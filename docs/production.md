@@ -10,7 +10,1014 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
-## October 1 discovery review migration
+The operator sections come first: installing a reviewed revision, the explicit
+security, Git and resource policies, release verification and rollout acceptance.
+Dated change and migration notes for the unreleased candidate follow them under
+[Candidate change history](#candidate-change-history). Nothing has been published,
+so those notes describe differences between candidate builds, not between
+releases.
+
+## Install from a reviewed revision
+
+Check out an audited full commit SHA before installation. README and example
+workflow instructions require a full reviewed commit; a fixed example SHA would
+fall behind new fixes. Record the exact revision with deployment evidence and
+verify the checkout matches it before building. Do not use a floating branch or
+a tag that has not been published.
+
+```bash
+SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
+git clone https://github.com/aisecnomad/Project-Nexus.git
+cd Project-Nexus
+git checkout --detach "$SHADOWSCAN_REVISION"
+test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
+```
+
+The install commands below use the files in this checked out tree. Check that
+`git status --porcelain` is empty and retain the commit SHA, CI links, dependency
+lock and built wheel hash for each worker deployment.
+
+The runtime lock covers the core scanner and all cloud SDK extras on CPython
+3.11, 3.12 and 3.13, Linux x86_64. It contains exact versions and permitted
+SHA-256 hashes; Linux CI checks installation and dependency consistency on all
+three interpreters. Linux x86_64 is the only validated deployment target for
+this full runtime/cloud lock. The macOS 3.11 and 3.13 CI jobs install
+`requirements-ci.lock` and this runtime lock from the same published wheel
+hashes and run the full test suite, which validates development use there;
+the coverage floors are enforced on Linux Python 3.11. A macOS deployment still
+needs its own wheel,
+container and acceptance evidence. Windows is not
+supported at all, because the confined file reader
+(`O_NOFOLLOW`, `O_DIRECTORY`, `dir_fd`) is unavailable there and the scanner
+refuses to read any input rather than weaken that policy. The lock is not
+universal for ARM or every future Python release either. Resolve and validate a
+separate lock before deploying on another platform.
+
+From the reviewed checkout, in a clean virtual environment:
+
+```bash
+python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
+python -m pip check
+python -m shadowscan.signatures.validate
+shadowscan --help
+```
+
+The runtime lock deliberately includes all cloud extras, even for a code-only
+worker. Development tools are not part of it; CI and `make install-dev` use
+`requirements-ci.lock`, which hash-locks the core and development environment.
+`requirements-ci-constraints.txt` is a reviewed version input for regenerating
+that lock and is never installed by CI. The build backend is locked separately:
+`requirements-build.lock` carries the exact `[build-system]` requirements from
+`pyproject.toml` (setuptools and wheel) with the SHA-256 hash of every artifact
+PyPI publishes for those releases. Install it under `--require-hashes` and build
+with `--no-build-isolation`, as above; an isolated build would let pip resolve
+the backend from the live index on a version pin alone. CI fails when the two
+files disagree, so refresh them together. Build the
+wheel in a controlled builder, retain its SHA-256, and install that reviewed
+artifact into workers. Capture the builder image digest, Python/pip/build-backend
+versions and wheel hash: matching runtime dependencies alone does not ensure
+identical wheel bytes. Dependency hashes
+prevent silent runtime artifact substitution; they do not establish that a
+dependency is safe.
+
+Regenerate intentionally in a clean Linux environment with Python 3.12 and
+`pip-tools==7.5.3`, review the dependency diff and advisory results, and let every
+CI matrix job verify the result:
+
+```bash
+pip-compile --extra cloud --generate-hashes --strip-extras \
+  --no-emit-index-url --no-emit-trusted-host --no-annotate \
+  --output-file requirements.lock pyproject.toml
+
+uv pip compile pyproject.toml --extra dev --universal --generate-hashes \
+  --no-emit-index-url --no-annotate --no-header \
+  --constraint requirements-ci-constraints.txt \
+  --constraint requirements.lock --constraint requirements-build.lock \
+  --output-file requirements-ci.lock
+```
+
+The current CI lock records the reviewed `uv` version in its header. Use a
+different resolver version only as an intentional toolchain change. Use
+`--upgrade` only for an intentional dependency refresh. Preserve each lock's
+supported-platform comment when regenerating. Do not bypass failed hash checks.
+
+The Dockerfile installs the runtime and build locks under `--require-hashes`
+into a virtual environment, builds the package with `--no-build-isolation`, and
+runs as UID/GID 65532. Both stages pin the same multi-arch
+`chainguard/wolfi-base:latest` image index by its literal digest; Python 3.12
+and Git are Wolfi packages, and pip stays in the build stage. The image build
+checks that Git is 2.45 or newer for history enrichment.
+Review that exact digest and any Dependabot refresh before deployment:
+
+```bash
+docker build --tag shadowscan:reviewed .
+```
+
+Retain the reviewed base and built image digests. The build context is an
+allowlist (`.dockerignore`) of package sources, signature data, packaging
+inputs and the runtime/build locks. Distribution packages from `apk` and image
+metadata remain mutable, so the Dockerfile does not promise byte-for-byte
+reproducible images. There is no claim of a hermetic package snapshot. CI
+smoke-tests a non-root, read-only and network-isolated image; build and test the
+deployment image, generate its container/OS SBOM, and validate resource limits
+and output-directory permissions before rollout.
+
+The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
+active deadline, a placeholder for a reviewed image digest, and a matching
+NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
+reviewed `/input` volume before running it. For live API collection, use a
+separate Job and enforce a network path through an approved egress proxy; a
+standard Kubernetes NetworkPolicy cannot filter destinations by DNS name.
+
+Opt-in Git history enrichment requires Git 2.45+;
+verify the distribution Git version if that feature is needed. Cloning requires
+Git 2.32 or newer; with an older or unidentifiable Git the scan uses sampled API mode
+and is incomplete. The gitlink inventory of a clone additionally needs Git 2.45; with
+Git 2.32 to 2.44 a clone is scanned but reports `could not inventory gitlinks safely;
+submodule coverage unknown`. Keep runtime secrets out of the build context.
+
+For record replay, read `exports/manifest.json` and use the `filename` for the
+intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
+
+## Explicit security policy
+
+```yaml
+options:
+  plugins: []
+  plugin_execution: thread
+  allow_signature_override: false
+  allow_private_origin: false
+  allow_credential_mixing: false
+  allow_instance_credentials: false
+  connector_timeout_seconds: 120
+connectors:
+  - name: identity.jwt
+    input: ./tokens.json
+    jwks_url: https://identity.example.com/keys
+    expected_issuer: https://identity.example.com/
+    allowed_algorithms: [RS256]
+```
+
+`plugins` contains exact connector names, not module paths or wildcard patterns.
+Approved plugins still run trusted Python code. `shadowscan connectors` lists
+installed plugin metadata without importing it. A plugin must be explicitly
+allowed on each scan, even if a prior scan imported it.
+
+Use `options.plugin_execution: process` or `--plugin-execution process` to run
+approved third-party connectors in dedicated spawned workers. Built-in
+connectors keep their existing thread execution; the default for plugins also
+remains `thread`. Plugin import and execution happen in the child. The original
+connector deadline includes worker startup and result transfer, and the worker
+exits as soon as its result is sent (plugin `atexit` handlers do not run); expired results
+are discarded, and termination escalates from TERM to KILL with bounded cleanup.
+A parent supervision guard allows up to two additional seconds for cleanup.
+Workers also exit by themselves two seconds after the deadline, or as soon as
+the scanner process exits (job-deadline watchdog, signals), and a
+`KeyboardInterrupt` during collection kills them at once. Worker crashes, invalid result schemas and output above the 16 MiB JSON
+transport limit make the scan incomplete. There is no automatic thread fallback.
+
+Process mode is lifecycle isolation, not a security sandbox. Workers inherit the
+scanner's privileges and environment, and killing one does not undo remote
+changes, completed cache/export writes, or terminate its independently spawned
+descendants. Continue to use an external job deadline and disposable workers
+with appropriately restricted credentials and filesystem/network access.
+Embedded Python entry points must use the usual `if __name__ == "__main__"`
+guard for spawning. Plugin workers are daemonic and cannot themselves start
+`multiprocessing.Process` children. See [connectors](connectors.md) for the
+plugin execution contract.
+
+Keep scans of repository content separate from jobs holding live cloud, identity,
+SaaS or low-code credentials. By default, configuration rejects a selected code
+connector alongside a selected live credentialed collector. A single remote code
+connector can use its repository token; code plus offline exports is allowed.
+`allow_credential_mixing: true` permits a reviewed exception, but does not isolate
+the repository from credentials available in the worker. Use separate disposable
+workers for untrusted repositories.
+
+`allow_instance_credentials: false` disables implicit cloud instance-metadata
+credential acquisition. Enabling it is a global opt-in; a connector-level value
+cannot silently override that policy. The engine replaces the key in any
+connector entry with the scan-wide value, and passes that value to every
+`cloud.*` connector, plugins included, and to any plugin that declares the
+cloud surface or documents the key in its `config_keys`. Before this release
+only `cloud.*` entries were replaced, so review plugin entries that set their
+own `allow_instance_credentials: true`: it no longer takes effect. Use
+explicit audit credentials or approved workload credentials and inspect
+account/tenant attribution before rollout.
+These settings are credential-use policy, not a process or network sandbox.
+
+Custom packs can add signatures by default. Replacing a built-in signature
+requires explicit `allow_signature_override` approval. Enable private origins
+only when the selected scan requires a trusted private HTTPS endpoint; keep
+network-layer restrictions appropriate for that scan. Separate private-endpoint
+scans from public collection when they need different trust policy.
+Configuration rejects duplicate authored YAML keys and unknown top-level or
+`options` fields. `${VAR}` must resolve to a nonempty value; use
+`${VAR:-fallback}` only where an explicit fallback is appropriate. Invalid
+`fail_on` thresholds or `parallel` values stop the scan before collection.
+Environment references are validated in disabled connector declarations too;
+remove unused placeholders or give intentionally optional values a fallback.
+Relative inventory globs and `options.workdir`, like other configured paths
+(including `identity.jwt` `ca_bundle`), resolve beside the configuration file,
+independent of the process directory.
+
+The new policies also expose `--connector-timeout-seconds`,
+`--allow-credential-mixing/--deny-credential-mixing` and
+`--allow-instance-credentials/--deny-instance-credentials`.
+All scan commands also expose `--allow-plugin`,
+`--allow-signature-override/--deny-signature-override` and
+`--allow-private-origin/--deny-private-origin`. Configured values are retained
+unless explicitly overridden. Signature inspection commands expose the same
+signature override opt-in. JWT CLI verification additionally accepts
+`--expected-issuer` and repeatable `--jwt-algorithm`.
+
+The shared HTTP transport enforces destination policy at connection time and
+retains TLS hostname checks. HTTP proxies are unsupported; environment proxies
+are ignored. Cloud SDK and Git transport behavior remains separate. Do not assume
+that the shared client's policy controls every network connection in the process.
+Inject only trusted `requests.Session` implementations. Calls to the shared
+client that explicitly request `stream=True` must read within a size limit and
+close the response; the default buffered response path enforces a 16 MiB limit
+and a whole-body [read deadline](#resource-limits-and-incomplete-scans).
+
+JWT verification is for analysis. The default scope is signature evidence;
+configuring `expected_issuer` also binds the issuer. Neither mode authorizes a
+request or substitutes for audience, expiry and application-policy validation in
+an actual relying service.
+
+## Git metadata policy
+
+All code connectors default to `use_git: false`. Source inspection and
+`CODEOWNERS` still work without invoking Git for history enrichment. For reviewed
+local metadata, set the connector's `use_git: true` explicitly (a YAML boolean).
+History enrichment requires Git 2.45 or later and a self-contained `.git`
+directory; external gitfiles and symlinks are not accepted for enrichment.
+Unsupported versions and failed metadata reads, including unavailable history
+objects, make the scan incomplete while preserving code findings.
+
+Metadata commands disable hooks, lazy fetching and every transport. Authenticated
+cloning uses a separate HTTPS-only policy. Remote JSON fields such as
+`_local_path` cannot select local scan roots or substitute for a verified offline
+record. Use fresh disposable workers and immutable inputs; these controls do not
+turn Git or the scanner into a process sandbox.
+
+## Resource limits and incomplete scans
+
+Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
+content by default. Each network attempt has a response-acquisition budget of
+twice the client timeout (60 seconds by default), covering connection, request
+transmission, status line and headers. TCP candidates and TLS handshakes share
+the remaining acquisition time. The active socket is interrupted on expiry;
+the watchdog is cancelled and joined before the response can leave its checked-out
+connection. System DNS is synchronous and cannot be forcibly cancelled: late
+resolution is rejected before connection, but needs a process/job supervisor
+for a hard time limit.
+
+Each response body has a separate budget of twice the client timeout.
+The 30-second client timeout also bounds individual socket reads, so without
+these budgets a server sending a byte just inside every timeout could hold a
+worker until the connector deadline abandoned it. A body still being read at the deadline is
+aborted (`HTTP response exceeds the read deadline`) and the connector's
+collection is incomplete (exit 3); a partial body is never analyzed. The
+budgets follow the client's timeout, not a `timeout` passed with one
+request. Retries and redirects each get a fresh acquisition budget:
+`connector_timeout_seconds` still bounds a connector's whole collection.
+Pagination rejects missing or malformed collection arrays and records an
+incomplete scan when a response exceeds its limit. Review unusually large
+provider pages against their API contract before raising a per-client or
+per-request limit. GitLab file downloads remain capped at 512 KB (512,000
+bytes) per file.
+
+YAML parsing checks input size, composed nodes, alias count, nesting, expanded
+nodes/content and merge work before object construction. Sanitization has a
+separate expanded-structure and total-work budget, so valid YAML aliases cannot
+cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
+matching with a per-lookup work budget.
+
+The code scanner's IaC wildcard-action and agent front-matter patterns run on
+the bounded regex engine under the same per-input matching budget as the
+signature patterns, so a planted file costs at most that budget and is
+reported as an incomplete file rather than holding the connector. Symbolic
+links count toward `max_files` together with regular files, and the link
+checks stop at the connector deadline with the error `connector deadline
+reached while checking symbolic links`; findings collected before that point
+are kept and the scan is incomplete (exit 3). A checkout with more links than
+the remaining `max_files` budget needs a larger `max_files` or an `exclude`
+entry for the link directories.
+
+YAML manifest artifact matching uses a shared one-second deadline and gives
+each bounded line chunk no more than the remaining manifest pattern budget.
+Concurrent collection can take over the signature matcher’s separate 100 ms
+ceiling while still remaining inside that manifest deadline and any active
+per-input scan deadline. Exhausting either deadline marks the code scan
+incomplete (exit 3).
+
+A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 3
+must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
+risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be a strictly positive
+finite number. It starts when the connector worker begins, and split filesystem
+roots share that connector's deadline. The engine stops accepting a connector's
+results after the deadline and records incomplete coverage. Python
+worker threads (the default backend) cannot safely be killed: a blocked SDK call can continue after
+that soft deadline. The CLI normally exits after emitting an incomplete report,
+but a filesystem replacement already in progress can finish after the timeout
+report. Such cache or record artifacts are unaccepted even if present; timed-out
+record exports are `exported: false` in the manifest. Use a fresh state and
+export directory after a timeout to avoid reusing a late cache or orphan export.
+Embedded callers must supervise their process and
+cannot reuse an Engine with an active abandoned worker. Also enforce a host/job
+wall-clock deadline and terminate the disposable worker when it expires.
+SDK connect/read limits and bounded retries reduce blocking; none guarantees a
+universal hard deadline for the whole scan.
+
+For CLI scans, `--job-deadline-seconds 600` or
+`options.job_deadline_seconds: 600` also arms a process watchdog covering plugin
+discovery, engine setup, collection and report output. The explicit CLI option
+starts during option processing, before command preparation, including connector
+metadata discovery for `run` and stdin reads for `jwt`. A YAML-only deadline starts
+after the configuration has been read and validated. Use an external supervisor
+to bound process startup, Click argument parsing and YAML preflight. The value
+must be positive and finite; omission or YAML `null` leaves it disabled. Expiry
+terminates the scanner with exit `3`, without guaranteeing a final report. It first
+stops in-flight `git clone` process groups and deletes their temporary checkouts (best
+effort, bounded to a few seconds); SIGTERM, SIGINT and SIGHUP do the same before the
+scanner exits. SIGKILL and OOM kills cannot, so keep the external job deadline and
+process-group or container cleanup. A blocked output stream cannot delay that exit. Completed CLI
+invocations disarm their watchdog. `Engine` embedding does not arm it: the host
+application owns process supervision. Keep the external job deadline and process
+group/container cleanup to reap child processes and bound native code that holds
+the interpreter lock indefinitely.
+
+Code scans follow a documented coverage policy. Links whose own names are never
+read, source-file links whose real targets are analyzed in the same project
+with the same test classification, and coding-agent instruction-document links
+to another instruction document under the same condition, are skipped because
+nothing at the alias path is lost (see [scan semantics](scanning.md) for the
+exact rule). Directory
+links, configuration aliases, links into excluded or unread content, links
+leaving the root, oversized files the scanner would
+inspect and files it analyzes by name but cannot read as text (a NUL byte
+outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) make the scan
+incomplete (exit 3) by default, with a warning naming the omission.
+`strict_coverage: true` (`--strict-coverage`) records those
+conditions as errors; explicit `oversize_skip_globs` remain declared omissions
+in both modes. Raise `max_file_size` or add `exclude` patterns for known data files.
+A non-empty `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
+`third_party`, `thirdparty` or `external` directory that the walk skips by default
+is listed in one warning per scan root (the scan stays complete); set
+`default_excludes: false` (`--no-default-excludes`) to scan them. Evidence found
+only in test or fixture paths has half weight and cannot promote a project to an
+agent unless `include_tests: true` (`--include-tests`) is set, and a project
+finding whose evidence is already reported by an MCP configuration, agent
+manifest, exported workflow, IaC or credential finding is not emitted again.
+Recognisable placeholder credentials (repeated characters, marker words such as
+`EXAMPLE`, very low character diversity) are no longer reported. A
+real-format credential in a test, fixture or `cassettes/` path is still a
+`secret` finding, at half weight and tagged `test-code-only` unless
+`include_tests: true` is set. Risk factors
+always sum to the reported score; `risk.danger_score` excludes the governance
+factors and `options.risk_basis: danger` bases `level` and `--fail-on` on it.
+Review [scan state and runtime correlation](scanning.md) and the changelog
+before raising an enforcement gate on a scanner upgrade.
+
+A ServiceNow agent remains a native finding if optional display-name or OAuth
+signature matching times out before the agents are emitted. The connector marks
+coverage incomplete and skips repeated matching; exit 3 remains mandatory.
+OAuth findings whose classification could not finish are omitted, and native
+findings must not be interpreted as fully enriched.
+
+Saved provider errors and unsupported/malformed export records also make scans
+incomplete. Valid neighbors remain available. Explicit empty inventories such
+as `[]` remain valid; an authorization-error document is not an empty inventory.
+Identity and low-code collectors retain available records when enrichment or a
+later page fails. Auth0 offset pagination has a finite page budget and detects
+repeated pages. Okta grants and optional tokens both follow pagination.
+Zoom's Marketplace listing enumerates approved public and account-created apps;
+its results do not prove a per-user installation. A denied or incomplete
+Marketplace category marks the scan incomplete.
+Google Workspace accepts omitted empty arrays only in identified native users
+and token-list envelopes; an arbitrary empty object is incomplete coverage.
+Every `--only` value must match an enabled connector name or label, including
+when another selector matches successfully.
+
+Use disposable, resource-limited workers for untrusted repository scans. Keep
+scanner state and output outside the repository under review. Avoid handing
+production credentials to a job that executes repository-controlled build steps.
+For GitHub/GitLab remote repository scans, preflight estimates and process-group
+cancellation reduce ordinary runaway clone cost. `clone_max_bytes` also stops a
+clone when observed checkout use, including `.git`, exceeds the configured cap.
+It checks during the clone and after Git exits; a failed measurement or excessive
+entry count also stops Git, removes the partial checkout and makes collection
+incomplete while retaining the sampled API fallback. Periodic checks can
+overshoot the threshold, and the cap does not limit network transfer bytes or
+guarantee a hard writable disk ceiling. Give each disposable worker an
+operating-system/container writable disk quota, memory and process limits, a
+separate job wall-clock deadline and a cleanup policy for abandoned workspaces.
+A worker's soft connector timeout is not a hard kill for every child process.
+A local checkout example, such as
+`examples/github-action-code-scan.yml`, does not exercise the remote clone path.
+
+## Release verification
+
+### Merge gate and review status
+
+The [versioned policy and activation procedure](operations/merge-policy.md)
+retain the existing required checks and add `CI gate`, bind them to GitHub
+Actions, and require fresh non-author approval with no bypass actors. Use
+`python -m tools.governance_check RULESET_JSON` on a fresh API snapshot before
+relying on enforcement. Neither the policy file nor this checker updates live
+repository administration settings.
+
+Ruleset
+[23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
+is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an
+up-to-date branch, and one approving review from a reviewer with write access,
+alongside `Protect main`. Add the new aggregate `CI gate` to that required-check
+list without removing the existing checks or approval rule. Its enforcement
+state has changed more than once during 2026-09: the 2026-09-24 review recorded
+it disabled; on 2026-09-25 (13:10 UTC) a merge attempted without an approving
+review was refused with "Repository rule violations found", so it was enforced
+at that moment; on 2026-09-27 (10:40 UTC), and again on 2026-10-01 during the
+discovery review, both rulesets were read back with `enforcement: disabled`.
+The October 1 branch response also reported `protected: false`. During the
+October 2 hygiene review, both rulesets were read back as `enforcement: active`
+and the branch response reported `protected: true`. `Require CI and CodeQL`
+retained one required approval, stale-review dismissal, strict checks and no
+bypass actors; its required checks still omitted `CI gate`. `Protect main`
+separately retained administrator and integration bypass actors. Treat no
+observation as permanent; only the live commands below describe the current
+state. Keep the CodeQL job's displayed name `analyze` consistent with the
+required check.
+
+Both rulesets were read back active on 2026-10-01 (updated 17:30 UTC).
+`Require CI and CodeQL` requires one approving review of the final revision
+with stale reviews dismissed, the strict required checks `test (3.11)`,
+`test (3.12)` and `analyze`, CodeQL alert gating and signed commits, and lists
+no bypass actors; `CI gate` is not yet among its required checks. `Protect
+main` adds linear history and deletion protection and still names bypass
+actors. At 08:05 UTC on 2026-10-02 both rulesets read back as
+`enforcement: disabled` again (last updated 04:28 UTC), and
+`GET /repos/aisecnomad/Project-Nexus/rules/branches/main` returned no active
+rules, so nothing enforced review, CI or linear history on `main` at that time.
+Classic branch protection is not readable through the app
+integration. Read and retain the current configuration before changing it,
+and compare it against the [versioned merge policy](operations/merge-policy.md):
+`python -m tools.governance_check <snapshot.json>` reports every difference
+with a fixed diagnostic code. The policy file is not applied automatically and
+does not describe the live state; a repository administrator applies it under
+**Settings → Rules → Rulesets**.
+
+Do not claim that the full merge gate is enforced until readback confirms
+`CI gate` is required. If the API connection lacks administration access, use
+an authorized administrator session rather than weakening the rules.
+
+Whatever the ruleset's state, the history is unchanged: the repository has a
+single maintainer, and no change merged to `main` through 2026-09-25 (including
+#62, #65 and #42) carries an approving review from a second person. A repository
+administrator can bypass or reconfigure rules, so a merged pull request, the
+version string and the internal AI-assisted hardening logs are not evidence of
+independent review. The review and merge policy is in
+[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).
+
+Rulesets, branch protection and pull request approvals are repository settings
+that can change at any time, so an
+operator who needs an independently reviewed revision must inspect the live
+state when selecting the commit and retain the output with the deployment
+evidence:
+
+```bash
+# Rules currently enforced on main; an empty list means nothing is enforced
+gh api repos/aisecnomad/Project-Nexus/rules/branches/main
+# The ruleset itself, including its enforcement state
+gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 --jq '{name, enforcement, rules: [.rules[].type]}'
+# Classic branch protection; HTTP 404 means none is configured
+gh api repos/aisecnomad/Project-Nexus/branches/main/protection
+# Who authored, reviewed and merged the pull request that introduced a change
+gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,reviews
+```
+
+The offline rules helper can prepare a reviewed PUT body from a fresh full
+ruleset response. Use an administrator identity able to see `bypass_actors`;
+GitHub can omit that field for identities without ruleset write access. Read
+the default branch first and confirm it is `main`:
+
+```bash
+gh api repos/aisecnomad/Project-Nexus --jq .default_branch
+gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 > /secure/main-rules-before.json
+python -m tools.release.rules prepare --input /secure/main-rules-before.json \
+  --output /secure/main-rules-update.json --repository aisecnomad/Project-Nexus \
+  --default-branch main
+# Review the generated body before this administrator operation.
+gh api --method PUT repos/aisecnomad/Project-Nexus/rulesets/23913372 \
+  --input /secure/main-rules-update.json
+gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 > /secure/main-rules-after.json
+python -m tools.release.rules verify --input /secure/main-rules-after.json \
+  --output /secure/merge-rule-verification.json --repository aisecnomad/Project-Nexus \
+  --default-branch main
+```
+
+Preparation activates the same ruleset and tightens it to the versioned minimum
+policy: all four required checks are bound to the GitHub Actions app, final-push
+approval and review-thread resolution are required, deletion is blocked and
+CodeQL errors remain blocking. It retains additional checks and stronger rules,
+pins an unbound required check and refuses a conflicting nonempty app binding.
+It also refuses missing independent approval or stale-review dismissal,
+ambiguous branch scopes, nonempty or unavailable bypass lists and malformed
+settings. Generate the body from current settings rather than from an older
+snapshot, so that later administrator changes are not overwritten, and compare
+it with the [versioned merge policy](operations/merge-policy.md). The verifier
+checks a supplied settings snapshot against the same minimum policy as the
+governance checker. The release workflow obtains its snapshot
+directly from GitHub; an offline receipt cannot authenticate its own API origin,
+establish historical enforcement or prove an actual human approved the final PR.
+
+An approving review counts only when it comes from a person with write access,
+other than the author, and covers the final revision of the pull request. A
+successful workflow run or Copilot review does not supply that approval. A
+single maintainer cannot approve their own PR: recruit a second eligible human
+reviewer rather than weakening the rules to self-merge. Recheck the live ruleset
+and pull request status at release time.
+
+The CI workflow installs hash-locked runtime, build and core/development
+dependency sets and validates signatures, lint, typing, dependency advisories
+(including the documentation lock), tests, wheel creation, installed-wheel
+validation outside the source checkout and offline SARIF output. The Linux
+Python 3.11 job traces coverage and enforces a minimum of 80% overall and 75%
+for each module under `shadowscan/connectors/`, both counting statements and
+branches, so a well-tested engine cannot conceal an untested provider; the
+other jobs run the same tests untraced. Coverage proves execution of code paths in tests; it does not prove
+provider compatibility or complete tenant inventory. The aggregate `CI gate`
+requires every Linux and macOS matrix job, documentation and container security to succeed; it also
+requires DCO on pull requests. It fails if a required prerequisite fails, is
+cancelled or is unexpectedly skipped. Verify that the live ruleset requires
+`CI gate` before treating the full matrix as an enforced merge gate. The dedicated
+container job builds one Docker image and checks its non-root UID, signature assets
+and network-isolated scan with a read-only root filesystem and resource limits.
+It also requires the expat that the image's Python uses to parse every XML file
+read from a repository to be 2.8.5 or newer, and the build fails if any file
+keeps a setuid or setgid bit.
+It inventories that exact local image with a CycloneDX SBOM and blocks HIGH or
+CRITICAL OS and Python vulnerabilities, including unfixed findings, and lists each
+blocking finding in the job log. It records
+the image ID, source revision, pinned scanner and fresh vulnerability database
+identities; scanner errors also block the gate.
+Focused regressions cover the review findings, private-address enforcement,
+public-key verification, plugin policy, artifact permissions and replay integrity.
+Dependabot checks Python, GitHub Actions and Docker base-image dependencies weekly.
+
+Automated and mocked provider-contract checks do not validate a tenant's actual
+permissions, enabled services, data retention or export trust chain. Before an
+operational rollout, run a read-only canary in each target tenant, inspect complete
+coverage and account identity, verify expected known resources, and compare live
+results with the retained export. These environment-specific checks require
+access to those tenants and are not performed by offline CI.
+
+The [synthetic evaluation](evaluation.md) guards against known classification
+regressions. It does not measure field precision, recall or the calibration of
+the heuristic confidence score. Before turning on `--fail-on` for an estate,
+label a representative held-out set from that estate, include inactive configs,
+commented/string-only source, disabled integrations and genuinely executing
+agents, and review errors by connector and severity. For code-filesystem cases,
+run the acceptance command with a separately reviewed, SHA-256-frozen policy:
+
+```bash
+python -m tools.evaluation.accept \
+  --corpus /restricted/holdout.json \
+  --policy /restricted/acceptance-policy.json \
+  --annotations /restricted/holdout-annotations.json \
+  --output /restricted/acceptance-result.json
+```
+
+The gate rejects synthetic/public samples and requires a frozen, SHA-256-bound
+two-reviewer ledger plus predeclared sample floors and Wilson lower bounds per
+family. Both acceptance paths reject repeated nonblank source contents or pinned
+locations across holdout cases, including renamed and partially overlapping
+multi-file samples. Repeated files inside one case are one sampling unit; blank
+package scaffolding alone does not duplicate an otherwise distinct case, but
+repeated all-blank cases are rejected. Previously evaluated source exclusion
+remains strict for every file. Ledger declarations do not authenticate reviewer independence or prove
+tenant completeness. Set a documented acceptable false-alert
+and miss rate for each high-impact workflow; keep human triage while those
+acceptance metrics are measured.
+
+## Rollout acceptance
+
+Before broad deployment, retain evidence for each intended connector instance.
+The [canary proof packet](evaluation.md#read-only-tenant-canary-procedure) lists
+the concrete status, denominator, control and reviewer artifacts:
+
+1. Run a read-only canary with the actual audit identity. Record the expected
+   tenant/account, regions and collection scope, then verify known agents and
+   at least one known permission/configuration signal appear.
+2. Verify denied access, malformed exports and partially invalid selections
+   cannot pass the gate. Require `summary.complete=true` and inspect all connector
+   statistics for successful collection; do not infer coverage from finding
+   count or an empty report alone.
+3. Check sanitized artifacts with synthetic credentials and enforce private
+   file/directory modes. Keep configuration, state and outputs outside scanned
+   repositories and restrict access to retained reports. Regenerate retained
+   reports after an upgrade that withholds more, such as the
+   [2026-09-28 redaction changes](#completeness-report-and-credential-changes).
+4. Replay each exported instance using its manifest filename, checking account,
+   resource identity and detection consistency. Sanitized exports are not
+   lossless raw API backups; credential findings may differ after redaction.
+5. Run a representative large scan in a resource-limited disposable worker.
+   Set a job deadline, monitor incomplete/failed runs and provider throttling,
+   and document how to restore access or rerun after a partial collection.
+6. Pin the reviewed scanner commit, wheel/image digest and approved dependency lock for rollout.
+   Establish a fresh comparison baseline, retain the prior pinned version for
+   rollback, and keep rollback reports separate from the new identity schema.
+7. Measure precision and recall on a held-out, representative set of your own
+   code and tenant records. Record the labeled corpus, per-connector confusion
+   matrix, severity thresholds, reviewer decisions and accepted failure budget
+   before treating findings as an automated policy decision.
+
+These checks require operator-specific tenant access and operational decisions.
+Until completed, describe deployment status as pending tenant and container acceptance.
+
+## Candidate change history
+
+These notes record behavior changes made while the 0.1.1 candidate was being
+hardened. Read them when you have baselines, reports or inventories produced
+by an earlier candidate build; a deployment that starts from a reviewed
+revision and a fresh baseline does not need them.
+
+### October 2 services review migration
+
+Re-run `gateway.logs` over combined-format access logs before comparing
+gateway callers with an earlier baseline. A host token that a client could have
+written (quoted, as in `host="api.example.com"`, or followed by another quoted
+field) is still not used, but when it alone would have made a request LLM
+traffic the scan is now incomplete (exit 3) instead of complete without that
+traffic. Put the host in the log format as an unquoted token after the last
+quoted field (nginx: `... "$http_user_agent" host=$host`), or export JSON
+logs, to attribute such requests. Fields that were taken from inside a value or
+quoted text of a text log (a `?model=` query, an `&host=` argument) no longer
+are, and a line truncated inside a quoted field is malformed (incomplete).
+
+`lowcode.servicenow` now pages each table until its 500-row windows cover the
+response's `X-Total-Count`, so a window that ACLs emptied no longer ends the
+table early with a complete scan. A table whose responses carry no valid
+`X-Total-Count` (a proxy that strips the header, `sysparm_no_count`) cannot
+prove where it ends: the scan is incomplete with a warning naming the table.
+Pass the header through to the scanner; `max_pages` still needs to exceed the
+table's `X-Total-Count`/500.
+
+Check connector configurations for numeric options before upgrading:
+`max_lambda`, `max_ecs_api_calls` (`cloud.aws`), `max_projects` (`cloud.gcp`),
+`min_events` (`gateway.logs`) and `max_teams` (`saas.microsoft-teams`) must be
+positive integers, and `cloudtrail_days` (`cloud.aws`) and `audit_days`
+(`cloud.gcp`) non-negative integers, as `max_pages` already must be. A boolean,
+a fraction or non-numeric text now stops that connector with a configuration
+error (exit 3) instead of being truncated: `cloudtrail_days: 0.5` used to
+switch the CloudTrail lookup off without a diagnostic and `max_lambda: true`
+became 1. Integral values such as `7.0` or `"7"` are still accepted.
+
+`cloud.azure` no longer sends a request whose path comes from an unchecked
+response identifier. A listed subscription without a GUID id, or a Resource
+Graph resource whose id is not a plain ARM path, is skipped with a warning and
+the scan is incomplete. ARM does not return such identifiers; a scan that
+reports one points at a proxy or a response that should be investigated.
+Configured `subscriptions` keep their existing validation.
+### October 2 code connector review fixes
+
+Re-run code scans before updating baselines. Kubernetes manifests, ECS task
+definitions, CI pipelines and other files that assign provider variables to a
+service or job are configuration again: repositories that reported nothing
+because such a file named four or more products now report LLM usage. A data
+file that only lists products is still discounted; when a project's only
+evidence is in such files, the scan adds a note (a warning that does not make
+the scan incomplete) naming them. Review the named files: a provider routing
+file that configures four or more providers by base URL cannot be told from a
+vendor list by its shape.
+
+A `.gitmodules` file with a run of more than 32 blanks is refused before it is
+parsed and makes the scan incomplete (submodule coverage unknown). Such a file
+used to stall the scanner process beyond every deadline.
+
+A JavaScript or TypeScript call longer than 8192 characters (a Genkit flow, an
+agent with long instructions) is now analyzed from its first 8192 characters,
+and the file's other import-bound evidence is kept: such files used to lose all
+of it. The scan is still incomplete (exit 3) as before, because options past
+that point are unread; the error now reads `import-bound call at line N
+analyzed from its first 8192 characters; options after them were not read, so
+coverage is incomplete` instead of `source binding call text limit exceeded`.
+Update any alert or triage rule that matches the old text.
+
+Notebooks that install packages with `%pip` or `!pip`, and Python files the
+scanner's interpreter cannot parse, can now report an agent where they reported
+LLM usage: their framework patterns count as lexical evidence when the same
+library is imported or declared. Notebook cells are now read one at a time, so
+a notebook with an unfinished scratch cell, which used to report nothing, can
+report findings, with a warning that names the cell that does not parse.
+Review such changed classifications before updating baselines.
+
+Local scans and offline clone directories now make the scan incomplete when a
+file the scanner reads is a Git LFS pointer. Check out such repositories with
+git-lfs installed (`git lfs pull`) before scanning, or the scan stays
+incomplete (exit 3).
+
+These fixes come from an AI-assisted review and have offline regression tests
+only; they are not independent human review or field precision evidence.
+
+### October 2 production review migration
+
+Review framework attribution in projects using npm dependency aliases before
+replacing enforcement baselines: the registry target now supplies dependency
+identity. This identifies a declared dependency, not runtime execution or
+cross-file resolution of imports through the alias. Malformed alias targets
+make source coverage incomplete (exit 3).
+
+CSV inventory approvals preserve embedded line separators in quoted resource
+and scope fields. Review previously generated reports if an inventory used such
+fields: a value that previously lost its separator is now a different identity
+and no longer confers the same approval. Ordinary single-line inventories are
+unaffected.
+
+Malformed evidence in imported reports is rejected before correlation or risk
+processing; malformed incremental cache entries are ignored and fully rescanned.
+Notion and Atlassian provider error envelopes and malformed Google Workspace user
+suspension flags now produce incomplete collection rather than a complete empty
+result. Valid neighboring Google Workspace users remain eligible for collection.
+Resolve the reported input or provider failure before accepting the scan.
+
+The connector coverage gate now rejects a report that does not name every
+module under `shadowscan/connectors/` in the checkout, and malformed counts
+(exit 2). Generate its JSON from a full coverage run; a selected-test report is
+not evidence for all connectors. The 75% per-module floor over statements and
+branches is unchanged. Wheel validation uses private temporary storage and
+cleans it up after success or failure.
+
+These changes have offline regression coverage. They do not replace independent
+human review, a fresh labeled holdout or authorized tenant acceptance checks.
+
+### October 2 hygiene review migration
+
+Re-run scans and compare MCP tool/capability labels before updating enforcement
+baselines: inert examples and unreferenced enum members no longer count as
+registered tools. Live GCP, Azure, OCI and Slack records keep collector-assigned
+classification and scope when response fields share those names. Invalid
+discovered GCP project identifiers are skipped with incomplete coverage.
+
+Gateway records with timestamps outside the representable UTC range now fail
+before updating caller state. A malformed record still makes coverage incomplete,
+while valid neighboring observations remain available for review.
+
+Tenant-canary verification now groups records and findings by exact resource
+identity before checking controls and reads record dumps incrementally under
+the existing size cap. The declared scope and acceptance selectors still apply;
+this optimization does not establish a tenant-scale latency or memory SLO.
+
+Re-render retained sensitive reports where possible: diagnostic sanitization
+now preserves context across errors, warnings and skip reasons, and JSON
+statistics are checked together. Continue treating reports as sensitive; no
+redaction rule recognizes every possible secret or private datum.
+
+CI and `make check` now enforce the bounded secret-pattern gate over every
+tracked text file. The intentional test, signature-pack and evaluation-corpus
+exemptions require review. The evaluation path contract now rejects ambiguous case/Unicode names,
+file/directory collisions and components over 255 UTF-8 bytes. Correct such
+layouts before re-running a private holdout; do not silently rename its samples
+after freezing the acceptance policy.
+
+These checks are offline regression evidence. They do not establish independent
+human approval, a representative field accuracy measurement or live tenant
+acceptance. Verify the current required-check configuration under
+[release verification](#release-verification) before merging or deploying.
+
+### October 2 review remediation
+
+Collect a fresh baseline after upgrading: dependency examples confined to Gradle
+or Dockerfile comments no longer establish framework usage, while active
+declarations and credentials inside comments are still reported. Do not read the
+disappearance of a comment-only finding as a remediation.
+
+The new regression cases are authored from observed defects. They do not replace
+the [fresh human-reviewed holdout](evaluation.md#build-a-genuinely-held-out-field-set),
+independent review of the final candidate, or [live tenant canaries](canaries.md).
+Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+on real evidence for the intended population and tenant scopes. Record unmet
+requirements as unmet; do not substitute offline replays or AI-generated labels.
+
+### October 2 detection and assurance migration
+
+Name/value credential redaction now reuses line bounds and first-content
+positions. Long lines containing repeated record names previously caused
+quadratic prefix scans and copies; those queries now perform linear character
+work. Credential withholding and record/list boundaries are unchanged. Existing
+matching budgets still fail closed, and timing regressions remain checks of the
+implementation rather than tenant throughput guarantees.
+
+JavaScript/TypeScript calls exceeding the bounded semantic-analysis budget now
+make the scan incomplete (exit 3). This includes long constructor arguments;
+an unchanged framework-usage finding is no longer evidence that agent analysis
+completed. Review the diagnostic and source, then provide an analyzable input
+or explicitly narrow the intended scope before using the result as a gate.
+Neighboring findings remain available for investigation.
+
+Binary-looking `.ts` files also make source coverage incomplete. Packet bytes
+cannot distinguish a video segment from TypeScript containing a padded comment.
+Review the affected paths and explicitly exclude verified media directories
+with the connector's `exclude` policy when they are outside the intended source
+scope. Recognized binary assets selected only by a directory-wide configuration
+glob keep their existing treatment.
+
+Failed incremental cache-decision hooks now mark connector coverage incomplete;
+built-in validation diagnostics remain available, while plugin hook failures
+expose only exception types.
+
+Zapier ignores wholly blank text rows only when a recognized identity column
+is present. Unknown JSON keys or CSV headers make coverage incomplete; existing
+padding rows under valid Zapier headers remain accepted.
+
+Generic Genkit initialization and standalone flow/tool declarations are
+framework evidence. Supported explicit agent definitions and concrete model
+calls using registered tools establish stronger configured behavior. Review
+changed kinds, capabilities and risk scores, then collect a fresh comparison
+baseline. Tool registration must resolve to a direct module-level initializer
+or a standalone call with an explicit statement boundary; dynamic bindings and
+uncertain boundaries remain supporting framework evidence. The added examples
+are authored regressions; obtain fresh
+human-reviewed evidence using the
+[holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+
+The shared HTTPS client now bounds response acquisition, including status and
+headers, separately from body delivery. Cancellation closes the active socket
+before that connection can be reused. System DNS resolution cannot be forcibly
+interrupted in a Python worker thread; a result arriving after the acquisition
+budget is rejected before connection. External SDK calls retain their own
+transports. Keep a process/job supervisor for a hard end-to-end execution limit.
+
+The aggregate `CI gate` also requires container security checks for the exact
+built image. CI retains the image identity, OS/Python SBOM and vulnerability
+result; HIGH/CRITICAL vulnerabilities, scanner errors and unavailable database
+updates fail the gate. These results depend on the database at scan time.
+Record the deployed image digest and rescan that exact image before deployment;
+an earlier source commit or Docker tag does not identify its bytes. apk still
+reads the live Wolfi repository, so independently rebuilding the source does
+not produce a guaranteed identical image.
+
+The first October 2 container scan found HIGH-severity Debian advisories,
+including advisories without a recorded stable-package fix. The worker build
+now upgrades base packages from the enabled Debian archives before installing
+Git and certificates. This applies available fixes; it does not establish that
+the resulting image is vulnerability-free. Retain the rebuilt image's actual
+scan, and keep the candidate blocked while HIGH/CRITICAL findings remain.
+Do not remove unfixed findings from the gate to turn it green.
+
+A later October 2 base-image refresh moved the worker to Python 3.12.15. Its
+bundled expat 2.8.5 carries the fixes for the expat denial-of-service and
+memory-safety advisories that affect the 2.8.3 copy in the previous image; the
+image scan reports Debian's `libexpat1`, which only `git-http-push` loads, and
+cannot see Python's own copy. The build now also removes setuid and setgid bits
+(`mount`, `su`, `passwd` and others). Neither change removes the unfixed Debian
+findings that still block the container gate.
+
+The worker image then moved from `python:3.12-slim-trixie` to Chainguard's
+Wolfi base. On Debian the gate could not pass without exempting findings: the
+55 unfixed HIGH entries (16 advisories in 22 packages) sat in packages the
+worker never executes, such as util-linux, ncurses, Perl and systemd libraries,
+and in `libcurl3t64-gnutls`, which Git's HTTPS transport needs and which had no
+trixie fix. Wolfi installs none of the unused packages and carries current
+fixes, so the gate stays strict and passes on the scanned image. Python, its
+expat and Git are now packages the image scan inventories; the official Python
+image built the interpreter outside the package manager, where the scan could
+not see it. Rebuild and rescan deployment images: the base distribution, the
+package names in the image inventory (`pkg:apk/wolfi/...`) and the virtual
+environment path (`/opt/venv`) changed. The CLI, entry point, non-root UID and
+mount points are unchanged.
+
+The release-evidence workflow now verifies active merge protections before
+building a candidate. Use the settings preparation and readback commands in
+[merge gate and review status](#merge-gate-and-review-status) to restore the
+existing ruleset without dropping checks, approvals or bypass restrictions.
+Neither merging this source change nor a prepared JSON patch changes GitHub
+settings. The release check fails if the API identity cannot expose bypass
+actors; it does not infer an empty list from an omitted field. Do not grant
+write credentials to the build job to suppress that failure.
+
+Complete AWS/Slack and separately credentialed permission-denied
+[tenant canaries](canaries.md) in the authorized deployment scope. For other
+connectors, retain connector-specific live evidence. Bind those receipts and a
+fresh human-reviewed holdout to this exact source/signature revision with the
+[acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+Independent human review of the final revision remains required before release.
+Offline replay and the new CI checks cannot supply these attestations.
+
+### October 2 repository hygiene
+
+Agentforce metadata that declares XML entities or attribute defaults is no
+longer parsed, so a previously complete scan can become incomplete (exit 3):
+remove the declarations, or exclude the file if it is not deployed metadata.
+Embedders that imported the non-strict `bounded_safe_load_all` must switch to
+`strict_bounded_safe_load_all`.
+
+### October 1 scan integrity remediation
+
+Rollout effects of the remediation listed in the changelog. Re-run any baseline
+collected before this revision: some scans that previously finished complete now
+finish incomplete because the earlier result hid a gap.
+
+- **More exit 3 on real estates.** Expect new incomplete diagnostics for files
+  with source or config names that hold a NUL byte, any file without a
+  supported export suffix in a connector's offline input directory (rotated
+  logs, a `README.md`, `.DS_Store`), unnamed `saas.generic` rows and negative
+  gateway usage. Fix the input (exclude the path, remove the extra files or point
+  `input` at the export file, supply rotated logs by name, map the name column)
+  rather than ignoring exit 3. Do not read a finding that disappeared before this
+  revision as resolved; compare only complete scans of the same scope.
+- **Notices are not completeness.** The default-exclude notice and the AWS/GCP
+  default-region notice are warnings that leave the scan complete. Scope a scan to
+  an excluded directory as its own root, or set `regions` (AWS) or `locations`
+  (GCP), to cover it. Review the
+  notices before treating a clean report as estate-wide.
+- **New report fields.** `collection_scope.not_run`, finding metadata
+  `registry_match_assurance` and tag `registry-identity-unverified`, and
+  `signature_verified` on JWT findings are additive. A gateway finding approved
+  only by an operator-asserted caller name is still registered; treat that match
+  as unverified until the caller binding is authenticated.
+- **CSV consumers.** An incomplete CSV report has a first data row with
+  `id=SCAN-INCOMPLETE`, `kind=scan-status` and the unfinished connectors in the
+  `connector` column. Skip or alert on it; exit code 3 remains the primary signal.
+- **Redaction.** Reports withhold more than before: `--passphrase`, `--pat`
+  and `--auth` option values, whole PGP private key blocks (earlier reports
+  could show a block's body when its first line followed a name such as
+  `private_key:`), every cookie in a `Cookie` header, compact `x-api-key:S` and
+  `password:S` values, unquoted values containing `;`, escaped-quote JSON values, the
+  URL query keys `auth`, `pwd` and `pat`, Fireworks `fw_` keys and provider
+  tokens next to non-Latin text. Reports generated before this revision can
+  contain those values: regenerate them, restrict or delete the old copies, and
+  rotate any key, PGP private key or session cookie they show. Expect extra
+  `[REDACTED]` markers (`ffmpeg -pass 1`, the text after `;` in `NAME=S;rest`,
+  the scheme after `Authorization:`). Finding IDs built from sanitized
+  resource fields can change where those fields held such values.
+- **Credential digest (open item).** Code and cloud findings (credentials in
+  source files, and in cloud environment variables and app settings) still
+  carry `credential:sha256:<digest>`, an unsalted SHA-256 of the raw credential
+  used for stable finding identity. Anyone holding a report can confirm a
+  candidate credential against it. Gateway reports carry only scan-local
+  `credential:hmac-sha256:` identifiers; the public digest appears only in the
+  operator's gateway binding configuration, which must stay private. Treat
+  reports as sensitive, and plan an operator-supplied keyed digest, which
+  changes finding identity and bindings, as a separate migration.
+- **Lower risk for routine scope names.** OIDC `offline_access`, Salesforce
+  `full`, `web` and `refresh_token`, GitLab `api`, GitHub `workflow` and Slack
+  `admin` no longer match `policy.privileged-scopes`, because scopes are
+  matched by bare name across providers. Findings that held only these scopes
+  lose that risk factor and can drop a risk level. GitLab `api` and GitHub
+  `workflow` remain powerful on their own providers: review those grants by
+  hand rather than relying on the risk level.
+- **Private CA.** Set `ca_bundle` on `identity.jwt` to a PEM file to scan an
+  endpoint behind internal PKI; TLS verification stays on and the bundle replaces
+  the default store. A relative path resolves beside the configuration file.
+  Other connectors do not accept it yet.
+- **Known limits.** The default 120 s connector deadline cannot finish a roughly
+  20,000-file repository or a 30 MiB gateway log (raise
+  `connector_timeout_seconds`); gateway finding IDs are scan-local unless
+  `SHADOWSCAN_IDENTITY_KEY` is set, so `diff` of gateway findings between
+  unkeyed runs is not stable; logfmt gateway lines still use last-key-wins
+  for `host`.
+
+### October 1 review migration
+
+Collect a fresh baseline after adopting the review corrections. Named Python
+direct-reference dependencies now use their declared package identity, and
+Python source analysis excludes provably unreachable local statements and loop
+bodies. Findings may appear or disappear, or change framework attribution;
+inspect those differences before using a comparison to enforce policy. The
+analysis remains bounded and does not prove runtime or interprocedural behavior.
+
+Opt-in Git enrichment now limits combined command output to 16 KiB, author and
+email fields to 1,024 characters each, and timestamps to 64 characters. Exceeded
+limits, malformed metadata, cancellation and deadlines retain source findings
+while making coverage incomplete. Re-run affected repositories with reviewed
+metadata or with history enrichment disabled; an incomplete scan cannot establish
+resolution of earlier findings.
+
+Credential redaction recognizes more constructor, environment fallback, record,
+command and query forms. The redaction policy token changes automatically with
+these rules. Regenerate persisted reports, exports and incremental baselines
+before sharing or reusing them, because an older artifact can contain values
+now withheld. Reports remain sensitive: ambiguous comment-only credential hints
+and arbitrary computed expressions do not establish safe public disclosure.
+
+Production acceptance policies may now freeze aggregate and per-kind
+`min_precision_lower95`, `min_recall_lower95` and `min_specificity_lower95`
+thresholds together. Successful decisions expose the recomputed 95% Wilson lower endpoints;
+the revised example also sets per-kind sample floors. Existing point-estimate
+policies retain their behavior. Freeze confidence thresholds before collecting
+new independently human-labeled holdout evidence, rather than tuning a policy to
+a previously observed result. A small perfect sample need not pass these gates.
+
+The [versioned merge policy](operations/merge-policy.md) and offline snapshot
+checker prepare the requested review and CI enforcement. They cannot activate
+live settings through the connected GitHub App. Administrator activation,
+independent human approval and approved tenant acceptance remain outstanding.
+
+### October 1 discovery review migration
 
 Review finding kinds, capabilities and risk scores before replacing an existing
 baseline. Ordinary Java chat-client construction and standalone tool declarations
@@ -43,7 +1050,7 @@ results. AWS/Slack live acceptance still requires the authorized complete and
 permission-denied [tenant canaries](canaries.md); other deployment scopes require
 their own connector-specific evidence.
 
-## September 27 migration and acceptance
+### September 27 migration and acceptance
 
 The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
 from the reviewed revision into a fresh virtual environment; do not overlay it
@@ -80,9 +1087,14 @@ Configured inventory is reloaded for every run, including the first run after
 engine construction, so an approval file changed between construction and
 execution cannot supply a stale match.
 
-When HTML or CSV is sent to stdout, terminal control and bidirectional-formatting
-characters are rendered visibly; artifacts explicitly written with `-o` retain
-their serialized data. Reporter boundaries sanitize copied diagnostics without
+HTML and CSV reports, whether sent to stdout or written with `-o`, render
+terminal control and bidirectional-formatting characters visibly (tab and line
+breaks remain data in CSV; tab and line feed in HTML), so `cat` or `less` on a
+saved report cannot execute escape sequences taken from a scanned log. Output
+sent to stdout also renders zero-width characters, the byte-order mark and
+Unicode tag characters visibly, and a lone surrogate (which no encoder accepts,
+and which a name read from an export can hold) is written as the escape text
+`\ud800` in every format. Reporter boundaries sanitize copied diagnostics without
 mutating in-memory scan state, ignore malformed related-finding metadata, preserve
 valid SARIF source paths and reject non-finite JSON. Serialization failures stop
 before stdout or an existing output file is changed; table output preflights
@@ -106,8 +1118,8 @@ Google Workspace domain-wide delegation pins the signed assertion audience and
 token exchange to `https://oauth2.googleapis.com/token`; a service-account
 document's `token_uri` cannot redirect the credential exchange.
 
-The `CI gate` job combines documentation, Linux Python 3.11–3.13 (including the
-container checks in Python 3.13), macOS Python 3.11 and 3.13, and DCO for pull
+The `CI gate` job combines documentation, Linux Python 3.11–3.13, a dedicated
+container security job, macOS Python 3.11 and 3.13, and DCO for pull
 requests. Core/development, runtime, build and documentation dependency sets are
 hash-locked, and CI audits all four. Add `CI gate` to the live required checks
 while retaining existing checks and independent approval. Verify the platform
@@ -130,7 +1142,7 @@ future OIDC trusted-publishing job; it does not publish anything or approve a
 release. Evidence from an earlier main commit does not cover these source or
 package changes, and local wheel checks do not establish GitHub-hosted provenance.
 
-## September 25 migration and acceptance
+### September 25 migration and acceptance
 
 Rebuild finding and comparison baselines after adopting the scanner-boundary
 corrections. Google Workspace customer attribution, unresolved permission/workflow
@@ -217,354 +1229,10 @@ permission or upload action.
 
 The runtime SBOM covers locked Python core/cloud dependencies. It is not a
 container or operating-system SBOM and does not cover the base image, Git,
-CA certificates or other Debian packages. Generate and review a container/OS
+CA certificates or other Wolfi packages. Generate and review a container/OS
 SBOM for the exact deployed image digest as a separate release control.
 
-## Install from a reviewed revision
-
-Check out an audited full commit SHA before installation. README and example
-workflow instructions require a full reviewed commit; a fixed example SHA would
-fall behind new fixes. Record the exact revision with deployment evidence and
-verify the checkout matches it before building. Do not use a floating branch or
-a tag that has not been published.
-
-```bash
-SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
-git clone https://github.com/aisecnomad/Project-Nexus.git
-cd Project-Nexus
-git checkout --detach "$SHADOWSCAN_REVISION"
-test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
-```
-
-The install commands below use the files in this checked out tree. Check that
-`git status --porcelain` is empty and retain the commit SHA, CI links, dependency
-lock and built wheel hash for each worker deployment.
-
-The runtime lock covers the core scanner and all cloud SDK extras on CPython
-3.11, 3.12 and 3.13, Linux x86_64. It contains exact versions and permitted
-SHA-256 hashes; Linux CI checks installation and dependency consistency on all
-three interpreters. Linux x86_64 is the only validated deployment target for
-this full runtime/cloud lock. The macOS 3.11 and 3.13 CI jobs install
-`requirements-ci.lock` and this runtime lock from the same published wheel
-hashes and run the full test suite with the per-connector coverage floor, which
-validates development use there; a macOS deployment still needs its own wheel,
-container and acceptance evidence. Windows is not
-supported at all, because the confined file reader
-(`O_NOFOLLOW`, `O_DIRECTORY`, `dir_fd`) is unavailable there and the scanner
-refuses to read any input rather than weaken that policy. The lock is not
-universal for ARM or every future Python release either. Resolve and validate a
-separate lock before deploying on another platform.
-
-From the reviewed checkout, in a clean virtual environment:
-
-```bash
-python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
-python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
-python -m pip check
-python -m shadowscan.signatures.validate
-shadowscan --help
-```
-
-The runtime lock deliberately includes all cloud extras, even for a code-only
-worker. Development tools are not part of it; CI and `make install-dev` use
-`requirements-ci.lock`, which hash-locks the core and development environment.
-`requirements-ci-constraints.txt` is a reviewed version input for regenerating
-that lock and is never installed by CI. The build backend is locked separately:
-`requirements-build.lock` carries the exact `[build-system]` requirements from
-`pyproject.toml` (setuptools and wheel) with the SHA-256 hash of every artifact
-PyPI publishes for those releases. Install it under `--require-hashes` and build
-with `--no-build-isolation`, as above; an isolated build would let pip resolve
-the backend from the live index on a version pin alone. CI fails when the two
-files disagree, so refresh them together. Build the
-wheel in a controlled builder, retain its SHA-256, and install that reviewed
-artifact into workers. Capture the builder image digest, Python/pip/build-backend
-versions and wheel hash: matching runtime dependencies alone does not ensure
-identical wheel bytes. Dependency hashes
-prevent silent runtime artifact substitution; they do not establish that a
-dependency is safe.
-
-Regenerate intentionally in a clean Linux environment with Python 3.12 and
-`pip-tools==7.5.3`, review the dependency diff and advisory results, and let every
-CI matrix job verify the result:
-
-```bash
-pip-compile --extra cloud --generate-hashes --strip-extras \
-  --no-emit-index-url --no-emit-trusted-host --no-annotate \
-  --output-file requirements.lock pyproject.toml
-
-uv pip compile pyproject.toml --extra dev --universal --generate-hashes \
-  --no-emit-index-url --no-annotate --no-header \
-  --constraint requirements-ci-constraints.txt \
-  --constraint requirements.lock --constraint requirements-build.lock \
-  --output-file requirements-ci.lock
-```
-
-The current CI lock records the reviewed `uv` version in its header. Use a
-different resolver version only as an intentional toolchain change. Use
-`--upgrade` only for an intentional dependency refresh. Preserve each lock's
-supported-platform comment when regenerating. Do not bypass failed hash checks.
-
-The Dockerfile installs the runtime and build locks under `--require-hashes`,
-builds the package with `--no-build-isolation`, and runs as UID/GID 65532. Its
-literal `FROM` pins the multi-arch `python:3.12-slim-trixie` image index. The
-image build checks that Git is 2.45 or newer for history enrichment.
-Review that exact digest and any Dependabot refresh before deployment:
-
-```bash
-docker build --tag shadowscan:reviewed .
-```
-
-Retain the reviewed base and built image digests. The build context is an
-allowlist (`.dockerignore`) of package sources, signature data, packaging
-inputs and the runtime/build locks. Distribution packages from `apt-get` and image
-metadata remain mutable, so the Dockerfile does not promise byte-for-byte
-reproducible images. There is no claim of a hermetic apt snapshot. CI
-smoke-tests a non-root, read-only and network-isolated image; build and test the
-deployment image, generate its container/OS SBOM, and validate resource limits
-and output-directory permissions before rollout.
-
-The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
-active deadline, a placeholder for a reviewed image digest, and a matching
-NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
-reviewed `/input` volume before running it. For live API collection, use a
-separate Job and enforce a network path through an approved egress proxy; a
-standard Kubernetes NetworkPolicy cannot filter destinations by DNS name.
-
-Opt-in Git history enrichment requires Git 2.45+;
-verify the distribution Git version if that feature is needed. Keep runtime
-secrets out of the build context.
-
-For record replay, read `exports/manifest.json` and use the `filename` for the
-intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
-
-## Explicit security policy
-
-```yaml
-options:
-  plugins: []
-  allow_signature_override: false
-  allow_private_origin: false
-  allow_credential_mixing: false
-  allow_instance_credentials: false
-  connector_timeout_seconds: 120
-connectors:
-  - name: identity.jwt
-    input: ./tokens.json
-    jwks_url: https://identity.example.com/keys
-    expected_issuer: https://identity.example.com/
-    allowed_algorithms: [RS256]
-```
-
-`plugins` contains exact connector names, not module paths or wildcard patterns.
-Approved plugins still run trusted Python code. `shadowscan connectors` lists
-installed plugin metadata without importing it. A plugin must be explicitly
-allowed on each scan, even if a prior scan imported it.
-
-Keep scans of repository content separate from jobs holding live cloud, identity,
-SaaS or low-code credentials. By default, configuration rejects a selected code
-connector alongside a selected live credentialed collector. A single remote code
-connector can use its repository token; code plus offline exports is allowed.
-`allow_credential_mixing: true` permits a reviewed exception, but does not isolate
-the repository from credentials available in the worker. Use separate disposable
-workers for untrusted repositories.
-
-`allow_instance_credentials: false` disables implicit cloud instance-metadata
-credential acquisition. Enabling it is a global opt-in; a connector-level value
-cannot silently override that policy. The engine replaces the key in any
-connector entry with the scan-wide value, and passes that value to every
-`cloud.*` connector, plugins included, and to any plugin that declares the
-cloud surface or documents the key in its `config_keys`. Before this release
-only `cloud.*` entries were replaced, so review plugin entries that set their
-own `allow_instance_credentials: true`: it no longer takes effect. Use
-explicit audit credentials or approved workload credentials and inspect
-account/tenant attribution before rollout.
-These settings are credential-use policy, not a process or network sandbox.
-
-Custom packs can add signatures by default. Replacing a built-in signature
-requires explicit `allow_signature_override` approval. Enable private origins
-only when the selected scan requires a trusted private HTTPS endpoint; keep
-network-layer restrictions appropriate for that scan. Separate private-endpoint
-scans from public collection when they need different trust policy.
-Configuration rejects duplicate authored YAML keys and unknown top-level or
-`options` fields. `${VAR}` must resolve to a nonempty value; use
-`${VAR:-fallback}` only where an explicit fallback is appropriate. Invalid
-`fail_on` thresholds or `parallel` values stop the scan before collection.
-Environment references are validated in disabled connector declarations too;
-remove unused placeholders or give intentionally optional values a fallback.
-Relative inventory globs and `options.workdir`, like other configured paths,
-resolve beside the configuration file, independent of the process directory.
-
-The new policies also expose `--connector-timeout-seconds`,
-`--allow-credential-mixing/--deny-credential-mixing` and
-`--allow-instance-credentials/--deny-instance-credentials`.
-All scan commands also expose `--allow-plugin`,
-`--allow-signature-override/--deny-signature-override` and
-`--allow-private-origin/--deny-private-origin`. Configured values are retained
-unless explicitly overridden. Signature inspection commands expose the same
-signature override opt-in. JWT CLI verification additionally accepts
-`--expected-issuer` and repeatable `--jwt-algorithm`.
-
-The shared HTTP transport enforces destination policy at connection time and
-retains TLS hostname checks. HTTP proxies are unsupported; environment proxies
-are ignored. Cloud SDK and Git transport behavior remains separate. Do not assume
-that the shared client's policy controls every network connection in the process.
-Inject only trusted `requests.Session` implementations. Calls to the shared
-client that explicitly request `stream=True` must read within a size limit and
-close the response; the default buffered response path enforces a 16 MiB limit
-and a whole-body [read deadline](#resource-limits-and-incomplete-scans).
-
-JWT verification is for analysis. The default scope is signature evidence;
-configuring `expected_issuer` also binds the issuer. Neither mode authorizes a
-request or substitutes for audience, expiry and application-policy validation in
-an actual relying service.
-
-## Git metadata policy
-
-All code connectors default to `use_git: false`. Source inspection and
-`CODEOWNERS` still work without invoking Git for history enrichment. For reviewed
-local metadata, set the connector's `use_git: true` explicitly (a YAML boolean).
-History enrichment requires Git 2.45 or later and a self-contained `.git`
-directory; external gitfiles and symlinks are not accepted for enrichment.
-Unsupported versions and failed metadata reads, including unavailable history
-objects, make the scan incomplete while preserving code findings.
-
-Metadata commands disable hooks, lazy fetching and every transport. Authenticated
-cloning uses a separate HTTPS-only policy. Remote JSON fields such as
-`_local_path` cannot select local scan roots or substitute for a verified offline
-record. Use fresh disposable workers and immutable inputs; these controls do not
-turn Git or the scanner into a process sandbox.
-
-## Resource limits and incomplete scans
-
-Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
-content by default. Each response body must also arrive within twice the
-client timeout (60 seconds by default). The 30-second client timeout bounds
-each connection attempt and each socket read, so without the deadline a server
-that sends a byte just inside every timeout could hold a worker until the
-connector deadline abandoned it. A body still being read at the deadline is
-aborted (`HTTP response exceeds the read deadline`) and the connector's
-collection is incomplete (exit 3); a partial body is never analyzed. The
-deadline follows the client's timeout, not a `timeout` passed with one
-request, and applies to each response separately:
-`connector_timeout_seconds` still bounds a connector's whole collection.
-Pagination rejects missing or malformed collection arrays and records an
-incomplete scan when a response exceeds its limit. Review unusually large
-provider pages against their API contract before raising a per-client or
-per-request limit. GitLab file downloads remain capped at 512 KB (512,000
-bytes) per file.
-
-YAML parsing checks input size, composed nodes, alias count, nesting, expanded
-nodes/content and merge work before object construction. Sanitization has a
-separate expanded-structure and total-work budget, so valid YAML aliases cannot
-cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
-matching with a per-lookup work budget.
-
-YAML manifest artifact matching uses a shared one-second deadline and gives
-each bounded line chunk no more than the remaining manifest pattern budget.
-Concurrent collection can take over the signature matcher’s separate 100 ms
-ceiling while still remaining inside that manifest deadline and any active
-per-input scan deadline. Exhausting either deadline marks the code scan
-incomplete (exit 3).
-
-A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 3
-must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
-risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be a strictly positive
-finite number. It starts when the connector worker begins, and split filesystem
-roots share that connector's deadline. The engine stops accepting a connector's
-results after the deadline and records incomplete coverage. Python
-worker threads cannot safely be killed: a blocked SDK call can continue after
-that soft deadline. The CLI normally exits after emitting an incomplete report,
-but a filesystem replacement already in progress can finish after the timeout
-report. Such cache or record artifacts are unaccepted even if present; timed-out
-record exports are `exported: false` in the manifest. Use a fresh state and
-export directory after a timeout to avoid reusing a late cache or orphan export.
-Embedded callers must supervise their process and
-cannot reuse an Engine with an active abandoned worker. Also enforce a host/job
-wall-clock deadline and terminate the disposable worker when it expires.
-SDK connect/read limits and bounded retries reduce blocking; none guarantees a
-universal hard deadline for the whole scan.
-
-For CLI scans, `--job-deadline-seconds 600` or
-`options.job_deadline_seconds: 600` also arms a process watchdog covering plugin
-discovery, engine setup, collection and report output. The explicit CLI option
-starts during option processing, before command preparation, including connector
-metadata discovery for `run` and stdin reads for `jwt`. A YAML-only deadline starts
-after the configuration has been read and validated. Use an external supervisor
-to bound process startup, Click argument parsing and YAML preflight. The value
-must be positive and finite; omission or YAML `null` leaves it disabled. Expiry
-terminates the scanner with exit `3`, without guaranteeing a final report or
-cleanup. A blocked output stream cannot delay that exit. Completed CLI
-invocations disarm their watchdog. `Engine` embedding does not arm it: the host
-application owns process supervision. Keep the external job deadline and process
-group/container cleanup to reap child processes and bound native code that holds
-the interpreter lock indefinitely.
-
-Code scans follow a documented coverage policy. Links whose own names are never
-read, source-file links whose real targets are analyzed in the same project
-with the same test classification, and coding-agent instruction-document links
-to another instruction document under the same condition, are skipped because
-nothing at the alias path is lost (see [scan semantics](scanning.md) for the
-exact rule). Directory
-links, configuration aliases, links into excluded or unread content, links
-leaving the root and oversized files the scanner would
-inspect make the scan incomplete (exit 3) by default, with a warning naming
-the omission. `strict_coverage: true` (`--strict-coverage`) records those
-conditions as errors; explicit `oversize_skip_globs` remain declared omissions
-in both modes. Raise `max_file_size` or add `exclude` patterns for known data files. Evidence found
-only in test or fixture paths has half weight and cannot promote a project to an
-agent unless `include_tests: true` (`--include-tests`) is set, and a project
-finding whose evidence is already reported by an MCP configuration, agent
-manifest, exported workflow, IaC or credential finding is not emitted again.
-Recognisable placeholder credentials (repeated characters, marker words such as
-`EXAMPLE`, very low character diversity) are no longer reported. A
-real-format credential in a test, fixture or `cassettes/` path is still a
-`secret` finding, at half weight and tagged `test-code-only` unless
-`include_tests: true` is set. Risk factors
-always sum to the reported score; `risk.danger_score` excludes the governance
-factors and `options.risk_basis: danger` bases `level` and `--fail-on` on it.
-Review [scan state and runtime correlation](scanning.md) and the changelog
-before raising an enforcement gate on a scanner upgrade.
-
-A ServiceNow agent remains a native finding if optional display-name or OAuth
-signature matching times out before the agents are emitted. The connector marks
-coverage incomplete and skips repeated matching; exit 3 remains mandatory.
-OAuth findings whose classification could not finish are omitted, and native
-findings must not be interpreted as fully enriched.
-
-Saved provider errors and unsupported/malformed export records also make scans
-incomplete. Valid neighbors remain available. Explicit empty inventories such
-as `[]` remain valid; an authorization-error document is not an empty inventory.
-Identity and low-code collectors retain available records when enrichment or a
-later page fails. Auth0 offset pagination has a finite page budget and detects
-repeated pages. Okta grants and optional tokens both follow pagination.
-Zoom's Marketplace listing enumerates approved public and account-created apps;
-its results do not prove a per-user installation. A denied or incomplete
-Marketplace category marks the scan incomplete.
-Google Workspace accepts omitted empty arrays only in identified native users
-and token-list envelopes; an arbitrary empty object is incomplete coverage.
-Every `--only` value must match an enabled connector name or label, including
-when another selector matches successfully.
-
-Use disposable, resource-limited workers for untrusted repository scans. Keep
-scanner state and output outside the repository under review. Avoid handing
-production credentials to a job that executes repository-controlled build steps.
-For GitHub/GitLab remote repository scans, preflight estimates and process-group
-cancellation reduce ordinary runaway clone cost. `clone_max_bytes` also stops a
-clone when observed checkout use, including `.git`, exceeds the configured cap.
-It checks during the clone and after Git exits; a failed measurement or excessive
-entry count also stops Git, removes the partial checkout and makes collection
-incomplete while retaining the sampled API fallback. Periodic checks can
-overshoot the threshold, and the cap does not limit network transfer bytes or
-guarantee a hard writable disk ceiling. Give each disposable worker an
-operating-system/container writable disk quota, memory and process limits, a
-separate job wall-clock deadline and a cleanup policy for abandoned workspaces.
-A worker's soft connector timeout is not a hard kill for every child process.
-A local checkout example, such as
-`examples/github-action-code-scan.yml`, does not exercise the remote clone path.
-
-## Output and inventory migration
+### Output and inventory migration
 
 Reports and inventory stub files now use atomic 0600 writes. An existing
 character device given as the report path, such as `/dev/null`, is written in
@@ -623,7 +1291,7 @@ approve each root separately. A scalar `path` retains its prior resource ID,
 so another option for stable identities is one connector per repository with
 its own explicit label.
 
-## Field review changes
+### Field review changes
 
 A field review of public repositories changed what some scans report. Compare a
 pinned baseline with a candidate before enforcing policy on the new output:
@@ -653,7 +1321,7 @@ pinned baseline with a candidate before enforcing policy on the new output:
   servers no longer add capabilities; MCP server capabilities come from their
   registered tools. Risk scores of affected findings change accordingly.
 
-## Completeness, report and credential changes
+### Completeness, report and credential changes
 
 The 2026-09-28 changes alter completeness, report text and credential policy.
 Compare a pinned baseline with a candidate before enforcing policy on the new
@@ -740,7 +1408,80 @@ output:
   behavior that differs by connector is a class hook (see
   [architecture](architecture.md#engine-hooks)).
 
-## October field scan changes
+### October 1 review changes
+
+These changes follow the 2026-10-01 repository review. Several change exit codes
+or what scans report, so compare a pinned baseline with a candidate before
+enforcing policy on the new output:
+
+- **Exit codes.** Command-line usage errors (an unknown option or command, an
+  invalid value such as `--min-confidence 1.5`, a missing path or
+  configuration file) exit 1, like configuration and setup errors, instead of
+  2. Exit 2 now only means a complete scan reached `--fail-on`, and exit 3 an
+  incomplete scan or comparison. Fail CI on every non-zero exit: a script that
+  treats only 2 and 3 as failures passes a scan that never ran.
+- **Gateway identity.** Gateway finding IDs stay scan-local by default, and
+  `diff` lists them under `not_comparable` (exit 3) instead of reporting them as
+  new. To compare gateway callers across scans, inject the same
+  `SHADOWSCAN_IDENTITY_KEY` (at least 32 bytes, hex or base64, for example from
+  `openssl rand -hex 32`) from a secret store into every comparable scan.
+  Findings then carry `identity_scope: keyed` and keep their IDs, and gateway
+  inputs join the collection scope through a keyed digest. Treat the key as a
+  secret: anyone who holds it can link reports and test guesses of short labels
+  or keys against them. It is read only from the environment and is never
+  written to reports, record exports, incremental state or git child
+  processes. An invalid value stops the command with exit 1 before collection,
+  findings recorded under one key never resolve against another, and rotating
+  the key requires a fresh baseline.
+- **Confidence.** Outside the code surface, repeated evidence of one signal
+  counts once, so some identity, gateway, low-code, SaaS and cloud findings
+  report lower confidence or a lower likelihood band. n8n, Make and Zapier
+  findings now score their model and step-name evidence before they are
+  finalized, so their confidence can rise: the demo's Zapier "Support agent"
+  moves from 0.8 (`likely`) to 0.901 (`confirmed`). Re-check `--min-confidence`
+  thresholds against a candidate run.
+- **Inventory.** Cards accept `discovery.discriminators`, enforced like
+  `regions`. `inventory stubs` writes each finding's discriminator, so findings
+  that share a resource (a repository's agent project and its coding-agent
+  configuration) are each registered by their own card. Cards generated
+  earlier still approve every finding on their resource: regenerate them or
+  add `discriminators`. Stub `names` are now plain strings.
+- **AWS trust policies.** `cloud.aws` parses role trust policies instead of
+  matching substrings. `Deny`, `NotAction` and `NotPrincipal` statements, and
+  service names that appear only in a `Sid` or `Condition`, no longer tag a
+  role `agent-execution-role`. A malformed trust policy is reported as unknown
+  trust (`malformed-trust-policy`) and makes the scan incomplete.
+- **Paging limits.** Every connector validates `max_pages` the same way: 0,
+  negative, fractional, boolean and non-numeric values are configuration
+  errors, and values above 1000 are capped at 1000. Fix such configurations
+  before upgrading.
+- **OCI exports.** `cloud.oci` converts SDK models with `oci.util.to_dict`, or
+  through their declared fields when the SDK is absent. An object that cannot
+  be converted is skipped and makes the scan incomplete instead of silently
+  losing fields.
+- **Detection.** Vercel AI SDK `generateText`/`streamText` calls that loop over
+  tools past the first step (`stopWhen`, including AI SDK 7 `isStepCount`, or
+  `maxSteps` above 1) are agents. Custom-pack `framework` code patterns now
+  take effect in Python and JavaScript. Detection-rule files (ShadowScan
+  signature packs, Semgrep, Sigma and gitleaks rules) are treated as data and
+  listed in `metadata.detection_rule_files`, so a rescan can close findings
+  that came only from such files.
+- **Threshold filtering.** With `--min-confidence`, `related` links and
+  `runtime_activity` references to findings below the threshold are removed.
+  The runtime observations themselves remain.
+- **Redaction.** Report excerpts withhold the API key passed positionally to
+  well-known LLM SDK calls whose names carry no credential word: Semantic
+  Kernel's .NET Azure OpenAI and OpenAI connectors, go-openai's
+  `openai.DefaultConfig`, `DefaultAzureConfig` and `NewClient`,
+  `new OpenAiService(...)` and `new GoogleGenerativeAI(...)` (see SECURITY.md
+  for the remaining gaps). Earlier reports of such code could show the key:
+  regenerate them and rotate any key they show. A long run of blanks before a
+  character the Python 3.11 tokenizer cannot read no longer makes redaction
+  quadratic and the scan incomplete, and on Python 3.12 and later a
+  non-ASCII character after a lone carriage return, or a lone surrogate, no
+  longer makes a file's analysis incomplete.
+
+### October field scan changes
 
 These corrections change what some scans report. Compare a pinned baseline with
 a candidate before enforcing policy on the new output:
@@ -775,7 +1516,187 @@ a candidate before enforcing policy on the new output:
   cookiecutter `{{...}}` template paths are not parsed as MCP configuration and
   no longer make a scan incomplete.
 
-## Finding identity and comparison migration
+### October 2 review changes
+
+These fixes came from an AI-assisted review of the October 1 candidate; neither
+the review nor the fixes had a second-person review. Several of them turn a
+result that used to look complete into an incomplete one, so run a candidate
+scan next to the pinned baseline and read the differences before you enforce
+policy on the new output.
+
+New incomplete (exit 3) and configuration-error outcomes:
+
+- **Unreadable analyzable files.** A file that `code.filesystem` analyzes by
+  name and that still contains a NUL byte in its first 8 KiB (a binary `.plist`
+  or `.xml`, a UTF-16 file without a byte-order mark, a stray NUL in source or
+  Markdown) is a coverage gap named `binary or undecodable content in
+  analyzable file`. Fix the file or add it to `exclude`. UTF-8, UTF-16 and
+  UTF-32 files with a byte-order mark, and Python sources with a PEP 263 coding
+  cookie, are now decoded and analyzed, so dependency lists, `.env` files and
+  sources that used to read as empty can add findings.
+- **List options.** A bare string for `exclude` or `paths` (`exclude:
+  "vendor/*"`, `--set exclude=vendor/*`) is a configuration error. It used to be
+  split into characters, which excluded the whole tree and reported a complete,
+  empty scan. Use a list, or repeat `shadowscan code --exclude`.
+- **Signature packs and inventories.** A custom signature pack directory that
+  contributes no `.yaml`/`.yml` pack (empty, other file types, only symbolic
+  links) and an inventory glob that matches no file now fail at setup (exit 1).
+- **Connectors and plugins.** A connector or plugin that calls `sys.exit()` is
+  a failed connector and the scan is incomplete; it no longer ends the process
+  with the plugin's status and no report.
+- **Exports.** Gateway logfmt lines that repeat a key or leave a quote open,
+  gateway records whose timestamp no supported format parses, `saas.generic` and
+  `lowcode.zapier` rows with no name (blank rows, footers; map the column with
+  `fields.name`, or call it `title`/`name` for Zapier), Slack Connect bots from
+  partner workspaces, OCI policy statements over 8192 characters, and
+  Power Platform records that cannot be analysed are skipped with a warning and
+  make the scan incomplete. The remaining records are still reported.
+- **ServiceNow paging.** A short page no longer proves that a table ended.
+  Collection stops at an empty page, so a small `max_pages` makes any non-empty
+  table incomplete. Keep the default (1000) or size it above rows/500 + 1.
+- **Report comparison.** `diff` treats a report whose `summary` counts do not
+  match its `findings` array as incomparable (missing findings are unknown,
+  exit 3) instead of counting them as resolved.
+
+Changed results to review before you compare against a baseline:
+
+- **Disabled MCP servers.** A server entry that declares `disabled: true` or
+  `enabled: false` is reported, tagged `declared-disabled`, with `disabled: true`
+  in `metadata.servers`; `server_count` still counts only the others. The flag
+  is client-specific and comes from the repository, so honoring it let a
+  repository hide a server. `diff` shows a configuration whose only entries are
+  disabled as a new finding.
+- **Newly visible evidence.** NuGet `PackageReference` items in
+  `Directory.Build.props`, `*.targets` and shared `*.props` files, and imports
+  of an SDK whose name a repository shares with an empty or data-only
+  directory, now produce dependency and provider evidence.
+- **Gateway logs.** Only the request path decides whether a request is a static
+  asset or health probe, and a probe name must be the last segment: `/healthz/ready`
+  and `?_=.js` requests are classified by the normal LLM route and host rules.
+  Provider attribution follows the URL authority (`https://api.openai.com@evil.example/`
+  names `evil.example`). Microsecond, nanosecond, Go and RFC 2822 timestamps
+  are now parsed, which changes first/last-seen and activity analysis.
+- **Entra.** Permission names in findings may change from a raw GUID to the
+  label of the resource that defines the role. The "conflicting role labels"
+  warning appears only when a conflicting label is needed for a grant, so
+  exports in which different resources reuse a role id are no longer incomplete.
+- **JWT.** Without `jwks_url`, every token finding carries
+  `metadata.verified: false`; confidence and risk are unchanged.
+
+New warnings (the scan stays complete):
+
+- Default-excluded directories: one warning per scan root names the non-empty
+  `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
+  `third_party`, `thirdparty` and `external` directories the walk skipped.
+  Set `default_excludes: false` (`shadowscan code --no-default-excludes`) to
+  scan them. That option also stops skipping dependency trees and virtualenvs
+  (`node_modules`, `.venv`, `site-packages`), so pair it with `exclude:
+  [node_modules, .venv]`. Version-control metadata (`.git`, `.hg`, `.svn`) is
+  always excluded. Pipelines that fail on any warning must pass the option or
+  tolerate the warning.
+- Inventory placement: a scan warns, under the new `engine.inventory` entry of
+  `stats`, when an inventory or a file it loads is inside a path scanned in the
+  same run, and for each `*`-only resource pattern. Keep the inventory outside
+  the checkout that a pull request can change. Report consumers that list
+  `stats[].connector` will see the new entry name.
+- Python that does not parse (syntax newer than the runtime, a notebook with
+  shell or magic lines) keeps its lexical evidence and adds a warning.
+- Gateway scans note how many static-asset and probe requests were not counted.
+  Tooling that fails on any warning should key on `incomplete` or the exit code.
+
+Remote collection changes to review:
+
+- **Listings.** Repositories are now listed in a fixed order before any is
+  cloned. Over `max_repos` or `max_projects` the covered subset changes from the
+  most recently active N to the first N by name (GitHub) or id (GitLab); the scan
+  is incomplete either way. A bare string for `topics`, `repos` or `projects`, or
+  a non-integer cap, is an error (exit 3) where it used to scan nothing.
+- **Git.** Cloning needs Git 2.32 or newer, and the gitlink inventory of a clone
+  needs 2.45: with 2.32 to 2.44 a clone is scanned but every repository reports
+  `could not inventory gitlinks safely`, and with older or unidentifiable Git the
+  connector uses sampled API mode. Both end incomplete. Clones that hold Git LFS
+  pointer files are incomplete, and a repository with malformed objects at its tip
+  is refused by `fsckObjects` and scanned through the sampled API fallback.
+- **Termination.** SIGINT, SIGTERM, SIGHUP and the job deadline now stop live
+  clones and delete their checkouts. Keep the external deadline and container or
+  process-group cleanup for SIGKILL and out-of-memory kills.
+- **Destinations.** `168.63.129.16` and `fec0::/10` are refused like the other
+  metadata and private destinations unless `allow_private_origin` is set, and a
+  URL with whitespace or control characters is an error rather than a cleaned
+  value; a base URL with a stray trailing space now fails.
+- **GitHub token.** Grant Secrets, Variables, Codespaces secrets and Dependabot
+  secrets (read) beside Contents and Metadata, or each repository adds four
+  identical `HTTP 403` warnings and the scan exits 3. Use distinct token
+  variables for `code.github` and `saas.github-apps`; the credential-mixing guard
+  separates scans, not token scope.
+
+Label, precision and risk-policy changes to review:
+
+- **`likelihood` value.** `findings[].likelihood` and the CSV `likelihood` column
+  report `strong` where earlier output said `confirmed`. Dashboards, `jq` filters,
+  SIEM rules and ticket automation that count or filter on `confirmed` must accept
+  `strong`; accept both while old reports are in circulation. `diff` reads
+  baselines written before the rename (the label is not compared and `confirmed`
+  parses as `strong`), so no baseline needs regenerating. Use `confidence`, a
+  number, for thresholds: `strong` does not mean verified.
+- **List-only repositories.** Findings disappear for repositories that only list
+  vendors (blocklists, allowlists, vendor policies, vendored signature or
+  inventory data). A bare data file that names four or more providers and is the
+  only evidence is no longer reported; keep its name a manifest name or add a
+  signature with a `file` signal if you rely on it.
+- **Plugin authors.** Evidence weights must be finite numbers in [0, 1]. A
+  violation fails the connector and the scan is incomplete.
+- **`risk_weights`.** A typo in a `capabilities` or `providers` key now fails the
+  scan setup (exit 1) instead of being ignored. Provider ids are checked when the
+  engine is built, after custom signature packs load. Check existing
+  configurations for keys that never matched anything, and dry-run a change.
+- **Scores.** Findings at five points of the score grid (raw 45 at confidence
+  0.25, 75 at 0.15, 85 at 0.25, 125 at 0.17 and 125 at 0.21) score one higher.
+  `diff` against an older baseline reports the changed `risk.score` and factor
+  weight for those findings only, and a level change for the one that crosses from
+  medium to high.
+
+Redaction and lexing changes to review:
+
+- **Redaction policy.** Credential operators, token boundaries, URL userinfo,
+  record-field names, unknown value types and private-key blocks are redacted
+  more completely (see the changelog). Reports can hold a little more
+  `[REDACTED]` than before: comparisons with a sensitive name, `creds` and
+  `db_pass`, record fields named for a credential word, and arrow functions whose
+  parameter is named for a credential, which keep the arrow but lose the body.
+  No finding, detection or exit code changes. The policy digest changes with the
+  rules, so verified-clean digests cached on findings are recomputed, and
+  `scanner_source_sha256` changes, so artifacts from an older build are not
+  comparable (as for any release).
+- **Earlier dumps.** `--dump-records` files written by an earlier version keep
+  their older, less redacted content. Regenerate them with this version before
+  you share them; a dump written now holds `[REDACTED]` for the newly covered
+  field names, and offline re-analysis of it sees the marker.
+- **Lexer.** Code that was hidden is now scanned when it followed a
+  keyword-named property (`o.of / 1; ...`), a comment ended by a bare CR,
+  U+2028 or U+2029, a JSX attribute string ending in a backslash, or a PHP
+  comment closed by `?>`; expect new findings in such files. New incomplete
+  (exit 3) cases are a `/` directly after `await` or `yield`, a regular
+  expression after `}` that holds a quote, backtick or slash, and a JSX file
+  that exhausts its look-ahead allowance (`file analysis incomplete
+  (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`;
+  hostile or machine-generated input, not configurable). Projects that vendor
+  `emoji-regex` or similar generated tables stop reporting
+  `incomplete source lexical analysis` for them.
+
+Operational notes:
+
+- With a Kubernetes ConfigMap mount, pass the resolved file path as the
+  scan configuration; links are deliberately not followed.
+- `XDG_STATE_HOME` is ignored when it is empty or relative.
+- Remove an `actions/cache` step that restores `--incremental` state. The
+  fingerprint includes file identity, so a fresh checkout never reused it.
+- Maintainers: `main` push CI runs are no longer cancelled by the next push,
+  so expect more concurrent CI minutes on busy days. A new connector family
+  directory or nested connector package must be listed in `CONNECTOR_FAMILIES`
+  in `tools/coverage_gate.py`, or the coverage gate fails.
+
+### Finding identity and comparison migration
 
 Finding IDs now separate stable source identity from inferred classification.
 A service principal transitioning from delegated to application permissions
@@ -812,7 +1733,10 @@ the checked-out commit and tree SHAs. These appear in each code finding's
 `metadata.source_snapshot`, alongside the provider, capture method and validated
 branch name when available. Missing or malformed snapshot identities and blob
 mismatches mark the scan incomplete; valid neighboring files remain usable.
-Symlinks and submodules are skipped with incomplete coverage. Provider settings,
+Symlinks and submodules are skipped with incomplete coverage in both modes: API mode
+skips them, and a clone reports submodules (gitlinks) through the filesystem scan of the
+checkout. Git LFS pointer files, which neither mode resolves, also make the scan
+incomplete. Provider settings,
 CI variable names and other metadata collected separately are not part of the
 source snapshot.
 
@@ -835,6 +1759,17 @@ or explicitly exclude such paths before accepting a completeness gate.
 Pre/post content hashes can detect ordinary concurrent edits but do not form an
 atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
 and revert between those reads.
+
+Confined regular-file reads use `O_NOFOLLOW_ANY` on macOS too, both for full
+paths and paths relative to an open scan root. The kernel rejects links in any
+component in the same lookup; the scanner does not call `realpath` to turn a
+rejected link into an accepted input. This also avoids opening every ancestor
+for reading. Nonblocking opens and `fstat` still reject FIFOs and other special
+files. On other supported POSIX platforms the component-by-component confined
+walk remains in use. Signature-pack directory enumeration fails if a subtree
+cannot be read or the entry budget is exceeded, including directory-only
+trees; correct those inputs before accepting the policy.
+
 Incremental state uses nonblocking advisory `flock` per cache slot
 (`<sha256>.lock`): shared for reading and exclusive for publication, as well as
 atomic writes and current-input fingerprint checks.
@@ -845,7 +1780,7 @@ rejected. Use local filesystems with working advisory locks; a lock is not a
 distributed coordination service or a security boundary against another process
 with the same user ID.
 
-## Cloud collection changes
+### Cloud collection changes
 
 AWS verifies the live account through STS before emitting account metadata,
 including when `account_id` is configured. For live scans, that setting is an
@@ -860,7 +1795,12 @@ revision of each family as a separate evidence category. Stopped tasks and unuse
 historical revisions are outside this collection scope. A registered-only label
 does not prove a definition is undeployed when discovery is incomplete.
 Late AWS list-page failures retain earlier observations, mark coverage incomplete,
-and cap pagination; a missing collection field is not an empty inventory.
+and cap pagination; a missing collection field is not an empty inventory. A
+malformed AWS or GCP record (a function without an ARN, a service without a
+config name) skips that record with a warning and incomplete coverage; the
+remaining resources, services and regions are still collected. AWS diagnostics
+for a failed SDK call name the operation and the provider's error code, never
+the provider's message text.
 The per-region `max_ecs_api_calls` limit defaults
 to 2000; exceeding it or encountering denied/partial calls marks coverage
 incomplete. Add the read permissions listed in [connectors.md](connectors.md).
@@ -890,159 +1830,7 @@ Google Workspace per-user token envelopes preserve the parent user in both
 single-object and array forms. Regenerate earlier offline analyses affected by
 lost user attribution before using their counts as governance evidence.
 
-## Release verification
-
-### Merge gate and review status
-
-Ruleset
-[23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
-is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an
-up-to-date branch, and one approving review from a reviewer with write access,
-alongside `Protect main`. Add the new aggregate `CI gate` to that required-check
-list without removing the existing checks or approval rule. Its enforcement
-state has changed more than once during 2026-09: the 2026-09-24 review recorded
-it disabled; on 2026-09-25 (13:10 UTC) a merge attempted without an approving
-review was refused with "Repository rule violations found", so it was enforced
-at that moment; on 2026-09-27 (10:40 UTC), and again on 2026-10-01 during the
-discovery review, both rulesets were read back with `enforcement: disabled`.
-The October 1 branch response also reported `protected: false`. Treat
-no observation as permanent; only the live commands below describe the current
-state. Keep the CodeQL job's displayed name `analyze` consistent with the
-required check.
-
-An administrator must activate both existing rulesets in
-[repository rules](https://github.com/aisecnomad/Project-Nexus/rules), add
-`CI gate` to `Require CI and CodeQL`, and retain its current required checks,
-strict up-to-date policy, one non-author approving review, stale-review
-dismissal, signature requirements and empty bypass list. Save the change and
-read back the effective rules on `main`; editing this guide or merging its PR
-does not change repository settings. Do not claim that protection was restored
-until that readback confirms it. If the API connection lacks administration
-access, use an authorized administrator session rather than weakening the rules.
-
-Whatever the ruleset's state, the history is unchanged: the repository has a
-single maintainer, and no change merged to `main` through 2026-09-25 (including
-#62, #65 and #42) carries an approving review from a second person. A repository
-administrator can bypass or reconfigure rules, so a merged pull request, the
-version string and the internal AI-assisted hardening logs are not evidence of
-independent review. The review and merge policy is in
-[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).
-
-Rulesets, branch protection and pull request approvals are repository settings
-that can change at any time, so an
-operator who needs an independently reviewed revision must inspect the live
-state when selecting the commit and retain the output with the deployment
-evidence:
-
-```bash
-# Rules currently enforced on main; an empty list means nothing is enforced
-gh api repos/aisecnomad/Project-Nexus/rules/branches/main
-# The ruleset itself, including its enforcement state
-gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 --jq '{name, enforcement, rules: [.rules[].type]}'
-# Classic branch protection; HTTP 404 means none is configured
-gh api repos/aisecnomad/Project-Nexus/branches/main/protection
-# Who authored, reviewed and merged the pull request that introduced a change
-gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,reviews
-```
-
-An approving review counts only when it comes from a person with write access,
-other than the author, and covers the final revision of the pull request. A
-successful workflow run or Copilot review does not supply that approval. A
-single maintainer cannot approve their own PR: recruit a second eligible human
-reviewer rather than weakening the rules to self-merge. Recheck the live ruleset
-and pull request status at release time.
-
-The CI workflow installs hash-locked runtime, build and core/development
-dependency sets and validates signatures, lint, typing, dependency advisories
-(including the documentation lock), tests with a minimum 80% statement coverage,
-wheel creation, installed-wheel validation outside the source checkout and
-offline SARIF output. All three Linux matrix jobs
-(Python 3.11, 3.12 and 3.13) enforce a 75% statement-coverage floor for each
-built-in connector module, so a well-tested engine cannot conceal an untested
-provider. Coverage proves execution of code paths in tests; it does not prove
-provider compatibility or complete tenant inventory. The aggregate `CI gate`
-requires every Linux and macOS matrix job and documentation to succeed; it also
-requires DCO on pull requests. It fails if a required prerequisite fails, is
-cancelled or is unexpectedly skipped. Verify that the live ruleset requires
-`CI gate` before treating the full matrix as an enforced merge gate. The Linux
-Python 3.13 job also
-builds the Docker image and checks its non-root UID, signature assets and
-network-isolated scan with a read-only root filesystem and resource limits.
-Focused regressions cover the review findings, private-address enforcement,
-public-key verification, plugin policy, artifact permissions and replay integrity.
-Dependabot checks Python, GitHub Actions and Docker base-image dependencies weekly.
-
-Automated and mocked provider-contract checks do not validate a tenant's actual
-permissions, enabled services, data retention or export trust chain. Before an
-operational rollout, run a read-only canary in each target tenant, inspect complete
-coverage and account identity, verify expected known resources, and compare live
-results with the retained export. These environment-specific checks require
-access to those tenants and are not performed by offline CI.
-
-The [synthetic evaluation](evaluation.md) guards against known classification
-regressions. It does not measure field precision, recall or the calibration of
-the heuristic confidence score. Before turning on `--fail-on` for an estate,
-label a representative held-out set from that estate, include inactive configs,
-commented/string-only source, disabled integrations and genuinely executing
-agents, and review errors by connector and severity. For code-filesystem cases,
-run the acceptance command with a separately reviewed, SHA-256-frozen policy:
-
-```bash
-python -m tools.evaluation.accept \
-  --corpus /restricted/holdout.json \
-  --policy /restricted/acceptance-policy.json \
-  --annotations /restricted/holdout-annotations.json \
-  --output /restricted/acceptance-result.json
-```
-
-The gate rejects synthetic/public samples and requires a frozen, SHA-256-bound
-two-reviewer ledger plus predeclared sample floors and Wilson lower bounds per
-family. Both acceptance paths reject repeated nonblank source contents or pinned
-locations across holdout cases, including renamed and partially overlapping
-multi-file samples. Repeated files inside one case are one sampling unit; blank
-package scaffolding alone does not duplicate an otherwise distinct case, but
-repeated all-blank cases are rejected. Previously evaluated source exclusion
-remains strict for every file. Ledger declarations do not authenticate reviewer independence or prove
-tenant completeness. Set a documented acceptable false-alert
-and miss rate for each high-impact workflow; keep human triage while those
-acceptance metrics are measured.
-
-## Rollout acceptance
-
-Before broad deployment, retain evidence for each intended connector instance.
-The [canary proof packet](evaluation.md#read-only-tenant-canary-procedure) lists
-the concrete status, denominator, control and reviewer artifacts:
-
-1. Run a read-only canary with the actual audit identity. Record the expected
-   tenant/account, regions and collection scope, then verify known agents and
-   at least one known permission/configuration signal appear.
-2. Verify denied access, malformed exports and partially invalid selections
-   cannot pass the gate. Require `summary.complete=true` and inspect all connector
-   statistics for successful collection; do not infer coverage from finding
-   count or an empty report alone.
-3. Check sanitized artifacts with synthetic credentials and enforce private
-   file/directory modes. Keep configuration, state and outputs outside scanned
-   repositories and restrict access to retained reports. Regenerate retained
-   reports after an upgrade that withholds more, such as the
-   [2026-09-28 redaction changes](#completeness-report-and-credential-changes).
-4. Replay each exported instance using its manifest filename, checking account,
-   resource identity and detection consistency. Sanitized exports are not
-   lossless raw API backups; credential findings may differ after redaction.
-5. Run a representative large scan in a resource-limited disposable worker.
-   Set a job deadline, monitor incomplete/failed runs and provider throttling,
-   and document how to restore access or rerun after a partial collection.
-6. Pin the reviewed scanner commit, wheel/image digest and approved dependency lock for rollout.
-   Establish a fresh comparison baseline, retain the prior pinned version for
-   rollback, and keep rollback reports separate from the new identity schema.
-7. Measure precision and recall on a held-out, representative set of your own
-   code and tenant records. Record the labeled corpus, per-connector confusion
-   matrix, severity thresholds, reviewer decisions and accepted failure budget
-   before treating findings as an automated policy decision.
-
-These checks require operator-specific tenant access and operational decisions.
-Until completed, describe deployment status as pending tenant and container acceptance.
-
-## Consolidated candidate compatibility
+### Consolidated candidate compatibility
 
 The consolidated candidate preserves the PR #30 runtime policies and reconciles
 verified additional fixes with PR #31, which merged during that work. The

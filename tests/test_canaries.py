@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import importlib
 import json
 import tempfile
 from pathlib import Path
@@ -114,6 +115,79 @@ def test_slack_canary_rejects_findings_attributed_to_another_workspace(index):
         finding.account = "TOTHER"
     verification = evaluate(config, result, records)
     assert not verification["passed"] and not verification["scope_verified"]
+
+
+@pytest.mark.parametrize("provider", ["aws", "slack"])
+def test_many_controls_do_not_rescan_the_tenant_for_each_selector(provider, monkeypatch, index):
+    from shadowscan.connectors.base import ConnectorContext
+    from shadowscan.connectors.cloud.aws import AwsConnector
+    from shadowscan.connectors.saas.slack import SlackConnector
+
+    config = load_config(EXAMPLES / f"{provider}-replay.yaml")
+    records = [json.loads(line) for line in Path(config["connector"]["input"]).read_text().splitlines()]
+    connector = AwsConnector if provider == "aws" else SlackConnector
+    findings = list(connector(ConnectorContext(index=index, config=config["connector"])).analyze(records))
+
+    def extra_resource(number):
+        identifier = f"ATEST{number}"
+        return (
+            f"arn:aws:lambda:us-east-1:123456789012:function:{identifier}"
+            if provider == "aws"
+            else f"slack:app:{identifier}"
+        )
+
+    for number in range(19_997):
+        resource = extra_resource(number)
+        record = copy.deepcopy(records[2])
+        if provider == "aws":
+            record["FunctionArn"] = resource
+        else:
+            record["app"]["id"] = resource.rsplit(":", 1)[1]
+        records.append(record)
+        if number < 998:
+            control = copy.deepcopy(config["controls"][1])
+            control["id"] = f"extra-control-{number}"
+            control["finding"]["resource"] = resource
+            selector_key = "FunctionArn" if provider == "aws" else "app.id"
+            control["record"][selector_key] = (
+                record["FunctionArn"] if provider == "aws" else record["app"]["id"]
+            )
+            config["controls"].append(control)
+    validate(config)
+    module = importlib.import_module("tools.canaries.run")
+    original_match = module._match
+    selector_checks = 0
+
+    def counted_match(record, selector):
+        nonlocal selector_checks
+        selector_checks += 1
+        return original_match(record, selector)
+
+    monkeypatch.setattr(module, "_match", counted_match)
+    result = ScanResult(findings=findings, stats=[ScanStats(config["connector"]["name"], "now")])
+    report = evaluate(config, result, records)
+    assert report["passed"]
+    assert len(report["controls"]) == 1000
+    assert all(control["collected_records"] == 1 for control in report["controls"])
+    # The declared maximum control set must not amplify selector work by 1000.
+    assert selector_checks <= len(records)
+
+
+def test_indexed_canary_controls_still_require_the_exact_record_kind(index):
+    from shadowscan.connectors.base import ConnectorContext
+    from shadowscan.connectors.saas.slack import SlackConnector
+
+    config = load_config(EXAMPLES / "slack-replay.yaml")
+    records = [json.loads(line) for line in Path(config["connector"]["input"]).read_text().splitlines()]
+    findings = list(
+        SlackConnector(ConnectorContext(index=index, config=config["connector"])).analyze(records)
+    )
+    records[2]["_kind"] = "restricted_app"
+    records.append({"_kind": [], "app": {"id": "ACANARYBENIGN"}})
+    result = ScanResult(findings=findings, stats=[ScanStats("saas.slack", "now")])
+    report = evaluate(config, result, records)
+    assert not report["passed"]
+    assert report["controls"][1]["collected_records"] == 0
 
 
 @pytest.mark.parametrize(

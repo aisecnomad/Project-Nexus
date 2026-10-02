@@ -58,16 +58,26 @@ def _raise_connector_error(message: str) -> NoReturn:
     raise ConnectorError(message)
 
 
-def _positive_limit(value: Any, name: str) -> int:
+def _integer_option(value: Any, name: str, minimum: int, requirement: str) -> int:
+    """An integer connector option: booleans, fractions, non-finite and non-numeric values are errors."""
     if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
-        raise ConnectorError(f"{name} must be a positive integer")
+        raise ConnectorError(f"{name} must be {requirement}")
     try:
         limit = int(value)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ConnectorError(f"{name} must be a positive integer") from exc
-    if limit < 1:
-        raise ConnectorError(f"{name} must be a positive integer")
+        raise ConnectorError(f"{name} must be {requirement}") from exc
+    if limit < minimum:
+        raise ConnectorError(f"{name} must be {requirement}")
     return limit
+
+
+def _positive_limit(value: Any, name: str) -> int:
+    return _integer_option(value, name, 1, "a positive integer")
+
+
+def _non_negative_limit(value: Any, name: str) -> int:
+    """Like ``_positive_limit``, for options such as look-back windows where 0 switches a feature off."""
+    return _integer_option(value, name, 0, "a non-negative integer")
 
 
 class ConnectorContext:
@@ -86,6 +96,7 @@ class ConnectorContext:
         cancelled: Event | None = None,
         publication_lock: LockType | None = None,
         gateway_identity_key: bytes | None = None,
+        gateway_identity_key_stable: bool = False,
     ) -> None:
         self.config: dict[str, Any] = dict(config or {})
         self.index: SignatureIndex = index or get_index()
@@ -96,7 +107,10 @@ class ConnectorContext:
         self.cancelled = cancelled
         self.publication_lock = publication_lock
         # Private scan context, separate from user configuration and reports.
+        # The key is random for each scan unless it is stable: the operator's
+        # SHADOWSCAN_IDENTITY_KEY, which keeps identities equal across scans.
         self.gateway_identity_key = gateway_identity_key
+        self.gateway_identity_key_stable = gateway_identity_key_stable
         self.stats: ScanStats | None = None
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
@@ -242,7 +256,8 @@ class BaseConnector(ABC):
 
     # Jobs of a connector that sets this share one private key per scan run
     # (ConnectorContext.gateway_identity_key): identical sources in a report
-    # get the same opaque identities, which separate runs cannot link.
+    # get the same opaque identities, which separate runs cannot link unless
+    # the operator supplies a stable SHADOWSCAN_IDENTITY_KEY.
     uses_run_identity_key: ClassVar[bool] = False
 
     @classmethod
@@ -262,11 +277,22 @@ class BaseConnector(ABC):
         """Whether an incremental multi-root ``paths`` scan may run and be cached per root.
 
         The engine then runs one job per root, so an unchanged repository is
-        reused while its sibling is rescanned. Raise ConnectorError for roots
-        that cannot be split: the engine runs the connector once instead, so
-        its own validation reports the scan as incomplete.
+        reused while its sibling is rescanned. Return False to collect all
+        roots together. Raise ConnectorError for invalid roots: the engine
+        marks the connector incomplete before construction or collection.
         """
         return False
+
+    @classmethod
+    def scanned_local_paths(cls, config: dict[str, Any]) -> list[str]:
+        """Local files or directories this connector scans as the subject of the run, as configured.
+
+        The engine compares them with the approval inventories of the scan: an inventory inside a
+        scanned tree can be edited by the content under review (a pull request approving its own
+        findings), so it warns. Empty for a connector that reads no local tree, including a
+        filesystem connector that replays an ``input`` export.
+        """
+        return []
 
     def __init__(self, ctx: ConnectorContext) -> None:
         self.ctx = ctx
@@ -321,6 +347,7 @@ class BaseConnector(ABC):
     _MAX_OFFLINE_TOTAL_BYTES: ClassVar[int] = _offline.MAX_OFFLINE_TOTAL_BYTES
     _MAX_OFFLINE_ENTRIES: ClassVar[int] = _offline.MAX_OFFLINE_ENTRIES
     _MAX_INVALID_LINE_ERRORS: ClassVar[int] = _offline.MAX_INVALID_LINE_ERRORS
+    _MAX_LISTED_UNSUPPORTED: ClassVar[int] = _offline.MAX_LISTED_UNSUPPORTED
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         """Validate exports under shared input budgets and preserve valid records."""
@@ -328,6 +355,10 @@ class BaseConnector(ABC):
 
     def _offline_budget(self) -> OfflineInputBudget:
         return OfflineInputBudget(self.max_input_bytes, self.max_input_files)
+
+    @staticmethod
+    def _empty_export_message(budget: OfflineInputBudget) -> str:
+        return _offline.empty_export_message(budget)
 
     def _offline_files(self, path: str, suffixes: AbstractSet[str] | None = None) -> Iterator[Path]:
         return _offline.offline_files(self, path, suffixes)

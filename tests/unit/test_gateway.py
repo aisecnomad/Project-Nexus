@@ -4,6 +4,8 @@ import base64
 import json
 import time
 
+import pytest
+
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.gateway import logs as logs_module
 from shadowscan.connectors.gateway.logs import (
@@ -204,6 +206,63 @@ def test_activity_buckets_use_utc_regardless_of_export_offset(index):
     assert "always-on" in findings[0].tags
 
 
+@pytest.mark.parametrize("timestamp", ["9999-12-31T23:59:59-01:00", "0001-01-01T00:00:00+01:00"])
+def test_unrepresentable_utc_timestamp_does_not_poison_valid_caller_records(index, timestamp):
+    records = [_litellm(0), _litellm(1, startTime=timestamp), _litellm(2)]
+
+    findings, ctx = _scan(index, records, format="litellm")
+
+    assert len(findings) == 1
+    assert findings[0].metadata["events"] == 2
+    assert findings[0].first_seen == findings[0].last_seen == "2026-01-05T09:00:00+00:00"
+    assert ctx.stats.incomplete
+    assert any("invalid record 2" in warning for warning in ctx.stats.warnings)
+    assert all("caller analysis failed" not in warning for warning in ctx.stats.warnings)
+
+
+def test_unrepresentable_utc_interval_end_does_not_poison_valid_usage_record(index):
+    valid = {
+        "api_key_id": "key-one",
+        "model": "gpt-4o",
+        "num_model_requests": 2,
+        "start_time": "2026-01-05T09:00:00Z",
+        "end_time": "2026-01-05T10:00:00Z",
+    }
+    malformed = {**valid, "end_time": "9999-12-31T23:59:59-01:00", "num_model_requests": 100}
+
+    findings, ctx = _scan(index, [malformed, valid], format="openai-usage")
+
+    assert len(findings) == 1
+    assert findings[0].metadata["events"] == 2
+    assert findings[0].last_seen == "2026-01-05T10:00:00+00:00"
+    assert ctx.stats.incomplete
+    assert any("invalid record 1" in warning for warning in ctx.stats.warnings)
+    assert all("caller analysis failed" not in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("per_second", [1, 1000, 1_000_000, 1_000_000_000], ids=["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("as_text", [False, True], ids=["number", "text"])
+def test_generic_epoch_timestamps_keep_activity_window_in_every_unit(
+    tmp_path, run_connector, per_second, as_text
+):
+    # 48 requests from one caller, one per hour, as a generic export would
+    # write them in epoch seconds, milliseconds, microseconds or nanoseconds.
+    start = 1767225600  # 2026-01-01T00:00:00Z
+    rows = []
+    for hour in range(48):
+        stamp = (start + hour * 3600) * per_second
+        rows.append({"service": "svc-ops", "model": "gpt-4o", "timestamp": str(stamp) if as_text else stamp})
+    export = tmp_path / "gateway.jsonl"
+    export.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    findings, ctx = run_connector("gateway.logs", input=str(export))
+    assert not ctx.stats.incomplete and not ctx.stats.errors and not ctx.stats.warnings
+    assert len(findings) == 1 and findings[0].metadata["events"] == 48
+    assert findings[0].first_seen == "2026-01-01T00:00:00+00:00"
+    assert findings[0].last_seen == "2026-01-02T23:00:00+00:00"
+    observation = findings[0].metadata["runtime_observations"][0]
+    assert observation["timestamped_events"] == 48
+
+
 def test_known_llm_host_keeps_unlisted_operation_paths(tmp_path, run_connector):
     line = '10.0.0.9 - - [05/Jan/2026:09:00:00 +0000] "{method} {path} HTTP/1.1" 200 12 "-" "openai-python/1.51" host={host}'
     path = tmp_path / "egress.log"
@@ -221,6 +280,36 @@ def test_known_llm_host_keeps_unlisted_operation_paths(tmp_path, run_connector):
     assert len(findings) == 1
     assert findings[0].metadata["events"] == 1
     assert findings[0].metadata["hosts"] == {"api.openai.com": 1}
+
+
+def test_cloudflare_workers_ai_inference_is_llm_traffic_but_other_cloudflare_api_calls_are_not(
+    tmp_path, run_connector
+):
+    # api.cloudflare.com is a general REST API: only its Workers AI paths are inference.
+    line = (
+        '10.0.0.5 - - [10/Oct/2025:13:55:{sec:02d} +0000] "{method} {path} HTTP/1.1" 200 2326 "-" "{ua}"'
+        " host=api.cloudflare.com"
+    )
+    account = "/client/v4/accounts/0123456789abcdef"
+    requests = [
+        ("POST", f"{account}/ai/run/@cf/meta/llama-3.1-8b-instruct", "python-requests/2.31"),
+        ("POST", f"{account}/ai/run/@cf/baai/bge-base-en-v1.5", "python-requests/2.31"),
+        ("POST", f"{account}/ai/v1/chat/completions", "httpx/0.27"),
+        ("GET", "/client/v4/zones", "terraform/1.9"),
+        ("GET", f"{account}/workers/scripts", "terraform/1.9"),
+        ("GET", f"{account}/ai/models/search", "terraform/1.9"),
+    ]
+    path = tmp_path / "access.log"
+    path.write_text(
+        "".join(
+            line.format(sec=sec, method=method, path=target, ua=ua) + "\n"
+            for sec, (method, target, ua) in enumerate(requests)
+        )
+    )
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert not ctx.stats.incomplete
+    callers = {finding.metadata["caller"]: finding.metadata["events"] for finding in findings}
+    assert callers == {"python-requests/2.31": 2, "httpx/0.27": 1}
 
 
 def test_vertex_detection_does_not_depend_on_serialized_prefix():
@@ -381,6 +470,164 @@ def test_text_line_parsers_are_linear_on_hostile_input():
     )
     without_protocol = '10.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /v1/models" 200 5'
     assert parse_text_line(without_protocol)["request_uri"] == "/v1/models"
+
+
+def test_query_string_cannot_hide_inference_as_a_static_asset(tmp_path, run_connector):
+    # "?_=.js" used to make three chat calls look like a static asset: 0 findings, complete.
+    line = (
+        '10.9.9.9 - rogue-agent [10/Oct/2025:03:00:0{n} +0000] "{request} HTTP/1.1" 200 512 "-" "crewai/0.5"'
+    )
+    requests = [
+        "POST /v1/chat/completions?_=.js",
+        "POST /v1/chat/completions?_=.js#x.css",
+        "POST /v1/messages?_=/healthz",
+        "GET /assets/app.js?v=3",
+        "GET /healthz",
+        "GET /favicon.ico/../v1/chat/completions",
+    ]
+    path = tmp_path / "access.log"
+    path.write_text("\n".join(line.format(n=n, request=r) for n, r in enumerate(requests)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 4
+    assert not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: requests for static assets or health probes not counted as LLM traffic: 2"
+    ]
+
+
+def test_path_parameters_and_format_suffixes_cannot_hide_inference(tmp_path, run_connector):
+    # Servlet containers drop ";name=value" path parameters before routing and
+    # suffix-matching routers serve "/chat/completions.css" as the endpoint, so
+    # neither may turn an inference call into a static asset.
+    line = (
+        '10.9.9.9 - rogue-agent [10/Oct/2025:03:00:0{n} +0000] "{request} HTTP/1.1" 200 512 "-" "crewai/0.5"'
+        " host=api.cohere.com"
+    )
+    requests = [
+        "POST /v1/chat/completions;x.js",
+        "POST /v1/chat/completions.css",
+        "POST /v1/chat;jsessionid=1.js",
+        "GET /static/app.js;jsessionid=abc",
+        "GET /healthz;probe=1",
+    ]
+    path = tmp_path / "access.log"
+    path.write_text("\n".join(line.format(n=n, request=r) for n, r in enumerate(requests)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 3
+    assert not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: requests for static assets or health probes not counted as LLM traffic: 2"
+    ]
+
+
+def test_static_files_under_inference_like_prefixes_stay_static(tmp_path, run_connector):
+    # Only an inference operation itself may carry a static suffix. A web page's
+    # assets under /agents/ or an image API's files are not LLM traffic.
+    line = (
+        '10.9.9.9 - - [10/Oct/2025:03:00:0{n} +0000] "GET {path} HTTP/1.1" 200 512 "-" "Mozilla/5.0"'
+        " host=www.example.com"
+    )
+    paths = [
+        "/agents/app.js",
+        "/agent/logo.svg",
+        "/v1/images/logo.png",
+        "/v1/files/site.css",
+        "/api/chat/widget.js",
+        "/mcp/icon.ico",
+    ]
+    path = tmp_path / "access.log"
+    path.write_text("\n".join(line.format(n=n, path=p) for n, p in enumerate(paths)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert findings == []
+    assert not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: requests for static assets or health probes not counted as LLM traffic: 6"
+    ]
+
+
+def test_logfmt_tokens_inside_a_value_or_quoted_text_are_not_fields(tmp_path, run_connector):
+    # A client-controlled query string or request line logged as one token
+    # must not set the model, key or host of the record.
+    victim = "ts=2025-10-10T13:55:36Z api_key=KEY-REAL-0001 model=gpt-4o-mini path=/v1/chat/completions"
+    hostile = [
+        "ts=2025-10-10T13:55:37Z api_key=KEY-REAL-0001 GET /v1/chat/completions?model=forged-model status=200",
+        'ts=2025-10-10T13:55:38Z api_key=KEY-REAL-0001 "POST /v1/chat/completions?model=forged-model" status=200',
+    ]
+    for line in hostile:
+        assert "model" not in parse_text_line(line)
+    path = tmp_path / "gateway.log"
+    path.write_text("\n".join([victim, *hostile]) + "\n")
+    findings, _ = run_connector("gateway.logs", input=str(path))
+    assert [f.models for f in findings] == [["gpt-4o-mini"]]
+
+
+def test_logfmt_escaped_quotes_cannot_inject_fields(tmp_path, run_connector):
+    victim = "level=info ts=2025-10-10T13:55:36Z api_key=KEY-REAL-0001 model=gpt-4o-mini user=alice path=/v1/chat/completions"
+    injected = (
+        "level=info ts=2025-10-10T13:55:38Z api_key=KEY-ATTACKER-9999 model=gpt-4o-mini user=mallory "
+        r'ua="x\" api_key=KEY-REAL-0001 user=alice model=forged-model \"y \\" path=/v1/chat/completions'
+    )
+    assert parse_text_line(injected)["ua"] == 'x" api_key=KEY-REAL-0001 user=alice model=forged-model "y \\'
+    assert parse_text_line(injected)["api_key"] == "KEY-ATTACKER-9999"
+    path = tmp_path / "gateway.log"
+    path.write_text(f"{victim}\n{injected}\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert sorted(f.metadata["events"] for f in findings) == [1, 1]
+    assert all(f.models == ["gpt-4o-mini"] for f in findings)
+    assert not ctx.stats.incomplete
+
+
+def test_logfmt_lines_with_repeated_keys_or_open_quotes_are_malformed(tmp_path, run_connector):
+    good = "ts=2025-10-10T13:55:36Z api_key=KEY-REAL-0001 model=gpt-4o-mini path=/v1/chat/completions"
+    repeated = "ts=2025-10-10T13:55:37Z api_key=KEY-ATTACKER-9999 model=gpt-4o api_key=KEY-REAL-0001"
+    unterminated = 'ts=2025-10-10T13:55:38Z api_key=KEY-REAL-0001 model=gpt-4o ua="x api_key=KEY-OTHER-0002'
+    for line in (repeated, unterminated):
+        with pytest.raises(ValueError):
+            parse_text_line(line)
+    path = tmp_path / "gateway.log"
+    path.write_text("\n".join([good, repeated, unterminated]) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 1
+    assert findings[0].models == ["gpt-4o-mini"]
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: invalid JSON/text record at line 2",
+        "gateway.logs: invalid JSON/text record at line 3",
+    ]
+
+
+def test_unparseable_event_times_are_counted_not_silently_dropped(tmp_path, run_connector):
+    records = [
+        {"api_key": "KEY-REAL-0001", "model": "gpt-4o", "timestamp": "Mon, 01 Jan 2024 00:00:00 GMT"},
+        {
+            "api_key": "KEY-REAL-0001",
+            "model": "gpt-4o",
+            "timestamp": "2024-01-01 00:00:05.5 +0000 UTC m=+1.5",
+        },
+        {"api_key": "KEY-REAL-0001", "model": "gpt-4o", "timestamp": "first tuesday of the month"},
+    ]
+    path = tmp_path / "gateway.jsonl"
+    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 3
+    assert (findings[0].first_seen, findings[0].last_seen) == (
+        "2024-01-01T00:00:00+00:00",
+        "2024-01-01T00:00:05+00:00",
+    )
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: records with an unparseable timestamp field: 1; their requests are counted "
+        "without activity timing"
+    ]
+
+
+def test_logfmt_quoted_values_are_parsed_in_linear_time():
+    started = time.monotonic()
+    with pytest.raises(ValueError):
+        parse_text_line('a=1 ua="' + 'x\\"' * 40_000)  # unterminated after 120 KB of escapes
+    assert parse_text_line('a=1 ua="' + "\\\\" * 60_000 + '"')["ua"] == "\\" * 60_000
+    assert len(parse_text_line(" ".join(f"k{i}=v" for i in range(20_000)))) == 20_000
+    assert time.monotonic() - started < 2
 
 
 def test_gateway_json_fallback_reports_a_corrupt_document_once(index, tmp_path):

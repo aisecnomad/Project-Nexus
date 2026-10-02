@@ -34,7 +34,7 @@ import re
 import secrets
 from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -324,14 +324,128 @@ def normalise_with_record(
 # These stdlib patterns run outside the signature engine's regex timeouts, so
 # they must be linear: possessive tokens (Python 3.11+) never backtrack into a
 # long unterminated request or a bare token blob to retry a failed match.
+# A quoted field keeps backslash escapes (Apache writes \" and \\) inside it.
+_QUOTED_TEXT = r'(?:[^"\\]++|\\.)*+'
 _COMBINED = re.compile(
-    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" '
-    r'(?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
+    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) '
+    r'(?P<path>(?:[^\s"\\]++|\\\S)++)' + _QUOTED_TEXT + r'" (?P<status>\d{3}) (?P<bytes>\S+)'
+    r'(?: "(?P<referer>' + _QUOTED_TEXT + r')" "(?P<ua>' + _QUOTED_TEXT + r')")?'
+    r'(?: "(?P<extra>' + _QUOTED_TEXT + r')")?'
 )
-_LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
-_HOST_IN_LINE = re.compile(
-    r"\b(?:host|authority|upstream_host|server_name)[=:]\s*\"?([A-Za-z0-9.-]+\.[a-z]{2,})", re.I
+# One logfmt token: key=value, key="quoted value" or quoted text without a key.
+# A key starts a whitespace-separated token, so text inside a value or quoted
+# text (``?model=x``, ``&host=y``) never becomes a field. A quote that opens a
+# token and is never closed makes the record malformed, not a bare token.
+_LOGFMT_TOKEN = re.compile(
+    r'(?<!\S)(?:(?P<key>\w[\w.-]*+)=(?:"(?P<quoted>' + _QUOTED_TEXT + r')"|(?P<bare>\S++))'
+    r'|"' + _QUOTED_TEXT + r'"|(?P<stray>"))'
 )
+_LOGFMT_ESCAPE = re.compile(r'\\(["\\])')
+# Static assets and health probes are not inference traffic. Only the routed
+# request path is tested: a client chooses the query string (``?_=.js``) and
+# ``;name=value`` path parameters, which servlet containers drop before
+# routing, and must not be able to hide an inference call with them.
+_STATIC_OR_PROBE_PATH = re.compile(
+    r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)/?$"
+    r"|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)$",
+    re.I,
+)
+_PATH_PARAMETERS = re.compile(r";[^/]*+")
+# An inference operation that a suffix-matching router also serves with a static
+# suffix (/v1/chat/completions.css) is not a static asset. Only the operation
+# itself is exempt: files under an agent-like prefix (/agents/app.js,
+# /v1/images/logo.png) are still a web page's or an image API's static assets.
+_SUFFIXED_INFERENCE_OPERATION = re.compile(
+    r"(?:/v1/(?:chat/completions|completions|responses|messages|embeddings)"
+    r"|[:/](?:generateContent|streamGenerateContent)|/invoke(?:-with-response-stream)?|/converse(?:-stream)?"
+    r"|/api/(?:chat|generate))"
+    r"\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)$",
+    re.I,
+)
+# Access-log trailer keys that name the requested host, and the host a value starts with.
+_TRAILER_HOST_KEYS = frozenset({"host", "authority", "upstream_host", "server_name"})
+_HOST_VALUE = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# A parsed access-log record field holding a host token that a client could have
+# written. Analysis never attributes traffic to it, only reports when it would
+# have made a request LLM traffic.
+_UNTRUSTED_HOST_FIELD = "_untrusted_host"
+
+
+# Field names that the gateway schemas read event times from.
+_TIMESTAMP_FIELDS = (
+    "timestamp",
+    "time",
+    "@timestamp",
+    "ts",
+    "date",
+    "datetime",
+    "event_time",
+    "time_local",
+    "time_iso8601",
+    "created_at",
+    "createdAt",
+    "request_created_at",
+    "start_time",
+    "startTime",
+    "started_at",
+    "starting_at",
+    "endTime",
+    "TimeGenerated",
+    "receiveTimestamp",
+    "effective_at",
+    "aggregation_timestamp",
+)
+
+
+def _has_unparsed_timestamp(rec: dict[str, Any]) -> bool:
+    """Whether a timestamp field holds a value that no supported format parses."""
+    return any(
+        rec.get(key) not in (None, "") and parse_timestamp(rec[key]) is None for key in _TIMESTAMP_FIELDS
+    )
+
+
+def _is_static_or_probe(path: str | None) -> bool:
+    """Whether the routed request path names a static asset or probe.
+
+    The query string, fragment and ``;name=value`` path parameters are removed
+    first, and a known inference operation with a static suffix is not static.
+    """
+    if not path:
+        return False
+    request_path = _PATH_PARAMETERS.sub("", path.partition("?")[0].partition("#")[0])
+    return (
+        _STATIC_OR_PROBE_PATH.search(request_path) is not None
+        and _SUFFIXED_INFERENCE_OPERATION.search(request_path) is None
+    )
+
+
+def _logfmt_pairs(line: str) -> dict[str, str]:
+    """Parse logfmt pairs; an unterminated quote or a repeated key makes the line malformed.
+
+    A repeated key would let the last occurrence (for example one smuggled
+    into a client-controlled value) override the gateway's own field.
+    """
+    pairs: dict[str, str] = {}
+    for token in _LOGFMT_TOKEN.finditer(line):
+        key, bare = token["key"], token["bare"]
+        if key is None:
+            if token["stray"] is not None:
+                raise ValueError("logfmt record has an unterminated quoted value")
+            continue  # quoted text without a key is text, never a field
+        if key in pairs:
+            raise ValueError("logfmt record repeats a key")
+        if bare is not None and bare.startswith('"'):
+            raise ValueError("logfmt record has an unterminated quoted value")
+        pairs[key] = bare.strip('"') if bare is not None else _LOGFMT_ESCAPE.sub(r"\1", token["quoted"])
+    return pairs
+
+
+def _host_field(pairs: dict[str, str]) -> str | None:
+    """The first host named by a ``host=``, ``authority=``, ``upstream_host=`` or ``server_name=`` pair."""
+    for key, value in pairs.items():
+        if key.lower() in _TRAILER_HOST_KEYS and (host := _HOST_VALUE.match(value)):
+            return host.group(0)
+    return None
 
 
 def parse_text_line(line: str) -> dict[str, Any] | None:
@@ -346,7 +460,15 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
     m = _COMBINED.match(line)
     if m:
         d = m.groupdict()
-        h = _HOST_IN_LINE.search(line)
+        # The request line, referer, user agent and any further quoted field are
+        # client-controlled, and a gateway that does not escape quotes lets a
+        # client close its field early and write tokens after it. Only text after
+        # the final quote is written by the server, so the host is read from a
+        # key=value token there and nowhere else. The whole trailer is tokenized
+        # as logfmt: an unterminated quote (a truncated line) or a repeated key
+        # makes the line malformed, and text inside a value is never a key.
+        trailer = _logfmt_pairs(line[m.end() :])
+        host = _host_field(_logfmt_pairs(line.rpartition('"')[2]))
         rec = {
             "remote_addr": d["ip"],
             "remote_user": None if d["user"] == "-" else d["user"],
@@ -355,14 +477,20 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
             "request_uri": d["path"],
             "status": d["status"],
             "http_user_agent": d.get("ua"),
-            "host": h.group(1) if h else None,
+            "host": host,
         }
+        # A host token in or before a quoted trailer field (``host="x"``, or one
+        # followed by a quoted forwarded-for field) may be the server's or a
+        # client's. It is kept apart so analysis can report what it would change.
+        untrusted = _host_field(trailer) if host is None else None
+        if untrusted is not None:
+            rec[_UNTRUSTED_HOST_FIELD] = untrusted
         return rec
     # key=value logfmt
     if "=" in line and " " in line:
-        kv = dict(_LOGFMT_PAIR.findall(line))
+        kv = _logfmt_pairs(line)
         if kv:
-            return {k: v.strip('"') for k, v in kv.items()}
+            return kv
     return None
 
 
@@ -479,10 +607,16 @@ class _Caller:
 # provider, or owner. Memory remains bounded as record cardinality increases.
 _MAX_DISTINCT_KEYS = 2000
 _MAX_INVALID_LINE_ERRORS = 20
+# Domain signals weighted below this are hints, not evidence of inference traffic.
+_MIN_LLM_HOST_WEIGHT = 0.3
 _MAX_DISTINCT_CALLERS = 10_000
 _MAX_USAGE_INTERVALS = 2_000
 _MAX_TOTAL_USAGE_INTERVALS = 20_000
 _MAX_TOTAL_DETAIL_KEYS = 50_000
+# Token counts and spend beyond this are not plausible usage. A negative or
+# absurd figure in an untrusted log must not offset real usage or be reported
+# verbatim in caller totals.
+_MAX_USAGE_VALUE = 10**15
 
 
 @dataclass(slots=True)
@@ -522,6 +656,21 @@ def _json_lines_fallback(lines: list[str]) -> bool:
     """Reject obvious pretty-printed documents; retain later valid JSONL rows."""
     first = next((line.strip() for line in lines if line.strip()), "")
     return bool(first) and first != "{" and not first.startswith("[")
+
+
+def _discard_unusable_usage(ev: Event) -> bool:
+    """Zero negative or absurd token and cost figures; report whether any were dropped."""
+    dropped = False
+    if not 0 <= ev.tokens_in <= _MAX_USAGE_VALUE:
+        ev.tokens_in = 0
+        dropped = True
+    if not 0 <= ev.tokens_out <= _MAX_USAGE_VALUE:
+        ev.tokens_out = 0
+        dropped = True
+    if not 0 <= ev.cost <= _MAX_USAGE_VALUE:
+        ev.cost = 0.0
+        dropped = True
+    return dropped
 
 
 def _record_activity(c: _Caller, ev: Event) -> None:
@@ -832,7 +981,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             "force schema: litellm|portkey|kong|cloudflare|helicone|langfuse|bedrock|azure-openai|vertex|"
             "openai-usage|anthropic-usage|access-log|generic (default auto)"
         ),
-        "min_events": "ignore callers with fewer events (default 1)",
+        "min_events": "ignore callers with fewer events, a positive integer (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
         "max_records": "stop after N records (default 5,000,000)",
         "label": (
@@ -852,8 +1001,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # Engine.run shares one key across its gateway jobs; direct connector
         # use gets an isolated key. Never place this key in config or reports.
         self._scope_key = ctx.gateway_identity_key or secrets.token_bytes(32)
+        # "keyed": the operator's stable key, so equal inputs keep equal IDs
+        # across scans. "run": IDs and pseudonyms are scan-local by design.
+        self.identity_scope = (
+            "keyed" if ctx.gateway_identity_key and ctx.gateway_identity_key_stable else "run"
+        )
         self.format = ctx.get("format")
-        self.min_events = int(ctx.get("min_events", 1))
+        self.min_events = _positive_limit(ctx.get("min_events", 1), "min_events")
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
         self.max_records = _positive_limit(ctx.get("max_records", 5_000_000), "max_records")
         self.label = ctx.get("label") or ctx.get("gateway_name")
@@ -1051,7 +1205,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     for rec in self._gateway_records(data):
                         yield from self._expand_record(rec)
                 if not saw_record:
-                    self.ctx.error("gateway.logs: empty offline export; use [] for an empty inventory")
+                    self.ctx.error(f"gateway.logs: {self._empty_export_message(budget)}")
                 continue
             if suffix == ".json":
                 yield from self._load_json_export(source, budget)
@@ -1065,7 +1219,12 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 if parsed is not None:
                     yield from self._expand_record(parsed)
             if not saw_content:
-                self.ctx.warn("gateway.logs: empty text export; use [] for an empty JSON export")
+                message = (
+                    self._empty_export_message(budget)
+                    if budget.limit_hit
+                    else "empty text export; use [] for an empty JSON export"
+                )
+                self.ctx.warn(f"gateway.logs: {message}")
 
     def _load_json_export(self, source: Path, budget: _OfflineInputBudget) -> Iterator[dict[str, Any]]:
         """A .json export: one document, or one object per line as a fallback."""
@@ -1146,6 +1305,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         detail_budget = _DetailBudget()
         n = 0
         skipped = 0
+        unusable_usage = 0
+        static_excluded = 0
+        untrusted_host_requests = 0
+        untimed = 0
         omitted_caller_records = 0
         omitted_caller_requests = 0
         retained_intervals = 0
@@ -1169,7 +1332,12 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     and not self._is_llm_traffic(ev)
                 ):
                     skipped += 1
+                    static_excluded += _is_static_or_probe(ev.path)
+                    untrusted_host_requests += self._untrusted_host_is_llm(ev, rec)
                     continue
+                unusable_usage += _discard_unusable_usage(ev)
+                if ev.timestamp is None and _has_unparsed_timestamp(rec):
+                    untimed += 1
                 self._runtime_context(ev, rec, framework_cache, clean)
                 identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
                 if identity not in callers and len(callers) >= _MAX_DISTINCT_CALLERS:
@@ -1201,6 +1369,29 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 continue
         self.ctx.examined(n)
         self._report_limits(callers, detail_budget, omitted_caller_records, omitted_caller_requests)
+        if unusable_usage:
+            self.ctx.warn(
+                f"gateway.logs: {unusable_usage} record(s) carried negative or out of range token or cost "
+                "values; those values were ignored and token and cost totals are incomplete"
+            )
+        if untimed:
+            self.ctx.warn(
+                f"gateway.logs: records with an unparseable timestamp field: {untimed}; their requests "
+                "are counted without activity timing"
+            )
+        if untrusted_host_requests:
+            self.ctx.warn(
+                f"gateway.logs: {untrusted_host_requests} access-log requests name an LLM host only in or "
+                "before a quoted field, where a client can write it; they were not counted as LLM traffic "
+                "and LLM traffic coverage is incomplete. Log the host as an unquoted token after the last "
+                "quoted field"
+            )
+        if static_excluded:
+            self.ctx.warn(
+                "gateway.logs: requests for static assets or health probes not counted as LLM traffic: "
+                f"{static_excluded}",
+                incomplete=False,
+            )
         if skipped:
             self.log.info("gateway.logs: %d/%d records skipped (unrecognised or non-LLM)", skipped, n)
         for c in callers.values():
@@ -1374,12 +1565,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         return "operator-asserted" if schema in {"generic", "access-log"} else "provider-authenticated-field"
 
     def _is_llm_traffic(self, ev: Event) -> bool:
-        if ev.path and re.search(
-            r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)(?:$|[/?#])"
-            r"|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)(?:$|[?#])",
-            ev.path,
-            re.I,
-        ):
+        # Static assets and probes are excluded first, except an inference
+        # operation with a static suffix, which a suffix-matching router serves
+        # as the endpoint (_is_static_or_probe).
+        if _is_static_or_probe(ev.path):
             return False
         text = " ".join(x for x in (ev.host, ev.path) if x)
         if ev.path and re.search(
@@ -1387,7 +1576,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             r"|runs|audio|images|files|batches|realtime)"
             r"|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent"
             r"|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b"
-            r"|/api/(?:chat|generate|tags)\b",
+            r"|/api/(?:chat|generate|tags)\b"
+            # Cloudflare Workers AI inference on the general api.cloudflare.com REST API.
+            r"|/accounts/[^/\s?#]+/ai/(?:run|v1)/",
             text,
         ):
             return True
@@ -1395,7 +1586,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             # A known provider/agent host identifies inference traffic even
             # when the operation is not an enumerated endpoint; static assets
             # and health probes were excluded above.
-            return bool(ev.host and self.index.match_domain(ev.host))
+            return self._is_llm_host(ev.host)
         if ev.model:
             return True
         if ev.schema == "generic" and _provider_signature(self.index, ev.provider):
@@ -1407,7 +1598,24 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 return True
         # Domain-only egress logs can identify a model provider. A path such as
         # /favicon.ico on that host is not an inference transaction.
-        return bool(ev.host and not ev.path and self.index.match_domain(ev.host))
+        return bool(not ev.path and self._is_llm_host(ev.host))
+
+    def _is_llm_host(self, host: str | None) -> bool:
+        # Generic vendor hosts (a general REST API, a dataset site) carry hint weights below
+        # the threshold and do not identify inference traffic by themselves.
+        return bool(host) and any(
+            m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host or "")
+        )
+
+    def _untrusted_host_is_llm(self, ev: Event, rec: dict[str, Any]) -> bool:
+        """Whether an excluded request would be LLM traffic with a host token a client could have written."""
+        untrusted = rec.get(_UNTRUSTED_HOST_FIELD)
+        return (
+            ev.schema == "access-log"
+            and ev.host is None
+            and isinstance(untrusted, str)
+            and self._is_llm_traffic(replace(ev, host=untrusted))
+        )
 
     @staticmethod
     def _accumulate(
@@ -1425,6 +1633,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             # Validate before changing any caller counts, preserving atomic
             # accumulation when individually finite costs overflow in aggregate.
             raise ValueError("gateway cost total exceeds finite numeric range")
+        # A valid offset-bearing ISO date can still fall outside datetime's
+        # range when converted to UTC. Check both ends before retaining any
+        # caller state; otherwise a rejected record poisons first/last seen
+        # and can suppress this caller's valid neighboring observations.
+        for moment in (ev.timestamp, ev.interval_end):
+            if moment is not None:
+                moment.astimezone(UTC)
         if c is None:
             c = callers[identity] = _Caller(ev.caller, ev.caller_kind, ev.caller_label, scope=dict(ev.scope))
         c.scope_redacted = c.scope_redacted or ev.scope_redacted
@@ -1553,6 +1768,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 "label": self.label,
                 "schemas": sorted(c.schemas),
             },
+            # With a per-scan key, another report's ID for this caller differs;
+            # report comparison must not read that as a new or resolved caller.
+            "identity_scope": self.identity_scope,
         }
 
     def _finding_title(self, f: Finding, c: _Caller, top_models: list[str]) -> str:

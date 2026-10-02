@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-09-23
-**Amended:** 2026-09-27 (see the amendment at the end)
+**Amended:** 2026-09-27 and 2026-10-01 (see the amendments at the end)
 
 ## Context
 
@@ -33,7 +33,7 @@ score is auditable.
 **Positive:**
 
 - Low-confidence findings (a dependency import) are visually distinct from
-  confirmed findings (a running Bedrock Agent).
+  strong findings (a running Bedrock Agent).
 - Risk scaling reduces contributions from weak evidence. An operator still
   needs to validate false-positive behavior before choosing a CI threshold.
 - Every score is explainable: the `risk.factors` and `evidence` arrays in
@@ -82,3 +82,18 @@ credential with no owner (raw 90) found with confidence 0.3 scores 65 (high);
 multiplying by confidence alone would give 27 (medium). Consequences listed
 above that depend on scaling still hold in this weaker form: low confidence
 reduces risk but cannot remove it.
+
+## Amendment (2026-10-01)
+
+Grouping now also applies where a connector sets no `confidence_group`.
+Outside the code surface, evidence without an explicit group is grouped by its
+`signal`, so repeated matches of one signal against one record (several scopes
+of one permission class, several system prompts in one workflow) count once at
+their strongest weight. Before this change, three 0.3 system-prompt matches in
+one n8n workflow scored 0.657 ("likely") instead of 0.3.
+
+Code findings keep their own grouping: source analysis groups a project's
+matches by technology, and a single-file code finding (a workflow export, IaC)
+still lets distinct matched patterns corroborate each other. Grouping code
+evidence by signal as well demoted true positives in the bundled corpora,
+while the non-code change left every corpus score unchanged.

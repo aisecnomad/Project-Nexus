@@ -56,14 +56,16 @@ import yaml
 
 from shadowscan.errors import SetupError, yaml_error_position
 from shadowscan.risk import RiskPolicy
-from shadowscan.utils.files import read_policy_text
-from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.files import read_policy_text, require_no_symlinks
+from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
 log = logging.getLogger("shadowscan.config")
 
 _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+# Connector options naming local files: YAML-relative values resolve beside the
+# configuration file, never against the process working directory.
 PATH_KEYS = (
     "input",
     "path",
@@ -72,6 +74,7 @@ PATH_KEYS = (
     "credentials_file",
     "config_file",
     "token_file",
+    "ca_bundle",
 )
 _CONFIG_FIELDS = {"connectors", "inventory", "signatures", "options"}
 _OPTION_FIELDS = {
@@ -83,6 +86,7 @@ _OPTION_FIELDS = {
     "incremental",
     "state_dir",
     "plugins",
+    "plugin_execution",
     "allow_signature_override",
     "allow_private_origin",
     "allow_instance_credentials",
@@ -99,27 +103,6 @@ _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 SHARED_CONNECTOR_KEYS = frozenset(
     {"input", "label", "max_input_bytes", "max_input_file_bytes", "max_input_files"}
 )
-# Keys a built-in connector reads without listing them in ``config_keys``
-# (aliases, alternatives named only in another key's description, and values
-# that code.github / code.gitlab hand to their child filesystem scans). The
-# drift test in tests/unit/test_config_validation.py compares this table with
-# the keys each connector actually reads.
-_UNDOCUMENTED_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
-    "cloud.gcp": frozenset({"max_pages"}),
-    "cloud.oci": frozenset({"max_pages", "region", "tenancy"}),
-    "code.filesystem": frozenset({"paths", "account", "owner", "provider", "metadata"}),
-    # code.github and code.gitlab forward these to the nested filesystem scan.
-    "code.github": frozenset(
-        {"github_token", "repos", "user", "exclude", "max_file_size", "max_files", "scan_secrets"}
-    ),
-    "code.gitlab": frozenset({"projects", "exclude", "max_file_size", "max_files", "scan_secrets"}),
-    "gateway.logs": frozenset({"gateway_name"}),
-    "identity.okta": frozenset({"bearer"}),
-    "lowcode.make": frozenset({"max_pages", "organization_id"}),
-    "lowcode.n8n": frozenset({"max_pages"}),
-    "lowcode.workato": frozenset({"max_pages"}),
-    "lowcode.zapier": frozenset({"max_pages"}),
-}
 # Built-in connector switches are normalised before connector construction so
 # environment expansion cannot turn the string ``"false"`` into a truthy
 # value.  Plugin configuration remains opaque: an approved plugin owns its
@@ -129,9 +112,12 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "cloud.azure": frozenset({"allow_instance_credentials", "include_app_settings"}),
     "cloud.gcp": frozenset({"allow_instance_credentials"}),
     "cloud.oci": frozenset({"allow_instance_credentials"}),
-    "code.filesystem": frozenset({"include_tests", "scan_secrets", "strict_coverage", "use_git"}),
+    "code.filesystem": frozenset(
+        {"default_excludes", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+    ),
     "code.github": frozenset(
         {
+            "default_excludes",
             "include_archived",
             "include_forks",
             "include_tests",
@@ -141,7 +127,14 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
         }
     ),
     "code.gitlab": frozenset(
-        {"include_archived", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+        {
+            "default_excludes",
+            "include_archived",
+            "include_tests",
+            "scan_secrets",
+            "strict_coverage",
+            "use_git",
+        }
     ),
     "gateway.logs": frozenset({"llm_hosts_only"}),
     "identity.entra": frozenset({"include_first_party"}),
@@ -229,21 +222,17 @@ def _display_identifier(value: Any, fallback: str) -> str:
 def accepted_connector_keys(name: str) -> frozenset[str] | None:
     """Return the configuration keys a built-in connector accepts, or None for plugins.
 
-    Built-in connector modules are first-party code, so importing one to read
-    its ``config_keys`` is safe at parse time. Third-party plugins are not
-    imported before they are approved, so their keys cannot be checked and
-    ``None`` is returned.
+    A built-in connector accepts exactly its documented ``config_keys`` and
+    the shared keys. Built-in connector modules are first-party code, so
+    importing one to read its ``config_keys`` is safe at parse time.
+    Third-party plugins are not imported before they are approved, so their
+    keys cannot be checked and ``None`` is returned.
     """
     from shadowscan.connectors import builtin_connector_names, get_connector_class
 
     if name not in builtin_connector_names():
         return None
-    cls = get_connector_class(name)
-    return (
-        frozenset(cls.config_keys)
-        | SHARED_CONNECTOR_KEYS
-        | _UNDOCUMENTED_CONNECTOR_KEYS.get(name, frozenset())
-    )
+    return frozenset(get_connector_class(name).config_keys) | SHARED_CONNECTOR_KEYS
 
 
 def validate_connector_config(name: str, config: Mapping[Any, Any]) -> None:
@@ -340,6 +329,31 @@ class ConnectorSpec:
     def id(self) -> str:
         return self.label or self.name
 
+    def __repr__(self) -> str:
+        # Connector settings carry credentials. A debug log of a spec, or of the
+        # ScanConfig holding it, shows the keys and redacted values only.
+        return (
+            f"{type(self).__name__}(name={self.name!r}, config={_redacted_config(self.config)!r},"
+            f" enabled={self.enabled!r}, label={self.label!r})"
+        )
+
+
+# Locations of credential files are withheld from representations too, as are
+# keys whose values are credentials whatever their shape: identity.jwt `tokens`
+# can hold opaque or malformed tokens that no value pattern recognizes.
+_WITHHELD_KEYS = frozenset({"service_account_file", "credentials_file", "token_file", "tokens"})
+
+
+def _redacted_config(config: Any) -> Any:
+    """A connector configuration for display: the report redaction rules plus credential-file locations."""
+    if not isinstance(config, dict):
+        return REDACTED
+    try:
+        shown = sanitize(dict(config), redact_short_secrets=True)
+    except Exception:  # noqa: BLE001 - a representation must not fail or fall back to raw values
+        return dict.fromkeys(config, REDACTED)
+    return {key: REDACTED if key in _WITHHELD_KEYS else value for key, value in shown.items()}
+
 
 @dataclass(slots=True)
 class ScanConfig:
@@ -354,6 +368,7 @@ class ScanConfig:
     incremental: bool = False
     state_dir: str | None = None
     plugins: list[str] = field(default_factory=list)
+    plugin_execution: str = "thread"
     allow_signature_override: bool = False
     allow_private_origin: bool = False
     allow_instance_credentials: bool = False
@@ -383,6 +398,8 @@ class ScanConfig:
 
     def validate_security_options(self) -> None:
         self.plugins = validate_plugins(self.plugins)
+        if not isinstance(self.plugin_execution, str) or self.plugin_execution not in {"thread", "process"}:
+            raise ConfigValidationError("options.plugin_execution must be thread or process")
         self.allow_signature_override = _boolean_option(
             self.allow_signature_override, "allow_signature_override"
         )
@@ -534,6 +551,7 @@ class ScanConfig:
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
+            plugin_execution=opts.get("plugin_execution", "thread"),
             allow_signature_override=_boolean_option(
                 opts.get("allow_signature_override", False), "allow_signature_override"
             ),
@@ -556,6 +574,14 @@ class ScanConfig:
     @classmethod
     def from_yaml(cls, path: str | Path) -> ScanConfig:
         p = Path(path)
+        try:
+            require_no_symlinks(p)
+        except ValueError:
+            # A Kubernetes ConfigMap mount, for example, is a chain of links.
+            raise ConfigValidationError(
+                f"scan configuration {p} is a symbolic link or inside one; links are not followed,"
+                " so pass the file's real path"
+            ) from None
         text = read_policy_text(p)
         try:
             data = yaml.load(text, Loader=_ConfigLoader)

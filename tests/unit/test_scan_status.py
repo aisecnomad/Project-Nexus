@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from io import StringIO
 
 import pytest
@@ -176,3 +177,79 @@ def test_mixed_selector_typo_fails_cli_gate(tmp_path):
     )
     assert result.exit_code == 3, result.output
     assert json.loads(result.stdout)["summary"]["complete"] is False
+
+
+class _Abort(BaseException):
+    """A non-Exception BaseException, as some asynchronous frameworks raise."""
+
+
+def _raise(exc: BaseException):
+    def call():
+        raise exc
+
+    return call
+
+
+# A worker's SystemExit used to reach the main thread and end the scan with
+# the plugin's exit status and no report: sys.exit(0) read as a clean pass.
+WORKER_EXITS = {
+    "sys-exit-0": (lambda: sys.exit(0), "SystemExit"),
+    "sys-exit-7": (lambda: sys.exit(7), "SystemExit"),
+    "raise-system-exit": (_raise(SystemExit()), "SystemExit"),
+    "base-exception": (_raise(_Abort()), "_Abort"),
+}
+
+
+def _exiting_connector(exit_call):
+    class ExitingConnector:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def run(self):
+            exit_call()
+
+    return ExitingConnector
+
+
+def _entra_config() -> ScanConfig:
+    return ScanConfig(connectors=[ConnectorSpec("identity.entra", {"input": "unused.json"})], parallel=1)
+
+
+@pytest.mark.parametrize(("exit_call", "raised"), WORKER_EXITS.values(), ids=list(WORKER_EXITS))
+def test_connector_exit_is_an_incomplete_connector_not_a_clean_scan(monkeypatch, index, exit_call, raised):
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda _: _exiting_connector(exit_call))
+    result = Engine(_entra_config(), index).run()
+    [stats] = result.stats
+    assert stats.incomplete and stats.skipped
+    assert stats.errors[0].startswith(f"identity.entra: {raised}")
+    assert not result.complete and _exit_code(result, None) == 3
+
+
+@pytest.mark.parametrize(("exit_call", "raised"), WORKER_EXITS.values(), ids=list(WORKER_EXITS))
+def test_exit_while_loading_a_plugin_is_an_incomplete_connector(monkeypatch, index, exit_call, raised):
+    def lookup(*args, **kwargs):
+        exit_call()
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lookup)
+    result = Engine(_entra_config(), index).run()
+    # The lookup fails before a worker exists; the diagnostic names that step.
+    assert result.stats[0].errors == [f"identity.entra: connector lookup raised {raised}"]
+    assert result.stats[0].skipped
+    assert not result.complete and _exit_code(result, None) == 3
+
+
+def test_cli_scan_with_exiting_connector_writes_report_and_exits_3(monkeypatch, tmp_path):
+    exiting = _exiting_connector(lambda: sys.exit(0))
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda _: exiting)
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "-f", "json"])
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.stdout)
+    assert report["summary"]["complete"] is False
+    assert report["stats"][0]["errors"][0].startswith("code.filesystem: SystemExit")
+
+
+def test_keyboard_interrupt_in_a_worker_still_stops_the_scan(monkeypatch, index):
+    interrupting = _exiting_connector(_raise(KeyboardInterrupt()))
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda _: interrupting)
+    with pytest.raises(KeyboardInterrupt):
+        Engine(_entra_config(), index).run()

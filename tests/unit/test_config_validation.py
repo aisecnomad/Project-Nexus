@@ -293,31 +293,55 @@ def test_recursive_config_validation_is_depth_bounded_without_interpreting_plugi
         ScanConfig.from_dict({"connectors": [{"name": "custom.plugin", "config": {"opaque": opaque}}]})
 
 
+def _is_ctx(node: ast.expr) -> bool:
+    return (isinstance(node, ast.Name) and node.id == "ctx") or (
+        isinstance(node, ast.Attribute) and node.attr == "ctx"
+    )
+
+
+def _string_constants(node: ast.expr) -> set[str]:
+    if not isinstance(node, (ast.Set, ast.List, ast.Tuple)):
+        return set()
+    return {
+        item.value for item in node.elts if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    }
+
+
 def _keys_read_by(cls: type[BaseConnector]) -> set[str]:
-    """Keys the connector class and its shadowscan bases read through ctx.get / ctx.require."""
+    """Keys the connector class and its shadowscan bases read or forward from their configuration.
+
+    Keys are read through ctx.get / ctx.require, or forwarded by a comprehension
+    over ctx.config.items() that keeps listed names (code.github and code.gitlab
+    pass scanner options to their nested filesystem scans).
+    """
     keys: set[str] = set()
     for klass in cls.__mro__:
         if klass is BaseConnector or not klass.__module__.startswith("shadowscan.connectors"):
             continue
         tree = ast.parse(textwrap.dedent(inspect.getsource(klass)))
         for node in ast.walk(tree):
-            if not (
+            if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr in {"get", "require"}
-            ):
-                continue
-            receiver = node.func.value
-            reads_ctx = (isinstance(receiver, ast.Name) and receiver.id == "ctx") or (
-                isinstance(receiver, ast.Attribute) and receiver.attr == "ctx"
-            )
-            if (
-                reads_ctx
+                and _is_ctx(node.func.value)
                 and node.args
                 and isinstance(node.args[0], ast.Constant)
                 and isinstance(node.args[0].value, str)
             ):
                 keys.add(node.args[0].value)
+            elif (
+                isinstance(node, ast.comprehension)
+                and isinstance(node.iter, ast.Call)
+                and isinstance(node.iter.func, ast.Attribute)
+                and node.iter.func.attr == "items"
+                and isinstance(node.iter.func.value, ast.Attribute)
+                and node.iter.func.value.attr == "config"
+                and _is_ctx(node.iter.func.value.value)
+            ):
+                for condition in node.ifs:
+                    if isinstance(condition, ast.Compare) and isinstance(condition.ops[0], ast.In):
+                        keys.update(*(_string_constants(container) for container in condition.comparators))
     return keys
 
 
@@ -329,6 +353,15 @@ def test_every_key_a_built_in_connector_reads_is_accepted(name):
     assert accepted >= SHARED_CONNECTOR_KEYS
     read = {key for key in _keys_read_by(get_connector_class(name)) if not key.startswith("_")}
     assert accepted >= read, f"{name} reads keys the configuration would reject: {sorted(read - accepted)}"
+
+
+@pytest.mark.parametrize("name", sorted(builtin_connector_names()))
+def test_every_key_a_built_in_connector_accepts_is_read(name):
+    """The reverse drift guard: an accepted key the connector never reads would be ignored silently."""
+    accepted = accepted_connector_keys(name)
+    assert accepted is not None
+    unread = accepted - SHARED_CONNECTOR_KEYS - _keys_read_by(get_connector_class(name))
+    assert not unread, f"{name} accepts keys it never reads: {sorted(unread)}"
 
 
 # ------------------------------------------------------------ YAML positions
@@ -380,3 +413,82 @@ def test_config_relative_globs_and_workdir_use_configuration_directory(tmp_path)
     loaded = ScanConfig.from_yaml(config)
     assert loaded.inventory == [str(directory / "inventory" / "*.yaml")]
     assert loaded.workdir == str(directory / "working")
+
+
+@pytest.mark.parametrize("layout", ["file", "directory"])
+def test_symlinked_config_names_the_link_rule_instead_of_yaml_structure(tmp_path, layout):
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+
+    # A Kubernetes ConfigMap mount links the file name through a ..data directory link.
+    real = tmp_path / "..2026_10_01" / "shadowscan.yaml"
+    real.parent.mkdir()
+    real.write_text("connectors: []\n")
+    if layout == "file":
+        path = tmp_path / "shadowscan.yaml"
+        path.symlink_to(real)
+    else:
+        (tmp_path / "..data").symlink_to(real.parent, target_is_directory=True)
+        path = tmp_path / "..data" / "shadowscan.yaml"
+    with pytest.raises(ConfigValidationError, match="symbolic link or inside one; links are not followed"):
+        ScanConfig.from_yaml(path)
+    result = CliRunner().invoke(main, ["scan", "-c", str(path)])
+    assert result.exit_code == 1
+    assert "links are not followed" in result.output and "YAML structure" not in result.output
+    assert ScanConfig.from_yaml(real).connectors == []
+
+
+def test_config_representations_never_show_connector_credentials(tmp_path):
+    secrets = {
+        "token": "opaque-token-value-1",
+        "client_secret": "opaque-client-secret-value-2",
+        "api_key": "opaque-api-key-value-3",
+        "password": "opaque-password-value-4",
+        "service_account_file": "/secure/keys/opaque-account-file-5.json",
+        "credentials_file": "/secure/keys/opaque-credentials-file-6.json",
+        # identity.jwt tokens that are not well-formed JWTs match no value pattern.
+        "tokens": ["opaque-session-token-7"],
+    }
+    spec = config_module.ConnectorSpec("acme.plugin", config={**secrets, "org": "acme-org"})
+    config = ScanConfig(connectors=[spec], plugins=["acme.plugin"])
+    path = tmp_path / "shadowscan.yaml"
+    path.write_text(
+        "connectors:\n  - name: code.github\n    org: acme-org\n    token: opaque-token-value-1\n"
+        "  - name: identity.google-workspace\n    service_account_file: /secure/keys/opaque-account-file-5.json\n"
+        "  - name: cloud.gcp\n    credentials_file: /secure/keys/opaque-credentials-file-6.json\n"
+    )
+    loaded = ScanConfig.from_yaml(path)
+    for shown in (repr(config), str(config), repr(spec), f"{config!s}", repr(loaded), str(loaded.connectors)):
+        assert not any(str(value).strip("[]'") in shown for value in secrets.values()), shown
+        assert "opaque" not in shown
+        assert "acme-org" in shown and "[REDACTED]" in shown
+    assert all(f"'{key}'" in repr(spec) for key in secrets)
+
+
+def test_relative_jwt_ca_bundle_resolves_beside_the_configuration_not_the_working_directory(
+    tmp_path, monkeypatch
+):
+    # The CA bundle replaces the default trust store for the JWKS fetch. A
+    # relative value must not pick up a same-named file from the directory
+    # the scanner runs in, such as a scanned checkout.
+    directory = tmp_path / "deployment"
+    directory.mkdir()
+    (directory / "internal-ca.pem").write_text("operator CA\n")
+    config = directory / "scan.yaml"
+    config.write_text(
+        "connectors:\n"
+        "  - name: identity.jwt\n"
+        "    input: tokens.txt\n"
+        "    jwks_url: https://keys.acme.example/jwks\n"
+        "    ca_bundle: internal-ca.pem\n"
+    )
+    elsewhere = tmp_path / "checkout"
+    elsewhere.mkdir()
+    (elsewhere / "internal-ca.pem").write_text("untrusted CA\n")
+    monkeypatch.chdir(elsewhere)
+
+    (spec,) = ScanConfig.from_yaml(config).connectors
+
+    assert spec.config["ca_bundle"] == str(directory / "internal-ca.pem")
+    assert spec.config["input"] == str(directory / "tokens.txt")

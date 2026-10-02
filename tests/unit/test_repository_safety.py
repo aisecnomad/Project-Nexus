@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+from shadowscan.comparison import IDENTITY_KEY_ENV
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code import filesystem
 from shadowscan.connectors.code.filesystem import FilesystemConnector
@@ -72,6 +73,13 @@ def test_codeowners_rule_limit_never_uses_partial_rules(tmp_path, run_connector,
 @pytest.mark.parametrize("branch", [" main", "main ", "main.", "heads/.hidden", "heads.lock/main"])
 def test_git_ref_validation_never_rewrites_or_accepts_invalid_components(branch):
     assert validate_git_ref(branch) is None
+
+
+def test_git_children_never_receive_the_report_identity_key(monkeypatch):
+    # Set through the constant, so renaming it without updating safe_git_env fails here.
+    monkeypatch.setenv(IDENTITY_KEY_ENV, "ab" * 32)
+    assert IDENTITY_KEY_ENV not in safe_git_env()
+    assert IDENTITY_KEY_ENV not in safe_git_env({"GIT_CONFIG_COUNT": "0"})
 
 
 def test_git_environment_discards_injected_configs_and_execution_overrides(monkeypatch):

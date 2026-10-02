@@ -2,7 +2,9 @@
 
 ShadowScan is configured through a YAML file passed with `-c` / `--config`.
 Environment variables are expanded using `${VAR}` syntax; missing required
-values fail closed.
+values fail closed. An invalid configuration, like an invalid command-line
+option, stops the command with exit code 1 before anything is scanned (see
+[exit codes](../operations/ci.md#exit-code-handling)).
 
 ## Common options
 
@@ -25,6 +27,7 @@ options:
   allow_credential_mixing: false      # permit repo + live tenant in one scan
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
+  plugin_execution: thread            # or process: killable spawned plugin workers
 
 connectors:
   - name: code.github
@@ -32,6 +35,13 @@ connectors:
     token: ${GITHUB_TOKEN}
   # ... see docs/connectors.md for all connector keys
 ```
+
+`plugin_execution: process` (or `--plugin-execution process`) runs each
+allowlisted third-party connector in its own spawned worker that the scanner
+can terminate at the connector deadline. Built-in connectors always use the
+thread backend. Workers keep the scanner's privileges and credentials: this is
+lifecycle isolation, not a sandbox. See
+[third-party plugin execution](../connectors.md#third-party-plugin-execution).
 
 ## Environment variable expansion
 

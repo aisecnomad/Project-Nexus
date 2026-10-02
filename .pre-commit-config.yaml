@@ -40,8 +40,12 @@ repos:
     rev: 7ff8d35ae36a7d2b968f2f90b4c723e292e594ee # v2.3.1
     hooks:
       - id: mypy
-        files: ^shadowscan/
+        files: ^(shadowscan|tools)/
+        # The hook runs in its own environment. click ships its own types; without
+        # it the decorated CLI is untyped and its `type: ignore` comments read as
+        # unused. Keep this pin equal to requirements.lock.
         additional_dependencies:
+          - click==8.5.0
           - types-PyYAML==6.0.12.20260906
           - types-requests==2.33.0.20260906
         args: [--ignore-missing-imports]
@@ -59,8 +63,8 @@ repos:
         name: Check for hardcoded secret patterns
         entry: python tools/check_secrets.py
         language: system
-        # `types` is an AND filter; `types_or` selects Python or YAML files.
-        types_or: [python, yaml]
-        # Tests and fixtures hold synthetic credential-shaped strings on purpose
-        # (the scanner's own detection and redaction tests need real shapes).
-        exclude: ^(tests/|shadowscan/signatures/data/)
+        # Every text file. Tests, fixtures, signature packs and evaluation
+        # corpora hold synthetic credential-shaped strings on purpose; the
+        # script skips them itself (EXCLUDED), so CI's run over `git ls-files`
+        # applies the same list.
+        types: [text]

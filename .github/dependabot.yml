@@ -65,8 +65,6 @@ updates:
     labels:
       - dependencies
       - docker
-    ignore:
-      # Refresh the Dockerfile base image digest only. The interpreter line
-      # follows the supported matrix in pyproject.toml and CI, not Docker Hub.
-      - dependency-name: python
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    # The Dockerfile pins chainguard/wolfi-base:latest by digest in both stages;
+    # Dependabot proposes the newer digest of that tag. Review it and keep both
+    # FROM lines equal (tests/test_repository_policy.py checks they are).

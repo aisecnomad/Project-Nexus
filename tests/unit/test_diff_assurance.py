@@ -3,6 +3,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import time
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -40,6 +42,12 @@ def _report(*findings: dict, complete: bool = True) -> dict:
         },
     ).to_dict()
     report["findings"] = list(findings)
+    # Keep the summary describing the injected records, as a real report's does.
+    report["summary"].update(
+        total=len(findings),
+        by_surface=dict(Counter(finding["surface"] for finding in findings)),
+        by_kind=dict(Counter(finding["kind"] for finding in findings)),
+    )
     return report
 
 
@@ -48,6 +56,18 @@ def _invoke(tmp_path: Path, baseline: dict, current: dict, *extra: str):
     before.write_text(json.dumps(baseline))
     after.write_text(json.dumps(current))
     return CliRunner().invoke(main, ["diff", str(before), str(after), *extra])
+
+
+def test_baseline_written_before_the_likelihood_rename_still_compares(tmp_path):
+    current = _finding("agent")
+    current["confidence"], current["likelihood"] = 0.95, "strong"
+    baseline = copy.deepcopy(current)
+    baseline["likelihood"] = "confirmed"  # what reports called the top bucket before it was renamed
+    result = _invoke(tmp_path, _report(baseline), _report(current), "--json")
+    assert result.exit_code == 0, result.output
+    output = json.loads(result.output)
+    assert output["comparable"] is True
+    assert output["new"] == [] and output["changed"] == [] and output["resolved"] == []
 
 
 def test_completed_comparable_report_can_resolve(tmp_path):
@@ -91,6 +111,50 @@ def test_unavailable_or_changed_scope_is_unknown(tmp_path, mutation):
     result = _invoke(tmp_path, before, after)
     assert result.exit_code == 3, result.output
     assert "0 resolved" in result.output and "1 unknown" in result.output
+
+
+@pytest.mark.parametrize("side", ["baseline", "current"])
+@pytest.mark.parametrize("mutation", ["emptied", "missing_total", "by_surface", "by_kind"])
+def test_summary_that_does_not_match_findings_is_unknown(tmp_path, side, mutation):
+    # Emptying the findings array of a complete report printed "1 resolved", exit 0.
+    before, after = _report(_finding("agent")), _report(_finding("agent"))
+    report = before if side == "baseline" else after
+    if mutation == "emptied":
+        report["findings"] = []
+    elif mutation == "missing_total":
+        report["summary"].pop("total")
+    else:
+        report["summary"][mutation] = {"cloud" if mutation == "by_surface" else "workflow": 1}
+    result = _invoke(tmp_path, before, after, "--json")
+    assert result.exit_code == 3, result.output
+    output = json.loads(result.output)
+    assert output["comparable"] is False and output["resolved"] == []
+    assert (
+        f"{side} summary counts do not match its findings (truncated or edited report)" in output["reasons"]
+    )
+    if mutation == "emptied" and side == "current":
+        assert [finding["resource"] for finding in output["unknown"]] == ["agent"]
+        text = _invoke(tmp_path, before, after)
+        assert text.exit_code == 3 and "0 resolved" in text.output and "1 unknown" in text.output
+
+
+@pytest.mark.parametrize("relation", ["new", "changed"])
+def test_text_output_of_a_long_imported_title_is_not_quadratic(tmp_path, relation):
+    # Rich's highlighter took about 30 s for a 50,000-character title.
+    title = "a" * 50_000
+    finding = _finding("repo/agent")
+    finding["title"] = title
+    changed = copy.deepcopy(finding)
+    changed["risk"] = {"level": "low", "score": 15, "factors": []}
+    before, after = (
+        (_report(), _report(finding)) if relation == "new" else (_report(finding), _report(changed))
+    )
+    started = time.perf_counter()
+    result = _invoke(tmp_path, before, after)
+    elapsed = time.perf_counter() - started
+    assert result.exit_code == 0, result.output
+    assert f"1 {relation}" in result.output and title in "".join(result.output.split())
+    assert elapsed < 1.0, elapsed
 
 
 def test_scope_mismatch_is_nonzero_even_without_missing_findings(tmp_path):
@@ -230,7 +294,7 @@ def test_invalid_config_does_not_echo_secret_yaml(tmp_path):
 
 def test_invalid_set_does_not_echo_credentials():
     result = CliRunner().invoke(main, ["run", "cloud.aws", "--set", "private-api-token"])
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert "private-api-token" not in result.output
 
 

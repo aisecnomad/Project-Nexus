@@ -15,7 +15,7 @@
 
 ### Required for all changes
 
-- [ ] `make lint` passes
+- [ ] `make lint` and `make format-check` pass
 - [ ] `make typecheck` passes
 - [ ] `pytest -q --cov=shadowscan --cov-fail-under=80` passes
 - [ ] `make audit` (`pip-audit`) reports no known vulnerabilities
@@ -29,7 +29,7 @@
 - [ ] Offline fixtures added (no live credentials in tests)
 - [ ] Connector handles API failures and marks coverage incomplete (exit 3)
 - [ ] New connector registered in `shadowscan/connectors/__init__.py`
-- [ ] `docs/connectors.md` updated with configuration keys and least-privilege scopes
+- [ ] `docs/connectors/reference.md` regenerated (`make connector-reference`) and least-privilege scopes documented in the connector guide
 - [ ] `shadowscan connectors` listing verified
 
 ### Required for signature changes

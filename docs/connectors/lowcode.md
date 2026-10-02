@@ -31,13 +31,24 @@ aggregated). Auth: `access_token` or client-credentials connected app.
 
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
-`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
+`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer. Live
+collection reads each table in windows of 500 rows (`sysparm_offset` 0, 500,
+1000, ...). ACLs remove rows after `sysparm_limit` is applied, so a window can
+come back short or even empty before the end of the table: collection stops
+only when the windows cover the table's `X-Total-Count`, the number of rows the
+query matches before that filtering. A response without a valid `X-Total-Count`
+cannot prove where the table ends: an empty page then ends the table with a
+warning and the scan is incomplete. `max_pages` bounds each table, and reaching
+it is incomplete.
 
 ### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
 GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
-steps (→ code-exec), models.
+steps (→ code-exec), models. A Zapier export record needs an `id`, `title`,
+`name` or `Zap` field; any other object is reported as an unsupported record
+and makes the scan incomplete. A CSV row whose cells are all blank is skipped
+without a diagnostic.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

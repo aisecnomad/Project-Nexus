@@ -37,6 +37,7 @@ stop and name one SHA. Operators who later deploy must pin that same SHA.
 5. [Evaluation](../evaluation.md) — what the corpora do and do not prove
 6. [Contributor review policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
 7. [Connector maturity and validation status](../connectors.md#validation-maturity-and-evidence-status) — check the published evidence level before treating a connector as production-accepted.
+8. [Merge policy enforcement](merge-policy.md) — compare the versioned policy with live settings; a policy file does not activate repository rules.
 
 ## What to run
 
@@ -91,6 +92,19 @@ For the October 1 discovery corrections, include these paired checks:
 - Capability assertions in the authored evaluation corpus, separately from
   binary agent-presence metrics. These are regression checks; commission fresh
   blinded human labels before claiming field accuracy.
+
+For the October 2 review corrections, also check:
+
+- A long JavaScript constructor versus its short equivalent: exceeding the
+  semantic budget must mark analysis incomplete and retain neighboring evidence.
+- Empty Genkit initialization versus a concrete agent definition or supported
+  registered-tool model call; check configured capabilities separately.
+- Slow HTTPS status/header delivery versus a healthy response and connection
+  reuse; cancellation must not close a socket already serving another request.
+- Container evidence for the exact built image, including database freshness,
+  OS/Python inventory and vulnerability failures. A smoke test alone is insufficient.
+- Disabled, bypassed or incomplete merge rules versus verified active settings.
+  A prepared settings patch is not evidence that the administrator applied it.
 
 Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be

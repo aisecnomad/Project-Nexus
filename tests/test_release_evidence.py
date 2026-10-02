@@ -13,9 +13,66 @@ import pytest
 import yaml
 
 from tools.release.evidence import verify_ci_run, verify_codeql_run, write_manifest
+from tools.release.rules import MAIN_RULESET_ID, verify_ruleset
 
 SHA = "a" * 40
 REPOSITORY = "aisecnomad/Project-Nexus"
+
+
+def _merge_rules() -> dict[str, Any]:
+    return verify_ruleset(
+        {
+            "id": MAIN_RULESET_ID,
+            "name": "Require CI and CodeQL",
+            "target": "branch",
+            "source_type": "Repository",
+            "source": REPOSITORY,
+            "enforcement": "active",
+            "bypass_actors": [],
+            "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+            "rules": [
+                {
+                    "type": "pull_request",
+                    "parameters": {
+                        "required_approving_review_count": 1,
+                        "dismiss_stale_reviews_on_push": True,
+                        "require_code_owner_review": False,
+                        "require_last_push_approval": True,
+                        "required_review_thread_resolution": True,
+                    },
+                },
+                {
+                    "type": "required_status_checks",
+                    "parameters": {
+                        "strict_required_status_checks_policy": True,
+                        "required_status_checks": [
+                            {"context": "CI gate", "integration_id": 15368},
+                            {"context": "analyze", "integration_id": 15368},
+                            {"context": "test (3.11)", "integration_id": 15368},
+                            {"context": "test (3.12)", "integration_id": 15368},
+                        ],
+                    },
+                },
+                {
+                    "type": "code_scanning",
+                    "parameters": {
+                        "code_scanning_tools": [
+                            {
+                                "tool": "CodeQL",
+                                "security_alerts_threshold": "medium_or_higher",
+                                "alerts_threshold": "errors",
+                            }
+                        ]
+                    },
+                },
+                {"type": "non_fast_forward"},
+                {"type": "required_signatures"},
+                {"type": "deletion"},
+            ],
+        },
+        repository=REPOSITORY,
+        default_branch="main",
+    )
 
 
 def _run(workflow: str = "ci") -> dict[str, Any]:
@@ -223,6 +280,7 @@ def candidate(tmp_path: Path) -> Path:
     (tmp_path / "codeql-verification.json").write_text(
         json.dumps(_verify_codeql(_run("codeql") | {"id": 456})), encoding="utf-8"
     )
+    (tmp_path / "merge-rule-verification.json").write_text(json.dumps(_merge_rules()), encoding="utf-8")
     (tmp_path / "runtime-sbom.cdx.json").write_text(
         json.dumps({"bomFormat": "CycloneDX", "components": [{"name": "click", "version": "8.1"}]}),
         encoding="utf-8",
@@ -242,6 +300,8 @@ def test_release_manifest_covers_every_artifact_and_detects_changed_bytes(candid
     assert "requirements-ci.lock" in {item["name"] for item in manifest["files"]}
     assert manifest["ci"]["id"] == 123
     assert manifest["codeql"]["id"] == 456
+    assert manifest["merge_rules"]["ruleset_id"] == MAIN_RULESET_ID
+    assert "merge-rule-verification.json" in {item["name"] for item in manifest["files"]}
     assert "not a claim" in manifest["scope"]["assurance"]
     checksums = (candidate / "SHA256SUMS").read_text().splitlines()
     checksummed = {}
@@ -272,6 +332,11 @@ def test_release_manifest_covers_every_artifact_and_detects_changed_bytes(candid
             "runtime-sbom.cdx.json",
             '{"bomFormat":"CycloneDX","components":[],"components":[{}]}',
             "runtime SBOM",
+        ),
+        (
+            "merge-rule-verification.json",
+            '{"ruleset_id":23913372,"ruleset_id":23913373}',
+            "saved merge-rule evidence",
         ),
     ],
 )
@@ -322,10 +387,46 @@ def test_release_evidence_refuses_mismatched_codeql(
 
 
 @pytest.mark.parametrize(
+    "field,value",
+    [("repository", "attacker/fork"), ("ruleset_id", MAIN_RULESET_ID + 1), ("default_branch", "other")],
+)
+def test_release_evidence_refuses_mismatched_merge_rule_receipt(
+    candidate: Path, field: str, value: Any
+) -> None:
+    saved_path = candidate / "merge-rule-verification.json"
+    receipt = json.loads(saved_path.read_text())
+    saved_path.write_text(json.dumps(receipt | {field: value}), encoding="utf-8")
+    with pytest.raises(ValueError, match="release source or ruleset"):
+        _manifest(candidate)
+    assert not (candidate / "SHA256SUMS").exists()
+
+
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("id", MAIN_RULESET_ID + 1, "ID does not match"),
+        ("source", "attacker/fork", "source does not match"),
+        ("enforcement", "disabled", "active"),
+    ],
+)
+def test_release_evidence_rechecks_saved_merge_rule_snapshot(
+    candidate: Path, field: str, value: Any, error: str
+) -> None:
+    saved_path = candidate / "merge-rule-verification.json"
+    receipt = json.loads(saved_path.read_text())
+    receipt["ruleset"][field] = value
+    saved_path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(ValueError, match=error):
+        _manifest(candidate)
+    assert not (candidate / "SHA256SUMS").exists()
+
+
+@pytest.mark.parametrize(
     "case",
     [
         "missing-sbom",
         "missing-codeql",
+        "missing-merge-rules",
         "missing-build-lock",
         "missing-ci-lock",
         "empty-sbom",
@@ -340,6 +441,8 @@ def test_release_evidence_refuses_incomplete_or_unsafe_bundle(candidate: Path, c
         (candidate / "runtime-sbom.cdx.json").unlink()
     elif case == "missing-codeql":
         (candidate / "codeql-verification.json").unlink()
+    elif case == "missing-merge-rules":
+        (candidate / "merge-rule-verification.json").unlink()
     elif case == "missing-build-lock":
         (candidate / "requirements-build.lock").unlink()
     elif case == "missing-ci-lock":
@@ -386,6 +489,12 @@ def test_release_workflow_limits_signing_to_artifacts_without_executing_source()
     assert 'gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CODEQL_RUN_ID"' in gate["run"]
     assert "verify-codeql" in gate["run"]
     assert '"$CANDIDATE_DIR/codeql-verification.json"' in gate["run"]
+    rules_gate = next(step for step in build["steps"] if step.get("name", "").startswith("Verify current"))
+    assert 'gh api "repos/$GITHUB_REPOSITORY/rulesets/23913372"' in rules_gate["run"]
+    assert "gh api \"repos/$GITHUB_REPOSITORY\" --jq '.default_branch'" in rules_gate["run"]
+    assert "python -m tools.release.rules verify" in rules_gate["run"]
+    assert '"$CANDIDATE_DIR/merge-rule-verification.json"' in rules_gate["run"]
+    assert rules_gate["env"] == {"GH_TOKEN": "${{ github.token }}"}
     assert attest["needs"] == "build"
     assert attest["permissions"] == {"contents": "read", "id-token": "write", "attestations": "write"}
     assert not any("checkout" in step.get("uses", "") for step in attest["steps"])

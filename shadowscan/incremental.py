@@ -27,7 +27,12 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
-from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES
+from shadowscan.connectors.code.filesystem import (
+    DEFAULT_EXCLUDES,
+    DISCLOSED_DEFAULT_EXCLUDES,
+    VCS_METADATA_EXCLUDES,
+    _holds_file,
+)
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
@@ -261,6 +266,7 @@ def _tree_digest(
     max_file_bytes: int,
     excluded_dir_names: frozenset[str] = frozenset(),
     unread_above: int | None = None,
+    skip_default_excludes: bool = True,
 ) -> str:
     """Digest a tree's content and metadata.
 
@@ -269,6 +275,10 @@ def _tree_digest(
     ``unread_above`` (the scanner's own ``max_file_size``) is never opened by
     the scanner, so only its metadata is tracked instead of aborting the
     fingerprint, which kept every tree with one oversize file out of the cache.
+    The scanner's built-in directory exclusions are skipped unless
+    ``skip_default_excludes`` is false (its ``default_excludes`` option): then
+    only version-control metadata is, and changes inside the other built-in
+    directories, which are scanned, must miss the cache.
     """
     digest = hashlib.sha256()
     if root.is_file():
@@ -308,7 +318,13 @@ def _tree_digest(
         kept: list[Path] = []
         for name in sorted(directories):
             path = basepath / name
-            if code and (name in DEFAULT_EXCLUDES or name in excluded_dir_names):
+            built_in = DEFAULT_EXCLUDES if skip_default_excludes else VCS_METADATA_EXCLUDES
+            if code and (name in built_in or name in excluded_dir_names):
+                if name in built_in and name in DISCLOSED_DEFAULT_EXCLUDES:
+                    # The scan warns about a skipped directory of this name that
+                    # holds a file; a cached result must not drop that warning.
+                    skipped = path.relative_to(root).as_posix()
+                    digest.update(_json(["skipped-directory", skipped, _holds_file(path)]))
                 continue
             if path.is_symlink():
                 # Ancillary readers such as CODEOWNERS can inspect descendants
@@ -352,8 +368,13 @@ def _checkout_container_digest(
     budget: _HashBudget,
     max_file_bytes: int,
     unread_above: int | None = None,
+    skip_default_excludes: bool = True,
 ) -> str:
-    """Offline provider inputs contain repositories; their names are not exclusions."""
+    """Offline provider inputs contain repositories; their names are not exclusions.
+
+    Inside each repository the provider scans like ``code.filesystem``, so its
+    ``default_excludes`` option decides whether built-in directories count.
+    """
     budget.check(entries=1)
     if not root.is_dir():
         raise ValueError("checkout container must be a directory")
@@ -381,6 +402,7 @@ def _checkout_container_digest(
                             budget=budget,
                             max_file_bytes=max_file_bytes,
                             unread_above=unread_above,
+                            skip_default_excludes=skip_default_excludes,
                         ),
                     ]
                 )
@@ -407,6 +429,16 @@ class _CacheEntry:
     inode: int
 
 
+def _state_home() -> Path:
+    """``$XDG_STATE_HOME``, which the XDG specification says to ignore when empty or relative.
+
+    Honouring an empty or relative value would put private scan state under
+    the current directory, typically the repository being scanned.
+    """
+    value = os.environ.get("XDG_STATE_HOME", "")
+    return Path(value) if os.path.isabs(value) else Path.home() / ".local" / "state"
+
+
 def _valid_slot(value: str) -> bool:
     return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
@@ -415,10 +447,13 @@ class IncrementalCache:
     def __init__(self, config: ScanConfig, index: SignatureIndex):
         self.config = config
         self.index = index
-        default = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / "shadowscan"
+        default = _state_home() / "shadowscan"
         self.directory = Path(config.state_dir).expanduser() if config.state_dir else default
         self.directory = self.directory.absolute()
         self.enabled = config.incremental and not config.dump_records
+        if config.incremental and config.dump_records:
+            # A cached result has no records to export, so record exports need a full scan.
+            log.warning("incremental cache not used: record exports (--dump-records) need a full scan")
         self.scanner_digest = ""
         self.signature_digest = ""
         if not self.enabled:
@@ -685,6 +720,7 @@ class IncrementalCache:
                         budget=budget,
                         max_file_bytes=max_bytes,
                         unread_above=unread_above,
+                        skip_default_excludes=spec.config.get("default_excludes", True) is True,
                     )
                 else:
                     digest = _tree_digest(
@@ -695,6 +731,7 @@ class IncrementalCache:
                         max_file_bytes=max_bytes,
                         excluded_dir_names=excluded_dir_names,
                         unread_above=unread_above,
+                        skip_default_excludes=spec.config.get("default_excludes", True) is True,
                     )
                 inputs.append([str(root), digest])
             fingerprint = hashlib.sha256(

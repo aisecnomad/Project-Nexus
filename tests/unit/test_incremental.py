@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -13,7 +14,7 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.engine import Engine
-from shadowscan.incremental import IncrementalCache, Snapshot
+from shadowscan.incremental import IncrementalCache, Snapshot, _json
 from shadowscan.models import Finding, Kind, ScanStats, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
@@ -276,6 +277,45 @@ def test_unusable_cache_falls_back_to_scan(tmp_path, index, monkeypatch, damage)
     result = Engine(cfg, index).run()
     assert result.findings and result.complete and not result.stats[0].cached
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("field, value", [("location", ["agent.py:1"]), ("attributes", [])])
+def test_malformed_cached_evidence_falls_back_before_postprocessing(
+    tmp_path, index, monkeypatch, field, value
+):
+    from shadowscan.incremental import _json
+
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    Engine(cfg, index).run()
+    entry = next((tmp_path / "state").glob("*.json"))
+    data = json.loads(entry.read_text())
+    data["payload"]["findings"][0]["evidence"][0][field] = value
+    # A checksum covers byte integrity, not the model contract. A stale or
+    # external cache producer can persist malformed data with a valid digest.
+    data["payload_sha256"] = hashlib.sha256(_json(data["payload"])).hexdigest()
+    entry.write_text(json.dumps(data))
+    result = Engine(cfg, index).run()
+    assert result.complete and result.findings and not result.stats[0].cached
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("weight", [7.5, -1, True, "0.9"])
+def test_cache_entry_with_an_invalid_evidence_weight_is_a_miss(tmp_path, index, monkeypatch, weight):
+    # The payload digest is recomputed, so only the weight makes the entry unusable. A corrupt
+    # weight must send the connector back to a full scan, not load as a confident finding.
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    Engine(cfg, index).run()
+    entry = next((tmp_path / "state").glob("*.json"))
+    data = json.loads(entry.read_text())
+    data["payload"]["findings"][0]["evidence"][0]["weight"] = weight
+    data["payload_sha256"] = hashlib.sha256(_json(data["payload"])).hexdigest()
+    entry.write_text(json.dumps(data))
+    result = Engine(cfg, index).run()
+    assert result.findings and result.complete and not result.stats[0].cached
+    assert len(calls) == 2
+    assert all(0 <= item.weight <= 1 for finding in result.findings for item in finding.evidence)
 
 
 def test_concurrent_cache_writers_publish_only_complete_matching_entries(tmp_path, index):
@@ -579,6 +619,32 @@ def test_literal_excluded_directory_reuses_cache_but_direct_codeowners_remains_t
     assert updated.findings[0].owner == "@second-team"
 
 
+def test_default_excludes_option_decides_whether_built_in_directories_are_fingerprinted(tmp_path, index):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["default_excludes"] = False
+    (tmp_path / "skipped").mkdir()
+    skipped = config(tmp_path / "skipped")
+    agent = tmp_path / "repo" / "bin" / "agent.py"
+    agent.parent.mkdir()
+    agent.write_text("import crewai\n")
+    ignored = tmp_path / "skipped" / "repo" / "bin" / "agent.py"
+    ignored.parent.mkdir()
+    ignored.write_text("import crewai\n")
+
+    # Scanned directory: a change inside it must miss the cache and be reported.
+    assert Engine(cfg, index).run().stats[0].cached is False
+    assert Engine(cfg, index).run().stats[0].cached
+    agent.write_text("import langgraph\n")
+    updated = Engine(cfg, index).run()
+    assert not updated.stats[0].cached
+    assert any("framework.langgraph" in f.frameworks for f in updated.findings)
+
+    # Skipped (default) directory: it is outside the scan, so a change there reuses the cache.
+    assert Engine(skipped, index).run().stats[0].cached is False
+    ignored.write_text("import langgraph\n")
+    assert Engine(skipped, index).run().stats[0].cached
+
+
 @pytest.mark.parametrize("limit", ["_MAX_HASH_BYTES", "_MAX_HASH_ENTRIES", "_MAX_HASH_SECONDS"])
 def test_fingerprint_work_limits_fall_back_to_full_scan(tmp_path, index, monkeypatch, limit):
     cfg = config(tmp_path)
@@ -676,6 +742,23 @@ def test_startup_maintenance_deadline_disables_cache_and_runs_full_scan(tmp_path
     assert result.complete and result.findings
     assert not result.stats[0].cached
     assert not list((tmp_path / "state").glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [{"incomplete": True}, {"errors": ["connector failed"]}, {"skipped": True}],
+    ids=["incomplete", "errors", "skipped"],
+)
+def test_a_result_that_is_not_a_clean_complete_scan_is_never_cached(tmp_path, index, flags):
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index)
+    snapshot = Snapshot("a" * 64, "b" * 64)
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z", **flags))
+    assert not (cache.directory / f"{snapshot.slot}.json").exists()
+    assert cache.load(cfg.connectors[0], snapshot) is None
+    # The same snapshot is stored when the scan was clean, so the refusal above is the flags' doing.
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z"))
+    assert (cache.directory / f"{snapshot.slot}.json").exists()
 
 
 def test_cache_load_propagates_connector_cancellation(tmp_path, index):
@@ -915,3 +998,77 @@ def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     changed = Engine(cfg, index).run()
     assert changed.complete and not changed.stats[0].cached
     assert changed.findings[0].owner == "bob@example.com"
+
+
+@pytest.mark.parametrize("value", [None, "", "relative/state", "."])
+def test_default_state_directory_ignores_empty_or_relative_xdg_state_home(
+    tmp_path, monkeypatch, index, value
+):
+    from shadowscan.incremental import IncrementalCache
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    if value is None:
+        monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    else:
+        monkeypatch.setenv("XDG_STATE_HOME", value)
+    cache = IncrementalCache(ScanConfig(), index)
+    assert cache.directory == tmp_path / "home" / ".local" / "state" / "shadowscan"
+
+
+@pytest.mark.parametrize("incremental", [True, False])
+def test_record_exports_disabling_the_cache_is_announced(tmp_path, caplog, index, incremental):
+    from shadowscan.incremental import IncrementalCache
+
+    config = ScanConfig(
+        incremental=incremental, dump_records=str(tmp_path / "exports"), state_dir=str(tmp_path)
+    )
+    with caplog.at_level("WARNING", logger="shadowscan.incremental"):
+        assert not IncrementalCache(config, index).enabled
+    expected = ["incremental cache not used: record exports (--dump-records) need a full scan"]
+    assert [record.getMessage() for record in caplog.records] == (expected if incremental else [])
+
+
+def test_absolute_xdg_state_home_is_used(tmp_path, monkeypatch, index):
+    from shadowscan.incremental import IncrementalCache
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    assert IncrementalCache(ScanConfig(), index).directory == tmp_path / "state" / "shadowscan"
+
+
+@pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
+def test_offline_checkout_fingerprint_follows_the_default_excludes_option(tmp_path, index, connector):
+    # With default_excludes false the provider scans vendor/, so a change there
+    # must miss the cache instead of replaying a complete result without it.
+    cfg = config(tmp_path)
+    clones = tmp_path / "clones"
+    vendored = clones / "acme__repo" / "vendor" / "helper.py"
+    vendored.parent.mkdir(parents=True)
+    vendored.write_text("print('unrelated')\n")
+    options = {"input": str(clones), "use_git": False, "default_excludes": False}
+    cfg.connectors = [ConnectorSpec(connector, options)]
+    first = Engine(cfg, index).run()
+    assert first.complete and not first.findings
+    assert Engine(cfg, index).run().stats[0].cached
+    vendored.write_text("import langgraph\n")
+    changed = Engine(cfg, index).run()
+    assert changed.complete and not changed.stats[0].cached
+    assert any("framework.langgraph" in f.frameworks for f in changed.findings)
+
+
+def test_default_excluded_directory_that_gains_a_file_is_disclosed_despite_the_cache(tmp_path, index):
+    # The scan warns about a skipped vendor/ that holds files; whether it does
+    # is part of the fingerprint, so the warning cannot be lost to a stale entry.
+    cfg = config(tmp_path)
+    vendored = tmp_path / "repo" / "vendor"
+    vendored.mkdir()
+    first = Engine(cfg, index).run()
+    assert not any("default-excluded" in w for w in first.stats[0].warnings)
+    assert Engine(cfg, index).run().stats[0].cached
+    (vendored / "agent.py").write_text("import crewai\n")
+    changed = Engine(cfg, index).run()
+    assert not changed.stats[0].cached
+    assert any("default-excluded directories not scanned: vendor" in w for w in changed.stats[0].warnings)
+    replayed = Engine(cfg, index).run()
+    assert replayed.stats[0].cached
+    assert replayed.stats[0].warnings == changed.stats[0].warnings

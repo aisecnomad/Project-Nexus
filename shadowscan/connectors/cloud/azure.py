@@ -15,6 +15,7 @@ Offline export: JSONL of dumped records (``_kind`` per record).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar, TypedDict
 from urllib.parse import parse_qs, urlsplit
@@ -35,7 +36,7 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials
-from shadowscan.connectors.common import apply_matches, config_boolean, model_matches
+from shadowscan.connectors.common import apply_matches, config_boolean, failure_summary, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
@@ -90,6 +91,23 @@ _RETRIEVAL_TOOLS = {"file_search", "azure_ai_search", "sharepoint_grounding"}
 # Bot endpoints hosted by Copilot Studio (Power Virtual Agents) rather than Bot Framework code.
 _COPILOT_STUDIO_HINTS = ("copilot", "powerplatform", "pva")
 _BROAD_ROLES = {"Owner", "Contributor"}
+# Identifiers from ARM responses become request paths sent with the ARM token.
+# A subscription id is a GUID. A resource id is "/"-separated nonempty segments
+# without whitespace, control characters, "?", "#", "%" or "\": requests removes
+# "." and ".." segments, and a query or fragment cuts off the suffix the
+# connector appends, so either could redirect a call to another ARM operation.
+_SUBSCRIPTION_ID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
+_ARM_RESOURCE_ID = re.compile(r"(?:/[^/?#%\\\s\x00-\x1f\x7f-\x9f]++)++")
+_MAX_ARM_ID_CHARS = 4096
+
+
+def _arm_resource_id(value: str) -> bool:
+    """Whether a response-derived ARM resource id is safe to use as a request path."""
+    return (
+        len(value) <= _MAX_ARM_ID_CHARS
+        and _ARM_RESOURCE_ID.fullmatch(value) is not None
+        and not {".", ".."}.intersection(value.split("/"))
+    )
 
 
 class _ResourceBase(TypedDict):
@@ -103,10 +121,6 @@ def _subscription(resource_id: str) -> str | None:
     if "/subscriptions/" not in resource_id:
         return None
     return resource_id.split("/subscriptions/")[-1].split("/")[0]
-
-
-def _failure(exc: Exception) -> str:
-    return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
 
 
 class AzureConnector(BaseConnector):
@@ -130,7 +144,11 @@ class AzureConnector(BaseConnector):
         "foundry_token": (
             "token for https://ai.azure.com/.default to list Foundry agents (auto-minted with azure-identity)"
         ),
-        "include_app_settings": "read App Service settings (names + credential detection) (default true)",
+        "include_app_settings": (
+            "read App Service settings for names and credential detection (default true). The "
+            "config/appsettings/list call returns plaintext values and needs "
+            "Microsoft.Web/sites/config/list/action (Contributor-class); false skips it"
+        ),
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
@@ -189,7 +207,7 @@ class AzureConnector(BaseConnector):
         if self._cred is not None:
             try:
                 self._foundry_token = self._cred.get_token("https://ai.azure.com/.default").token
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - _collect_agents reports a missing token as incomplete
                 self.log.debug("foundry token acquisition failed (%s)", type(exc).__name__)
         return self._foundry_token
 
@@ -201,7 +219,9 @@ class AzureConnector(BaseConnector):
                 params = {"api-version": api, **params}
             return self.http.get_json(path, params=params or None)
         except (HttpError, RequestException, ValueError) as exc:
-            self.ctx.warn(f"cloud.azure: {_failure(exc)} for {path}; coverage unknown", incomplete=True)
+            self.ctx.warn(
+                f"cloud.azure: {failure_summary(exc)} for {path}; coverage unknown", incomplete=True
+            )
             return None
 
     def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[Any] | None:
@@ -222,7 +242,9 @@ class AzureConnector(BaseConnector):
             try:
                 data = self._get(path, api)
             except (HttpError, RequestException, ValueError) as exc:
-                self.ctx.warn(f"cloud.azure: list collection failed ({_failure(exc)}); coverage unknown")
+                self.ctx.warn(
+                    f"cloud.azure: list collection failed ({failure_summary(exc)}); coverage unknown"
+                )
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("value"), list):
                 self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
@@ -255,11 +277,7 @@ class AzureConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        subs = self.subscriptions or [
-            s["subscriptionId"]
-            for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []
-            if isinstance(s.get("subscriptionId"), str)
-        ]
+        subs = self.subscriptions or self._listed_subscriptions()
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
         for r in self._resource_graph(subs):
@@ -273,6 +291,13 @@ class AzureConnector(BaseConnector):
             if not isinstance(rid, str) or not rid.strip():
                 self.ctx.warn("cloud.azure: Resource Graph resource has no valid identifier", incomplete=True)
                 continue
+            if not _arm_resource_id(rid):
+                self.ctx.warn(
+                    "cloud.azure: Resource Graph resource identifier is not a plain ARM path; resource "
+                    "skipped, coverage incomplete",
+                    incomplete=True,
+                )
+                continue
             r["_kind"] = "resource"
             yield r
             yield from self._resource_details(r, rid)
@@ -282,13 +307,31 @@ class AzureConnector(BaseConnector):
                 role_id = str(get_path(ra, "properties.roleDefinitionId", default="")).rsplit("/", 1)[-1]
                 if role_id in AI_ROLE_IDS:
                     yield {
+                        **(ra.get("properties") or {}),
                         "_kind": "role-assignment",
                         "_subscription": sub,
                         "role_id": role_id,
                         "role": AI_ROLE_IDS[role_id],
-                        **(ra.get("properties") or {}),
                         "id": ra.get("id"),
                     }
+
+    def _listed_subscriptions(self) -> list[str]:
+        """The visible subscriptions' ids; a listing without a GUID id is reported, never requested."""
+        subs: list[str] = []
+        invalid = 0
+        for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []:
+            sub = s.get("subscriptionId")
+            if isinstance(sub, str) and _SUBSCRIPTION_ID.fullmatch(sub):
+                subs.append(sub)
+            else:
+                invalid += 1
+        if invalid:
+            self.ctx.warn(
+                f"cloud.azure: {invalid} listed subscriptions have no valid subscription id (a GUID) and "
+                "were not scanned; coverage incomplete",
+                incomplete=True,
+            )
+        return subs
 
     def _resource_graph(self, subs: list[str]) -> list[Any]:
         """Every Resource Graph row for the subscriptions, unchecked: the caller validates each row."""
@@ -309,7 +352,8 @@ class AzureConnector(BaseConnector):
                 )
             except (HttpError, RequestException, ValueError) as exc:
                 self.ctx.warn(
-                    f"cloud.azure: Resource Graph collection failed ({_failure(exc)}); coverage unknown"
+                    f"cloud.azure: Resource Graph collection failed ({failure_summary(exc)}); "
+                    "coverage unknown"
                 )
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
@@ -341,7 +385,7 @@ class AzureConnector(BaseConnector):
         t = str(r.get("type", "")).lower()
         if t == "microsoft.cognitiveservices/accounts":
             for d in self._list(f"{rid}/deployments", "2024-10-01", allow_partial=True) or []:
-                yield {"_kind": "deployment", "_account": rid, "_account_name": r.get("name"), **d}
+                yield {**d, "_kind": "deployment", "_account": rid, "_account_name": r.get("name")}
             diag = self._list(
                 f"{rid}/providers/Microsoft.Insights/diagnosticSettings",
                 "2021-05-01-preview",
@@ -405,7 +449,15 @@ class AzureConnector(BaseConnector):
                     "environment": settings["properties"],
                 }
             except (HttpError, RequestException, ValueError) as exc:
-                self.ctx.warn(f"cloud.azure: appsettings {_failure(exc)} for {rid}", incomplete=True)
+                hint = ""
+                if isinstance(exc, HttpError) and exc.status in (401, 403):
+                    hint = (
+                        " (needs Microsoft.Web/sites/config/list/action; "
+                        "set include_app_settings: false to skip app settings)"
+                    )
+                self.ctx.warn(
+                    f"cloud.azure: appsettings {failure_summary(exc)} for {rid}{hint}", incomplete=True
+                )
 
     def _collect_agents(self, account: dict[str, Any], project: dict[str, Any]) -> Iterator[dict[str, Any]]:
         token = self._foundry()
@@ -442,7 +494,7 @@ class AzureConnector(BaseConnector):
                 data = http.get_json("/assistants", params=dict(params))
             except (HttpError, RequestException, ValueError) as exc:
                 self.ctx.warn(
-                    f"cloud.azure: Foundry agents {_failure(exc)}; coverage unknown",
+                    f"cloud.azure: Foundry agents {failure_summary(exc)}; coverage unknown",
                     incomplete=True,
                 )
                 return

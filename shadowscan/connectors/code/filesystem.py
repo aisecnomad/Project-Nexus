@@ -30,11 +30,22 @@ Precision safeguards
   environment-variable or display-name reference, the heuristics are dropped
   and the finding is built from the name references alone: evidence weights
   are halved, the finding is tagged ``env-names-only`` and confidence is
-  capped below the ``confirmed`` band.
+  capped below the ``strong`` band.
+* A detection-rule pack (a ShadowScan signature pack, Semgrep or Sigma rules,
+  a gitleaks configuration; see ``rule_packs``) lists the names and hosts it
+  detects. Its content is never usage or configuration evidence; the project
+  finding lists such files under ``detection_rule_files``. File-name signals
+  and credentials in them are still reported.
+* A data or prose file that only lists products (a blocklist, a vendor
+  policy, a copy of the signature packs: four or more products by domain or
+  variable name, no import, dependency, code or other structural evidence) is
+  a catalog. Its mentions count only for a signature with library evidence
+  elsewhere in the project (``shadowscan.connectors.code.catalogs``).
 """
 
 from __future__ import annotations
 
+import ast
 import errno
 import fnmatch
 import hashlib
@@ -44,18 +55,33 @@ import stat
 import subprocess
 import time
 import tomllib
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
+import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.code.catalogs import (
+    CATALOG_MIN_SIGNATURES,
+    catalog_metadata,
+    configuration_document,
+    project_catalog_files,
+)
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
-from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
+from shadowscan.connectors.code.manifests import (
+    MANIFEST_PATTERN_SECONDS,
+    Artifact,
+    Dep,
+    is_manifest_name,
+    manifest_comment_projection,
+    parse_manifest,
+)
 from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -67,6 +93,7 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
+from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
     has_template_markers,
@@ -75,7 +102,12 @@ from shadowscan.connectors.code.semantic_config import (
     structured_code_matches,
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
-from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded, bound_source_matches
+from shadowscan.connectors.code.source_semantics import (
+    MAX_CALL_TEXT,
+    SourceBudgetExceeded,
+    SourceNotParsed,
+    bound_source_matches,
+)
 from shadowscan.connectors.common import (
     apply_matches,
     cap_confidence,
@@ -85,15 +117,26 @@ from shadowscan.connectors.common import (
     placeholder_reason,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.signatures import Match
-from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
+from shadowscan.signatures import Match, Signature
+from shadowscan.signatures.loader import builtin_signature_dir
+from shadowscan.signatures.matcher import (
+    SOURCE_EXTENSIONS,
+    MatchTimeoutError,
+    language_for_path,
+    pattern_timeout,
+)
 from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
 from shadowscan.utils.git import (
+    LFS_POINTER_MAX_BYTES,
+    LFS_POINTER_PREFIX,
     MAX_GITMODULES_BYTES,
+    MetadataOutputLimitError,
+    MetadataTimeoutError,
     declared_submodule_paths,
     metadata_git_argv_prefix,
     metadata_git_env,
     read_gitlink_paths,
+    run_bounded_metadata,
 )
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
@@ -104,7 +147,13 @@ from shadowscan.utils.safe_yaml import (
     YAMLResourceLimitError,
     strict_bounded_safe_load,
 )
-from shadowscan.utils.text import notebook_to_source, parse_timestamp, read_text, redact, truncate
+from shadowscan.utils.text import (
+    notebook_to_source,
+    parse_timestamp,
+    read_text,
+    redact,
+    truncate,
+)
 
 # Manifests that configure the code of the project containing them. A2A cards
 # and M365 declarative agents declare a separately addressable agent (its own
@@ -113,6 +162,13 @@ _PROJECT_MANIFESTS = frozenset({"crewai", "langgraph"})
 
 # Registered MCP tool names retained per project.
 _MAX_MCP_TOOLS = 200
+# Detection-rule pack paths listed in a project finding's metadata.
+_MAX_LISTED_RULE_FILES = 20
+
+# Git identities must not turn a small compressed commit into a large report.
+_MAX_GIT_AUTHOR_CHARS = 1024
+_MAX_GIT_EMAIL_CHARS = 1024
+_MAX_GIT_TIMESTAMP_CHARS = 64
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
@@ -167,6 +223,38 @@ DEFAULT_EXCLUDES = {
     "thirdparty",
     "external",
 }
+# The walk skips every DEFAULT_EXCLUDES name at any depth unless the connector
+# option `default_excludes` is false. Most are tool metadata, caches,
+# virtualenvs, dependency trees and IDE state that never hold a project's own
+# source: those are skipped without comment. The names here are build output or
+# vendored code by convention, but projects also keep first-party code in them
+# (scripts in bin/, an agent under vendor/ or build/). A directory with these
+# names that holds a file is reported as a scan warning (not incomplete) so the
+# omission is visible. This is the one definition of the split.
+DISCLOSED_DEFAULT_EXCLUDES = frozenset(
+    {
+        "bin",
+        "build",
+        "dist",
+        "out",
+        "target",
+        "obj",
+        "coverage",
+        "vendor",
+        "third_party",
+        "thirdparty",
+        "external",
+    }
+)
+# Version-control metadata is never project content (its index and objects are
+# binary, so each would be a coverage gap): it stays excluded even when
+# `default_excludes` is false.
+VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
+# Entries inspected to decide whether a skipped directory holds any file.
+_EMPTY_DIRECTORY_PROBE_ENTRIES = 256
+
+# Non-regular entries named individually per root, before the rest are summarized.
+_MAX_NON_REGULAR_NOTES = 10
 
 LOCK_FILES = {
     "package-lock.json",
@@ -245,11 +333,29 @@ DEADLINE_MARGIN_MIN_SECONDS = 0.25
 
 # Generated or locked files the walker never reads at any size.
 _NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
+# A name no real file can have (a path component cannot contain NUL), so only
+# a wildcard glob segment such as ``**`` matches it.
+_ANY_FILE_NAME = "\x00"
+# The first line of a Git LFS pointer file (at most LFS_POINTER_MAX_BYTES long).
+_LFS_POINTER_TEXT = LFS_POINTER_PREFIX.decode("ascii")
 
 
 def _never_read_by_name(name: str) -> bool:
     """Whether the walker skips ``name`` silently because it never carries evidence."""
     return name in LOCK_FILES or name.endswith(_NEVER_READ_SUFFIXES)
+
+
+def _special_file_kind(mode: int) -> str:
+    """Name the kind of a non-regular, non-directory entry for diagnostics."""
+    for test, kind in (
+        (stat.S_ISFIFO, "FIFO"),
+        (stat.S_ISSOCK, "socket"),
+        (stat.S_ISCHR, "character device"),
+        (stat.S_ISBLK, "block device"),
+    ):
+        if test(mode):
+            return kind
+    return "special file"
 
 
 PROJECT_ROOT_MARKERS = {
@@ -290,6 +396,34 @@ def _marks_project(directory: Path, names: Iterable[str]) -> bool:
         name in PROJECT_ROOT_MARKERS and (name != "setup.py" or _packaging_setup_script(directory / name))
         for name in names
     )
+
+
+def _holds_file(directory: Path) -> bool:
+    """Whether a skipped ``directory`` holds anything that is not a directory.
+
+    Probes at most ``_EMPTY_DIRECTORY_PROBE_ENTRIES`` entries without following
+    a link (a link in place of the directory is not listed at all). A tree the
+    probe cannot finish or cannot list counts as non-empty, so the omission is
+    disclosed rather than assumed to be nothing.
+    """
+    try:
+        if directory.is_symlink():
+            return False
+    except OSError:
+        return True
+    pending = [directory]
+    inspected = 0
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    inspected += 1
+                    if inspected > _EMPTY_DIRECTORY_PROBE_ENTRIES or not entry.is_dir(follow_symlinks=False):
+                        return True
+                    pending.append(Path(entry.path))
+        except OSError:
+            return True
+    return False
 
 
 TEXT_CONFIG_EXTENSIONS = {
@@ -383,11 +517,35 @@ _WORKFLOW_EXTENSIONS = frozenset({".json", ".yaml", ".yml"})
 # Coding-agent sub-agent and rule definitions (Markdown with YAML front matter).
 _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/", ".windsurf/rules/")
 
-_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
+# Agent definition front matter. Only horizontal whitespace may follow a
+# marker: ``\s*`` before a required newline backtracks quadratically over a
+# run of blank lines, which a planted file makes as long as it likes. The
+# possessive quantifier never backtracks, and the bounded engine applies the
+# per-input matching budget where the pattern runs (_parse_agent_definition).
+_FRONTMATTER = regex.compile(r"^---[ \t\r]*+\n(.*?)\n---[ \t\r]*+\n", regex.S)
+# Front-matter keys whose bare glob values _quote_glob_values quotes.
+_GLOB_KEYS = ("globs", "paths")
+# A YAML comment starts at a "#" that follows a space or tab.
+_COMMENT_START = re.compile(r"[ \t]#")
 # Files whose parsed structure supplies credential context for excerpt
 # redaction (see _structured_context).
 _JSON_SUFFIXES = (".json", ".jsonc", ".json5")
 _YAML_SUFFIXES = (".yaml", ".yml")
+# File names that only ever hold MCP client/server configuration. Any other
+# file is MCP configuration only when its parsed structure configures a server.
+_DEDICATED_MCP_CONFIG_NAMES = frozenset(
+    {
+        ".mcp.json",
+        "mcp.json",
+        "mcp-config.json",
+        "mcp_config.json",
+        "mcp-servers.json",
+        "claude_desktop_config.json",
+        "cline_mcp_settings.json",
+        "mcp_settings.json",
+        "smithery.yaml",
+    }
+)
 
 # Documentation placeholders are informational: enough to be listed, never
 # enough to establish a technology or raise risk.
@@ -420,6 +578,10 @@ class _Project:
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
+    detection_rules: dict[str, int] = field(default_factory=dict)  # rule-pack format -> files
+    detection_rule_files: list[str] = field(default_factory=list)  # the first, in walk order
+    # Data files that declare what a deployment or a job runs with: never catalogs.
+    configuration_files: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -430,6 +592,7 @@ class _ScanState:
     label: str  # resource prefix of every finding
     # Descriptor of the directory files are read relative to, open during the walk.
     root_fd: int = -1
+    base: Path | None = None  # that directory (the scan root, or a single-file root's parent)
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
     # relpath, parsed servers
@@ -457,6 +620,10 @@ class _ScanState:
         )
 
 
+# The span of each code cell in a notebook's text; empty for any other file.
+_CellSpans = tuple[tuple[int, int], ...]
+
+
 @dataclass
 class _SourceFile:
     """One file under analysis and the state its analysis passes share."""
@@ -477,7 +644,8 @@ class _SourceFile:
     card_valid: bool = False
     is_mcp: bool = False
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
-    mcp_active: bool = False  # at least one configured MCP server is enabled
+    mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
+    cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
 
     @property
     def name(self) -> str:
@@ -505,7 +673,7 @@ class _ProjectEvidence:
         # Environment-variable and display-name references are weak
         # anchors, so they are judged before heuristics join: an agent
         # loop or subprocess.run next to a .env.example must not promote
-        # the project to a confirmed agent with autonomous or code-exec
+        # the project to a strong agent with autonomous or code-exec
         # capabilities. Such a finding is built from the name references
         # alone. A live credential is not a name: it keeps full weights
         # and lets the heuristics count. Every anchor is non-heuristic,
@@ -616,8 +784,12 @@ _LLM_CATEGORIES = frozenset({"provider", "framework", "protocol", "platform", "c
 # Signatures that are only meaningful when the same file also invokes an LLM.
 _COLOCATED_SIGNATURES = frozenset({"heuristic.llm-command-execution"})
 # IAM statements granting every action (Terraform, CloudFormation, ARM/Bicep JSON).
-_IAM_WILDCARD_RE = re.compile(
-    r"""(?i)["']?\bActions?["']?\s*[:=]\s*\[?\s*["']\*["']"""
+# Whitespace runs are matched possessively: ``\s*\[?\s*`` backtracks
+# quadratically over a long run of blank space after ``Action:``, and the
+# stdlib engine cannot be interrupted. The bounded engine applies the
+# per-input matching budget where the pattern runs (_scan_iac).
+_IAM_WILDCARD_RE = regex.compile(
+    r"""(?i)["']?\bActions?["']?\s*+[:=]\s*+(?:\[\s*+)?["']\*["']"""
     r"""|["'](?:bedrock|iam|sts|lambda|s3|secretsmanager|kms):\*["']"""
 )
 _IAC_MODEL_RE = re.compile(
@@ -625,6 +797,15 @@ _IAC_MODEL_RE = re.compile(
     r"""["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9._:/@-]{2,199})["']"""
 )
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
+
+
+def _pattern_timeout() -> float:
+    """Per-call ceiling for the regexes this module runs outside the signature matcher.
+
+    Like the manifest parsers, well above the matcher's 100 ms so an ordinary large file does not
+    time out under CPU contention between parallel connectors; the file's scan budget still caps it.
+    """
+    return pattern_timeout(MANIFEST_PATTERN_SECONDS)
 
 
 def _exception_name(exc: Exception) -> str:
@@ -666,6 +847,15 @@ def _is_test_path(rel: str) -> bool:
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
 
 
+# A signature's source names its pack file (as the validator's namespace check reads it).
+_BUNDLED_PACKS = os.path.join(os.path.abspath(builtin_signature_dir()), "")
+
+
+def _bundled_signature(signature: Signature) -> bool:
+    """Whether ``signature`` comes from the packs that ship with the scanner, not a custom pack."""
+    return signature.source is not None and signature.source.startswith(_BUNDLED_PACKS)
+
+
 _CODING_AGENT_DOC_NAMES = frozenset(
     {
         "agents.md",
@@ -691,6 +881,11 @@ def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     return target if target == resolved_root or resolved_root in target.parents else None
 
 
+def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
+    """The project directory of ``path`` under its on-disk name; ``proj_root`` is the report-safe form."""
+    return root.joinpath(*path.relative_to(root).parts[: len(PurePosixPath(proj_root).parts)])
+
+
 def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[[str], bool]:
     """Return a cached check whether an import in ``path`` names a module of the scanned tree."""
     local_modules: dict[str, bool] = {}
@@ -706,7 +901,7 @@ def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[
                 module,
                 scan_root=root,
                 source_path=path,
-                project_root=root if proj_root == "." else root / proj_root,
+                project_root=root if proj_root == "." else _on_disk_project(root, path, proj_root),
             )
         return local_modules[name]
 
@@ -739,6 +934,22 @@ def deadline_margin(remaining: float) -> float:
     engine's own sanitization before it compares completion to the deadline.
     """
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
+
+
+def _validated_names(value: Any, key: str) -> list[str]:
+    """A list-typed option: a list of non-empty strings, or unset.
+
+    A bare string must not pass: iterated per character, ``exclude: "vendor/*"``
+    would become the patterns ``/`` and ``*`` and exclude the whole tree. The
+    message names the option, never its value.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ConnectorError(f"code.filesystem: {key} must be a list of non-empty strings")
+    return list(value)
 
 
 def _validated_globs(value: Any) -> list[str]:
@@ -806,6 +1017,14 @@ class FilesystemConnector(BaseConnector):
             validate_root_ids(roots, root_ids)
         return True
 
+    @classmethod
+    def scanned_local_paths(cls, config: dict[str, Any]) -> list[str]:
+        # Engine hook: the configured paths are the scan subject, unless an export is replayed.
+        if config.get("input"):
+            return []
+        raw = config.get("paths") or [config.get("path")]
+        return [path for path in raw if isinstance(path, str) and path] if isinstance(raw, list) else []
+
     name: ClassVar[str] = "code.filesystem"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "filesystem"
@@ -816,7 +1035,15 @@ class FilesystemConnector(BaseConnector):
     config_keys: ClassVar[dict[str, str]] = {
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
-        "exclude": "extra directory names / glob patterns to skip",
+        "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
+        "default_excludes": (
+            "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
+            "state, and build-output or vendored names such as bin, build, dist, vendor) at any depth "
+            "(default true); a skipped non-empty bin/build/dist/out/target/obj/coverage/vendor/"
+            "third_party/thirdparty/external directory is reported as a warning. false scans all of "
+            "them, including node_modules and virtualenvs unless `exclude` names them; VCS metadata "
+            "(.git, .hg, .svn) is never scanned"
+        ),
         "max_file_size": (
             "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs "
             "matches it (default 1,000,000 bytes)"
@@ -826,7 +1053,7 @@ class FilesystemConnector(BaseConnector):
             "warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, "
             "fonts, archives and compiled artifacts)"
         ),
-        "max_files": "stop after this many files (default 100000)",
+        "max_files": "stop after this many files and symbolic links (default 100000)",
         "max_notebook_size": (
             "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even "
             "when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a "
@@ -847,8 +1074,9 @@ class FilesystemConnector(BaseConnector):
             "(default false)"
         ),
         "strict_coverage": (
-            "report coverage gaps (unread analyzable oversize files, symbolic links whose alias path is not "
-            "covered) as errors instead of warnings; either way the scan is incomplete (default false)"
+            "report coverage gaps (unread analyzable oversize files, non-regular entries named like "
+            "configuration files, symbolic links whose alias path is not covered) as errors instead of "
+            "warnings; either way the scan is incomplete (default false)"
         ),
         "include_tests": (
             "let test and fixture code establish agents and credential findings at full weight "
@@ -892,13 +1120,21 @@ class FilesystemConnector(BaseConnector):
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
-        extra = ctx.get("exclude", []) or []
-        self.exclude_names = set(DEFAULT_EXCLUDES) | {e for e in extra if "*" not in e and "/" not in e}
+        extra = _validated_names(ctx.get("exclude"), "exclude")
+        self.default_excludes = config_boolean(ctx.get("default_excludes", True), "default_excludes")
+        self._explicit_exclude_names = frozenset(e for e in extra if "*" not in e and "/" not in e)
+        self.exclude_names = (
+            set(DEFAULT_EXCLUDES) if self.default_excludes else set(VCS_METADATA_EXCLUDES)
+        ) | self._explicit_exclude_names
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
+        # Default-excluded directory names the current walk skipped, with counts.
+        self._default_skipped: dict[str, int] = {}
         self.label: str | None = ctx.get("label")
         # Every labeled `paths` root has its own identity, even if the list
         # shrinks to one. The engine marks a child split for incremental reuse.
         paths = ctx.get("paths")
+        # Iterated per character, a bare string would name roots such as "/".
+        _validated_names(paths, "paths")
         self._shared_label_roots = isinstance(paths, list) or ctx.get("_shared_label_roots") is True
         if self.label and isinstance(paths, list):
             validate_distinct_paths(paths)
@@ -981,6 +1217,48 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
+    def _analyzed_name(self, rel: str, name: str) -> bool:
+        """Whether the scanner would read a regular file called ``name`` for evidence.
+
+        Names without an extension count only when they are manifests, MCP
+        configuration or carry a file-name signature; other extensionless
+        entries (executables, sockets) are not analyzable by name.
+        """
+        ext = Path(name).suffix.lower()
+        return (
+            ext in SOURCE_EXTENSIONS
+            or ext in TEXT_CONFIG_EXTENSIONS
+            or is_manifest_name(name)
+            or name in MCP_CONFIG_NAMES
+            or bool(self.index.match_file(rel))
+        )
+
+    def _disclosed_default_exclusion(self, rel: str, name: str) -> bool:
+        """Whether only a built-in exclusion of a disclosed name skips this directory.
+
+        A quiet name (``DISCLOSED_DEFAULT_EXCLUDES`` lists the others), and a
+        name or glob the operator excluded explicitly, skip without comment.
+        """
+        return (
+            self.default_excludes
+            and name in DISCLOSED_DEFAULT_EXCLUDES
+            and name not in self._explicit_exclude_names
+            and not self._excluded_file(rel)
+        )
+
+    def _report_default_excluded(self, scan: _ScanState) -> None:
+        """Warn once per root about the non-empty built-in-excluded directories the walk skipped."""
+        skipped, self._default_skipped = self._default_skipped, {}
+        if not skipped:
+            return
+        named = ", ".join(f"{name} ({count})" for name, count in sorted(skipped.items()))
+        where = self._root_prefix(scan.label)
+        self.ctx.warn(
+            f"code.filesystem: {where}default-excluded directories not scanned: {named}; "
+            "set default_excludes: false to scan them",
+            incomplete=False,
+        )
+
     def _size_limit(self, name: str) -> int:
         """Bytes the reader accepts for ``name``: notebooks may carry large saved outputs."""
         if name.lower().endswith(".ipynb"):
@@ -1005,7 +1283,9 @@ class FilesystemConnector(BaseConnector):
             incomplete=False,
         )
 
-    def _link_target_is_scanned(self, rel: str, target: Path, root: Path) -> bool:
+    def _link_target_is_scanned(
+        self, rel: str, target: Path, root: Path, walk: _WalkCounters | None = None
+    ) -> bool:
         """Whether skipping the (never followed) link at ``rel`` loses no coverage.
 
         Coverage is kept when nothing would ever be read at the alias path, or
@@ -1052,9 +1332,10 @@ class FilesystemConnector(BaseConnector):
             return False
         # The real path must keep the alias's project ownership and evidence
         # weight; another project or a test directory would change both.
-        if _project_root(root, rel) != _project_root(root, target_rel) or _is_test_path(rel) != _is_test_path(
-            target_rel
-        ):
+        cache = walk.project_roots if walk is not None else None
+        if _project_root(root, rel, cache) != _project_root(root, target_rel, cache) or _is_test_path(
+            rel
+        ) != _is_test_path(target_rel):
             return False
         # File-name signatures can apply to the alias but not the real file.
         target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
@@ -1154,7 +1435,15 @@ class FilesystemConnector(BaseConnector):
         # ancestors, so assigning a project is amortized constant time even in
         # monorepos with thousands of sibling projects.
         roots: list[str] = ["."]
-        count = 0
+        # Files and links both count toward max_files: a link is never
+        # followed, but deciding whether skipping it loses coverage costs a
+        # project lookup and file-name matching. Link checks also stop at the
+        # connector deadline, as file analysis does in _walk_entries, so a tree
+        # planted with links cannot hold the walk past it.
+        deadline = self.ctx.deadline
+        walk = _WalkCounters(
+            stop_at=None if deadline is None else deadline - deadline_margin(deadline - time.monotonic())
+        )
 
         resolved_root = Path(os.path.realpath(root))
 
@@ -1178,24 +1467,29 @@ class FilesystemConnector(BaseConnector):
         # even when this source tree produces no findings (and no enrichment).
         if self.use_git and os.path.lexists(root / ".git"):
             self.check_gitlink_coverage(root)
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
+        for dirpath, dirnames, filenames in _walk_directories(root, walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
-            rel_dir = "." if rel_dir == "." else rel_dir
+            rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if ".gitmodules" in filenames:
                 self._check_submodule_declarations(root, rel_dir)
-            dirnames[:] = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames)
+            kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
+            if kept is None:
+                return
+            dirnames[:] = kept
             proj = _nearest_root(rel_dir, roots)
             if rel_dir != "." and _marks_project(Path(dirpath), filenames):
                 roots.append(rel_dir)
                 proj = rel_dir
             for fn in sorted(filenames):
-                rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
+                shown = _report_name(fn)
+                rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
                 if self._excluded_file(rel):
                     continue
                 p = Path(dirpath) / fn
                 try:
                     if p.is_symlink():
-                        self._skip_link(root, resolved_root, rel, p)
+                        if not self._skip_link(root, resolved_root, rel, p, walk):
+                            return
                         continue
                     info = p.stat()
                 except OSError as exc:
@@ -1204,15 +1498,15 @@ class FilesystemConnector(BaseConnector):
                     self.ctx.error(f"code.filesystem: could not inspect {rel}")
                     continue
                 if not stat.S_ISREG(info.st_mode):
+                    if self._analyzed_name(rel, fn):
+                        self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
                     continue
                 if info.st_size > self._size_limit(fn) and self._oversize_skippable(rel, fn):
                     self._skip_oversize(rel, info.st_size)
                     continue
                 if _never_read_by_name(fn):
                     continue
-                count += 1
-                if count > self.max_files:
-                    self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
+                if not self._count_entry(walk, root):
                     return
                 yield rel, p, proj, info.st_size
 
@@ -1223,31 +1517,87 @@ class FilesystemConnector(BaseConnector):
         dirpath: str,
         rel_dir: str,
         dirnames: list[str],
-    ) -> list[str]:
-        """Return the subdirectories of ``dirpath`` the walk descends into, in name order."""
+        walk: _WalkCounters,
+    ) -> list[str] | None:
+        """Return the subdirectories of ``dirpath`` the walk descends into, in name order.
+
+        None means the walk must stop: a directory link reached ``max_files``
+        or the connector deadline (see ``_skip_link``).
+        """
         kept = []
         for name in sorted(dirnames):
-            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
-            if self._excluded(rel, name):
-                continue
+            shown = _report_name(name)
+            rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
+            if self._excluded(rel, name):
+                if self._disclosed_default_exclusion(rel, name) and _holds_file(path):
+                    self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
+                continue
             try:
                 if path.is_symlink():
-                    self._skip_link(root, resolved_root, rel, path)
+                    if not self._skip_link(root, resolved_root, rel, path, walk):
+                        return None
                     continue
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {rel}")
                 continue
+            if name in MCP_CONFIG_NAMES:
+                # The walk descends into it, but no client reads a directory
+                # as the configuration file its name implies. A file-signature
+                # glob is not such a name: ``.roo/**`` or ``.clinerules`` also
+                # match directories that their clients read as directories.
+                self._skip_non_regular(walk, root, rel, "directory")
             kept.append(name)
         return kept
 
-    def _skip_link(self, root: Path, resolved_root: Path, rel: str, link: Path) -> None:
-        """Record the coverage gap of a symbolic link, which the walk never follows."""
+    def _skip_non_regular(self, walk: _WalkCounters, root: Path, rel: str, kind: str) -> None:
+        """Record an entry the scanner cannot read as a file although its name says it would.
+
+        Like a link, such an entry hides whatever a client would find there:
+        coverage is incomplete. The first few are named; the rest are counted.
+        """
+        walk.non_regular += 1
+        if walk.non_regular > _MAX_NON_REGULAR_NOTES + 1:
+            return
+        if walk.non_regular == _MAX_NON_REGULAR_NOTES + 1:
+            message = f"code.filesystem: further non-regular entries under {root} not listed"
+        else:
+            message = (
+                f"code.filesystem: {rel}: skipped, not a regular file ({kind}) but named like "
+                "analyzable content"
+            )
+        if self.strict_coverage:
+            self.ctx.error(f"{message}; coverage incomplete")
+        else:
+            self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+
+    def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
+        """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
+        walk.examined += 1
+        if walk.examined > self.max_files:
+            self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
+            return False
+        return True
+
+    def _skip_link(self, root: Path, resolved_root: Path, rel: str, link: Path, walk: _WalkCounters) -> bool:
+        """Record the coverage gap of a symbolic link, which the walk never follows.
+
+        Returns False, with the reason recorded as an error, when the walk
+        must stop: the link reached ``max_files`` or the connector deadline.
+        """
+        if not self._count_entry(walk, root):
+            return False
+        if walk.stop_at is not None and time.monotonic() >= walk.stop_at:
+            self.ctx.error(
+                f"code.filesystem: connector deadline reached while checking symbolic links under {root}; "
+                "results incomplete"
+            )
+            return False
         # A link that resolves inside the scan root loses no coverage only if
         # the target is scanned at its real path.
         target = _resolved_link_target(link, resolved_root)
-        if target is not None and self._link_target_is_scanned(rel, target, resolved_root):
-            return
+        if target is not None and self._link_target_is_scanned(rel, target, resolved_root, walk):
+            return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
         if root not in self._symlink_warnings:
@@ -1257,6 +1607,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"{message}; coverage incomplete")
             else:
                 self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+        return True
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
         """Return the share of ``budget`` a file must have left before the walk may start it.
@@ -1351,6 +1702,7 @@ class FilesystemConnector(BaseConnector):
         """
         # A single-file root is read relative to its (equally checked) parent.
         base = scan.root.parent if scan.root.is_file() else scan.root
+        scan.base = base
         try:
             scan.root_fd = open_confined_directory(base)
         except (OSError, ValueError) as exc:
@@ -1358,11 +1710,13 @@ class FilesystemConnector(BaseConnector):
             reason = _root_open_failure(exc)
             self.ctx.error(f"code.filesystem: {scan.label}: could not open the scan root safely ({reason})")
             return
+        self._default_skipped = {}
         try:
             self._walk_entries(scan)
         finally:
             os.close(scan.root_fd)
             scan.root_fd = -1
+        self._report_default_excluded(scan)
 
     def _walk_entries(self, scan: _ScanState) -> None:
         """Start each file only while its matching budget fits before the connector deadline."""
@@ -1409,12 +1763,14 @@ class FilesystemConnector(BaseConnector):
 
         # 1. file-name signals (config files of agents / MCP / A2A ...)
         file_matches = self.index.match_file(rel)
-        if not (_analyzed_by_name(path.name) or file_matches):
+        by_name = _analyzed_by_name(path.name)
+        if not (by_name or file_matches):
             return
-        loaded = self._read_source(rel, path, scan.root_fd)
+        named = by_name or self._named_by_signature(rel, file_matches)
+        loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if loaded is None:
             return
-        text, raw_notebook = loaded
+        text, raw_notebook, cells = loaded
         file = _SourceFile(
             rel=rel,
             path=path,
@@ -1425,10 +1781,15 @@ class FilesystemConnector(BaseConnector):
             file_matches=file_matches,
             raw_notebook=raw_notebook,
             structure=self._structure_for(rel, text),
+            cells=cells,
         )
         self._record_file_matches(file)
         if self.scan_secrets:
             self._detect_secrets(scan, file)
+        if self._record_detection_rules(file):
+            # A rule pack lists the names and hosts it detects. Its content
+            # is data, not usage or configuration of those products.
+            return
         self._detect_mcp(file)
 
         # 2. manifests (dependencies, images, env names, IaC types)
@@ -1442,15 +1803,24 @@ class FilesystemConnector(BaseConnector):
         # 4. special files
         self._record_special_files(scan, file)
 
-    def _read_source(self, rel: str, path: Path, root_fd: int) -> tuple[str, str | None] | None:
-        """Read a file for analysis: its text and, for a notebook, the raw document.
+    def _read_source(
+        self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
+    ) -> tuple[str, str | None, _CellSpans] | None:
+        """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
-        ``rel`` is read relative to the open scan root ``root_fd``. A notebook's
-        text is its code cells. None means nothing is analyzed; the recorded
-        diagnostics say why.
+        The file is read relative to the open scan root ``root_fd``: by its on-disk
+        name (``path`` below ``base``), while ``rel`` is the report-safe name used in
+        diagnostics. A notebook's text is its code cells, and the spans locate each
+        in it. None means nothing is analyzed; the recorded diagnostics say why.
+        ``named`` is False when only a directory-wide signature glob selects the
+        file, so a recognised binary artifact there (an image beside coding-agent
+        rules) is skipped without a coverage gap.
         """
         read_errors: list[str] = []
-        text = read_text(PurePosixPath(rel), self._size_limit(path.name), read_errors, dir_fd=root_fd)
+        on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
+        text = read_text(
+            on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd, analyzable_name=named
+        )
         for issue in read_errors:
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
@@ -1461,17 +1831,46 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
         if text is None:
             return None
+        if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
+            # A checkout made without git-lfs holds a pointer in place of the
+            # file: its content was never read, whatever the name promises.
+            message = f"code.filesystem: {rel}: Git LFS pointer file, not the content it stands for"
+            if self.strict_coverage:
+                self.ctx.error(f"{message}; coverage incomplete")
+            else:
+                self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+            return None
         if path.suffix.lower() != ".ipynb":
-            return text, None
+            return text, None, ()
         return self._notebook_source(rel, text)
 
-    def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None] | None:
-        """Return a notebook's code cells and, when within max_file_size, its raw document."""
+    def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
+        """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
+
+        A signal that also matches a name no file can have, in the same
+        directory, comes from a directory-wide glob such as ``.cursor/rules/**``:
+        it says nothing about this file, which may be an image kept beside the
+        rules. A literal name such as ``.cursorrules`` selects the file itself.
+        """
+        parent = rel.rpartition("/")[0]
+        probe = f"{parent}/{_ANY_FILE_NAME}" if parent else _ANY_FILE_NAME
+        directory_wide = {(m.signature.id, id(m.signal)) for m in self.index.match_file(probe)}
+        return any((m.signature.id, id(m.signal)) not in directory_wide for m in file_matches)
+
+    def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None, _CellSpans] | None:
+        """Return a notebook's code cells, their spans and, within max_file_size, its raw document."""
         notebook_errors: list[str] = []
         oversized_notebook = len(document) > self.max_file_size
         raw_notebook = None if oversized_notebook else document
-        text = notebook_to_source(document, notebook_errors)
+        sources: list[str] = []
+        text = notebook_to_source(document, notebook_errors, cells=sources)
         self._file_errors(rel, dict.fromkeys(notebook_errors))
+        # The cells are joined by one line break each.
+        spans: list[tuple[int, int]] = []
+        offset = 0
+        for source in sources:
+            spans.append((offset, offset + len(source)))
+            offset += len(source) + 1
         # Unread analyzable content leaves coverage incomplete, as
         # for any oversize file; strict_coverage only raises the
         # diagnostic from a warning to an error.
@@ -1492,7 +1891,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
         if len(text) > self.max_file_size:
             return None
-        return text, raw_notebook
+        return text, raw_notebook, tuple(spans)
 
     def _structure_for(self, rel: str, text: str) -> Any:
         """Parse the credential context of a structured file; None withholds its excerpts.
@@ -1569,10 +1968,13 @@ class FilesystemConnector(BaseConnector):
         """
         with self._isolated(file.rel, "credential detection"):
             seen_secrets: set[tuple[str, str, int | None]] = set()
-            for raw in (file.text, file.raw_notebook):
-                if raw is None or (raw == file.text and seen_secrets):
-                    continue
-                self._detect_secrets_in(scan, file, raw, seen_secrets)
+            self._detect_secrets_in(scan, file, file.text, seen_secrets)
+            if file.raw_notebook is not None and file.raw_notebook != file.text:
+                # The raw document repeats every code cell at other line
+                # numbers, so a credential found in the cells is not a second
+                # observation there; only outputs and markdown cells are new.
+                cell_values = {(signature, value) for signature, value, _ in seen_secrets}
+                self._detect_secrets_in(scan, file, file.raw_notebook, seen_secrets, skip_values=cell_values)
 
     def _detect_secrets_in(
         self,
@@ -1580,6 +1982,7 @@ class FilesystemConnector(BaseConnector):
         file: _SourceFile,
         raw: str,
         seen_secrets: set[tuple[str, str, int | None]],
+        skip_values: AbstractSet[tuple[str, str]] = frozenset(),
     ) -> None:
         # Excerpts of a notebook's raw document come from its own sanitized
         # lines; the redacted source lines describe the code cells only.
@@ -1594,6 +1997,8 @@ class FilesystemConnector(BaseConnector):
                     "excerpts withheld"
                 )
         for m in self.index.match_secrets(raw):
+            if (m.signature_id, m.value) in skip_values:
+                continue
             key = (m.signature_id, m.value, m.line)
             if key in seen_secrets:
                 continue
@@ -1610,7 +2015,12 @@ class FilesystemConnector(BaseConnector):
             self._record(file.proj, m, file.rel, None)
 
     def _detect_mcp(self, file: _SourceFile) -> None:
-        """Parse an MCP client/server configuration; only an enabled server is MCP evidence."""
+        """Parse an MCP client/server configuration.
+
+        A server that declares itself disabled is still a configured server: the flag
+        is client-specific (Cline and Roo honour it, Claude Code does not) and comes
+        from the repository, so honouring it here would let a repository hide a server.
+        """
         file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text) or (
             file.name.lower() == "server.json" and '"mcpServers"' in file.text
         )
@@ -1618,15 +2028,45 @@ class FilesystemConnector(BaseConnector):
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors)
             self._file_errors(file.rel, dict.fromkeys(mcp_errors))
-        file.mcp_active = any(not server["disabled"] for server in file.mcp_servers)
+            dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
+            if not file.mcp_servers and not mcp_errors and not dedicated:
+                # The content heuristic (an "mcp" and a "servers" key anywhere
+                # in a JSON/YAML/TOML file) selected a file whose parsed
+                # structure configures no server: an exported workflow tagged
+                # "mcp", a template with such a comment. It is ordinary
+                # configuration, so the IaC, configuration and lexical passes
+                # read it as usual instead of skipping it without a diagnostic.
+                file.is_mcp = False
+        file.mcp_active = bool(file.mcp_servers)
         if file.mcp_active:
             for m in file.file_matches:
                 if m.signature_id == "protocol.mcp":
                     self._record(file.proj, m, file.rel, None)
 
+    @staticmethod
+    def _record_detection_rules(file: _SourceFile) -> bool:
+        """Whether ``file`` is a detection-rule pack; if so, count it on its project.
+
+        File-name and credential evidence is already recorded and agent
+        manifests keep their own analysis. No rule-pack shape has an MCP
+        server table, so a pack that mentions MCP keys in its patterns is not
+        parsed as a client configuration.
+        """
+        if file.card_kind:
+            return False
+        parsed = None if file.structure is _NO_STRUCTURE else file.structure
+        rule_format = detection_rule_format(file.rel, file.text, parsed)
+        if rule_format is None:
+            return False
+        proj = file.proj
+        proj.detection_rules[rule_format] = proj.detection_rules.get(rule_format, 0) + 1
+        if len(proj.detection_rule_files) < _MAX_LISTED_RULE_FILES:
+            proj.detection_rule_files.append(file.rel)
+        return True
+
     def _record_content(self, file: _SourceFile, m: Match, snippet: str | None) -> None:
         # A bare key or matching filename is not evidence of a
-        # configured server when all entries are empty/disabled.
+        # configured server when the entries are all empty.
         if m.signature_id != "protocol.mcp" or not file.is_mcp or file.mcp_active:
             self._record(file.proj, m, file.rel, snippet)
 
@@ -1663,9 +2103,9 @@ class FilesystemConnector(BaseConnector):
         rel, text = file.rel, file.text
         # Excerpts come from the redacted source, which is only
         # produced for files that actually contain a wildcard.
-        if _IAM_WILDCARD_RE.search(text):
+        if _IAM_WILDCARD_RE.search(text, timeout=_pattern_timeout(), concurrent=False):
             for number, line_text in enumerate(self._redacted_lines(file), start=1):
-                if _IAM_WILDCARD_RE.search(line_text):
+                if _IAM_WILDCARD_RE.search(line_text, timeout=_pattern_timeout(), concurrent=False):
                     wildcard_hits = scan.iam_wildcards.setdefault(file.proj_root, [])
                     if len(wildcard_hits) < 20:
                         wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
@@ -1689,24 +2129,36 @@ class FilesystemConnector(BaseConnector):
         # XML comments are examples/disabled declarations. Preserve
         # offsets for match line numbers and the original redacted
         # excerpts; the manifest parser handles active XML itself.
-        content_text = _without_xml_comments(file.text) if file.ext in _XML_EXTENSIONS else file.text
+        content_text = manifest_comment_projection(file.rel, file.text)
+        if file.ext in _XML_EXTENSIONS:
+            content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
             self._scan_source(scan.root, file, content_text)
         elif not is_nonexecutable:
             self._scan_config(scan, file, content_text)
         if not is_nonexecutable and not file.is_mcp:
-            for m in self.index.match_envs_in_text(content_text):
+            variables = self.index.match_envs_in_text(content_text)
+            for m in variables:
                 self._record_content(file, m, self._file_excerpt(file, m.line))
             for m in self.index.match_domains_in_text(content_text):
                 self._record_content(file, m, self._file_excerpt(file, m.line))
+            # A deployment or CI document is configuration however many products it names.
+            parsed = None if file.structure is _NO_STRUCTURE else file.structure
+            if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):
+                file.proj.configuration_files.add(file.rel)
 
     def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> None:
         """Match the imports, code patterns and import-bound calls of a source file."""
         lang, ext = file.lang, file.ext
         is_local_module = _local_module_predicate(root, file.path, file.proj_root)
         # Malformed trailing literals are masked through EOF;
-        # preceding valid imports/code remain inspectable.
-        ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
+        # preceding valid imports/code remain inspectable. A notebook's
+        # cells run one at a time, so each is lexed on its own: a literal
+        # left open in one cell masks the rest of that cell only.
+        if file.cells:
+            ignored, ambiguous = _cell_noncode_ranges(content_text, file.cells)
+        else:
+            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
         if ambiguous:
             self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
         imports = (
@@ -1725,18 +2177,18 @@ class FilesystemConnector(BaseConnector):
             if ignored
             else self.index.match_code(content_text, lang)
         )
-        bound = self._bound_matches(file, content_text, ignored, is_local_module)
+        bound, unbound = self._bound_matches(file, content_text, ignored, is_local_module)
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
         # tool-calling protocol; elsewhere they are build tooling.
         file_uses_llm = any(
             m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
         )
-        self._record_code_matches(file, code_matches, file_uses_llm, bound)
+        self._record_code_matches(file, code_matches, file_uses_llm, bound, unbound=unbound)
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
-            self._register_mcp_tools(file)
+            self._register_mcp_tools(file, ignored)
 
     def _bound_matches(
         self,
@@ -1744,21 +2196,36 @@ class FilesystemConnector(BaseConnector):
         content_text: str,
         ignored: list[tuple[int, int]],
         is_local_module: Callable[[str], bool],
-    ) -> list[Match]:
-        """Return bound evidence, including narrow typed-field registration for Java."""
+    ) -> tuple[list[Match], list[tuple[int, int]]]:
+        """Return bound evidence, including narrow typed-field registration for Java.
+
+        Also returns the spans of ``content_text`` the Python or JavaScript
+        binder did not read, where the lexical evidence stands in for it: the
+        whole file when the binder did not run (a budget, or a source that does
+        not parse), or a notebook's cells that do not parse.
+        """
         lang = file.lang
         if file.ext == ".java":
-            return spring_tool_registration_matches(self.index, content_text, ignored)
+            return spring_tool_registration_matches(self.index, content_text, ignored), []
         if lang not in {"python", "javascript"}:
-            return []
+            return [], []
+        whole = [(0, len(content_text))]
+        truncated: list[int] = []
+        unparsed: list[int] = []
         try:
-            return bound_source_matches(
+            source = content_text
+            if file.cells:
+                # Jupyter runs the cells one at a time: one that does not parse
+                # fails alone, so the binder reads the others without it.
+                source, unparsed = _notebook_binder_source(content_text, file.cells)
+            bound = bound_source_matches(
                 self.index,
-                content_text,
+                source,
                 lang,
                 ignored,
                 is_local_module=is_local_module if lang == "python" else None,
                 max_ast_nodes=self.max_ast_nodes,
+                truncated=truncated,
             )
         except SourceBudgetExceeded as exc:
             # The budget is a property of the file, not of
@@ -1772,20 +2239,75 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
             else:
                 self.ctx.error(message)
-            return []
+            return [], whole
+        except SourceNotParsed as exc:
+            # Newer syntax than the interpreter knows, or invalid source: no
+            # import binding, but the lexical evidence, framework patterns
+            # included, stays. A warning, not a gap in what the file was asked
+            # to show.
+            self.ctx.warn(
+                f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
+                "lexical evidence retained",
+                incomplete=False,
+            )
+            return [], whole
+        if unparsed:
+            # As for a source that does not parse, but for these cells alone.
+            numbers = ", ".join(str(number + 1) for number in unparsed[:10])
+            cells = "cell" if len(unparsed) == 1 else "cells"
+            verb = "does" if len(unparsed) == 1 else "do"
+            self.ctx.warn(
+                f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook {cells} {numbers}, "
+                f"which {verb} not parse; lexical evidence retained",
+                incomplete=False,
+            )
+        if truncated:
+            # An option past the limit (tools, a stop condition) was not read: the
+            # call-analysis budget is a coverage gap like the one above, but the
+            # file's bound evidence, these calls' included, is kept.
+            lines = ", ".join(str(line) for line in truncated[:10])
+            message = (
+                f"code.filesystem: {file.rel}: import-bound call at line {lines} analyzed from its first "
+                f"{MAX_CALL_TEXT} characters; options after them were not read, so coverage is incomplete"
+            )
+            if not self.include_tests and _is_test_path(file.rel):
+                self.ctx.warn(message, incomplete=self.strict_coverage)
+            else:
+                self.ctx.error(message)
+        return bound, [file.cells[number] for number in unparsed]
 
     def _record_code_matches(
-        self, file: _SourceFile, code_matches: list[Match], file_uses_llm: bool, bound: list[Match]
+        self,
+        file: _SourceFile,
+        code_matches: list[Match],
+        file_uses_llm: bool,
+        bound: list[Match],
+        *,
+        unbound: Sequence[tuple[int, int]] = (),
     ) -> None:
+        # The binder's evidence for a signal on a line replaces its lexical match.
+        bound_signals = {(m.signature_id, id(m.signal), m.line) for m in bound}
         configured_spans = {
             m.extra["configured_call_span"] for m in bound if "configured_call_span" in m.extra
+        }
+        genkit_spans = {
+            m.extra["configured_call_span"]
+            for m in bound
+            if m.signature_id == "framework.genkit" and "configured_call_span" in m.extra
         }
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
-            if file.lang in {"python", "javascript"}:
-                if m.signature.category == "framework":
-                    continue  # import-bound calls establish the library
+            if file.lang not in {"python", "javascript"}:
+                # Other languages have lexical filtering but
+                # no import binder. Their code signatures need
+                # corroborating library evidence at emit time.
+                m.extra["lexical_source"] = file.lang
+            elif m.signature.category != "framework":
+                if m.signature_id == "heuristic.tool-use" and any(
+                    start <= m.extra.get("start", -1) < end for start, end in genkit_spans
+                ):
+                    continue  # Genkit declarations/options alone do not establish model tool dispatch
                 if (
                     m.signature_id in {"heuristic.tool-use", "heuristic.memory"}
                     and re.match(r"(?:tools|checkpointer)\s*[=:]", m.value)
@@ -1800,18 +2322,24 @@ class FilesystemConnector(BaseConnector):
                 ):
                     continue  # explicit disabled options do not register tools
                 m.extra["verified_agent"] = False
+            elif (m.signature_id, id(m.signal), m.line) in bound_signals or (
+                _bundled_signature(m.signature) and not _within(m.extra.get("start", -1), unbound)
+            ):
+                continue  # import-bound calls establish the library
             else:
-                # Other languages have lexical filtering but
-                # no import binder. Their code signatures need
-                # corroborating library evidence at emit time.
+                # The bundled framework patterns are written for the import
+                # binder. A custom pack's pattern is plain lexical evidence,
+                # as in other languages, so a pack without a matching import
+                # still takes effect, corroborated at emit time. So is every
+                # framework pattern in source the binder could not read.
                 m.extra["lexical_source"] = file.lang
             self._record_content(file, m, self._file_excerpt(file, m.line))
 
     @staticmethod
-    def _register_mcp_tools(file: _SourceFile) -> None:
+    def _register_mcp_tools(file: _SourceFile, ignored: list[tuple[int, int]]) -> None:
         """Remember the MCP tool names a source file registers, bounded per project."""
         tools = file.proj.mcp_tools
-        for tool in mcp_tool_names(file.text):
+        for tool in mcp_tool_names(file.text, ignore_spans=ignored):
             known = tools.get(tool)
             if known is None:
                 if len(tools) < _MAX_MCP_TOOLS:
@@ -2078,17 +2606,7 @@ class FilesystemConnector(BaseConnector):
                     for r in remotes
                 )
             )
-        if lower in {
-            ".mcp.json",
-            "mcp.json",
-            "mcp-config.json",
-            "mcp_config.json",
-            "mcp-servers.json",
-            "claude_desktop_config.json",
-            "cline_mcp_settings.json",
-            "mcp_settings.json",
-            "smithery.yaml",
-        }:
+        if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
             head = text[:200_000]
@@ -2118,7 +2636,7 @@ class FilesystemConnector(BaseConnector):
             return {}
         target = "." if rel_root == "." else rel_root
         try:
-            out = subprocess.run(
+            out = run_bounded_metadata(
                 [
                     *metadata_git_argv_prefix(),
                     "-C",
@@ -2132,18 +2650,27 @@ class FilesystemConnector(BaseConnector):
                     "--",
                     target,
                 ],
-                capture_output=True,
-                # Author bytes follow the repository's i18n.logOutputEncoding;
-                # a strict decode would abort the whole project's findings.
-                encoding="utf-8",
-                errors="replace",
                 env=metadata_git_env(),
+                ctx=self.ctx,
                 timeout=20,
-                check=False,
             )
             if out.returncode == 0 and out.stdout.strip():
                 # NUL separators: an author name may itself contain "|".
-                an, ae, ci = (out.stdout.strip("\r\n").split("\x00") + ["", "", ""])[:3]
+                fields = out.stdout.strip("\r\n").split("\x00")
+                if len(fields) != 3:
+                    self.ctx.warn("code.filesystem: git metadata has invalid fields; enrichment skipped")
+                    return {}
+                an, ae, ci = fields
+                if any(
+                    len(value) > limit
+                    for value, limit in zip(
+                        fields,
+                        (_MAX_GIT_AUTHOR_CHARS, _MAX_GIT_EMAIL_CHARS, _MAX_GIT_TIMESTAMP_CHARS),
+                        strict=True,
+                    )
+                ):
+                    self.ctx.warn("code.filesystem: git metadata field limit exceeded; enrichment skipped")
+                    return {}
                 if parse_timestamp(ci) is None:
                     self.ctx.warn(
                         "code.filesystem: git metadata has an unparseable commit timestamp; "
@@ -2153,6 +2680,17 @@ class FilesystemConnector(BaseConnector):
                 return {"last_author": an, "last_author_email": ae, "last_commit": ci}
             if out.returncode == 0:
                 return {}
+        except MetadataOutputLimitError:
+            self.ctx.warn("code.filesystem: git metadata output limit exceeded; enrichment skipped")
+            return {}
+        except MetadataTimeoutError:
+            # A TimeoutError is an OSError: name the cause instead of blaming
+            # the Git version below.
+            self.ctx.warn(
+                "code.filesystem: git metadata collection reached its time limit or the connector "
+                "deadline; enrichment skipped"
+            )
+            return {}
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         self.ctx.warn(
@@ -2180,7 +2718,12 @@ class FilesystemConnector(BaseConnector):
                     errors: list[str] = []
                     directory = open_confined_directory(root)
                     try:
-                        content = read_text(PurePosixPath(cand), self.max_file_size, errors, dir_fd=directory)
+                        content = read_text(
+                            PurePosixPath(cand),
+                            self.max_file_size,
+                            errors,
+                            dir_fd=directory,
+                        )
                     finally:
                         os.close(directory)
                     for issue in errors:
@@ -2288,32 +2831,76 @@ class FilesystemConnector(BaseConnector):
         proj: _Project,
         covered_files: frozenset[str] = frozenset(),
     ) -> Iterator[Finding]:
-        observations = self._project_observations(proj)
-        # Anchors establish LLM / agent technology on their own. A credential
-        # alone is already a SECRET finding, evidence that an MCP, manifest,
-        # workflow or IaC finding already reports is not a project anchor, and
-        # a vendor-neutral heuristic alone (a retry loop, subprocess.run)
-        # describes ordinary automation.
-        if any(
-            m.signature.category != "heuristic" and rel not in covered_files and m.signal.type != "secret"
-            for m, rel, _ in observations
-        ):
+        catalogs = project_catalog_files(proj, proj.configuration_files)
+        observations = self._project_observations(proj, catalogs)
+        # Evidence held back only because it sits in a catalog is listed in the
+        # project finding (catalog_mentions) or, without one, in a scan note.
+        reported = self._anchored(observations, covered_files)
+        if reported:
             yield self._project_finding(label, root, proj, observations)
+        discounted = (
+            bool(catalogs)
+            and not reported
+            and self._anchored(self._project_observations(proj, frozenset()), covered_files)
+        )
         for sig_id, files in proj.coding_agent_files.items():
             # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
             # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.
             # Config files, instruction docs, dependencies and code such as a
-            # workflow step or a YOLO-mode flag still establish the agent.
-            if not any(
-                m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name)
+            # workflow step or a YOLO-mode flag still establish the agent. A
+            # catalog (an allowlist of vendor hosts) establishes none.
+            establishing = [
+                rel
                 for m, rel, _ in proj.coding_agent_matches.get(sig_id, [])
-            ):
+                if m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name)
+            ]
+            if all(rel in catalogs for rel in establishing):
+                discounted = discounted or (bool(establishing) and not reported)
                 continue
             yield self._coding_agent_finding(label, root, proj, sig_id, files)
+        if discounted:
+            self._note_discounted_catalogs(label, proj, catalogs)
 
     @staticmethod
-    def _project_observations(proj: _Project) -> list[_Observation]:
-        """Return a project's technology evidence without policy or uncorroborated ambiguous matches."""
+    def _anchored(observations: list[_Observation], covered_files: frozenset[str]) -> bool:
+        """Whether ``observations`` establish a project finding.
+
+        Anchors establish LLM / agent technology on their own. A credential
+        alone is already a SECRET finding, evidence that an MCP, manifest,
+        workflow or IaC finding already reports is not a project anchor, and
+        a vendor-neutral heuristic alone (a retry loop, subprocess.run)
+        describes ordinary automation.
+        """
+        return any(
+            m.signature.category != "heuristic" and rel not in covered_files and m.signal.type != "secret"
+            for m, rel, _ in observations
+        )
+
+    def _note_discounted_catalogs(self, label: str, proj: _Project, catalogs: frozenset[str]) -> None:
+        """Name the catalogs that held evidence a project finding would have listed; never drop it silently.
+
+        A shape cannot tell every configuration from a list, so the files are named
+        for review. A note, not a coverage gap: every file was read and matched.
+        """
+        listed = sorted(catalogs)
+        names = ", ".join(listed[:5]) + (f" and {len(listed) - 5} more" if len(listed) > 5 else "")
+        where = "repository root" if proj.root == "." else proj.root
+        self.ctx.warn(
+            f"code.filesystem: {self._root_prefix(label)}{where}: evidence not reported because it is only "
+            f"in catalog-like data files that name {CATALOG_MIN_SIGNATURES} or more products, which nothing "
+            f"else in the project uses: {names}; review them if they configure a deployment",
+            incomplete=False,
+        )
+
+    def _root_prefix(self, label: str) -> str:
+        """Name the scan root in a diagnostic only when this connector scans several roots."""
+        paths = self.ctx.get("paths")
+        several = (isinstance(paths, list) and len(paths) > 1) or self.ctx.get("_shared_label_roots") is True
+        return f"{label}: " if several else ""
+
+    @staticmethod
+    def _project_observations(proj: _Project, catalogs: frozenset[str]) -> list[_Observation]:
+        """Return a project's technology evidence without policy, catalog or ambiguous-only matches."""
         observations = [
             (m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}
         ]
@@ -2326,7 +2913,15 @@ class FilesystemConnector(BaseConnector):
             for m, _, _ in observations
             if m.signal.type in _LIBRARY_SIGNALS and not m.signal.ambiguous
         }
-        return [t for t in observations if not t[0].signal.ambiguous or t[0].signature_id in independent]
+        # A catalog (a blocklist, a vendor policy, a copy of the signature
+        # packs) names many products and uses none, so its mentions are held
+        # to the same rule (see shadowscan.connectors.code.catalogs).
+        return [
+            t
+            for t in observations
+            if (not t[0].signal.ambiguous or t[0].signature_id in independent)
+            and (t[1] not in catalogs or t[0].signature_id in independent)
+        ]
 
     def _project_finding(
         self,
@@ -2347,6 +2942,9 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("env-names-only")
         self._attach_example_credentials(f, proj)
         self._attach_project_metadata(f, root, proj, evidence)
+        catalogs = project_catalog_files(proj, proj.configuration_files)
+        if catalogs:
+            f.metadata["catalog_mentions"] = catalog_metadata(catalogs)
         if evidence.test_only:
             f.add_tag("test-code-only")
         finalize(f, self.index)
@@ -2383,7 +2981,7 @@ class FilesystemConnector(BaseConnector):
             f.metadata["potential_capabilities"] = sorted(potential)
         # Repeated observations of one technology are correlated evidence.
         # Generic idioms share a single supporting group; loops in several
-        # worker files must never accumulate into a confirmed AI agent.
+        # worker files must never accumulate into a strong AI agent.
         for item in f.evidence:
             category = item.attributes.get("category")
             item.attributes["confidence_group"] = (
@@ -2422,6 +3020,13 @@ class FilesystemConnector(BaseConnector):
         )
         f.metadata["models"] = sorted({m.value for m, _, _ in matches if m.signal.type == "model"})
         f.models = f.metadata["models"]
+        if proj.detection_rules:
+            # Rule packs read as data, not as evidence (see rule_packs).
+            f.metadata["detection_rule_files"] = {
+                "count": sum(proj.detection_rules.values()),
+                "formats": dict(sorted(proj.detection_rules.items())),
+                "files": list(proj.detection_rule_files),
+            }
         if proj.agent_defs:
             f.metadata["agent_definitions"] = proj.agent_defs
         # Installed SDKs, imports and endpoint strings establish framework
@@ -2601,6 +3206,8 @@ class FilesystemConnector(BaseConnector):
         return f"{what} in {where}: {detail}"
 
     def _mcp_finding(self, label: str, root: Path, rel: str, servers: list[dict[str, Any]]) -> Finding:
+        # Every configured server is evidence, including one that declares itself
+        # disabled (see _detect_mcp); each record carries its own ``disabled`` flag.
         enabled = [server for server in servers if not server["disabled"]]
         f = self._base(label, root, rel, Kind.MCP_SERVER, f"MCP configuration: {rel}", "mcp-config")
         sig = self.index.get("protocol.mcp")
@@ -2616,7 +3223,7 @@ class FilesystemConnector(BaseConnector):
             )
         )
         remote_hosts: list[str] = []
-        for s in enabled:
+        for s in servers:
             urls = s.get("urls")
             if not isinstance(urls, list):
                 urls = [s["url"]] if s.get("url") else []
@@ -2649,9 +3256,14 @@ class FilesystemConnector(BaseConnector):
                 if any(k in cmd for k in keywords):
                     f.add_capability(capability)
                     break
-        f.metadata["servers"] = enabled
+        f.metadata["servers"] = servers
+        # Servers that are not declared disabled; the others are counted apart.
         f.metadata["server_count"] = len(enabled)
         f.metadata["disabled_server_count"] = len(servers) - len(enabled)
+        if len(enabled) < len(servers):
+            f.add_tag("declared-disabled")
+            if not enabled:
+                f.metadata["disabled"] = True
         f.metadata["remote_urls"] = remote_hosts
         f.metadata["client"] = _mcp_client_for(rel)
         f.owner = self._owner_for(root, rel) or f.owner
@@ -2900,10 +3512,10 @@ class FilesystemConnector(BaseConnector):
 
     def _parse_agent_definition(self, rel: str, text: str) -> dict[str, Any]:
         info: dict[str, Any] = {"file": rel, "name": PurePosixPath(rel).stem}
-        m = _FRONTMATTER.match(text)
+        m = _FRONTMATTER.match(text, timeout=_pattern_timeout(), concurrent=False)
         if m:
             try:
-                fm = strict_bounded_safe_load(m.group(1)) or {}
+                fm = strict_bounded_safe_load(_quote_glob_values(m.group(1))) or {}
             except (ValueError, RecursionError, yaml.YAMLError):
                 # Includes resource limits, duplicate fields, non-finite
                 # numbers, and SafeLoader's plain ValueError for an
@@ -2928,6 +3540,63 @@ class FilesystemConnector(BaseConnector):
                             truncate(sanitize_text(v), 200) if isinstance(v, str) else _clip(sanitize(v))
                         )
         return info
+
+
+def _strip_comment(text: str) -> str:
+    """Remove a trailing YAML comment and the blanks before it."""
+    start = _COMMENT_START.search(text)
+    return text if start is None else text[: start.start()].rstrip(" \t")
+
+
+def _quote_glob_values(front_matter: str) -> str:
+    """Quote bare ``globs``/``paths`` values that start with ``*``.
+
+    Cursor and Claude Code rule files routinely write ``globs: **/*.ts``
+    unquoted, which YAML reads as an alias and rejects. Only those two keys
+    (a scalar, a flow list or block list items) are rewritten, so a real alias
+    elsewhere is untouched and the bounded loader still parses the result.
+    Lines are split with string methods, not backtracking patterns: the front
+    matter is untrusted, and the scan budget cannot interrupt stdlib ``re``,
+    so a long run of blanks must cost linear time.
+    """
+
+    def quote(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    out: list[str] = []
+    in_list = False
+    for raw in front_matter.split("\n"):
+        line = raw.rstrip("\r")
+        head, colon, rest = line.partition(":")
+        name = head.rstrip(" \t")
+        if colon and name in _GLOB_KEYS:
+            value = rest.strip(" \t")
+            if value.startswith("#"):
+                value = ""
+            elif value.startswith("*"):
+                value = _strip_comment(value)
+            in_list = not value
+            if value.startswith("*"):
+                raw = f"{name}: {quote(value)}"
+            elif (
+                value.startswith("[")
+                and value.endswith("]")
+                and "*" in value
+                and not re.search(r"[\"']", value)
+            ):
+                items = [item.strip() for item in value[1:-1].split(",")]
+                raw = f"{name}: [{', '.join(quote(i) if i.startswith('*') else i for i in items)}]"
+        elif in_list:
+            # A block item is blanks, "-", at least one blank, then the glob.
+            item = _strip_comment(line)
+            body = item.lstrip(" \t")
+            glob = body[1:].lstrip(" \t")
+            if body.startswith("-") and glob.startswith("*") and len(glob) < len(body) - 1:
+                raw = item[: len(item) - len(glob)] + quote(glob.rstrip(" \t"))
+            elif line[:1] not in ("", " ", "\t", "-", "#"):
+                in_list = False
+        out.append(raw)
+    return "\n".join(out)
 
 
 _MAX_CARD_FILES = 200
@@ -2965,23 +3634,104 @@ def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int 
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-def _project_root(root: Path, rel: str) -> str:
+@dataclass
+class _WalkCounters:
+    """What one directory walk has examined so far, shared with its link checks."""
+
+    examined: int = 0  # files and links counted toward max_files
+    non_regular: int = 0  # entries named like analyzable content that are not regular files
+    stop_at: float | None = None  # monotonic time after which link checks stop (deadline minus margin)
+    # Directory (POSIX, relative to the root) -> project root of the files in
+    # it, so a directory holding many links lists its ancestors once.
+    project_roots: dict[str, str] = field(default_factory=dict)
+
+
+def _project_root(root: Path, rel: str, cache: dict[str, str] | None = None) -> str:
     """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
 
     That is the deepest ancestor directory below the scan root holding a
-    project marker, or ``"."``. Used for the rare symlink checks only.
+    project marker, or ``"."``. Used for the symlink checks only; ``cache``
+    remembers the answer for every directory the lookup passed through, so a
+    tree planted with links costs one listing per directory, not per link.
     """
+    directory = PurePosixPath(rel).parent.as_posix()
+    if cache is not None and directory in cache:
+        return cache[directory]
+    passed: list[str] = []
+    result = "."
     for parent in PurePosixPath(rel).parents:
-        directory = parent.as_posix()
-        if directory == ".":
+        ancestor = parent.as_posix()
+        if ancestor == ".":
             break
+        passed.append(ancestor)
         try:
-            names = os.listdir(root / directory)
+            names = os.listdir(root / ancestor)
         except OSError:
             continue
-        if _marks_project(root / directory, names):
-            return directory
-    return "."
+        if _marks_project(root / ancestor, names):
+            result = ancestor
+            break
+    if cache is not None:
+        # Every directory between the file and its project root (or the scan
+        # root) shares the answer: no marker was found below the result.
+        for ancestor in passed:
+            cache.setdefault(ancestor, result)
+    return result
+
+
+def _walk_directories(
+    top: Path, onerror: Callable[[OSError], None]
+) -> Iterator[tuple[str, list[str], list[str]]]:
+    """Walk ``top`` top-down like ``os.walk(top, followlinks=False, onerror=onerror)``, without recursion.
+
+    ``os.walk`` recurses before Python 3.12, so a tree about a thousand directories
+    deep ends in a RecursionError that discards every finding. This keeps its
+    contract: a directory is yielded before its children, a link to a directory is
+    listed in ``dirnames`` but never entered, the caller may prune or reorder
+    ``dirnames`` in place, and a directory that cannot be listed is passed to
+    ``onerror`` and skipped.
+    """
+    stack = [os.fspath(top)]
+    while stack:
+        current = stack.pop()
+        dirs: list[str] = []
+        files: list[str] = []
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        is_dir = entry.is_dir()
+                    except OSError:
+                        is_dir = False
+                    (dirs if is_dir else files).append(entry.name)
+        except OSError as error:
+            onerror(error)
+            continue
+        yield current, dirs, files
+        for name in reversed(dirs):
+            child = os.path.join(current, name)
+            if not os.path.islink(child):
+                stack.append(child)
+
+
+def _report_name(name: str) -> str:
+    """A report-safe form of a path or path component read from disk.
+
+    ``os.walk`` returns the bytes of a name that is not UTF-8 as lone surrogates,
+    which no reporter can encode: each becomes a ``\\xNN`` escape. Valid names are
+    returned unchanged; I/O keeps using the ``Path`` that holds the on-disk name.
+    """
+    if name.isascii():
+        return name
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        try:
+            raw = name.encode("utf-8", errors="surrogateescape")
+        except UnicodeEncodeError:
+            raw = name.encode("utf-8", errors="backslashreplace")
+        return raw.decode("utf-8", errors="backslashreplace")
+    return name
 
 
 def _nearest_root(rel_dir: str, roots: list[str]) -> str:
@@ -3032,6 +3782,61 @@ _MCP_FIELD_ALIASES: tuple[tuple[str, ...], ...] = (
     ("type", "transport"),
     ("autoApprove", "alwaysAllow"),
 )
+
+
+# IPython line and cell magics (%pip, %%time) and shell escapes (!pip), each
+# alone on its line, as IPython rewrites them before Python reads the cell.
+# "% name" continuing an expression is the modulo operator and stays.
+_IPYTHON_LINE = re.compile(r"^([ \t]*+)((?:%%?[A-Za-z_]|!)[^\n]*)", re.MULTILINE)
+
+
+def _without_ipython_lines(text: str) -> str:
+    """Replace a notebook's magic and shell lines with an inert expression, keeping every offset.
+
+    IPython turns each into an expression statement, so an indented one can be a
+    block's only statement: it becomes ``0`` padded to its length, not blanks.
+    """
+    return _IPYTHON_LINE.sub(lambda match: match[1] + "0" + " " * (len(match[2]) - 1), text)
+
+
+def _within(offset: int, spans: Sequence[tuple[int, int]]) -> bool:
+    return any(start <= offset < end for start, end in spans)
+
+
+def _cell_noncode_ranges(text: str, cells: _CellSpans) -> tuple[list[tuple[int, int]], bool]:
+    """Lex each notebook cell on its own; return the ignored spans in ``text``'s offsets."""
+    spans: list[tuple[int, int]] = []
+    ambiguous = False
+    for start, end in cells:
+        cell_spans, cell_ambiguous = noncode_ranges(text[start:end], "python")
+        spans.extend((start + low, start + high) for low, high in cell_spans)
+        ambiguous = ambiguous or cell_ambiguous
+    return spans, ambiguous
+
+
+def _notebook_binder_source(text: str, cells: _CellSpans) -> tuple[str, list[int]]:
+    """Return a notebook's cells as the import binder reads them, and which cells do not parse.
+
+    Magic and shell lines become inert expressions (``_without_ipython_lines``).
+    A cell that still does not parse is blanked, its line breaks kept, so the
+    other cells are bound together, as Jupyter runs them, and every offset and
+    line stays that of ``text``.
+    """
+    source = _without_ipython_lines(text)
+    unparsed: list[int] = []
+    pieces: list[str] = []
+    previous = 0
+    for number, (start, end) in enumerate(cells):
+        try:
+            ast.parse(source[start:end])
+        except (SyntaxError, ValueError):
+            unparsed.append(number)
+            pieces.extend((source[previous:start], re.sub(r"[^\n]", " ", source[start:end])))
+            previous = end
+        except RecursionError as exc:
+            raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
+    pieces.append(source[previous:])
+    return "".join(pieces), unparsed
 
 
 def _without_xml_comments(text: str) -> str:

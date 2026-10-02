@@ -114,6 +114,35 @@ def test_malformed_declarations_are_incomplete_and_keep_neighbor_findings(tmp_pa
     assert "declarations safely" in stats.warnings[0]
 
 
+def test_long_blank_runs_are_refused_before_the_quadratic_parser(monkeypatch):
+    # ConfigParser rescans a blank run before "=" from each of its positions, in C
+    # and holding the GIL: a 1 MiB line used to freeze the process for over an hour.
+    monkeypatch.setattr(
+        git_utils.ConfigParser, "read_string", Mock(side_effect=AssertionError("parser reached"))
+    )
+    hostile = '[submodule "x"]\n\tpath = x\n\ta' + " " * 4096 + "b\n"
+    with pytest.raises(ValueError, match="blank"):
+        declared_submodule_paths(hostile)
+    with pytest.raises(ValueError, match="blank"):
+        declared_submodule_paths('[submodule "x"]\n\tpath = "x' + "\t" * 33 + 'y"\n')
+
+
+def test_hostile_declarations_end_in_linear_time_as_a_coverage_gap(tmp_path, index):
+    (tmp_path / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n\ta' + " " * 40_000 + "b\n")
+    (tmp_path / "requirements.txt").write_text("langgraph\n")
+    started = time.monotonic()
+    findings, stats = _scan(tmp_path, index)
+    assert time.monotonic() - started < 2  # about 8 s before the run of blanks was refused
+    assert findings and stats.incomplete
+    assert "declarations safely" in stats.warnings[0]
+
+
+def test_ordinary_blank_runs_still_parse():
+    # Indentation and column alignment, up to the limit, and any number of blank lines.
+    text = '[submodule "agent"]\n' + "\t" * 8 + "path" + " " * 32 + "=" + " " * 32 + "agents/hidden\n"
+    assert declared_submodule_paths(text + "\n" * 100) == ["agents/hidden"]
+
+
 def test_oversized_declarations_fail_closed(tmp_path, index, monkeypatch):
     _declare(tmp_path)
     monkeypatch.setattr(filesystem, "MAX_GITMODULES_BYTES", 16)

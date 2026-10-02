@@ -273,6 +273,35 @@ def test_import_failures_are_refused_with_a_bounded_diagnostic(monkeypatch):
     }
 
 
+@pytest.mark.parametrize(
+    "raised,shown",
+    [(SystemExit(0), "SystemExit"), (SystemExit("token=ghp_" + "A" * 36), "SystemExit")],
+)
+def test_import_that_exits_is_refused_with_its_exception_type_only(monkeypatch, raised, shown):
+    _publish(monkeypatch, (ENTRY, _connector()))
+
+    def load(path):
+        raise raised
+
+    monkeypatch.setattr(registry, "_load", load)
+    error = _refusal(ENTRY)
+    assert error.diagnostic.rule == "load-failed" and error.diagnostic.entry == ENTRY
+    assert str(error) == f"plugin '{ENTRY}' ('{MODULE}:Target0') could not be imported ({shown})"
+    assert error.__cause__ is None and registry.plugin_registry_errors() == (error.diagnostic,)
+
+
+def test_keyboard_interrupt_during_plugin_import_is_not_a_refusal(monkeypatch):
+    _publish(monkeypatch, (ENTRY, _connector()))
+
+    def load(path):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(registry, "_load", load)
+    with pytest.raises(KeyboardInterrupt):
+        registry.get_connector_class(ENTRY, allowed_plugins=[ENTRY])
+    assert registry.plugin_registry_errors() == ()
+
+
 def test_diagnostics_are_credential_free_and_bounded(monkeypatch):
     token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij0123"
     _publish(

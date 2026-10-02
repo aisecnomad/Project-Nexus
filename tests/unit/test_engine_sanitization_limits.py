@@ -72,6 +72,30 @@ def test_custom_connector_returning_unsafe_finding_keeps_safe_neighbors(monkeypa
     assert "opaque-private-value" not in result.to_json()
 
 
+def test_custom_connector_diagnostics_preserve_credential_context_until_sanitized(monkeypatch, index):
+    secret = "opaque-synthetic-diagnostic-credential"
+
+    class DiagnosticProbe(_Probe):
+        def run(self):
+            self.ctx.stats = ScanStats(
+                connector=self.name,
+                started_at="now",
+                errors=["--api-key", secret],
+                warnings=[f"reflected caller {secret}"],
+                skipped=True,
+                skip_reason=f"request for {secret} was denied",
+            )
+            return []
+
+    result = _run(monkeypatch, index, DiagnosticProbe)
+
+    assert not result.complete
+    assert secret not in repr(result.stats)
+    assert secret not in result.to_json()
+    assert result.stats[0].warnings == [f"reflected caller {REDACTED}"]
+    assert result.stats[0].skip_reason == f"request for {REDACTED} was denied"
+
+
 def test_post_correlation_growth_is_bounded_without_losing_safe_neighbor(monkeypatch, index):
     class TwoProbe(_Probe):
         def analyze(self, records):

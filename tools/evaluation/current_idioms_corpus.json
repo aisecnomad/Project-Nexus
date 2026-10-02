@@ -1,0 +1,549 @@
+{
+  "schema": 1,
+  "metadata": {
+    "name": "Current SDK idioms, October 2026",
+    "type": "synthetic",
+    "provenance": "Short snippets written from scratch for this regression suite (AI-assisted) in the shape the current SDK documentation uses: AI SDK 7, OpenAI Agents SDK, Claude Agent SDK, LangGraph, LangChain 1.0, Google ADK, Pydantic AI, smolagents, Strands, Microsoft Agent Framework and Mastra, with hard negatives. No copied third party code, live repositories, independent labels or field accuracy claims.",
+    "known_gap_policy": {
+      "max_count": 1,
+      "expires_on": "2026-12-31"
+    }
+  },
+  "cases": [
+    {
+      "id": "ai-sdk7-chat-route-tool-loop",
+      "family": "vercel-ai-sdk",
+      "description": "AI SDK 7 chat route: streamText with imported tools and stopWhen isStepCount(5) is a five-step tool loop",
+      "files": {
+        "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
+        "app/api/chat/route.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { convertToModelMessages, isStepCount, streamText, type UIMessage } from \"ai\";\nimport { lookupOrder } from \"@/lib/tools/orders\";\nimport { refundPolicy } from \"@/lib/tools/policy\";\n\nexport const maxDuration = 30;\n\nexport async function POST(request: Request) {\n  const { messages }: { messages: UIMessage[] } = await request.json();\n  const result = streamText({\n    model: openai(\"gpt-5-mini\"),\n    system: \"You answer order questions for the Lumen Lamps shop. Look orders up before answering.\",\n    messages: await convertToModelMessages(messages),\n    tools: { lookupOrder, refundPolicy },\n    stopWhen: isStepCount(5),\n    onError({ error }) {\n      console.error(\"chat stream failed\", error);\n    },\n  });\n  return result.toUIMessageStreamResponse();\n}\n",
+        "lib/tools/orders.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\nimport { db } from \"@/lib/db\";\n\nexport const lookupOrder = tool({\n  description: \"Find an order by its number and return its status and items\",\n  inputSchema: z.object({ orderNumber: z.string().regex(/^LL-[0-9]{6}$/) }),\n  execute: async ({ orderNumber }) => {\n    const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });\n    return order ?? { error: `no order ${orderNumber}` };\n  },\n});\n",
+        "lib/tools/policy.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\n\nconst POLICY = {\n  damaged: \"Full refund or a replacement within 30 days, with a photo of the damage.\",\n  unwanted: \"Refund within 14 days if the lamp is unused and still in its box.\",\n};\n\nexport const refundPolicy = tool({\n  description: \"Return the refund policy that applies to a reason\",\n  inputSchema: z.object({ reason: z.enum([\"damaged\", \"unwanted\"]) }),\n  execute: async ({ reason }) => POLICY[reason],\n});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.vercel-ai-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ai-sdk-tool-loop-agent-class",
+      "family": "vercel-ai-sdk",
+      "description": "AI SDK 6 ToolLoopAgent with an inline executable tool and a stepCountIs(8) stop condition",
+      "files": {
+        "package.json": "{\n  \"name\": \"fernwood-docs-agent\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": { \"@ai-sdk/anthropic\": \"^3.0.0\", \"ai\": \"^6.0.20\", \"zod\": \"^4.1.0\" }\n}\n",
+        "src/agent.ts": "import { anthropic } from \"@ai-sdk/anthropic\";\nimport { ToolLoopAgent, stepCountIs, tool } from \"ai\";\nimport { z } from \"zod\";\nimport { searchDocs } from \"./search.js\";\n\nexport const docsAgent = new ToolLoopAgent({\n  model: anthropic(\"claude-sonnet-5-5\"),\n  instructions: \"Answer questions about the Fernwood API with the documentation search tool. Cite page titles.\",\n  tools: {\n    searchDocs: tool({\n      description: \"Full-text search over the API documentation\",\n      inputSchema: z.object({ query: z.string().min(2) }),\n      execute: async ({ query }) => searchDocs(query, 5),\n    }),\n  },\n  stopWhen: stepCountIs(8),\n});\n",
+        "src/search.ts": "import { readFile } from \"node:fs/promises\";\n\ntype Page = { title: string; body: string };\n\nconst pages: Page[] = JSON.parse(await readFile(new URL(\"./pages.json\", import.meta.url), \"utf8\"));\n\nexport function searchDocs(query: string, limit: number) {\n  const terms = query.toLowerCase().split(/\\s+/);\n  return pages\n    .map((page) => ({ page, score: terms.filter((term) => page.body.toLowerCase().includes(term)).length }))\n    .filter((hit) => hit.score > 0)\n    .sort((a, b) => b.score - a.score)\n    .slice(0, limit)\n    .map(({ page }) => ({ title: page.title, excerpt: page.body.slice(0, 400) }));\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.vercel-ai-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ai-sdk7-plain-chat-route",
+      "family": "vercel-ai-sdk",
+      "description": "AI SDK 7 chat route with one streamText call and no tools: SDK usage, not an agent",
+      "files": {
+        "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
+        "app/api/chat/route.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { convertToModelMessages, streamText, type UIMessage } from \"ai\";\n\nexport const maxDuration = 30;\n\nexport async function POST(request: Request) {\n  const { messages }: { messages: UIMessage[] } = await request.json();\n  const result = streamText({\n    model: openai(\"gpt-5-mini\"),\n    system: \"You are a friendly writing coach. Suggest one improvement at a time.\",\n    messages: await convertToModelMessages(messages),\n    temperature: 0.4,\n  });\n  return result.toUIMessageStreamResponse();\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.vercel-ai-sdk"
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ai-sdk7-steps-without-tools",
+      "family": "vercel-ai-sdk",
+      "description": "generateText with stopWhen isStepCount(3) but no tools continues text generation; nothing can be called",
+      "files": {
+        "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
+        "lib/describe.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { generateText, isStepCount } from \"ai\";\n\n// Long product descriptions need a continuation step; there is nothing to call.\nexport async function describe(product: { name: string; features: string[] }) {\n  const { text } = await generateText({\n    model: openai(\"gpt-5-mini\"),\n    prompt: `Write a product page for ${product.name}: ${product.features.join(\", \")}`,\n    stopWhen: isStepCount(3),\n    maxOutputTokens: 1200,\n  });\n  return text;\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.vercel-ai-sdk"
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ai-sdk7-tool-loop-disabled",
+      "family": "vercel-ai-sdk",
+      "description": "A multi-step call that passes the chat tools with toolChoice none cannot select a tool",
+      "files": {
+        "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
+        "lib/digest.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { generateText, isStepCount } from \"ai\";\nimport { lookupOrder } from \"@/lib/tools/orders\";\nimport { refundPolicy } from \"@/lib/tools/policy\";\n\nconst shared = { tools: { lookupOrder, refundPolicy } };\n\n// The nightly digest reuses the chat configuration but must never act.\nexport async function digest(transcript: string) {\n  const { text } = await generateText({\n    model: openai(\"gpt-5-mini\"),\n    prompt: `Summarize today's support conversations:\\n${transcript}`,\n    tools: shared.tools,\n    toolChoice: \"none\",\n    stopWhen: isStepCount(2),\n  });\n  return text;\n}\n",
+        "lib/tools/orders.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\nimport { db } from \"@/lib/db\";\n\nexport const lookupOrder = tool({\n  description: \"Find an order by its number and return its status and items\",\n  inputSchema: z.object({ orderNumber: z.string().regex(/^LL-[0-9]{6}$/) }),\n  execute: async ({ orderNumber }) => {\n    const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });\n    return order ?? { error: `no order ${orderNumber}` };\n  },\n});\n",
+        "lib/tools/policy.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\n\nconst POLICY = {\n  damaged: \"Full refund or a replacement within 30 days, with a photo of the damage.\",\n  unwanted: \"Refund within 14 days if the lamp is unused and still in its box.\",\n};\n\nexport const refundPolicy = tool({\n  description: \"Return the refund policy that applies to a reason\",\n  inputSchema: z.object({ reason: z.enum([\"damaged\", \"unwanted\"]) }),\n  execute: async ({ reason }) => POLICY[reason],\n});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.vercel-ai-sdk"
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ai-sdk7-single-step-imported-tool",
+      "family": "vercel-ai-sdk",
+      "description": "One generateText step with an imported tool whose execute runs when the model selects it: model-selected dispatch, as for an inline executable tool. Known gap: without a stop condition the scanner only recognizes inline tool({ execute }) definitions and does not follow imported tool definitions across files, so this is reported as SDK usage.",
+      "files": {
+        "package.json": "{\n  \"name\": \"lumen-support-chat\",\n  \"private\": true,\n  \"scripts\": { \"dev\": \"next dev\", \"build\": \"next build\", \"start\": \"next start\" },\n  \"dependencies\": {\n    \"@ai-sdk/openai\": \"^3.0.4\",\n    \"ai\": \"7.0.12\",\n    \"next\": \"16.0.3\",\n    \"react\": \"19.2.0\",\n    \"zod\": \"^4.1.0\"\n  }\n}\n",
+        "lib/status.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { generateText } from \"ai\";\nimport { lookupOrder } from \"@/lib/tools/orders\";\n\n// One step: the model may call lookupOrder once; its result is returned, not fed back.\nexport async function orderStatus(question: string) {\n  const result = await generateText({\n    model: openai(\"gpt-5-mini\"),\n    prompt: question,\n    tools: { lookupOrder },\n  });\n  return result.toolResults;\n}\n",
+        "lib/tools/orders.ts": "import { tool } from \"ai\";\nimport { z } from \"zod\";\nimport { db } from \"@/lib/db\";\n\nexport const lookupOrder = tool({\n  description: \"Find an order by its number and return its status and items\",\n  inputSchema: z.object({ orderNumber: z.string().regex(/^LL-[0-9]{6}$/) }),\n  execute: async ({ orderNumber }) => {\n    const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });\n    return order ?? { error: `no order ${orderNumber}` };\n  },\n});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.vercel-ai-sdk"
+      },
+      "present": true,
+      "known_gap": true
+    },
+    {
+      "id": "openai-agents-python-runner",
+      "family": "openai-agents-sdk",
+      "description": "OpenAI Agents SDK triage agent with a function tool and handoffs, run with Runner.run",
+      "files": {
+        "requirements.txt": "openai-agents==0.4.2\nhttpx>=0.27\n",
+        "triage.py": "\"\"\"Route incoming support tickets to the billing or shipping specialist.\"\"\"\n\nimport asyncio\nimport os\n\nimport httpx\nfrom agents import Agent, Runner, function_tool\n\nTICKETS_URL = os.environ.get(\"TICKETS_URL\", \"http://tickets.internal:8080\")\n\n\n@function_tool\ndef get_ticket(ticket_id: str) -> dict:\n    \"\"\"Fetch a support ticket by id.\"\"\"\n    response = httpx.get(f\"{TICKETS_URL}/tickets/{ticket_id}\", timeout=10)\n    response.raise_for_status()\n    return response.json()\n\n\nbilling = Agent(name=\"Billing\", instructions=\"Resolve invoices, refunds and failed payments.\", tools=[get_ticket])\nshipping = Agent(name=\"Shipping\", instructions=\"Resolve delivery delays and address changes.\", tools=[get_ticket])\ntriage = Agent(\n    name=\"Triage\",\n    instructions=\"Read the ticket and hand it to the right specialist.\",\n    tools=[get_ticket],\n    handoffs=[billing, shipping],\n)\n\n\nasync def main(ticket_id: str) -> None:\n    result = await Runner.run(triage, f\"Handle ticket {ticket_id}\")\n    print(result.final_output)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main(os.environ[\"TICKET_ID\"]))\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "openai-agents-typescript-run",
+      "family": "openai-agents-sdk",
+      "description": "OpenAI Agents SDK for TypeScript: an Agent with a tool, executed with run()",
+      "files": {
+        "package.json": "{\n  \"name\": \"trip-planner\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": { \"@openai/agents\": \"^0.3.1\", \"zod\": \"^3.25.0\" }\n}\n",
+        "src/planner.ts": "import { Agent, run, tool } from \"@openai/agents\";\nimport { z } from \"zod\";\n\nconst getForecast = tool({\n  name: \"get_forecast\",\n  description: \"Three-day forecast for a city\",\n  parameters: z.object({ city: z.string() }),\n  async execute({ city }) {\n    const response = await fetch(`https://forecast.internal.example/v1/${encodeURIComponent(city)}`);\n    return response.text();\n  },\n});\n\nconst planner = new Agent({\n  name: \"Trip planner\",\n  instructions: \"Plan a weekend trip. Check the forecast before suggesting outdoor activities.\",\n  tools: [getForecast],\n});\n\nconst result = await run(planner, process.argv.slice(2).join(\" \") || \"A weekend in Porto\");\nconsole.log(result.finalOutput);\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "local-agents-package-named-like-sdk",
+      "family": "openai-agents-sdk",
+      "description": "A local agents package defines estate-agent Agent and Runner classes; nothing imports the OpenAI Agents SDK",
+      "files": {
+        "requirements.txt": "click>=8.1\n",
+        "agents/__init__.py": "\"\"\"Listing agents and the showing runner of the Harbourview estate office.\"\"\"\n\nfrom dataclasses import dataclass, field\n\n\n@dataclass\nclass Agent:\n    name: str\n    instructions: str\n    listings: list[str] = field(default_factory=list)\n\n\nclass Runner:\n    @staticmethod\n    def run(agent: Agent, listing: str) -> str:\n        agent.listings.append(listing)\n        return f\"{agent.name} will show {listing}: {agent.instructions}\"\n",
+        "showings.py": "from agents import Agent, Runner\n\ndana = Agent(name=\"Dana Okafor\", instructions=\"Bring the floor plans and the energy certificate.\")\n\nfor listing in (\"12 Quay Street\", \"4 Mill Lane\"):\n    print(Runner.run(dana, listing))\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "framework.openai-agents-sdk"
+        ]
+      }
+    },
+    {
+      "id": "claude-agent-sdk-python-query",
+      "family": "claude-agent-sdk",
+      "description": "Claude Agent SDK query() with read-only built-in tools reviews a changelog in the working tree",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"changelog-reviewer\"\nversion = \"0.3.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"claude-agent-sdk>=0.1.6\", \"anyio>=4.4\"]\n",
+        "review.py": "\"\"\"Ask Claude to check the unreleased changelog entries against the branch diff.\"\"\"\n\nimport anyio\nfrom claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock, query\n\nOPTIONS = ClaudeAgentOptions(\n    system_prompt=\"You review changelog entries. Report entries that do not match the code change.\",\n    allowed_tools=[\"Read\", \"Grep\", \"Glob\"],\n    permission_mode=\"default\",\n    max_turns=8,\n    cwd=\".\",\n)\n\n\nasync def main() -> None:\n    async for message in query(prompt=\"Review CHANGELOG.md against git diff main...HEAD\", options=OPTIONS):\n        if isinstance(message, AssistantMessage):\n            for block in message.content:\n                if isinstance(block, TextBlock):\n                    print(block.text)\n        elif isinstance(message, ResultMessage):\n            print(f\"turns: {message.num_turns}\")\n\n\nanyio.run(main)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.claude-agent-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.claude-agent-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "claude-agent-sdk-python-client-sdk-tool",
+      "family": "claude-agent-sdk",
+      "description": "ClaudeSDKClient session with an in-process MCP tool created by @tool and create_sdk_mcp_server",
+      "files": {
+        "requirements.txt": "claude-agent-sdk>=0.1.6\n",
+        "assistant.py": "import asyncio\n\nfrom claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, create_sdk_mcp_server, tool\n\nfrom inventory import stock_level\n\n\n@tool(\"stock_level\", \"Units in stock for a SKU\", {\"sku\": str})\nasync def stock_tool(args):\n    return {\"content\": [{\"type\": \"text\", \"text\": str(stock_level(args[\"sku\"]))}]}\n\n\nserver = create_sdk_mcp_server(name=\"inventory\", version=\"1.0.0\", tools=[stock_tool])\noptions = ClaudeAgentOptions(\n    mcp_servers={\"inventory\": server},\n    allowed_tools=[\"mcp__inventory__stock_level\"],\n    system_prompt=\"You help warehouse staff check stock. Use the inventory tool and never guess.\",\n)\n\n\nasync def main() -> None:\n    async with ClaudeSDKClient(options=options) as client:\n        await client.query(\"How many units of SKU WH-2291 are left?\")\n        async for message in client.receive_response():\n            print(message)\n\n\nasyncio.run(main())\n",
+        "inventory.py": "import csv\nfrom pathlib import Path\n\nSTOCK_FILE = Path(__file__).with_name(\"stock.csv\")\n\n\ndef stock_level(sku: str) -> int:\n    with STOCK_FILE.open(newline=\"\", encoding=\"utf-8\") as handle:\n        for row in csv.DictReader(handle):\n            if row[\"sku\"] == sku:\n                return int(row[\"units\"])\n    return 0\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.claude-agent-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.claude-agent-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "claude-agent-sdk-typescript-query",
+      "family": "claude-agent-sdk",
+      "description": "Claude Agent SDK for TypeScript: query() with allowedTools and maxTurns iterated with for await",
+      "files": {
+        "package.json": "{\n  \"name\": \"test-triage\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": { \"@anthropic-ai/claude-agent-sdk\": \"^0.1.30\" }\n}\n",
+        "triage.ts": "import { query } from \"@anthropic-ai/claude-agent-sdk\";\n\nconst report = process.argv[2] ?? \"test-output.txt\";\n\nfor await (const message of query({\n  prompt: `Read the failing test output in ${report} and propose the smallest fix.`,\n  options: {\n    allowedTools: [\"Read\", \"Grep\", \"Glob\"],\n    permissionMode: \"default\",\n    maxTurns: 6,\n  },\n})) {\n  if (message.type === \"result\" && message.subtype === \"success\") {\n    console.log(message.result);\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.claude-agent-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.claude-agent-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "langgraph-prebuilt-react-agent",
+      "family": "langgraph",
+      "description": "LangGraph create_react_agent with two calendar tools and an in-memory checkpointer",
+      "files": {
+        "requirements.txt": "langgraph>=0.6\nlangchain-anthropic>=0.3\n",
+        "scheduler.py": "from langchain_core.tools import tool\nfrom langgraph.checkpoint.memory import InMemorySaver\nfrom langgraph.prebuilt import create_react_agent\n\nfrom calendar_api import book_slot, free_slots\n\n\n@tool\ndef find_slots(day: str) -> list[str]:\n    \"\"\"List free 30 minute slots on a day (YYYY-MM-DD).\"\"\"\n    return free_slots(day)\n\n\n@tool\ndef book(day: str, slot: str, attendee: str) -> str:\n    \"\"\"Book a slot for an attendee.\"\"\"\n    return book_slot(day, slot, attendee)\n\n\nscheduler = create_react_agent(\n    \"anthropic:claude-sonnet-5-5\",\n    tools=[find_slots, book],\n    prompt=\"You schedule meetings. Confirm the slot with the user before booking.\",\n    checkpointer=InMemorySaver(),\n)\n\nif __name__ == \"__main__\":\n    config = {\"configurable\": {\"thread_id\": \"cli\"}}\n    request = {\"messages\": [{\"role\": \"user\", \"content\": \"Book 30 minutes with Ana on Friday\"}]}\n    print(scheduler.invoke(request, config)[\"messages\"][-1].content)\n",
+        "calendar_api.py": "import datetime as dt\n\nBOOKED: dict[str, set[str]] = {}\n\n\ndef free_slots(day: str) -> list[str]:\n    dt.date.fromisoformat(day)\n    taken = BOOKED.get(day, set())\n    return [f\"{hour:02d}:{minute:02d}\" for hour in range(9, 17) for minute in (0, 30) if f\"{hour:02d}:{minute:02d}\" not in taken]\n\n\ndef book_slot(day: str, slot: str, attendee: str) -> str:\n    if slot not in free_slots(day):\n        return f\"{slot} on {day} is no longer free\"\n    BOOKED.setdefault(day, set()).add(slot)\n    return f\"booked {slot} on {day} with {attendee}\"\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langgraph"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.langgraph"
+          }
+        ]
+      }
+    },
+    {
+      "id": "langchain-v1-create-agent",
+      "family": "langchain",
+      "description": "LangChain 1.0 create_agent with a help-center search tool",
+      "files": {
+        "requirements.txt": "langchain>=1.0,<2\nlangchain-openai>=1.0\n",
+        "support_agent.py": "from langchain.agents import create_agent\nfrom langchain.tools import tool\n\nfrom kb import search_articles\n\n\n@tool\ndef search_kb(query: str) -> str:\n    \"\"\"Search the help-center articles and return the three best matches.\"\"\"\n    return \"\\n\\n\".join(search_articles(query, limit=3))\n\n\nagent = create_agent(\n    model=\"openai:gpt-5-mini\",\n    tools=[search_kb],\n    system_prompt=\"Answer customer questions from the help center. Say when no article covers it.\",\n)\n\n\ndef answer(question: str) -> str:\n    result = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": question}]})\n    return result[\"messages\"][-1].content\n",
+        "kb.py": "import json\nfrom pathlib import Path\n\nARTICLES = json.loads(Path(__file__).with_name(\"articles.json\").read_text(encoding=\"utf-8\"))\n\n\ndef search_articles(query: str, limit: int) -> list[str]:\n    words = set(query.lower().split())\n    ranked = sorted(ARTICLES, key=lambda a: -len(words & set(a[\"body\"].lower().split())))\n    return [f\"{a['title']}\\n{a['body'][:500]}\" for a in ranked[:limit]]\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.langchain"
+          }
+        ]
+      }
+    },
+    {
+      "id": "google-adk-llm-agent",
+      "family": "google-adk",
+      "description": "Google ADK LlmAgent exported as root_agent with a forecast function tool",
+      "files": {
+        "requirements.txt": "google-adk>=1.15\nhttpx>=0.27\n",
+        "weather_agent/__init__.py": "from . import agent\n",
+        "weather_agent/agent.py": "import httpx\nfrom google.adk.agents import LlmAgent\n\nFORECAST_URL = \"https://forecast.internal.example/v1/daily\"\n\n\ndef get_forecast(city: str) -> dict:\n    \"\"\"Return tomorrow's forecast for a city.\"\"\"\n    response = httpx.get(FORECAST_URL, params={\"city\": city}, timeout=10)\n    response.raise_for_status()\n    return {\"status\": \"success\", \"forecast\": response.json()}\n\n\nroot_agent = LlmAgent(\n    name=\"weather_agent\",\n    model=\"gemini-2.5-flash\",\n    description=\"Answers questions about tomorrow's weather.\",\n    instruction=\"Call get_forecast for every city the user mentions. Answer in one short paragraph.\",\n    tools=[get_forecast],\n)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.google-adk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.google-adk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pydantic-ai-agent-with-tool",
+      "family": "pydantic-ai",
+      "description": "Pydantic AI agent with dependencies, structured output and a tool registered with @reviewer.tool",
+      "files": {
+        "pyproject.toml": "[project]\nname = \"expense-review\"\nversion = \"1.2.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"pydantic-ai-slim[openai]>=1.0\"]\n",
+        "review.py": "from dataclasses import dataclass\n\nfrom pydantic import BaseModel\nfrom pydantic_ai import Agent, RunContext\n\nfrom ledger import Ledger\n\n\n@dataclass\nclass Deps:\n    ledger: Ledger\n    employee_id: str\n\n\nclass Verdict(BaseModel):\n    approved: bool\n    reason: str\n\n\nreviewer = Agent(\n    \"openai:gpt-5-mini\",\n    deps_type=Deps,\n    output_type=Verdict,\n    instructions=\"Approve an expense only if it fits the employee's remaining monthly budget.\",\n)\n\n\n@reviewer.tool\ndef remaining_budget(ctx: RunContext[Deps]) -> float:\n    \"\"\"Remaining monthly budget of the employee, in euros.\"\"\"\n    return ctx.deps.ledger.remaining(ctx.deps.employee_id)\n\n\ndef review(ledger: Ledger, employee_id: str, claim: str) -> Verdict:\n    return reviewer.run_sync(claim, deps=Deps(ledger, employee_id)).output\n",
+        "ledger.py": "class Ledger:\n    def __init__(self, budgets: dict[str, float], spent: dict[str, float]) -> None:\n        self.budgets = budgets\n        self.spent = spent\n\n    def remaining(self, employee_id: str) -> float:\n        return self.budgets.get(employee_id, 0.0) - self.spent.get(employee_id, 0.0)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.pydantic-ai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.pydantic-ai"
+          }
+        ]
+      }
+    },
+    {
+      "id": "smolagents-code-agent",
+      "family": "smolagents",
+      "description": "smolagents CodeAgent with a web search tool, a custom tool and extra authorized imports",
+      "files": {
+        "requirements.txt": "smolagents[toolkit]>=1.20\n",
+        "research.py": "from smolagents import CodeAgent, InferenceClientModel, WebSearchTool, tool\n\n\n@tool\ndef count_words(text: str) -> int:\n    \"\"\"Count the words in a text.\n\n    Args:\n        text: The text to count.\n    \"\"\"\n    return len(text.split())\n\n\nagent = CodeAgent(\n    tools=[WebSearchTool(), count_words],\n    model=InferenceClientModel(model_id=\"Qwen/Qwen3-Coder-30B-A3B-Instruct\"),\n    additional_authorized_imports=[\"statistics\"],\n    max_steps=6,\n)\n\nif __name__ == \"__main__\":\n    print(agent.run(\"Find three recent articles about heat pumps and report their average word count.\"))\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.smolagents"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.smolagents"
+          }
+        ]
+      }
+    },
+    {
+      "id": "strands-agent-with-tools",
+      "family": "aws-strands",
+      "description": "Strands Agents agent with a custom @tool and two strands_tools helpers",
+      "files": {
+        "requirements.txt": "strands-agents>=1.10\nstrands-agents-tools>=0.2\n",
+        "quotes.py": "from strands import Agent, tool\nfrom strands_tools import calculator, current_time\n\n\n@tool\ndef shipping_cost(weight_kg: float, zone: int) -> float:\n    \"\"\"Shipping cost in euros for a parcel weight and a delivery zone from 1 to 4.\"\"\"\n    base = {1: 4.5, 2: 6.0, 3: 8.5, 4: 12.0}[zone]\n    return round(base + 1.2 * max(0.0, weight_kg - 1), 2)\n\n\nquoter = Agent(\n    system_prompt=\"You quote shipping prices. Always use the shipping_cost tool.\",\n    tools=[shipping_cost, calculator, current_time],\n)\n\nif __name__ == \"__main__\":\n    quoter(\"What does a 3.2 kg parcel to zone 3 cost?\")\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.aws-strands"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.aws-strands"
+          }
+        ]
+      }
+    },
+    {
+      "id": "microsoft-agent-framework-chat-agent",
+      "family": "microsoft-agent-framework",
+      "description": "Microsoft Agent Framework ChatAgent over an OpenAI chat client with a function tool",
+      "files": {
+        "requirements.txt": "agent-framework>=1.0.0b251001\n",
+        "rooms.py": "import asyncio\nfrom typing import Annotated\n\nfrom agent_framework import ChatAgent\nfrom agent_framework.openai import OpenAIChatClient\nfrom pydantic import Field\n\nROOMS = {\"oslo\": 8, \"lima\": 4, \"accra\": 12}\n\n\ndef free_rooms(min_seats: Annotated[int, Field(description=\"Minimum number of seats\")]) -> list[str]:\n    \"\"\"List meeting rooms with at least the given number of seats.\"\"\"\n    return [name for name, seats in ROOMS.items() if seats >= min_seats]\n\n\nasync def main() -> None:\n    agent = ChatAgent(\n        chat_client=OpenAIChatClient(),\n        instructions=\"You book meeting rooms. Check which rooms are free before proposing one.\",\n        tools=[free_rooms],\n    )\n    result = await agent.run(\"I need a room for six people this afternoon.\")\n    print(result.text)\n\n\nasyncio.run(main())\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.microsoft-agent-framework"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.microsoft-agent-framework"
+          }
+        ]
+      }
+    },
+    {
+      "id": "mastra-agent-with-tool",
+      "family": "mastra",
+      "description": "Mastra agent with a createTool weather tool, registered on the Mastra instance",
+      "files": {
+        "package.json": "{\n  \"name\": \"weather-concierge\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": { \"dev\": \"mastra dev\" },\n  \"dependencies\": { \"@ai-sdk/openai\": \"^2.0.0\", \"@mastra/core\": \"^0.20.0\", \"zod\": \"^3.25.0\" }\n}\n",
+        "src/mastra/agents/weather.ts": "import { openai } from \"@ai-sdk/openai\";\nimport { Agent } from \"@mastra/core/agent\";\nimport { weatherTool } from \"../tools/weather\";\n\nexport const weatherAgent = new Agent({\n  name: \"Weather concierge\",\n  instructions: \"Tell travellers what to pack. Look the weather up before answering.\",\n  model: openai(\"gpt-4o-mini\"),\n  tools: { weatherTool },\n});\n",
+        "src/mastra/tools/weather.ts": "import { createTool } from \"@mastra/core/tools\";\nimport { z } from \"zod\";\n\nexport const weatherTool = createTool({\n  id: \"get-weather\",\n  description: \"Current weather for a city\",\n  inputSchema: z.object({ city: z.string() }),\n  execute: async ({ context }) => {\n    const response = await fetch(`https://forecast.internal.example/v1/now?city=${encodeURIComponent(context.city)}`);\n    return response.json();\n  },\n});\n",
+        "src/mastra/index.ts": "import { Mastra } from \"@mastra/core\";\nimport { weatherAgent } from \"./agents/weather\";\n\nexport const mastra = new Mastra({ agents: { weatherAgent } });\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.mastra"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.mastra"
+          }
+        ]
+      }
+    },
+    {
+      "id": "openai-chat-tool-dispatch-loop",
+      "family": "provider-sdk",
+      "description": "OpenAI chat completions loop that dispatches the model-selected function from a name map and feeds results back",
+      "files": {
+        "requirements.txt": "openai>=1.60\n",
+        "rota_bot.py": "\"\"\"Answer questions about the on-call rota by calling local functions.\"\"\"\n\nimport json\n\nfrom openai import OpenAI\n\nfrom rota import who_is_on_call, swap_requests\n\nclient = OpenAI()\nFUNCTIONS = {\"who_is_on_call\": who_is_on_call, \"swap_requests\": swap_requests}\nTOOLS = [\n    {\n        \"type\": \"function\",\n        \"function\": {\n            \"name\": \"who_is_on_call\",\n            \"description\": \"Engineer on call for a team on a date\",\n            \"parameters\": {\n                \"type\": \"object\",\n                \"properties\": {\"team\": {\"type\": \"string\"}, \"date\": {\"type\": \"string\"}},\n                \"required\": [\"team\", \"date\"],\n            },\n        },\n    },\n    {\n        \"type\": \"function\",\n        \"function\": {\n            \"name\": \"swap_requests\",\n            \"description\": \"Open swap requests for a team\",\n            \"parameters\": {\"type\": \"object\", \"properties\": {\"team\": {\"type\": \"string\"}}, \"required\": [\"team\"]},\n        },\n    },\n]\n\n\ndef ask(question: str) -> str:\n    messages = [{\"role\": \"user\", \"content\": question}]\n    for _ in range(6):\n        response = client.chat.completions.create(model=\"gpt-5-mini\", messages=messages, tools=TOOLS)\n        message = response.choices[0].message\n        messages.append(message)\n        if not message.tool_calls:\n            return message.content or \"\"\n        for call in message.tool_calls:\n            result = FUNCTIONS[call.function.name](**json.loads(call.function.arguments))\n            messages.append({\"role\": \"tool\", \"tool_call_id\": call.id, \"content\": json.dumps(result)})\n    return \"stopped after six tool rounds\"\n",
+        "rota.py": "ROTA = {(\"payments\", \"2026-10-02\"): \"kofi\", (\"search\", \"2026-10-02\"): \"mei\"}\nSWAPS = {\"payments\": [{\"from\": \"kofi\", \"to\": \"ines\", \"date\": \"2026-10-09\"}]}\n\n\ndef who_is_on_call(team: str, date: str) -> str:\n    return ROTA.get((team, date), \"nobody scheduled\")\n\n\ndef swap_requests(team: str) -> list[dict]:\n    return SWAPS.get(team, [])\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "provider_signature": "provider.openai"
+          }
+        ]
+      }
+    },
+    {
+      "id": "openai-chat-completion-without-tools",
+      "family": "provider-sdk",
+      "description": "A summarizer that sends one chat completions request without tools is LLM usage, not an agent",
+      "files": {
+        "requirements.txt": "openai>=1.60\n",
+        "standup.py": "\"\"\"Summarize yesterday's incident notes for the morning stand-up.\"\"\"\n\nimport sys\nfrom pathlib import Path\n\nfrom openai import OpenAI\n\nclient = OpenAI()\n\n\ndef summarize(notes: str) -> str:\n    response = client.chat.completions.create(\n        model=\"gpt-5-mini\",\n        messages=[\n            {\"role\": \"system\", \"content\": \"Summarize incident notes in five bullet points for engineers.\"},\n            {\"role\": \"user\", \"content\": notes},\n        ],\n        temperature=0.2,\n    )\n    return response.choices[0].message.content or \"\"\n\n\nif __name__ == \"__main__\":\n    print(summarize(Path(sys.argv[1]).read_text(encoding=\"utf-8\")))\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.openai"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.openai"
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "anthropic-messages-without-tools",
+      "family": "provider-sdk",
+      "description": "A release-notes script that sends one Messages API request without tools is LLM usage, not an agent",
+      "files": {
+        "package.json": "{\n  \"name\": \"release-notes-writer\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": { \"@anthropic-ai/sdk\": \"^0.68.0\" }\n}\n",
+        "notes.ts": "import Anthropic from \"@anthropic-ai/sdk\";\nimport { readFile } from \"node:fs/promises\";\n\nconst client = new Anthropic();\n\nconst commits = await readFile(process.argv[2] ?? \"commits.txt\", \"utf8\");\nconst message = await client.messages.create({\n  model: \"claude-opus-5-5\",\n  max_tokens: 2000,\n  system: \"Turn commit subjects into user-facing release notes grouped by feature.\",\n  messages: [{ role: \"user\", content: commits }],\n});\n\nfor (const block of message.content) {\n  if (block.type === \"text\") console.log(block.text);\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "provider.anthropic"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "provider_signature": "provider.anthropic"
+          }
+        ],
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "vendored-llm-detection-rules",
+      "family": "detection-rules",
+      "description": "A repository of Semgrep, Sigma and gitleaks rules that name LLM keys, hosts and agent constructors; rule content is data, so nothing here uses a model",
+      "files": {
+        "README.md": "# Detection rules\n\nSemgrep, Sigma and gitleaks rules the platform security team maintains for\nLLM credentials and direct model API calls. CI publishes them to the shared\nrule registry; nothing in this repository calls a model.\n",
+        "semgrep/llm.yml": "rules:\n  - id: llm-key-from-environment\n    message: OPENAI_API_KEY or ANTHROPIC_API_KEY is read directly; use the secrets broker instead\n    severity: WARNING\n    languages: [python]\n    pattern-either:\n      - pattern: os.environ[\"OPENAI_API_KEY\"]\n      - pattern: os.getenv(\"ANTHROPIC_API_KEY\")\n  - id: direct-model-endpoint\n    message: Call api.openai.com and api.anthropic.com through the egress gateway\n    severity: ERROR\n    languages: [generic]\n    pattern-regex: https://api\\.(?:openai|anthropic)\\.com/v1/\n  - id: unreviewed-agent-loop\n    message: AgentExecutor and create_react_agent run tools the model selects; add an approval step\n    severity: INFO\n    languages: [python]\n    pattern-either:\n      - pattern: AgentExecutor(...)\n      - pattern: create_react_agent(...)\n",
+        "sigma/llm_keys.yml": "title: Model provider key exported in a shell session\nid: 6b0a3c52-1f7e-4d55-9e0b-2a7c41d9f8e3\nstatus: experimental\ndescription: Detects an LLM provider key exported on the command line of a build host\nauthor: Platform security\nlogsource:\n  product: linux\n  category: process_creation\ndetection:\n  selection:\n    CommandLine|contains:\n      - 'OPENAI_API_KEY='\n      - 'ANTHROPIC_API_KEY='\n      - 'GROQ_API_KEY='\n  condition: selection\nfalsepositives:\n  - Developers testing the secrets broker\nlevel: medium\n---\ntitle: Build agent contacts a model API directly\nlogsource:\n  category: proxy\ndetection:\n  selection:\n    c-uri|contains:\n      - 'api.openai.com'\n      - 'api.anthropic.com'\n      - 'generativelanguage.googleapis.com'\n  condition: selection\nlevel: low\n",
+        ".gitleaks.toml": "title = \"platform security gitleaks rules\"\n\n[extend]\nuseDefault = true\n\n[[rules]]\nid = \"internal-llm-gateway-token\"\ndescription = \"Token for the internal LLM gateway (LLM_GATEWAY_TOKEN)\"\nregex = '''(?i)llm_gateway_token\\s*[=:]\\s*['\"]?(lgw_[a-z0-9]{32})'''\nkeywords = [\"llm_gateway_token\", \"lgw_\"]\n"
+      },
+      "target": {
+        "kind": "framework-usage"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": []
+      }
+    }
+  ]
+}

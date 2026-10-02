@@ -11,12 +11,14 @@ managed identities, and JWT tokens related to AI services and agent frameworks.
 `/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OAuth apps that
 match AI SaaS signatures or hold privileged scopes, and service apps
 (`application_type: service` / `client_credentials` / token-exchange).
-Token: SSWS API token or OAuth bearer with `okta.apps.read`.
+Token: SSWS API token or OAuth bearer with `okta.apps.read`. A 429 is retried
+after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
+per wait); exhausted retries mark the scan incomplete.
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
-app-only `appRoleAssignments` (role ids resolved to names such as
-`Mail.ReadWrite`), tenant app registrations, managed identities. First-party
+app-only `appRoleAssignments` (role ids resolved to the names their resource
+defines, such as `Mail.ReadWrite`), tenant app registrations, managed identities. First-party
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
@@ -56,7 +58,14 @@ Decodes tokens (never stored) and classifies the holder as `human`, `service`,
 `workload`, `delegated`, `agent` or `delegated-agent` using issuer-specific
 conventions (Entra `idtyp=app`, Okta `cid == sub`, Auth0 `gty`, Google service
 accounts, Cognito, Keycloak, SPIFFE) plus RFC 8693 `act` chains and
-agent-related claims. Scopes/roles are classified by the policy signatures;
+agent-related claims. GitHub Actions, Kubernetes service-account and GitLab CI
+job tokens are `workload` identities; a `system:serviceaccount:` subject or
+Kubernetes service-account claims make a `workload` whatever the issuer (GKE
+included). A GitHub Actions `actor` or `triggering_actor` is an agent hint only
+when it names an AI agent or product (`copilot-swe-agent[bot]`), not for a
+person or an ordinary `[bot]` App login. An agent-related claim counts only with a
+meaningful value: `bot: false`, `purpose: ""` or `tools: []` do not make an
+agent. Scopes/roles are classified by the policy signatures;
 lifetime and algorithm hygiene are flagged. Optional `jwks_url` verification
 fetches a bounded JWKS through the shared HTTPS client and accepts only RS256,
 ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
@@ -65,6 +74,13 @@ unverified token's issuer does not choose or authorize a key source. The JWKS UR
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
 `metadata.verified` as signature evidence, not permission to act.
+A token analyzed without `jwks_url`, or whose verification failed, carries
+`metadata.signature_verified: false`, the `signature-unverified` tag and a
+`jwt:signature` evidence item: its issuer family, identity type and privileged
+scopes come from unauthenticated claims and can be forged. The marker does not
+change confidence or risk. For a JWKS endpoint behind a private CA, set
+`ca_bundle` to a PEM file; it replaces the default CA store for that fetch and
+certificate verification stays on.
 
 CLI equivalents: `--jwks-url`, `--expected-issuer`, and repeatable
 `--jwt-algorithm`. The latter two require `--jwks-url`.

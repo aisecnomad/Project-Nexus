@@ -22,17 +22,20 @@ import re
 import threading
 import weakref
 from bisect import bisect_right
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections import ChainMap
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 import regex
 
+from shadowscan.connectors.code.genkit_semantics import genkit_call_capabilities, genkit_tool_registration
 from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.connectors.code.source_capabilities import CallCapabilities, configured_capabilities
-from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools
+from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools, has_vercel_tool_loop
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
@@ -41,6 +44,9 @@ from shadowscan.utils.redaction import sanitize_text
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
+# The Python binder checks the file's matching budget every this many visited
+# nodes: its walk is pure Python, which no regex timeout covers.
+_BUDGET_CHECK_NODES = 256
 # Proving a file unbindable matches at most this many distinct synthesized
 # statements (real modules need a few hundred), of which at most 512 name an
 # attribute of an imported module; a file needing more keeps the binder.
@@ -53,6 +59,17 @@ class SourceBudgetExceeded(MatchTimeoutError):
 
     Unlike a matching deadline, this is a property of the file itself: callers
     keep its lexical evidence and report the import-bound analysis as partial.
+    """
+
+
+class SourceNotParsed(Exception):
+    """The source does not parse, so it has no import bindings.
+
+    Python written for a newer grammar than the running interpreter's (``type A =
+    int`` before 3.12), or otherwise invalid, cannot be parsed (the filesystem
+    connector rewrites a notebook's magic and shell lines first). Callers keep
+    the file's lexical evidence, framework patterns included, and report that
+    the import binder did not run.
     """
 
 
@@ -74,6 +91,20 @@ class _Call:
     start: int = 0
     end: int = 0
     decorator: bool = False
+    receiver: str = ""
+    genkit_tools: tuple[str, ...] = ()
+    # The argument text stops at MAX_CALL_TEXT (or the end of the source) before the
+    # call closes: options past that point are unread, so they establish nothing.
+    partial: bool = False
+
+
+@dataclass
+class _LoopTransfers:
+    scope_depth: int
+    # The scope the loop body is layered on; transfers record their changes over it.
+    base: Mapping[str, _Binding | None]
+    scope: dict[str, _Binding | None] | None = None
+    has_break: bool = False
 
 
 # These APIs construct agents even when their arguments have a different order
@@ -109,7 +140,7 @@ _FACTORIES = {
     "framework.openai-swarm": r"(?:Agent|Swarm)",
     "framework.claude-agent-sdk": r"(?:ClaudeSDKClient|query)",
     "framework.pydantic-ai": r"Agent",
-    "framework.vercel-ai-sdk": r"(?:ToolLoopAgent|Experimental_Agent)",
+    "framework.vercel-ai-sdk": r"(?:ToolLoopAgent|Experimental_Agent|Agent)",
     "framework.mastra": r"(?:Agent|Mastra)",
     "framework.haystack": r"(?:Agent|ToolInvoker)",
     "framework.dspy": r"(?:ReAct|ProgramOfThought)",
@@ -118,6 +149,7 @@ _FACTORIES = {
     "framework.nova-act": r"NovaAct",
     "framework.inngest-agentkit": r"(?:createAgent|createNetwork)",
     "framework.voltagent": r"(?:Agent|VoltAgent)",
+    "framework.genkit": r"Genkit\.(?:defineAgent|definePromptAgent|defineCustomAgent)",
     "framework.langroid": r"(?:ChatAgent|Task)",
     "framework.beeai": r"(?:ReActAgent|ToolCallingAgent|RequirementAgent)",
 }
@@ -190,11 +222,149 @@ class _PythonBindings(ast.NodeVisitor):
         self.offsets = [0]
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))
-        self.scopes: list[dict[str, _Binding | None]] = [{}]
+        self.scopes: list[MutableMapping[str, _Binding | None]] = [{}]
         self.scope_kinds = ["module"]
         self.calls: list[_Call] = []
         self.imports: list[tuple[_Binding, int]] = []
+        self._loop_transfers: list[_LoopTransfers] = []
         self.decorator_calls: set[int] = set()
+        self._visited = 0
+
+    def visit(self, node: ast.AST) -> Any:
+        self._visited += 1
+        if not self._visited % _BUDGET_CHECK_NODES:
+            try:
+                pattern_timeout()
+            except MatchTimeoutError as exc:
+                raise SourceBudgetExceeded("source binding time budget exceeded") from exc
+        return super().visit(node)
+
+    def _visit_block(self, statements: Sequence[ast.AST]) -> bool:
+        """Visit a syntactic suite until an explicit, unconditional transfer.
+
+        This only proves local reachability: return/raise/break/continue and
+        constant or fully terminating if branches. Calls, exception handlers,
+        context-manager suppression and interprocedural/global mutation timing
+        are not assumed to establish that a surrounding suite terminates.
+        """
+        return any(self.visit(statement) is True for statement in statements)
+
+    def generic_visit(self, node: ast.AST) -> None:
+        # Generic constructs (notably try suites) keep their existing bounded
+        # lexical traversal, but a return cannot make later statements in the
+        # same suite into reachable construction evidence.
+        for _, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                if value and all(isinstance(item, ast.stmt) for item in value):
+                    self._visit_block(value)
+                else:
+                    for item in value:
+                        if isinstance(item, ast.AST):
+                            self.visit(item)
+            elif isinstance(value, ast.AST):
+                self.visit(value)
+
+    @staticmethod
+    def _join_into(
+        before: MutableMapping[str, _Binding | None], outcomes: Sequence[Mapping[str, _Binding | None]]
+    ) -> None:
+        """Keep a binding of ``before`` only when every possible outcome leaves it unchanged.
+
+        Each outcome holds only the names a suite may have assigned (an overlay
+        of ``before``, or a whole mapping after a star import), so the join costs
+        those names rather than the enclosing scope. An assigned name is recorded
+        even when it agrees: it shadows an outer scope from here on.
+        """
+        for name in set().union(*outcomes):
+            prior = before.get(name)
+            before[name] = prior if all(outcome.get(name, prior) == prior for outcome in outcomes) else None
+
+    @staticmethod
+    def _changes(
+        scope: Mapping[str, _Binding | None], base: Mapping[str, _Binding | None]
+    ) -> Mapping[str, _Binding | None]:
+        """The bindings ``scope`` holds over ``base``, the scope it was layered on.
+
+        Loop bodies and if branches layer an overlay on their enclosing scope, so
+        the changes are the overlays between them. A star import replaces the
+        scope with a mapping of every name: that whole mapping is then the change.
+        """
+        layers: list[Mapping[str, _Binding | None]] = []
+        current = scope
+        while current is not base:
+            if not isinstance(current, ChainMap) or len(current.maps) != 2:
+                return current
+            layers.append(current.maps[0])
+            current = current.maps[1]
+        return {name: scope[name] for name in set().union(*layers)}
+
+    def visit_Return(self, node: ast.Return) -> bool:
+        if node.value is not None:
+            self.visit(node.value)
+        return True
+
+    def visit_Raise(self, node: ast.Raise) -> bool:
+        if node.exc is not None:
+            self.visit(node.exc)
+        if node.cause is not None:
+            self.visit(node.cause)
+        return True
+
+    def visit_Break(self, node: ast.Break) -> bool:
+        self._record_loop_transfer(is_break=True)
+        return True
+
+    def visit_Continue(self, node: ast.Continue) -> bool:
+        self._record_loop_transfer(is_break=False)
+        return True
+
+    def _record_loop_transfer(self, *, is_break: bool) -> None:
+        if self._loop_transfers and self._loop_transfers[-1].scope_depth == len(self.scopes):
+            # A conditional break/continue may leave its branch before later
+            # statements restore a binding. Keep that earlier mutation as a
+            # possible loop outcome rather than letting visit_If discard it.
+            # Merge in place: retain at most one transfer scope per loop, and
+            # in it only the names the body changed, never a full symbol table.
+            transfers = self._loop_transfers[-1]
+            changes = self._changes(self.scopes[-1], transfers.base)
+            if transfers.scope is None:
+                transfers.scope = dict(changes)
+            else:
+                recorded, base = transfers.scope, transfers.base
+                for name in set(recorded).union(changes):
+                    prior = base.get(name)
+                    value = recorded.get(name, prior)
+                    recorded[name] = value if changes.get(name, prior) == value else None
+            transfers.has_break |= is_break
+
+    def _visit_loop(self, body: list[ast.stmt], target: ast.AST | None = None) -> bool:
+        """Visit a loop body layered on its scope, join what it may change; return whether it can break.
+
+        The iterable may be empty, and further iterations may overwrite an
+        imported namespace. A single lexical iteration never proves the binding
+        left behind by an unknown runtime iteration count. The body writes to an
+        overlay, so the join costs the names it assigns, not the whole scope.
+        """
+        before = self.scopes[-1]
+        overlay: dict[str, _Binding | None] = {}
+        chain = ChainMap(overlay, before)
+        self.scopes[-1] = chain
+        if target is not None:
+            self._store(target)
+        transfers = _LoopTransfers(len(self.scopes), before)
+        self._loop_transfers.append(transfers)
+        try:
+            self._visit_block(body)
+        finally:
+            self._loop_transfers.pop()
+        scope = self.scopes[-1]
+        # A star import replaces the scope with a mapping of every name.
+        outcomes: list[Mapping[str, _Binding | None]] = [overlay if scope is chain else scope]
+        if transfers.scope is not None:
+            outcomes.append(transfers.scope)
+        self.scopes[-1] = before
+        self._join_into(before, outcomes)
+        return transfers.has_break
 
     def _offset(self, line: int, column: int) -> int:
         # AST columns are UTF-8 bytes, not Unicode code points.
@@ -378,8 +548,7 @@ class _PythonBindings(ast.NodeVisitor):
             pending.extend(ast.iter_child_nodes(item))
         self.scopes.append(locals_)
         self.scope_kinds.append("function")
-        for statement in body:
-            self.visit(statement)
+        self._visit_block(body)
         self.scopes.pop()
         self.scope_kinds.pop()
 
@@ -393,26 +562,64 @@ class _PythonBindings(ast.NodeVisitor):
         self.scopes[-1][node.name] = None
         self.scopes.append({})
         self.scope_kinds.append("class")
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
         self.scopes.pop()
         self.scope_kinds.pop()
 
-    def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+    def visit_For(self, node: ast.For | ast.AsyncFor) -> bool:
         self.visit(node.iter)
-        self._store(node.target)
-        for statement in [*node.body, *node.orelse]:
-            self.visit(statement)
+        # Empty literal collections cannot enter a synchronous for body.
+        # Async iteration and calls (including range()) are not evaluated.
+        if not isinstance(node, ast.AsyncFor) and (
+            isinstance(node.iter, (ast.List, ast.Tuple, ast.Set))
+            and not node.iter.elts
+            or isinstance(node.iter, ast.Dict)
+            and not node.iter.keys
+            or isinstance(node.iter, ast.Constant)
+            and isinstance(node.iter.value, (str, bytes))
+            and not node.iter.value
+        ):
+            return self._visit_block(node.orelse)
+        has_break = self._visit_loop(node.body, node.target)
+        return self._loop_else(node.orelse, has_break=has_break)
 
     visit_AsyncFor = visit_For
+
+    def visit_While(self, node: ast.While) -> bool:
+        self.visit(node.test)
+        if isinstance(node.test, ast.Constant) and not node.test.value:
+            # The else suite runs on the zero-iteration path. Neither calls nor
+            # assignments in the body can alter the incoming bindings.
+            return self._visit_block(node.orelse)
+        has_break = self._visit_loop(node.body)
+        if isinstance(node.test, ast.Constant) and node.test.value:
+            # A constant-true condition cannot reach else. Without an outer
+            # loop break, it cannot reach the following statement either.
+            return not has_break
+        return self._loop_else(node.orelse, has_break=has_break)
+
+    def _loop_else(self, otherwise: list[ast.stmt], *, has_break: bool) -> bool:
+        # This runs after the loop's transfer frame is popped. A break in a
+        # nested loop's else belongs to the enclosing loop, unlike its body.
+        if not has_break:
+            return self._visit_block(otherwise)
+        # A break bypasses else, so its mutations cannot become certain.
+        before = self.scopes[-1]
+        overlay: dict[str, _Binding | None] = {}
+        chain = ChainMap(overlay, before)
+        self.scopes[-1] = chain
+        self._visit_block(otherwise)
+        scope = self.scopes[-1]
+        self.scopes[-1] = before
+        self._join_into(before, [overlay if scope is chain else scope])
+        return False
 
     def visit_With(self, node: ast.With | ast.AsyncWith) -> None:
         for item in node.items:
             self.visit(item.context_expr)
             if item.optional_vars:
                 self._store(item.optional_vars, self._resolve(item.context_expr))
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
 
     visit_AsyncWith = visit_With
 
@@ -446,8 +653,7 @@ class _PythonBindings(ast.NodeVisitor):
             self.visit(node.type)
         if node.name:
             self.scopes[-1][node.name] = None
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
 
     def visit_Match(self, node: ast.Match) -> None:
         self.visit(node.subject)
@@ -459,28 +665,40 @@ class _PythonBindings(ast.NodeVisitor):
                     self.scopes[-1][pattern.rest] = None
             if case.guard:
                 self.visit(case.guard)
-            for statement in case.body:
-                self.visit(statement)
+            self._visit_block(case.body)
 
-    def visit_If(self, node: ast.If) -> None:
+    def visit_If(self, node: ast.If) -> bool:
         self.visit(node.test)
         if isinstance(node.test, ast.Constant):
-            for statement in node.body if node.test.value else node.orelse:
-                self.visit(statement)
-            return
+            return self._visit_block(node.body if node.test.value else node.orelse)
         # Neither branch is assumed to execute. Only bindings identical after
-        # both branches survive into subsequent code.
-        before = self.scopes[-1].copy()
-        outcomes = []
+        # both branches survive into subsequent code. Each branch writes to an
+        # overlay of the enclosing bindings, so the merge costs the branches'
+        # own assignments rather than a copy of the whole scope per ``if``,
+        # which made a file of many top-level names and ifs quadratic. A branch
+        # that ends in an unconditional transfer (return, raise, break,
+        # continue) contributes no bindings to the code after the ``if``.
+        before = self.scopes[-1]
+        outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
         for branch in (node.body, node.orelse):
-            self.scopes[-1] = before.copy()
-            for statement in branch:
-                self.visit(statement)
-            outcomes.append(self.scopes[-1])
-        self.scopes[-1] = {
-            name: outcomes[0].get(name) if outcomes[0].get(name) == outcomes[1].get(name) else None
-            for name in set(outcomes[0]) | set(outcomes[1])
-        }
+            overlay: dict[str, _Binding | None] = {}
+            chain = ChainMap(overlay, before)
+            self.scopes[-1] = chain
+            stopped = self._visit_block(branch)
+            # A star import replaces the branch's scope with a plain mapping
+            # of every name; that mapping is then the branch's whole outcome.
+            scope = self.scopes[-1]
+            outcome = overlay if scope is chain else scope
+            outcomes.append(outcome)
+            if not stopped:
+                continuing.append(outcome)
+        self.scopes[-1] = before
+        joined = continuing or outcomes
+        for name in set().union(*joined):
+            values = [outcome.get(name, before.get(name)) for outcome in joined]
+            before[name] = values[0] if all(value == values[0] for value in values[1:]) else None
+        return not continuing
 
 
 _LiteralGroups = tuple[tuple[str, ...], ...]
@@ -776,7 +994,136 @@ def _javascript_bindings(
     if relevant is not None:
         bindings = {name: binding for name, binding in bindings.items() if relevant(binding)}
     _drop_uncertain_bindings(bindings, masked, declaration_spans)
-    return _javascript_calls(text, masked, bindings), imports
+    calls = _javascript_calls(text, masked, bindings)
+    calls.extend(_javascript_genkit_calls(text, masked, calls))
+    if len(calls) > MAX_BOUND_CALLS:
+        raise SourceBudgetExceeded("source binding call limit exceeded")
+    return calls, imports
+
+
+def _javascript_assignment(masked: str, call: _Call) -> tuple[str, tuple[int, int]] | None:
+    """Recognize a complete direct initializer at an explicit statement boundary.
+
+    Newlines do not prove a boundary: a concise arrow body or an unbraced
+    conditional can continue across them. An explicit semicolon or the true
+    start of the module is required on both assignment and standalone paths.
+    """
+    base = max(0, call.start - 2000)
+    prefix = masked[base : call.start]
+    match = re.search(
+        r"(?:^|;)\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)"
+        r"\s*(?::[^;={}\n]{1,500})?\s*=\s*$",
+        prefix,
+    )
+    if (
+        match is None
+        or base > 0
+        and match.start() == 0
+        and prefix[0] != ";"
+        or not re.match(r"\s*(?:;|$)", masked[call.end :])
+    ):
+        return None
+    start = base + match.start(1)
+    return match[1], (start, call.end)
+
+
+def _javascript_standalone_call(masked: str, call: _Call) -> bool:
+    """Whether the entire module statement is this call, without an enclosing expression."""
+    base = max(0, call.start - 2000)
+    prefix = masked[base : call.start]
+    match = re.search(r"(?:^|;)\s*(?:await\s+)?$", prefix)
+    return bool(
+        match is not None
+        and (base == 0 or match.start() > 0 or prefix[0] == ";")
+        and re.match(r"\s*(?:;|$)", masked[call.end :])
+    )
+
+
+def _javascript_module_level(masked: str, offset: int) -> bool:
+    """Reject bindings inside functions, branches, blocks or callback bodies."""
+    prefix = masked[:offset]
+    return prefix.count("{") == prefix.count("}")
+
+
+def _javascript_genkit_calls(text: str, masked: str, initial: list[_Call]) -> list[_Call]:
+    """Follow stable module-level Genkit instances and their registered tool callbacks.
+
+    Local instances, aliases, reassignments and shadowed names stay framework
+    evidence. A registered tool belongs only to the instance that defined it.
+    """
+    instances: dict[str, _Binding] = {}
+    created: dict[str, int] = {}
+    declarations: list[tuple[int, int]] = []
+    duplicates: set[str] = set()
+    for call in initial:
+        if (
+            call.binding.module not in {"genkit", "genkit/beta"}
+            or _symbol_tail(call.binding.symbol) != "genkit"
+        ):
+            continue
+        assigned = _javascript_assignment(masked, call)
+        if assigned is None:
+            continue
+        name, span = assigned
+        # A function-local initializer does not bind unrelated module code.
+        if not _javascript_module_level(masked, span[0]):
+            continue
+        if name in instances:
+            duplicates.add(name)
+        instances[name] = _Binding(call.binding.module, "Genkit", constructed=True)
+        created[name] = call.end
+        declarations.append(span)
+    for name in duplicates:
+        instances.pop(name, None)
+    _drop_uncertain_bindings(instances, masked, declarations)
+    calls = [
+        call for call in _javascript_calls(text, masked, instances) if call.start >= created[call.receiver]
+    ]
+    registrations: list[tuple[_Call, str, str | None, tuple[int, int] | None]] = []
+    variables: dict[str, _Binding] = {}
+    variable_declarations: list[tuple[int, int]] = []
+    duplicate_variables: set[str] = set()
+    for call in calls:
+        if call.binding.symbol != "Genkit.defineTool" or not _javascript_module_level(masked, call.start):
+            continue
+        registered = genkit_tool_registration(call.arguments, call.structural_arguments)
+        if registered is None:
+            continue
+        assigned = _javascript_assignment(masked, call)
+        if assigned is None and not _javascript_standalone_call(masked, call):
+            continue
+        variable, registration_span = assigned if assigned is not None else (None, None)
+        registrations.append((call, registered, variable, registration_span))
+        if variable is not None and registration_span is not None:
+            if variable in variables:
+                duplicate_variables.add(variable)
+            variables[variable] = call.binding
+            variable_declarations.append(registration_span)
+    for variable in duplicate_variables:
+        variables.pop(variable, None)
+    _drop_uncertain_bindings(variables, masked, variable_declarations)
+    return [
+        replace(
+            call,
+            genkit_tools=tuple(
+                sorted(
+                    {
+                        value
+                        for registration, name, variable, _ in registrations
+                        if registration.receiver == call.receiver and registration.end <= call.start
+                        for value in (
+                            "name:" + name,
+                            "variable:" + variable
+                            if variable is not None and variable in variables
+                            else None,
+                        )
+                        if value is not None
+                    }
+                )
+            ),
+        )
+        for call in calls
+    ]
 
 
 def _drop_uncertain_bindings(
@@ -841,18 +1188,22 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
         while end < min(len(masked), opening + MAX_CALL_TEXT) and depth:
             depth += (masked[end] == "(") - (masked[end] == ")")
             end += 1
-        if depth:
-            continue
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
+        # A longer call (a Genkit flow body, an agent with long instructions) is
+        # analyzed from its first MAX_CALL_TEXT characters, as the Python binder
+        # does; an option past them cannot be read, so it establishes nothing,
+        # and the caller reports the call (bound_source_matches ``truncated``).
         calls.append(
             _Call(
-                _Binding(binding.module, symbol),
+                _Binding(binding.module, symbol, binding.constructed),
                 text[opening:end],
                 text.count("\n", 0, match.start()) + 1,
                 masked[opening:end],
                 tool_factories=tool_factories,
                 start=match.start(),
                 end=end,
+                receiver=parts[0],
+                partial=bool(depth),
             )
         )
     return calls
@@ -957,11 +1308,15 @@ def bound_source_matches(
     *,
     is_local_module: Callable[[str], bool] | None = None,
     max_ast_nodes: int | None = None,
+    truncated: list[int] | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
-    Invalid Python cannot establish bound constructions. The caller already
-    retains lexical import/supporting evidence and reports lexical ambiguity.
+    Invalid Python cannot establish bound constructions: ``SourceNotParsed`` is
+    raised so the caller can say so. It already retains lexical import and
+    supporting evidence and reports lexical ambiguity. The lines of JavaScript
+    calls analyzed only from their first ``MAX_CALL_TEXT`` characters are
+    appended to ``truncated``.
     """
     module_matches = _ModuleMatches(index, language, is_local_module)
     tree = None
@@ -977,8 +1332,10 @@ def bound_source_matches(
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)
     except RecursionError as exc:
         raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
-    except (SyntaxError, ValueError):
-        return []
+    except (SyntaxError, ValueError) as exc:
+        raise SourceNotParsed("source did not parse") from exc
+    if truncated is not None:
+        truncated.extend(sorted({call.line for call in calls if call.partial}))
 
     found = _import_evidence(index, language, imports, module_matches)
     requests = _LoopRequests()
@@ -1065,6 +1422,7 @@ def _call_evidence(
     for signature in signatures.values():
         factory = _FACTORIES.get(signature.id)
         verified = bool(factory and re.fullmatch(factory, symbol))
+        construction = "import-bound agent construction"
         if signature.id == "framework.langgraph" and symbol == "StateGraph":
             verified = call.line in graph_lines
         if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
@@ -1073,6 +1431,10 @@ def _call_evidence(
             verified = has_executable_vercel_tools(
                 call.arguments, call.structural_arguments, call.tool_factories
             )
+            if not verified and has_vercel_tool_loop(call.arguments, call.structural_arguments):
+                # Tool results go back to the model until the stop condition:
+                # an agent loop even when the tools are imported definitions.
+                verified, construction = True, "import-bound multi-step tool loop"
         configured = configured_capabilities(
             signature.id,
             symbol,
@@ -1081,6 +1443,16 @@ def _call_evidence(
             masked=call.structural_arguments,
             verified_graph=signature.id == "framework.langgraph" and symbol == "StateGraph" and verified,
         )
+        if signature.id == "framework.genkit":
+            verified, configured = genkit_call_capabilities(
+                symbol,
+                call.arguments,
+                call.structural_arguments,
+                call.genkit_tools,
+                constructed=call.binding.constructed,
+            )
+            if verified and symbol in {"Genkit.generate", "Genkit.generateStream"}:
+                construction = "import-bound Genkit automatic tool loop"
 
         capabilities = CallCapabilities(signature.id, verified, configured, (call.start, call.end))
 
@@ -1186,7 +1558,7 @@ def _call_evidence(
                         type="code",
                         weight=0.9,
                         agent_indicator=True,
-                        description="import-bound agent construction",
+                        description=construction,
                     ),
                     sanitize_text(f"{call.binding.module}:{symbol}("),
                     0.9,

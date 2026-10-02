@@ -50,6 +50,7 @@ def _certificate(tmp_path):
 def _serve_tls(handler, cert_path, key_path):
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(cert_path, key_path)
     server.socket = tls.wrap_socket(server.socket, server_side=True)
     thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
@@ -104,8 +105,9 @@ def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_
 
 
 # A valid JSON document the server sends one byte every DRIP_INTERVAL seconds:
-# always inside the client's per-read timeout, but taking about four seconds.
-DRIP_BODY = b'{"items": []}'.rjust(80)
+# always inside the client's per-read timeout, but taking about twelve seconds,
+# far beyond the one-second deadline even when a loaded runner delays the client.
+DRIP_BODY = b'{"items": []}'.rjust(240)
 DRIP_INTERVAL = 0.05
 READ_TIMEOUT = 0.5  # the whole-body deadline is twice this
 
@@ -163,7 +165,7 @@ def test_slow_drip_body_fails_at_the_read_deadline_instead_of_holding_the_worker
         thread.join(timeout=2)
     assert http.read_deadline == 2 * READ_TIMEOUT
     # The deadline interrupts a read blocked inside one 64 KiB chunk rather than
-    # waiting for the server to finish its body (about four seconds).
+    # waiting for the server to finish its body (about twelve seconds).
     assert elapsed < len(DRIP_BODY) * DRIP_INTERVAL * 0.75
     # No transport detail is chained onto the fail-closed diagnostic.
     assert caught.value.__cause__ is None and caught.value.__context__ is None
@@ -204,3 +206,74 @@ def test_bodies_read_within_the_deadline_return_their_connection_to_the_pool(tmp
     # The read-deadline watchdog guards each connection's release to the pool;
     # every request still reuses the one kept-alive connection.
     assert len(clients) == 3 and len(set(clients)) == 1
+
+
+@pytest.mark.parametrize("phase", ["status", "headers"])
+def test_slow_drip_status_and_headers_are_interrupted_before_the_body_reader(tmp_path, monkeypatch, phase):
+    cert_path, key_path = _certificate(tmp_path)
+    clients = []
+    stop = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def setup(self):
+            super().setup()
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+        def do_GET(self):
+            clients.append(self.client_address)
+            body = b'{"items": []}'
+            try:
+                if len(clients) == 1:
+                    # Either drip takes about 4 s, far beyond the 0.3 s budget.
+                    if phase == "status":
+                        drip = b"HTTP/1.1 200 " + b"O" * 80 + b"\r\n"
+                    else:
+                        self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                        drip = b"X-Slow: " + b"a" * 90 + b"\r\n"
+                    for byte in drip:
+                        if stop.is_set():
+                            return
+                        self.wfile.write(bytes([byte]))
+                        self.wfile.flush()
+                        time.sleep(0.04)
+                else:
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                self.wfile.write(b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+            except OSError:
+                return
+
+        def log_message(self, *args):
+            pass
+
+    server, thread = _serve_tls(Handler, cert_path, key_path)
+    _resolve_to(server.server_port, monkeypatch)
+    http = HttpClient(allow_private_origin=True, timeout=0.15, max_retries=0)
+    url = f"https://service.example:{server.server_port}/items"
+    # Isolate the acquisition watchdog from per-read platform buffering. A
+    # request override leaves the client's 0.3 s acquisition budget unchanged;
+    # the 1 s read timeout tolerates macOS TLS/TCP delayed delivery of tiny writes.
+    request_timeout = 1
+    try:
+        started = time.monotonic()
+        with pytest.raises(ValueError, match="acquisition deadline"):
+            http.get_json(url, verify=str(cert_path), timeout=request_timeout)
+        elapsed = time.monotonic() - started
+        # Every byte is inside the socket timeout, so only the aggregate budget
+        # can end the status/header phase this early. The margin over 0.3 s
+        # absorbs macOS runner scheduling delays; a budget taken from the 1 s
+        # request timeout (2 s) or no budget at all (about 4 s) still fails.
+        assert elapsed < 1.5
+        assert not any(t.name == "shadowscan-http-acquisition" for t in threading.enumerate())
+        # An expired checkout is discarded. Subsequent successful requests can
+        # reuse their fresh TLS connection without a stale watchdog shutting it.
+        for _ in range(2):
+            assert http.get_json(url, verify=str(cert_path), timeout=request_timeout) == {"items": []}
+        assert clients[0] != clients[1] and clients[1] == clients[2]
+    finally:
+        stop.set()
+        http.session.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

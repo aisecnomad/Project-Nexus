@@ -393,7 +393,7 @@
     {
       "id": "mcp-disabled-json",
       "family": "mcp-server",
-      "description": "A disabled only MCP JSON mapping configures no active server",
+      "description": "A disabled only MCP JSON mapping is still reported (declared disabled) but configures no active server",
       "files": {
         ".mcp.json": "{\"mcpServers\":{\"disabled\":{\"command\":\"npx\",\"disabled\":true}}}\n"
       },
@@ -401,7 +401,7 @@
         "kind": "mcp-server",
         "signature": "protocol.mcp"
       },
-      "present": false,
+      "present": true,
       "assertions": {
         "server_count": 0,
         "max_agent_findings": 0
@@ -410,7 +410,7 @@
     {
       "id": "mcp-disabled-toml",
       "family": "mcp-server",
-      "description": "A disabled only Codex MCP server configures no active server",
+      "description": "A disabled only Codex MCP server is still reported (declared disabled) but configures no active server",
       "files": {
         ".codex/config.toml": "[mcp_servers.disabled]\ncommand = 'npx'\nenabled = false\n"
       },
@@ -418,7 +418,7 @@
         "kind": "mcp-server",
         "signature": "protocol.mcp"
       },
-      "present": false,
+      "present": true,
       "assertions": {
         "server_count": 0,
         "max_agent_findings": 0
@@ -427,7 +427,7 @@
     {
       "id": "mcp-disabled-yaml",
       "family": "mcp-server",
-      "description": "A disabled only MCP YAML mapping configures no active server",
+      "description": "A disabled only MCP YAML mapping is still reported (declared disabled) but configures no active server",
       "files": {
         "smithery.yaml": "mcpServers:\n  disabled:\n    command: npx\n    disabled: true\n"
       },
@@ -435,7 +435,7 @@
         "kind": "mcp-server",
         "signature": "protocol.mcp"
       },
-      "present": false,
+      "present": true,
       "assertions": {
         "server_count": 0,
         "max_agent_findings": 0
@@ -850,7 +850,7 @@
     {
       "id": "env-names-only-usage",
       "family": "framework-usage",
-      "description": "Provider environment variable names in .env.example establish likely, not confirmed, LLM usage",
+      "description": "Provider environment variable names in .env.example establish likely, not strong, LLM usage",
       "files": {
         ".env.example": "OPENAI_API_KEY=\nANTHROPIC_API_KEY=\nGEMINI_API_KEY=\n"
       },

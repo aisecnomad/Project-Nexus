@@ -22,8 +22,14 @@ from typing import Any, ClassVar
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import apply_matches, finalize, name_matches
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import (
+    apply_matches,
+    failure_summary,
+    finalize,
+    max_pages_limit,
+    name_matches,
+)
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
@@ -68,6 +74,15 @@ _PAGE_SIZE = 500
 _MAX_TABLE_PAGES = 1000  # 500,000 rows per table before coverage is reported incomplete
 
 
+def _total_count(headers: Any) -> int | None:
+    """The Table API ``X-Total-Count`` header as a row count, or None when absent or malformed."""
+    value = headers.get("X-Total-Count") if hasattr(headers, "get") else None
+    # Bounded decimal digits only: a count never needs more than 12 of them.
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 12:
+        return int(value)
+    return None
+
+
 class ServiceNowConnector(BaseConnector):
     name: ClassVar[str] = "lowcode.servicenow"
     surface: ClassVar[Surface] = Surface.LOWCODE
@@ -109,22 +124,14 @@ class ServiceNowConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        max_pages = max_pages_limit(self.ctx.get("max_pages", 1000))
         for table, fields in TABLES.items():
             seen: set[str] = set()
             for page in range(max_pages):
                 try:
-                    data = self.http.get_json(
-                        f"/api/now/table/{table}",
-                        params={
-                            "sysparm_fields": fields,
-                            "sysparm_limit": _PAGE_SIZE,
-                            "sysparm_offset": page * _PAGE_SIZE,
-                            "sysparm_display_value": "all",
-                        },
-                    )
+                    data, total = self._table_page(table, fields, page)
                 except (HttpError, RequestException, ValueError, RuntimeError) as exc:
-                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    status = failure_summary(exc)
                     self.ctx.warn(f"lowcode.servicenow: table {table} collection incomplete ({status})")
                     break
                 if not isinstance(data, dict) or not isinstance(data.get("result"), list):
@@ -133,22 +140,51 @@ class ServiceNowConnector(BaseConnector):
                 if self._is_error_record(data):
                     self.ctx.warn(f"lowcode.servicenow: provider error in {table} page; coverage incomplete")
                 rows = data["result"]
-                fingerprint = hashlib.sha256(
-                    json.dumps(rows, sort_keys=True, default=str).encode()
-                ).hexdigest()
-                if fingerprint in seen:
-                    self.ctx.warn(f"lowcode.servicenow: repeated pagination page for {table}")
-                    break
-                seen.add(fingerprint)
+                if rows:
+                    # An empty page can legitimately repeat: ACLs hid every row of its window.
+                    fingerprint = hashlib.sha256(
+                        json.dumps(rows, sort_keys=True, default=str).encode()
+                    ).hexdigest()
+                    if fingerprint in seen:
+                        self.ctx.warn(f"lowcode.servicenow: repeated pagination page for {table}")
+                        break
+                    seen.add(fingerprint)
                 for r in rows:
                     if not isinstance(r, dict):
                         self.ctx.warn(f"lowcode.servicenow: invalid record in {table} page")
                         continue
                     yield {**r, "_table": table}
-                if len(rows) < _PAGE_SIZE:
+                # ACLs filter rows after sysparm_limit is applied, so a short or
+                # even empty page is not the last one. X-Total-Count counts the
+                # rows the query matches before that filter, so the table ends
+                # once the windows cover it.
+                if total is not None:
+                    if (page + 1) * _PAGE_SIZE >= total:
+                        break
+                elif not rows:
+                    self.ctx.warn(
+                        f"lowcode.servicenow: table {table} sent no valid X-Total-Count; ACLs can empty a "
+                        "page before the end of a table, so its end is unproven and coverage is incomplete"
+                    )
                     break
             else:
                 self.ctx.warn(f"lowcode.servicenow: pagination limit reached for {table}")
+
+    def _table_page(self, table: str, fields: str, page: int) -> tuple[Any, int | None]:
+        """One Table API window and its X-Total-Count, or None when that header is absent or malformed."""
+        assert self.http
+        totals: list[int | None] = []
+        data = self.http.get_json(
+            f"/api/now/table/{table}",
+            params={
+                "sysparm_fields": fields,
+                "sysparm_limit": _PAGE_SIZE,
+                "sysparm_offset": page * _PAGE_SIZE,
+                "sysparm_display_value": "all",
+            },
+            on_response=lambda response: totals.append(_total_count(response.headers)),
+        )
+        return data, (totals[0] if totals else None)
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         for rec in super().load_offline(path):

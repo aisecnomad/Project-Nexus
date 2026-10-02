@@ -34,7 +34,7 @@ format-check: ## Check ruff formatting without changes
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+	mypy shadowscan tools
 
 .PHONY: test
 test: ## Run test suite with coverage
@@ -44,18 +44,33 @@ test: ## Run test suite with coverage
 test-fast: ## Run tests without coverage (faster iteration)
 	python -m pytest -q -x
 
+.PHONY: test-parallel
+test-parallel: ## Run tests in parallel with pytest-xdist
+	python -m pytest -q -n auto --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+
 .PHONY: coverage-gate
 coverage-gate: ## Enforce per-connector coverage floor
-	python -m coverage json -o /tmp/shadowscan-coverage.json
-	python -m tools.coverage_gate /tmp/shadowscan-coverage.json
+	@set -euo pipefail; \
+	coverage_file="$$(mktemp "$${TMPDIR:-/tmp}/shadowscan-coverage.XXXXXX")"; \
+	trap 'rm -f "$$coverage_file"' EXIT; \
+	python -m coverage json -o "$$coverage_file"; \
+	python -m tools.coverage_gate "$$coverage_file"
 
 .PHONY: signatures
 signatures: ## Validate all signature schemas and regexes
 	python -m shadowscan.signatures.validate
 
+.PHONY: secrets
+secrets: ## Fail on hardcoded credentials in tracked files, as CI does
+	set -o pipefail; git ls-files -z | xargs -0 python tools/check_secrets.py
+
 .PHONY: audit
-audit: ## Audit dependencies for known vulnerabilities
+audit: ## Audit the environment and every hash-locked dependency set, as CI does
 	pip-audit --skip-editable --progress-spinner off
+	set -e; for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do \
+		pip-audit --require-hashes --strict --progress-spinner off \
+			--disable-pip -r "$$lock"; \
+	done
 
 .PHONY: evaluate
 evaluate: ## Run the bundled detection regression corpora
@@ -65,12 +80,13 @@ evaluate: ## Run the bundled detection regression corpora
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
 		--annotations tools/evaluation/independent_annotations.json
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint format-check typecheck signatures audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck signatures secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 # --- Build -----------------------------------------------------------------
@@ -82,13 +98,23 @@ build: ## Build distributable wheel
 
 .PHONY: wheel-validate
 wheel-validate: build ## Validate the wheel installs and works outside checkout
-	python -m venv /tmp/shadowscan-wheel-test
-	/tmp/shadowscan-wheel-test/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-	/tmp/shadowscan-wheel-test/bin/python -m pip install --no-deps dist/project_nexus_shadowscan-*.whl
-	/tmp/shadowscan-wheel-test/bin/python -m pip check
-	cd /tmp && /tmp/shadowscan-wheel-test/bin/python -m shadowscan.signatures.validate
-	cd /tmp && /tmp/shadowscan-wheel-test/bin/shadowscan --help
-	rm -rf /tmp/shadowscan-wheel-test
+	@set -euo pipefail; \
+		set -- dist/project_nexus_shadowscan-*.whl; \
+		if [ "$$#" -ne 1 ] || [ ! -f "$$1" ]; then \
+			echo "wheel-validate requires exactly one scanner wheel in dist; remove stale build artifacts" >&2; \
+			exit 1; \
+		fi; \
+		wheel="$$1"; \
+		wheel_test_root="$$(cd "$${TMPDIR:-/tmp}" && pwd -P)"; \
+		wheel_test_dir="$$(mktemp -d "$$wheel_test_root/shadowscan-wheel-test.XXXXXXXX")"; \
+		trap 'rm -rf -- "$$wheel_test_dir"' EXIT; \
+		python -m venv "$$wheel_test_dir/venv"; \
+		"$$wheel_test_dir/venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements.lock; \
+		"$$wheel_test_dir/venv/bin/python" -m pip install --no-deps "$$wheel"; \
+		"$$wheel_test_dir/venv/bin/python" -m pip check; \
+		cd "$$wheel_test_dir"; \
+		"$$wheel_test_dir/venv/bin/python" -m shadowscan.signatures.validate; \
+		"$$wheel_test_dir/venv/bin/shadowscan" --help
 
 .PHONY: docker
 docker: ## Build worker from the reviewed Dockerfile base digest
@@ -125,6 +151,10 @@ docs: ## Build documentation site locally with the locked toolchain
 docs-serve: ## Serve documentation site with live reload
 	python -m pip install -q --require-hashes --only-binary=:all: -r requirements-docs.lock
 	mkdocs serve
+
+.PHONY: connector-reference
+connector-reference: ## Regenerate docs/connectors/reference.md from the connector classes
+	python -m tools.connector_reference
 
 .PHONY: policy
 policy: ## Check workflow and issue-form safety policies

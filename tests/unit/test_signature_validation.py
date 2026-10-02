@@ -162,6 +162,7 @@ def test_match_excerpt_redacts_before_truncating_and_preserves_secret_identity()
     assert matcher.match_secrets(secret)[0].value == secret
 
 
+@pytest.mark.production_budgets
 def test_builtin_newline_and_hostname_regressions_finish_within_budget(index):
     start = time.monotonic()
     with index.scan_budget(seconds=2):
@@ -174,6 +175,7 @@ def test_builtin_newline_and_hostname_regressions_finish_within_budget(index):
     assert providers == [("provider.openai", 2), ("provider.anthropic", 4)]
 
 
+@pytest.mark.production_budgets
 def test_parallel_tokenization_does_not_exhaust_regex_deadlines(index):
     text = "https://api.openai.com/v1\napi.anthropic.com\n" * 2000
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -182,6 +184,7 @@ def test_parallel_tokenization_does_not_exhaust_regex_deadlines(index):
         assert {"provider.openai", "provider.anthropic"} <= {m.signature_id for m in matches}
 
 
+@pytest.mark.production_budgets
 def test_parallel_match_processing_is_not_charged_to_regex_iterator(monkeypatch):
     import shadowscan.signatures.matcher as matcher_module
 
@@ -327,6 +330,37 @@ def test_empty_string_and_glob_helpers():
     check_glob("**/[!.]*.md", "ok")
     with pytest.raises(ValueError, match="unbalanced"):
         check_glob("[abc", "bad")
+
+
+def test_empty_match_check_uses_the_matchers_regex_engine():
+    import regex
+
+    from shadowscan.signatures import matcher, schema
+
+    # The standard library cannot compile \p{L}, so the old check let \p{L}*
+    # through; the matcher compiles it and it then matches everywhere.
+    assert matches_empty_string(r"\p{L}*") and matches_empty_string(r"\p{L}*", regex.IGNORECASE)
+    assert not matches_empty_string(r"\p{L}+Agent") and not matches_empty_string(r"\bagent\b")
+    assert schema.EMPTY_MATCH_TIMEOUT_SECONDS == matcher.REGEX_TIMEOUT_SECONDS
+    for signal in (
+        {"type": "code", "patterns": [r"\p{L}*"]},
+        {"type": "domain", "values": [r"re:\p{L}*"]},
+    ):
+        sig = _signature()
+        sig["signals"] = [signal]
+        with pytest.raises(ValueError, match="matches the empty string"):
+            signature_from_dict(sig)
+
+
+def test_empty_match_check_fails_closed_when_the_search_times_out(monkeypatch):
+    from shadowscan.signatures import schema
+
+    class Slow:
+        def search(self, text, timeout):
+            raise TimeoutError
+
+    monkeypatch.setattr(schema.regex, "compile", lambda pattern, flags: Slow())
+    assert matches_empty_string("anything")
 
 
 @pytest.mark.parametrize(

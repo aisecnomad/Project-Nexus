@@ -3,11 +3,19 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly on main: the worker image is rebuilt from the current Wolfi packages
+  # and rescanned with a fresh vulnerability database even when nothing merges.
+  schedule:
+    - cron: "17 5 * * 1"  # Monday 05:17 UTC
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A newer pull-request push supersedes the older run. Every main push run must
+  # finish: release evidence cites the CI run of one exact main commit. A shared
+  # group would still replace a pending main run with a newer one, so each push
+  # run gets its own group.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   dco:
     if: github.event_name == 'pull_request'
@@ -46,21 +54,22 @@ jobs:
       - name: Install the hash-locked runtime, cloud and development toolchain
         run: |
           # The runtime lock lists every published wheel hash, so the cloud SDKs
-          # install from it here too; the per-connector coverage floor below
-          # needs their code paths on this platform as well.
+          # install from it here too and the suite exercises their code paths on
+          # this platform as well.
           python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check native file confinement and plugin worker lifecycle
+        run: pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
-      - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
-      - name: Enforce per-connector coverage floor
-        run: |
-          python -m coverage json -o "$RUNNER_TEMP/shadowscan-coverage.json"
-          python -m tools.coverage_gate "$RUNNER_TEMP/shadowscan-coverage.json"
+      - run: mypy shadowscan tools
+      # The full suite without coverage tracing; the Linux coverage leg of the
+      # test job enforces both coverage floors. The console entry point is used
+      # on purpose: it must import the checkout-only tools packages.
+      - run: pytest -q
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -68,6 +77,13 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.11", "3.12", "3.13"]
+        # One leg traces line and branch coverage and enforces the aggregate
+        # and per-connector floors. Tracing slows the suite several-fold and
+        # the floors measure the tests, not the interpreter, so the other legs
+        # (and macOS) run the same full suite untraced.
+        include:
+          - python: "3.11"
+            coverage: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,11 +120,17 @@ jobs:
             -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check tracked files for hardcoded credentials
+        run: |
+          set -euo pipefail
+          # The same standard-library script as the pre-commit hook; it skips
+          # the paths that hold synthetic credentials on purpose.
+          git ls-files -z | xargs -0 python tools/check_secrets.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+      - run: mypy shadowscan tools
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
@@ -118,10 +140,16 @@ jobs:
           # environment audit permits an intentionally skipped editable package.
           for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do
             pip-audit --require-hashes --strict --progress-spinner off \
-              --disable-pip --no-deps -r "$lock"
+              --disable-pip -r "$lock"
           done
-      - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+      - name: Run the test suite
+        if: ${{ !matrix.coverage }}
+        run: python -m pytest -q
+      - name: Run the test suite with line and branch coverage
+        if: ${{ matrix.coverage }}
+        run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
+        if: ${{ matrix.coverage }}
         run: |
           python -m coverage json -o "$RUNNER_TEMP/shadowscan-coverage.json"
           python -m tools.coverage_gate "$RUNNER_TEMP/shadowscan-coverage.json"
@@ -139,6 +167,8 @@ jobs:
             --output "$RUNNER_TEMP/shadowscan-field-review-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json \
             --output "$RUNNER_TEMP/shadowscan-attribution-evaluation.json"
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json \
+            --output "$RUNNER_TEMP/shadowscan-current-idioms-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"
@@ -158,21 +188,6 @@ jobs:
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -c 'from importlib.metadata import distribution; import shadowscan; package = distribution("project-nexus-shadowscan"); assert package.version == shadowscan.__version__; assert any(ep.name == "shadowscan" and ep.value == "shadowscan.cli:main" for ep in package.entry_points)'
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.signatures.validate
           "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
-      - name: Build and validate disposable worker
-        if: matrix.python == '3.13'
-        run: |
-          set -euo pipefail
-          # The literal Dockerfile FROM pins the reviewed multi-arch index.
-          docker build --tag shadowscan:ci .
-          docker run --rm --network none --read-only --cap-drop ALL \
-            --security-opt no-new-privileges --entrypoint python shadowscan:ci \
-            -c 'import os, subprocess; assert os.geteuid() == 65532; subprocess.run(["python", "-m", "shadowscan.signatures.validate"], check=True)'
-          docker run --rm --network none --read-only --cap-drop ALL \
-            --security-opt no-new-privileges --memory 1g --pids-limit 128 \
-            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-            --mount "type=bind,source=$PWD/tests/fixtures/sample_repo,target=/input,readonly" \
-            shadowscan:ci code /input --format json > "$RUNNER_TEMP/container-report.json"
-          python -c 'import json, os, pathlib; report = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "container-report.json").read_text()); assert report["summary"]["complete"] is True; assert report["findings"]'
       - name: Self-scan (demo, offline)
         run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -188,10 +203,117 @@ jobs:
           name: shadowscan-sarif-${{ matrix.python }}
           path: shadowscan.sarif
           retention-days: 1
+  container-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # Official immutable v0.74.0 release; reviewed Linux x86_64 asset digest:
+      # https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.74.0
+      # Resolved 2026-10-02. Refresh version and digest together after review.
+      TRIVY_VERSION: "0.74.0"
+      TRIVY_SHA256: "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build and validate one immutable worker image
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/container-evidence"
+          mkdir "$evidence_dir"
+          printf 'CONTAINER_EVIDENCE=%s\n' "$evidence_dir" >> "$GITHUB_ENV"
+          # A Docker image ID binds the local config and its layer hashes. It is
+          # not a registry manifest digest and this workflow publishes no image.
+          docker build --tag shadowscan:ci --label "org.opencontainers.image.revision=$GITHUB_SHA" .
+          image_id="$(docker image inspect --format '{{.Id}}' shadowscan:ci)"
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'CONTAINER_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
+          docker image inspect "$image_id" > "$evidence_dir/image-inspect.json"
+          # Repository XML is parsed by Python's bundled expat, which an image
+          # scan does not inventory; 2.8.5 carries the October 2026 expat fixes.
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --entrypoint python "$image_id" \
+            -c 'import os, pyexpat, subprocess; assert os.geteuid() == 65532; expat = tuple(int(part) for part in pyexpat.EXPAT_VERSION.removeprefix("expat_").split(".")); assert expat >= (2, 8, 5), pyexpat.EXPAT_VERSION; subprocess.run(["python", "-m", "shadowscan.signatures.validate"], check=True)'
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --memory 1g --pids-limit 128 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            --mount "type=bind,source=$PWD/tests/fixtures/sample_repo,target=/input,readonly" \
+            "$image_id" code /input --format json > "$evidence_dir/smoke-report.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads((Path(os.environ['RUNNER_TEMP']) / 'container-evidence/smoke-report.json').read_text())
+          if report['summary']['complete'] is not True or not report['findings']:
+              raise SystemExit('container smoke scan failed')
+          PY
+      - name: Install the digest-verified Trivy binary
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d "$RUNNER_TEMP/trivy-tool.XXXXXX")"
+          archive="$tool_dir/trivy.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --connect-timeout 20 --max-time 180 --retry 2 --retry-max-time 240 \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$TRIVY_SHA256" "$archive" | sha256sum --check --strict
+          tar --extract --gzip --file "$archive" --directory "$tool_dir" trivy
+          printf 'TRIVY_BIN=%s\n' "$tool_dir/trivy" >> "$GITHUB_ENV"
+      - name: Acquire a fresh bounded vulnerability database
+        run: |
+          set -euo pipefail
+          cache_dir="$(mktemp -d "$RUNNER_TEMP/trivy-db.XXXXXX")"
+          printf 'TRIVY_CACHE_DIR=%s\n' "$cache_dir" >> "$GITHUB_ENV"
+          # Never restore a PR-populated cache. A registry outage, timeout, or
+          # database older than 48 hours blocks the job; no empty-scan fallback.
+          printf '{}\n' > "$CONTAINER_EVIDENCE/trivy.yaml"
+          : > "$CONTAINER_EVIDENCE/no-ignores"
+          timeout 300s "$TRIVY_BIN" image --download-db-only --timeout 4m \
+            --config "$CONTAINER_EVIDENCE/trivy.yaml" --cache-dir "$cache_dir" \
+            --db-repository ghcr.io/aquasecurity/trivy-db:2 \
+            --db-repository mirror.gcr.io/aquasec/trivy-db:2 \
+            --disable-telemetry --skip-version-check
+          cp "$cache_dir/db/metadata.json" "$CONTAINER_EVIDENCE/database-metadata.json"
+          sha256sum "$cache_dir/db/trivy.db" | cut -d ' ' -f 1 > "$CONTAINER_EVIDENCE/database-sha256.txt"
+          "$TRIVY_BIN" version --format json --cache-dir "$cache_dir" > "$CONTAINER_EVIDENCE/trivy-version.json"
+          python -m tools.container.verify database "$CONTAINER_EVIDENCE"
+      - name: Inventory and scan the exact image for OS and Python vulnerabilities
+        run: |
+          set -euo pipefail
+          common=(--config "$CONTAINER_EVIDENCE/trivy.yaml" --cache-dir "$TRIVY_CACHE_DIR"
+            --image-src docker --pkg-types os,library --offline-scan
+            --skip-db-update --skip-java-db-update --skip-check-update --skip-version-check
+            --disable-telemetry --timeout 4m --ignorefile "$CONTAINER_EVIDENCE/no-ignores"
+            --ignore-unfixed=false --list-all-pkgs)
+          timeout 300s "$TRIVY_BIN" image "${common[@]}" --format cyclonedx \
+            --output "$CONTAINER_EVIDENCE/container-sbom.cdx.json" "$CONTAINER_IMAGE_ID"
+          scan_exit=0
+          timeout 300s "$TRIVY_BIN" image "${common[@]}" --scanners vuln \
+            --severity HIGH,CRITICAL --exit-code 1 --format json \
+            --output "$CONTAINER_EVIDENCE/container-vulnerabilities.json" "$CONTAINER_IMAGE_ID" || scan_exit=$?
+          # Verify inventory, image/source identity, scanner/database identity and
+          # exit/result consistency. Unfixed HIGH/CRITICAL findings also block.
+          python -m tools.container.verify bundle "$CONTAINER_EVIDENCE" \
+            --image-id "$CONTAINER_IMAGE_ID" --source-sha "$GITHUB_SHA" \
+            --scanner-version "$TRIVY_VERSION" --scanner-sha256 "$TRIVY_SHA256" \
+            --scan-exit "$scan_exit" --os-type wolfi
+      - name: Retain container evidence including blocked scans
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shadowscan-container-${{ github.sha }}
+          path: ${{ runner.temp }}/container-evidence/*
+          if-no-files-found: error
+          retention-days: 14
   gate:
     name: CI gate
     if: always()
-    needs: [dco, docs, test-macos, test]
+    needs: [dco, docs, test-macos, test, container-security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -203,6 +325,7 @@ jobs:
           MACOS_RESULT: ${{ needs.test-macos.result }}
           TEST_RESULT: ${{ needs.test.result }}
           DCO_RESULT: ${{ needs.dco.result }}
+          CONTAINER_RESULT: ${{ needs.container-security.result }}
         run: |
           python - <<'PY'
           import os
@@ -212,10 +335,11 @@ jobs:
               'DOCS_RESULT': 'success',
               'MACOS_RESULT': 'success',
               'TEST_RESULT': 'success',
+              'CONTAINER_RESULT': 'success',
           }
           if event == 'pull_request':
               expected['DCO_RESULT'] = 'success'
-          elif event == 'push':
+          elif event in ('push', 'schedule'):
               expected['DCO_RESULT'] = 'skipped'
           else:
               sys.exit(f'unsupported CI event: {event}')
