@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import multiprocessing.connection
 import os
 import re
 import socket
+import threading
 import time
 from dataclasses import asdict, replace
 from multiprocessing.process import BaseProcess
@@ -30,6 +32,9 @@ if TYPE_CHECKING:
 
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 _CLEANUP_SECONDS = 0.5
+# A worker stops itself this long after its deadline, matching the parent's
+# supervision guard, in case nothing in the scanner is left to terminate it.
+_WORKER_GRACE_SECONDS = 2.0
 
 
 def _remaining(deadline: float) -> float:
@@ -48,6 +53,30 @@ def _encode_result(value: dict[str, Any]) -> bytes:
     return bytes(output)
 
 
+def _exit_with_scanner(deadline: float) -> None:
+    """Stop this worker when the scanner process exits or the deadline grace ends.
+
+    The scanner can exit without running its cleanup (the job-deadline
+    watchdog's ``os._exit``, SIGTERM or SIGKILL). A plugin that ignores its
+    deadline would then keep running, with its credentials, as an orphan.
+    The parent sentinel becomes readable as soon as the scanner process is gone.
+    """
+    parent = multiprocessing.parent_process()
+    sentinels = [parent.sentinel] if parent is not None else []
+
+    def watch() -> None:
+        try:
+            timeout = max(0.0, deadline + _WORKER_GRACE_SECONDS - time.monotonic())
+            if sentinels:
+                multiprocessing.connection.wait(sentinels, timeout)
+            else:
+                time.sleep(timeout)
+        finally:
+            os._exit(1)
+
+    threading.Thread(target=watch, name="shadowscan-plugin-watchdog", daemon=True).start()
+
+
 def _worker(
     channel: socket.socket,
     config: ScanConfig,
@@ -57,6 +86,7 @@ def _worker(
     identity_key: bytes,
 ) -> None:
     """Import and execute the approved plugin only inside its spawned process."""
+    _exit_with_scanner(deadline)
     # A plugin's print/log calls may contain credentials. Diagnostics must come
     # through the scanner's sanitized result, not inherited stdout or stderr.
     with open(os.devnull, "w") as sink:
@@ -228,6 +258,8 @@ def _run_plugin_process(
     warnings: list[str] = []
     try:
         _remaining(deadline)
+        if state.cancelled.is_set():
+            raise TimeoutError
         process.start()
         if state.cancelled.is_set():
             raise TimeoutError
