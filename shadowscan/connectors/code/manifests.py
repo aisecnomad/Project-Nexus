@@ -922,7 +922,9 @@ def is_manifest_name(name: str) -> bool:
         return True
     return (
         (lower.startswith("requirements") and lower.endswith((".txt", ".in")))
-        or lower.endswith((".csproj", ".fsproj", ".vbproj", ".tf", ".bicep", ".gradle"))
+        # MSBuild imports carry PackageReference items too (Directory.Build.props,
+        # Directory.Build.targets, shared eng/*.props): parse_manifest routes them to NuGet.
+        or lower.endswith((".csproj", ".fsproj", ".vbproj", ".props", ".targets", ".tf", ".bicep", ".gradle"))
         or lower.startswith("dockerfile")
         or lower.endswith(".dockerfile")
         or lower == "containerfile"

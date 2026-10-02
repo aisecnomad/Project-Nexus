@@ -11,7 +11,7 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
-from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanResult, ScanStats, Surface
+from shadowscan.models import Evidence, Finding, Kind, RiskFactor, RiskLevel, ScanResult, ScanStats, Surface
 from shadowscan.reporters import render
 from shadowscan.reporters.sarif import _physical_locations, render_sarif
 
@@ -406,3 +406,30 @@ def test_sarif_rule_severity_is_the_most_severe_result(order):
     assert (
         rule["properties"]["security-severity"] == "9.5" and rule["defaultConfiguration"]["level"] == "error"
     )
+
+
+# ------------------------------------------------------- embedded links (SARIF 3.11.6)
+
+
+def test_message_text_cannot_write_an_embedded_link():
+    # A viewer renders '[text](destination)' in a message as a link, and titles, risk
+    # factors and diagnostics come from the scanned data.
+    finding = _finding(
+        title="[Review](https://evil.example) agent",
+        frameworks=["framework.[x](http://evil.example)"],
+    )
+    finding.risk.factors.append(RiskFactor("f", "see [docs](https://evil.example/docs) and \\[kept]", 10))
+    document = _render(
+        finding,
+        stats=[_stats(warnings=["[click](https://evil.example) failed"], errors=["\\](x)"])],
+    )
+    run = document["runs"][0]
+    (result,) = run["results"]
+    assert result["message"]["text"].startswith("\\[Review\\](https://evil.example) agent")
+    assert "see \\[docs\\](https://evil.example/docs) and \\\\\\[kept\\]" in result["message"]["text"]
+    texts = [note["message"]["text"] for note in run["invocations"][0]["toolExecutionNotifications"]]
+    assert "code.filesystem: \\[click\\](https://evil.example) failed" in texts
+    assert "code.filesystem: \\\\\\](x)" in texts
+    (rule,) = run["tool"]["driver"]["rules"]
+    assert "\\[x\\](http://evil.example)" in rule["shortDescription"]["text"]
+    _validate(document)

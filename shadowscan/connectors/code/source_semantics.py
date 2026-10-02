@@ -57,6 +57,16 @@ class SourceBudgetExceeded(MatchTimeoutError):
     """
 
 
+class SourceNotParsed(Exception):
+    """The source does not parse, so it has no import bindings.
+
+    Python written for a newer grammar than the running interpreter's (``type A =
+    int`` before 3.12), or a notebook's shell and magic lines, cannot be parsed.
+    Callers keep the file's lexical evidence and report that the import binder
+    did not run.
+    """
+
+
 @dataclass(frozen=True)
 class _Binding:
     module: str
@@ -970,8 +980,9 @@ def bound_source_matches(
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
-    Invalid Python cannot establish bound constructions. The caller already
-    retains lexical import/supporting evidence and reports lexical ambiguity.
+    Invalid Python cannot establish bound constructions: ``SourceNotParsed`` is
+    raised so the caller can say so. It already retains lexical import and
+    supporting evidence and reports lexical ambiguity.
     """
     module_matches = _ModuleMatches(index, language, is_local_module)
     tree = None
@@ -987,8 +998,8 @@ def bound_source_matches(
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)
     except RecursionError as exc:
         raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
-    except (SyntaxError, ValueError):
-        return []
+    except (SyntaxError, ValueError) as exc:
+        raise SourceNotParsed("source did not parse") from exc
 
     found = _import_evidence(index, language, imports, module_matches)
     requests = _LoopRequests()

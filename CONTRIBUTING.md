@@ -126,6 +126,7 @@ exact supported Python matrix and dependency pins.
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% per connector |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
+| Secrets | `make secrets` | No hardcoded credentials in tracked files |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
 
@@ -139,6 +140,7 @@ The same gates as individual commands:
 ```bash
 python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
+make secrets
 ruff check shadowscan tests tools
 mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 pip-audit --progress-spinner off

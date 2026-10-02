@@ -79,6 +79,7 @@ def test_base_connector_hooks_describe_an_ordinary_connector():
     assert BaseConnector.uses_run_identity_key is False
     assert BaseConnector.inherits_instance_credentials_approval() is False
     assert BaseConnector.cache_roots_separately(["a", "b"], None, labelled=False) is False
+    assert BaseConnector.scanned_local_paths({"path": "/srv/repo", "paths": ["/srv/other"]}) == []
 
 
 def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_code():
@@ -100,6 +101,29 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
         if any("cache_roots_separately" in vars(klass) for klass in cls.__mro__ if klass is not BaseConnector)
     }
     assert splitting == {"code.filesystem"}
+    scanning_local_trees = {
+        name
+        for name, cls in classes.items()
+        if any("scanned_local_paths" in vars(klass) for klass in cls.__mro__ if klass is not BaseConnector)
+    }
+    assert scanning_local_trees == {"code.filesystem"}
+
+
+@pytest.mark.parametrize(
+    "config,expected",
+    [
+        ({"path": "/srv/repo"}, ["/srv/repo"]),
+        ({"paths": ["/srv/a", "/srv/b"], "path": "/ignored"}, ["/srv/a", "/srv/b"]),
+        ({"paths": ["/srv/a", "", 3, None]}, ["/srv/a"]),
+        # An export replay reads no local tree, and malformed values declare none.
+        ({"path": "/srv/repo", "input": "export.json"}, []),
+        ({"paths": "/srv/repo"}, []),
+        ({"path": 7}, []),
+        ({}, []),
+    ],
+)
+def test_filesystem_declares_the_trees_it_scans(config, expected):
+    assert FilesystemConnector.scanned_local_paths(config) == expected
 
 
 def test_filesystem_root_split_hook_validates_labelled_roots_and_ids(tmp_path):

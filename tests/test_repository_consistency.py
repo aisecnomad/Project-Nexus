@@ -389,6 +389,24 @@ def test_make_audit_checks_the_environment_and_every_lock_like_ci() -> None:
     assert "set -e; for lock in" in recipe, "the first failing lock must fail make audit"
 
 
+def test_changelog_has_no_relative_links() -> None:
+    """The docs site includes CHANGELOG.md from docs/changelog.md, so a relative link breaks one rendering."""
+    prose = re.sub(r"`[^`\n]*`", "", _read(ROOT / "CHANGELOG.md"))  # code spans show link syntax, not links
+    links = re.findall(r"\]\((?!https?://|mailto:|#)([^)\s]+)\)", prose)
+    assert not links, f"name the file in a code span instead of linking it: {sorted(set(links))}"
+
+
+def test_make_secrets_runs_the_ci_credential_check_and_is_part_of_make_check() -> None:
+    """The credential hook only protects a commit if the local gate runs what CI runs."""
+    makefile = _read(ROOT / "Makefile")
+    command = "git ls-files -z | xargs -0 python tools/check_secrets.py"
+    recipe = makefile.split("\nsecrets:", 1)[1].split("\n.PHONY", 1)[0]
+    assert command in recipe
+    assert command in "\n".join(_ci_run_lines())
+    check = re.search(r"^check:(.*?)##", makefile, re.M)
+    assert check is not None and "secrets" in check.group(1).split()
+
+
 def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
     config_text = _read(ROOT / ".pre-commit-config.yaml")
     revisions = {

@@ -140,8 +140,15 @@ def print_table(
         console.print("[bold red]Connector errors:[/bold red]")
         for c, error in errs[:20]:
             console.print(Text(terminal_text(f"  {c}: {error}"), style="red"))
-    warns = [(st["connector"], warning) for st in stats for warning in st["warnings"]]
-    if warns and (verbose or not result.complete):
+    # Scan-level advisories (engine.*, e.g. an inventory inside a scanned tree)
+    # are shown even when the scan is complete.
+    warns = [
+        (st["connector"], warning)
+        for st in stats
+        for warning in st["warnings"]
+        if verbose or not result.complete or st["connector"].startswith("engine.")
+    ]
+    if warns:
         console.print("[bold yellow]Warnings:[/bold yellow]")
         for c, w in warns[:30]:
             console.print(Text(terminal_text(f"  {c}: {w}"), style="yellow"))

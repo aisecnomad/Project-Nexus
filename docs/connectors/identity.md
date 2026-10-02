@@ -15,8 +15,8 @@ Token: SSWS API token or OAuth bearer with `okta.apps.read`.
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
-app-only `appRoleAssignments` (role ids resolved to names such as
-`Mail.ReadWrite`), tenant app registrations, managed identities. First-party
+app-only `appRoleAssignments` (role ids resolved to the names their resource
+defines, such as `Mail.ReadWrite`), tenant app registrations, managed identities. First-party
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
@@ -64,7 +64,9 @@ ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
 unverified token's issuer does not choose or authorize a key source. The JWKS URL
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
-`metadata.verified` as signature evidence, not permission to act.
+`metadata.verified` as signature evidence, not permission to act. Without
+`jwks_url`, every token reports `metadata.verified: false` and a "signature not
+checked" evidence line: its claims are unauthenticated.
 
 CLI equivalents: `--jwks-url`, `--expected-issuer`, and repeatable
 `--jwt-algorithm`. The latter two require `--jwks-url`.

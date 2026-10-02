@@ -5251,7 +5251,7 @@
     }
    ],
    "confidence": 0.99,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -5453,7 +5453,7 @@
     }
    ],
    "confidence": 0.992,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
