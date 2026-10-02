@@ -102,6 +102,13 @@ integrating them:
   finding and a complete scan. When a project's only evidence is in
   catalog-like files, a scan note (a warning that does not make the scan
   incomplete) names them instead of dropping it silently.
+- Submodule declarations (`.gitmodules`) are read in linear time. The
+  configuration parser rescans a run of blanks before `=` from each of its
+  positions, in C while holding the GIL, so one planted 1 MiB line froze the
+  whole process for over an hour and neither the connector deadline nor
+  `--job-deadline-seconds` could fire. A file with a run of more than 32 blanks
+  is refused before parsing and reported like other unreadable declarations
+  (submodule coverage unknown, scan incomplete).
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

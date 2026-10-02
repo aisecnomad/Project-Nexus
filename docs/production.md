@@ -694,6 +694,10 @@ the scan incomplete) naming them. Review the named files: a provider routing
 file that configures four or more providers by base URL cannot be told from a
 vendor list by its shape.
 
+A `.gitmodules` file with a run of more than 32 blanks is refused before it is
+parsed and makes the scan incomplete (submodule coverage unknown). Such a file
+used to stall the scanner process beyond every deadline.
+
 These fixes come from an AI-assisted review and have offline regression tests
 only; they are not independent human review or field precision evidence.
 

@@ -32,6 +32,14 @@ if TYPE_CHECKING:
 _REF_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
 MAX_GITMODULES_BYTES = 1024 * 1024
 _MAX_GITLINK_OUTPUT_BYTES = 8 * 1024 * 1024
+# ConfigParser reads an option line with ``(.*?)\s*=``, which rescans a run of
+# blanks before the delimiter from each of its positions: quadratic in the run,
+# in C and holding the GIL, so neither the connector deadline nor the job
+# deadline can interrupt it (one 1 MiB line took over an hour). Declarations
+# never need a long run of blanks; a file with one is refused before parsing.
+# With runs this short the parser stays linear in the size of the file.
+_MAX_GITMODULES_BLANK_RUN = 32
+_GITMODULES_BLANK_RUN = re.compile(rf"[^\S\n]{{{_MAX_GITMODULES_BLANK_RUN + 1},}}")
 
 
 def _submodule_path(value: str) -> str:
@@ -84,7 +92,11 @@ def declared_submodule_paths(text: str) -> list[str]:
 
     Includes and URLs have no authority here. Unsupported/ambiguous syntax is
     a coverage error, so an unusual declaration cannot silently hide a module.
+    A run of more than ``_MAX_GITMODULES_BLANK_RUN`` blanks is such syntax: it
+    is refused before the parser, whose time it would square.
     """
+    if _GITMODULES_BLANK_RUN.search(text):
+        raise ValueError("submodule declarations contain an over-long run of blanks")
     parser = ConfigParser(interpolation=None, delimiters=("=",), empty_lines_in_values=False)
     try:
         parser.read_string(text)
