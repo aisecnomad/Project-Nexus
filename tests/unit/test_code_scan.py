@@ -506,3 +506,56 @@ def test_python_that_parses_keeps_import_bound_evidence_without_a_warning(tmp_pa
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.warnings and not ctx.stats.errors
     assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+# ------------------------------------------- directories named like an SDK
+_SDK_APP = (
+    "from openai import OpenAI\nfrom langchain.agents import AgentExecutor\n"
+    "client = OpenAI()\nexecutor = AgentExecutor(agent=a, tools=[])\n"
+)
+
+
+def _sdk_names_repo(root: Path, layout: dict[str, str | None]) -> None:
+    (root / "app.py").write_text(_SDK_APP)
+    for rel, content in layout.items():
+        target = root / rel
+        if content is None:
+            target.mkdir(parents=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+
+
+@pytest.mark.parametrize(
+    "layout",
+    [
+        {"openai": None, "agents": None, "langchain": None},
+        {"openai/data.json": "{}", "langchain/notes.txt": "x", "agents/model.pyi": "x"},
+        {"src/openai": None, "src/langchain": None},
+    ],
+    ids=["empty-directories", "data-only-directories", "empty-src-directories"],
+)
+def test_directories_named_like_an_sdk_without_python_do_not_hide_its_imports(
+    tmp_path, run_connector, layout
+):
+    _sdk_names_repo(tmp_path, layout)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any("provider.openai" in f.model_providers for f in findings)
+    assert any("framework.langchain" in f.frameworks for f in findings)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "layout",
+    [
+        {"openai/__init__.py": "", "langchain/__init__.py": ""},
+        {"openai/client.py": "x = 1\n", "langchain/agents/executor.py": "x = 1\n"},
+        {"openai.py": "x = 1\n", "langchain.py": "x = 1\n"},
+    ],
+    ids=["packages", "namespace-packages-with-modules", "modules"],
+)
+def test_local_code_named_like_an_sdk_still_is_not_the_sdk(tmp_path, run_connector, layout):
+    _sdk_names_repo(tmp_path, layout)
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not any("provider.openai" in f.model_providers for f in findings)
+    assert not any("framework.langchain" in f.frameworks for f in findings)
