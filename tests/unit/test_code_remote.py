@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from threading import Event, Lock
 from time import monotonic
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -1153,3 +1154,121 @@ def test_blank_target_names_are_unset_like_an_empty_variable(index, monkeypatch)
     assert connector.org is None and connector.user is None
     with pytest.raises(ConnectorError, match="set 'org', 'user' or 'repos'"):
         list(connector.collect())
+
+
+# ---------------------------------------------------- Git version gate
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "org/repo", "size": 1}),
+        (GitLabConnector, {"path_with_namespace": "org/repo", "id": 123}),
+    ],
+)
+@pytest.mark.parametrize("version", [(2, 30, 2), (2, 31, 9), (1, 9, 5), None], ids=str)
+def test_clone_with_an_old_or_unreadable_git_uses_incomplete_api_fallback(
+    tmp_path, monkeypatch, index, cls, record, version
+):
+    """Git before 2.32 ignores GIT_CONFIG_COUNT/GIT_CONFIG_GLOBAL: a redirect to another host was followed."""
+    ctx = ConnectorContext(config={"mode": "clone"}, index=index)
+    ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
+    connector = cls(ctx)
+    monkeypatch.setattr(git_module, "git_version", lambda: version)
+    clone = Mock(side_effect=AssertionError("an unsupported git must not clone"))
+    monkeypatch.setattr(connector, "_clone", clone)
+    monkeypatch.setattr(connector, "_fetch_via_api", lambda repo, tmp: tmp)
+    fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
+    assert fetch(record, str(tmp_path)) == str(tmp_path)
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        f"{cls.name}: Git 2.32 or newer is required to clone org/repo; using sampled API mode"
+    ]
+    clone.assert_not_called()
+
+
+@pytest.mark.parametrize("version", [(2, 32, 0), (2, 43, 0), (3, 0, 1)])
+def test_clone_proceeds_with_a_supported_git(tmp_path, monkeypatch, index, version):
+    ctx = ConnectorContext(index=index)
+    ctx.stats = ScanStats(connector="code.github", started_at="2026-01-01T00:00:00Z")
+    connector = GitHubConnector(ctx)
+    monkeypatch.setattr(git_module, "git_version", lambda: version)
+    monkeypatch.setattr(connector, "_clone", lambda repo, dest: True)
+    monkeypatch.setattr(
+        remote, "read_git_snapshot", lambda path, timeout: {"commit_sha": "a" * 40, "tree_sha": "b" * 40}
+    )
+    assert connector._fetch_repo({"full_name": "org/repo", "size": 1}, str(tmp_path)) == str(
+        tmp_path / "repo"
+    )
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "version,supported",
+    [
+        ((2, 31, 9), False),
+        ((2, 32, 0), True),
+        ((2, 43, 0), True),
+        ((3, 0, 0), True),
+        ((1, 99, 0), False),
+        (None, False),
+    ],
+)
+def test_clone_git_support_boundary(monkeypatch, version, supported):
+    monkeypatch.setattr(git_module, "git_version", lambda: version)
+    assert git_module.clone_git_supported() is supported
+
+
+@pytest.mark.parametrize(
+    "output,expected",
+    [
+        (b"git version 2.43.0\n", (2, 43, 0)),
+        (b"git version 2.39.3 (Apple Git-146)\n", (2, 39, 3)),
+        (b"git version 2.43.0.windows.1\n", (2, 43, 0)),
+        (b"git version 2.32\n", (2, 32, 0)),
+        (b"git version 2.45.0-rc1\n", (2, 45, 0)),
+        (b"not git\n", None),
+        (b"", None),
+    ],
+)
+def test_git_version_parses_the_banner(monkeypatch, output, expected):
+    monkeypatch.setattr(git_module, "_git_version_cache", None)
+    monkeypatch.setattr(
+        git_module.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=output)
+    )
+    assert git_module.git_version() == expected
+
+
+def test_git_version_is_read_once_and_a_failed_probe_is_retried(monkeypatch):
+    monkeypatch.setattr(git_module, "_git_version_cache", None)
+    calls = []
+
+    def probe(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise OSError("git could not be executed")
+        return SimpleNamespace(returncode=0, stdout=b"git version 2.40.1\n")
+
+    monkeypatch.setattr(git_module.subprocess, "run", probe)
+    assert git_module.git_version() is None  # not remembered: cloning is not disabled for good
+    assert git_module.git_version() == (2, 40, 1)
+    assert git_module.git_version() == (2, 40, 1)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        SimpleNamespace(returncode=1, stdout=b"git version 2.43.0\n"),
+        SimpleNamespace(returncode=0, stdout="git version 2.43.0\n"),
+        SimpleNamespace(returncode=0, stdout=None),
+    ],
+)
+def test_unusable_version_probe_output_is_unknown_not_supported(monkeypatch, result):
+    monkeypatch.setattr(git_module, "_git_version_cache", None)
+    monkeypatch.setattr(git_module.subprocess, "run", lambda *a, **k: result)
+    assert git_module.git_version() is None and not git_module.clone_git_supported()
+
+
+@needs_git
+def test_the_installed_git_banner_is_understood():
+    # Catches a banner format the parser misses on the platform that runs the suite.
+    assert git_module.git_version() is not None

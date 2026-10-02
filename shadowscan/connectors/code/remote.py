@@ -38,6 +38,7 @@ from shadowscan.utils.git import (
     checkout_has_gitlinks,
     checkout_has_lfs_pointers,
     clone_environment,
+    clone_git_supported,
     exceeds_clone_size,
     git_argv_prefix,
     has_clone_size_estimate,
@@ -487,7 +488,7 @@ class RemoteRepositoryConnector(BaseConnector):
         # Provenance is derived from the bytes actually selected for scanning;
         # provider JSON must not supply it.
         repo.pop("source_snapshot", None)
-        if self.mode == "clone" and shutil.which("git"):
+        if self.mode == "clone" and shutil.which("git") and clone_git_supported():
             dest = os.path.join(tmp, "repo")
             size = self._clone_size(repo)
             if exceeds_clone_size(size, self.size_unit, self.clone_max_bytes):
@@ -514,6 +515,12 @@ class RemoteRepositoryConnector(BaseConnector):
                     if os.path.islink(dest):
                         raise ConnectorError(f"{self.name}: partial clone destination is a symlink")
                     shutil.rmtree(dest)
+        elif self.mode == "clone" and shutil.which("git"):
+            # An older (or unreadable) Git ignores protections that keep the clone on its origin.
+            self.ctx.warn(
+                f"{self.name}: Git 2.32 or newer is required to clone {full}; using sampled API mode",
+                incomplete=True,
+            )
         elif self.mode == "clone":
             self.ctx.warn(
                 f"{self.name}: git is unavailable for {full}; using sampled API mode",

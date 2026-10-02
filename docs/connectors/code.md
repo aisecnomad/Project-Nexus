@@ -138,6 +138,9 @@ removed. Directory symlinks are not followed during measurement. Checks occur
 between Git writes, so brief overshoot is possible, and this is not a network
 transfer limit. Use a dedicated filesystem/container disk quota to enforce a
 strict disk ceiling; `clone_timeout_seconds` (default 120) bounds clone time.
+Cloning requires Git 2.32 or newer (older versions ignore the environment
+settings that confine a clone); with an older or unidentifiable Git the
+connector uses sampled API mode and the scan is incomplete.
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;

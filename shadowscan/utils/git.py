@@ -403,6 +403,44 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+# The clone protections (no redirects, origin-scoped credentials, no hooks, no helpers, no
+# system or global configuration) are applied through GIT_CONFIG_COUNT (Git 2.31) and
+# GIT_CONFIG_GLOBAL (Git 2.32). An older Git ignores both silently, follows a redirect to
+# another host and finishes the scan, so cloning requires at least this version.
+MINIMUM_CLONE_GIT = (2, 32)
+_GIT_VERSION_RX = re.compile(rb"git version (\d+)\.(\d+)(?:\.(\d+))?")
+_git_version_cache: tuple[int, int, int] | None = None
+
+
+def git_version() -> tuple[int, int, int] | None:
+    """The installed Git's version, read once per process; None when it cannot be determined."""
+    global _git_version_cache
+    if _git_version_cache is None:
+        try:
+            result = subprocess.run(
+                ["git", "--version"],
+                env=safe_git_env(),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        output = result.stdout if isinstance(result.stdout, bytes) else b""
+        match = _GIT_VERSION_RX.match(output) if result.returncode == 0 else None
+        if match is None:
+            return None  # not cached: a transient failure should not disable cloning for good
+        _git_version_cache = (int(match[1]), int(match[2]), int(match[3] or 0))
+    return _git_version_cache
+
+
+def clone_git_supported() -> bool:
+    """Whether the installed Git honours every clone protection; an unknown version does not."""
+    version = git_version()
+    return version is not None and version[:2] >= MINIMUM_CLONE_GIT
+
+
 def git_config_overlay(pairs: list[tuple[str, str]]) -> dict[str, str]:
     """Encode ``-c key=value`` equivalents via ``GIT_CONFIG_COUNT``."""
     env: dict[str, str] = {}

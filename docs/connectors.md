@@ -196,6 +196,11 @@ submodules; a clone that could not be inspected for either does too.
 An oversized repository or missing/malformed size estimate falls back to sampled
 API mode without launching Git and marks coverage incomplete. A failed clone or
 Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
+Cloning requires Git 2.32 or newer: the protections that keep a clone on its
+origin and out of local configuration are passed through `GIT_CONFIG_COUNT` and
+`GIT_CONFIG_GLOBAL`, which older versions ignore without an error. With an older
+or unidentifiable Git (`git --version` is read once per process) the connector
+uses sampled API mode and the scan is incomplete.
 The provider's size is an estimate, and polling can overshoot between samples.
 Neither check limits network transfer or guarantees a hard disk ceiling. Run
 remote scans with a host/container wall-clock limit and a writable disk quota.
