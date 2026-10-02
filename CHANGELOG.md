@@ -63,6 +63,12 @@ in `docs/production.md` under "Candidate change history".
   `packaging` stay out of `/opt/venv` (the Dockerfile already said so). The CI
   smoke test asserts it, and the Dockerfile policy test covers `pip wheel` as
   well as `pip install`.
+- Both image stages pin Wolfi's `python-3.12` to `3.12.15-r0` for now.
+  `3.12.15-r1`, published on 2026-10-02, has no SHA-224 or SHA3-224, and pip
+  derives its cache keys from SHA-224, so every `pip install` in the build
+  failed, on `main` as well. Drop the pin once a newer revision provides
+  `hashlib.sha224`; the policy test requires both stages to stay on one
+  interpreter revision.
 - The consumer workflow example runs `python -m` from the runner's temporary
   directory, never from the scanned checkout, where a `pip/__main__.py` or
   `shadowscan/` package in a pull request would run in place of the installed

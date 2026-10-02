@@ -1038,12 +1038,14 @@ def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> N
 def test_container_updates_installed_base_packages_before_dependency_install() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     build, runtime = dockerfile.split("\nFROM ", 2)[1:]
-    assert build.index("RUN apk upgrade --no-cache") < build.index(
-        "&& apk add --no-cache python-3.12 py3.12-pip"
-    )
-    assert runtime.index("RUN apk upgrade --no-cache") < runtime.index(
-        "&& apk add --no-cache python-3.12 git"
-    )
+    # The interpreter may carry a temporary revision pin, identical in both stages.
+    python = r"python-3\.12(?:=(?P<pin>\S+) python-3\.12-base=(?P=pin))?"
+    build_add = re.search(rf"&& apk add --no-cache {python} py3\.12-pip\n", build)
+    runtime_add = re.search(rf"&& apk add --no-cache {python} git ", runtime)
+    assert build_add and runtime_add, "both stages install python-3.12 (and pip or git) with apk"
+    assert build_add["pin"] == runtime_add["pin"], "the build and runtime interpreters must match"
+    assert build.index("RUN apk upgrade --no-cache") < build_add.start()
+    assert runtime.index("RUN apk upgrade --no-cache") < runtime_add.start()
     # pip and the build tools never reach the runtime stage.
     assert "pip" not in runtime.split("RUN apk upgrade", 1)[1].split("\nCOPY --from=build")[0].replace(
         "python-3.12", ""
@@ -1066,7 +1068,7 @@ def test_container_build_removes_setuid_and_setgid_bits_and_checks_none_remain()
     strip = runtime.index("&& find / -xdev -type f -perm /6000 -exec chmod a-s {} +")
     check = runtime.index('&& test -z "$(find / -xdev -type f -perm /6000 -print -quit)"')
     assert (
-        runtime.index("apk add --no-cache python-3.12 git")
+        runtime.index("apk add --no-cache python-3.12")
         < strip
         < check
         < runtime.index("USER 65532:65532")
