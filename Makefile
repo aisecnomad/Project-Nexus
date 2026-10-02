@@ -62,7 +62,7 @@ signatures: ## Validate all signature schemas and regexes
 
 .PHONY: secrets
 secrets: ## Fail on hardcoded credentials in tracked files, as CI does
-	git ls-files -z | xargs -0 python tools/check_secrets.py
+	set -o pipefail; git ls-files -z | xargs -0 python tools/check_secrets.py
 
 .PHONY: audit
 audit: ## Audit the environment and every hash-locked dependency set, as CI does

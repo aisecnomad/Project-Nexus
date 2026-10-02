@@ -456,7 +456,11 @@ with stale reviews dismissed, the strict required checks `test (3.11)`,
 `test (3.12)` and `analyze`, CodeQL alert gating and signed commits, and lists
 no bypass actors; `CI gate` is not yet among its required checks. `Protect
 main` adds linear history and deletion protection and still names bypass
-actors. Classic branch protection is not readable through the app
+actors. At 08:05 UTC on 2026-10-02 both rulesets read back as
+`enforcement: disabled` again (last updated 04:28 UTC), and
+`GET /repos/aisecnomad/Project-Nexus/rules/branches/main` returned no active
+rules, so nothing enforced review, CI or linear history on `main` at that time.
+Classic branch protection is not readable through the app
 integration. Read and retain the current configuration before changing it,
 and compare it against the [versioned merge policy](operations/merge-policy.md):
 `python -m tools.governance_check <snapshot.json>` reports every difference

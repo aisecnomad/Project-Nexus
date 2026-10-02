@@ -129,10 +129,9 @@ exact supported Python matrix and dependency pins.
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
-| Secrets | `make secrets` | No hardcoded credentials in tracked files |
+| Secrets | `make secrets` | No hardcoded credentials in tracked files; tests, fixtures, signature packs and evaluation corpora hold synthetic examples and are skipped |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
-| Secrets | `pre-commit run no-hardcoded-secrets --all-files` | No credential-shaped strings outside `tests/` |
 
 CI measures coverage on one Linux job (Python 3.11) and runs the same full
 suite untraced on the others; `pyproject.toml` enables branch coverage.

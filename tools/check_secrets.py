@@ -2,10 +2,11 @@
 """Pre-commit hook: check for common hardcoded secret patterns.
 
 Usage: python tools/check_secrets.py FILE [FILE ...]
-       python tools/check_secrets.py --tracked
+       git ls-files -z | xargs -0 python tools/check_secrets.py
 
 Exits 1 when a file contains a string shaped like a known credential, or when
-a named file cannot be read. Each report names the file, line and credential
+a named file cannot be read, and 2 when no file is named: a pipeline whose file
+listing failed must not pass without checking anything. Each report names the file, line and credential
 family, the first four characters and the length of the match, never the
 value itself. The pre-commit hook and CI pass every tracked text file; the
 script itself skips the paths in ``EXCLUDED``, which hold synthetic
@@ -111,6 +112,9 @@ def is_excluded(path: str) -> bool:
 
 def main(argv: Sequence[str] | None = None) -> int:
     paths = sys.argv[1:] if argv is None else argv
+    if not paths:
+        print("check_secrets: no files to check", file=sys.stderr)
+        return 2
     failed = False
     for path in paths:
         # A symbolic link's target is not part of the commit, and a gitlink

@@ -160,16 +160,19 @@ reason the sweep's input cannot reach it.
 
 The [CI workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/ci.yml)
 runs the same commands on Linux for Python 3.11, 3.12 and 3.13 and on macOS for
-3.11 and 3.13, installs the hash-locked dependency sets, audits every lock,
-builds and validates the wheel outside the checkout, and on Python 3.13 builds
-and smoke-tests the container image. The Linux Python 3.11 job runs the suite
+3.11 and 3.13, installs the hash-locked dependency sets, audits every lock and
+builds and validates the wheel outside the checkout. A separate
+`container-security` job builds the worker image once, smoke-tests it, records
+a CycloneDX inventory and blocks HIGH or CRITICAL vulnerabilities in that exact
+image. The Linux Python 3.11 job runs the suite
 with line and branch coverage and enforces both coverage floors; tracing slows
 the suite several-fold, so the other jobs run the same full suite without it.
-The Linux jobs also run the `no-hardcoded-secrets` pre-commit hook over every
-tracked file it selects. The `CI gate` job requires every job, including DCO on
-pull requests, to succeed. A new push to a pull request cancels its running
-checks, but a run on `main` always finishes, because release evidence needs a
-successful push run for the exact commit. [CI integration](operations/ci.md)
+The Linux jobs also run `tools/check_secrets.py`, the script behind the
+`no-hardcoded-secrets` pre-commit hook, over every tracked file. The
+`CI gate` job requires every job, including DCO on pull requests, to succeed.
+A new push to a pull request cancels its running checks, but every run on
+`main` runs in its own concurrency group and finishes, because release evidence
+needs a successful push run for the exact commit. [CI integration](operations/ci.md)
 describes running the scanner itself inside a pipeline.
 
 ## Troubleshooting

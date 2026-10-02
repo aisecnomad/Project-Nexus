@@ -6,9 +6,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   # A newer pull-request push supersedes the older run. Every main push run must
-  # finish: release evidence cites the CI run of one exact main commit.
+  # finish: release evidence cites the CI run of one exact main commit. A shared
+  # group would still replace a pending main run with a newer one, so each push
+  # run gets its own group.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   dco:

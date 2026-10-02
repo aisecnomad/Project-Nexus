@@ -551,8 +551,11 @@ def test_push_runs_are_not_cancelled_by_a_newer_push(path: Path) -> None:
 
 def test_ci_cancels_only_superseded_pull_request_runs() -> None:
     concurrency = _load(GITHUB / "workflows" / "ci.yml")["concurrency"]
-    assert (
-        concurrency["group"] == "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+    # Pull requests share one group per number; every other run has its own, so
+    # GitHub never replaces a pending main run with a newer one.
+    assert concurrency["group"] == (
+        "${{ github.workflow }}-${{ github.event_name == 'pull_request' && "
+        "github.event.pull_request.number || github.run_id }}"
     )
     assert concurrency["cancel-in-progress"] == PULL_REQUEST_ONLY_CANCELLATION
 

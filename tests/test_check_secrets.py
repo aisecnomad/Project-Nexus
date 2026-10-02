@@ -170,8 +170,10 @@ def test_exit_codes_and_paths_that_are_skipped(
     Path("link.txt").symlink_to(tmp_path / reported[0])
     Path("submodule").mkdir()
     assert main(excluded + ["clean.md", "link.txt", "submodule"]) == 0
-    assert main([]) == 0
     assert capsys.readouterr().out == ""
+    # No file at all means the listing that feeds the check failed: never a pass.
+    assert main([]) == 2
+    assert "no files to check" in capsys.readouterr().err
     for name in reported:
         assert main([name]) == 1
         assert capsys.readouterr().out.startswith(f"{name}:1: possible hardcoded GitHub token")
