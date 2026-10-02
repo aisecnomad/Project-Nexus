@@ -72,10 +72,14 @@ class Connector(BaseConnector):
 
     def analyze(self, records):
         for record in records:
+            metadata = {"pid": record["pid"]}
+            if mode == "metadata-types":
+                import datetime
+                metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
             yield Finding(
                 surface=self.surface, connector=self.name, kind=Kind.AGENT,
                 title="process probe", resource="probe", resource_type="test",
-                metadata={"pid": record["pid"]},
+                metadata=metadata,
             )
 """
 
@@ -346,6 +350,28 @@ def test_worker_enforces_its_own_deadline_without_parent_supervision(installed_p
         child.close()
 
 
+def test_non_json_metadata_round_trips_like_thread_mode(installed_probe, monkeypatch):
+    """Transport serialization matches the JSON report: datetime/set/bytes become str()."""
+    from shadowscan import connectors as registry
+
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "metadata-types")
+    reported = {}
+    try:
+        for backend in ("thread", "process"):
+            config = ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY], plugin_execution=backend)
+            result = Engine(config, SignatureIndex([])).run()
+            assert result.complete, (backend, result.stats)
+            [finding] = json.loads(result.to_json())["findings"]
+            finding["metadata"].pop("pid")
+            reported[backend] = finding["metadata"]
+    finally:
+        # The thread backend imported the probe here; keep later tests honest.
+        sys.modules.pop(MODULE, None)
+        registry._cache.pop(ENTRY, None)
+    assert reported["process"] == reported["thread"]
+    assert reported["thread"] == {"seen": "2026-01-01 00:00:00", "scopes": "{'read'}", "raw": "b'ab'"}
+
+
 def test_plugin_allowlist_still_required_without_parent_import(installed_probe):
     engine = Engine(
         ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugin_execution="process"), SignatureIndex([])
@@ -386,6 +412,11 @@ def test_result_encoder_enforces_limit(monkeypatch):
     monkeypatch.setattr(transport, "MAX_RESULT_BYTES", 16)
     with pytest.raises(ValueError, match="transport limit"):
         _encode_result({"result": "x" * 20})
+
+
+def test_result_encoder_still_rejects_nan():
+    with pytest.raises(ValueError):
+        _encode_result({"findings": [{"confidence": float("nan")}]})
 
 
 @pytest.mark.parametrize(

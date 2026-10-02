@@ -46,8 +46,12 @@ def _remaining(deadline: float) -> float:
 
 
 def _encode_result(value: dict[str, Any]) -> bytes:
+    # Match ScanResult.to_json: values JSON cannot represent (datetime, set,
+    # bytes) become str() as in a thread-mode report, then the parent's
+    # Finding.from_dict sanitizes them. NaN and infinity still fail closed.
     output = bytearray()
-    for chunk in json.JSONEncoder(allow_nan=False, separators=(",", ":")).iterencode(value):
+    encoder = json.JSONEncoder(allow_nan=False, separators=(",", ":"), default=str)
+    for chunk in encoder.iterencode(value):
         output.extend(chunk.encode("utf-8"))
         if len(output) > MAX_RESULT_BYTES:
             raise ValueError("plugin result exceeds transport limit")
