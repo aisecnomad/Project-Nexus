@@ -105,7 +105,7 @@ the scan incomplete. Review source evidence before using these languages to
 enforce a production policy gate.
 
 `tools/evaluation/realistic_corpus.json` holds multi-file repository
-snapshots (3 to 8 files each) written from scratch to resemble real projects:
+snapshots (5 to 7 files each) written from scratch to resemble real projects:
 a FastAPI service with a LangGraph agent, a Next.js app on the Vercel AI SDK
 with an MCP client config, a Terraform Bedrock agent module, a CrewAI crew
 with YAML agents, a Semantic Kernel console app, a LangChainGo service, an

@@ -56,7 +56,12 @@ make coverage-gate  # 75% per-connector floor; run after make test
 
 `make coverage-gate` exports the coverage data recorded by the preceding
 `make test`. The per-connector floor needs the cloud SDKs installed, so run it
-after `make install` rather than `make install-dev`.
+after `make install` rather than `make install-dev`. The gate does not skip a
+connector module that its per-connector rule does not cover. A module in a
+connector family that `tools/coverage_gate.py` does not list, a module in a
+nested package, or an unlisted module directly under `shadowscan/connectors/`
+fails the gate. The exceptions are package `__init__` files and modules
+without statements.
 
 Useful pytest patterns:
 
@@ -66,6 +71,27 @@ python -m pytest -q -x --tb=short              # stop early, short tracebacks
 python -m pytest -q --co tests/unit | head     # list collected tests
 ```
 
+### Expected skips
+
+Some tests skip by design when the host cannot exercise them. Read the skip
+summary (`python -m pytest -q -rs`) before trusting a local run:
+
+- **Cloud SDKs missing.** `make install-dev`, or any install without the
+  `cloud` extra, skips about 60 tests that call `pytest.importorskip` for
+  `oci`, `boto3`/`botocore` or `google-auth`. The per-connector coverage floor
+  also needs those SDKs, so run `make install` for the full suite.
+- **Git older than 2.45, or no `git` on `PATH`.** Tests marked
+  `requires_git_2_45` run real `use_git` history enrichment and skip (see
+  `tests/conftest.py`).
+- **Running as root.** A process that ignores directory read permission (root,
+  or a process with `CAP_DAC_READ_SEARCH`) skips
+  `test_scan_below_a_real_search_only_ancestor_is_complete` in
+  `tests/unit/test_confined_source_reads.py`. Run the suite as an unprivileged
+  user to exercise it.
+- **Platform features.** Tests that need symbolic links, `O_PATH`, POSIX
+  `flock`, FIFOs, pseudo-terminals or `AF_UNIX` sockets skip where the
+  platform or sandbox lacks them.
+
 ## Other gates
 
 ```bash
@@ -73,7 +99,7 @@ make lint            # ruff check
 make format-check    # ruff format --check
 make typecheck       # mypy on the scanner and tools
 make signatures      # signature schema and regex validation
-make audit           # pip-audit on the installed environment
+make audit           # pip-audit on the environment and every hash lock, as CI
 make evaluate        # every bundled detection corpus
 make policy          # workflow, issue-form and repository consistency checks
 make check           # all of the above, in order
