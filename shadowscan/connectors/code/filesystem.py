@@ -2177,7 +2177,7 @@ class FilesystemConnector(BaseConnector):
             for m, rel, _ in observations
         ):
             yield self._project_finding(label, root, proj, observations)
-        catalogs = project_catalog_files(proj)
+        catalogs = project_catalog_files(proj) if proj.coding_agent_files else frozenset()
         for sig_id, files in proj.coding_agent_files.items():
             # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
             # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.

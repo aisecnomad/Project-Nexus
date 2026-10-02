@@ -14,11 +14,13 @@ It is a **noisy-OR** of evidence weights (`Finding.recompute_confidence`):
 confidence = round(1 − ∏(1 − wᵢ), 3)
 ```
 
-Each weight `wᵢ` is clamped to 0–1. Evidence that shares a
-`confidence_group` attribute is correlated (for example, repeated matches of
-one framework in a project), so each group contributes only its strongest
-weight. A project that merely imports `openai` is not the same as a Bedrock
-Agent with a confirmed runtime status.
+Each weight `wᵢ` is a finite number from 0 to 1: `Evidence` refuses any other
+value when it is built or changed, so a corrupt report, cache entry or plugin
+fails instead of turning NaN or a huge weight into certainty. Evidence that
+shares a `confidence_group` attribute is correlated (for example, repeated
+matches of one framework in a project), so each group contributes only its
+strongest weight. A project that merely imports `openai` is not the same as a
+Bedrock Agent with a confirmed runtime status.
 
 Confidence is a heuristic evidence score, not a calibrated probability of
 agent execution: the weights are authored in signature packs and connectors,
@@ -113,12 +115,12 @@ score = min(100, max(0, round(raw × scale)))
 
 `round` rounds halves to even, and the arithmetic is exact: the confidence is
 read as the decimal number it is written as (0.15, not the nearest binary
-float), so a raw 75 at confidence 0.15 is 49.5 and scores 50, not 49. A
-finding with confidence 1.0
-keeps its full score; lower confidence reduces it by at most 40%, so a
-low-confidence finding produces a lower effective risk but severe factors
-still register. Below confidence 1.0 the change is listed as a
-`confidence-scaling` factor, which is never positive, and a clamp at 0 or 100
+float), so a raw 75 at confidence 0.15 is 49.5 and scores 50, not 49.
+
+A finding with confidence 1.0 keeps its full score; lower confidence reduces
+it by at most 40%, so a low-confidence finding produces a lower effective risk
+but severe factors still register. Below confidence 1.0 the change is listed as
+a `confidence-scaling` factor, which is never positive, and a clamp at 0 or 100
 as a `bounds` factor, so the listed factors always add up to `score`.
 
 `risk.danger_score` applies the same scale and bounds to the factors other than
