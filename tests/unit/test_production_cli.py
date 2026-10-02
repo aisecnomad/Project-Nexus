@@ -107,7 +107,7 @@ def test_cli_security_options_and_private_report(tmp_path):
 )
 def test_cli_verification_policy_requires_jwks(option, value):
     result = CliRunner().invoke(main, ["jwt", "synthetic", option, value])
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert "require --jwks-url" in result.output
 
 

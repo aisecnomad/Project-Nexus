@@ -196,7 +196,10 @@ def context(index, **config):
     return ctx
 
 
-def test_gateway_overflow_is_atomic_and_keeps_later_callers(index):
+def test_gateway_overflow_is_atomic_and_keeps_later_callers(index, monkeypatch):
+    # Absurd per-record costs are normally discarded before accumulation; lift
+    # that cap so this still exercises the aggregate-overflow guard itself.
+    monkeypatch.setattr("shadowscan.connectors.gateway.logs._MAX_USAGE_VALUE", float("inf"))
     ctx = context(index, format="litellm")
     records = [
         {"api_key": "a", "model": "gpt-4o", "spend": 1e308},

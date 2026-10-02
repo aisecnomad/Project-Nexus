@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import config_boolean, finalize
+from shadowscan.connectors.common import config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -79,7 +80,7 @@ class TeamsConnector(BaseConnector):
         try:
             yield from http.paginate_odata(path, **kwargs)
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            status = failure_summary(exc)
             self.ctx.warn(f"saas.microsoft-teams: collection incomplete for {path} ({status})")
 
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -100,8 +101,9 @@ class TeamsConnector(BaseConnector):
             if not self._record_fields_valid(team, required=("id",), strings=("displayName",)):
                 self.ctx.warn("saas.microsoft-teams: malformed team identity; installed-app coverage unknown")
                 continue
+            team_path = quote(str(team["id"]), safe="")
             for inst in self._pages(
-                http, f"/teams/{team['id']}/installedApps", params={"$expand": "teamsApp,teamsAppDefinition"}
+                http, f"/teams/{team_path}/installedApps", params={"$expand": "teamsApp,teamsAppDefinition"}
             ):
                 inst["_kind"] = "installedApp"
                 inst["_team"] = team.get("displayName")

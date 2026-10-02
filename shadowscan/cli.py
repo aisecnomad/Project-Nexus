@@ -11,7 +11,7 @@ import sys
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
-from typing import Any, NoReturn, TypeVar
+from typing import IO, Any, NoReturn, TypeVar
 
 import click
 import yaml
@@ -112,7 +112,10 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
         except (OSError, ValueError):
             raise click.ClickException("could not write report; check output path and permissions") from None
         written = fmt if fmt != "table" else "json"
-        err_console.print(Text(terminal_text(f"wrote {written} report to {output}"), style="green"))
+        note = f"wrote {written} report to {output}"
+        if fmt == "table":
+            note += " (the table format saves JSON to a file; pass --format for another file type)"
+        err_console.print(Text(terminal_text(note), style="green"))
         if fmt == "table":
             try:
                 print_table(result, console=console, verbose=verbose, max_rows=max_rows)
@@ -298,7 +301,13 @@ security_options = [
         type=float,
         callback=_connector_timeout_option,
         help="per-connector completion deadline in seconds (default: 120); --connector-timeout is a"
-        " deprecated alias; blocking calls cannot be forcibly stopped",
+        " deprecated alias; thread workers use cooperative cancellation",
+    ),
+    click.option(
+        "--plugin-execution",
+        type=click.Choice(["thread", "process"]),
+        default=None,
+        help="third-party connector execution backend (default: thread); process enables worker termination",
     ),
     click.option(
         "--allow-plugin",
@@ -399,6 +408,7 @@ class ScanOptions:
     allow_credential_mixing: bool | None
     connector_timeout_seconds: float | None
     allow_plugin: tuple[str, ...]
+    plugin_execution: str | None
     allow_signature_override: bool | None
     allow_private_origin: bool | None
     incremental: bool | None
@@ -443,6 +453,8 @@ def scan_options(command: Callable[..., None]) -> Callable[..., None]:
 def _apply_security_options(cfg: ScanConfig, opts: ScanOptions) -> None:
     """Command-line approvals and deadlines override the configuration when given."""
     cfg.plugins = list(dict.fromkeys([*cfg.plugins, *opts.allow_plugin]))
+    if opts.plugin_execution is not None:
+        cfg.plugin_execution = opts.plugin_execution
     if opts.allow_signature_override is not None:
         cfg.allow_signature_override = opts.allow_signature_override
     if opts.allow_private_origin is not None:
@@ -464,7 +476,54 @@ def _run_scan(cfg: ScanConfig, opts: ScanOptions, only: list[str] | None = None)
     _run_and_emit(cfg, opts.fmt, opts.output, verbose, opts.max_rows, only=only)
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+class _UsageError(click.UsageError):
+    """A Click usage error, shown unchanged, that exits 1 instead of 2.
+
+    Exit 2 means a complete scan reached ``--fail-on``. A mistyped option,
+    invalid value or missing file stops the command before it scans anything,
+    like a configuration error, so a CI gate must not read it as a policy result.
+    """
+
+    exit_code = 1
+
+    def __init__(self, error: click.UsageError) -> None:
+        super().__init__(error.message, error.ctx)
+        self.error = error
+
+    def format_message(self) -> str:
+        return self.error.format_message()
+
+    def __str__(self) -> str:
+        return str(self.error)
+
+    def show(self, file: IO[Any] | None = None) -> None:
+        self.error.show(file)
+
+
+class _MainGroup(click.Group):
+    """Root group: usage errors of every command, raised while parsing or running, exit 1."""
+
+    def make_context(
+        self,
+        info_name: str | None,
+        args: list[str],
+        parent: click.Context | None = None,
+        **extra: Any,
+    ) -> click.Context:
+        try:
+            return super().make_context(info_name, args, parent, **extra)
+        except click.UsageError as exc:
+            raise _UsageError(exc) from None
+
+    def invoke(self, ctx: click.Context) -> Any:
+        # Subcommand parsing and callbacks run inside the root invocation.
+        try:
+            return super().invoke(ctx)
+        except click.UsageError as exc:
+            raise _UsageError(exc) from None
+
+
+@click.group(cls=_MainGroup, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, prog_name="shadowscan")
 @click.option("-v", "--verbose", count=True, help="-v info, -vv debug")
 @click.option("-q", "--quiet", is_flag=True, help="errors only")
@@ -1127,7 +1186,15 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
 @click.argument("baseline", type=click.Path(exists=True, dir_okay=False))
 @click.argument("current", type=click.Path(exists=True, dir_okay=False))
 @click.option("--json", "as_json", is_flag=True)
-def diff(baseline: str, current: str, as_json: bool) -> None:
+@click.option(
+    "--fail-on-new",
+    is_flag=True,
+    help=(
+        "exit 2 if the comparison has new findings or findings whose risk level rose; "
+        "an incomplete comparison still exits 3"
+    ),
+)
+def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
     """Compare reports; missing findings require complete, comparable scans to resolve."""
     try:
         comparison = compare_reports(
@@ -1141,13 +1208,22 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
     else:
         keys = ("new", "resolved", "unknown", "changed")
         new, resolved, unknown, changed = (comparison[key] for key in keys)
+        # Scan-local IDs (baseline "<", current ">") cannot be matched across reports.
+        local_baseline, local_current = (comparison["not_comparable"][key] for key in ("baseline", "current"))
         console.print(
             f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold],"
-            f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold]"
+            f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold],"
+            f" [bold]{len(local_baseline) + len(local_current)} not comparable[/bold]"
         )
         for reason in comparison["reasons"]:
             console.print(f"Comparison incomplete: {reason}", markup=False)
-        for marker, records in (("+", new), ("-", resolved), ("?", unknown)):
+        for marker, records in (
+            ("+", new),
+            ("-", resolved),
+            ("?", unknown),
+            ("<", local_baseline),
+            (">", local_current),
+        ):
             for d in sorted(records, key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
                 console.print(terminal_text(line), markup=False)
@@ -1158,6 +1234,13 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
             console.print(terminal_text(line), markup=False)
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
+    if fail_on_new and (comparison["new"] or any(_risk_rose(change) for change in comparison["changed"])):
+        raise click.exceptions.Exit(2)
+
+
+def _risk_rose(change: dict[str, Any]) -> bool:
+    """Whether a changed finding moved to a more severe risk level (LEVELS runs most to least severe)."""
+    return LEVELS.index(change["after"]["risk"]["level"]) < LEVELS.index(change["before"]["risk"]["level"])
 
 
 if __name__ == "__main__":  # pragma: no cover

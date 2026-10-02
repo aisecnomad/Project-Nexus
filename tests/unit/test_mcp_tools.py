@@ -52,10 +52,13 @@ def test_mcp_tools_registered_only_in_tests_imply_no_capabilities(tmp_path, inde
 
 
 def test_mcp_enum_tool_names_are_found_in_one_pass():
-    enums = "".join(f'class Unused{n}(str, Enum):\n    VALUE = "value_{n}"\n\n' for n in range(5_000))
+    # One pass over 20,000 enum classes takes well under a second; searching the
+    # whole text once per enum class took about 10 s for 5,000 and grows with the
+    # square. This thread's CPU time ignores scheduling delays on a busy runner.
+    enums = "".join(f'class Unused{n}(str, Enum):\n    VALUE = "value_{n}"\n\n' for n in range(20_000))
     text = (
         enums + 'class Tools(str, Enum):\n    READ = "read_file"\n\nTool(name=Tools.READ, description="x")\n'
     )
-    started = time.perf_counter()
+    started = time.thread_time()
     assert mcp_tool_names(text) == ["read_file"]
-    assert time.perf_counter() - started < 1
+    assert time.thread_time() - started < 10

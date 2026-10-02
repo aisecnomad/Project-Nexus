@@ -20,8 +20,9 @@ The inventory can be supplied as:
 * a CSV with columns ``agent_id, name, owner, resources`` (resources separated by ``|``)
 
 Automatic approval requires an explicit, case-sensitive resource pattern and
-all configured ``surfaces``, ``providers``, ``accounts`` and ``regions`` constraints. Names
-and aliases are review suggestions only; they never confer sanctioned status.
+all configured ``surfaces``, ``providers``, ``accounts``, ``regions`` and
+``discriminators`` constraints. Names and aliases are review suggestions only;
+they never confer sanctioned status.
 """
 
 from __future__ import annotations
@@ -95,21 +96,57 @@ def _has_usable_scope_identity(finding: Finding) -> bool:
     )
 
 
-def _meta_names(finding: Finding) -> set[str]:
-    out: set[str] = set()
+def _has_usable_discriminator(finding: Finding) -> bool:
+    # Inventory lists hold stripped, nonempty strings: an empty or padded value
+    # could not be written as a binding that matches this finding again.
+    value = finding.identity_discriminator
+    return bool(value) and value == value.strip()
+
+
+# A gateway resource such as ``principal:svc-ops`` is a field the log producer
+# (often the caller itself) wrote. A match on it is flagged, not trusted.
+UNVERIFIED_IDENTITY_TAG = "registry-identity-unverified"
+
+
+def _unauthenticated_caller_assurance(finding: Finding) -> str | None:
+    """Weakest identity assurance behind a gateway caller name, unless it is provider-authenticated.
+
+    Returns ``operator-asserted`` or ``unverified``; a gateway finding whose
+    observations carry no recognizable assurance counts as ``unverified``.
+    """
+    if finding.surface != Surface.GATEWAY:
+        return None
+    observations = finding.metadata.get("runtime_observations")
+    levels = (
+        {item.get("identity_assurance") for item in observations if isinstance(item, dict)}
+        if isinstance(observations, list)
+        else set()
+    )
+    if not levels or not levels <= {"operator-asserted", "provider-authenticated-field"}:
+        return "unverified"
+    return "operator-asserted" if "operator-asserted" in levels else None
+
+
+def _metadata_names(finding: Finding) -> list[str]:
+    """Name strings in finding metadata, including names of listed agent definitions."""
+    out: list[str] = []
     for k in NAME_FIELDS:
         v = finding.metadata.get(k)
         if isinstance(v, str):
-            out.add(v.lower())
+            out.append(v)
         elif isinstance(v, list):
             for item in v:
                 if isinstance(item, str):
-                    out.add(item.lower())
+                    out.append(item)
                 elif isinstance(item, dict):
                     for kk in ("name", "agent_id", "display_name"):
                         if isinstance(item.get(kk), str):
-                            out.add(item[kk].lower())
+                            out.append(item[kk])
     return out
+
+
+def _meta_names(finding: Finding) -> set[str]:
+    return {name.lower() for name in _metadata_names(finding)}
 
 
 @dataclass(slots=True)
@@ -124,6 +161,7 @@ class InventoryEntry:
     providers: list[str] = field(default_factory=list)
     accounts: list[str] = field(default_factory=list)
     regions: list[str] = field(default_factory=list)
+    discriminators: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     source: str | None = None
     card: dict[str, Any] = field(default_factory=dict)
@@ -165,7 +203,7 @@ class Inventory:
             path = Path(p).expanduser()
             files: list[Path]
             if path.is_dir():
-                files = list(policy_files(path, {".yaml", ".yml", ".json", ".csv"}))
+                files = list(policy_files(path, {".yaml", ".yml", ".json", ".csv"}, reject_links=True))
             elif path.exists() or path.is_symlink():
                 require_no_symlinks(path)
                 files = [path]
@@ -174,7 +212,13 @@ class Inventory:
             else:
                 # A missing path is reported by name only: the message must stay
                 # safe for the CLI to print verbatim (see shadowscan.errors).
-                raise SetupPathError(sanitize_text(f"inventory path not found: {p}"))
+                raise SetupPathError(
+                    sanitize_text(
+                        f"inventory path not found: {p} "
+                        "(create it, pass an existing card file or directory such as agent-card.yaml, "
+                        "or omit the inventory)"
+                    )
+                )
             for f in files:
                 inv.entries.extend(cls._load_file(f))
                 inv.sources.append(str(f))
@@ -295,6 +339,7 @@ class Inventory:
             providers=lists["providers"],
             accounts=lists["accounts"],
             regions=lists["regions"],
+            discriminators=lists["discriminators"],
             tags=tags,
             source=str(path),
             card=doc,
@@ -322,6 +367,7 @@ class Inventory:
             providers=lists["providers"],
             accounts=lists["accounts"],
             regions=lists["regions"],
+            discriminators=lists["discriminators"],
             tags=lists["tags"],
             source=str(path),
             card=item,
@@ -333,10 +379,16 @@ class Inventory:
 
         Case folding resource IDs can approve a different object (for example,
         a case-sensitive cloud ARN or repository path). Unknown scopes and
-        conflicting inventory identities fail closed.
+        conflicting inventory identities fail closed. A match on a gateway
+        caller name whose identity is only operator-asserted or unverified is
+        kept but flagged with ``metadata['registry_match_assurance']`` and the
+        ``registry-identity-unverified`` tag.
         """
         finding.metadata.pop("registry_suggestions", None)
         finding.metadata.pop("registry_match_reason", None)
+        finding.metadata.pop("registry_match_assurance", None)
+        if UNVERIFIED_IDENTITY_TAG in finding.tags:
+            finding.tags.remove(UNVERIFIED_IDENTITY_TAG)
         # Finding construction redacts credentials before reconciliation. A
         # lossy resource ID is not an identity: distinct repositories, URLs or
         # cloud objects can all become the same ".../[REDACTED]" string. Even
@@ -364,6 +416,12 @@ class Inventory:
         ]
         if len(matches) == 1:
             finding.metadata.pop("registry_suggestions", None)
+            assurance = _unauthenticated_caller_assurance(finding)
+            if assurance:
+                # Keep the documented match, but a caller name taken from a log
+                # does not prove the caller is the registered agent: say so.
+                finding.metadata["registry_match_assurance"] = assurance
+                finding.add_tag(UNVERIFIED_IDENTITY_TAG)
             return matches[0]
         if len(matches) > 1:
             finding.metadata["registry_suggestions"] = sorted({e.agent_id for e in matches})
@@ -385,6 +443,10 @@ class Inventory:
             # resource cannot confer approval across unrelated customers.
             and (not requires_card_account_scope(finding.provider) or bool(entry.accounts))
             and (not entry.regions or finding.region in entry.regions)
+            # Several observations can share one resource (a repository's
+            # agent project and its coding-agent configuration). The stable
+            # observation type keeps an approval to the one it names.
+            and (not entry.discriminators or finding.identity_discriminator in entry.discriminators)
         )
 
     def _name_pattern(self, name: str) -> re.Pattern[str]:
@@ -435,6 +497,7 @@ _LIST_FIELDS = {
     "providers",
     "accounts",
     "regions",
+    "discriminators",
     "tags",
 }
 _SIMPLE_FIELDS = _LIST_FIELDS | {"id", "agent_id", "name", "owner", "owner_team"}
@@ -547,14 +610,17 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
                 and _has_usable_scope_identity(finding)
                 and _has_valid_account_scope(finding)
                 and finding.metadata.get("identity_unresolved") is not True
+                and _has_usable_discriminator(finding)
             )
             else [finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})],
-            "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),
+            "names": sorted({name.strip() for name in _metadata_names(finding) if name.strip()}),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],
             "providers": [finding.provider] if finding.provider else [],
             "accounts": [finding.account] if finding.account else [],
             "regions": [finding.region] if finding.region else [],
+            # Other findings can share this resource; approve this observation only.
+            "discriminators": [finding.identity_discriminator] if _has_usable_discriminator(finding) else [],
         },
     }
 

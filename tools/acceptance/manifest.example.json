@@ -10,7 +10,21 @@
     "min_negative_cases": 200,
     "min_precision": 0.98,
     "min_recall": 0.95,
-    "min_specificity": 0.99
+    "min_specificity": 0.99,
+    "min_precision_lower95": 0.95,
+    "min_recall_lower95": 0.95,
+    "min_specificity_lower95": 0.95,
+    "per_kind": {
+      "agent": {
+        "min_positive_cases": 100,
+        "min_negative_cases": 200,
+        "max_false_positives": 0,
+        "max_false_negatives": 0,
+        "min_precision_lower95": 0.95,
+        "min_recall_lower95": 0.95,
+        "min_specificity_lower95": 0.95
+      }
+    }
   },
   "evaluation": {
     "corpus": {"path": "holdout.json", "sha256": "REPLACE_WITH_SHA256"},

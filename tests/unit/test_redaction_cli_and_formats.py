@@ -1,0 +1,327 @@
+"""Redaction of CLI flags, shell/JSON text shapes, token formats and linear-time matching."""
+
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+
+import pytest
+
+from shadowscan.models import Kind
+from shadowscan.utils.redaction import REDACTED, credential_id, sanitize, sanitize_text
+
+SECRET = "Zx9qOpaqueSecretValue7731"
+
+
+def _json_in_string(value: str, escapes: int) -> str:
+    """JSON text as it appears inside a string literal that escapes its quotes."""
+    quote = "\\" * escapes + '"'
+    return (
+        "{"
+        + quote
+        + "api_key"
+        + quote
+        + ": "
+        + quote
+        + value
+        + quote
+        + ", "
+        + quote
+        + "model"
+        + quote
+        + ": 1}"
+    )
+
+
+def _clean(text: str) -> str:
+    result = sanitize_text(text)
+    assert SECRET not in result
+    assert sanitize_text(result) == result
+    return result
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (f"--api-key={SECRET}", f"--api-key={REDACTED}"),
+        (f"--token={SECRET} --model gpt-example", f"--token={REDACTED} --model gpt-example"),
+        (f"--db-password={SECRET}", f"--db-password={REDACTED}"),
+        (f"--pat={SECRET}", f"--pat={REDACTED}"),
+        (f"npx -y @acme/mcp-two --token {SECRET}", f"npx -y @acme/mcp-two --token {REDACTED}"),
+        (f"tool --pat {SECRET} --verbose", f"tool --pat {REDACTED} --verbose"),
+        (f"tool --passphrase {SECRET}", f"tool --passphrase {REDACTED}"),
+        (f"tool --key {SECRET}", f"tool --key {REDACTED}"),
+        (f"tool --auth {SECRET}", f"tool --auth {REDACTED}"),
+        (f"tool --secret {SECRET} run", f"tool --secret {REDACTED} run"),
+        (f"tool --password '{SECRET} with spaces' run", f"tool --password '{REDACTED}' run"),
+        (f'tool --token="{SECRET} x" run', f'tool --token="{REDACTED}" run'),
+        (f"tool --token '{SECRET}", f"tool --token '{REDACTED}"),
+        (
+            f"curl -u admin:{SECRET} https://api.example.test/x",
+            f"curl -u admin:{REDACTED} https://api.example.test/x",
+        ),
+        (f"curl --user admin:{SECRET}", f"curl --user admin:{REDACTED}"),
+        (f"mysql -u root -p{SECRET} -h db.example.test", f"mysql -u root -p{REDACTED} -h db.example.test"),
+    ],
+)
+def test_cli_flag_credentials_are_redacted_in_text(text, expected):
+    assert _clean(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "tool --max-tokens 100 --model gpt-example",
+        "tool --token --verbose",
+        "tool --token",
+        "docker run -p 8080:80 -u 1000:1000 image",
+        "tool --key-file /etc/ssl/key.pem --password-file /run/pw",
+        "mysql -p -h db.example.test",
+        "tool --tokenizer gpt2 --keyboard us",
+        "pip install --user package",
+    ],
+)
+def test_cli_flag_redaction_leaves_ordinary_arguments(text):
+    assert sanitize_text(text) == text
+
+
+@pytest.mark.parametrize(
+    "flag", ["--token", "--pat", "--passphrase", "--secret", "--password", "--key", "--auth"]
+)
+def test_argv_pairs_and_inline_flags_are_redacted_in_sanitize(flag):
+    result = sanitize(
+        {"command": "npx", "args": [flag, SECRET, "--model", "gpt-example", f"{flag}={SECRET}"]},
+    )
+    assert SECRET not in json.dumps(result)
+    assert result["args"][2:4] == ["--model", "gpt-example"]
+    # Siblings of a flag/value pair are scrubbed even where the pair is a tuple.
+    assert SECRET not in json.dumps(sanitize({"args": (flag, SECRET), "copy": f"saw {SECRET}"}))
+
+
+def test_mcp_server_arguments_do_not_reach_code_scan_findings(tmp_path: Path, run_connector):
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "one": {"command": "npx", "args": ["-y", "@acme/mcp-one", f"--api-key={SECRET}"]},
+                    "two": {"command": f"npx -y @acme/mcp-two --token {SECRET}"},
+                    "three": {"command": "npx", "args": ["-y", "@acme/mcp-three", "--pat", SECRET]},
+                }
+            }
+        )
+    )
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path))
+    assert any(f.kind == Kind.MCP_SERVER for f in findings)
+    assert SECRET not in json.dumps([f.to_dict() for f in findings], default=str)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (f'payload = "{_json_in_string(SECRET, 1)}"', f'payload = "{_json_in_string(REDACTED, 1)}"'),
+        (_json_in_string(SECRET, 3), _json_in_string(REDACTED, 3)),
+        (f"password:{SECRET}", f'password:"{REDACTED}"'),
+        (f"x-api-key:{SECRET}", f'x-api-key:"{REDACTED}"'),
+        (f"Cookie: a=1; sessionid={SECRET}", f'Cookie: "{REDACTED}"'),
+        (f"Set-Cookie: sid={SECRET}; Path=/; HttpOnly", f'Set-Cookie: "{REDACTED}"'),
+        (f"PASSWORD=Ab;tail{SECRET}", f'PASSWORD="{REDACTED}"'),
+        (f"DB_PASSWORD=Ab;{SECRET}\nNEXT=1", f'DB_PASSWORD="{REDACTED}"\nNEXT=1'),
+        (
+            f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n{SECRET}\n-----END PGP PRIVATE KEY BLOCK-----",
+            f"{REDACTED}\n\n",
+        ),
+    ],
+)
+def test_text_shape_gaps_are_redacted(text, expected):
+    assert _clean(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        (f'curl -H "api-key:{SECRET}" https://x.test', 'curl -H "api-key:'),
+        (f'curl -H "Cookie: a=1; sessionid={SECRET}" https://x.test', 'curl -H "Cookie: '),
+        (f"line one\nCookie: a=1; sessionid={SECRET}\nline three", "line one\nCookie: "),
+        (f'{{"headers": "api-key:{SECRET}"}}', '{"headers": "api-key:'),
+    ],
+)
+def test_inline_header_credentials_are_redacted_in_context(text, kept):
+    result = _clean(text)
+    assert result.startswith(kept) and REDACTED in result
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A key=value neighbour after ';' ends the value (connection strings, shell lists).
+        (f"Server=db;Password={SECRET};Database=app", f"Server=db;Password={REDACTED};Database=app"),
+        (f"export PASSWORD=x{SECRET}; echo done", f"export PASSWORD={REDACTED}; echo done"),
+        ("mac aa:bb:cc:dd:ee:ff:00:11:22:33", "mac aa:bb:cc:dd:ee:ff:00:11:22:33"),
+        ("time 12:34:56 path C:\\Users\\x", "time 12:34:56 path C:\\Users\\x"),
+        ("def f(name:str, size:int) -> None: ...", "def f(name:str, size:int) -> None: ..."),
+        ("Cookie handling is documented in the guide", "Cookie handling is documented in the guide"),
+        # Resource paths that merely contain a bare ``secret:`` or ``token:`` segment.
+        (
+            "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf",
+            "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf",
+        ),
+        # Evidence signals and identifiers that merely contain a credential-like word.
+        ("example-credential:provider.anthropic", "example-credential:provider.anthropic"),
+        ("secret:provider.openai", "secret:provider.openai"),
+        ("jwt:service-account", "jwt:service-account"),
+        # Opaque identities written by the shared fingerprint and the gateway.
+        ("api-key:" + credential_id("k"), "api-key:" + credential_id("k")),
+        ("api-key:credential:hmac-sha256:" + "a" * 64, "api-key:credential:hmac-sha256:" + "a" * 64),
+    ],
+)
+def test_text_shape_fixes_keep_neighbouring_context(text, expected):
+    assert sanitize_text(text) == expected
+    assert sanitize_text(sanitize_text(text)) == expected
+
+
+_TOKENS = {
+    "stripe-live": "sk_live_" + "a1B2c3D4e5F6g7H8i9J0k1L2",
+    "stripe-restricted": "rk_live_" + "a1B2c3D4e5F6g7H8i9J0k1L2",
+    "stripe-webhook": "whsec_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4",
+    "sendgrid": "SG." + "abcdefghijklmnopqrstuv" + "." + "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+    "npm": "npm_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8",
+    "pypi": "pypi-AgEIcHlwaS5vcmcCJGExMjM0NTY3OC1hYmNkLTQ1NjctYWJjZGVm" + "x" * 40,
+    "digitalocean": "dop_v1_" + "0123456789abcdef" * 4,
+    "databricks": "dapi" + "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+    "slack-app": "xapp-" + "1-A0123456789-1234567890123-abcdef0123456789abcdef",
+    "slack-config": "xoxe-" + "1-abcdef0123456789abcdef",
+    "fireworks": "fw_" + "a1B2c3D4e5F6g7H8i9J0k1L2",
+    "google-oauth": "ya29." + "a0AfH6SMBabcdefghijklmnopqrstuvwxyz0123456789",
+    "anthropic-oauth": "sk-ant-oat01-" + "abcdefghijklmnopqrstuvwxyz0123456789",
+    "elevenlabs": "sk_" + "0123456789abcdef" * 3,
+}
+
+
+@pytest.mark.parametrize("token", _TOKENS.values(), ids=_TOKENS)
+def test_token_backstop_covers_common_formats(token):
+    for template in ("{}", "value is {} here", "密钥{}", "{}令牌"):
+        text = template.format(token)
+        result = sanitize_text(text)
+        assert token not in result and REDACTED in result, template
+        assert sanitize_text(result) == result
+
+
+def test_token_backstop_after_cjk_and_ascii_boundaries():
+    assert sanitize_text("密钥sk-proj-abcdefghijklmnopqrst1234") == f"密钥{REDACTED}"
+    assert sanitize_text("令牌ghp_abcdefghijklmnop1234!") == f"令牌{REDACTED}!"
+    # Identifiers that merely contain a prefix are not credentials.
+    for text in ("task_sk-proj-abcdefghijklmnop", "my_fw_a1B2c3D4e5F6g7H8i9J0k1L2", "npm_short", "ya29.x"):
+        assert sanitize_text(text) == text
+
+
+@pytest.mark.parametrize("key", ["auth", "pwd", "pat", "X-Amz-Security-Token", "x-amz-security-token"])
+def test_url_query_keys_auth_pwd_pat_and_session_token_are_redacted(key):
+    url = f"https://example.test/path?model=a&{key}={SECRET}&safe=1#{key}={SECRET}"
+    result = _clean(url)
+    assert result == f"https://example.test/path?model=a&{key}={REDACTED}&safe=1#{key}={REDACTED}"
+
+
+def test_set_and_bytes_values_are_sanitized():
+    token = "sk-proj-" + "a1B2c3D4e5F6g7H8i9J0"
+    original = {
+        "plain": {token},
+        "frozen": frozenset({f"copy {token}"}),
+        "raw": token.encode(),
+        "buffer": bytearray(f"note {token}".encode()),
+        "nested": {"x": {"y": {token}}},
+        "tuple_set": {("a", token)},
+        "api_key": {token},
+        "ok": {"alpha"},
+        "count": b"12",
+    }
+    result = sanitize(original)
+    assert token not in json.dumps(result, default=str)
+    assert token not in repr(result)
+    assert result["ok"] == {"alpha"} and result["count"] == b"12"
+    assert isinstance(result["plain"], set) and isinstance(result["frozen"], frozenset)
+    assert isinstance(result["raw"], bytes) and isinstance(result["buffer"], bytearray)
+
+
+def test_bytes_with_invalid_utf8_are_sanitized_without_error():
+    token = "ghp_" + "a1B2c3D4e5F6g7H8i9J0"
+    result = sanitize({"blob": b"\xff\xfe" + token.encode() + b"\x80"})
+    assert token.encode() not in result["blob"]
+
+
+def test_set_values_count_toward_sanitization_limits():
+    from shadowscan.utils.redaction import SanitizationLimitError
+
+    with pytest.raises(SanitizationLimitError):
+        sanitize({"big": frozenset(f"v{i}" for i in range(150_000))})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bearer abcDEF123xyz",
+        "bearer abcDEF123xyz",
+        "Authorization header: Bearer abcDEF123xyz.part-two_three==",
+        'curl -H "Authorization: Bearer abcDEF123xyz" https://x.test',
+        "token=Bearer   abcDEF123xyz",
+        "Basic dXNlcjpwYXNzd29yZA==",
+        "SSWS 00abcDEF123xyz",
+    ],
+)
+def test_bare_authorization_scheme_credentials_are_redacted(text):
+    result = sanitize_text(text)
+    assert "abcDEF123xyz" not in result and "dXNlcjpwYXNzd29yZA" not in result and "00abcDEF" not in result
+    assert sanitize_text(result) == result
+
+
+def test_bare_bearer_keeps_scheme_and_surrounding_words():
+    assert sanitize_text("sent Bearer abcDEF123xyz to host") == f"sent Bearer {REDACTED} to host"
+    assert sanitize_text("Bearer") == "Bearer"
+    assert sanitize({"note": "use Bearer abcDEF123xyz"}) == {"note": f"use Bearer {REDACTED}"}
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "eyJ-",
+        "eyJ-eyJa-",
+        "eyJa.eyJb.",
+        "eyJ_",
+        "sk-",
+        "Bearer ",
+        "--token ",
+        "--api-key=",
+        "Cookie: a=1; ",
+        'password:\\"',
+        "api-key:",
+        "PASSWORD=a;",
+        "mysql x -p",
+        "curl -u ",
+        "SG.",
+        "xapp-",
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\n",
+    ],
+)
+def test_hostile_repetitive_input_is_matched_in_linear_time(unit):
+    text = unit * (400_000 // len(unit))
+    started = time.perf_counter()
+    try:
+        sanitize_text(text)
+    except Exception as exc:  # a fail-closed limit is acceptable; a stall is not
+        assert exc.__class__.__name__ == "SanitizationLimitError"
+    assert time.perf_counter() - started < 5.0
+
+
+def test_real_jwts_are_still_redacted_in_every_position():
+    jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    unsigned = "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0."
+    for template in ("{}", "token {} end", "x-{}", "a.b.{}", "密钥{}", '"{}"', "Bearer-{}"):
+        result = sanitize_text(template.format(jwt))
+        assert jwt not in result and "eyJ" not in result, template
+    assert "eyJ" not in sanitize_text(f"unsigned {unsigned}")
+    # A header with '-' characters stays one token.
+    hyphenated = "eyJhbGci-OiJI_UzI1.eyJzdWIiOiIxIn0.sig-nature_1"
+    assert sanitize_text(hyphenated) == REDACTED
+    # Not a token: identifiers that contain eyJ mid-word, and two-segment values.
+    for text in ("abceyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0"):
+        assert sanitize_text(text) == text

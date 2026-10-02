@@ -7,6 +7,7 @@ on adversarial unicode.
 
 from __future__ import annotations
 
+import re
 import string
 
 import pytest
@@ -58,10 +59,21 @@ def test_sanitize_text_unicode_safety(text: str) -> None:
     assert isinstance(result, str)
 
 
-@given(token=st.sampled_from(_SAMPLE_TOKENS), prefix=st.text(max_size=50), suffix=st.text(max_size=50))
+# A token starts and ends at an ASCII word boundary: glued to a letter, digit
+# or underscore it is part of an identifier ('task-proj-…') or of a longer
+# value that is not this token ('AKIA…F0' is not a 20-character key id).
+_NOT_A_WORD_END = re.compile(r"(?<![A-Za-z0-9_])\Z")
+_NOT_A_WORD_START = re.compile(r"\A(?![A-Za-z0-9_])")
+
+
+@given(
+    token=st.sampled_from(_SAMPLE_TOKENS),
+    prefix=st.text(max_size=50).filter(_NOT_A_WORD_END.search),
+    suffix=st.text(max_size=50).filter(_NOT_A_WORD_START.search),
+)
 @settings(max_examples=100, deadline=5000)
 def test_known_tokens_always_redacted(token: str, prefix: str, suffix: str) -> None:
-    """Known credential patterns must be redacted regardless of surrounding context."""
+    """Known credential patterns must be redacted whatever precedes or follows them."""
     text = prefix + token + suffix
     result = sanitize_text(text)
     assert token not in result

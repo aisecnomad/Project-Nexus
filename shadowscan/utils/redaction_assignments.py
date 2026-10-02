@@ -14,6 +14,7 @@ import re
 from shadowscan.utils.redaction_rules import (
     _CLI_WORD,
     _FINGERPRINT,
+    _VALUE_SEMICOLON,
     REDACTED,
     SanitizationLimitError,
     _blanks_before,
@@ -39,12 +40,33 @@ from shadowscan.utils.redaction_rules import (
 # '[REDACTED' again and grew the marker by one ']' on every pass. After such a
 # marker it also stops at a query separator: 'sv=1&sig=[REDACTED]&Authorization:'
 # must leave the next parameter's name to be read with its own value.
+# Quotes may be escaped (JSON inside a string literal, up to eight levels), in
+# which case the closing delimiter must repeat the opening one exactly. A ';'
+# inside an unquoted value follows _VALUE_SEMICOLON.
+_ESCAPED_QUOTE = re.compile(r"\\{1,8}[\"']")
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
-    r"(?P<sep>[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
+    r"(?P<sep>\\{0,8}[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=\\{0,8}[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
-    r"|[^\s,;\}\]\)\"']+(?:(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
+    r"|(?P<escaped>\\{1,8}[\"'])(?:(?!(?P=escaped))[^\r\n])*(?P=escaped)"
+    r"|\\{1,8}[\"'][^\r\n]*"
+    r"|[^\s,;\}\]\)\"']+(?:" + _VALUE_SEMICOLON + r"[^\s,;\}\]\)\"']*|(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
 )
+
+
+def _unquote(raw: str, escaped: str | None) -> tuple[str, str, str]:
+    """Split a lexed value into its opening quote, content and closing quote."""
+    if escaped:
+        return escaped, raw[len(escaped) : -len(escaped)], escaped
+    if raw[:1] in {'"', "'"}:
+        closed = len(raw) > 1 and raw[-1] == raw[0]
+        return raw[0], raw[1:-1] if closed else raw[1:], raw[0] if closed else ""
+    unclosed = _ESCAPED_QUOTE.match(raw)
+    if unclosed:
+        return unclosed.group(0), raw[unclosed.end() :], ""
+    return "", raw, ""
+
+
 _MAPPING_VALUE = re.compile(
     r"(?<![\w.-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
     r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
@@ -158,6 +180,17 @@ def _mapping_expression_end(text: str, start: int) -> int:
     return len(text)
 
 
+def _line_quote(text: str, quote: str, start: int) -> int | None:
+    """Position of the next ``quote`` on the line starting at ``start``, or None."""
+    position = text.find(quote, start)
+    if position == -1:
+        return None
+    line_end = min(
+        (end for end in (text.find("\n", start), text.find("\r", start)) if end != -1), default=len(text)
+    )
+    return position if position < line_end else None
+
+
 def _redact_mapping_values(text: str) -> str:
     """Withhold full sensitive mapping expressions before excerpt shortening."""
     pieces: list[str] = []
@@ -167,6 +200,23 @@ def _redact_mapping_values(text: str) -> str:
         if match.start() < cursor or not _sensitive_assignment_key(key):
             continue
         start = match.start("value")
+        if text.startswith(REDACTED, start) and match.start() > 0 and text[match.start() - 1] in "\"'":
+            # An earlier pass left a bare marker inside a quoted string
+            # ('-H "x-api-key:[REDACTED]" https://…'). The string's closing
+            # quote ends the value: what sits between the marker and it is
+            # withheld with the marker, and nothing there leaves the text as
+            # it is. Read as a '[' expression, the quote would start a string
+            # that runs to the end of the text, on every sanitization.
+            after = start + len(REDACTED)
+            close = _line_quote(text, text[match.start() - 1], after)
+            if close is not None:
+                kept = text[after:close].rstrip("\\")
+                if not kept.replace(REDACTED, "").strip():
+                    continue
+                pieces.append(text[cursor:start])
+                pieces.append(REDACTED + text[after + len(kept) : close])
+                cursor = close
+                continue
         end = _mapping_expression_end(text, start)
         raw = text[start:end]
         bare = raw.strip()
@@ -202,6 +252,20 @@ _OPAQUE_VALUE = re.compile(
 # long run of one class every possible way before it failed, so
 # 'key: ' + 'a' * 56 + '.' took minutes.
 _WORD_RUN = re.compile(r"[A-Z]+|[a-z]+|[0-9_]+|[^A-Za-z0-9_]")
+_IDENTIFIER_DIGITS = re.compile(r"[0-9]+")
+_IDENTIFIER_LETTERS = re.compile(r"[A-Za-z]+")
+
+
+def _opaque_identifier(value: str) -> bool:
+    """A word-shaped key with repeated short fragments separated by digits.
+
+    Types such as Ed25519PrivateKey and labels such as NextPage2 remain
+    identifiers. Multiple short fragments with interleaved digit runs are
+    stronger evidence of key material when the assigned name names a key.
+    """
+    return len(_IDENTIFIER_DIGITS.findall(value)) >= 3 and all(
+        len(fragment) <= 3 for fragment in _IDENTIFIER_LETTERS.findall(value)
+    )
 
 
 def _wordy(value: str) -> bool:
@@ -275,7 +339,7 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
                 match.group("separator") == ":"
                 and not (extended and text.startswith((" ", "\t"), match.end("separator")))
             )
-            or _wordy(value)
+            or (_wordy(value) and not (extended and _opaque_identifier(value)))
         ):
             continue
         if match.group("quote") and _interpolated(match.group("prefix") or "", match.group("quote"), value):
@@ -364,8 +428,7 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
         if _FINGERPRINT.fullmatch(full):
             return full
         raw: str = m.group("value")
-        quote = raw[0] if raw.startswith(('"', "'")) else ""
-        bare = raw[1:-1] if quote else raw
+        opener, bare, closer = _unquote(raw, m.group("escaped"))
         key: str = m.group("key")
         sep: str = m.group("sep")
         if _sensitive_assignment_key(key):
@@ -376,6 +439,6 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
             clean = _redact_plain_assignments(bare, depth + 1) if depth < 8 else REDACTED
         else:
             return full
-        return key + sep + quote + clean + quote
+        return key + sep + opener + clean + closer
 
     return _ASSIGNMENT.sub(assignment, value)

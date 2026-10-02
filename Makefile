@@ -34,7 +34,7 @@ format-check: ## Check ruff formatting without changes
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py
 
 .PHONY: test
 test: ## Run test suite with coverage
@@ -58,8 +58,12 @@ signatures: ## Validate all signature schemas and regexes
 	python -m shadowscan.signatures.validate
 
 .PHONY: audit
-audit: ## Audit dependencies for known vulnerabilities
+audit: ## Audit the environment and every hash-locked dependency set, as CI does
 	pip-audit --skip-editable --progress-spinner off
+	set -e; for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do \
+		pip-audit --require-hashes --strict --progress-spinner off \
+			--disable-pip --no-deps -r "$$lock"; \
+	done
 
 .PHONY: evaluate
 evaluate: ## Run the bundled detection regression corpora
@@ -69,6 +73,7 @@ evaluate: ## Run the bundled detection regression corpora
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
 		--annotations tools/evaluation/independent_annotations.json
 

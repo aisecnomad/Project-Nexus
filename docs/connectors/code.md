@@ -29,10 +29,22 @@ including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
 Confidence groups cap repeated observations of the same technology. Unsupported
 dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
-languages use lexical signatures and require matching framework import/dependency
+languages, and framework code patterns from custom signature packs in any
+language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
+
+Ordinary Spring `ChatClient` and LangChain4j `AiServices` construction, and
+standalone Java tool declarations, remain framework usage. Recognized explicit
+agent factories and supported concrete tool registration can establish agents.
+For Spring typed-field registrations, the registered class must have matching
+`@Tool` methods in the same project; unrelated or test-only tool declarations
+do not establish production capabilities.
+For supported import-bound constructors, empty or disabled tool/delegation
+options do not establish those workload capabilities; unresolved dynamic
+configuration remains potential evidence. Review capability assertions as well
+as binary presence when validating a detection change.
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of confirmed
@@ -45,12 +57,23 @@ reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
 
+Submodule declarations are inspected without running Git. Missing, empty or
+unsafe declared module directories make coverage incomplete. Clone collection
+and local `use_git: true` also inventory committed gitlinks using the hardened
+metadata path. No submodule is initialized or fetched; see the detailed
+[coverage policy](../scanning.md#coverage-policy) for scope and limitations.
+
 Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
-by default; `strict_coverage` promotes their diagnostics to errors. Declared
-oversize skip globs remain visible omissions. Each root is opened once, and every
+by default, as do undecodable or binary content in an analyzable file, non-regular
+entries named like configuration files, and directory nesting deeper than the
+walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
+oversize skip globs remain visible omissions, and directories skipped by the
+default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
+root that does not affect completeness. See the coverage policy in
+[scanning](../scanning.md#coverage-policy). Each root is opened once, and every
 file (including `CODEOWNERS`) is read relative to it without following a link in
 any path component. A directory replaced by a link while the scan runs therefore
 fails the reads below it, which makes the scan incomplete, instead of redirecting

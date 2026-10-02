@@ -17,7 +17,9 @@ confidence = round(1 − ∏(1 − wᵢ), 3)
 Each weight `wᵢ` is clamped to 0–1. Evidence that shares a
 `confidence_group` attribute is correlated (for example, repeated matches of
 one framework in a project), so each group contributes only its strongest
-weight. A project that merely imports `openai` is not the same as a Bedrock
+weight. Outside the code surface, evidence without an explicit group is
+grouped by its signal, so repeated matches of one signal (several scopes of one
+permission class, several system prompts in one workflow) count once. A project that merely imports `openai` is not the same as a Bedrock
 Agent with a confirmed runtime status.
 
 Confidence is a heuristic evidence score, not a calibrated probability of

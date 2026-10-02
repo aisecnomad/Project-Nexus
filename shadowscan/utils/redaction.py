@@ -48,15 +48,28 @@ from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credent
 from shadowscan.utils.redaction_commands import (
     _redact_command_credentials,
     _redact_environment_commands,
+    _redact_extended_options,
     _redact_opaque_options,
     _redact_user_secrets,
 )
-from shadowscan.utils.redaction_formats import _AUTH, _JWT, _PEM, _SECRET_TOKEN, _URL, _sanitize_url
+from shadowscan.utils.redaction_formats import (
+    _AUTH,
+    _JWT,
+    _PEM,
+    _SECRET_TOKEN,
+    _URL,
+    _redact_compact_colons,
+    _redact_cookie_headers,
+    _redact_query_text,
+    _sanitize_url,
+)
 from shadowscan.utils.redaction_markup import (
+    _redact_flow_records,
     _redact_markup_credentials,
     _redact_markup_settings,
     _redact_name_value_pairs,
     _redact_record_settings,
+    _redact_reversed_records,
 )
 from shadowscan.utils.redaction_rules import (
     _FINGERPRINT,
@@ -70,11 +83,15 @@ from shadowscan.utils.redaction_rules import (
     _credential_name,
     _redact_value,
     _sensitive_assignment_key,
+    _sensitive_flag,
     _sensitive_key,
     _setting_level,
     _setting_value_withheld,
 )
 from shadowscan.utils.redaction_statements import _redact_python_assignments
+
+# Values the sanitizer descends into; sets and frozensets are traversed like lists.
+_CONTAINERS = (Mapping, list, tuple, set, frozenset)
 
 # Keys whose mapping or list of name/value records holds environment variables.
 _ENVIRONMENT_KEYS = frozenset({"env", "environment", "environment_variables", "environmentvariables"})
@@ -143,6 +160,10 @@ def _redact_extended(text: str) -> str:
     text = _redact_user_secrets(text)
     text = _redact_opaque_assignments(text, extended=True)
     text = _redact_fallback_defaults(text, extended=True)
+    text = _redact_reversed_records(text)
+    text = _redact_query_text(text)
+    text = _redact_extended_options(text)
+    text = _redact_compact_colons(text)
     return _redact_opaque_options(text)
 
 
@@ -151,7 +172,9 @@ def _sanitize_established(text: str) -> str:
     text = _checked_text(text)
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
+    text = _redact_cookie_headers(text)
     text = _redact_markup_credentials(text)
+    text = _redact_flow_records(text, quoted_only=True)
     text = _redact_name_value_pairs(text)
     text = _redact_command_credentials(text)
     text = _redact_environment_commands(text)
@@ -161,7 +184,7 @@ def _sanitize_established(text: str) -> str:
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
     text = _redact_opaque_assignments(text)
-    text = _JWT.sub(REDACTED, text)
+    text = _JWT.sub(r"\g<prefix>" + REDACTED, text)
     text = _SECRET_TOKEN.sub(REDACTED, text)
     # The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
     text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED + "\n" * m.group().count("\n"), text)
@@ -251,6 +274,8 @@ class _Sanitizer:
             raise SanitizationLimitError("credential replacement work limit exceeded")
 
     def remember(self, child: Any) -> None:
+        if isinstance(child, (bytes, bytearray)):
+            child = bytes(child).decode("utf-8", errors="replace")
         if isinstance(child, str) and child:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 self.known.add(child)
@@ -262,9 +287,9 @@ class _Sanitizer:
 
     def discover(self, item: Any, depth: int = 0, *, environment: bool = False) -> None:
         identity = (id(item), environment)
-        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.discovered):
+        if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.discovered):
             return
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             self.discovered.add(identity)
         # The extended pass knows only the values the added rules find: the
         # established pass already withheld and removed the others.
@@ -286,14 +311,23 @@ class _Sanitizer:
                             if isinstance(entry, Mapping):
                                 self.remember(entry.get("value") or entry.get("Value"))
                 self.discover(child, depth + 1, environment=child_environment)
+        elif isinstance(item, (set, frozenset)):
+            for child in item:
+                self.discover(child, depth + 1, environment=environment)
         elif isinstance(item, (list, tuple)):
             previous = None
             for child in item:
-                if isinstance(previous, str) and previous.startswith("-"):
-                    if (established and _sensitive_key(previous.lstrip("-"))) or (
+                if isinstance(previous, str) and previous.startswith("-") and "=" not in previous:
+                    if (established and _sensitive_flag(previous.lstrip("-"))) or (
                         self.extended and _opaque_option(previous) and _opaque_literal(child)
                     ):
                         self.remember(child)
+                elif established and isinstance(child, str) and child.startswith("-") and "=" in child:
+                    # --api-key=VALUE: the value is a credential to remove from
+                    # sibling fields, exactly as for a separate argv entry.
+                    flag, _, flag_value = child.partition("=")
+                    if _sensitive_flag(flag.lstrip("-")):
+                        self.remember(flag_value)
                 self.discover(child, depth + 1, environment=environment)
                 previous = child
 
@@ -369,14 +403,14 @@ class _Sanitizer:
             raise SanitizationLimitError("sanitization work limit exceeded")
         if depth > 64:
             return REDACTED
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             if id(item) in self.cleaning:
                 return REDACTED
             self.cleaning.add(id(item))
         try:
             return self.clean_value(item, depth)
         finally:
-            if isinstance(item, (Mapping, list, tuple)):
+            if isinstance(item, _CONTAINERS):
                 self.cleaning.discard(id(item))
 
     def clean_value(self, item: Any, depth: int) -> Any:
@@ -393,9 +427,20 @@ class _Sanitizer:
                     sequence_out.append(self.clean(child, depth + 1))
                     opaque_next = False
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
-                        redact_next = _sensitive_key(child.lstrip("-"))
+                        redact_next = _sensitive_flag(child.lstrip("-"))
                         opaque_next = self.extended and _opaque_option(child)
             return tuple(sequence_out) if isinstance(item, tuple) else sequence_out
+        if isinstance(item, (set, frozenset)):
+            members = [self.clean(child, depth + 1) for child in item]
+            return frozenset(members) if isinstance(item, frozenset) else set(members)
+        if isinstance(item, (bytes, bytearray)):
+            # Decode tolerantly: json default=str would otherwise print the raw
+            # bytes. Untouched content keeps its exact bytes.
+            decoded = bytes(item).decode("utf-8", errors="replace")
+            cleaned = self.text(decoded)
+            if cleaned == decoded:
+                return item
+            return bytearray(cleaned.encode()) if isinstance(item, bytearray) else cleaned.encode()
         if isinstance(item, str):
             return self.text(item)
         return item
@@ -470,9 +515,9 @@ class _NestedSanitizer(_Sanitizer):
         ``credential_group`` marks a container named for credentials.
         """
         identity = (id(item), environment, credential, credential_group)
-        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.containers):
+        if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.containers):
             return
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             self.containers.add(identity)
         if isinstance(item, Mapping):
             named_secret = _record_has_secret_value(item, environment=environment) or (
@@ -502,7 +547,7 @@ class _NestedSanitizer(_Sanitizer):
                     credential=key_sensitive or member,
                     credential_group=child_group,
                 )
-        elif isinstance(item, (list, tuple)):
+        elif isinstance(item, (list, tuple, set, frozenset)):
             for child in item:
                 if credential:
                     self.remember(child)
@@ -617,8 +662,8 @@ def _check_sanitization_structure(value: Any) -> None:
     memo: dict[int, tuple[int, int, int]] = {}
 
     def cost(item: Any) -> tuple[int, int, int]:
-        if not isinstance(item, (Mapping, list, tuple)):
-            return 1, len(item) if isinstance(item, str) else 0, 1
+        if not isinstance(item, _CONTAINERS):
+            return 1, len(item) if isinstance(item, (str, bytes, bytearray)) else 0, 1
         identity = id(item)
         if identity in active:
             return 1, len(REDACTED), 1

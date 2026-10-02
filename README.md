@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aisecnomad/Project-Nexus/badge)](https://scorecard.dev/viewer/?uri=github.com/aisecnomad/Project-Nexus)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](https://www.python.org/downloads/)
 [![Coverage ≥80%](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](CONTRIBUTING.md#quality-gates)
@@ -12,27 +13,28 @@
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
-registry of
+agent registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
 Counts and severity labels need an analyst review before they drive enforcement.
 
-Example findings (totals vary as signatures evolve):
+Example output, abridged to the first columns (totals vary as signatures evolve;
+`--max-rows 5` shows the five highest-risk rows of the bundled offline demo):
 
 ```
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 99 findings  •  95 shadow (inventory: 3 registered agents)                  │
-│ critical 12  high 52  medium 35  •  code 11 identity 19 cloud 27 …          │
+│ critical 11  high 53  medium 35  •  cloud 27 identity 19 saas 17 …          │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
- CRITICAL 95  SHADOW  code      mcp-server   MCP configuration: .mcp.json (inline GitHub PAT, Zapier remote MCP, docker/postgres)
- CRITICAL 90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
- HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper
- MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered via its card's resource binding; owner from the AWS resource tag
+ CRITICAL  95  SHADOW  code      mcp-server   MCP configuration: .mcp.json
+ CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
+ CRITICAL  90  SHADOW  identity  oauth-grant  Entra service principal: Otter.ai
+ CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
 ```
 
-## Why
+## The Why
 
 Agents are no longer only Python scripts.
 They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
@@ -41,7 +43,7 @@ developer's editor, service principals with `Mail.ReadWrite` acting on behalf of
 Each surface has its own discovery API and its own vocabulary.
 ShadowScan normalizes these observations into one finding model with evidence,
 so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
-registered in the registry supplied for this scan?*
+registered in the agent registry supplied for this scan?*
 
 | Observation | What it establishes | Next check |
 |---|---|---|
@@ -60,8 +62,11 @@ misses, not a field precision or recall estimate. See
 threshold as a production gate.
 
 The [assurance results](docs/assurance-results.md) preserve the baseline and
-subsequent results on a frozen, independently AI-labeled corpus of 42 public
-files (30 negatives). [Read-only AWS and Slack canaries](docs/canaries.md)
+subsequent results on a frozen corpus of 42 public files (30 negatives) that
+two AI reviewers labeled before evaluation. The labelers share model
+capabilities, so the labels are not independent human ground truth, and the
+corpus has since informed the implementation; only the baseline is out of
+sample. [Read-only AWS and Slack canaries](docs/canaries.md)
 validate named tenant controls when approved credentials are supplied; offline
 replay does not establish live tenant acceptance.
 
@@ -94,7 +99,7 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 
 ## Frameworks & products recognised
 
-215 signatures / 1001 signals, YAML-defined with explicit opt-in overrides:
+215 signatures / 1006 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -107,6 +112,27 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 
 `shadowscan signatures list` shows everything; `shadowscan signatures test <value>`
 tells you what a package, host, user agent, model id, scope or file path maps to.
+
+## Project status
+
+* **Unreleased.** `0.1.1` is a candidate version string: there is no tag, no
+  published package and no signed artifact. The package classifier is
+  `Development Status :: 3 - Alpha`.
+* **Single maintainer, AI-assisted development.** One account merges every
+  change. Apart from Dependabot updates, every commit was written by that
+  maintainer or generated with an AI coding assistant, often in large batches,
+  and reviewed by that same maintainer. The logs under
+  [archive/reviews/](archive/reviews/) are AI-assisted, not third-party reviews.
+* **What is independently reviewed: nothing yet.** Every pull request runs CI
+  and CodeQL, but no merged pull request carries an approval from a second
+  person. Independent human review is required before any tagged release; see
+  the [review and merge policy](CONTRIBUTING.md#review-and-merge-policy). The
+  intended branch ruleset is versioned in
+  [.github/rulesets/require-ci-and-review.json](.github/rulesets/require-ci-and-review.json).
+* **Recommendation.** Review the revision yourself or have it reviewed, then
+  pin that full commit SHA as shown below. Review state cannot be established
+  from a checkout; verify it with the commands in
+  [merge gate and review status](docs/production.md#merge-gate-and-review-status).
 
 
 ## Install
@@ -136,7 +162,8 @@ or a reserved namespace: install the reviewed source or built wheel below.
 The current `0.1.1` source version is an unreleased candidate; the version
 string does not imply a published or signed artifact. These VCS installs resolve
 transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11, 3.12, or 3.13 is required and covered by CI. Core dependencies
+below. Python 3.11, 3.12, or 3.13 is required and covered by CI; 3.14 is
+excluded until the CI matrix and the hash-locked dependency sets cover it. Core dependencies
 include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
 `PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
 also accepts an offline record dump.
@@ -225,7 +252,7 @@ connectors:
 required extras; `shadowscan connectors --json` also includes each connector's
 offline export formats. Every entry also accepts `enabled` (default true) and
 `label` (a distinct id when a connector runs more than once). See
-[docs/connectors.md](docs/connectors.md) for entry keys, credentials and
+[docs/connectors.md](docs/connectors.md) for entry keys, credentials, and
 least-privilege scopes per connector. Run repository scans in
 a separate job/configuration from live tenant collection. Mixing these credential
 boundaries requires an explicit `allow_credential_mixing` exception; keep the
@@ -253,7 +280,10 @@ not scanned. Evidence found only in test or fixture code cannot establish an
 agent unless `--include-tests` is set.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
-`--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
+`--fail-on`, **1** when the command produced no scan result (an invalid option,
+value, path or configuration, or a setup or output error), and **0** for a
+completed scan that passes. `shadowscan diff` exits **3** when the two reports
+are not comparable. Gate CI on any non-zero exit. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
 Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
 and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)
@@ -300,7 +330,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 }
 ```
 
-* **confidence** combines evidence weights with noisy-OR. It groups correlated source evidence first, so repeated matches cannot inflate the score. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **confidence** combines evidence weights with noisy-OR after grouping correlated evidence, so each group counts once at its strongest weight. A code project groups its matches by technology; on identity, gateway, low-code, SaaS and cloud surfaces, repeated matches of one signal form one group. A single-file code finding (a workflow export, IaC, agent configuration) still counts each distinct matched pattern. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
 * **potential_capabilities** in static finding metadata records framework features supported only by availability evidence, such as an import or dependency. These are excluded from capability risk factors until stronger source evidence supports them.
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence. The listed factors always add up to `score`; confidence scaling and the 0–100 bounds appear as factors.
 * **danger_score** is the same model without the governance factors (inventory registration and ownership): what the agent can do, independent of whether anyone approved it. Set `options.risk_basis: danger` to base `level` and `--fail-on` on it, and `options.risk_weights` to tune weights (see [Risk policy](#risk-policy)).
@@ -395,7 +425,7 @@ A small documentation fix or a reproducible false-positive report is useful.
 | Understand decisions, review and release requirements | [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [Roadmap](ROADMAP.md) |
 | Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
 | Understand participation standards or report harmful conduct | [Code of conduct](CODE_OF_CONDUCT.md) |
-| See what changed, or cite the project | [Changelog](CHANGELOG.md), [CITATION.cff](CITATION.cff) |
+| See what changed, or cite the project | [Release notes](RELEASE_NOTES.md), [Changelog](CHANGELOG.md), [CITATION.cff](CITATION.cff) |
 
 Use synthetic, minimal examples in public reports. Scan results can contain
 credentials, personal data, and sensitive inventory even after redaction.

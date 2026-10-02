@@ -22,6 +22,8 @@ fail-closed trust model.
   acceptance; retain the evidence before enabling enforcement.
 - Require the aggregate `CI gate` in the live branch rules and exercise the
   manual release-evidence workflow after the candidate is reviewed and merged.
+  The versioned [merge policy](docs/operations/merge-policy.md) and snapshot
+  checker are implemented; live administrator activation remains outstanding.
 
 ## Next
 
