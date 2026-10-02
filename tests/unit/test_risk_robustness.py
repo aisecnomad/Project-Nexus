@@ -10,6 +10,8 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import random
+from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,7 @@ from shadowscan.risk import (
     PROVIDER_WEIGHTS,
     TAG_WEIGHTS,
     RiskPolicy,
+    _confidence_scale,
     assess,
     provider_ids,
 )
@@ -204,6 +207,90 @@ def test_confidence_scaling_of_a_positive_subtotal_is_unchanged():
 
 def test_full_confidence_adds_no_scaling_factor():
     assert "confidence-scaling" not in _ids(assess(_finding(confidence=1.0)))
+
+
+def _documented_score(total: int, confidence: float) -> int:
+    """docs/concepts/risk.md: min(100, max(0, round(raw * (0.6 + 0.4 * confidence)))), halves to even."""
+    scale = Decimal("0.6") + Decimal("0.4") * Decimal(repr(confidence))
+    return max(0, min(100, int((Decimal(total) * scale).quantize(Decimal(1), rounding=ROUND_HALF_EVEN))))
+
+
+def _assess_raw(total: int, confidence: float) -> Risk:
+    """Assess a finding whose factors add up to exactly ``total`` before scaling."""
+    kind = min(total, 100)
+    extra = total - kind
+    policy = RiskPolicy.from_options({"kinds": {"agent": kind}, "capabilities": {"code-exec": extra}})
+    finding = _finding(confidence=confidence, owner="team", capabilities=["code-exec"] if extra else [])
+    return assess(finding, policy=policy)
+
+
+@pytest.mark.parametrize(
+    "total, confidence, score, level",
+    [
+        (75, 0.15, 50, RiskLevel.HIGH),  # 75 * 0.66 = 49.5: half to even is 50 (floats said 49, medium)
+        (45, 0.25, 32, RiskLevel.MEDIUM),  # 45 * 0.7 = 31.5
+        (85, 0.25, 60, RiskLevel.HIGH),  # 85 * 0.7 = 59.5
+        (125, 0.17, 84, RiskLevel.CRITICAL),  # 125 * 0.668 = 83.5
+        (125, 0.21, 86, RiskLevel.CRITICAL),  # 125 * 0.684 = 85.5
+    ],
+)
+def test_score_rounds_half_to_even_where_binary_floats_drifted(total, confidence, score, level):
+    risk = _assess_raw(total, confidence)
+    assert (risk.score, risk.level) == (score, level) == (_documented_score(total, confidence), level)
+    assert sum(factor.weight for factor in risk.factors) == risk.score
+    scaling = next(factor for factor in risk.factors if factor.id == "confidence-scaling")
+    assert scaling.weight == score - total  # none of these is clamped, so no bounds factor either
+    assert "bounds" not in _ids(risk)
+
+
+def test_the_scaling_factor_names_the_exact_multiplier():
+    risk = _assess_raw(75, 0.15)
+    scaling = next(factor for factor in risk.factors if factor.id == "confidence-scaling")
+    assert scaling.weight == -25
+    assert "multiplied by 0.66 because confidence is 0.15" in scaling.description
+
+
+def test_scale_equals_the_decimal_formula_over_the_whole_grid():
+    # Every raw total from 0 to 130 (above 100 the score is clamped) at every confidence from
+    # 0.000 to 1.000 in steps of 0.001. The float formula disagreed at five of these points.
+    for total in range(131):
+        for thousandths in range(1001):
+            confidence = thousandths / 1000
+            exact = max(0, min(100, round(total * _confidence_scale(confidence))))
+            assert exact == _documented_score(total, confidence), (total, confidence)
+
+
+def test_assess_follows_the_decimal_formula_and_its_factors_sum_to_the_score():
+    rng = random.Random(20260315)
+    for _ in range(400):
+        total, confidence = rng.randint(0, 130), rng.randint(0, 1000) / 1000
+        risk = _assess_raw(total, confidence)
+        assert risk.score == _documented_score(total, confidence), (total, confidence)
+        assert sum(factor.weight for factor in risk.factors) == risk.score, (total, confidence)
+
+
+def test_danger_score_uses_the_same_exact_scaling():
+    # Governance (shadow, 25) is excluded from the danger subtotal: 75 * 0.66 = 49.5 -> 50.
+    policy = RiskPolicy.from_options({"kinds": {"agent": 75}, "governance": {"no-owner": 0}})
+    finding = _finding(confidence=0.15, owner="team")
+    finding.shadow = True
+    risk = assess(finding, inventory_present=True, policy=policy)
+    assert risk.danger_score == 50 and risk.score == _documented_score(100, 0.15) == 66
+
+
+class _OddRepr(float):
+    def __repr__(self) -> str:
+        return "OddRepr(0.5)"
+
+
+@pytest.mark.parametrize(
+    "confidence", [1e-05, 5e-324, 0.1 + 0.2, 1 - 1e-16, _OddRepr(0.5), float("nan"), float("inf"), -3.0, 7.5]
+)
+def test_unusual_confidences_scale_without_error_and_keep_the_factors_exact(confidence):
+    risk = _assess_raw(75, confidence)
+    clamped = 1.0 if confidence != confidence else max(0.0, min(1.0, float(confidence)))
+    assert risk.score == _documented_score(75, clamped)
+    assert sum(factor.weight for factor in risk.factors) == risk.score
 
 
 def test_danger_basis_omits_zero_weight_governance_factors():

@@ -22,6 +22,7 @@ import math
 import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any
 
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
@@ -311,6 +312,16 @@ def _mcp_server_urls(server: dict[str, Any]) -> list[str]:
     return urls
 
 
+def _confidence_scale(confidence: float) -> Fraction:
+    """``0.6 + 0.4 * confidence`` as an exact fraction of the confidence's decimal spelling.
+
+    The documented score is ``round(raw * scale)`` with halves rounded to even. Binary floats drift
+    off that: ``0.6 + 0.4 * 0.15`` is ``0.6599999999999999``, so a raw 75 became 49.4999... and
+    scored 49 (medium) instead of 49.5 -> 50 (high). A non-finite confidence clamps to 1 as before.
+    """
+    return Fraction(3, 5) + Fraction(2, 5) * Fraction(repr(float(max(0.0, min(1.0, confidence)))))
+
+
 def assess(
     finding: Finding,
     index: SignatureIndex | None = None,
@@ -336,17 +347,17 @@ def assess(
     total = sum(f.weight for f in factors)
     danger_total = sum(f.weight for f in factors if f.id not in GOVERNANCE_FACTORS)
     # scale by confidence that this is really an agent / agent enabler
-    scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
-    scaled = int(round(total * scale))
+    scale = _confidence_scale(finding.confidence)
+    scaled = round(total * scale)
     score = max(0, min(100, scaled))
-    if scale < 1.0:
+    if scale < 1:
         # Scaling lowers a positive subtotal. A subtotal at or below zero is
         # already floored at 0, so the adjustment must never read as added risk.
         adjustment = min(0, scaled - total)
         factors.append(
             RiskFactor(
                 "confidence-scaling",
-                f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; "
+                f"score multiplied by {float(scale):.2f} because confidence is {finding.confidence:.2f}; "
                 "this only ever lowers risk",
                 adjustment,
             )
@@ -361,7 +372,7 @@ def assess(
                 "bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained
             )
         )
-    danger_score = max(0, min(100, int(round(danger_total * scale))))
+    danger_score = max(0, min(100, round(danger_total * scale)))
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors, danger_score=danger_score)
 
 

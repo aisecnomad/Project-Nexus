@@ -111,7 +111,10 @@ scale = 0.6 + 0.4 × confidence        (confidence clamped to 0–1)
 score = min(100, max(0, round(raw × scale)))
 ```
 
-`round` is Python's rounding (halves to even). A finding with confidence 1.0
+`round` rounds halves to even, and the arithmetic is exact: the confidence is
+read as the decimal number it is written as (0.15, not the nearest binary
+float), so a raw 75 at confidence 0.15 is 49.5 and scores 50, not 49. A
+finding with confidence 1.0
 keeps its full score; lower confidence reduces it by at most 40%, so a
 low-confidence finding produces a lower effective risk but severe factors
 still register. Below confidence 1.0 the change is listed as a
