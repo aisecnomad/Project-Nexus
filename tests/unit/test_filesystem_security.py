@@ -15,9 +15,11 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext
+from shadowscan.connectors.code import filesystem as filesystem_module
 from shadowscan.connectors.code import manifests
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt, _parse_mcp_servers
 from shadowscan.models import Kind
+from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.text import BINARY_CONTENT_ERROR, read_text
 
 
@@ -721,3 +723,130 @@ def test_binary_file_read_only_for_a_file_name_signature_is_not_a_new_gap(tmp_pa
     (rules / "diagram.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
     _, ctx = _run(index, tmp_path)
     assert not ctx.stats.errors and not ctx.stats.incomplete
+
+
+# ----------------------------------- linear-time IaC wildcard and front-matter patterns
+HOSTILE_RUN = 150_000
+
+
+def _agent_definitions(findings):
+    return {d["file"]: d for f in findings for d in f.metadata.get("agent_definitions", [])}
+
+
+def test_whitespace_run_after_iam_action_cannot_stall_the_scan(tmp_path, index):
+    # The stdlib pattern took ~11 s for 40 KB of spaces and held the GIL, so no
+    # connector or job deadline could interrupt it.
+    (tmp_path / "hostile.tf").write_text("Action:" + " " * HOSTILE_RUN + "\n")
+    (tmp_path / "main.tf").write_text(
+        'resource "aws_bedrockagent_agent" "ops" {\n'
+        '  agent_name       = "ops-agent"\n'
+        '  foundation_model = "anthropic.claude-3-5-sonnet-20240620-v1:0"\n}\n'
+    )
+    (tmp_path / "iam.tf").write_text(
+        'resource "aws_iam_role_policy" "p" {\n'
+        '  policy = jsonencode({Statement=[{Effect="Allow",Action="*",Resource="*"}]})\n}\n'
+    )
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    started = time.monotonic()
+    findings, ctx = _run(index, tmp_path)
+    assert time.monotonic() - started < 2.0
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    # The genuine wildcard grant and the neighbouring agent are retained.
+    assert any("framework.crewai" in f.frameworks for f in findings)
+    assert any(f.kind == Kind.INFRA and "wildcard-permissions" in f.tags for f in findings)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Action:" + " " * HOSTILE_RUN,
+        "Action" + " " * HOSTILE_RUN + ":",
+        "Action: [" + " " * HOSTILE_RUN,
+        ("Action: " + " " * 100 + "x\n") * (HOSTILE_RUN // 100),
+    ],
+    ids=["after-colon", "before-colon", "after-bracket", "repeated"],
+)
+def test_iam_wildcard_pattern_is_linear_on_whitespace_runs(text):
+    started = time.monotonic()
+    assert filesystem_module._IAM_WILDCARD_RE.search(text, timeout=5.0, concurrent=False) is None
+    assert time.monotonic() - started < 2.0
+
+
+@pytest.mark.parametrize(
+    "line",
+    ['Action = "*"', '"Action" : [ "*" ]', "actions=['*']", 'Action:\t[\n  "*"', '"iam:*"', "'s3:*'"],
+)
+def test_iam_wildcard_pattern_still_matches_wildcard_grants(line):
+    assert filesystem_module._IAM_WILDCARD_RE.search(line, timeout=5.0, concurrent=False)
+
+
+def test_blank_lines_after_agent_front_matter_marker_cannot_stall_the_scan(tmp_path, index):
+    agents = tmp_path / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "hostile.md").write_text("---" + "\n" * HOSTILE_RUN)
+    (agents / "spaces.md").write_text("---\nname: spaces\n---" + " " * HOSTILE_RUN)
+    (agents / "good.md").write_text("---\nname: reviewer\ntools: Bash\n---\nReview code.\n")
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    started = time.monotonic()
+    findings, ctx = _run(index, tmp_path)
+    assert time.monotonic() - started < 2.0
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    definitions = _agent_definitions(findings)
+    assert definitions[".claude/agents/good.md"]["name"] == "reviewer"
+    assert ".claude/agents/hostile.md" in definitions
+    assert any("framework.crewai" in f.frameworks for f in findings)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "---\nname: reviewer\ntools: Bash\n---\nbody\n",
+        "---  \r\nname: reviewer\r\ntools: Bash\r\n---\t\r\nbody\r\n",
+        "---\n\nname: reviewer\ntools: Bash\n---\n\nbody\n",
+    ],
+    ids=["plain", "crlf-and-trailing-blanks", "blank-lines"],
+)
+def test_agent_front_matter_formats_still_parse(tmp_path, index, document):
+    connector = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))
+    info = connector._parse_agent_definition(".claude/agents/reviewer.md", document)
+    assert info["name"] == "reviewer" and info["tools"] == "Bash"
+
+
+class _Stalls:
+    """A compiled-pattern stand-in whose every call fails like an exhausted matching budget."""
+
+    def __init__(self, error):
+        self.error = error
+
+    def __getattr__(self, name):
+        def stall(*args, **kwargs):
+            raise self.error
+
+        return stall
+
+
+@pytest.mark.parametrize(
+    ("attribute", "path", "text"),
+    [
+        ("_FRONTMATTER", ".claude/agents/stalled.md", "---\nname: stalled\n---\nbody\n"),
+        ("_IAM_WILDCARD_RE", "stalled.tf", 'Action = "*"\n'),
+    ],
+)
+@pytest.mark.parametrize(
+    "error", [TimeoutError(), MatchTimeoutError("budget exhausted")], ids=["engine", "budget"]
+)
+def test_pattern_timeout_is_an_explicit_coverage_gap(
+    tmp_path, index, monkeypatch, attribute, path, text, error
+):
+    monkeypatch.setattr(filesystem_module, attribute, _Stalls(error))
+    target = tmp_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    findings, ctx = _run(index, tmp_path)
+    assert ctx.stats.incomplete
+    reason = "MatchTimeoutError: budget exhausted" if isinstance(error, MatchTimeoutError) else "TimeoutError"
+    assert [e for e in ctx.stats.errors if path in e] == [
+        f"code.filesystem: {path}: file analysis incomplete ({reason})"
+    ]
+    assert any("framework.crewai" in f.frameworks for f in findings)

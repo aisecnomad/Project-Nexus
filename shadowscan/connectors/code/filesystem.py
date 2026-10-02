@@ -50,11 +50,18 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
+import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.import_provenance import local_module_conflict
-from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
+from shadowscan.connectors.code.manifests import (
+    MANIFEST_PATTERN_SECONDS,
+    Artifact,
+    Dep,
+    is_manifest_name,
+    parse_manifest,
+)
 from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -85,7 +92,12 @@ from shadowscan.connectors.common import (
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
-from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, MatchTimeoutError, language_for_path
+from shadowscan.signatures.matcher import (
+    SOURCE_EXTENSIONS,
+    MatchTimeoutError,
+    language_for_path,
+    pattern_timeout,
+)
 from shadowscan.utils.files import open_confined_directory, open_confined_file
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
@@ -440,7 +452,12 @@ _WORKFLOW_EXTENSIONS = frozenset({".json", ".yaml", ".yml"})
 # Coding-agent sub-agent and rule definitions (Markdown with YAML front matter).
 _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/", ".windsurf/rules/")
 
-_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
+# Agent definition front matter. Only horizontal whitespace may follow a
+# marker: ``\s*`` before a required newline backtracks quadratically over a
+# run of blank lines, which a planted file makes as long as it likes. The
+# possessive quantifier never backtracks, and the bounded engine applies the
+# per-input matching budget where the pattern runs (_parse_agent_definition).
+_FRONTMATTER = regex.compile(r"^---[ \t\r]*+\n(.*?)\n---[ \t\r]*+\n", regex.S)
 # Files whose parsed structure supplies credential context for excerpt
 # redaction (see _structured_context).
 _JSON_SUFFIXES = (".json", ".jsonc", ".json5")
@@ -657,8 +674,12 @@ _LLM_CATEGORIES = frozenset({"provider", "framework", "protocol", "platform", "c
 # Signatures that are only meaningful when the same file also invokes an LLM.
 _COLOCATED_SIGNATURES = frozenset({"heuristic.llm-command-execution"})
 # IAM statements granting every action (Terraform, CloudFormation, ARM/Bicep JSON).
-_IAM_WILDCARD_RE = re.compile(
-    r"""(?i)["']?\bActions?["']?\s*[:=]\s*\[?\s*["']\*["']"""
+# Whitespace runs are matched possessively: ``\s*\[?\s*`` backtracks
+# quadratically over a long run of blank space after ``Action:``, and the
+# stdlib engine cannot be interrupted. The bounded engine applies the
+# per-input matching budget where the pattern runs (_scan_iac).
+_IAM_WILDCARD_RE = regex.compile(
+    r"""(?i)["']?\bActions?["']?\s*+[:=]\s*+(?:\[\s*+)?["']\*["']"""
     r"""|["'](?:bedrock|iam|sts|lambda|s3|secretsmanager|kms):\*["']"""
 )
 _IAC_MODEL_RE = re.compile(
@@ -666,6 +687,15 @@ _IAC_MODEL_RE = re.compile(
     r"""["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9._:/@-]{2,199})["']"""
 )
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
+
+
+def _pattern_timeout() -> float:
+    """Per-call ceiling for the regexes this module runs outside the signature matcher.
+
+    Like the manifest parsers, well above the matcher's 100 ms so an ordinary large file does not
+    time out under CPU contention between parallel connectors; the file's scan budget still caps it.
+    """
+    return pattern_timeout(MANIFEST_PATTERN_SECONDS)
 
 
 def _exception_name(exc: Exception) -> str:
@@ -1669,9 +1699,9 @@ class FilesystemConnector(BaseConnector):
         rel, text = file.rel, file.text
         # Excerpts come from the redacted source, which is only
         # produced for files that actually contain a wildcard.
-        if _IAM_WILDCARD_RE.search(text):
+        if _IAM_WILDCARD_RE.search(text, timeout=_pattern_timeout(), concurrent=False):
             for number, line_text in enumerate(self._redacted_lines(file), start=1):
-                if _IAM_WILDCARD_RE.search(line_text):
+                if _IAM_WILDCARD_RE.search(line_text, timeout=_pattern_timeout(), concurrent=False):
                     wildcard_hits = scan.iam_wildcards.setdefault(file.proj_root, [])
                     if len(wildcard_hits) < 20:
                         wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
@@ -2881,7 +2911,7 @@ class FilesystemConnector(BaseConnector):
 
     def _parse_agent_definition(self, rel: str, text: str) -> dict[str, Any]:
         info: dict[str, Any] = {"file": rel, "name": PurePosixPath(rel).stem}
-        m = _FRONTMATTER.match(text)
+        m = _FRONTMATTER.match(text, timeout=_pattern_timeout(), concurrent=False)
         if m:
             try:
                 fm = strict_bounded_safe_load(m.group(1)) or {}
