@@ -933,6 +933,19 @@ def test_default_state_directory_ignores_empty_or_relative_xdg_state_home(
     assert cache.directory == tmp_path / "home" / ".local" / "state" / "shadowscan"
 
 
+@pytest.mark.parametrize("incremental", [True, False])
+def test_record_exports_disabling_the_cache_is_announced(tmp_path, caplog, index, incremental):
+    from shadowscan.incremental import IncrementalCache
+
+    config = ScanConfig(
+        incremental=incremental, dump_records=str(tmp_path / "exports"), state_dir=str(tmp_path)
+    )
+    with caplog.at_level("WARNING", logger="shadowscan.incremental"):
+        assert not IncrementalCache(config, index).enabled
+    expected = ["incremental cache not used: record exports (--dump-records) need a full scan"]
+    assert [record.getMessage() for record in caplog.records] == (expected if incremental else [])
+
+
 def test_absolute_xdg_state_home_is_used(tmp_path, monkeypatch, index):
     from shadowscan.incremental import IncrementalCache
 

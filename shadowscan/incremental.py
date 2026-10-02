@@ -429,6 +429,9 @@ class IncrementalCache:
         self.directory = Path(config.state_dir).expanduser() if config.state_dir else default
         self.directory = self.directory.absolute()
         self.enabled = config.incremental and not config.dump_records
+        if config.incremental and config.dump_records:
+            # A cached result has no records to export, so record exports need a full scan.
+            log.warning("incremental cache not used: record exports (--dump-records) need a full scan")
         self.scanner_digest = ""
         self.signature_digest = ""
         if not self.enabled:
