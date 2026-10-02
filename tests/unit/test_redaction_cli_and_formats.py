@@ -137,6 +137,118 @@ def test_text_shape_gaps_are_redacted(text, expected):
     assert _clean(text) == expected
 
 
+@pytest.mark.parametrize("depth", [1, 2, 3])
+@pytest.mark.parametrize("value", [f'ab"cd{SECRET}', f"{SECRET}\\", f'a\\"b{SECRET}', f"x'{SECRET}"])
+def test_escaped_json_values_close_at_their_own_delimiter(value, depth):
+    # A quote inside the value, escaped one level deeper than its delimiter,
+    # ends with a copy of that delimiter. The value closed there and the rest
+    # of it was shown.
+    text = json.dumps({"password": value, "model": 1})
+    for _ in range(depth):
+        text = json.dumps(text)
+    result = _clean(text)
+    assert REDACTED in result and "model" in result
+
+
+_PGP_KEY = f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n{SECRET}\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----"
+
+
+@pytest.mark.parametrize(
+    ("prefix", "expected"),
+    [
+        ("private_key: ", f'private_key: "{REDACTED}"'),
+        ("secret: ", f'secret: "{REDACTED}"'),
+        ("GPG_PRIVATE_KEY: ", f'GPG_PRIVATE_KEY: "{REDACTED}"'),
+        ("Authorization: ", f'Authorization: "{REDACTED}"'),
+        ("INFO loaded secret: ", f'INFO loaded secret: "{REDACTED}"'),
+        ("ENV GPG_KEY ", f"ENV GPG_KEY {REDACTED}"),
+        ("api-key:", f'api-key:"{REDACTED}"'),
+        ("x-api-key: ", f'x-api-key: "{REDACTED}"'),
+        ("Cookie: x ", f'Cookie: "{REDACTED}"'),
+        ("note: ", f"note: {REDACTED}"),
+    ],
+)
+def test_pgp_private_key_body_is_withheld_after_a_credential_name(prefix, expected):
+    # The name's rule withheld the BEGIN line, and the block rule, which
+    # starts there, no longer found the block: its body lines were shown.
+    for newline in ("\n", "\r\n"):
+        text = prefix + _PGP_KEY.replace("\n", newline)
+        assert _clean(text) == expected + "\n" * 4
+        assert SECRET not in json.dumps(sanitize({"excerpt": text, "items": [text]}))
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A cookie argument the statement rules withheld ends at the ',' or ')' after it.
+        (
+            "resp = session.get(url, cookie=session_cookie, timeout=5)",
+            f'resp = session.get(url, cookie="{REDACTED}", timeout=5)',
+        ),
+        (f"f(cookie={SECRET}, timeout=5)", f'f(cookie="{REDACTED}", timeout=5)'),
+        (
+            f"HttpRequest(method=GET, cookie=sid={SECRET}, timeout=5)",
+            f'HttpRequest(method=GET, cookie="{REDACTED}", timeout=5)',
+        ),
+        (f'x(cookie={{"a": "{SECRET}"}}, t=1)', f'x(cookie="{REDACTED}", t=1)'),
+        # Past a ';' come the other cookies: withheld to the end of the line,
+        # quoted where the statement rules read an argument.
+        (
+            f"Request(url=https://x.test/a, cookie=sid=abc; csrftoken={SECRET})",
+            f'Request(url=https://x.test/a, cookie="{REDACTED}"',
+        ),
+        (f"COOKIE=a=1; sid={SECRET}", f"COOKIE={REDACTED}"),
+        (f"cookie = sid=abc; csrftoken={SECRET}", f"cookie = {REDACTED}"),
+        (f"get(url, cookie=a; b={SECRET}\n& x", f'get(url, cookie="{REDACTED}"\n'),
+        # A withheld 'name:value' before a ';' reads as an annotation, as the statement rules read it.
+        (f"api_key:a=1; sid={SECRET}", f'api_key:"{REDACTED}"; sid= "{REDACTED}"'),
+        (f"api_key:a={SECRET}; sid=X", f'api_key:"{REDACTED}"; sid= "{REDACTED}"'),
+        # Inside a quoted string the compact marker stays bare, so the statement
+        # rules then read it as an annotation; the result is stable.
+        (
+            f'{{"log": "xapikey:a=1; sid={SECRET} end"}}',
+            f'{{"log": "xapikey:{REDACTED} "{REDACTED}"; sid= "{REDACTED}"',
+        ),
+    ],
+)
+def test_cookie_arguments_and_compact_values_are_stable_under_resanitization(text, expected):
+    # The cookie pass read a cookie argument's ', timeout=5)' as more cookies
+    # and left a bare marker after '=' that the next sanitization quoted; a
+    # withheld 'api_key:a=1' became an annotation whose ';' the next one read past.
+    assert _clean(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"get(u, cookie=c1, timeout=5) Cookie: a=1; sid={SECRET}",
+        f"get(u, cookie=c1) cookie=x; sid={SECRET}",
+        f"x; Request(url=u, cookie=sid=abc; sessionid={SECRET})",
+    ],
+)
+def test_cookie_header_after_a_cookie_argument_on_the_same_line_is_withheld(text):
+    # Skipping an argument the established passes withheld also skipped the
+    # rest of its line, and a Cookie header there kept its other cookies.
+    _clean(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps({"msg": json.dumps({"body": json.dumps({"password": SECRET})})}),
+        json.dumps(json.dumps({"body": json.dumps({"api_key": SECRET, "model": "x"})})),
+        json.dumps({"body": json.dumps({"api_key": SECRET, "model": "x"})}),
+        # Three escaping levels (seven backslashes), within the eight the rules read.
+        json.dumps({"a": json.dumps({"b": json.dumps({"c": json.dumps({"token": SECRET})})})}),
+    ],
+)
+def test_escaped_json_under_another_name_is_read_for_credentials(text):
+    # An escaped value closes only at its own delimiter, so a value under a
+    # name that is not a credential spans the more deeply escaped JSON in it;
+    # that JSON is read on its own.
+    _clean(text)
+
+
 @pytest.mark.parametrize(
     ("text", "kept"),
     [
@@ -149,6 +261,35 @@ def test_text_shape_gaps_are_redacted(text, expected):
 def test_inline_header_credentials_are_redacted_in_context(text, kept):
     result = _clean(text)
     assert result.startswith(kept) and REDACTED in result
+
+
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        (
+            json.dumps({"message": f"login failed\npassword:{SECRET}"}),
+            '{"message": "login failed\\npassword:',
+        ),
+        (json.dumps({"request": f"GET /v1 HTTP/1.1\r\nX-Api-Key:{SECRET}\r\n"}), "HTTP/1.1\\r\\nX-Api-Key:"),
+        (f'"a\\tpassword:{SECRET}"', '"a\\tpassword:'),
+        (f'{{"headers": "Accept:*/*\\nAuthorization:{SECRET}"}}', "Accept:*/*\\nAuthorization:"),
+        (
+            json.dumps(json.dumps({"message": f"login failed\npassword:{SECRET}"})),
+            "login failed\\\\npassword:",
+        ),
+        (json.dumps({"m": f"x\fpasswd:{SECRET}"}), '{"m": "x\\fpasswd:'),
+        (f'{{"m": "x\\u000apassword:{SECRET}"}}', '{"m": "x\\u000apassword:'),
+        (
+            json.dumps({"request": f"GET / HTTP/1.1\r\nCookie: a=1; sid={SECRET}\r\n"}),
+            "HTTP/1.1\\r\\nCookie: ",
+        ),
+    ],
+)
+def test_inline_headers_after_an_escaped_line_break_are_redacted(text, kept):
+    # The name was read from the escape's letter ('npassword', 'nX-Api-Key'),
+    # which named no header: the value was shown.
+    result = _clean(text)
+    assert kept in result and REDACTED in result
 
 
 @pytest.mark.parametrize(
@@ -246,6 +387,33 @@ def test_set_and_bytes_values_are_sanitized():
     assert isinstance(result["raw"], str) and isinstance(result["buffer"], str)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"args": ["--token", SECRET.encode()]},
+        {"args": ["--password", bytearray(SECRET.encode())]},
+        {"args": ("--api-key", SECRET.encode())},
+        {"args": [b"--token", SECRET.encode()]},
+        {"args": [b"--token", SECRET]},
+        {"args": [b"--pat", SECRET.encode()]},
+        {"env": {"X": SECRET.encode()}},
+        {"env": [{"name": "X", "value": SECRET.encode()}]},
+        {"environment": {"nested": {"X": SECRET.encode()}}},
+    ],
+)
+def test_bytes_argv_and_environment_values_are_removed_from_sibling_fields(value):
+    # The established pass remembers text alone, and the later passes read
+    # its copy, where these values were already withheld (or, after a bytes
+    # option, never read): a copy in another field was shown.
+    for short in (False, True):
+        result = sanitize({**value, "note": f"saw {SECRET}"}, redact_short_secrets=short)
+        assert SECRET not in repr(result)
+    # Ordinary environments keep their values out of the sibling rule, as text values do.
+    kept = sanitize({"env": {"X": SECRET.encode()}, "note": SECRET}, env_values_are_secrets=False)
+    assert kept["note"] == SECRET
+    assert sanitize({"args": ["--model", b"gpt-4o"], "note": "gpt-4o"})["note"] == "gpt-4o"
+
+
 def test_bytes_with_invalid_utf8_are_sanitized_without_error():
     token = "ghp_" + "a1B2c3D4e5F6g7H8i9J0"
     result = sanitize({"blob": b"\xff\xfe" + token.encode() + b"\x80"})
@@ -295,6 +463,9 @@ def test_bare_bearer_keeps_scheme_and_surrounding_words():
         "--token ",
         "--api-key=",
         "Cookie: a=1; ",
+        "cookie=a, ",
+        "cookie=a, Cookie: b ",
+        '\\"k\\": \\"',
         'password:\\"',
         "api-key:",
         "PASSWORD=a;",
@@ -306,13 +477,24 @@ def test_bare_bearer_keeps_scheme_and_surrounding_words():
     ],
 )
 def test_hostile_repetitive_input_is_matched_in_linear_time(unit):
-    text = unit * (400_000 // len(unit))
+    # Linear, not fast: four times the input may take at most ten times as
+    # long, where quadratic work takes sixteen. An absolute bound failed on a
+    # loaded runner under coverage ('Cookie: a=1; ' tokenizes each of its
+    # 30,769 annotated assignments). The floor keeps timer noise on a fast
+    # unit from failing it; the ceiling still fails a stall.
+    small = min(_sanitize_seconds(unit * (100_000 // len(unit))) for _ in range(2))
+    large = _sanitize_seconds(unit * (400_000 // len(unit)))
+    assert large < 10 * max(small, 0.05), (small, large)
+    assert large < 60.0
+
+
+def _sanitize_seconds(text: str) -> float:
     started = time.perf_counter()
     try:
         sanitize_text(text)
     except Exception as exc:  # a fail-closed limit is acceptable; a stall is not
         assert exc.__class__.__name__ == "SanitizationLimitError"
-    assert time.perf_counter() - started < 5.0
+    return time.perf_counter() - started
 
 
 def test_real_jwts_are_still_redacted_in_every_position():

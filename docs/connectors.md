@@ -25,7 +25,10 @@ text logs stream line by line, with a 4 MiB line cap; gzip gateway logs are boun
 by expanded size. Override `max_input_files`, `max_input_file_bytes` or
 `max_input_bytes` in the connector config when a trusted export needs larger
 limits. The existing hard ceilings remain 64 MiB per file and 512 MiB total.
-Any skipped symlink or input-limit hit marks the connector incomplete.
+Any skipped symlink or input-limit hit marks the connector incomplete, and so
+does any file in an offline input directory without one of the connector's
+export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
+`input` at the export file.
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and
@@ -68,17 +71,30 @@ connectors:
 The equivalent CLI override is `--plugin-execution process`. Built-in connectors
 continue to use the existing thread backend. A plugin is imported only inside
 its child process, and its original completion deadline includes import,
-collection, result serialization and transfer. The parent accepts only bounded
+collection, result serialization and transfer. The worker exits with
+`os._exit` as soon as its result is sent: plugin `atexit` handlers do not run,
+and lingering non-daemon threads cannot delay or discard the result. The parent accepts only bounded
 JSON results (16 MiB maximum), validates their model and statistics, and discards
-results on timeout, crash, serialization failure or malformed output. These
+results on timeout, crash, serialization failure or malformed output. As in the
+JSON report, values JSON cannot represent (such as `datetime`, sets and bytes)
+are converted with `str()` and then sanitized by the parent; NaN and infinity
+still fail closed. These
 failures mark the scan incomplete (exit 3); they never fall back to threads.
 Each terminated worker frees capacity for queued connectors. Termination uses
 SIGTERM and, if needed, SIGKILL with at most 0.5 seconds of waiting at each step;
 the parent retains a separate deadline guard with two seconds for cleanup.
+A worker does not depend on that cleanup: its watchdog thread exits it two
+seconds after the deadline, or as soon as the scanner process exits for any
+reason, including the job-deadline watchdog's immediate exit, SIGTERM or SIGKILL.
+A `KeyboardInterrupt` during collection kills running workers before it
+propagates. The watchdog is a Python thread, so native code that holds the
+interpreter lock indefinitely still needs external supervision.
 
 This is **lifecycle isolation, not a security sandbox**. A child retains the
 scanner's operating-system privileges and environment, including credentials.
-Sibling connector configurations are not passed to it. Descendant subprocesses
+Sibling connector configurations are not passed to it. Record exports go only
+to the private export directory the scanner prepared (expanded, symlink-free,
+owned, mode 0700); the worker never derives that path again. Descendant subprocesses
 and external side effects are not rolled back by worker termination; plugins
 that launch other programs need external process-group/container supervision.
 A cache or record export published before termination may remain on disk; the

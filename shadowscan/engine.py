@@ -236,6 +236,8 @@ class _ConnectorRunner:
             return get_connector_class(name)
         except Exception as exc:  # noqa: BLE001 - reported as an incomplete connector by _collect
             return exc
+        except BaseException as exc:  # noqa: BLE001 - plugin code calling sys.exit() is a connector failure
+            return _hook_failure(name, "connector lookup", exc)
         finally:
             reset_allow_private_origin(origin_token)
 
@@ -243,28 +245,38 @@ class _ConnectorRunner:
         resolved = self._resolve(spec.name, state)
         roots = spec.config.get("paths")
         root_ids = spec.config.get("root_ids")
-        if not isinstance(roots, list) or not self._split_roots(spec, resolved, roots, root_ids):
-            return self._run_one(spec, resolved, f"{number:04d}", state)
-        return self._run_split(number, spec, resolved, state, roots, root_ids)
+        if isinstance(roots, list):
+            split, resolved = self._split_roots(spec, resolved, roots, root_ids)
+            if split:
+                return self._run_split(number, spec, resolved, state, roots, root_ids)
+        return self._run_one(spec, resolved, f"{number:04d}", state)
 
-    def _split_roots(self, spec: ConnectorSpec, resolved: _Resolved, roots: list[Any], root_ids: Any) -> bool:
-        """Decide whether a multi-root scan can be cached per repository."""
+    def _split_roots(
+        self, spec: ConnectorSpec, resolved: _Resolved, roots: list[Any], root_ids: Any
+    ) -> tuple[bool, _Resolved]:
+        """Decide whether a multi-root scan can be cached per repository.
+
+        Also returns the job's connector class, or the failure ``_run_one``
+        reports as an incomplete connector when the class's hook fails.
+        """
         if not (self._config.incremental and not spec.config.get("input") and len(roots) > 1):
-            return False
+            return False, resolved
         if isinstance(resolved, Exception):
-            return False  # _run_one reports the lookup failure as incomplete
+            return False, resolved  # _run_one reports the lookup failure as incomplete
         try:
             labelled = bool(spec.label or spec.config.get("label"))
             if not _hooks(resolved).cache_roots_separately(roots, root_ids, labelled=labelled):
-                return False
+                return False, resolved
         except ConnectorError:
             # Run once so constructor validation reports an incomplete
             # scan, rather than partially scanning the valid children.
-            return False
+            return False, resolved
+        except BaseException as exc:  # noqa: BLE001 - a failing plugin hook is a connector failure
+            return False, _hook_failure(spec.name, "cache_roots_separately()", exc)
         try:
-            return self._cache.supports_connector(spec, resolved)
+            return self._cache.supports_connector(spec, resolved), resolved
         except Exception:  # noqa: BLE001 - _run_one reports import failures as incomplete
-            return False
+            return False, resolved
 
     def _run_split(
         self,
@@ -312,10 +324,10 @@ class _ConnectorRunner:
         return spec, combined, stats
 
     def _connector_config(
-        self, spec: ConnectorSpec, hooks: type[BaseConnector], dump_key: str
+        self, spec: ConnectorSpec, inherits_approval: bool, dump_key: str
     ) -> dict[str, Any]:
         cfg = dict(spec.config)
-        if "allow_instance_credentials" in cfg or hooks.inherits_instance_credentials_approval():
+        if "allow_instance_credentials" in cfg or inherits_approval:
             # Scan-wide approval cannot be bypassed by a connector-level key.
             cfg["allow_instance_credentials"] = self._config.allow_instance_credentials
         if spec.label:
@@ -330,7 +342,13 @@ class _ConnectorRunner:
     ) -> _JobResult:
         self._engine._report_progress(spec.id, "starting")
         hooks = _hooks(resolved)
-        cfg = self._connector_config(spec, hooks, dump_key)
+        try:
+            inherits_approval = hooks.inherits_instance_credentials_approval()
+        except BaseException as exc:  # noqa: BLE001 - a failing plugin hook is a connector failure
+            # _collect raises the failure before the connector is constructed.
+            resolved = _hook_failure(spec.name, "inherits_instance_credentials_approval()", exc)
+            hooks, inherits_approval = _hooks(resolved), True
+        cfg = self._connector_config(spec, inherits_approval, dump_key)
         identity_key = self._run_identity_key if hooks.uses_run_identity_key else None
         ctx = ConnectorContext(
             config=cfg,
@@ -453,6 +471,19 @@ class _ConnectorRunner:
                 st.incomplete = True
                 st.errors.append("static input changed during the scan; rerun required")
         return st, False
+
+
+def _hook_failure(name: str, call: str, exc: BaseException) -> ConnectorError:
+    """The error ``_collect`` reports when plugin code fails outside collection.
+
+    Covers looking up a connector class and calling its engine hooks. A
+    KeyboardInterrupt still ends the scan. Only the exception type is kept,
+    as for a plugin that fails at import: a ``SystemExit`` argument or other
+    exception text from plugin code may carry a credential.
+    """
+    if isinstance(exc, KeyboardInterrupt):
+        raise exc
+    return ConnectorError(f"{name}: {call} raised {type(exc).__name__}")
 
 
 def _failure_message(spec: ConnectorSpec, exc: BaseException) -> str:
@@ -873,6 +904,14 @@ class Engine:
             supervisor.run()
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
+            # Supervision can end abnormally (KeyboardInterrupt). A plugin
+            # worker must not outlive it until its deadline; a job whose worker
+            # is not started yet sees the cancellation and stops it at once.
+            for state in states.values():
+                if state.isolated_process:
+                    state.cancelled.set()
+                    if state.kill_process is not None:
+                        state.kill_process()
         return supervisor.completed, supervisor.timed_out
 
     # --------------------------------------------------------- postprocessing

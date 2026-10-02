@@ -90,6 +90,12 @@ AGENT_CLAIM_KEYS = (
 # delegated token carries app_displayname). Their *value* must match an AI
 # product / agent name signature before they count as an agent hint.
 _AGENT_NAMING_CLAIMS = frozenset({"client_name", "app_displayname", "azp_name"})
+# GitHub Actions names the account that started the run in ``actor`` (and,
+# when present, ``triggering_actor``). Usually that is a person, so these
+# count as agent hints only when the value names an AI agent or product
+# (``claude[bot]``, ``copilot-swe-agent[bot]``). The ``[bot]`` suffix of every
+# GitHub App login (``dependabot[bot]``) is not enough.
+_GITHUB_ACTOR_CLAIMS = ("actor", "triggering_actor")
 # Falsy spellings of an agent claim ("bot": "false"); the claim is then absent.
 _FALSE_STRINGS = frozenset({"false", "no", "none", "null", "0"})
 # Issuer families whose tokens are issued to a workload (CI job, pod), never a person.
@@ -374,12 +380,14 @@ class JwtConnector(BaseConnector, _NoDump):
         """Identity type, the reasons for it, agent-hint claims and the authorised party."""
         identity_type, reasons = _machine_identity(f, claims, family, sub)
         agent_hints: dict[str, Any] = {}
-        for key in AGENT_CLAIM_KEYS:
+        github = family == "github-actions"
+        for key in (*AGENT_CLAIM_KEYS, "triggering_actor") if github else AGENT_CLAIM_KEYS:
             if key not in claims or key in {"act", "may_act"} or not _meaningful(claims[key]):
                 continue
-            if key == "actor" and family == "github-actions":
-                continue  # GitHub names the user who triggered the run here
-            if key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
+            if github and key in _GITHUB_ACTOR_CLAIMS:
+                if not any(match.agent_indicator for match in name_matches(self.index, str(claims[key]))):
+                    continue
+            elif key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
                 continue
             agent_hints[key] = claims[key]
         if "act" in claims or "may_act" in claims:
@@ -504,6 +512,12 @@ def _machine_identity(f: Finding, claims: dict[str, Any], family: str, sub: str)
     ):
         identity_type = "workload"
         reasons.append(f"{family} issuer (CI job or in-cluster workload identity)")
+    elif identity_type == "human" and (
+        # Any cluster's issuer: GKE's is container.googleapis.com, in the google family.
+        sub.startswith("system:serviceaccount:") or _has_kubernetes_service_account_claims(claims)
+    ):
+        identity_type = "workload"
+        reasons.append("Kubernetes service-account token (in-cluster workload identity)")
     return identity_type, reasons
 
 
