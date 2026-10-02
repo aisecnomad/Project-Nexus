@@ -9,9 +9,11 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
@@ -22,7 +24,7 @@ from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import ScanStats
-from shadowscan.plugin_process import _decode_result, _encode_result, _receive, _worker
+from shadowscan.plugin_process import _decode_result, _encode_result, _receive, _worker, _WorkerHandle
 from shadowscan.signatures import SignatureIndex
 
 ENTRY = "platform.process-probe"
@@ -68,6 +70,12 @@ class Connector(BaseConnector):
             # For example an SDK helper still waiting when collection returns.
             import threading
             threading.Thread(target=threading.Event().wait, daemon=False).start()
+        if mode == "background-helper":
+            # A helper program that keeps every inheritable descriptor open.
+            import subprocess
+            import sys
+            helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], close_fds=False)
+            Path(os.environ["SHADOWSCAN_PROCESS_PID"] + ".helper").write_text(str(helper.pid))
         return [{"pid": os.getpid()}]
 
     def analyze(self, records):
@@ -230,6 +238,29 @@ def test_lingering_non_daemon_thread_cannot_hold_result_hostage(installed_probe,
     assert result.complete, result.stats
     assert len(result.findings) == 1
     assert time.monotonic() - start < 8
+    _assert_reaped(installed_probe)
+
+
+def test_helper_program_started_by_the_plugin_cannot_hold_the_result(installed_probe, monkeypatch):
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "background-helper")
+    start = time.monotonic()
+    try:
+        result = _engine(connector_timeout_seconds=TIMEOUT_SECONDS).run()
+        assert result.complete, result.stats
+        assert len(result.findings) == 1
+        assert time.monotonic() - start < TIMEOUT_SECONDS
+        _assert_reaped(installed_probe)
+    finally:
+        helper = Path(str(installed_probe) + ".helper")
+        if helper.exists():
+            _kill_leftover(int(helper.read_text()))
+
+
+def test_very_large_connector_timeout_still_runs_process_plugins(installed_probe):
+    # Waits of more than about 24.8 days overflow; they are taken in slices.
+    result = _engine(connector_timeout_seconds=3e6).run()
+    assert result.complete, result.stats
+    assert len(result.findings) == 1
     _assert_reaped(installed_probe)
 
 
@@ -400,12 +431,78 @@ def test_process_resource_failure_is_incomplete(installed_probe, monkeypatch):
 def test_partial_ipc_is_deadline_bounded():
     parent, child = socket.socketpair()
     try:
-        child.sendall(b'{"partial":')
+        child.sendall((100).to_bytes(8, "big") + b'{"partial":')
         with pytest.raises(TimeoutError):
             _receive(parent, time.monotonic() + 0.05)
     finally:
         parent.close()
         child.close()
+
+
+def test_declared_length_ends_the_result_while_the_channel_stays_open():
+    parent, child = socket.socketpair()
+    try:
+        payload = b'{"findings":[]}'
+        child.sendall(len(payload).to_bytes(8, "big") + payload)
+        start = time.monotonic()
+        assert _receive(parent, time.monotonic() + 5) == payload
+        assert time.monotonic() - start < 1
+    finally:
+        parent.close()
+        child.close()
+
+
+@pytest.mark.parametrize("declared,sent", [(100, b'{"truncated":'), (17 * 1024 * 1024, b"")])
+def test_truncated_or_oversized_declared_result_fails_closed(declared, sent):
+    parent, child = socket.socketpair()
+    try:
+        child.sendall(declared.to_bytes(8, "big") + sent)
+        child.close()
+        with pytest.raises(ValueError):
+            _receive(parent, time.monotonic() + 5)
+    finally:
+        parent.close()
+
+
+class _ClosingProcess:
+    """Mimics Process.close(): the handle is cleared before the object is marked closed."""
+
+    pid = 4242
+
+    def __init__(self):
+        self._popen = SimpleNamespace(poll=lambda: 0)
+        self._closed = False
+        self.closing = threading.Event()
+
+    def is_alive(self):
+        if self._closed:
+            raise ValueError("process object is closed")
+        return self._popen.poll() is None
+
+    def close(self):
+        self._popen = None
+        self.closing.set()
+        time.sleep(0.2)
+        self._closed = True
+
+
+def test_kill_during_worker_cleanup_waits_instead_of_failing_the_scan():
+    process = _ClosingProcess()
+    handle = _WorkerHandle(process)
+    failures = []
+
+    def kill_when_closing():
+        process.closing.wait(5)
+        try:
+            handle.kill()
+        except Exception as exc:  # noqa: BLE001 - recorded for the assertion below
+            failures.append(exc)
+
+    killer = threading.Thread(target=kill_when_closing)
+    killer.start()
+    handle.stop()
+    killer.join(5)
+    assert not killer.is_alive() and failures == []
 
 
 def test_result_encoder_enforces_limit(monkeypatch):

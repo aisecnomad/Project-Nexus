@@ -1,7 +1,8 @@
 """Killable plugin workers; lifecycle isolation, never a security sandbox.
 
 Only trusted first-party configuration and signature objects travel through
-``spawn``. Plugin results use a size-bounded JSON socket stream, never pickle.
+``spawn``. Plugin results use one length-prefixed, size-bounded JSON message
+on a socket, never pickle.
 Dedicated processes allow individual timeouts on Python 3.11, where cancelling
 a ProcessPoolExecutor future cannot stop a running worker.
 """
@@ -17,6 +18,7 @@ import socket
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, replace
 from multiprocessing.process import BaseProcess
 from pathlib import Path
@@ -32,7 +34,11 @@ if TYPE_CHECKING:
     from shadowscan.engine import _ConnectorRunner, _JobResult, _JobState
 
 MAX_RESULT_BYTES = 16 * 1024 * 1024
+_LENGTH_BYTES = 8
 _CLEANUP_SECONDS = 0.5
+# Socket and multiprocessing waits overflow beyond about 24.8 days. Waits use
+# slices of at most a day, so a very large connector timeout still works.
+_MAX_WAIT_SECONDS = 86_400.0
 # A worker stops itself this long after its deadline, matching the parent's
 # supervision guard, in case nothing in the scanner is left to terminate it.
 _WORKER_GRACE_SECONDS = 2.0
@@ -43,6 +49,11 @@ def _remaining(deadline: float) -> float:
     if remaining <= 0:
         raise TimeoutError
     return remaining
+
+
+def _wait_slice(deadline: float) -> float:
+    """The time left before *deadline*, at most one wait slice; TimeoutError once it has passed."""
+    return min(_remaining(deadline), _MAX_WAIT_SECONDS)
 
 
 def _encode_result(value: dict[str, Any]) -> bytes:
@@ -71,15 +82,42 @@ def _exit_with_scanner(deadline: float) -> None:
 
     def watch() -> None:
         try:
-            timeout = max(0.0, deadline + _WORKER_GRACE_SECONDS - time.monotonic())
-            if sentinels:
-                multiprocessing.connection.wait(sentinels, timeout)
-            else:
-                time.sleep(timeout)
+            end = deadline + _WORKER_GRACE_SECONDS
+            while (remaining := end - time.monotonic()) > 0:
+                wait = min(remaining, _MAX_WAIT_SECONDS)
+                if sentinels:
+                    if multiprocessing.connection.wait(sentinels, wait):
+                        break
+                else:
+                    time.sleep(wait)
         finally:
             os._exit(1)
 
     threading.Thread(target=watch, name="shadowscan-plugin-watchdog", daemon=True).start()
+
+
+def _keep_descriptors_from_programs() -> None:
+    """Programs a plugin starts must not inherit this worker's descriptors.
+
+    Spawn passes the result socket and multiprocessing's liveness pipe as
+    inheritable descriptors. A program still holding the liveness pipe keeps
+    the parent from seeing this worker exit, so a result that already arrived
+    would be discarded at the deadline.
+    """
+    for listing in ("/proc/self/fd", "/dev/fd"):
+        try:
+            descriptors: Iterable[int] = [int(name) for name in os.listdir(listing)]
+            break
+        except (OSError, ValueError):
+            continue
+    else:
+        descriptors = range(3, 4096)
+    for descriptor in descriptors:
+        if descriptor > 2:
+            try:
+                os.set_inheritable(descriptor, False)
+            except OSError:
+                pass  # Closed meanwhile, such as the directory listing's own descriptor.
 
 
 def _worker(
@@ -92,6 +130,7 @@ def _worker(
     dump_directory: Path | None,
 ) -> None:
     """Import and execute the approved plugin only inside its spawned process."""
+    _keep_descriptors_from_programs()
     _exit_with_scanner(deadline)
     # A plugin's print/log calls may contain credentials. Diagnostics must come
     # through the scanner's sanitized result, not inherited stdout or stderr.
@@ -130,8 +169,8 @@ def _worker(
         status = 1
     try:
         try:
-            channel.settimeout(_remaining(deadline))
-            channel.sendall(payload)
+            channel.settimeout(_wait_slice(deadline))
+            channel.sendall(len(payload).to_bytes(_LENGTH_BYTES, "big") + payload)
         finally:
             channel.close()
     except BaseException:  # noqa: BLE001 - an unsent result is a failed worker
@@ -147,17 +186,30 @@ def _worker(
         os._exit(status)
 
 
-def _receive(channel: socket.socket, deadline: float) -> bytes:
-    """Bound both frame size and partial writes by the original job deadline."""
+def _read_exactly(channel: socket.socket, size: int, deadline: float) -> bytes:
     result = bytearray()
-    while True:
-        channel.settimeout(_remaining(deadline))
-        chunk = channel.recv(min(65536, MAX_RESULT_BYTES + 1 - len(result)))
+    while len(result) < size:
+        channel.settimeout(_wait_slice(deadline))
+        try:
+            chunk = channel.recv(min(65536, size - len(result)))
+        except TimeoutError:
+            continue  # A wait slice ended; _wait_slice raises once the deadline has passed.
         if not chunk:
-            return bytes(result)
+            raise ValueError("plugin result ended before its declared length")
         result.extend(chunk)
-        if len(result) > MAX_RESULT_BYTES:
-            raise ValueError("plugin result exceeds transport limit")
+    return bytes(result)
+
+
+def _receive(channel: socket.socket, deadline: float) -> bytes:
+    """Read one length-prefixed result, bounded in size and by the original job deadline.
+
+    The declared length ends the result, so a program the plugin started that
+    still holds the worker's end of the socket cannot delay it.
+    """
+    size = int.from_bytes(_read_exactly(channel, _LENGTH_BYTES, deadline), "big")
+    if size > MAX_RESULT_BYTES:
+        raise ValueError("plugin result exceeds transport limit")
+    return _read_exactly(channel, size, deadline)
 
 
 def _stop(process: BaseProcess) -> None:
@@ -174,6 +226,31 @@ def _stop(process: BaseProcess) -> None:
         # even by SIGKILL. Do not hide that exceptional cleanup failure.
         raise RuntimeError("plugin worker could not be reaped; external process supervision required")
     process.close()
+
+
+class _WorkerHandle:
+    """Serialize the watchdog's kill with the supervisor's cleanup of one worker.
+
+    ``Process.close()`` clears its handle before it marks the object closed;
+    a kill from another thread in between would fail with AttributeError and
+    end the scan without a report.
+    """
+
+    def __init__(self, process: BaseProcess) -> None:
+        self._process = process
+        self._lock = threading.Lock()
+
+    def kill(self) -> None:
+        with self._lock:
+            try:
+                if self._process.pid is not None and self._process.is_alive():
+                    self._process.kill()
+            except (OSError, ValueError):
+                pass  # The worker already exited, or its process handle is closed.
+
+    def stop(self) -> None:
+        with self._lock:
+            _stop(self._process)
 
 
 def _decode_result(
@@ -272,14 +349,8 @@ def _run_plugin_process(
         child.close()
         raise
 
-    def kill_process() -> None:
-        try:
-            if process.pid is not None and process.is_alive():
-                process.kill()
-        except (OSError, ValueError):
-            pass  # The worker may already have exited or closed its process handle.
-
-    state.kill_process = kill_process
+    handle = _WorkerHandle(process)
+    state.kill_process = handle.kill
     runner._engine._report_progress(spec.id, "starting (process)")
     result: _JobResult | None = None
     message = "plugin process failed, crashed, or returned invalid/oversized output; results discarded"
@@ -293,7 +364,7 @@ def _run_plugin_process(
             raise TimeoutError
         child.close()
         payload = _receive(parent, deadline)
-        process.join(_remaining(deadline))
+        process.join(_wait_slice(deadline))
         _remaining(deadline)
         if process.exitcode != 0:
             raise ValueError("plugin worker did not exit successfully")
@@ -313,7 +384,7 @@ def _run_plugin_process(
         parent.close()
         child.close()
         try:
-            _stop(process)
+            handle.stop()
         except RuntimeError as exc:
             result = None
             message = str(exc)
