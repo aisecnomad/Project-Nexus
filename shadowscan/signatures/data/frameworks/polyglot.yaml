@@ -119,7 +119,6 @@ signatures:
     vendor: Google
     homepage: https://genkit.dev
     description: Google's open-source framework for AI-powered apps and agents (JS, Go, Python).
-    capabilities: [tool-use]
     signals:
       - type: dependency
         ecosystem: npm
@@ -145,9 +144,11 @@ signatures:
         patterns: ['"github\.com/firebase/genkit']
         weight: 0.9
       - type: code
-        patterns: ['\bai\.defineTool\s*\(', '\bai\.defineFlow\s*\(', '\bgenkit\s*\(\s*\{\s*plugins']
+        # Initialization, flows and standalone tool declarations establish
+        # framework usage. The import-bound Genkit pass verifies explicit
+        # agent definitions and generate calls with registered callbacks.
+        patterns: ['\bgenkit\s*\(', '\bGenkit\.(?:defineTool|defineFlow|defineAgent|definePromptAgent|defineCustomAgent|generate|generateStream)\s*\(']
         weight: 0.8
-        agent_indicator: true
 
   - id: framework.eino
     name: Eino

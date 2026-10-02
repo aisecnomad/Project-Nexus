@@ -46,6 +46,65 @@ _HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 _allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "shadowscan_allow_private_origin", default=False
 )
+_acquisition_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "shadowscan_http_acquisition_deadline", default=None
+)
+
+
+class _SocketDeadline:
+    """Interrupt acquisition while this pool checkout still owns its socket.
+
+    The timer never closes a descriptor or touches a returned pool connection.
+    ``finish`` cancels and joins it before ``_make_request`` returns, so an
+    expiring request cannot shut down a socket reused by another request.
+    DNS runs in the caller: it cannot be killed safely, but a late resolution
+    cannot proceed to a connection. TLS uses the remaining socket timeout.
+    """
+
+    def __init__(self, connection: Any, deadline: float):
+        self.connection = connection
+        self.deadline = deadline
+        self.socket: socket.socket | None = None
+        self.expired = threading.Event()
+        self._lock = threading.Lock()
+        self._finished = False
+        self._timer = threading.Timer(max(0.0, deadline - time.monotonic()), self._abort)
+        self._timer.name = "shadowscan-http-acquisition"
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _abort(self) -> None:
+        with self._lock:
+            if self._finished:
+                return
+            self.expired.set()
+            # During numeric connect the socket is not yet assigned to the
+            # connection. After TLS wrapping, its live SSLSocket takes priority.
+            active = self.connection.sock or self.socket
+            if active is not None:
+                with contextlib.suppress(OSError, RuntimeError, ValueError):
+                    active.shutdown(socket.SHUT_RDWR)
+
+    def remaining(self) -> float:
+        remaining = self.deadline - time.monotonic()
+        if self.expired.is_set() or remaining <= 0:
+            raise ValueError("HTTP request exceeds the acquisition deadline")
+        return remaining
+
+    def socket_timeout(self, timeout: Any) -> float:
+        remaining = self.remaining()
+        return min(float(timeout), remaining) if isinstance(timeout, (float, int)) else remaining
+
+    def watch_socket(self, active: socket.socket) -> None:
+        with self._lock:
+            self.socket = active
+        self.remaining()
+
+    def finish(self) -> None:
+        with self._lock:
+            self._finished = True
+        self._timer.cancel()
+        self._timer.join()
 
 
 def _validate_headers(headers: Any, *, allow_removal: bool = False) -> None:
@@ -269,8 +328,12 @@ class _PublicHTTPSConnection(HTTPSConnection):
     """
 
     allow_private_origin = False
+    acquisition_guard: _SocketDeadline | None = None
 
     def _new_conn(self) -> socket.socket:
+        guard = self.acquisition_guard
+        if guard is not None:
+            guard.remaining()
         host = self.host.rstrip(".")
         if not self.allow_private_origin and (_blocked_host(host) or "%" in host):
             raise ValueError("Refusing private or cloud-metadata destination")
@@ -278,6 +341,8 @@ class _PublicHTTPSConnection(HTTPSConnection):
             addresses = socket.getaddrinfo(host, self.port or 443, type=socket.SOCK_STREAM)
         except socket.gaierror as exc:
             raise NameResolutionError(host, self, exc) from exc
+        if guard is not None:
+            guard.remaining()
         if not addresses:
             raise NewConnectionError(self, "DNS returned no usable addresses")
         # Reject mixed public/private results, not just the first DNS answer.
@@ -289,13 +354,23 @@ class _PublicHTTPSConnection(HTTPSConnection):
             connection: socket.socket | None = None
             try:
                 connection = socket.socket(family, socktype, proto)
-                connection.settimeout(self.timeout)
+                if guard is not None:
+                    guard.watch_socket(connection)
+                connection.settimeout(guard.socket_timeout(self.timeout) if guard else self.timeout)
                 for option in self.socket_options or ():
                     connection.setsockopt(*option)
                 if self.source_address:
                     connection.bind(self.source_address)
                 connection.connect(address)
+                if guard is not None:
+                    # TLS follows this connect; give its handshake only the
+                    # remaining acquisition time, not another full timeout.
+                    connection.settimeout(guard.socket_timeout(self.timeout))
                 return connection
+            except ValueError:
+                if connection is not None:
+                    connection.close()
+                raise
             except OSError as exc:
                 last_error = exc
                 if connection is not None:
@@ -309,11 +384,36 @@ class _PrivateHTTPSConnection(_PublicHTTPSConnection):
     allow_private_origin = True
 
 
-class _PublicHTTPSConnectionPool(HTTPSConnectionPool):
+class _AcquisitionHTTPSConnectionPool(HTTPSConnectionPool):
+    def _make_request(self, conn: Any, *args: Any, **kwargs: Any) -> Any:
+        deadline = _acquisition_deadline.get()
+        if deadline is None:
+            return super()._make_request(conn, *args, **kwargs)
+        guard = _SocketDeadline(conn, deadline)
+        conn.acquisition_guard = guard
+        try:
+            try:
+                response = super()._make_request(conn, *args, **kwargs)
+            except Exception:
+                guard.finish()
+                if guard.expired.is_set() or time.monotonic() >= deadline:
+                    raise ValueError("HTTP request exceeds the acquisition deadline") from None
+                raise
+            guard.finish()
+            if guard.expired.is_set() or time.monotonic() >= deadline:
+                response.close()
+                raise ValueError("HTTP request exceeds the acquisition deadline")
+            return response
+        finally:
+            guard.finish()
+            conn.acquisition_guard = None
+
+
+class _PublicHTTPSConnectionPool(_AcquisitionHTTPSConnectionPool):
     ConnectionCls = _PublicHTTPSConnection
 
 
-class _PrivateHTTPSConnectionPool(HTTPSConnectionPool):
+class _PrivateHTTPSConnectionPool(_AcquisitionHTTPSConnectionPool):
     ConnectionCls = _PrivateHTTPSConnection
 
 
@@ -476,11 +576,15 @@ class HttpClient:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
             self.requests_made += 1
+            deadline_token = _acquisition_deadline.set(time.monotonic() + self.read_deadline)
             try:
-                resp = self.session.request(method, url, **kwargs)
-            except InvalidHeader:
-                # Auth handlers can add headers after our preflight validation.
-                raise ValueError("HTTP header contains invalid characters or types") from None
+                try:
+                    resp = self.session.request(method, url, **kwargs)
+                except InvalidHeader:
+                    # Auth handlers can add headers after our preflight validation.
+                    raise ValueError("HTTP header contains invalid characters or types") from None
+            finally:
+                _acquisition_deadline.reset(deadline_token)
             if resp.status_code in {301, 302, 303, 307, 308}:
                 location = resp.headers.get("Location")
                 resp.close()

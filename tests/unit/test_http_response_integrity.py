@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gzip
 import json
+import socket
+import time
 from io import BytesIO
 from unittest.mock import Mock
 
@@ -18,6 +20,7 @@ from shadowscan.utils.http import (
     HttpError,
     _DestinationPolicyAdapter,
     _PublicHTTPSConnection,
+    _SocketDeadline,
 )
 
 
@@ -167,6 +170,28 @@ def test_injected_session_cannot_keep_a_longer_prefix_transport_adapter():
         legacy.close.assert_called_once()
     finally:
         session.close()
+
+
+def test_late_dns_resolution_cannot_start_a_connection_after_acquisition_deadline(monkeypatch):
+    def resolve(*args, **kwargs):
+        # DNS is synchronous and cannot be forcibly cancelled; nevertheless
+        # its result must never authorize a connection after the budget expires.
+        time.sleep(0.1)
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))]
+
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolve)
+    create_socket = Mock(side_effect=AssertionError("must not connect after late DNS"))
+    monkeypatch.setattr("shadowscan.utils.http.socket.socket", create_socket)
+    connection = _PublicHTTPSConnection("service.example", timeout=1)
+    guard = _SocketDeadline(connection, time.monotonic() + 0.05)
+    connection.acquisition_guard = guard
+    try:
+        with pytest.raises(ValueError, match="acquisition deadline"):
+            connection._new_conn()
+    finally:
+        guard.finish()
+        connection.acquisition_guard = None
+    create_socket.assert_not_called()
 
 
 PAGINATORS = [

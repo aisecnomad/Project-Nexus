@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
 import shutil
 import subprocess
+import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+
+from tools.container.verify import verify_bundle, verify_database
 
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
@@ -161,7 +166,7 @@ def test_ci_gate_waits_for_every_job_and_cannot_skip_failed_dependencies() -> No
     assert set(gate["needs"]) == set(jobs) - {"gate"}
     assert not any(job.get("continue-on-error") for job in jobs.values())
     assert not any(step.get("continue-on-error") for step in gate["steps"])
-    for name in ("docs", "test-macos", "test"):
+    for name in ("docs", "test-macos", "test", "container-security"):
         assert "if" not in jobs[name], f"{name} must always run"
     assert jobs["dco"]["if"] == "github.event_name == 'pull_request'"
     assert jobs["dco"]["uses"] == "./.github/workflows/dco.yml"
@@ -210,9 +215,249 @@ def test_ci_gate_executes_fail_closed(
             "MACOS_RESULT": macos,
             "TEST_RESULT": tests,
             "DCO_RESULT": dco,
+            "CONTAINER_RESULT": "success",
         },
     )
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("container", ["failure", "cancelled", "skipped", ""])
+def test_ci_gate_blocks_unavailable_container_assurance(container: str) -> None:
+    script = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["gate"]["steps"][0]["run"]
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={
+            **os.environ,
+            "EVENT_NAME": "pull_request",
+            "DOCS_RESULT": "success",
+            "MACOS_RESULT": "success",
+            "TEST_RESULT": "success",
+            "DCO_RESULT": "success",
+            "CONTAINER_RESULT": container,
+        },
+    )
+    assert result.returncode != 0
+    assert "CONTAINER_RESULT" in result.stderr
+
+
+def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> None:
+    job = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["container-security"]
+    env = job["env"]
+    assert env["TRIVY_VERSION"] == "0.74.0"
+    assert env["TRIVY_SHA256"] == "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+    steps = job["steps"]
+    script = "\n".join(step.get("run", "") for step in steps)
+    assert "sha256sum --check --strict" in script
+    assert script.index("sha256sum --check --strict") < script.index("tar --extract")
+    assert "--max-time 180" in script and "--retry-max-time 240" in script
+    assert "docker image inspect --format '{{.Id}}'" in script
+    assert "--download-db-only" in script and "timeout 300s" in script
+    assert "--skip-db-update" in script and "--image-src docker" in script
+    assert "--severity HIGH,CRITICAL --exit-code 1" in script
+    assert "--ignore-unfixed=false" in script and "--pkg-types os,library" in script
+    assert "--format cyclonedx" in script and '"$CONTAINER_IMAGE_ID"' in script
+    assert "python -m tools.container.verify database" in script
+    assert "python -m tools.container.verify bundle" in script
+    assert not any("cache@" in step.get("uses", "") for step in steps)
+    assert not any(step.get("continue-on-error") for step in steps)
+    upload = steps[-1]
+    assert upload["if"] == "always()"
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
+def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:
+    image_id = "sha256:" + "a" * 64
+    now = datetime(2026, 10, 2, 5, tzinfo=UTC)
+    documents = {
+        "image-inspect.json": [
+            {"Id": image_id, "Config": {"Labels": {"org.opencontainers.image.revision": "d" * 40}}}
+        ],
+        "database-metadata.json": {
+            "Version": 2,
+            "UpdatedAt": (now - timedelta(hours=6)).isoformat(),
+            "DownloadedAt": now.isoformat(),
+        },
+        "trivy-version.json": {"Version": "0.74.0"},
+        "container-sbom.cdx.json": {
+            "bomFormat": "CycloneDX",
+            "metadata": {
+                "component": {
+                    "type": "container",
+                    "properties": [
+                        {"name": "aquasecurity:trivy:ImageID", "value": image_id},
+                        {
+                            "name": "aquasecurity:trivy:Labels:org.opencontainers.image.revision",
+                            "value": "d" * 40,
+                        },
+                    ],
+                }
+            },
+            "components": [
+                {"purl": "pkg:deb/debian/git@2.47.3"},
+                {"purl": "pkg:pypi/project-nexus-shadowscan@0.1.1"},
+            ],
+        },
+        "container-vulnerabilities.json": {
+            "ArtifactType": "container_image",
+            "Metadata": {"ImageID": image_id},
+            "Results": [
+                {"Class": "os-pkgs", "Type": "debian", "Packages": [{"Name": "git"}]},
+                {"Class": "lang-pkgs", "Type": "python-pkg", "Packages": [{"Name": "requests"}]},
+            ],
+        },
+    }
+    for filename, document in documents.items():
+        (tmp_path / filename).write_text(json.dumps(document), encoding="utf-8")
+    (tmp_path / "database-sha256.txt").write_text("b" * 64 + "\n", encoding="utf-8")
+    return image_id, now
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "passed",
+        "vulnerable-unfixed",
+        "scanner-error",
+        "scanner-timeout",
+        "stale-database",
+        "future-database",
+        "old-download",
+        "missing-os",
+        "missing-python",
+        "missing-scanner",
+        "wrong-image",
+        "wrong-inspection",
+        "wrong-source",
+        "wrong-sbom-image",
+        "wrong-sbom-source",
+        "wrong-version",
+        "empty-report",
+        "hidden-vulnerability",
+        "inconsistent-exit",
+        "duplicate-key",
+    ],
+)
+def test_container_evidence_cannot_accept_incomplete_or_mismatched_scans(tmp_path: Path, case: str) -> None:
+    image_id, now = _container_evidence(tmp_path)
+    scan_exit = 0
+    report_path = tmp_path / "container-vulnerabilities.json"
+    report = json.loads(report_path.read_text())
+    if case in {"vulnerable-unfixed", "hidden-vulnerability"}:
+        report["Results"][0]["Vulnerabilities"] = [
+            {"VulnerabilityID": "CVE-TEST-0001", "Severity": "HIGH", "FixedVersion": ""}
+        ]
+        scan_exit = 1 if case == "vulnerable-unfixed" else 0
+    elif case == "scanner-error":
+        scan_exit = 2
+    elif case == "scanner-timeout":
+        scan_exit = 124
+    elif case in {"stale-database", "future-database", "old-download"}:
+        metadata = json.loads((tmp_path / "database-metadata.json").read_text())
+        field = "DownloadedAt" if case == "old-download" else "UpdatedAt"
+        delta = timedelta(hours=49 if case == "stale-database" else 2)
+        metadata[field] = (now + delta if case == "future-database" else now - delta).isoformat()
+        (tmp_path / "database-metadata.json").write_text(json.dumps(metadata))
+    elif case in {"missing-os", "missing-python"}:
+        report["Results"] = report["Results"][1:] if case == "missing-os" else report["Results"][:1]
+    elif case == "missing-scanner":
+        sbom_path = tmp_path / "container-sbom.cdx.json"
+        sbom = json.loads(sbom_path.read_text())
+        sbom["components"] = sbom["components"][:1]
+        sbom_path.write_text(json.dumps(sbom))
+    elif case == "wrong-image":
+        report["Metadata"]["ImageID"] = "sha256:" + "c" * 64
+    elif case == "wrong-inspection":
+        (tmp_path / "image-inspect.json").write_text(json.dumps([{"Id": "sha256:" + "c" * 64}]))
+    elif case == "wrong-source":
+        inspection_path = tmp_path / "image-inspect.json"
+        inspection = json.loads(inspection_path.read_text())
+        inspection[0]["Config"]["Labels"]["org.opencontainers.image.revision"] = "f" * 40
+        inspection_path.write_text(json.dumps(inspection))
+    elif case in {"wrong-sbom-image", "wrong-sbom-source"}:
+        sbom_path = tmp_path / "container-sbom.cdx.json"
+        sbom = json.loads(sbom_path.read_text())
+        index = 0 if case == "wrong-sbom-image" else 1
+        sbom["metadata"]["component"]["properties"][index]["value"] = "wrong"
+        sbom_path.write_text(json.dumps(sbom))
+    elif case == "wrong-version":
+        (tmp_path / "trivy-version.json").write_text(json.dumps({"Version": "0.69.4"}))
+    elif case == "empty-report":
+        report = {}
+    elif case == "inconsistent-exit":
+        scan_exit = 1
+    report_path.write_text(json.dumps(report))
+    if case == "duplicate-key":
+        report_path.write_text('{"Metadata":{},"Metadata":{}}')
+    arguments = {
+        "image_id": image_id,
+        "source_sha": "d" * 40,
+        "scanner_version": "0.74.0",
+        "scanner_sha256": "e" * 64,
+        "scan_exit": scan_exit,
+        "now": now,
+    }
+    if case not in {"passed", "vulnerable-unfixed"}:
+        with pytest.raises(ValueError):
+            verify_bundle(tmp_path, **arguments)
+        return
+    manifest = verify_bundle(tmp_path, **arguments)
+    assert manifest["image_id"] == image_id
+    assert manifest["status"] == ("blocked" if case == "vulnerable-unfixed" else "passed")
+    assert len(manifest["files"]) == 6
+
+
+def test_database_verification_requires_a_real_digest(tmp_path: Path) -> None:
+    _, now = _container_evidence(tmp_path)
+    (tmp_path / "database-sha256.txt").write_text("invalid\n")
+    with pytest.raises(ValueError, match="database digest"):
+        verify_database(tmp_path, now=now)
+
+
+@pytest.mark.parametrize("vulnerable", [False, True])
+def test_container_evidence_cli_retains_blocked_results_and_fails_the_job(
+    tmp_path: Path, vulnerable: bool
+) -> None:
+    image_id, _ = _container_evidence(tmp_path)
+    current = datetime.now(UTC).isoformat()
+    (tmp_path / "database-metadata.json").write_text(
+        json.dumps({"Version": 2, "UpdatedAt": current, "DownloadedAt": current})
+    )
+    if vulnerable:
+        path = tmp_path / "container-vulnerabilities.json"
+        report = json.loads(path.read_text())
+        report["Results"][0]["Vulnerabilities"] = [
+            {"VulnerabilityID": "CVE-TEST-0001", "Severity": "CRITICAL", "FixedVersion": ""}
+        ]
+        path.write_text(json.dumps(report))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.container.verify",
+            "bundle",
+            str(tmp_path),
+            "--image-id",
+            image_id,
+            "--source-sha",
+            "d" * 40,
+            "--scanner-version",
+            "0.74.0",
+            "--scanner-sha256",
+            "e" * 64,
+            "--scan-exit",
+            "1" if vulnerable else "0",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == (1 if vulnerable else 0), result.stdout + result.stderr
+    manifest = json.loads((tmp_path / "container-evidence.json").read_text())
+    assert manifest["status"] == ("blocked" if vulnerable else "passed")
 
 
 @pytest.mark.parametrize(

@@ -23,10 +23,11 @@ import threading
 import weakref
 from bisect import bisect_right
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import regex
 
+from shadowscan.connectors.code.genkit_semantics import genkit_call_capabilities, genkit_tool_registration
 from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
@@ -74,6 +75,8 @@ class _Call:
     start: int = 0
     end: int = 0
     decorator: bool = False
+    receiver: str = ""
+    genkit_tools: tuple[str, ...] = ()
 
 
 # These APIs construct agents even when their arguments have a different order
@@ -118,6 +121,7 @@ _FACTORIES = {
     "framework.nova-act": r"NovaAct",
     "framework.inngest-agentkit": r"(?:createAgent|createNetwork)",
     "framework.voltagent": r"(?:Agent|VoltAgent)",
+    "framework.genkit": r"Genkit\.(?:defineAgent|definePromptAgent|defineCustomAgent)",
     "framework.langroid": r"(?:ChatAgent|Task)",
     "framework.beeai": r"(?:ReActAgent|ToolCallingAgent|RequirementAgent)",
 }
@@ -776,7 +780,110 @@ def _javascript_bindings(
     if relevant is not None:
         bindings = {name: binding for name, binding in bindings.items() if relevant(binding)}
     _drop_uncertain_bindings(bindings, masked, declaration_spans)
-    return _javascript_calls(text, masked, bindings), imports
+    calls = _javascript_calls(text, masked, bindings)
+    calls.extend(_javascript_genkit_calls(text, masked, calls))
+    if len(calls) > MAX_BOUND_CALLS:
+        raise SourceBudgetExceeded("source binding call limit exceeded")
+    return calls, imports
+
+
+def _javascript_assignment(masked: str, call: _Call) -> tuple[str, tuple[int, int]] | None:
+    """Recognize only a complete direct variable initializer, never a call inside an expression."""
+    prefix = masked[max(0, call.start - 2000) : call.start]
+    match = re.search(
+        r"(?:^|[;{}\n])\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)"
+        r"\s*(?::[^;={}\n]{1,500})?\s*=\s*$",
+        prefix,
+    )
+    if match is None or not re.match(r"\s*(?:;|$|\n)", masked[call.end :]):
+        return None
+    start = max(0, call.start - 2000) + match.start(1)
+    return match[1], (start, call.end)
+
+
+def _javascript_module_level(masked: str, offset: int) -> bool:
+    """Reject bindings inside functions, branches, blocks or callback bodies."""
+    prefix = masked[:offset]
+    return prefix.count("{") == prefix.count("}")
+
+
+def _javascript_genkit_calls(text: str, masked: str, initial: list[_Call]) -> list[_Call]:
+    """Follow stable module-level Genkit instances and their registered tool callbacks.
+
+    Local instances, aliases, reassignments and shadowed names stay framework
+    evidence. A registered tool belongs only to the instance that defined it.
+    """
+    instances: dict[str, _Binding] = {}
+    created: dict[str, int] = {}
+    declarations: list[tuple[int, int]] = []
+    duplicates: set[str] = set()
+    for call in initial:
+        if (
+            call.binding.module not in {"genkit", "genkit/beta"}
+            or _symbol_tail(call.binding.symbol) != "genkit"
+        ):
+            continue
+        assigned = _javascript_assignment(masked, call)
+        if assigned is None:
+            continue
+        name, span = assigned
+        # A function-local initializer does not bind unrelated module code.
+        if not _javascript_module_level(masked, span[0]):
+            continue
+        if name in instances:
+            duplicates.add(name)
+        instances[name] = _Binding(call.binding.module, "Genkit", constructed=True)
+        created[name] = call.end
+        declarations.append(span)
+    for name in duplicates:
+        instances.pop(name, None)
+    _drop_uncertain_bindings(instances, masked, declarations)
+    calls = [
+        call for call in _javascript_calls(text, masked, instances) if call.start >= created[call.receiver]
+    ]
+    registrations: list[tuple[_Call, str, str | None, tuple[int, int] | None]] = []
+    variables: dict[str, _Binding] = {}
+    variable_declarations: list[tuple[int, int]] = []
+    duplicate_variables: set[str] = set()
+    for call in calls:
+        if call.binding.symbol != "Genkit.defineTool" or not _javascript_module_level(masked, call.start):
+            continue
+        registered = genkit_tool_registration(call.arguments, call.structural_arguments)
+        if registered is None:
+            continue
+        assigned = _javascript_assignment(masked, call)
+        variable, registration_span = assigned if assigned is not None else (None, None)
+        registrations.append((call, registered, variable, registration_span))
+        if variable is not None and registration_span is not None:
+            if variable in variables:
+                duplicate_variables.add(variable)
+            variables[variable] = call.binding
+            variable_declarations.append(registration_span)
+    for variable in duplicate_variables:
+        variables.pop(variable, None)
+    _drop_uncertain_bindings(variables, masked, variable_declarations)
+    return [
+        replace(
+            call,
+            genkit_tools=tuple(
+                sorted(
+                    {
+                        value
+                        for registration, name, variable, _ in registrations
+                        if registration.receiver == call.receiver and registration.end <= call.start
+                        for value in (
+                            "name:" + name,
+                            "variable:" + variable
+                            if variable is not None and variable in variables
+                            else None,
+                        )
+                        if value is not None
+                    }
+                )
+            ),
+        )
+        for call in calls
+    ]
 
 
 def _drop_uncertain_bindings(
@@ -842,17 +949,18 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
             depth += (masked[end] == "(") - (masked[end] == ")")
             end += 1
         if depth:
-            continue
+            raise SourceBudgetExceeded("source binding call text limit exceeded or unbalanced call")
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
         calls.append(
             _Call(
-                _Binding(binding.module, symbol),
+                _Binding(binding.module, symbol, binding.constructed),
                 text[opening:end],
                 text.count("\n", 0, match.start()) + 1,
                 masked[opening:end],
                 tool_factories=tool_factories,
                 start=match.start(),
                 end=end,
+                receiver=parts[0],
             )
         )
     return calls
@@ -1081,6 +1189,14 @@ def _call_evidence(
             masked=call.structural_arguments,
             verified_graph=signature.id == "framework.langgraph" and symbol == "StateGraph" and verified,
         )
+        if signature.id == "framework.genkit":
+            verified, configured = genkit_call_capabilities(
+                symbol,
+                call.arguments,
+                call.structural_arguments,
+                call.genkit_tools,
+                constructed=call.binding.constructed,
+            )
 
         capabilities = CallCapabilities(signature.id, verified, configured, (call.start, call.end))
 
@@ -1186,7 +1302,12 @@ def _call_evidence(
                         type="code",
                         weight=0.9,
                         agent_indicator=True,
-                        description="import-bound agent construction",
+                        description=(
+                            "import-bound Genkit automatic tool loop"
+                            if signature.id == "framework.genkit"
+                            and symbol in {"Genkit.generate", "Genkit.generateStream"}
+                            else "import-bound agent construction"
+                        ),
                     ),
                     sanitize_text(f"{call.binding.module}:{symbol}("),
                     0.9,

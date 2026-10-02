@@ -8,10 +8,13 @@ security advisories and repository administration. Contributors are welcome;
 there is currently no foundation, governing board or independent review team.
 
 The detailed [review and merge policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
-is authoritative. The `main` ruleset is configured to require one approving
+is authoritative. The merge policy requires one approving
 review from someone with write access, an up-to-date branch and passing
-`test (3.11)`, `test (3.12)` and `analyze` checks before a pull request can
-merge, and to dismiss stale approvals after a new push. Its enforcement has been
+`CI gate`, `test (3.11)`, `test (3.12)` and `analyze` checks before a pull request can
+merge, and dismissal of stale approvals after a new push. The October 2 readback
+found the `CI gate` context missing from the disabled ruleset; the source's
+settings-patch generator adds it while preserving the other checks.
+Ruleset enforcement has been
 switched on and off during 2026-09; a disabled ruleset blocks nothing. The
 author cannot approve their own change; the single maintainer therefore needs a
 second eligible human reviewer for changes they author. AI-assisted review is
@@ -21,9 +24,12 @@ tagged release.
 Repository settings may change. Consult the
 [live repository rules](https://github.com/aisecnomad/Project-Nexus/rules) and the
 [verification commands](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#merge-gate-and-review-status)
-before relying on enforcement. The ruleset has no configured bypass actors,
+before relying on enforcement. `Require CI and CodeQL` has no configured bypass actors,
 but it only blocks anything while it is enabled. Do not weaken it, bypass
-review or checks, or count a green workflow as an independent review.
+review or checks, or count a green workflow as an independent review. The
+October 2 source changes provide a settings-patch generator and release-time
+readback verifier; applying that patch requires repository administration.
+Do not treat their presence as evidence that the live ruleset is active.
 
 ## Roles
 

@@ -144,20 +144,18 @@ is author-written: the authors chose the frameworks, the file layouts and the
 distractors, so its rates describe these 31 cases only and are not a field
 precision estimate.
 
-`tools/evaluation/attribution_corpus.json` contains nine short, handwritten
-source cases without credential examples: a generic LangGraph graph
-construction that is framework usage rather than an agent, a LangGraph agent
-with an OpenAI model, an OpenAI Agents SDK agent, a framework dependency without
-an agent, Spring AI tool methods, an n8n workflow and Compose service, an
-ordinary insurance assignment service, an MCP config and a Bedrock agent
-definition. Each selected case checks expected and forbidden finding
-kind/product/provider combinations; all nine also declare an `exact_findings`
-list to compare the full emitted finding multiset. The binary target currently
-scores six TP and three TN, while one binary-correct case fails attribution
+`tools/evaluation/attribution_corpus.json` contains 24 short, handwritten
+source cases without credential examples. They cover framework-only usage,
+agent construction, product/provider attribution and configured capabilities.
+The October 2 additions check Genkit initialization, explicit agents, registered
+tool generation, disabled dispatch and function-local registrations. Each case
+checks expected and forbidden findings and declares an `exact_findings` list
+to compare the full emitted finding multiset. On the October 2 implementation,
+the binary target scores 14 TP and 10 TN, while one binary-correct case fails attribution
 checks: Docker Compose beside an n8n workflow is also credited to Kubernetes
 agent workloads. That case has explicit `known_gap: true` under the corpus's
 bounded `known_gap_policy`, remains in the case and assertion counts, and is
-listed as a failing gap. Eight of nine exact finding sets pass. These are
+listed as a failing gap. Twenty-three of 24 exact finding sets pass. These are
 intentionally selected development fixtures; their scores do not measure field
 error rates or human-labeled vendor accuracy.
 `field_review_corpus.json` holds eight synthetic cases written after a field

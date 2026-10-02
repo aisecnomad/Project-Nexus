@@ -2,6 +2,28 @@
 
 ## 0.1.1 — Unreleased
 
+### October 2 review corrections
+
+- JavaScript and TypeScript source calls that exceed the bounded semantic
+  analysis budget now make coverage incomplete instead of silently losing
+  agent-construction evidence. Valid neighboring findings are retained.
+- Generic Genkit initialization and flow/tool declarations no longer establish
+  an agent or configured tool-use capability. Supported concrete agent
+  definitions and model calls with registered tools retain detection.
+- The shared HTTPS transport bounds response acquisition as well as body
+  delivery, interrupting slow status/header delivery without releasing an
+  actively cancelled connection back into the pool. System DNS and external
+  SDK calls still require a process/job supervisor for a hard execution limit.
+- CI checks the exact built worker image for HIGH/CRITICAL OS and Python
+  vulnerabilities and retains a container SBOM, scan result and image identity.
+  Vulnerability database acquisition and scanner errors fail the gate.
+- Release candidate evidence now checks active merge rules, independent-review
+  requirements, strict `CI gate`/CodeQL checks and bypass visibility. An offline
+  settings-patch command preserves existing protections while adding the
+  missing aggregate check. Repository administration remains a separate action.
+- These changes add authored regression evidence. They do not establish live
+  tenant acceptance, fresh field accuracy or independent human approval.
+
 ### October 1 discovery review corrections
 
 - Code collection identifies declared submodules whose source has not been

@@ -34,7 +34,7 @@ format-check: ## Check ruff formatting without changes
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/container
 
 .PHONY: test
 test: ## Run test suite with coverage

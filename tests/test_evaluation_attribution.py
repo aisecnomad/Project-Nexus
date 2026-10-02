@@ -261,7 +261,7 @@ def test_finding_selector_schema_rejects_invalid_or_contradictory_labels(
 def test_bundled_authored_attribution_gaps_are_visible_without_relabeling_independent_corpus() -> None:
     authored = evaluate(DEFAULT_CORPUS.with_name("attribution_corpus.json"))
     assert authored["passed"]
-    assert authored["metrics"]["all"] | {"tp": 12, "fp": 0, "fn": 0, "tn": 5} == authored["metrics"]["all"]
+    assert authored["metrics"]["all"] | {"tp": 14, "fp": 0, "fn": 0, "tn": 10} == authored["metrics"]["all"]
     assert authored["finding_assertions"]["provider_signature"]["checks"] >= 4
     assert authored["finding_assertions"]["forbidden_findings"] == {
         "checks": 13,
@@ -269,11 +269,11 @@ def test_bundled_authored_attribution_gaps_are_visible_without_relabeling_indepe
         "failed": 1,
     }
     assert authored["finding_assertions"]["exact_finding_sets"] == {
-        "checks": 17,
-        "passed": 16,
+        "checks": 24,
+        "passed": 23,
         "failed": 1,
     }
-    assert authored["finding_assertions"]["capabilities"] == {"checks": 13, "passed": 13, "failed": 0}
+    assert authored["finding_assertions"]["capabilities"] == {"checks": 20, "passed": 20, "failed": 0}
     # The one remaining gap is waived by the corpus's bounded policy; a passing
     # flagged case fails the run so the waiver cannot outlive the defect.
     assert set(authored["known_gaps"]["failing"]) == {"n8n-compose-workflow"}
