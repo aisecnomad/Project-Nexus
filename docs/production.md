@@ -645,6 +645,19 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 2 services review migration
+
+Re-run `gateway.logs` over combined-format access logs before comparing
+gateway callers with an earlier baseline. A host token that a client could have
+written (quoted, as in `host="api.example.com"`, or followed by another quoted
+field) is still not used, but when it alone would have made a request LLM
+traffic the scan is now incomplete (exit 3) instead of complete without that
+traffic. Put the host in the log format as an unquoted token after the last
+quoted field (nginx: `... "$http_user_agent" host=$host`), or export JSON
+logs, to attribute such requests. Fields that were taken from inside a value or
+quoted text of a text log (a `?model=` query, an `&host=` argument) no longer
+are, and a line truncated inside a quoted field is malformed (incomplete).
+
 ### October 2 production review migration
 
 Review framework attribution in projects using npm dependency aliases before

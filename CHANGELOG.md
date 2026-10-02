@@ -40,6 +40,19 @@ integrating them:
 - `docs/connectors/reference.md` is regenerated from the stack's connectors,
   and `docs/production.md` puts operator guidance first with every dated note,
   including the stack's, under "Candidate change history" (#122).
+- `gateway.logs` access-log attribution (AI-assisted review of the stack):
+  trailer and logfmt tokens are read as logfmt, so a key must start a token.
+  An unquoted client value after the final quote (`args=a&host=api.openai.com
+  host=intranet`) no longer becomes the host, a request line or query logged as
+  one token can no longer set `model` (`GET /v1/x?model=forged`), and a line
+  truncated inside the user agent is malformed instead of taking its host from
+  the user agent. Combined-format fields keep `\"` escapes inside the field.
+  A host token in or before a quoted trailer field, which a client can write
+  when the gateway does not escape quotes, is still not trusted; when it alone
+  would have made a request LLM traffic the scan is now incomplete with a
+  warning, where such requests used to be skipped with exit 0. Known inference
+  paths are no longer excluded as static assets (`/v1/chat/completions.css`),
+  and `;name=value` path parameters are removed before the static-asset test.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

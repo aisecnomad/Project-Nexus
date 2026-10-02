@@ -31,7 +31,20 @@ the final quoted field, as in `... "ua" host=api.openai.com`. The request line,
 referer, user agent and any other quoted field are client-controlled and are
 never a host source; a line without such a trailing token has no host and is
 kept only when its path is a known LLM endpoint. JSON and CSV access logs use
-their structured host field.
+their structured host field. Trailer and logfmt tokens are read as logfmt: a
+key must start a whitespace-separated token, so a client value such as
+`args=a&host=b` or `/path?model=x` never becomes a field, quoted text without
+a key is never parsed for fields, and an unterminated quote (for example a line
+truncated inside the user agent) or a repeated key makes the line malformed
+(incomplete). A host token in or before a quoted trailer field (`host="x"`, or
+`host=x "203.0.113.7"`) is not trusted, because a gateway that does not escape
+quotes lets a client write the same text through its user agent. When such a
+token names an LLM host and would have made a request LLM traffic, the request
+is not counted and a warning makes the scan incomplete; log the host as an
+unquoted token after the last quoted field to attribute that traffic. A known
+inference path (`/v1/chat/completions`, `:generateContent`, ...) is never
+excluded as a static asset or probe, and `;name=value` path parameters are
+removed before the static-asset test.
 
 Directory inputs read files with a supported suffix (`.json`, `.jsonl`,
 `.ndjson`, `.csv`, `.log`, `.txt`, `.gz`). Other files, such as rotated logs

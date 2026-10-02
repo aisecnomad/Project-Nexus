@@ -34,7 +34,7 @@ import re
 import secrets
 from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -324,25 +324,40 @@ def normalise_with_record(
 # These stdlib patterns run outside the signature engine's regex timeouts, so
 # they must be linear: possessive tokens (Python 3.11+) never backtrack into a
 # long unterminated request or a bare token blob to retry a failed match.
+# A quoted field keeps backslash escapes (Apache writes \" and \\) inside it.
+_QUOTED_TEXT = r'(?:[^"\\]++|\\.)*+'
 _COMBINED = re.compile(
-    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) (?P<path>[^\s"]++)[^"]*" '
-    r'(?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
+    r'^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>[A-Z]+) '
+    r'(?P<path>(?:[^\s"\\]++|\\\S)++)' + _QUOTED_TEXT + r'" (?P<status>\d{3}) (?P<bytes>\S+)'
+    r'(?: "(?P<referer>' + _QUOTED_TEXT + r')" "(?P<ua>' + _QUOTED_TEXT + r')")?'
+    r'(?: "(?P<extra>' + _QUOTED_TEXT + r')")?'
 )
-# A quoted logfmt value may contain backslash-escaped quotes and backslashes;
-# a value that opens a quote it never closes is malformed, not a bare token.
-_LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=(?:"((?:[^"\\]++|\\.)*+)"|(\S++))')
+# One logfmt token: key=value, key="quoted value" or quoted text without a key.
+# A key starts a whitespace-separated token, so text inside a value or quoted
+# text (``?model=x``, ``&host=y``) never becomes a field. A quote that opens a
+# token and is never closed makes the record malformed, not a bare token.
+_LOGFMT_TOKEN = re.compile(
+    r'(?<!\S)(?:(?P<key>\w[\w.-]*+)=(?:"(?P<quoted>' + _QUOTED_TEXT + r')"|(?P<bare>\S++))'
+    r'|"' + _QUOTED_TEXT + r'"|(?P<stray>"))'
+)
 _LOGFMT_ESCAPE = re.compile(r'\\(["\\])')
-# Static assets and health probes are not inference traffic. Only the request
-# path is tested: a client chooses the query string (``?_=.js``) and must not
-# be able to hide an inference call with it.
+# Static assets and health probes are not inference traffic. Only the routed
+# request path is tested: a client chooses the query string (``?_=.js``) and
+# ``;name=value`` path parameters, which servlet containers drop before
+# routing, and must not be able to hide an inference call with them.
 _STATIC_OR_PROBE_PATH = re.compile(
     r"(?:^|/)(?:favicon\.ico|robots\.txt|healthz?|readyz?|livez?|metrics)/?$"
     r"|\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)$",
     re.I,
 )
-_HOST_IN_TRAILER = re.compile(
-    r"(?<![\w.-])(?:host|authority|upstream_host|server_name)[=:]\s*([A-Za-z0-9.-]+\.[a-z]{2,})", re.I
-)
+_PATH_PARAMETERS = re.compile(r";[^/]*+")
+# Access-log trailer keys that name the requested host, and the host a value starts with.
+_TRAILER_HOST_KEYS = frozenset({"host", "authority", "upstream_host", "server_name"})
+_HOST_VALUE = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# A parsed access-log record field holding a host token that a client could have
+# written. Analysis never attributes traffic to it, only reports when it would
+# have made a request LLM traffic.
+_UNTRUSTED_HOST_FIELD = "_untrusted_host"
 
 
 # Field names that the gateway schemas read event times from.
@@ -379,10 +394,13 @@ def _has_unparsed_timestamp(rec: dict[str, Any]) -> bool:
 
 
 def _is_static_or_probe(path: str | None) -> bool:
-    """Whether the request path, without its query string or fragment, names a static asset or probe."""
+    """Whether the routed request path names a static asset or probe.
+
+    The query string, fragment and ``;name=value`` path parameters are removed first.
+    """
     if not path:
         return False
-    request_path = path.partition("?")[0].partition("#")[0]
+    request_path = _PATH_PARAMETERS.sub("", path.partition("?")[0].partition("#")[0])
     return _STATIC_OR_PROBE_PATH.search(request_path) is not None
 
 
@@ -393,13 +411,26 @@ def _logfmt_pairs(line: str) -> dict[str, str]:
     into a client-controlled value) override the gateway's own field.
     """
     pairs: dict[str, str] = {}
-    for key, quoted, bare in _LOGFMT_PAIR.findall(line):
+    for token in _LOGFMT_TOKEN.finditer(line):
+        key, bare = token["key"], token["bare"]
+        if key is None:
+            if token["stray"] is not None:
+                raise ValueError("logfmt record has an unterminated quoted value")
+            continue  # quoted text without a key is text, never a field
         if key in pairs:
             raise ValueError("logfmt record repeats a key")
-        if bare.startswith('"'):
+        if bare is not None and bare.startswith('"'):
             raise ValueError("logfmt record has an unterminated quoted value")
-        pairs[key] = bare.strip('"') if bare else _LOGFMT_ESCAPE.sub(r"\1", quoted)
+        pairs[key] = bare.strip('"') if bare is not None else _LOGFMT_ESCAPE.sub(r"\1", token["quoted"])
     return pairs
+
+
+def _host_field(pairs: dict[str, str]) -> str | None:
+    """The first host named by a ``host=``, ``authority=``, ``upstream_host=`` or ``server_name=`` pair."""
+    for key, value in pairs.items():
+        if key.lower() in _TRAILER_HOST_KEYS and (host := _HOST_VALUE.match(value)):
+            return host.group(0)
+    return None
 
 
 def parse_text_line(line: str) -> dict[str, Any] | None:
@@ -414,10 +445,15 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
     m = _COMBINED.match(line)
     if m:
         d = m.groupdict()
-        # The request line, referer and user agent are client-controlled and
-        # can carry a look-alike host= token. Only text after the final quote is
-        # written by the server, so the host is read from there and nowhere else.
-        h = _HOST_IN_TRAILER.search(line.rpartition('"')[2])
+        # The request line, referer, user agent and any further quoted field are
+        # client-controlled, and a gateway that does not escape quotes lets a
+        # client close its field early and write tokens after it. Only text after
+        # the final quote is written by the server, so the host is read from a
+        # key=value token there and nowhere else. The whole trailer is tokenized
+        # as logfmt: an unterminated quote (a truncated line) or a repeated key
+        # makes the line malformed, and text inside a value is never a key.
+        trailer = _logfmt_pairs(line[m.end() :])
+        host = _host_field(_logfmt_pairs(line.rpartition('"')[2]))
         rec = {
             "remote_addr": d["ip"],
             "remote_user": None if d["user"] == "-" else d["user"],
@@ -426,8 +462,14 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
             "request_uri": d["path"],
             "status": d["status"],
             "http_user_agent": d.get("ua"),
-            "host": h.group(1) if h else None,
+            "host": host,
         }
+        # A host token in or before a quoted trailer field (``host="x"``, or one
+        # followed by a quoted forwarded-for field) may be the server's or a
+        # client's. It is kept apart so analysis can report what it would change.
+        untrusted = _host_field(trailer) if host is None else None
+        if untrusted is not None:
+            rec[_UNTRUSTED_HOST_FIELD] = untrusted
         return rec
     # key=value logfmt
     if "=" in line and " " in line:
@@ -1250,6 +1292,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         skipped = 0
         unusable_usage = 0
         static_excluded = 0
+        untrusted_host_requests = 0
         untimed = 0
         omitted_caller_records = 0
         omitted_caller_requests = 0
@@ -1275,6 +1318,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 ):
                     skipped += 1
                     static_excluded += _is_static_or_probe(ev.path)
+                    untrusted_host_requests += self._untrusted_host_is_llm(ev, rec)
                     continue
                 unusable_usage += _discard_unusable_usage(ev)
                 if ev.timestamp is None and _has_unparsed_timestamp(rec):
@@ -1319,6 +1363,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             self.ctx.warn(
                 f"gateway.logs: records with an unparseable timestamp field: {untimed}; their requests "
                 "are counted without activity timing"
+            )
+        if untrusted_host_requests:
+            self.ctx.warn(
+                f"gateway.logs: {untrusted_host_requests} access-log requests name an LLM host only in or "
+                "before a quoted field, where a client can write it; they were not counted as LLM traffic "
+                "and LLM traffic coverage is incomplete. Log the host as an unquoted token after the last "
+                "quoted field"
             )
         if static_excluded:
             self.ctx.warn(
@@ -1499,9 +1550,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         return "operator-asserted" if schema in {"generic", "access-log"} else "provider-authenticated-field"
 
     def _is_llm_traffic(self, ev: Event) -> bool:
-        if _is_static_or_probe(ev.path):
-            return False
         text = " ".join(x for x in (ev.host, ev.path) if x)
+        # A known inference endpoint is never a static asset or probe: a
+        # suffix-matching router serves /v1/chat/completions.css as the endpoint.
         if ev.path and re.search(
             r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads"
             r"|runs|audio|images|files|batches|realtime)"
@@ -1513,6 +1564,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             text,
         ):
             return True
+        if _is_static_or_probe(ev.path):
+            return False
         if ev.schema == "access-log" and ev.path:
             # A known provider/agent host identifies inference traffic even
             # when the operation is not an enumerated endpoint; static assets
@@ -1536,6 +1589,16 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # the threshold and do not identify inference traffic by themselves.
         return bool(host) and any(
             m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host or "")
+        )
+
+    def _untrusted_host_is_llm(self, ev: Event, rec: dict[str, Any]) -> bool:
+        """Whether an excluded request would be LLM traffic with a host token a client could have written."""
+        untrusted = rec.get(_UNTRUSTED_HOST_FIELD)
+        return (
+            ev.schema == "access-log"
+            and ev.host is None
+            and isinstance(untrusted, str)
+            and self._is_llm_traffic(replace(ev, host=untrusted))
         )
 
     @staticmethod

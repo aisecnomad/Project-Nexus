@@ -90,6 +90,86 @@ def test_host_token_inside_quoted_client_fields_is_not_a_host(line):
     assert parse_text_line(line)["host"] is None
 
 
+@pytest.mark.parametrize(
+    "trailer",
+    [
+        # a client-chosen query string the gateway logs unquoted after the final quote
+        " args=x&host=api.openai.com host=intranet.acme.com",
+        # a request target logged without a key
+        " /relay?host=api.openai.com upstream_host=intranet.acme.com",
+    ],
+)
+def test_text_inside_a_trailer_value_cannot_name_the_host(run_connector, tmp_path, trailer):
+    assert parse_text_line(PREFIX.format(sec=0) + ' "-" "bot"' + trailer)["host"] == "intranet.acme.com"
+    findings, ctx = _scan_access_log(
+        run_connector, tmp_path, _access_lines(ua="crewai/0.80", trailer=trailer)
+    )
+    assert findings == []
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+
+
+def test_an_unterminated_client_field_cannot_supply_the_host(run_connector, tmp_path):
+    # A truncated line ends inside the user agent: the text after its opening
+    # quote is the client's, not a server-written trailer.
+    line = PREFIX.format(sec=0) + ' "-" "Mozilla/5.0 host=api.openai.com'
+    with pytest.raises(ValueError):
+        parse_text_line(line)
+    findings, ctx = _scan_access_log(run_connector, tmp_path, [line])
+    assert findings == []
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == ["gateway.logs: invalid JSON/text record at line 1"]
+
+
+def test_escaped_quotes_stay_inside_their_combined_field():
+    line = (
+        PREFIX.format(sec=0) + r' "-" "Mozilla/5.0 \"crewai/0.80\" host=evil.example.com" host=api.openai.com'
+    )
+    rec = parse_text_line(line)
+    assert rec["http_user_agent"] == r"Mozilla/5.0 \"crewai/0.80\" host=evil.example.com"
+    assert rec["host"] == "api.openai.com"
+
+
+@pytest.mark.parametrize(
+    "trailer",
+    [
+        # the server's own host, quoted
+        ' host="api.cohere.com"',
+        # the server's own host, followed by a quoted forwarded-for field
+        ' host=api.cohere.com "203.0.113.7"',
+    ],
+)
+def test_a_host_token_a_client_could_write_is_reported_not_silently_dropped(run_connector, tmp_path, trailer):
+    # Without quote escaping a client can write either line through its user
+    # agent, so the token is not trusted. The requests it alone would make LLM
+    # traffic are reported instead of being skipped with a complete scan.
+    lines = _access_lines(ua="python-requests/2.32", trailer=trailer, path="/v1/chat", count=3)
+    assert parse_text_line(lines[0])["host"] is None
+    findings, ctx = _scan_access_log(run_connector, tmp_path, lines)
+    assert findings == []
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: 3 access-log requests name an LLM host only in or before a quoted field, where "
+        "a client can write it; they were not counted as LLM traffic and LLM traffic coverage is "
+        "incomplete. Log the host as an unquoted token after the last quoted field"
+    ]
+
+
+@pytest.mark.parametrize(
+    "trailer,path",
+    [
+        # an untrusted host token that would not change the outcome is not a gap
+        (' host="intranet.acme.com"', "/relay"),
+        (' host="api.openai.com"', "/v1/chat/completions"),
+    ],
+)
+def test_an_untrusted_host_token_that_changes_nothing_is_not_reported(run_connector, tmp_path, trailer, path):
+    findings, ctx = _scan_access_log(
+        run_connector, tmp_path, _access_lines(ua="crewai/0.80", trailer=trailer, path=path, count=2)
+    )
+    assert len(findings) == (path == "/v1/chat/completions")
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+
+
 # --------------------------------------------- rotated / unsupported inputs
 
 

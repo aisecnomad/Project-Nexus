@@ -495,6 +495,47 @@ def test_query_string_cannot_hide_inference_as_a_static_asset(tmp_path, run_conn
     ]
 
 
+def test_path_parameters_and_format_suffixes_cannot_hide_inference(tmp_path, run_connector):
+    # Servlet containers drop ";name=value" path parameters before routing and
+    # suffix-matching routers serve "/chat/completions.css" as the endpoint, so
+    # neither may turn an inference call into a static asset.
+    line = (
+        '10.9.9.9 - rogue-agent [10/Oct/2025:03:00:0{n} +0000] "{request} HTTP/1.1" 200 512 "-" "crewai/0.5"'
+        " host=api.cohere.com"
+    )
+    requests = [
+        "POST /v1/chat/completions;x.js",
+        "POST /v1/chat/completions.css",
+        "POST /v1/chat;jsessionid=1.js",
+        "GET /static/app.js;jsessionid=abc",
+        "GET /healthz;probe=1",
+    ]
+    path = tmp_path / "access.log"
+    path.write_text("\n".join(line.format(n=n, request=r) for n, r in enumerate(requests)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 3
+    assert not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: requests for static assets or health probes not counted as LLM traffic: 2"
+    ]
+
+
+def test_logfmt_tokens_inside_a_value_or_quoted_text_are_not_fields(tmp_path, run_connector):
+    # A client-controlled query string or request line logged as one token
+    # must not set the model, key or host of the record.
+    victim = "ts=2025-10-10T13:55:36Z api_key=KEY-REAL-0001 model=gpt-4o-mini path=/v1/chat/completions"
+    hostile = [
+        "ts=2025-10-10T13:55:37Z api_key=KEY-REAL-0001 GET /v1/chat/completions?model=forged-model status=200",
+        'ts=2025-10-10T13:55:38Z api_key=KEY-REAL-0001 "POST /v1/chat/completions?model=forged-model" status=200',
+    ]
+    for line in hostile:
+        assert "model" not in parse_text_line(line)
+    path = tmp_path / "gateway.log"
+    path.write_text("\n".join([victim, *hostile]) + "\n")
+    findings, _ = run_connector("gateway.logs", input=str(path))
+    assert [f.models for f in findings] == [["gpt-4o-mini"]]
+
+
 def test_logfmt_escaped_quotes_cannot_inject_fields(tmp_path, run_connector):
     victim = "level=info ts=2025-10-10T13:55:36Z api_key=KEY-REAL-0001 model=gpt-4o-mini user=alice path=/v1/chat/completions"
     injected = (
