@@ -839,6 +839,32 @@ New warnings (the scan stays complete):
 - Gateway scans note how many static-asset and probe requests were not counted.
   Tooling that fails on any warning should key on `incomplete` or the exit code.
 
+Label, precision and risk-policy changes to review:
+
+- **`likelihood` value.** `findings[].likelihood` and the CSV `likelihood` column
+  report `strong` where earlier output said `confirmed`. Dashboards, `jq` filters,
+  SIEM rules and ticket automation that count or filter on `confirmed` must accept
+  `strong`; accept both while old reports are in circulation. `diff` reads
+  baselines written before the rename (the label is not compared and `confirmed`
+  parses as `strong`), so no baseline needs regenerating. Use `confidence`, a
+  number, for thresholds: `strong` does not mean verified.
+- **List-only repositories.** Findings disappear for repositories that only list
+  vendors (blocklists, allowlists, vendor policies, vendored signature or
+  inventory data). A bare data file that names four or more providers and is the
+  only evidence is no longer reported; keep its name a manifest name or add a
+  signature with a `file` signal if you rely on it.
+- **Plugin authors.** Evidence weights must be finite numbers in [0, 1]. A
+  violation fails the connector and the scan is incomplete.
+- **`risk_weights`.** A typo in a `capabilities` or `providers` key now fails the
+  scan setup (exit 1) instead of being ignored. Provider ids are checked when the
+  engine is built, after custom signature packs load. Check existing
+  configurations for keys that never matched anything, and dry-run a change.
+- **Scores.** Findings at five points of the score grid (raw 45 at confidence
+  0.25, 75 at 0.15, 85 at 0.25, 125 at 0.17 and 125 at 0.21) score one higher.
+  `diff` against an older baseline reports the changed `risk.score` and factor
+  weight for those findings only, and a level change for the one that crosses from
+  medium to high.
+
 Redaction and lexing changes to review:
 
 - **Redaction policy.** Credential operators, token boundaries, URL userinfo,

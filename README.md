@@ -331,7 +331,7 @@ links, @-mentions or e-mail links; code spans keep identifiers verbatim.
 ```yaml
 options:
   risk_basis: danger          # combined (default) | danger: level from capabilities, not registration
-  risk_weights:               # integers -100..100; unknown groups, kinds or governance keys are rejected
+  risk_weights:               # integers -100..100; unknown groups, kinds, capabilities, provider ids or governance keys are rejected (tags may be custom)
     capabilities: {code-exec: 25}
     tags: {meeting-bot: 20}
     providers: {provider.deepseek: 20}

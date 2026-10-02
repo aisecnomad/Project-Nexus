@@ -202,6 +202,49 @@ field precision. Behavior changes that affect an existing baseline are listed in
   documented authored-corpus counts change from 29/48 to 32/45 positives and
   negatives; the evaluation harness scans cases with `default_excludes: false`.
 
+#### Detection precision, labels and risk policy
+
+- The top bucket of the `likelihood` field is renamed from `confirmed` to
+  `strong` in every report format. It was only ever `confidence >= 0.85`, never a
+  verification state; the thresholds are unchanged. Reports, `diff` baselines and
+  incremental-cache entries that carry `confirmed` are still read, as `strong`
+  (the label is derived from `confidence` and is not part of finding identity).
+  Python callers: `Likelihood.CONFIRMED` is now `Likelihood.STRONG`. Anything that
+  filters or counts on the string `confirmed` must accept `strong`; use
+  `confidence` for thresholds.
+- A data or prose file that only lists products no longer establishes a
+  technology. A YAML, JSON, TOML, INI, XML, CSV, text or Markdown file that names
+  four or more products through domains or environment-variable names, and holds
+  no import, dependency, code, file-name, image, IaC, model or credential
+  evidence, is a catalog (a proxy blocklist, an egress allowlist, a vendor policy,
+  a copy of the signature packs). Its mentions count only for a signature with
+  library evidence elsewhere in the project. A repository whose only content was
+  such a list reported "LLM usage: CrewAI" at confidence 1.0 and high risk; it
+  now yields no finding, and `metadata.catalog_mentions` lists the discounted
+  files when a finding remains. Source code, manifest-named files (dotenv,
+  Compose, Helm values, workflows, requirements, IaC) and data files naming one to
+  three products are unchanged. Scanning `shadowscan/signatures/data` no longer
+  reports LangGraph, CrewAI, Google ADK and Agno. Known cost: a bare data file
+  that names four or more providers and is the only evidence (for example an
+  Envoy routing table kept in YAML) is no longer reported; its deployment is still
+  found through its dependency, import, image, IaC or file-name evidence.
+- `Evidence` refuses a weight that is not a finite number between 0 and 1, at
+  construction and on assignment. A NaN or infinite weight clamped to 1.0 inside
+  the noisy-OR and produced confidence 1.0. A plugin that passes such a weight now
+  fails its connector (the scan is incomplete) instead of reporting an inflated
+  confidence.
+- `options.risk_weights` keys under `capabilities` and `providers` are
+  validated: a capability must be one of the ten capability names and a provider
+  must be a provider signature id of the loaded packs, with a "did you mean" hint.
+  `capabilities: {code-execution: 99}` used to exit 0 and change nothing; it now
+  stops the scan setup. Tags stay open-ended, so an unfamiliar tag key is accepted
+  and logged once per process.
+- The risk score scales by confidence with exact arithmetic. Binary floats had
+  drifted (`0.6 + 0.4 * 0.15` is `0.6599999999999999`), so a raw 75 at confidence
+  0.15 scored 49 (medium) instead of 49.5, which rounds to 50 (high). Over raw
+  totals 0 to 300 and confidences 0.000 to 1.000, five clamped scores move by one
+  and one crosses a level (medium to high).
+
 #### Redaction and report output
 
 - Credential redaction reads an operator whole. `'api_key' => '<value>'` used to
