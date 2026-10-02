@@ -698,6 +698,15 @@ A `.gitmodules` file with a run of more than 32 blanks is refused before it is
 parsed and makes the scan incomplete (submodule coverage unknown). Such a file
 used to stall the scanner process beyond every deadline.
 
+A JavaScript or TypeScript call longer than 8192 characters (a Genkit flow, an
+agent with long instructions) is now analyzed from its first 8192 characters,
+and the file's other import-bound evidence is kept: such files used to lose all
+of it. The scan is still incomplete (exit 3) as before, because options past
+that point are unread; the error now reads `import-bound call at line N
+analyzed from its first 8192 characters; options after them were not read, so
+coverage is incomplete` instead of `source binding call text limit exceeded`.
+Update any alert or triage rule that matches the old text.
+
 These fixes come from an AI-assisted review and have offline regression tests
 only; they are not independent human review or field precision evidence.
 

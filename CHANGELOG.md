@@ -117,6 +117,14 @@ integrating them:
   also checks the file's matching budget every 256 visited nodes, so any
   remaining expensive walk ends at that budget as partial import-bound
   analysis (scan incomplete) instead of overrunning it.
+- A JavaScript or TypeScript call into a signature's library that is longer
+  than 8192 characters (a Genkit flow body, an agent with long instructions)
+  is analyzed from its first 8192 characters, as the Python binder does, and
+  the file's other import-bound evidence is kept. It used to discard every
+  import-bound call of the file, so a long Genkit flow also lost the file's
+  `genkit()` constructor evidence. Options past the limit are unread, so the
+  scan is still incomplete (exit 3) as before; the error names the call's
+  line.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

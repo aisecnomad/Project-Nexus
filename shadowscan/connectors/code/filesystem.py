@@ -102,6 +102,7 @@ from shadowscan.connectors.code.semantic_config import (
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.connectors.code.source_semantics import (
+    MAX_CALL_TEXT,
     SourceBudgetExceeded,
     SourceNotParsed,
     bound_source_matches,
@@ -2170,14 +2171,16 @@ class FilesystemConnector(BaseConnector):
             return spring_tool_registration_matches(self.index, content_text, ignored)
         if lang not in {"python", "javascript"}:
             return []
+        truncated: list[int] = []
         try:
-            return bound_source_matches(
+            bound = bound_source_matches(
                 self.index,
                 content_text,
                 lang,
                 ignored,
                 is_local_module=is_local_module if lang == "python" else None,
                 max_ast_nodes=self.max_ast_nodes,
+                truncated=truncated,
             )
         except SourceBudgetExceeded as exc:
             # The budget is a property of the file, not of
@@ -2202,6 +2205,20 @@ class FilesystemConnector(BaseConnector):
                 incomplete=False,
             )
             return []
+        if truncated:
+            # An option past the limit (tools, a stop condition) was not read: the
+            # call-analysis budget is a coverage gap like the one above, but the
+            # file's bound evidence, these calls' included, is kept.
+            lines = ", ".join(str(line) for line in truncated[:10])
+            message = (
+                f"code.filesystem: {file.rel}: import-bound call at line {lines} analyzed from its first "
+                f"{MAX_CALL_TEXT} characters; options after them were not read, so coverage is incomplete"
+            )
+            if not self.include_tests and _is_test_path(file.rel):
+                self.ctx.warn(message, incomplete=self.strict_coverage)
+            else:
+                self.ctx.error(message)
+        return bound
 
     def _record_code_matches(
         self, file: _SourceFile, code_matches: list[Match], file_uses_llm: bool, bound: list[Match]

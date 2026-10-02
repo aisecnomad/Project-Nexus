@@ -92,6 +92,9 @@ class _Call:
     decorator: bool = False
     receiver: str = ""
     genkit_tools: tuple[str, ...] = ()
+    # The argument text stops at MAX_CALL_TEXT (or the end of the source) before the
+    # call closes: options past that point are unread, so they establish nothing.
+    partial: bool = False
 
 
 @dataclass
@@ -1184,9 +1187,11 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
         while end < min(len(masked), opening + MAX_CALL_TEXT) and depth:
             depth += (masked[end] == "(") - (masked[end] == ")")
             end += 1
-        if depth:
-            raise SourceBudgetExceeded("source binding call text limit exceeded or unbalanced call")
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
+        # A longer call (a Genkit flow body, an agent with long instructions) is
+        # analyzed from its first MAX_CALL_TEXT characters, as the Python binder
+        # does; an option past them cannot be read, so it establishes nothing,
+        # and the caller reports the call (bound_source_matches ``truncated``).
         calls.append(
             _Call(
                 _Binding(binding.module, symbol, binding.constructed),
@@ -1197,6 +1202,7 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
                 start=match.start(),
                 end=end,
                 receiver=parts[0],
+                partial=bool(depth),
             )
         )
     return calls
@@ -1301,12 +1307,15 @@ def bound_source_matches(
     *,
     is_local_module: Callable[[str], bool] | None = None,
     max_ast_nodes: int | None = None,
+    truncated: list[int] | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
     Invalid Python cannot establish bound constructions: ``SourceNotParsed`` is
     raised so the caller can say so. It already retains lexical import and
-    supporting evidence and reports lexical ambiguity.
+    supporting evidence and reports lexical ambiguity. The lines of JavaScript
+    calls analyzed only from their first ``MAX_CALL_TEXT`` characters are
+    appended to ``truncated``.
     """
     module_matches = _ModuleMatches(index, language, is_local_module)
     tree = None
@@ -1324,6 +1333,8 @@ def bound_source_matches(
         raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
     except (SyntaxError, ValueError) as exc:
         raise SourceNotParsed("source did not parse") from exc
+    if truncated is not None:
+        truncated.extend(sorted({call.line for call in calls if call.partial}))
 
     found = _import_evidence(index, language, imports, module_matches)
     requests = _LoopRequests()

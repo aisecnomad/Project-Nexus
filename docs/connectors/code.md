@@ -179,7 +179,14 @@ the scan incomplete. Deciding this takes time linear in the module and at most
 that needs more, which ordinary code does not, is treated like one that imports
 a signature's library. Any other Python module over `max_ast_nodes` (default
 50000) keeps its lexical evidence without import-bound analysis: a warning in
-test code, an error elsewhere.
+test code, an error elsewhere. A call into a signature's library is analyzed
+from its first 8,192 characters in Python, JavaScript and TypeScript alike. A
+longer JavaScript or TypeScript call (a Genkit flow body, an agent with long
+instructions) keeps its construction evidence, as does the rest of the file's
+import-bound evidence, but an option past that point is unread: the scan
+records `import-bound call at line N analyzed from its first 8192
+characters; options after them were not read, so coverage is incomplete` and
+is incomplete (exit 3), a warning in test code as for the other binder limits.
 
 An absolute import is read as repository code rather than the SDK of the same
 name when the scan root, the project root, its `src` directory or the importing

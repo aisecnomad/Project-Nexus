@@ -173,14 +173,18 @@ def test_standalone_module_tool_registration_preserves_named_generation(tmp_path
 
 
 @pytest.mark.parametrize("suffix", [".js", ".ts"])
-def test_long_bound_agent_calls_fail_incomplete(tmp_path, run_connector, suffix):
+def test_long_bound_agent_calls_are_read_partially(tmp_path, run_connector, suffix):
+    # Long instructions used to discard every bound call of the file; the
+    # construction is read from the call's first characters and kept, while
+    # the unread options leave the scan incomplete as before.
     (tmp_path / f"app{suffix}").write_text(
         'import { Agent } from "@openai/agents";\n'
         'const worker = new Agent({name: "worker", instructions: "' + "x" * 9000 + '"});\n'
     )
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False)
     assert ctx.stats.incomplete
-    assert any("call text limit" in error for error in ctx.stats.errors)
+    assert any(f"app{suffix}: import-bound call at line 2" in error for error in ctx.stats.errors)
+    assert any(f.kind == Kind.AGENT and "framework.openai-agents-sdk" in f.frameworks for f in findings)
 
 
 @pytest.mark.parametrize("suffix", [".js", ".ts"])
