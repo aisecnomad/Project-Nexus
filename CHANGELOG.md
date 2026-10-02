@@ -26,6 +26,8 @@
   Workers write record exports only into the private export directory the
   scanner prepared, and exit as soon as their result is sent, so lingering
   non-daemon plugin threads cannot turn a delivered result into a timeout.
+  Result transport serializes like the JSON report (`str()` for values such as
+  `datetime`, sets and bytes; NaN and infinity still fail closed).
   Crashes, malformed output and output above the 16 MiB transport
   limit also fail closed. The default remains `thread`; built-ins retain their
   existing execution path. Process mode provides lifecycle isolation, not a

@@ -62,7 +62,10 @@ collection, result serialization and transfer. The worker exits with
 `os._exit` as soon as its result is sent: plugin `atexit` handlers do not run,
 and lingering non-daemon threads cannot delay or discard the result. The parent accepts only bounded
 JSON results (16 MiB maximum), validates their model and statistics, and discards
-results on timeout, crash, serialization failure or malformed output. These
+results on timeout, crash, serialization failure or malformed output. As in the
+JSON report, values JSON cannot represent (such as `datetime`, sets and bytes)
+are converted with `str()` and then sanitized by the parent; NaN and infinity
+still fail closed. These
 failures mark the scan incomplete (exit 3); they never fall back to threads.
 Each terminated worker frees capacity for queued connectors. Termination uses
 SIGTERM and, if needed, SIGKILL with at most 0.5 seconds of waiting at each step;
