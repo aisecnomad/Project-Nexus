@@ -451,6 +451,43 @@ def test_docker_continuation_is_joined_before_shell_comment_detection(escape, tm
 
 
 @pytest.mark.parametrize(
+    "header",
+    [
+        "# build image for the support bot\n# escape=`\n",
+        "\n# escape=`\n",
+        "# syntax=docker/dockerfile:1\n# unknown=value\n# escape=`\n",
+        "FROM scratch AS base\n# escape=`\n",
+    ],
+    ids=["after-comment", "after-blank-line", "after-unknown-directive", "after-instruction"],
+)
+def test_docker_escape_directive_is_read_only_from_the_leading_directives(header, tmp_path, run_connector):
+    # BuildKit stops reading parser directives at the first line that is not a
+    # known directive. A later "# escape=`" is a plain comment, so a trailing
+    # backtick continues nothing and the next RUN runs; it used to be joined
+    # into the shell comment before it and masked.
+    text = (
+        header + "FROM python:3.12-slim\nRUN apt-get update # refresh `\n"
+        "RUN pip install langchain-openai crewai\n"
+    )
+    deps, result = _deps("Dockerfile", text)
+    assert not result.errors
+    assert {("pypi", "langchain-openai"), ("pypi", "crewai")} <= deps
+    assert "RUN pip install langchain-openai crewai" in manifest_comment_projection("Dockerfile", text)
+    (tmp_path / "Dockerfile").write_text(text)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert ctx.stats is not None and not ctx.stats.incomplete
+    assert {"framework.crewai", "framework.langchain"} <= {fw for f in findings for fw in f.frameworks}
+
+
+@pytest.mark.parametrize(
+    "directive", ["# escape=`", "#escape=`", "#  ESCAPE = ` ", "\t# escape=`", "# syntax=x\n# escape=`"]
+)
+def test_docker_escape_directive_spellings_are_honoured(directive):
+    deps, _ = _deps("Dockerfile", f"{directive}\nFROM python:3.12\nRUN pip install `\n    openai-agents\n")
+    assert deps == {("pypi", "openai-agents")}
+
+
+@pytest.mark.parametrize(
     "filename, declaration, signature",
     [
         (

@@ -721,16 +721,30 @@ def _unique_artifacts(artifacts: list[Artifact]) -> list[Artifact]:
     return unique
 
 
+# A parser directive: "#", a name, "=" and a value, blanks allowed around each.
+# Possessive, so a long run of blanks costs one pass.
+_DOCKER_DIRECTIVE = re.compile(r"#[\t\f\r ]*+([A-Za-z][A-Za-z0-9]*+)[\t\f\r ]*+=")
+_DOCKER_DIRECTIVES = frozenset({"syntax", "escape", "check"})
+
+
 def _docker_escape(text: str) -> str:
-    """Read the optional Docker parser escape directive before instructions."""
+    """Read the optional escape parser directive the way BuildKit does.
+
+    Directives are read from the leading lines only: the first line that is not
+    a known directive (a comment, a blank line, an unknown directive or an
+    instruction) ends them, and a later ``# escape=`` is an ordinary comment.
+    Honouring it there let a trailing backtick join the next instruction into a
+    shell comment that Docker never sees.
+    """
     escape = "\\"
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("#"):
+    for raw in text.split("\n"):
+        line = raw.rstrip("\r").lstrip()
+        directive = _DOCKER_DIRECTIVE.match(line, timeout=_pattern_timeout(), concurrent=False)
+        value = line[directive.end() :].strip(" \t\f\r") if directive is not None else ""
+        if directive is None or not value or directive[1].lower() not in _DOCKER_DIRECTIVES:
             break
-        directive = stripped[1:].strip().partition("=")
-        if directive[0].strip().lower() == "escape" and directive[2].strip() in {"\\", "`"}:
-            escape = directive[2].strip()
+        if directive[1].lower() == "escape" and value in {"\\", "`"}:
+            escape = value
     return escape
 
 

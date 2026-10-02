@@ -125,6 +125,12 @@ integrating them:
   `genkit()` constructor evidence. Options past the limit are unread, so the
   scan is still incomplete (exit 3) as before; the error names the call's
   line.
+- Dockerfile comment masking reads the `escape` parser directive as BuildKit
+  does: only from the leading directive lines. A `# escape=` after an ordinary
+  comment, a blank line, an unknown directive or an instruction is a comment.
+  It used to switch the escape character, so a trailing backtick joined the
+  next `RUN pip install ...` into a shell comment and hid its dependencies
+  while Docker ran it.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 
