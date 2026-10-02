@@ -435,6 +435,40 @@ def test_look_ahead_budget_is_proportional_to_the_input() -> None:
         small.spend(small.remaining + 1)
 
 
+def test_backslash_does_not_escape_the_quote_of_a_jsx_attribute_string() -> None:
+    # A JSX attribute string has no escapes, so `title="\"` is complete and the tag ends at its `>`.
+    # Reading the backslash as an escape paired the quotes of the code after it with the tag's.
+    source = (
+        'const a = <a title="\\">x</a>;\nconst OpenAI = require("openai"); const s = \'it"s\';\n'
+        "const b = (n > 1) && <b>y</b>;\n"
+    )
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
+    assert not ambiguous
+    assert [source[start:end] for start, end in ignored] == [
+        '<a title="\\">',
+        "x",
+        "</a>",
+        '"openai"',
+        "'it\"s'",
+        "<b>",
+        "y",
+        "</b>",
+    ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["const a = <a title='it\"s' alt=\"it's\" />;\n", 'const a = <a title="line one\nline two" />;\n'],
+    ids=["other-quote-inside", "spans-lines"],
+)
+def test_jsx_attribute_strings_may_contain_the_other_quote_and_line_breaks(source: str) -> None:
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
+    assert not ambiguous
+    assert [source[start:end] for start, end in ignored] == [
+        source[source.index("<a") : source.index("/>") + 2]
+    ]
+
+
 # --- Long regular expression literals --------------------------------------------------------------
 # Generated Unicode tables (the emoji-regex package is the common one) are single regular expression
 # literals of 10-60 KB. They are not suspicious, and treating them as ambiguous made a scan of any

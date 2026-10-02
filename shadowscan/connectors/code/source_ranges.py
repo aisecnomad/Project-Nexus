@@ -657,13 +657,11 @@ class _JavaScriptLexer:
                 i = end + 2
                 continue
             if text[i] in {'"', "'"}:
-                quote = text[i]
-                i += 1
-                while i < size and text[i] != quote:
-                    i += 2 if text[i] == "\\" else 1
-                if i >= size:
+                # A JSX attribute string has no escapes: `title="\"` is complete, and it may span lines.
+                end = text.find(text[i], i + 1)
+                if end < 0:
                     return self._unterminated(start)
-                i += 1
+                i = end + 1
                 slash = False
                 continue
             if text[i] == "{":
@@ -874,6 +872,8 @@ _COMMENT_END_UNICODE = re.compile("[\n\r\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPAR
 # Java translates unicode escapes before it lexes: `// note \u000a import x;` ends the comment at the
 # escape (group 1). A backslash starts an escape only after an even number of backslashes.
 _COMMENT_END_JAVA = re.compile(r"[\n\r]|(?<!\\)(?:\\\\)*(\\u+000[aAdD])")
+# A PHP line comment also ends at a closing tag: `// note ?> html <?php code();` leaves PHP mode.
+_COMMENT_END_PHP = re.compile(r"[\n\r]|\?>")
 _RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
 # A Swift raw string opens with 1-255 "#" and a quote. Possessive, so that a long run of "#" costs one
 # bounded pass at each position in C instead of 255 steps of Python (13 s for a megabyte of "#").
@@ -897,6 +897,8 @@ def _comment_end_pattern(language: str, dialect: str | None) -> re.Pattern[str]:
         return _COMMENT_END_LF
     if language == "dotnet":
         return _COMMENT_END_UNICODE
+    if language == "php":
+        return _COMMENT_END_PHP
     return _COMMENT_END_JAVA if language == "java" and dialect == ".java" else _COMMENT_END_CR
 
 

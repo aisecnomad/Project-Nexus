@@ -353,6 +353,35 @@ def test_java_text_that_is_not_a_line_break_escape_stays_in_the_comment(text: st
     assert [source[start:end] for start, end in ignored] == [source.split("\n")[0]]
 
 
+@pytest.mark.parametrize("leader", ["//", "#"])
+def test_php_line_comment_ends_at_the_closing_tag(leader: str):
+    # `?>` leaves PHP mode even inside a line comment; the next `<?php` is code again.
+    source = f"<?php {leader} note ?><?php live_code(1); ?>\n"
+    ignored, ambiguous = noncode_ranges(source, "php", ".php")
+    assert not ambiguous
+    assert f"{leader} note " in [source[start:end] for start, end in ignored]
+    assert not any(start <= source.index("live_code") < end for start, end in ignored)
+
+
+def test_php_code_after_a_closing_tag_in_a_comment_is_scanned(tmp_path: Path, run_connector):
+    (tmp_path / "agent.php").write_text("<?php // harmless ?><?php AiServices.builder($foo); ?>\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert findings and any(e.signal.startswith("code:") for finding in findings for e in finding.evidence)
+
+
+def test_php_comments_ended_by_closing_tags_scan_in_linear_time():
+    block = "<?php // note ?> "
+    small, large = block * 2_000, block * 32_000
+    started = time.perf_counter()
+    noncode_ranges(small, "php", ".php")
+    small_time = time.perf_counter() - started
+    started = time.perf_counter()
+    noncode_ranges(large, "php", ".php")
+    large_time = time.perf_counter() - started
+    assert large_time < max(small_time, 0.005) * 64
+
+
 def test_java_comments_ended_by_escapes_scan_in_linear_time():
     # Every comment here is ended by its own escape, with no real line break anywhere. A search that
     # scanned ahead for the next line break before looking for the escape would rescan the rest of the
