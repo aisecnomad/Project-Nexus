@@ -107,7 +107,7 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
         for name, cls in classes.items()
         if any("scanned_local_paths" in vars(klass) for klass in cls.__mro__ if klass is not BaseConnector)
     }
-    assert scanning_local_trees == {"code.filesystem"}
+    assert scanning_local_trees == {"code.filesystem", "code.github", "code.gitlab"}
 
 
 @pytest.mark.parametrize(
@@ -125,6 +125,22 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
 )
 def test_filesystem_declares_the_trees_it_scans(config, expected):
     assert FilesystemConnector.scanned_local_paths(config) == expected
+
+
+@pytest.mark.parametrize("name", ["code.github", "code.gitlab"])
+@pytest.mark.parametrize(
+    "config,expected",
+    [
+        # An offline directory of clones is scanned content; a live run clones privately.
+        ({"input": "/srv/clones"}, ["/srv/clones"]),
+        ({"input": "/srv/clones", "token": "x", "path": "/srv/other"}, ["/srv/clones"]),
+        ({"org": "acme"}, []),
+        ({"input": ""}, []),
+        ({"input": 7}, []),
+    ],
+)
+def test_remote_repository_connectors_declare_their_offline_clones(name, config, expected):
+    assert get_connector_class(name).scanned_local_paths(config) == expected
 
 
 def test_filesystem_root_split_hook_validates_labelled_roots_and_ids(tmp_path):

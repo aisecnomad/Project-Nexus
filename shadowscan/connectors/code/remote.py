@@ -263,6 +263,13 @@ class RemoteRepositoryConnector(BaseConnector):
     clone_timeout_seconds: float
     http: HttpClient
 
+    @classmethod
+    def scanned_local_paths(cls, config: dict[str, Any]) -> list[str]:
+        # Engine hook: an offline directory of clones is scanned content, like a
+        # code.filesystem path; live clones live in private temporary directories.
+        source = config.get("input")
+        return [source] if isinstance(source, str) and source else []
+
     # -------------------------------------------------------------- settings
     def _clone_mode(self, value: Any) -> str:
         mode = str(value)

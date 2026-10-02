@@ -108,7 +108,8 @@ registrations before treating the agent as sanctioned.
 An inventory is an approval list, so whoever can edit it can approve findings.
 When an inventory file or directory (resolved with `realpath`), or a file it
 loads, lies inside a local path that the same run scans with `code.filesystem`
-(including `shadowscan code PATH`), the scan records the warning
+(including `shadowscan code PATH`) or inside the offline clone directory
+(`input`) of a `code.github` or `code.gitlab` entry, the scan records the warning
 `inventory <name> is inside scanned path <path>; scanned content could alter approvals`.
 It also warns once per run for each entry whose resources include a pattern that
 matches every resource, such as `*`, `**`, `?*` or `*?`, which approves every

@@ -539,6 +539,26 @@ def test_inventory_inside_scanned_path_is_a_warning_not_a_failure(tmp_path, inde
     assert result.complete and result.findings
 
 
+@pytest.mark.parametrize("connector", ["code.github", "code.gitlab"])
+def test_inventory_inside_offline_provider_clones_is_reported(tmp_path, index, connector):
+    # Offline clones are scanned content like a code.filesystem path; a pull
+    # request in one of them could approve its own findings.
+    clones = tmp_path / "clones"
+    repo = clones / "acme__agent"
+    repo.mkdir(parents=True)
+    (repo / "agent.py").write_text("from crewai import Agent\nAgent(role='r')\n")
+    (repo / "agents.yaml").write_text(NARROW_CARD)
+    inventory = str(repo / "agents.yaml")
+    config = ScanConfig(
+        connectors=[ConnectorSpec(connector, {"input": str(clones), "use_git": False})], inventory=[inventory]
+    )
+    result = Engine(config, index).run()
+    assert _inventory_warnings(result) == [
+        f"inventory {inventory} is inside scanned path {clones}; scanned content could alter approvals"
+    ]
+    assert result.complete and result.findings
+
+
 def test_inventory_outside_scanned_paths_is_not_reported(tmp_path, index):
     repo = _repo(tmp_path)
     (tmp_path / "agents.yaml").write_text(NARROW_CARD)
