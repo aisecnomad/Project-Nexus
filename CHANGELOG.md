@@ -181,6 +181,13 @@ integrating them:
   block had its arguments lexed again for each word. A skipped comment is now
   remembered with where its trivia ends, and a `(` that several words reach is
   lexed and judged once.
+- A Python source whose PEP 263 cookie names a codec that does not read ASCII
+  as ASCII (`utf_16_le`, `utf-16-be` or `utf_32_le` without a byte-order mark,
+  `utf-7`, HZ, EBCDIC code pages such as `cp037`) is a coverage gap
+  (`binary or undecodable content in analyzable file`). The ASCII file was
+  decoded into other characters, CJK text for UTF-16, and its imports and keys
+  went unanalyzed with no gap reported; CPython refuses most such cookies. A
+  codec error raised as a plain `UnicodeError` is reported as the same gap.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

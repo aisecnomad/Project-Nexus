@@ -60,6 +60,12 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
 # about 30 s for a 1 MB file with the GIL held), so a hostile cookie would stall
 # the scan. Such a file is reported as undecodable instead.
 _SLOW_SOURCE_CODECS = frozenset({"punycode"})
+# Printable ASCII, the tab and the line breaks: a cookie's line is ASCII, and a
+# declared codec must read these bytes as themselves. UTF-16 and UTF-32 without
+# a byte-order mark, UTF-7, HZ and EBCDIC code pages read an ASCII source as
+# other characters (CJK text for UTF-16), which would be analyzed as garbage
+# without a gap; CPython refuses most of them with "encoding problem".
+_ASCII_SOURCE = bytes(range(0x20, 0x7F)) + b"\t\n\r"
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
 # A compact calendar day (yyyymmdd); checked before the epoch form claims it.
@@ -98,7 +104,8 @@ def _python_source_text(raw: bytes) -> str | None:
     A cookie naming UTF-8, an unknown codec or a codec that is not a text
     encoding leaves the caller's default decoding in place (the interpreter
     cannot run such a file either). A text codec that cannot decode the bytes,
-    or that is too slow to run on untrusted input, is a coverage gap.
+    that does not read ASCII as ASCII (see ``_ASCII_SOURCE``), or that is too
+    slow to run on untrusted input, is a coverage gap.
     """
     try:
         declared, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
@@ -110,10 +117,12 @@ def _python_source_text(raw: bytes) -> str | None:
     if codec in _SLOW_SOURCE_CODECS:
         raise ValueError(BINARY_CONTENT_ERROR)
     try:
+        if _ASCII_SOURCE.decode(declared) != _ASCII_SOURCE.decode("ascii"):
+            raise ValueError(BINARY_CONTENT_ERROR)
         return raw.decode(declared)
     except LookupError:
         return None
-    except UnicodeDecodeError:
+    except UnicodeError:
         # Name the gap, not the position or byte the decoder rejected.
         raise ValueError(BINARY_CONTENT_ERROR) from None
 

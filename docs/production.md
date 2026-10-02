@@ -1536,7 +1536,10 @@ New incomplete (exit 3) and configuration-error outcomes:
   analyzable file`. Fix the file or add it to `exclude`. UTF-8, UTF-16 and
   UTF-32 files with a byte-order mark, and Python sources with a PEP 263 coding
   cookie, are now decoded and analyzed, so dependency lists, `.env` files and
-  sources that used to read as empty can add findings.
+  sources that used to read as empty can add findings. A cookie naming a codec
+  that does not read ASCII as ASCII (`utf-16-le` without a byte-order mark,
+  `utf-7`, an EBCDIC code page such as `cp037`) is the same coverage gap: an
+  ASCII file decoded that way became other characters and was not analyzed.
 - **List options.** A bare string for `exclude` or `paths` (`exclude:
   "vendor/*"`, `--set exclude=vendor/*`) is a configuration error. It used to be
   split into characters, which excluded the whole tree and reported a complete,

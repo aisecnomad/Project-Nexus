@@ -29,7 +29,9 @@ coverage, even when a response includes an empty collection field.
 
 * Source and manifest inputs are decoded from UTF-8, from UTF-16 or UTF-32
   with a byte-order mark, and for Python from the declared PEP 263 codec. An
-  analyzed file with binary or undecodable content leaves coverage incomplete;
+  analyzed file with binary or undecodable content, or whose declared codec
+  does not read ASCII as ASCII (UTF-16 or UTF-32 without a byte-order mark,
+  UTF-7, EBCDIC), leaves coverage incomplete;
   ordinary binary assets are not text evidence. IAM wildcard and
   agent-definition front-matter matching shares the bounded matcher budget;
   keep an external worker/job deadline for hard isolation.
