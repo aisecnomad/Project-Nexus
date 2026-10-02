@@ -49,6 +49,7 @@ from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
+from shadowscan.utils.git import terminate_active_clones, terminate_clones_on_signal
 from shadowscan.utils.output import (
     encodable_text,
     prepare_private_directory,
@@ -146,6 +147,8 @@ def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
             except Exception:  # noqa: BLE001 - still try the other stream and exit
                 pass
     finally:
+        # An abandoned worker may still be waiting to stop its own clone.
+        terminate_active_clones()
         os._exit(code)
 
 
@@ -205,7 +208,10 @@ def _run_and_emit_with_deadline(
         log.warning("plugin registry: %s", problem)
     try:
         engine = Engine(cfg, progress=progress if verbose else None)
-        result = engine.run(only=only)
+        # Connectors run on worker threads, which cannot install signal
+        # handlers: a termination signal must stop live clones from here.
+        with terminate_clones_on_signal():
+            result = engine.run(only=only)
     except SetupError as exc:
         # SetupError messages are credential-free by contract (shadowscan.errors).
         raise click.ClickException(str(exc)) from None

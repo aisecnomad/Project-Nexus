@@ -40,7 +40,10 @@ class GitHubAppsConnector(BaseConnector):
     )
     config_keys: ClassVar[dict[str, str]] = {
         "org": "organisation login (env GITHUB_ORG)",
-        "token": "org admin token (env GITHUB_TOKEN)",
+        "token": (
+            "org admin token (env GITHUB_TOKEN, which code.github also reads by default: "
+            "give each connector a variable of its own)"
+        ),
         "api_url": "default https://api.github.com",
         "input": "offline: installations JSON",
         "include_unrecognized_apps": (

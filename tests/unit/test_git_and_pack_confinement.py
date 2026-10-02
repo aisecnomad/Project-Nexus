@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 
 import pytest
 
@@ -10,7 +12,13 @@ from shadowscan.connectors.code import github as github_mod
 from shadowscan.connectors.code import remote as remote_mod
 from shadowscan.registry import Inventory
 from shadowscan.signatures.loader import load_signatures
-from shadowscan.utils.git import clone_environment, git_argv_prefix, validate_git_ref
+from shadowscan.utils.git import (
+    clone_environment,
+    git_argv_prefix,
+    git_config_overlay,
+    safe_git_env,
+    validate_git_ref,
+)
 
 
 @pytest.mark.parametrize(
@@ -254,3 +262,63 @@ def test_inventory_glob_matching_nothing_is_an_error_like_a_missing_path(tmp_pat
         Inventory.load([tmp_path / pattern])
     result = CliRunner().invoke(main, ["code", str(tmp_path / "inv"), "--inventory", str(tmp_path / pattern)])
     assert result.exit_code == 1 and "inventory glob matched no files" in result.output
+
+
+def _clone_settings(env):
+    return {
+        env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+
+
+def test_clone_environment_makes_git_verify_the_objects_it_receives():
+    settings = _clone_settings(clone_environment("https://github.com", "token", "x-access-token"))
+    assert settings["transfer.fsckObjects"] == "true"
+    assert settings["fetch.fsckObjects"] == "true"  # fetch.* takes precedence over transfer.* for a clone
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+def test_hardened_clone_takes_ordinary_repositories_and_refuses_malformed_objects(tmp_path):
+    """No HTTPS server in tests: the real clone settings, except that a local repository may be read."""
+    env = clone_environment("https://github.com", None, "x-access-token")
+    pairs = [(key, value) for key, value in _clone_settings(env).items() if not key.startswith("protocol.")]
+    hardened = safe_git_env(git_config_overlay([*pairs, ("protocol.file.allow", "always")]))
+    unchecked = safe_git_env(
+        git_config_overlay(
+            [(k, v) for k, v in [*pairs, ("protocol.file.allow", "always")] if "fsckObjects" not in k]
+        )
+    )
+
+    def git(*args, check=True, **kwargs):
+        return subprocess.run(["git", *args], env=safe_git_env(), check=check, capture_output=True, **kwargs)
+
+    origin = tmp_path / "origin"
+    git("init", "-q", "-b", "main", str(origin))
+    (origin / "app.py").write_text("print('hello')\n")
+    git("-C", str(origin), "add", "-A")
+    git(
+        *("-C", str(origin), "-c", "user.name=Test", "-c", "user.email=test@example.test"),
+        *("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"),
+    )
+    good = git("-C", str(origin), "rev-parse", "HEAD").stdout.decode().strip()
+    tree = git("-C", str(origin), "write-tree").stdout.decode().strip()
+    # A commit without an author address: accepted by a plain clone, refused by fsck (missingEmail).
+    malformed = f"tree {tree}\nauthor Nobody 1 +0000\ncommitter Nobody 1 +0000\n\nmalformed\n".encode()
+    bad = (
+        git("-C", str(origin), "hash-object", "-t", "commit", "-w", "--literally", "--stdin", input=malformed)
+        .stdout.decode()
+        .strip()
+    )
+
+    def clone(commit, environment, name):
+        git("-C", str(origin), "update-ref", "refs/heads/main", commit)
+        return subprocess.run(
+            [*git_argv_prefix(), "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch", "--"]
+            + [f"file://{origin}", str(tmp_path / name)],
+            env=environment,
+            capture_output=True,
+            check=False,
+        ).returncode
+
+    assert clone(good, hardened, "ordinary") == 0
+    assert clone(bad, unchecked, "unchecked") == 0  # the malformed commit is only refused by the setting
+    assert clone(bad, hardened, "refused") != 0

@@ -218,8 +218,12 @@ makes the scan incomplete.
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
-matching LLM providers. Token: fine-grained PAT or GitHub App token with
-`contents:read`, `metadata:read`; `secrets:read` for secret names. Offline
+matching LLM providers. Token: a fine-grained PAT or GitHub App token with
+read-only Contents and Metadata, plus Secrets, Variables, Codespaces secrets and
+Dependabot secrets (each repository is asked for the names in all four; a denied
+one adds `repository metadata HTTP 403; coverage unknown` and makes the scan
+incomplete; see the [connector reference](../connectors.md#codegithub)). Use a
+variable of its own for the token rather than a shared `GITHUB_TOKEN`. Offline
 input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.
@@ -229,6 +233,16 @@ requested name is incomplete, and that response is not scanned.
 An org or user listing entry whose `full_name` is not a plain `owner/name`
 (letters, digits, `.`, `_` and `-`, never a `.` or `..` segment) is an error
 that makes the scan incomplete; that repository is never requested or cloned.
+The listing is read to the end, in `full_name` order, before the first repository
+is cloned or scanned, so a push during the scan cannot move an unlisted
+repository out of it. A listing that fails part-way, or exceeds `max_repos`,
+still has the repositories already listed scanned and makes the scan incomplete.
+A clone populates no submodule (reported by the filesystem scan of the checkout;
+see the [coverage policy](../scanning.md#coverage-policy)) and runs no Git LFS
+smudge filter: a repository whose files include LFS pointer files is reported as
+`Git LFS pointer files in <repo> are not resolved` and makes the scan incomplete
+(an error under `strict_coverage`), as does a clone that could not be checked for
+them. API mode reports LFS pointer files the same way.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository
@@ -241,6 +255,11 @@ removed. Directory symlinks are not followed during measurement. Checks occur
 between Git writes, so brief overshoot is possible, and this is not a network
 transfer limit. Use a dedicated filesystem/container disk quota to enforce a
 strict disk ceiling; `clone_timeout_seconds` (default 120) bounds clone time.
+Cloning requires Git 2.32 or newer (older versions ignore the environment
+settings that confine a clone); with an older or unidentifiable Git the
+connector uses sampled API mode and the scan is incomplete. (The gitlink
+inventory of a clone needs Git 2.45; with 2.32 to 2.44 a clone is scanned but
+reports that submodule coverage is unknown.)
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -256,6 +275,10 @@ input with no clone directories, make the scan incomplete.
 A group listing entry whose project `id` is not a positive integer is an error
 that makes the scan incomplete; that project is skipped before any request is
 made for it, and the other projects in the listing are still scanned.
+The group listing is ordered by project `id`, read to the end before the first
+project is cloned, and compared with the `X-Total` / `X-Total-Pages` totals GitLab
+reports (it omits them for very large groups); a mismatch makes the scan
+incomplete. LFS pointer files are reported as for GitHub.
 GitLab clones use the same observed `clone_max_bytes` and timeout behavior as
 GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
 it does not replace a filesystem/container disk quota.
