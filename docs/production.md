@@ -10,492 +10,12 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
-## October 2 production review migration
-
-Review framework attribution in projects using npm dependency aliases before
-replacing enforcement baselines: the registry target now supplies dependency
-identity. This identifies a declared dependency, not runtime execution or
-cross-file resolution of imports through the alias. Malformed alias targets
-make source coverage incomplete (exit 3).
-
-CSV inventory approvals preserve embedded line separators in quoted resource
-and scope fields. Review previously generated reports if an inventory used such
-fields: a value that previously lost its separator is now a different identity
-and no longer confers the same approval. Ordinary single-line inventories are
-unaffected.
-
-Malformed evidence in imported reports is rejected before correlation or risk
-processing; malformed incremental cache entries are ignored and fully rescanned.
-Notion and Atlassian provider error envelopes and malformed Google Workspace user
-suspension flags now produce incomplete collection rather than a complete empty
-result. Valid neighboring Google Workspace users remain eligible for collection.
-Resolve the reported input or provider failure before accepting the scan.
-
-The connector coverage gate now rejects a report that does not name every
-module under `shadowscan/connectors/` in the checkout, and malformed counts
-(exit 2). Generate its JSON from a full coverage run; a selected-test report is
-not evidence for all connectors. The 75% per-module floor over statements and
-branches is unchanged. Wheel validation uses private temporary storage and
-cleans it up after success or failure.
-
-These changes have offline regression coverage. They do not replace independent
-human review, a fresh labeled holdout or authorized tenant acceptance checks.
-
-## October 2 hygiene review migration
-
-Re-run scans and compare MCP tool/capability labels before updating enforcement
-baselines: inert examples and unreferenced enum members no longer count as
-registered tools. Live GCP, Azure, OCI and Slack records keep collector-assigned
-classification and scope when response fields share those names. Invalid
-discovered GCP project identifiers are skipped with incomplete coverage.
-
-Gateway records with timestamps outside the representable UTC range now fail
-before updating caller state. A malformed record still makes coverage incomplete,
-while valid neighboring observations remain available for review.
-
-Tenant-canary verification now groups records and findings by exact resource
-identity before checking controls and reads record dumps incrementally under
-the existing size cap. The declared scope and acceptance selectors still apply;
-this optimization does not establish a tenant-scale latency or memory SLO.
-
-Re-render retained sensitive reports where possible: diagnostic sanitization
-now preserves context across errors, warnings and skip reasons, and JSON
-statistics are checked together. Continue treating reports as sensitive; no
-redaction rule recognizes every possible secret or private datum.
-
-CI and `make check` now enforce the bounded secret-pattern gate over every
-tracked text file. The intentional test, signature-pack and evaluation-corpus
-exemptions require review. The evaluation path contract now rejects ambiguous case/Unicode names,
-file/directory collisions and components over 255 UTF-8 bytes. Correct such
-layouts before re-running a private holdout; do not silently rename its samples
-after freezing the acceptance policy.
-
-These checks are offline regression evidence. They do not establish independent
-human approval, a representative field accuracy measurement or live tenant
-acceptance. Verify the current required-check configuration under
-[release verification](#release-verification) before merging or deploying.
-
-## October 2 review remediation
-
-Collect a fresh baseline after upgrading: dependency examples confined to Gradle
-or Dockerfile comments no longer establish framework usage, while active
-declarations and credentials inside comments are still reported. Do not read the
-disappearance of a comment-only finding as a remediation.
-
-The new regression cases are authored from observed defects. They do not replace
-the [fresh human-reviewed holdout](evaluation.md#build-a-genuinely-held-out-field-set),
-independent review of the final candidate, or [live tenant canaries](canaries.md).
-Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
-on real evidence for the intended population and tenant scopes. Record unmet
-requirements as unmet; do not substitute offline replays or AI-generated labels.
-
-## October 2 detection and assurance migration
-
-Name/value credential redaction now reuses line bounds and first-content
-positions. Long lines containing repeated record names previously caused
-quadratic prefix scans and copies; those queries now perform linear character
-work. Credential withholding and record/list boundaries are unchanged. Existing
-matching budgets still fail closed, and timing regressions remain checks of the
-implementation rather than tenant throughput guarantees.
-
-JavaScript/TypeScript calls exceeding the bounded semantic-analysis budget now
-make the scan incomplete (exit 3). This includes long constructor arguments;
-an unchanged framework-usage finding is no longer evidence that agent analysis
-completed. Review the diagnostic and source, then provide an analyzable input
-or explicitly narrow the intended scope before using the result as a gate.
-Neighboring findings remain available for investigation.
-
-Binary-looking `.ts` files also make source coverage incomplete. Packet bytes
-cannot distinguish a video segment from TypeScript containing a padded comment.
-Review the affected paths and explicitly exclude verified media directories
-with the connector's `exclude` policy when they are outside the intended source
-scope. Recognized binary assets selected only by a directory-wide configuration
-glob keep their existing treatment.
-
-Failed incremental cache-decision hooks now mark connector coverage incomplete;
-built-in validation diagnostics remain available, while plugin hook failures
-expose only exception types.
-
-Zapier ignores wholly blank text rows only when a recognized identity column
-is present. Unknown JSON keys or CSV headers make coverage incomplete; existing
-padding rows under valid Zapier headers remain accepted.
-
-Generic Genkit initialization and standalone flow/tool declarations are
-framework evidence. Supported explicit agent definitions and concrete model
-calls using registered tools establish stronger configured behavior. Review
-changed kinds, capabilities and risk scores, then collect a fresh comparison
-baseline. Tool registration must resolve to a direct module-level initializer
-or a standalone call with an explicit statement boundary; dynamic bindings and
-uncertain boundaries remain supporting framework evidence. The added examples
-are authored regressions; obtain fresh
-human-reviewed evidence using the
-[holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
-
-The shared HTTPS client now bounds response acquisition, including status and
-headers, separately from body delivery. Cancellation closes the active socket
-before that connection can be reused. System DNS resolution cannot be forcibly
-interrupted in a Python worker thread; a result arriving after the acquisition
-budget is rejected before connection. External SDK calls retain their own
-transports. Keep a process/job supervisor for a hard end-to-end execution limit.
-
-The aggregate `CI gate` also requires container security checks for the exact
-built image. CI retains the image identity, OS/Python SBOM and vulnerability
-result; HIGH/CRITICAL vulnerabilities, scanner errors and unavailable database
-updates fail the gate. These results depend on the database at scan time.
-Record the deployed image digest and rescan that exact image before deployment;
-an earlier source commit or Docker tag does not identify its bytes. Apt still
-uses live Debian mirrors, so independently rebuilding the source does not
-produce a guaranteed identical image.
-
-The first October 2 container scan found HIGH-severity Debian advisories,
-including advisories without a recorded stable-package fix. The worker build
-now upgrades base packages from the enabled Debian archives before installing
-Git and certificates. This applies available fixes; it does not establish that
-the resulting image is vulnerability-free. Retain the rebuilt image's actual
-scan, and keep the candidate blocked while HIGH/CRITICAL findings remain.
-Do not remove unfixed findings from the gate to turn it green.
-
-The release-evidence workflow now verifies active merge protections before
-building a candidate. Use the settings preparation and readback commands in
-[merge gate and review status](#merge-gate-and-review-status) to restore the
-existing ruleset without dropping checks, approvals or bypass restrictions.
-Neither merging this source change nor a prepared JSON patch changes GitHub
-settings. The release check fails if the API identity cannot expose bypass
-actors; it does not infer an empty list from an omitted field. Do not grant
-write credentials to the build job to suppress that failure.
-
-Complete AWS/Slack and separately credentialed permission-denied
-[tenant canaries](canaries.md) in the authorized deployment scope. For other
-connectors, retain connector-specific live evidence. Bind those receipts and a
-fresh human-reviewed holdout to this exact source/signature revision with the
-[acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
-Independent human review of the final revision remains required before release.
-Offline replay and the new CI checks cannot supply these attestations.
-
-## October 1 scan integrity remediation
-
-Rollout effects of the remediation listed in the changelog. Re-run any baseline
-collected before this revision: some scans that previously finished complete now
-finish incomplete because the earlier result hid a gap.
-
-- **More exit 3 on real estates.** Expect new incomplete diagnostics for files
-  with source or config names that hold a NUL byte, any file without a
-  supported export suffix in a connector's offline input directory (rotated
-  logs, a `README.md`, `.DS_Store`), unnamed `saas.generic` rows and negative
-  gateway usage. Fix the input (exclude the path, remove the extra files or point
-  `input` at the export file, supply rotated logs by name, map the name column)
-  rather than ignoring exit 3. Do not read a finding that disappeared before this
-  revision as resolved; compare only complete scans of the same scope.
-- **Notices are not completeness.** The default-exclude notice and the AWS/GCP
-  default-region notice are warnings that leave the scan complete. Scope a scan to
-  an excluded directory as its own root, or set `regions` (AWS) or `locations`
-  (GCP), to cover it. Review the
-  notices before treating a clean report as estate-wide.
-- **New report fields.** `collection_scope.not_run`, finding metadata
-  `registry_match_assurance` and tag `registry-identity-unverified`, and
-  `signature_verified` on JWT findings are additive. A gateway finding approved
-  only by an operator-asserted caller name is still registered; treat that match
-  as unverified until the caller binding is authenticated.
-- **CSV consumers.** An incomplete CSV report has a first data row with
-  `id=SCAN-INCOMPLETE`, `kind=scan-status` and the unfinished connectors in the
-  `connector` column. Skip or alert on it; exit code 3 remains the primary signal.
-- **Redaction.** Reports withhold more than before: `--passphrase`, `--pat`
-  and `--auth` option values, whole PGP private key blocks (earlier reports
-  could show a block's body when its first line followed a name such as
-  `private_key:`), every cookie in a `Cookie` header, compact `x-api-key:S` and
-  `password:S` values, unquoted values containing `;`, escaped-quote JSON values, the
-  URL query keys `auth`, `pwd` and `pat`, Fireworks `fw_` keys and provider
-  tokens next to non-Latin text. Reports generated before this revision can
-  contain those values: regenerate them, restrict or delete the old copies, and
-  rotate any key, PGP private key or session cookie they show. Expect extra
-  `[REDACTED]` markers (`ffmpeg -pass 1`, the text after `;` in `NAME=S;rest`,
-  the scheme after `Authorization:`). Finding IDs built from sanitized
-  resource fields can change where those fields held such values.
-- **Credential digest (open item).** Code and cloud findings (credentials in
-  source files, and in cloud environment variables and app settings) still
-  carry `credential:sha256:<digest>`, an unsalted SHA-256 of the raw credential
-  used for stable finding identity. Anyone holding a report can confirm a
-  candidate credential against it. Gateway reports carry only scan-local
-  `credential:hmac-sha256:` identifiers; the public digest appears only in the
-  operator's gateway binding configuration, which must stay private. Treat
-  reports as sensitive, and plan an operator-supplied keyed digest, which
-  changes finding identity and bindings, as a separate migration.
-- **Lower risk for routine scope names.** OIDC `offline_access`, Salesforce
-  `full`, `web` and `refresh_token`, GitLab `api`, GitHub `workflow` and Slack
-  `admin` no longer match `policy.privileged-scopes`, because scopes are
-  matched by bare name across providers. Findings that held only these scopes
-  lose that risk factor and can drop a risk level. GitLab `api` and GitHub
-  `workflow` remain powerful on their own providers: review those grants by
-  hand rather than relying on the risk level.
-- **Private CA.** Set `ca_bundle` on `identity.jwt` to a PEM file to scan an
-  endpoint behind internal PKI; TLS verification stays on and the bundle replaces
-  the default store. A relative path resolves beside the configuration file.
-  Other connectors do not accept it yet.
-- **Known limits.** The default 120 s connector deadline cannot finish a roughly
-  20,000-file repository or a 30 MiB gateway log (raise
-  `connector_timeout_seconds`); gateway finding IDs are scan-local unless
-  `SHADOWSCAN_IDENTITY_KEY` is set, so `diff` of gateway findings between
-  unkeyed runs is not stable; logfmt gateway lines still use last-key-wins
-  for `host`.
-
-## October 1 review migration
-
-Collect a fresh baseline after adopting the review corrections. Named Python
-direct-reference dependencies now use their declared package identity, and
-Python source analysis excludes provably unreachable local statements and loop
-bodies. Findings may appear or disappear, or change framework attribution;
-inspect those differences before using a comparison to enforce policy. The
-analysis remains bounded and does not prove runtime or interprocedural behavior.
-
-Opt-in Git enrichment now limits combined command output to 16 KiB, author and
-email fields to 1,024 characters each, and timestamps to 64 characters. Exceeded
-limits, malformed metadata, cancellation and deadlines retain source findings
-while making coverage incomplete. Re-run affected repositories with reviewed
-metadata or with history enrichment disabled; an incomplete scan cannot establish
-resolution of earlier findings.
-
-Credential redaction recognizes more constructor, environment fallback, record,
-command and query forms. The redaction policy token changes automatically with
-these rules. Regenerate persisted reports, exports and incremental baselines
-before sharing or reusing them, because an older artifact can contain values
-now withheld. Reports remain sensitive: ambiguous comment-only credential hints
-and arbitrary computed expressions do not establish safe public disclosure.
-
-Production acceptance policies may now freeze aggregate and per-kind
-`min_precision_lower95`, `min_recall_lower95` and `min_specificity_lower95`
-thresholds together. Successful decisions expose the recomputed 95% Wilson lower endpoints;
-the revised example also sets per-kind sample floors. Existing point-estimate
-policies retain their behavior. Freeze confidence thresholds before collecting
-new independently human-labeled holdout evidence, rather than tuning a policy to
-a previously observed result. A small perfect sample need not pass these gates.
-
-The [versioned merge policy](operations/merge-policy.md) and offline snapshot
-checker prepare the requested review and CI enforcement. They cannot activate
-live settings through the connected GitHub App. Administrator activation,
-independent human approval and approved tenant acceptance remain outstanding.
-
-## October 2 repository hygiene
-
-Agentforce metadata that declares XML entities or attribute defaults is no
-longer parsed, so a previously complete scan can become incomplete (exit 3):
-remove the declarations, or exclude the file if it is not deployed metadata.
-Embedders that imported the non-strict `bounded_safe_load_all` must switch to
-`strict_bounded_safe_load_all`.
-
-## October 1 discovery review migration
-
-Review finding kinds, capabilities and risk scores before replacing an existing
-baseline. Ordinary Java chat-client construction and standalone tool declarations
-are framework evidence; they do not by themselves establish an agent. Explicit
-agent factories and supported concrete tool-registration patterns remain evidence
-of construction or configuration, never proof of runtime execution.
-
-Supported import-bound constructors in OpenAI Agents SDK, CrewAI, Pydantic AI,
-LangGraph and LangChain no longer inherit a framework's advertised features as
-configured workload capabilities. Empty tool/handoff collections and disabled
-delegation do not contribute those capabilities or their risk factors. Unknown
-features can remain potential capabilities in metadata; review the supporting
-source before relying on a capability label for enforcement.
-
-Submodule declarations whose source is missing or empty make source coverage
-incomplete (exit 3). Clone collection also checks the immutable Git tree for
-submodule entries. The scanner does not initialize submodules or contact their
-URLs. Supply the intended source in a separately reviewed checkout or explicitly
-exclude it from the declared scan scope; do not interpret an incomplete result
-as an absence of agents. See [coverage policy](scanning.md#coverage-policy) for
-the collection modes and limitations.
-
-The new kind and capability examples are authored regressions. Keep the frozen
-AI-labeled corpus unchanged and obtain fresh human-reviewed field evidence using
-the [holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
-Include ordinary Java chat applications, explicit empty/disabled capabilities,
-positive tool/delegation controls and incomplete source checkouts in the sampling
-plan. Predeclare kind, product and capability labels before revealing scanner
-results. AWS/Slack live acceptance still requires the authorized complete and
-permission-denied [tenant canaries](canaries.md); other deployment scopes require
-their own connector-specific evidence.
-
-## September 27 migration and acceptance
-
-The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
-from the reviewed revision into a fresh virtual environment; do not overlay it
-on a previous `shadowscan` distribution, because both use the same Python import
-and command paths. The CLI, Python imports, connector entry-point group and
-report schemas retain the `shadowscan` name. This rename does not publish a
-package or reserve the package-index namespace.
-
-Offline exports, approval inventories, imported reports, dependency manifests,
-notebooks and agent/MCP configuration with duplicate or non-finite data now fail
-validation. Affected scans are incomplete while valid neighboring evidence is
-retained. JSON readers and writers also reject `NaN`, infinities and exponent
-overflow rather than accepting non-standard values. Obtain an unambiguous,
-standards-compliant source and rerun collection; do not treat empty findings
-from rejected input as evidence that an earlier finding resolved.
-Conflicting schema aliases, case-folded CSV headers, pagination cursors and
-multiple records for one provider identity also make coverage incomplete. The
-scanner quarantines only the ambiguous identity where the format permits it and
-continues to retain findings from unambiguous neighboring records.
-Ordinary deterministic graph/flow construction and text generation without
-enabled tool execution no longer establish agent behavior. Source capabilities
-also stop inheriting unsupported features solely from framework membership.
-Review changed kinds, capabilities and risk scores, then collect a fresh baseline
-before using these reports in an enforcement decision.
-
-Built-in connector options now apply the same schema to YAML-loaded and
-programmatically constructed configurations. Connector option booleans accept
-explicit case-insensitive true/false forms; the connector `enabled` field also
-retains its documented aliases. Ambiguous values, unknown built-in keys and
-reserved keys fail before collection. Plugin keys remain plugin-defined, while
-cycles, excessive nesting and non-finite values still fail at the scanner
-boundary. Mutable risk and deadline settings are revalidated before every run.
-Configured inventory is reloaded for every run, including the first run after
-engine construction, so an approval file changed between construction and
-execution cannot supply a stale match.
-
-HTML and CSV reports, whether sent to stdout or written with `-o`, render
-terminal control and bidirectional-formatting characters visibly (tab and line
-breaks remain data in CSV; tab and line feed in HTML), so `cat` or `less` on a
-saved report cannot execute escape sequences taken from a scanned log. Output
-sent to stdout also renders zero-width characters, the byte-order mark and
-Unicode tag characters visibly, and a lone surrogate (which no encoder accepts,
-and which a name read from an export can hold) is written as the escape text
-`\ud800` in every format. Reporter boundaries sanitize copied diagnostics without
-mutating in-memory scan state, ignore malformed related-finding metadata, preserve
-valid SARIF source paths and reject non-finite JSON. Serialization failures stop
-before stdout or an existing output file is changed; table output preflights
-diagnostics before emitting its header. Continue to treat reports as sensitive:
-these controls do not authorize publication of tenant or source data.
-
-Incremental scans now bind cache fingerprints to Python/platform, parser/regex
-and Git runtime versions. Git-aware reuse refuses `.git` indirection, and tree
-hashing, Git metadata, cache reads and post-scan maintenance cooperate with
-cancellation and connector deadlines. Startup maintenance has its own two-second
-monotonic budget; exceeding it disables cache reuse for that run so collection
-continues as a full scan. Enumeration is bounded by entries, depth, time and
-bytes. Cache maintenance applies a 30-day TTL, 256-entry and 512 MiB aggregate
-limits, deterministic oldest-access eviction and removal of stale pending and
-orphan-lock files. Post-lock inode checks prevent cleanup from splitting a slot
-across stale and replacement lock files. These are implementation defaults, not
-evidence of field accuracy; rebuild the incremental state when changing rollout
-baselines.
-
-Google Workspace domain-wide delegation pins the signed assertion audience and
-token exchange to `https://oauth2.googleapis.com/token`; a service-account
-document's `token_uri` cannot redirect the credential exchange.
-
-The `CI gate` job combines documentation, Linux Python 3.11–3.13, a dedicated
-container security job, macOS Python 3.11 and 3.13, and DCO for pull
-requests. Core/development, runtime, build and documentation dependency sets are
-hash-locked, and CI audits all four. Add `CI gate` to the live required checks
-while retaining existing checks and independent approval. Verify the platform
-setting before claiming it is enforced: a workflow cannot change a branch
-ruleset by declaring a job.
-
-The revised synthetic cases remain regression data. Freeze a fresh population,
-human labels and acceptance policy using [the holdout procedure](evaluation.md#gate-a-frozen-holdout),
-then run the [scope-specific evidence gate](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
-For AWS or Slack deployments, retain complete and separately credentialed
-permission-denied receipts from [approved tenant canaries](canaries.md).
-Other connectors need their own acceptance evidence. The existing bundled
-corpora, replays and mocked transports do not meet these live requirements.
-
-After independent review, merge and successful exact-commit CI and CodeQL,
-exercise the manual release-evidence workflow described below. Retain its
-candidate, attestation and `release-publication-input-<SHA>` artifacts together.
-The latter contains the exact attested wheel bytes and is an input to a possible
-future OIDC trusted-publishing job; it does not publish anything or approve a
-release. Evidence from an earlier main commit does not cover these source or
-package changes, and local wheel checks do not establish GitHub-hosted provenance.
-
-## September 25 migration and acceptance
-
-Rebuild finding and comparison baselines after adopting the scanner-boundary
-corrections. Google Workspace customer attribution, unresolved permission/workflow
-identities, and semantic provider-dispatch classification can change finding IDs,
-registry status or finding kinds. Review existing inventory bindings and retain the
-previous pinned scanner and reports for rollback. Unresolved identity is evidence
-for investigation, not a resource that can be approved through an inventory card.
-
-For Google Workspace, add `admin.directory.customer.readonly` to the audit
-identity's approved scopes before live collection. The read-only customer lookup
-must establish a concrete customer ID, even for an empty tenant. Offline runs
-require that verified ID in `customer`. Regenerate accountless Google Workspace
-inventory cards with an explicit customer binding; an old globally scoped OAuth
-client card no longer approves grants across tenants. Re-run tenant acceptance
-after changing audit permissions. No live Google tenant validation is implied by
-the mocked provider-contract tests.
-
-Source excerpts now redact sensitive environment-call arguments, and repository
-connector debug diagnostics omit raw exception payloads. Run the synthetic report
-and log checks before distributing reports; redaction remains a defense in depth
-control, not permission to publish private source or unrestricted tenant exports.
-The sanitizer also propagates opaque secret values found in nested credential
-objects or lists to sibling fields in the same finding or connector record export.
-It leaves common credential descriptor labels intact so resource identity remains
-useful; the containing credential field is still redacted. Recheck stored reports
-and exports containing nested credential data before sharing or reusing them,
-because earlier scanner versions could leave an identical value in an unrelated
-description. Synthetic regressions exercise this path; no live tenant validation
-is implied.
-
-The two holdout acceptance paths share source-overlap checks. Copying or renaming
-previously evaluated source does not create new independent observations; repeated
-holdout sources cannot satisfy sample minima or tighten uncertainty estimates.
-Freeze a fresh independently human-labeled sample and its policy before evaluation.
-Neither these checks nor a passing regression suite supplies that human review or
-real tenant canary evidence.
-
-Slack findings now use the immutable workspace ID as `account`; workspace names
-are display metadata. Update inventory account bindings and collect a fresh
-Slack baseline after upgrading. An offline
-export must include a valid team record or an explicit operator-supplied
-`team_id`; conflicting workspace identities cannot establish attributed findings.
-Teams records without valid app identity make collection incomplete while valid
-neighboring observations remain available.
-
-Code findings can change after this scanner update. A single OpenAI Responses
-action requires an import-bound request and source-linked model-selected dispatch;
-it supplies tool-use evidence without asserting repeated autonomous execution.
-An iterative function loop additionally requires matching feedback to the next
-request. Provider analysis rejects unrelated dispatch, unreachable literal branches
-and locally shadowed execution calls. Reconcile a fresh code
-baseline and review changed finding identities before using `--fail-on` as an
-enforcement gate. Offline source tests establish these paths, not runtime use.
-
-Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
-required evidence for the intended deployment scope. It checks artifact identity,
-freshness and declared review/metric requirements. It does not authenticate
-reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
-tests into operational evidence. Keep receipts and human attestations in controlled
-audit storage and review their origin. Unsupported live connectors still require
-their own acceptance work; they cannot inherit an AWS or Slack result.
-
-The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
-requires successful main-branch CI and CodeQL runs for the exact selected commit.
-It rejects modified, untracked and ignored checkout files, builds from a clean
-`git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
-and produces GitHub artifact provenance. It then assembles the candidate and
-attestation bundles without rebuilding the wheel. It does not publish to PyPI,
-create a release, or declare tenant acceptance. Review and retain its artifacts
-before a separate maintainer publication decision.
-
-After merge and successful push CI, dispatch **Release candidate evidence** on
-`main` with `expected_commit` set to the full current main SHA, `ci_run_id`
-set to that commit's successful CI run ID, and `codeql_run_id` set to its
-successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
-failed checks and other workflows. Retain `release-candidate-<SHA>`,
-`release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
-hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
-attestations before publication. A future publisher must use the wheel in that
-publication-input artifact, not rebuild from a tag. Configure an environment-
-protected PyPI trusted publisher and grant `id-token: write` only in that future,
-isolated publication job. The current workflow deliberately has no package-index
-permission or upload action.
-
-The runtime SBOM covers locked Python core/cloud dependencies. It is not a
-container or operating-system SBOM and does not cover the base image, Git,
-CA certificates or other Debian packages. Generate and review a container/OS
-SBOM for the exact deployed image digest as a separate release control.
+The operator sections come first: installing a reviewed revision, the explicit
+security, Git and resource policies, release verification and rollout acceptance.
+Dated change and migration notes for the unreleased candidate follow them under
+[Candidate change history](#candidate-change-history). Nothing has been published,
+so those notes describe differences between candidate builds, not between
+releases.
 
 ## Install from a reviewed revision
 
@@ -898,604 +418,6 @@ A worker's soft connector timeout is not a hard kill for every child process.
 A local checkout example, such as
 `examples/github-action-code-scan.yml`, does not exercise the remote clone path.
 
-## Output and inventory migration
-
-Reports and inventory stub files now use atomic 0600 writes. An existing
-character device given as the report path, such as `/dev/null`, is written in
-place instead of being replaced. An existing named pipe is written in place only
-when you own it with mode 0600 and a reader already has it open. Sockets,
-directories and other non-regular paths are refused. Inventory stub and
-record-export directories are created as 0700; existing non-private directories
-are rejected without changing their permissions. Use dedicated directories for
-these outputs.
-
-The Markdown reporter defangs bare HTTP(S) and `www.` strings and writes `@` as
-`[@]` in untrusted text fields, so repository names, owners, diagnostics and
-evidence descriptions do not become links, @-mentions or e-mail links when
-reports are pasted into a ticket, pull request or wiki. Code spans keep
-identifiers verbatim. The CSV reporter inserts a literal `'` at the start of a
-value, and after each `,`, `;`, tab, `|` or line break inside it, where the
-text that follows begins with `=`, `+`, `-` or `@` (also after whitespace,
-including no-break spaces, or double quotes) or with a tab or carriage
-return; a value that begins with a line feed is marked too. Other tabs and
-line breaks inside a value are left alone. A report opened with another
-delimiter therefore cannot create a formula cell. Strip every marker when
-consuming CSV programmatically, or consume `json`.
-
-Dump filenames include the original connector configuration ordinal and a safe
-label. Repeated names or normalization-colliding labels no longer overwrite each
-other. Selecting a subset with `--only` retains the original ordinal. Use the
-export manifest to locate each instance's file and completion status instead of
-assuming a filename such as `cloud_aws.jsonl`. Exports remain sanitized and are
-not lossless copies of upstream responses. JWTs are never included.
-
-Generated resource patterns escape literal `*`, `?` and `[` characters. Review
-previously generated cards for those characters and regenerate literal bindings
-where necessary. Existing intentionally authored wildcard approvals remain valid.
-Resources or identity scopes whose identifiers were redacted cannot establish
-an exact approval: assign a stable nonsecret resource, provider, account and
-region identity before registering them. A report display value containing
-`[REDACTED]` is not an authority to approve every object that renders to the
-same value.
-AWS findings with only a short resource ID also require an account ID from
-the connector configuration or a trusted account export record. Without one,
-the scan is incomplete and a registry card cannot approve the finding. Check
-that distinct offline exports carry their own account scope before combining
-them into an inventory baseline.
-Generated cards now include `discovery.regions` when a region is known; review
-older cards with short resource IDs (for example a Bedrock agent ID without its
-ARN) and add explicit region constraints to avoid approving another region.
-
-For a labeled `code.filesystem` connector using `paths`, each root gets its own
-resource ID under the shared label, even if the list later contains just one
-path. Without `root_ids`, the suffix is `root-<SHA256 of canonical path>` and
-changes when a checkout moves. Set unique `root_ids` in the same order as
-`paths` to emit `root-id-<id>` suffixes that remain stable across CI workers;
-reorder the two lists together. Inventory entries using the old shared label
-will no longer approve these roots. Regenerate cards from a complete scan and
-approve each root separately. A scalar `path` retains its prior resource ID,
-so another option for stable identities is one connector per repository with
-its own explicit label.
-
-## Field review changes
-
-A field review of public repositories changed what some scans report. Compare a
-pinned baseline with a candidate before enforcing policy on the new output:
-
-- **Folded manifests.** A CrewAI `agents.yaml` or `langgraph.json` inside a
-  reported project no longer produces its own `agent-manifest` finding; it is
-  listed under the project finding's `metadata.manifests`. `diff` shows those
-  finding IDs as resolved. Inventory entries that bound a manifest path should
-  bind the project resource instead. A2A cards and M365 declarative agents are
-  unchanged.
-- **GitHub Apps.** Installations without an AI signature or AI-like name are no
-  longer reported. Set `include_unrecognized_apps: true` to keep reviewing them,
-  at possible confidence with the `unrecognized-app` tag. Read-only apps with an
-  AI-like name are now reported. `contents` or `pull_requests` write access no
-  longer implies `code-exec`, so such apps can drop a risk level (the Claude app
-  from critical to high); check `--fail-on` thresholds against a baseline.
-- **Completeness.** Syntax errors in ordinary configuration files and Python
-  test modules over `max_ast_nodes` produce warnings instead of incomplete
-  scans; the file is still read lexically. Enable `strict_coverage` to keep
-  treating them as incomplete. A file the parsers refuse for nesting depth or
-  XML entity expansion stays incomplete, since its content is unknown rather
-  than malformed. Notebooks whose outputs exceed `max_file_size`
-  now contribute their code-cell evidence; their outputs are not scanned for
-  credentials at that size, so the scan stays incomplete unless `scan_secrets`
-  is off. Raise `max_file_size` to scan the outputs too.
-- **Capabilities.** Test-only evidence and vendor-neutral idioms in MCP tool
-  servers no longer add capabilities; MCP server capabilities come from their
-  registered tools. Risk scores of affected findings change accordingly.
-
-## Completeness, report and credential changes
-
-The 2026-09-28 changes alter completeness, report text and credential policy.
-Compare a pinned baseline with a candidate before enforcing policy on the new
-output:
-
-- **Newly incomplete (exit 3).** A shared HTTP response body that misses the
-  [read deadline](#resource-limits-and-incomplete-scans); a `code.filesystem`
-  root that cannot be opened safely, or a directory replaced by a link during
-  the scan (see
-  [finding identity](#finding-identity-and-comparison-migration)); a
-  `code.gitlab` group listing entry without a positive integer project `id`;
-  and a `code.github` listing entry whose `full_name` is not a plain
-  `owner/name`.
-- **Changed diagnostics, still incomplete.** A YAML value PyYAML cannot
-  construct, such as an impossible date or an integer over 4,300 digits,
-  already made a scan incomplete; it is now reported as malformed YAML
-  (`invalid YAML`, `invalid agent definition YAML`), and the agent definition
-  is now listed where it used to be dropped, which can raise that finding's
-  risk score. Scan configuration and inventory files with such a value still
-  fail at setup (exit 1), now with `ConfigValidationError` or
-  `InventoryValidationError`. A cancellation or connector deadline while a
-  credential finding is built now ends that connector instead of being
-  recorded as one file's error; the scan was and is incomplete.
-- **Newly complete.** A Python module whose imports cannot resolve to any
-  signature is complete at any size or nesting depth, because the import
-  binder, which could add no evidence there, is skipped for it.
-  `mypy/checker.py` (52,729 AST nodes) used to make ordinary library trees
-  exit 3. A module that imports a library a signature describes keeps the
-  `max_ast_nodes` diagnostic: a warning in tests, an error elsewhere.
-  Configuration, inventory, signature pack, report and offline input files
-  below a traverse-only directory (mode `0711`) now open, since directories
-  are opened for traversal only.
-  An unrendered Helm, Jinja or Go-template YAML file, such as a chart
-  template with `image: {{ .Values.image }}`, no longer reports
-  `structured parsing incomplete`: it is not YAML until rendered, so its
-  excerpts use lexical redaction. Plain YAML with duplicate or non-finite
-  data still makes the scan incomplete.
-- **Reports.** CSV reports also carry `'` markers after a `,`, `;`, tab, `|`
-  or line break inside a value, not only at its start (see
-  [output migration](#output-and-inventory-migration)). Consumers that strip
-  only a leading marker must strip these too, or read `json`. Markdown writes
-  `@` as `[@]` in untrusted text, including owner e-mail addresses.
-- **Redaction.** Report excerpts and structured connector metadata withhold
-  more credential forms: literals passed to credential constructors and
-  builder chains, literal fallbacks of credential environment variables,
-  credential command-line options, .NET and XML settings, and opaque values
-  under credential-like names ([changelog](changelog.md) lists them). This is
-  a credential-policy change without configuration changes; scores and
-  evaluation results are unchanged. Expect more `[REDACTED]` markers, for
-  example on every literal after the first in a multi-argument credential
-  constructor (such as a client ID), on opaque-looking values under names
-  such as `cacheKey` or `nextPageToken`, and on a capitalized literal
-  fallback after a credential name. Reports produced before this release may
-  show such values although the scan exited 0, for example a web.config
-  `<appSettings>` key beside an Azure OpenAI endpoint, a C#
-  `new AzureKeyCredential("…")` or a `--key` command line. Regenerate earlier
-  reports that covered .NET or XML configuration, SDK client code or such
-  command lines, and rotate any key they show. The
-  [security policy](security.md) lists the forms still not withheld; keep
-  treating reports as confidential.
-- **Redaction limits.** Redaction is linear in its input, so minified bundles
-  and long runs of unfinished annotations no longer exhaust the redaction
-  budget or time out, and a long unquoted value after `key=` no longer hangs
-  a scan. Expressions nested more than 100 brackets deep are withheld through
-  the end of the excerpt, and an unquoted word holding more than 16
-  command-line options from its 17th option on. In structured metadata the
-  added rules run as a second pass over the first pass's output. That pass
-  refuses a value the earlier rules accepted, with a sanitization limit
-  (exit 3), only when removing a credential it found from the value's other
-  fields would exceed the replacement work budget or grow a text past the
-  size limit. Report sanitization takes about 28% longer.
-- **Finding identity.** IDs are computed from sanitized resource fields, so
-  an ID changes only where such a field held a value that is now withheld;
-  the demo, sample repository and evaluation corpora keep their IDs. The
-  redaction policy token changed, so findings verified clean under the old
-  rules are sanitized again automatically.
-- **Plugins and embedders.** `shadowscan.utils.text.sanitize_record` and
-  `HttpClient.paginate_cursor` are removed: call
-  `shadowscan.utils.redaction.sanitize`, and paginate explicitly. Patch
-  redaction rules only through `shadowscan.utils.redaction`. A plugin that
-  declares the cloud surface or documents `allow_instance_credentials`
-  receives the scan-wide approval (see
-  [explicit security policy](#explicit-security-policy)), and engine
-  behavior that differs by connector is a class hook (see
-  [architecture](architecture.md#engine-hooks)).
-
-## October 1 review changes
-
-These changes follow the 2026-10-01 repository review. Several change exit codes
-or what scans report, so compare a pinned baseline with a candidate before
-enforcing policy on the new output:
-
-- **Exit codes.** Command-line usage errors (an unknown option or command, an
-  invalid value such as `--min-confidence 1.5`, a missing path or
-  configuration file) exit 1, like configuration and setup errors, instead of
-  2. Exit 2 now only means a complete scan reached `--fail-on`, and exit 3 an
-  incomplete scan or comparison. Fail CI on every non-zero exit: a script that
-  treats only 2 and 3 as failures passes a scan that never ran.
-- **Gateway identity.** Gateway finding IDs stay scan-local by default, and
-  `diff` lists them under `not_comparable` (exit 3) instead of reporting them as
-  new. To compare gateway callers across scans, inject the same
-  `SHADOWSCAN_IDENTITY_KEY` (at least 32 bytes, hex or base64, for example from
-  `openssl rand -hex 32`) from a secret store into every comparable scan.
-  Findings then carry `identity_scope: keyed` and keep their IDs, and gateway
-  inputs join the collection scope through a keyed digest. Treat the key as a
-  secret: anyone who holds it can link reports and test guesses of short labels
-  or keys against them. It is read only from the environment and is never
-  written to reports, record exports, incremental state or git child
-  processes. An invalid value stops the command with exit 1 before collection,
-  findings recorded under one key never resolve against another, and rotating
-  the key requires a fresh baseline.
-- **Confidence.** Outside the code surface, repeated evidence of one signal
-  counts once, so some identity, gateway, low-code, SaaS and cloud findings
-  report lower confidence or a lower likelihood band. n8n, Make and Zapier
-  findings now score their model and step-name evidence before they are
-  finalized, so their confidence can rise: the demo's Zapier "Support agent"
-  moves from 0.8 (`likely`) to 0.901 (`confirmed`). Re-check `--min-confidence`
-  thresholds against a candidate run.
-- **Inventory.** Cards accept `discovery.discriminators`, enforced like
-  `regions`. `inventory stubs` writes each finding's discriminator, so findings
-  that share a resource (a repository's agent project and its coding-agent
-  configuration) are each registered by their own card. Cards generated
-  earlier still approve every finding on their resource: regenerate them or
-  add `discriminators`. Stub `names` are now plain strings.
-- **AWS trust policies.** `cloud.aws` parses role trust policies instead of
-  matching substrings. `Deny`, `NotAction` and `NotPrincipal` statements, and
-  service names that appear only in a `Sid` or `Condition`, no longer tag a
-  role `agent-execution-role`. A malformed trust policy is reported as unknown
-  trust (`malformed-trust-policy`) and makes the scan incomplete.
-- **Paging limits.** Every connector validates `max_pages` the same way: 0,
-  negative, fractional, boolean and non-numeric values are configuration
-  errors, and values above 1000 are capped at 1000. Fix such configurations
-  before upgrading.
-- **OCI exports.** `cloud.oci` converts SDK models with `oci.util.to_dict`, or
-  through their declared fields when the SDK is absent. An object that cannot
-  be converted is skipped and makes the scan incomplete instead of silently
-  losing fields.
-- **Detection.** Vercel AI SDK `generateText`/`streamText` calls that loop over
-  tools past the first step (`stopWhen`, including AI SDK 7 `isStepCount`, or
-  `maxSteps` above 1) are agents. Custom-pack `framework` code patterns now
-  take effect in Python and JavaScript. Detection-rule files (ShadowScan
-  signature packs, Semgrep, Sigma and gitleaks rules) are treated as data and
-  listed in `metadata.detection_rule_files`, so a rescan can close findings
-  that came only from such files.
-- **Threshold filtering.** With `--min-confidence`, `related` links and
-  `runtime_activity` references to findings below the threshold are removed.
-  The runtime observations themselves remain.
-- **Redaction.** Report excerpts withhold the API key passed positionally to
-  well-known LLM SDK calls whose names carry no credential word: Semantic
-  Kernel's .NET Azure OpenAI and OpenAI connectors, go-openai's
-  `openai.DefaultConfig`, `DefaultAzureConfig` and `NewClient`,
-  `new OpenAiService(...)` and `new GoogleGenerativeAI(...)` (see SECURITY.md
-  for the remaining gaps). Earlier reports of such code could show the key:
-  regenerate them and rotate any key they show. A long run of blanks before a
-  character the Python 3.11 tokenizer cannot read no longer makes redaction
-  quadratic and the scan incomplete, and on Python 3.12 and later a
-  non-ASCII character after a lone carriage return, or a lone surrogate, no
-  longer makes a file's analysis incomplete.
-
-## October field scan changes
-
-These corrections change what some scans report. Compare a pinned baseline with
-a candidate before enforcing policy on the new output:
-
-- **Completeness.** TSX files with typed elements, comments between JSX
-  attributes or element text starting with `(` no longer make scans incomplete.
-  Previously incomplete React repositories can now complete and become usable
-  `diff` baselines.
-- **New MCP findings.** Gemini `httpUrl` servers and MCP servers embedded in
-  GitHub Actions step inputs are new `mcp-server` findings. `diff` shows them as
-  new; review their risk before using `--fail-on`.
-- **Attribution.** Findings whose only Google ADK evidence was
-  `GOOGLE_GENAI_USE_VERTEXAI` lose `framework.google-adk` and its `multi-agent`
-  potential capability. `diff` reports them as changed; titles change too.
-- **Fixture workflows.** Exported workflows under test or fixture paths gain the
-  `test-code-only` tag, lower confidence and a lower risk score.
-- **Project roots.** Modules named `setup.py` that do not build a package no
-  longer create a project. Findings for such directories disappear from `diff`
-  as resolved and their evidence joins the enclosing project's finding.
-- **Credential files.** MCP servers whose only inline-secret evidence was a
-  credential-file path argument or a repeated variable reference lose the
-  `inline-secrets` tag and its risk factor.
-- **Test-path credentials.** `secret` findings under test, fixture or
-  `cassettes/` paths gain the `test-code-only` tag, lower confidence and a lower
-  risk score unless `include_tests` is set; they are still reported.
-- **Coding-agent configuration.** A product named only by an environment
-  variable or display name (such as `GOOSE_PROVIDER` in a test matrix) no longer
-  yields an `agent-config` finding; `diff` shows such findings as resolved.
-  Instruction-document aliases (`CLAUDE.md` linking to `AGENTS.md` in the same
-  project) no longer make a scan incomplete.
-- **MCP parsing.** Compiled agentic-workflow lock files (`*.lock.yml`) and
-  cookiecutter `{{...}}` template paths are not parsed as MCP configuration and
-  no longer make a scan incomplete.
-
-## October 2 review changes
-
-These fixes came from an AI-assisted review of the October 1 candidate; neither
-the review nor the fixes had a second-person review. Several of them turn a
-result that used to look complete into an incomplete one, so run a candidate
-scan next to the pinned baseline and read the differences before you enforce
-policy on the new output.
-
-New incomplete (exit 3) and configuration-error outcomes:
-
-- **Unreadable analyzable files.** A file that `code.filesystem` analyzes by
-  name and that still contains a NUL byte in its first 8 KiB (a binary `.plist`
-  or `.xml`, a UTF-16 file without a byte-order mark, a stray NUL in source or
-  Markdown) is a coverage gap named `binary or undecodable content in
-  analyzable file`. Fix the file or add it to `exclude`. UTF-8, UTF-16 and
-  UTF-32 files with a byte-order mark, and Python sources with a PEP 263 coding
-  cookie, are now decoded and analyzed, so dependency lists, `.env` files and
-  sources that used to read as empty can add findings.
-- **List options.** A bare string for `exclude` or `paths` (`exclude:
-  "vendor/*"`, `--set exclude=vendor/*`) is a configuration error. It used to be
-  split into characters, which excluded the whole tree and reported a complete,
-  empty scan. Use a list, or repeat `shadowscan code --exclude`.
-- **Signature packs and inventories.** A custom signature pack directory that
-  contributes no `.yaml`/`.yml` pack (empty, other file types, only symbolic
-  links) and an inventory glob that matches no file now fail at setup (exit 1).
-- **Connectors and plugins.** A connector or plugin that calls `sys.exit()` is
-  a failed connector and the scan is incomplete; it no longer ends the process
-  with the plugin's status and no report.
-- **Exports.** Gateway logfmt lines that repeat a key or leave a quote open,
-  gateway records whose timestamp no supported format parses, `saas.generic` and
-  `lowcode.zapier` rows with no name (blank rows, footers; map the column with
-  `fields.name`, or call it `title`/`name` for Zapier), Slack Connect bots from
-  partner workspaces, OCI policy statements over 8192 characters, and
-  Power Platform records that cannot be analysed are skipped with a warning and
-  make the scan incomplete. The remaining records are still reported.
-- **ServiceNow paging.** A short page no longer proves that a table ended.
-  Collection stops at an empty page, so a small `max_pages` makes any non-empty
-  table incomplete. Keep the default (1000) or size it above rows/500 + 1.
-- **Report comparison.** `diff` treats a report whose `summary` counts do not
-  match its `findings` array as incomparable (missing findings are unknown,
-  exit 3) instead of counting them as resolved.
-
-Changed results to review before you compare against a baseline:
-
-- **Disabled MCP servers.** A server entry that declares `disabled: true` or
-  `enabled: false` is reported, tagged `declared-disabled`, with `disabled: true`
-  in `metadata.servers`; `server_count` still counts only the others. The flag
-  is client-specific and comes from the repository, so honoring it let a
-  repository hide a server. `diff` shows a configuration whose only entries are
-  disabled as a new finding.
-- **Newly visible evidence.** NuGet `PackageReference` items in
-  `Directory.Build.props`, `*.targets` and shared `*.props` files, and imports
-  of an SDK whose name a repository shares with an empty or data-only
-  directory, now produce dependency and provider evidence.
-- **Gateway logs.** Only the request path decides whether a request is a static
-  asset or health probe, and a probe name must be the last segment: `/healthz/ready`
-  and `?_=.js` requests are classified by the normal LLM route and host rules.
-  Provider attribution follows the URL authority (`https://api.openai.com@evil.example/`
-  names `evil.example`). Microsecond, nanosecond, Go and RFC 2822 timestamps
-  are now parsed, which changes first/last-seen and activity analysis.
-- **Entra.** Permission names in findings may change from a raw GUID to the
-  label of the resource that defines the role. The "conflicting role labels"
-  warning appears only when a conflicting label is needed for a grant, so
-  exports in which different resources reuse a role id are no longer incomplete.
-- **JWT.** Without `jwks_url`, every token finding carries
-  `metadata.verified: false`; confidence and risk are unchanged.
-
-New warnings (the scan stays complete):
-
-- Default-excluded directories: one warning per scan root names the non-empty
-  `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
-  `third_party`, `thirdparty` and `external` directories the walk skipped.
-  Set `default_excludes: false` (`shadowscan code --no-default-excludes`) to
-  scan them. That option also stops skipping dependency trees and virtualenvs
-  (`node_modules`, `.venv`, `site-packages`), so pair it with `exclude:
-  [node_modules, .venv]`. Version-control metadata (`.git`, `.hg`, `.svn`) is
-  always excluded. Pipelines that fail on any warning must pass the option or
-  tolerate the warning.
-- Inventory placement: a scan warns, under the new `engine.inventory` entry of
-  `stats`, when an inventory or a file it loads is inside a path scanned in the
-  same run, and for each `*`-only resource pattern. Keep the inventory outside
-  the checkout that a pull request can change. Report consumers that list
-  `stats[].connector` will see the new entry name.
-- Python that does not parse (syntax newer than the runtime, a notebook with
-  shell or magic lines) keeps its lexical evidence and adds a warning.
-- Gateway scans note how many static-asset and probe requests were not counted.
-  Tooling that fails on any warning should key on `incomplete` or the exit code.
-
-Remote collection changes to review:
-
-- **Listings.** Repositories are now listed in a fixed order before any is
-  cloned. Over `max_repos` or `max_projects` the covered subset changes from the
-  most recently active N to the first N by name (GitHub) or id (GitLab); the scan
-  is incomplete either way. A bare string for `topics`, `repos` or `projects`, or
-  a non-integer cap, is an error (exit 3) where it used to scan nothing.
-- **Git.** Cloning needs Git 2.32 or newer, and the gitlink inventory of a clone
-  needs 2.45: with 2.32 to 2.44 a clone is scanned but every repository reports
-  `could not inventory gitlinks safely`, and with older or unidentifiable Git the
-  connector uses sampled API mode. Both end incomplete. Clones that hold Git LFS
-  pointer files are incomplete, and a repository with malformed objects at its tip
-  is refused by `fsckObjects` and scanned through the sampled API fallback.
-- **Termination.** SIGINT, SIGTERM, SIGHUP and the job deadline now stop live
-  clones and delete their checkouts. Keep the external deadline and container or
-  process-group cleanup for SIGKILL and out-of-memory kills.
-- **Destinations.** `168.63.129.16` and `fec0::/10` are refused like the other
-  metadata and private destinations unless `allow_private_origin` is set, and a
-  URL with whitespace or control characters is an error rather than a cleaned
-  value; a base URL with a stray trailing space now fails.
-- **GitHub token.** Grant Secrets, Variables, Codespaces secrets and Dependabot
-  secrets (read) beside Contents and Metadata, or each repository adds four
-  identical `HTTP 403` warnings and the scan exits 3. Use distinct token
-  variables for `code.github` and `saas.github-apps`; the credential-mixing guard
-  separates scans, not token scope.
-
-Label, precision and risk-policy changes to review:
-
-- **`likelihood` value.** `findings[].likelihood` and the CSV `likelihood` column
-  report `strong` where earlier output said `confirmed`. Dashboards, `jq` filters,
-  SIEM rules and ticket automation that count or filter on `confirmed` must accept
-  `strong`; accept both while old reports are in circulation. `diff` reads
-  baselines written before the rename (the label is not compared and `confirmed`
-  parses as `strong`), so no baseline needs regenerating. Use `confidence`, a
-  number, for thresholds: `strong` does not mean verified.
-- **List-only repositories.** Findings disappear for repositories that only list
-  vendors (blocklists, allowlists, vendor policies, vendored signature or
-  inventory data). A bare data file that names four or more providers and is the
-  only evidence is no longer reported; keep its name a manifest name or add a
-  signature with a `file` signal if you rely on it.
-- **Plugin authors.** Evidence weights must be finite numbers in [0, 1]. A
-  violation fails the connector and the scan is incomplete.
-- **`risk_weights`.** A typo in a `capabilities` or `providers` key now fails the
-  scan setup (exit 1) instead of being ignored. Provider ids are checked when the
-  engine is built, after custom signature packs load. Check existing
-  configurations for keys that never matched anything, and dry-run a change.
-- **Scores.** Findings at five points of the score grid (raw 45 at confidence
-  0.25, 75 at 0.15, 85 at 0.25, 125 at 0.17 and 125 at 0.21) score one higher.
-  `diff` against an older baseline reports the changed `risk.score` and factor
-  weight for those findings only, and a level change for the one that crosses from
-  medium to high.
-
-Redaction and lexing changes to review:
-
-- **Redaction policy.** Credential operators, token boundaries, URL userinfo,
-  record-field names, unknown value types and private-key blocks are redacted
-  more completely (see the changelog). Reports can hold a little more
-  `[REDACTED]` than before: comparisons with a sensitive name, `creds` and
-  `db_pass`, record fields named for a credential word, and arrow functions whose
-  parameter is named for a credential, which keep the arrow but lose the body.
-  No finding, detection or exit code changes. The policy digest changes with the
-  rules, so verified-clean digests cached on findings are recomputed, and
-  `scanner_source_sha256` changes, so artifacts from an older build are not
-  comparable (as for any release).
-- **Earlier dumps.** `--dump-records` files written by an earlier version keep
-  their older, less redacted content. Regenerate them with this version before
-  you share them; a dump written now holds `[REDACTED]` for the newly covered
-  field names, and offline re-analysis of it sees the marker.
-- **Lexer.** Code that was hidden is now scanned when it followed a
-  keyword-named property (`o.of / 1; ...`), a comment ended by a bare CR,
-  U+2028 or U+2029, a JSX attribute string ending in a backslash, or a PHP
-  comment closed by `?>`; expect new findings in such files. New incomplete
-  (exit 3) cases are a `/` directly after `await` or `yield`, a regular
-  expression after `}` that holds a quote, backtick or slash, and a JSX file
-  that exhausts its look-ahead allowance (`file analysis incomplete
-  (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`;
-  hostile or machine-generated input, not configurable). Projects that vendor
-  `emoji-regex` or similar generated tables stop reporting
-  `incomplete source lexical analysis` for them.
-
-Operational notes:
-
-- With a Kubernetes ConfigMap mount, pass the resolved file path as the
-  scan configuration; links are deliberately not followed.
-- `XDG_STATE_HOME` is ignored when it is empty or relative.
-- Remove an `actions/cache` step that restores `--incremental` state. The
-  fingerprint includes file identity, so a fresh checkout never reused it.
-- Maintainers: `main` push CI runs are no longer cancelled by the next push,
-  so expect more concurrent CI minutes on busy days. A new connector family
-  directory or nested connector package must be listed in `CONNECTOR_FAMILIES`
-  in `tools/coverage_gate.py`, or the coverage gate fails.
-
-## Finding identity and comparison migration
-
-Finding IDs now separate stable source identity from inferred classification.
-A service principal transitioning from delegated to application permissions
-keeps its identity. Stable resource-type families separate different observation
-types on the same resource; plugins can provide an explicit stable
-`identity_discriminator` when needed. Never derive this discriminator from an
-inferred kind, risk level or current permissions.
-
-Reports declare `shadowscan.finding-identity/v2`. Rebuild comparison baselines
-after this upgrade: legacy or mismatched schemas cannot establish resolution
-and diff reports missing findings as unknown. Incremental cache format changes
-force a full rescan; cached approval is never reused. Review any downstream
-deduplication, SARIF alert history and ticket integrations that store old IDs.
-
-This candidate preserves the v2 algorithm (`ss-` plus the first 16 SHA-256 hex
-characters). Corrected JWT issuer labels can change provider-derived IDs for
-previously misclassified tokens; review those deltas when updating a baseline.
-
-Diffs now identify substantive changes in classification, permissions,
-capabilities, technologies, risk score/factors, registration and ownership,
-including changes within the same risk band. `changed_fields` identifies the
-changed attributes. Timestamp and evidence ordering alone do not create changes.
-`diff` and `inventory stubs` accept regular JSON report files up to 64 MiB,
-without input or ancestor symlinks. Duplicate keys, non-finite numbers, invalid
-finding fields and excessive nesting fail validation. All records are checked
-before stub generation writes files; this does not make multiple file writes
-transactional if a later filesystem operation fails.
-
-GitHub and GitLab API source downloads use immutable blob IDs returned by tree
-enumeration and verify each downloaded file against its Git object ID before
-scanning it. GitHub API findings include the tree SHA; GitLab API findings
-include the commit SHA resolved before pagination. Clone-mode findings include
-the checked-out commit and tree SHAs. These appear in each code finding's
-`metadata.source_snapshot`, alongside the provider, capture method and validated
-branch name when available. Missing or malformed snapshot identities and blob
-mismatches mark the scan incomplete; valid neighboring files remain usable.
-Symlinks and submodules are skipped with incomplete coverage in both modes: API mode
-skips them, and a clone reports submodules (gitlinks) through the filesystem scan of the
-checkout. Git LFS pointer files, which neither mode resolves, also make the scan
-incomplete. Provider settings,
-CI variable names and other metadata collected separately are not part of the
-source snapshot.
-
-Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
-Filesystem scans reject selected roots whose paths traverse a symbolic link.
-They then open each root once and read every file, including `CODEOWNERS`,
-relative to it without following a link in any path component. A scan needs
-read and search permission on the root and the directories below it, but on
-Linux and macOS only search permission on the directories above it (they are
-opened with `O_PATH` on Linux; on macOS the root is opened in one call with
-`O_NOFOLLOW_ANY`), so a checkout below a traverse-only directory such as a
-mode `0711` home directory is scanned completely. A root that cannot be opened
-this way is reported, by its `label` when one is set, as
-`could not open the scan root safely (<reason>)`, for example
-`permission denied`, and makes the scan incomplete. Source links encountered
-during a walk are skipped and mark coverage incomplete. A directory replaced
-by a link while the scan runs fails the reads below it and also marks
-coverage incomplete, so content outside the root is never analyzed. Review
-or explicitly exclude such paths before accepting a completeness gate.
-Pre/post content hashes can detect ordinary concurrent edits but do not form an
-atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
-and revert between those reads.
-
-Confined regular-file reads use `O_NOFOLLOW_ANY` on macOS too, both for full
-paths and paths relative to an open scan root. The kernel rejects links in any
-component in the same lookup; the scanner does not call `realpath` to turn a
-rejected link into an accepted input. This also avoids opening every ancestor
-for reading. Nonblocking opens and `fstat` still reject FIFOs and other special
-files. On other supported POSIX platforms the component-by-component confined
-walk remains in use. Signature-pack directory enumeration fails if a subtree
-cannot be read or the entry budget is exceeded, including directory-only
-trees; correct those inputs before accepting the policy.
-
-Incremental state uses nonblocking advisory `flock` per cache slot
-(`<sha256>.lock`): shared for reading and exclusive for publication, as well as
-atomic writes and current-input fingerprint checks.
-Keep state in a dedicated private directory outside the scanned repository. A
-busy read lock causes a cache miss; a busy write lock skips that publication.
-Incremental state needs POSIX advisory locking (`fcntl`); platforms without it are ones the confined file reader already refuses, so no scan runs there. Symlinked, non-owner or non-private lock files are
-rejected. Use local filesystems with working advisory locks; a lock is not a
-distributed coordination service or a security boundary against another process
-with the same user ID.
-
-## Cloud collection changes
-
-AWS verifies the live account through STS before emitting account metadata,
-including when `account_id` is configured. For live scans, that setting is an
-expected account and a mismatch stops collection. AWS and OCI SDK clients have
-explicit 10-second connect and 30-second read timeouts with at most three
-attempts. These bounds do not replace the overall worker deadline. AWS Lambda
-and GCP project limits stop enumeration without materializing the full inventory.
-ECS discovery follows
-exact definition ARNs referenced by running tasks and service deployments,
-including referenced inactive revisions, and retains the latest active registered
-revision of each family as a separate evidence category. Stopped tasks and unused
-historical revisions are outside this collection scope. A registered-only label
-does not prove a definition is undeployed when discovery is incomplete.
-Late AWS list-page failures retain earlier observations, mark coverage incomplete,
-and cap pagination; a missing collection field is not an empty inventory. A
-malformed AWS or GCP record (a function without an ARN, a service without a
-config name) skips that record with a warning and incomplete coverage; the
-remaining resources, services and regions are still collected. AWS diagnostics
-for a failed SDK call name the operation and the provider's error code, never
-the provider's message text.
-The per-region `max_ecs_api_calls` limit defaults
-to 2000; exceeding it or encountering denied/partial calls marks coverage
-incomplete. Add the read permissions listed in [connectors.md](connectors.md).
-
-GCP Owner/Editor-only principals remain visible as privileged access findings.
-Neither broad role grants nor ECS deployment references establish that AI code
-actually executed. Use trusted runtime telemetry for additional attribution.
-GCP audit caller findings keep events from separate projects distinct, including
-when the service account principal is the same. Azure Resource Graph failures on
-later pages preserve earlier observations and mark collection incomplete.
-Cloud Run discovers concrete regions using the locations API before listing
-services; the v2 services endpoint does not accept a `-` location. Unreachable
-regions in GCP list responses make coverage incomplete while retaining reachable
-observations. The audit identity must have `run.locations.list` and
-`run.services.list` for this discovery path. Azure ARM inventory pages also retain
-observations after later failures; diagnostic-setting coverage remains unknown
-unless every page was collected successfully.
-
-Foundry collection uses the verified classic Agent Service `/assistants` route
-with `api-version=v1` and validates its pagination envelope. Newer `/agents`
-families are outside that contract. OCI Function collection now reads both
-application and function details, merges inherited configuration with function
-overrides, and treats denied detail access as incomplete. Ensure the audit
-identity can read those details, not just enumerate summary records.
-
-Google Workspace per-user token envelopes preserve the parent user in both
-single-object and array forms. Regenerate earlier offline analyses affected by
-lost user attribution before using their counts as governance evidence.
-
 ## Release verification
 
 ### Merge gate and review status
@@ -1706,7 +628,1099 @@ the concrete status, denominator, control and reviewer artifacts:
 These checks require operator-specific tenant access and operational decisions.
 Until completed, describe deployment status as pending tenant and container acceptance.
 
-## Consolidated candidate compatibility
+## Candidate change history
+
+These notes record behavior changes made while the 0.1.1 candidate was being
+hardened. Read them when you have baselines, reports or inventories produced
+by an earlier candidate build; a deployment that starts from a reviewed
+revision and a fresh baseline does not need them.
+
+### October 2 production review migration
+
+Review framework attribution in projects using npm dependency aliases before
+replacing enforcement baselines: the registry target now supplies dependency
+identity. This identifies a declared dependency, not runtime execution or
+cross-file resolution of imports through the alias. Malformed alias targets
+make source coverage incomplete (exit 3).
+
+CSV inventory approvals preserve embedded line separators in quoted resource
+and scope fields. Review previously generated reports if an inventory used such
+fields: a value that previously lost its separator is now a different identity
+and no longer confers the same approval. Ordinary single-line inventories are
+unaffected.
+
+Malformed evidence in imported reports is rejected before correlation or risk
+processing; malformed incremental cache entries are ignored and fully rescanned.
+Notion and Atlassian provider error envelopes and malformed Google Workspace user
+suspension flags now produce incomplete collection rather than a complete empty
+result. Valid neighboring Google Workspace users remain eligible for collection.
+Resolve the reported input or provider failure before accepting the scan.
+
+The connector coverage gate now rejects a report that does not name every
+module under `shadowscan/connectors/` in the checkout, and malformed counts
+(exit 2). Generate its JSON from a full coverage run; a selected-test report is
+not evidence for all connectors. The 75% per-module floor over statements and
+branches is unchanged. Wheel validation uses private temporary storage and
+cleans it up after success or failure.
+
+These changes have offline regression coverage. They do not replace independent
+human review, a fresh labeled holdout or authorized tenant acceptance checks.
+
+### October 2 hygiene review migration
+
+Re-run scans and compare MCP tool/capability labels before updating enforcement
+baselines: inert examples and unreferenced enum members no longer count as
+registered tools. Live GCP, Azure, OCI and Slack records keep collector-assigned
+classification and scope when response fields share those names. Invalid
+discovered GCP project identifiers are skipped with incomplete coverage.
+
+Gateway records with timestamps outside the representable UTC range now fail
+before updating caller state. A malformed record still makes coverage incomplete,
+while valid neighboring observations remain available for review.
+
+Tenant-canary verification now groups records and findings by exact resource
+identity before checking controls and reads record dumps incrementally under
+the existing size cap. The declared scope and acceptance selectors still apply;
+this optimization does not establish a tenant-scale latency or memory SLO.
+
+Re-render retained sensitive reports where possible: diagnostic sanitization
+now preserves context across errors, warnings and skip reasons, and JSON
+statistics are checked together. Continue treating reports as sensitive; no
+redaction rule recognizes every possible secret or private datum.
+
+CI and `make check` now enforce the bounded secret-pattern gate over every
+tracked text file. The intentional test, signature-pack and evaluation-corpus
+exemptions require review. The evaluation path contract now rejects ambiguous case/Unicode names,
+file/directory collisions and components over 255 UTF-8 bytes. Correct such
+layouts before re-running a private holdout; do not silently rename its samples
+after freezing the acceptance policy.
+
+These checks are offline regression evidence. They do not establish independent
+human approval, a representative field accuracy measurement or live tenant
+acceptance. Verify the current required-check configuration under
+[release verification](#release-verification) before merging or deploying.
+
+### October 2 review remediation
+
+Collect a fresh baseline after upgrading: dependency examples confined to Gradle
+or Dockerfile comments no longer establish framework usage, while active
+declarations and credentials inside comments are still reported. Do not read the
+disappearance of a comment-only finding as a remediation.
+
+The new regression cases are authored from observed defects. They do not replace
+the [fresh human-reviewed holdout](evaluation.md#build-a-genuinely-held-out-field-set),
+independent review of the final candidate, or [live tenant canaries](canaries.md).
+Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+on real evidence for the intended population and tenant scopes. Record unmet
+requirements as unmet; do not substitute offline replays or AI-generated labels.
+
+### October 2 detection and assurance migration
+
+Name/value credential redaction now reuses line bounds and first-content
+positions. Long lines containing repeated record names previously caused
+quadratic prefix scans and copies; those queries now perform linear character
+work. Credential withholding and record/list boundaries are unchanged. Existing
+matching budgets still fail closed, and timing regressions remain checks of the
+implementation rather than tenant throughput guarantees.
+
+JavaScript/TypeScript calls exceeding the bounded semantic-analysis budget now
+make the scan incomplete (exit 3). This includes long constructor arguments;
+an unchanged framework-usage finding is no longer evidence that agent analysis
+completed. Review the diagnostic and source, then provide an analyzable input
+or explicitly narrow the intended scope before using the result as a gate.
+Neighboring findings remain available for investigation.
+
+Binary-looking `.ts` files also make source coverage incomplete. Packet bytes
+cannot distinguish a video segment from TypeScript containing a padded comment.
+Review the affected paths and explicitly exclude verified media directories
+with the connector's `exclude` policy when they are outside the intended source
+scope. Recognized binary assets selected only by a directory-wide configuration
+glob keep their existing treatment.
+
+Failed incremental cache-decision hooks now mark connector coverage incomplete;
+built-in validation diagnostics remain available, while plugin hook failures
+expose only exception types.
+
+Zapier ignores wholly blank text rows only when a recognized identity column
+is present. Unknown JSON keys or CSV headers make coverage incomplete; existing
+padding rows under valid Zapier headers remain accepted.
+
+Generic Genkit initialization and standalone flow/tool declarations are
+framework evidence. Supported explicit agent definitions and concrete model
+calls using registered tools establish stronger configured behavior. Review
+changed kinds, capabilities and risk scores, then collect a fresh comparison
+baseline. Tool registration must resolve to a direct module-level initializer
+or a standalone call with an explicit statement boundary; dynamic bindings and
+uncertain boundaries remain supporting framework evidence. The added examples
+are authored regressions; obtain fresh
+human-reviewed evidence using the
+[holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+
+The shared HTTPS client now bounds response acquisition, including status and
+headers, separately from body delivery. Cancellation closes the active socket
+before that connection can be reused. System DNS resolution cannot be forcibly
+interrupted in a Python worker thread; a result arriving after the acquisition
+budget is rejected before connection. External SDK calls retain their own
+transports. Keep a process/job supervisor for a hard end-to-end execution limit.
+
+The aggregate `CI gate` also requires container security checks for the exact
+built image. CI retains the image identity, OS/Python SBOM and vulnerability
+result; HIGH/CRITICAL vulnerabilities, scanner errors and unavailable database
+updates fail the gate. These results depend on the database at scan time.
+Record the deployed image digest and rescan that exact image before deployment;
+an earlier source commit or Docker tag does not identify its bytes. Apt still
+uses live Debian mirrors, so independently rebuilding the source does not
+produce a guaranteed identical image.
+
+The first October 2 container scan found HIGH-severity Debian advisories,
+including advisories without a recorded stable-package fix. The worker build
+now upgrades base packages from the enabled Debian archives before installing
+Git and certificates. This applies available fixes; it does not establish that
+the resulting image is vulnerability-free. Retain the rebuilt image's actual
+scan, and keep the candidate blocked while HIGH/CRITICAL findings remain.
+Do not remove unfixed findings from the gate to turn it green.
+
+The release-evidence workflow now verifies active merge protections before
+building a candidate. Use the settings preparation and readback commands in
+[merge gate and review status](#merge-gate-and-review-status) to restore the
+existing ruleset without dropping checks, approvals or bypass restrictions.
+Neither merging this source change nor a prepared JSON patch changes GitHub
+settings. The release check fails if the API identity cannot expose bypass
+actors; it does not infer an empty list from an omitted field. Do not grant
+write credentials to the build job to suppress that failure.
+
+Complete AWS/Slack and separately credentialed permission-denied
+[tenant canaries](canaries.md) in the authorized deployment scope. For other
+connectors, retain connector-specific live evidence. Bind those receipts and a
+fresh human-reviewed holdout to this exact source/signature revision with the
+[acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+Independent human review of the final revision remains required before release.
+Offline replay and the new CI checks cannot supply these attestations.
+
+### October 2 repository hygiene
+
+Agentforce metadata that declares XML entities or attribute defaults is no
+longer parsed, so a previously complete scan can become incomplete (exit 3):
+remove the declarations, or exclude the file if it is not deployed metadata.
+Embedders that imported the non-strict `bounded_safe_load_all` must switch to
+`strict_bounded_safe_load_all`.
+
+### October 1 scan integrity remediation
+
+Rollout effects of the remediation listed in the changelog. Re-run any baseline
+collected before this revision: some scans that previously finished complete now
+finish incomplete because the earlier result hid a gap.
+
+- **More exit 3 on real estates.** Expect new incomplete diagnostics for files
+  with source or config names that hold a NUL byte, any file without a
+  supported export suffix in a connector's offline input directory (rotated
+  logs, a `README.md`, `.DS_Store`), unnamed `saas.generic` rows and negative
+  gateway usage. Fix the input (exclude the path, remove the extra files or point
+  `input` at the export file, supply rotated logs by name, map the name column)
+  rather than ignoring exit 3. Do not read a finding that disappeared before this
+  revision as resolved; compare only complete scans of the same scope.
+- **Notices are not completeness.** The default-exclude notice and the AWS/GCP
+  default-region notice are warnings that leave the scan complete. Scope a scan to
+  an excluded directory as its own root, or set `regions` (AWS) or `locations`
+  (GCP), to cover it. Review the
+  notices before treating a clean report as estate-wide.
+- **New report fields.** `collection_scope.not_run`, finding metadata
+  `registry_match_assurance` and tag `registry-identity-unverified`, and
+  `signature_verified` on JWT findings are additive. A gateway finding approved
+  only by an operator-asserted caller name is still registered; treat that match
+  as unverified until the caller binding is authenticated.
+- **CSV consumers.** An incomplete CSV report has a first data row with
+  `id=SCAN-INCOMPLETE`, `kind=scan-status` and the unfinished connectors in the
+  `connector` column. Skip or alert on it; exit code 3 remains the primary signal.
+- **Redaction.** Reports withhold more than before: `--passphrase`, `--pat`
+  and `--auth` option values, whole PGP private key blocks (earlier reports
+  could show a block's body when its first line followed a name such as
+  `private_key:`), every cookie in a `Cookie` header, compact `x-api-key:S` and
+  `password:S` values, unquoted values containing `;`, escaped-quote JSON values, the
+  URL query keys `auth`, `pwd` and `pat`, Fireworks `fw_` keys and provider
+  tokens next to non-Latin text. Reports generated before this revision can
+  contain those values: regenerate them, restrict or delete the old copies, and
+  rotate any key, PGP private key or session cookie they show. Expect extra
+  `[REDACTED]` markers (`ffmpeg -pass 1`, the text after `;` in `NAME=S;rest`,
+  the scheme after `Authorization:`). Finding IDs built from sanitized
+  resource fields can change where those fields held such values.
+- **Credential digest (open item).** Code and cloud findings (credentials in
+  source files, and in cloud environment variables and app settings) still
+  carry `credential:sha256:<digest>`, an unsalted SHA-256 of the raw credential
+  used for stable finding identity. Anyone holding a report can confirm a
+  candidate credential against it. Gateway reports carry only scan-local
+  `credential:hmac-sha256:` identifiers; the public digest appears only in the
+  operator's gateway binding configuration, which must stay private. Treat
+  reports as sensitive, and plan an operator-supplied keyed digest, which
+  changes finding identity and bindings, as a separate migration.
+- **Lower risk for routine scope names.** OIDC `offline_access`, Salesforce
+  `full`, `web` and `refresh_token`, GitLab `api`, GitHub `workflow` and Slack
+  `admin` no longer match `policy.privileged-scopes`, because scopes are
+  matched by bare name across providers. Findings that held only these scopes
+  lose that risk factor and can drop a risk level. GitLab `api` and GitHub
+  `workflow` remain powerful on their own providers: review those grants by
+  hand rather than relying on the risk level.
+- **Private CA.** Set `ca_bundle` on `identity.jwt` to a PEM file to scan an
+  endpoint behind internal PKI; TLS verification stays on and the bundle replaces
+  the default store. A relative path resolves beside the configuration file.
+  Other connectors do not accept it yet.
+- **Known limits.** The default 120 s connector deadline cannot finish a roughly
+  20,000-file repository or a 30 MiB gateway log (raise
+  `connector_timeout_seconds`); gateway finding IDs are scan-local unless
+  `SHADOWSCAN_IDENTITY_KEY` is set, so `diff` of gateway findings between
+  unkeyed runs is not stable; logfmt gateway lines still use last-key-wins
+  for `host`.
+
+### October 1 review migration
+
+Collect a fresh baseline after adopting the review corrections. Named Python
+direct-reference dependencies now use their declared package identity, and
+Python source analysis excludes provably unreachable local statements and loop
+bodies. Findings may appear or disappear, or change framework attribution;
+inspect those differences before using a comparison to enforce policy. The
+analysis remains bounded and does not prove runtime or interprocedural behavior.
+
+Opt-in Git enrichment now limits combined command output to 16 KiB, author and
+email fields to 1,024 characters each, and timestamps to 64 characters. Exceeded
+limits, malformed metadata, cancellation and deadlines retain source findings
+while making coverage incomplete. Re-run affected repositories with reviewed
+metadata or with history enrichment disabled; an incomplete scan cannot establish
+resolution of earlier findings.
+
+Credential redaction recognizes more constructor, environment fallback, record,
+command and query forms. The redaction policy token changes automatically with
+these rules. Regenerate persisted reports, exports and incremental baselines
+before sharing or reusing them, because an older artifact can contain values
+now withheld. Reports remain sensitive: ambiguous comment-only credential hints
+and arbitrary computed expressions do not establish safe public disclosure.
+
+Production acceptance policies may now freeze aggregate and per-kind
+`min_precision_lower95`, `min_recall_lower95` and `min_specificity_lower95`
+thresholds together. Successful decisions expose the recomputed 95% Wilson lower endpoints;
+the revised example also sets per-kind sample floors. Existing point-estimate
+policies retain their behavior. Freeze confidence thresholds before collecting
+new independently human-labeled holdout evidence, rather than tuning a policy to
+a previously observed result. A small perfect sample need not pass these gates.
+
+The [versioned merge policy](operations/merge-policy.md) and offline snapshot
+checker prepare the requested review and CI enforcement. They cannot activate
+live settings through the connected GitHub App. Administrator activation,
+independent human approval and approved tenant acceptance remain outstanding.
+
+### October 1 discovery review migration
+
+Review finding kinds, capabilities and risk scores before replacing an existing
+baseline. Ordinary Java chat-client construction and standalone tool declarations
+are framework evidence; they do not by themselves establish an agent. Explicit
+agent factories and supported concrete tool-registration patterns remain evidence
+of construction or configuration, never proof of runtime execution.
+
+Supported import-bound constructors in OpenAI Agents SDK, CrewAI, Pydantic AI,
+LangGraph and LangChain no longer inherit a framework's advertised features as
+configured workload capabilities. Empty tool/handoff collections and disabled
+delegation do not contribute those capabilities or their risk factors. Unknown
+features can remain potential capabilities in metadata; review the supporting
+source before relying on a capability label for enforcement.
+
+Submodule declarations whose source is missing or empty make source coverage
+incomplete (exit 3). Clone collection also checks the immutable Git tree for
+submodule entries. The scanner does not initialize submodules or contact their
+URLs. Supply the intended source in a separately reviewed checkout or explicitly
+exclude it from the declared scan scope; do not interpret an incomplete result
+as an absence of agents. See [coverage policy](scanning.md#coverage-policy) for
+the collection modes and limitations.
+
+The new kind and capability examples are authored regressions. Keep the frozen
+AI-labeled corpus unchanged and obtain fresh human-reviewed field evidence using
+the [holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+Include ordinary Java chat applications, explicit empty/disabled capabilities,
+positive tool/delegation controls and incomplete source checkouts in the sampling
+plan. Predeclare kind, product and capability labels before revealing scanner
+results. AWS/Slack live acceptance still requires the authorized complete and
+permission-denied [tenant canaries](canaries.md); other deployment scopes require
+their own connector-specific evidence.
+
+### September 27 migration and acceptance
+
+The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
+from the reviewed revision into a fresh virtual environment; do not overlay it
+on a previous `shadowscan` distribution, because both use the same Python import
+and command paths. The CLI, Python imports, connector entry-point group and
+report schemas retain the `shadowscan` name. This rename does not publish a
+package or reserve the package-index namespace.
+
+Offline exports, approval inventories, imported reports, dependency manifests,
+notebooks and agent/MCP configuration with duplicate or non-finite data now fail
+validation. Affected scans are incomplete while valid neighboring evidence is
+retained. JSON readers and writers also reject `NaN`, infinities and exponent
+overflow rather than accepting non-standard values. Obtain an unambiguous,
+standards-compliant source and rerun collection; do not treat empty findings
+from rejected input as evidence that an earlier finding resolved.
+Conflicting schema aliases, case-folded CSV headers, pagination cursors and
+multiple records for one provider identity also make coverage incomplete. The
+scanner quarantines only the ambiguous identity where the format permits it and
+continues to retain findings from unambiguous neighboring records.
+Ordinary deterministic graph/flow construction and text generation without
+enabled tool execution no longer establish agent behavior. Source capabilities
+also stop inheriting unsupported features solely from framework membership.
+Review changed kinds, capabilities and risk scores, then collect a fresh baseline
+before using these reports in an enforcement decision.
+
+Built-in connector options now apply the same schema to YAML-loaded and
+programmatically constructed configurations. Connector option booleans accept
+explicit case-insensitive true/false forms; the connector `enabled` field also
+retains its documented aliases. Ambiguous values, unknown built-in keys and
+reserved keys fail before collection. Plugin keys remain plugin-defined, while
+cycles, excessive nesting and non-finite values still fail at the scanner
+boundary. Mutable risk and deadline settings are revalidated before every run.
+Configured inventory is reloaded for every run, including the first run after
+engine construction, so an approval file changed between construction and
+execution cannot supply a stale match.
+
+HTML and CSV reports, whether sent to stdout or written with `-o`, render
+terminal control and bidirectional-formatting characters visibly (tab and line
+breaks remain data in CSV; tab and line feed in HTML), so `cat` or `less` on a
+saved report cannot execute escape sequences taken from a scanned log. Output
+sent to stdout also renders zero-width characters, the byte-order mark and
+Unicode tag characters visibly, and a lone surrogate (which no encoder accepts,
+and which a name read from an export can hold) is written as the escape text
+`\ud800` in every format. Reporter boundaries sanitize copied diagnostics without
+mutating in-memory scan state, ignore malformed related-finding metadata, preserve
+valid SARIF source paths and reject non-finite JSON. Serialization failures stop
+before stdout or an existing output file is changed; table output preflights
+diagnostics before emitting its header. Continue to treat reports as sensitive:
+these controls do not authorize publication of tenant or source data.
+
+Incremental scans now bind cache fingerprints to Python/platform, parser/regex
+and Git runtime versions. Git-aware reuse refuses `.git` indirection, and tree
+hashing, Git metadata, cache reads and post-scan maintenance cooperate with
+cancellation and connector deadlines. Startup maintenance has its own two-second
+monotonic budget; exceeding it disables cache reuse for that run so collection
+continues as a full scan. Enumeration is bounded by entries, depth, time and
+bytes. Cache maintenance applies a 30-day TTL, 256-entry and 512 MiB aggregate
+limits, deterministic oldest-access eviction and removal of stale pending and
+orphan-lock files. Post-lock inode checks prevent cleanup from splitting a slot
+across stale and replacement lock files. These are implementation defaults, not
+evidence of field accuracy; rebuild the incremental state when changing rollout
+baselines.
+
+Google Workspace domain-wide delegation pins the signed assertion audience and
+token exchange to `https://oauth2.googleapis.com/token`; a service-account
+document's `token_uri` cannot redirect the credential exchange.
+
+The `CI gate` job combines documentation, Linux Python 3.11–3.13, a dedicated
+container security job, macOS Python 3.11 and 3.13, and DCO for pull
+requests. Core/development, runtime, build and documentation dependency sets are
+hash-locked, and CI audits all four. Add `CI gate` to the live required checks
+while retaining existing checks and independent approval. Verify the platform
+setting before claiming it is enforced: a workflow cannot change a branch
+ruleset by declaring a job.
+
+The revised synthetic cases remain regression data. Freeze a fresh population,
+human labels and acceptance policy using [the holdout procedure](evaluation.md#gate-a-frozen-holdout),
+then run the [scope-specific evidence gate](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+For AWS or Slack deployments, retain complete and separately credentialed
+permission-denied receipts from [approved tenant canaries](canaries.md).
+Other connectors need their own acceptance evidence. The existing bundled
+corpora, replays and mocked transports do not meet these live requirements.
+
+After independent review, merge and successful exact-commit CI and CodeQL,
+exercise the manual release-evidence workflow described below. Retain its
+candidate, attestation and `release-publication-input-<SHA>` artifacts together.
+The latter contains the exact attested wheel bytes and is an input to a possible
+future OIDC trusted-publishing job; it does not publish anything or approve a
+release. Evidence from an earlier main commit does not cover these source or
+package changes, and local wheel checks do not establish GitHub-hosted provenance.
+
+### September 25 migration and acceptance
+
+Rebuild finding and comparison baselines after adopting the scanner-boundary
+corrections. Google Workspace customer attribution, unresolved permission/workflow
+identities, and semantic provider-dispatch classification can change finding IDs,
+registry status or finding kinds. Review existing inventory bindings and retain the
+previous pinned scanner and reports for rollback. Unresolved identity is evidence
+for investigation, not a resource that can be approved through an inventory card.
+
+For Google Workspace, add `admin.directory.customer.readonly` to the audit
+identity's approved scopes before live collection. The read-only customer lookup
+must establish a concrete customer ID, even for an empty tenant. Offline runs
+require that verified ID in `customer`. Regenerate accountless Google Workspace
+inventory cards with an explicit customer binding; an old globally scoped OAuth
+client card no longer approves grants across tenants. Re-run tenant acceptance
+after changing audit permissions. No live Google tenant validation is implied by
+the mocked provider-contract tests.
+
+Source excerpts now redact sensitive environment-call arguments, and repository
+connector debug diagnostics omit raw exception payloads. Run the synthetic report
+and log checks before distributing reports; redaction remains a defense in depth
+control, not permission to publish private source or unrestricted tenant exports.
+The sanitizer also propagates opaque secret values found in nested credential
+objects or lists to sibling fields in the same finding or connector record export.
+It leaves common credential descriptor labels intact so resource identity remains
+useful; the containing credential field is still redacted. Recheck stored reports
+and exports containing nested credential data before sharing or reusing them,
+because earlier scanner versions could leave an identical value in an unrelated
+description. Synthetic regressions exercise this path; no live tenant validation
+is implied.
+
+The two holdout acceptance paths share source-overlap checks. Copying or renaming
+previously evaluated source does not create new independent observations; repeated
+holdout sources cannot satisfy sample minima or tighten uncertainty estimates.
+Freeze a fresh independently human-labeled sample and its policy before evaluation.
+Neither these checks nor a passing regression suite supplies that human review or
+real tenant canary evidence.
+
+Slack findings now use the immutable workspace ID as `account`; workspace names
+are display metadata. Update inventory account bindings and collect a fresh
+Slack baseline after upgrading. An offline
+export must include a valid team record or an explicit operator-supplied
+`team_id`; conflicting workspace identities cannot establish attributed findings.
+Teams records without valid app identity make collection incomplete while valid
+neighboring observations remain available.
+
+Code findings can change after this scanner update. A single OpenAI Responses
+action requires an import-bound request and source-linked model-selected dispatch;
+it supplies tool-use evidence without asserting repeated autonomous execution.
+An iterative function loop additionally requires matching feedback to the next
+request. Provider analysis rejects unrelated dispatch, unreachable literal branches
+and locally shadowed execution calls. Reconcile a fresh code
+baseline and review changed finding identities before using `--fail-on` as an
+enforcement gate. Offline source tests establish these paths, not runtime use.
+
+Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
+required evidence for the intended deployment scope. It checks artifact identity,
+freshness and declared review/metric requirements. It does not authenticate
+reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
+tests into operational evidence. Keep receipts and human attestations in controlled
+audit storage and review their origin. Unsupported live connectors still require
+their own acceptance work; they cannot inherit an AWS or Slack result.
+
+The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
+requires successful main-branch CI and CodeQL runs for the exact selected commit.
+It rejects modified, untracked and ignored checkout files, builds from a clean
+`git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
+and produces GitHub artifact provenance. It then assembles the candidate and
+attestation bundles without rebuilding the wheel. It does not publish to PyPI,
+create a release, or declare tenant acceptance. Review and retain its artifacts
+before a separate maintainer publication decision.
+
+After merge and successful push CI, dispatch **Release candidate evidence** on
+`main` with `expected_commit` set to the full current main SHA, `ci_run_id`
+set to that commit's successful CI run ID, and `codeql_run_id` set to its
+successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
+failed checks and other workflows. Retain `release-candidate-<SHA>`,
+`release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
+hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
+attestations before publication. A future publisher must use the wheel in that
+publication-input artifact, not rebuild from a tag. Configure an environment-
+protected PyPI trusted publisher and grant `id-token: write` only in that future,
+isolated publication job. The current workflow deliberately has no package-index
+permission or upload action.
+
+The runtime SBOM covers locked Python core/cloud dependencies. It is not a
+container or operating-system SBOM and does not cover the base image, Git,
+CA certificates or other Debian packages. Generate and review a container/OS
+SBOM for the exact deployed image digest as a separate release control.
+
+### Output and inventory migration
+
+Reports and inventory stub files now use atomic 0600 writes. An existing
+character device given as the report path, such as `/dev/null`, is written in
+place instead of being replaced. An existing named pipe is written in place only
+when you own it with mode 0600 and a reader already has it open. Sockets,
+directories and other non-regular paths are refused. Inventory stub and
+record-export directories are created as 0700; existing non-private directories
+are rejected without changing their permissions. Use dedicated directories for
+these outputs.
+
+The Markdown reporter defangs bare HTTP(S) and `www.` strings and writes `@` as
+`[@]` in untrusted text fields, so repository names, owners, diagnostics and
+evidence descriptions do not become links, @-mentions or e-mail links when
+reports are pasted into a ticket, pull request or wiki. Code spans keep
+identifiers verbatim. The CSV reporter inserts a literal `'` at the start of a
+value, and after each `,`, `;`, tab, `|` or line break inside it, where the
+text that follows begins with `=`, `+`, `-` or `@` (also after whitespace,
+including no-break spaces, or double quotes) or with a tab or carriage
+return; a value that begins with a line feed is marked too. Other tabs and
+line breaks inside a value are left alone. A report opened with another
+delimiter therefore cannot create a formula cell. Strip every marker when
+consuming CSV programmatically, or consume `json`.
+
+Dump filenames include the original connector configuration ordinal and a safe
+label. Repeated names or normalization-colliding labels no longer overwrite each
+other. Selecting a subset with `--only` retains the original ordinal. Use the
+export manifest to locate each instance's file and completion status instead of
+assuming a filename such as `cloud_aws.jsonl`. Exports remain sanitized and are
+not lossless copies of upstream responses. JWTs are never included.
+
+Generated resource patterns escape literal `*`, `?` and `[` characters. Review
+previously generated cards for those characters and regenerate literal bindings
+where necessary. Existing intentionally authored wildcard approvals remain valid.
+Resources or identity scopes whose identifiers were redacted cannot establish
+an exact approval: assign a stable nonsecret resource, provider, account and
+region identity before registering them. A report display value containing
+`[REDACTED]` is not an authority to approve every object that renders to the
+same value.
+AWS findings with only a short resource ID also require an account ID from
+the connector configuration or a trusted account export record. Without one,
+the scan is incomplete and a registry card cannot approve the finding. Check
+that distinct offline exports carry their own account scope before combining
+them into an inventory baseline.
+Generated cards now include `discovery.regions` when a region is known; review
+older cards with short resource IDs (for example a Bedrock agent ID without its
+ARN) and add explicit region constraints to avoid approving another region.
+
+For a labeled `code.filesystem` connector using `paths`, each root gets its own
+resource ID under the shared label, even if the list later contains just one
+path. Without `root_ids`, the suffix is `root-<SHA256 of canonical path>` and
+changes when a checkout moves. Set unique `root_ids` in the same order as
+`paths` to emit `root-id-<id>` suffixes that remain stable across CI workers;
+reorder the two lists together. Inventory entries using the old shared label
+will no longer approve these roots. Regenerate cards from a complete scan and
+approve each root separately. A scalar `path` retains its prior resource ID,
+so another option for stable identities is one connector per repository with
+its own explicit label.
+
+### Field review changes
+
+A field review of public repositories changed what some scans report. Compare a
+pinned baseline with a candidate before enforcing policy on the new output:
+
+- **Folded manifests.** A CrewAI `agents.yaml` or `langgraph.json` inside a
+  reported project no longer produces its own `agent-manifest` finding; it is
+  listed under the project finding's `metadata.manifests`. `diff` shows those
+  finding IDs as resolved. Inventory entries that bound a manifest path should
+  bind the project resource instead. A2A cards and M365 declarative agents are
+  unchanged.
+- **GitHub Apps.** Installations without an AI signature or AI-like name are no
+  longer reported. Set `include_unrecognized_apps: true` to keep reviewing them,
+  at possible confidence with the `unrecognized-app` tag. Read-only apps with an
+  AI-like name are now reported. `contents` or `pull_requests` write access no
+  longer implies `code-exec`, so such apps can drop a risk level (the Claude app
+  from critical to high); check `--fail-on` thresholds against a baseline.
+- **Completeness.** Syntax errors in ordinary configuration files and Python
+  test modules over `max_ast_nodes` produce warnings instead of incomplete
+  scans; the file is still read lexically. Enable `strict_coverage` to keep
+  treating them as incomplete. A file the parsers refuse for nesting depth or
+  XML entity expansion stays incomplete, since its content is unknown rather
+  than malformed. Notebooks whose outputs exceed `max_file_size`
+  now contribute their code-cell evidence; their outputs are not scanned for
+  credentials at that size, so the scan stays incomplete unless `scan_secrets`
+  is off. Raise `max_file_size` to scan the outputs too.
+- **Capabilities.** Test-only evidence and vendor-neutral idioms in MCP tool
+  servers no longer add capabilities; MCP server capabilities come from their
+  registered tools. Risk scores of affected findings change accordingly.
+
+### Completeness, report and credential changes
+
+The 2026-09-28 changes alter completeness, report text and credential policy.
+Compare a pinned baseline with a candidate before enforcing policy on the new
+output:
+
+- **Newly incomplete (exit 3).** A shared HTTP response body that misses the
+  [read deadline](#resource-limits-and-incomplete-scans); a `code.filesystem`
+  root that cannot be opened safely, or a directory replaced by a link during
+  the scan (see
+  [finding identity](#finding-identity-and-comparison-migration)); a
+  `code.gitlab` group listing entry without a positive integer project `id`;
+  and a `code.github` listing entry whose `full_name` is not a plain
+  `owner/name`.
+- **Changed diagnostics, still incomplete.** A YAML value PyYAML cannot
+  construct, such as an impossible date or an integer over 4,300 digits,
+  already made a scan incomplete; it is now reported as malformed YAML
+  (`invalid YAML`, `invalid agent definition YAML`), and the agent definition
+  is now listed where it used to be dropped, which can raise that finding's
+  risk score. Scan configuration and inventory files with such a value still
+  fail at setup (exit 1), now with `ConfigValidationError` or
+  `InventoryValidationError`. A cancellation or connector deadline while a
+  credential finding is built now ends that connector instead of being
+  recorded as one file's error; the scan was and is incomplete.
+- **Newly complete.** A Python module whose imports cannot resolve to any
+  signature is complete at any size or nesting depth, because the import
+  binder, which could add no evidence there, is skipped for it.
+  `mypy/checker.py` (52,729 AST nodes) used to make ordinary library trees
+  exit 3. A module that imports a library a signature describes keeps the
+  `max_ast_nodes` diagnostic: a warning in tests, an error elsewhere.
+  Configuration, inventory, signature pack, report and offline input files
+  below a traverse-only directory (mode `0711`) now open, since directories
+  are opened for traversal only.
+  An unrendered Helm, Jinja or Go-template YAML file, such as a chart
+  template with `image: {{ .Values.image }}`, no longer reports
+  `structured parsing incomplete`: it is not YAML until rendered, so its
+  excerpts use lexical redaction. Plain YAML with duplicate or non-finite
+  data still makes the scan incomplete.
+- **Reports.** CSV reports also carry `'` markers after a `,`, `;`, tab, `|`
+  or line break inside a value, not only at its start (see
+  [output migration](#output-and-inventory-migration)). Consumers that strip
+  only a leading marker must strip these too, or read `json`. Markdown writes
+  `@` as `[@]` in untrusted text, including owner e-mail addresses.
+- **Redaction.** Report excerpts and structured connector metadata withhold
+  more credential forms: literals passed to credential constructors and
+  builder chains, literal fallbacks of credential environment variables,
+  credential command-line options, .NET and XML settings, and opaque values
+  under credential-like names ([changelog](changelog.md) lists them). This is
+  a credential-policy change without configuration changes; scores and
+  evaluation results are unchanged. Expect more `[REDACTED]` markers, for
+  example on every literal after the first in a multi-argument credential
+  constructor (such as a client ID), on opaque-looking values under names
+  such as `cacheKey` or `nextPageToken`, and on a capitalized literal
+  fallback after a credential name. Reports produced before this release may
+  show such values although the scan exited 0, for example a web.config
+  `<appSettings>` key beside an Azure OpenAI endpoint, a C#
+  `new AzureKeyCredential("…")` or a `--key` command line. Regenerate earlier
+  reports that covered .NET or XML configuration, SDK client code or such
+  command lines, and rotate any key they show. The
+  [security policy](security.md) lists the forms still not withheld; keep
+  treating reports as confidential.
+- **Redaction limits.** Redaction is linear in its input, so minified bundles
+  and long runs of unfinished annotations no longer exhaust the redaction
+  budget or time out, and a long unquoted value after `key=` no longer hangs
+  a scan. Expressions nested more than 100 brackets deep are withheld through
+  the end of the excerpt, and an unquoted word holding more than 16
+  command-line options from its 17th option on. In structured metadata the
+  added rules run as a second pass over the first pass's output. That pass
+  refuses a value the earlier rules accepted, with a sanitization limit
+  (exit 3), only when removing a credential it found from the value's other
+  fields would exceed the replacement work budget or grow a text past the
+  size limit. Report sanitization takes about 28% longer.
+- **Finding identity.** IDs are computed from sanitized resource fields, so
+  an ID changes only where such a field held a value that is now withheld;
+  the demo, sample repository and evaluation corpora keep their IDs. The
+  redaction policy token changed, so findings verified clean under the old
+  rules are sanitized again automatically.
+- **Plugins and embedders.** `shadowscan.utils.text.sanitize_record` and
+  `HttpClient.paginate_cursor` are removed: call
+  `shadowscan.utils.redaction.sanitize`, and paginate explicitly. Patch
+  redaction rules only through `shadowscan.utils.redaction`. A plugin that
+  declares the cloud surface or documents `allow_instance_credentials`
+  receives the scan-wide approval (see
+  [explicit security policy](#explicit-security-policy)), and engine
+  behavior that differs by connector is a class hook (see
+  [architecture](architecture.md#engine-hooks)).
+
+### October 1 review changes
+
+These changes follow the 2026-10-01 repository review. Several change exit codes
+or what scans report, so compare a pinned baseline with a candidate before
+enforcing policy on the new output:
+
+- **Exit codes.** Command-line usage errors (an unknown option or command, an
+  invalid value such as `--min-confidence 1.5`, a missing path or
+  configuration file) exit 1, like configuration and setup errors, instead of
+  2. Exit 2 now only means a complete scan reached `--fail-on`, and exit 3 an
+  incomplete scan or comparison. Fail CI on every non-zero exit: a script that
+  treats only 2 and 3 as failures passes a scan that never ran.
+- **Gateway identity.** Gateway finding IDs stay scan-local by default, and
+  `diff` lists them under `not_comparable` (exit 3) instead of reporting them as
+  new. To compare gateway callers across scans, inject the same
+  `SHADOWSCAN_IDENTITY_KEY` (at least 32 bytes, hex or base64, for example from
+  `openssl rand -hex 32`) from a secret store into every comparable scan.
+  Findings then carry `identity_scope: keyed` and keep their IDs, and gateway
+  inputs join the collection scope through a keyed digest. Treat the key as a
+  secret: anyone who holds it can link reports and test guesses of short labels
+  or keys against them. It is read only from the environment and is never
+  written to reports, record exports, incremental state or git child
+  processes. An invalid value stops the command with exit 1 before collection,
+  findings recorded under one key never resolve against another, and rotating
+  the key requires a fresh baseline.
+- **Confidence.** Outside the code surface, repeated evidence of one signal
+  counts once, so some identity, gateway, low-code, SaaS and cloud findings
+  report lower confidence or a lower likelihood band. n8n, Make and Zapier
+  findings now score their model and step-name evidence before they are
+  finalized, so their confidence can rise: the demo's Zapier "Support agent"
+  moves from 0.8 (`likely`) to 0.901 (`confirmed`). Re-check `--min-confidence`
+  thresholds against a candidate run.
+- **Inventory.** Cards accept `discovery.discriminators`, enforced like
+  `regions`. `inventory stubs` writes each finding's discriminator, so findings
+  that share a resource (a repository's agent project and its coding-agent
+  configuration) are each registered by their own card. Cards generated
+  earlier still approve every finding on their resource: regenerate them or
+  add `discriminators`. Stub `names` are now plain strings.
+- **AWS trust policies.** `cloud.aws` parses role trust policies instead of
+  matching substrings. `Deny`, `NotAction` and `NotPrincipal` statements, and
+  service names that appear only in a `Sid` or `Condition`, no longer tag a
+  role `agent-execution-role`. A malformed trust policy is reported as unknown
+  trust (`malformed-trust-policy`) and makes the scan incomplete.
+- **Paging limits.** Every connector validates `max_pages` the same way: 0,
+  negative, fractional, boolean and non-numeric values are configuration
+  errors, and values above 1000 are capped at 1000. Fix such configurations
+  before upgrading.
+- **OCI exports.** `cloud.oci` converts SDK models with `oci.util.to_dict`, or
+  through their declared fields when the SDK is absent. An object that cannot
+  be converted is skipped and makes the scan incomplete instead of silently
+  losing fields.
+- **Detection.** Vercel AI SDK `generateText`/`streamText` calls that loop over
+  tools past the first step (`stopWhen`, including AI SDK 7 `isStepCount`, or
+  `maxSteps` above 1) are agents. Custom-pack `framework` code patterns now
+  take effect in Python and JavaScript. Detection-rule files (ShadowScan
+  signature packs, Semgrep, Sigma and gitleaks rules) are treated as data and
+  listed in `metadata.detection_rule_files`, so a rescan can close findings
+  that came only from such files.
+- **Threshold filtering.** With `--min-confidence`, `related` links and
+  `runtime_activity` references to findings below the threshold are removed.
+  The runtime observations themselves remain.
+- **Redaction.** Report excerpts withhold the API key passed positionally to
+  well-known LLM SDK calls whose names carry no credential word: Semantic
+  Kernel's .NET Azure OpenAI and OpenAI connectors, go-openai's
+  `openai.DefaultConfig`, `DefaultAzureConfig` and `NewClient`,
+  `new OpenAiService(...)` and `new GoogleGenerativeAI(...)` (see SECURITY.md
+  for the remaining gaps). Earlier reports of such code could show the key:
+  regenerate them and rotate any key they show. A long run of blanks before a
+  character the Python 3.11 tokenizer cannot read no longer makes redaction
+  quadratic and the scan incomplete, and on Python 3.12 and later a
+  non-ASCII character after a lone carriage return, or a lone surrogate, no
+  longer makes a file's analysis incomplete.
+
+### October field scan changes
+
+These corrections change what some scans report. Compare a pinned baseline with
+a candidate before enforcing policy on the new output:
+
+- **Completeness.** TSX files with typed elements, comments between JSX
+  attributes or element text starting with `(` no longer make scans incomplete.
+  Previously incomplete React repositories can now complete and become usable
+  `diff` baselines.
+- **New MCP findings.** Gemini `httpUrl` servers and MCP servers embedded in
+  GitHub Actions step inputs are new `mcp-server` findings. `diff` shows them as
+  new; review their risk before using `--fail-on`.
+- **Attribution.** Findings whose only Google ADK evidence was
+  `GOOGLE_GENAI_USE_VERTEXAI` lose `framework.google-adk` and its `multi-agent`
+  potential capability. `diff` reports them as changed; titles change too.
+- **Fixture workflows.** Exported workflows under test or fixture paths gain the
+  `test-code-only` tag, lower confidence and a lower risk score.
+- **Project roots.** Modules named `setup.py` that do not build a package no
+  longer create a project. Findings for such directories disappear from `diff`
+  as resolved and their evidence joins the enclosing project's finding.
+- **Credential files.** MCP servers whose only inline-secret evidence was a
+  credential-file path argument or a repeated variable reference lose the
+  `inline-secrets` tag and its risk factor.
+- **Test-path credentials.** `secret` findings under test, fixture or
+  `cassettes/` paths gain the `test-code-only` tag, lower confidence and a lower
+  risk score unless `include_tests` is set; they are still reported.
+- **Coding-agent configuration.** A product named only by an environment
+  variable or display name (such as `GOOSE_PROVIDER` in a test matrix) no longer
+  yields an `agent-config` finding; `diff` shows such findings as resolved.
+  Instruction-document aliases (`CLAUDE.md` linking to `AGENTS.md` in the same
+  project) no longer make a scan incomplete.
+- **MCP parsing.** Compiled agentic-workflow lock files (`*.lock.yml`) and
+  cookiecutter `{{...}}` template paths are not parsed as MCP configuration and
+  no longer make a scan incomplete.
+
+### October 2 review changes
+
+These fixes came from an AI-assisted review of the October 1 candidate; neither
+the review nor the fixes had a second-person review. Several of them turn a
+result that used to look complete into an incomplete one, so run a candidate
+scan next to the pinned baseline and read the differences before you enforce
+policy on the new output.
+
+New incomplete (exit 3) and configuration-error outcomes:
+
+- **Unreadable analyzable files.** A file that `code.filesystem` analyzes by
+  name and that still contains a NUL byte in its first 8 KiB (a binary `.plist`
+  or `.xml`, a UTF-16 file without a byte-order mark, a stray NUL in source or
+  Markdown) is a coverage gap named `binary or undecodable content in
+  analyzable file`. Fix the file or add it to `exclude`. UTF-8, UTF-16 and
+  UTF-32 files with a byte-order mark, and Python sources with a PEP 263 coding
+  cookie, are now decoded and analyzed, so dependency lists, `.env` files and
+  sources that used to read as empty can add findings.
+- **List options.** A bare string for `exclude` or `paths` (`exclude:
+  "vendor/*"`, `--set exclude=vendor/*`) is a configuration error. It used to be
+  split into characters, which excluded the whole tree and reported a complete,
+  empty scan. Use a list, or repeat `shadowscan code --exclude`.
+- **Signature packs and inventories.** A custom signature pack directory that
+  contributes no `.yaml`/`.yml` pack (empty, other file types, only symbolic
+  links) and an inventory glob that matches no file now fail at setup (exit 1).
+- **Connectors and plugins.** A connector or plugin that calls `sys.exit()` is
+  a failed connector and the scan is incomplete; it no longer ends the process
+  with the plugin's status and no report.
+- **Exports.** Gateway logfmt lines that repeat a key or leave a quote open,
+  gateway records whose timestamp no supported format parses, `saas.generic` and
+  `lowcode.zapier` rows with no name (blank rows, footers; map the column with
+  `fields.name`, or call it `title`/`name` for Zapier), Slack Connect bots from
+  partner workspaces, OCI policy statements over 8192 characters, and
+  Power Platform records that cannot be analysed are skipped with a warning and
+  make the scan incomplete. The remaining records are still reported.
+- **ServiceNow paging.** A short page no longer proves that a table ended.
+  Collection stops at an empty page, so a small `max_pages` makes any non-empty
+  table incomplete. Keep the default (1000) or size it above rows/500 + 1.
+- **Report comparison.** `diff` treats a report whose `summary` counts do not
+  match its `findings` array as incomparable (missing findings are unknown,
+  exit 3) instead of counting them as resolved.
+
+Changed results to review before you compare against a baseline:
+
+- **Disabled MCP servers.** A server entry that declares `disabled: true` or
+  `enabled: false` is reported, tagged `declared-disabled`, with `disabled: true`
+  in `metadata.servers`; `server_count` still counts only the others. The flag
+  is client-specific and comes from the repository, so honoring it let a
+  repository hide a server. `diff` shows a configuration whose only entries are
+  disabled as a new finding.
+- **Newly visible evidence.** NuGet `PackageReference` items in
+  `Directory.Build.props`, `*.targets` and shared `*.props` files, and imports
+  of an SDK whose name a repository shares with an empty or data-only
+  directory, now produce dependency and provider evidence.
+- **Gateway logs.** Only the request path decides whether a request is a static
+  asset or health probe, and a probe name must be the last segment: `/healthz/ready`
+  and `?_=.js` requests are classified by the normal LLM route and host rules.
+  Provider attribution follows the URL authority (`https://api.openai.com@evil.example/`
+  names `evil.example`). Microsecond, nanosecond, Go and RFC 2822 timestamps
+  are now parsed, which changes first/last-seen and activity analysis.
+- **Entra.** Permission names in findings may change from a raw GUID to the
+  label of the resource that defines the role. The "conflicting role labels"
+  warning appears only when a conflicting label is needed for a grant, so
+  exports in which different resources reuse a role id are no longer incomplete.
+- **JWT.** Without `jwks_url`, every token finding carries
+  `metadata.verified: false`; confidence and risk are unchanged.
+
+New warnings (the scan stays complete):
+
+- Default-excluded directories: one warning per scan root names the non-empty
+  `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
+  `third_party`, `thirdparty` and `external` directories the walk skipped.
+  Set `default_excludes: false` (`shadowscan code --no-default-excludes`) to
+  scan them. That option also stops skipping dependency trees and virtualenvs
+  (`node_modules`, `.venv`, `site-packages`), so pair it with `exclude:
+  [node_modules, .venv]`. Version-control metadata (`.git`, `.hg`, `.svn`) is
+  always excluded. Pipelines that fail on any warning must pass the option or
+  tolerate the warning.
+- Inventory placement: a scan warns, under the new `engine.inventory` entry of
+  `stats`, when an inventory or a file it loads is inside a path scanned in the
+  same run, and for each `*`-only resource pattern. Keep the inventory outside
+  the checkout that a pull request can change. Report consumers that list
+  `stats[].connector` will see the new entry name.
+- Python that does not parse (syntax newer than the runtime, a notebook with
+  shell or magic lines) keeps its lexical evidence and adds a warning.
+- Gateway scans note how many static-asset and probe requests were not counted.
+  Tooling that fails on any warning should key on `incomplete` or the exit code.
+
+Remote collection changes to review:
+
+- **Listings.** Repositories are now listed in a fixed order before any is
+  cloned. Over `max_repos` or `max_projects` the covered subset changes from the
+  most recently active N to the first N by name (GitHub) or id (GitLab); the scan
+  is incomplete either way. A bare string for `topics`, `repos` or `projects`, or
+  a non-integer cap, is an error (exit 3) where it used to scan nothing.
+- **Git.** Cloning needs Git 2.32 or newer, and the gitlink inventory of a clone
+  needs 2.45: with 2.32 to 2.44 a clone is scanned but every repository reports
+  `could not inventory gitlinks safely`, and with older or unidentifiable Git the
+  connector uses sampled API mode. Both end incomplete. Clones that hold Git LFS
+  pointer files are incomplete, and a repository with malformed objects at its tip
+  is refused by `fsckObjects` and scanned through the sampled API fallback.
+- **Termination.** SIGINT, SIGTERM, SIGHUP and the job deadline now stop live
+  clones and delete their checkouts. Keep the external deadline and container or
+  process-group cleanup for SIGKILL and out-of-memory kills.
+- **Destinations.** `168.63.129.16` and `fec0::/10` are refused like the other
+  metadata and private destinations unless `allow_private_origin` is set, and a
+  URL with whitespace or control characters is an error rather than a cleaned
+  value; a base URL with a stray trailing space now fails.
+- **GitHub token.** Grant Secrets, Variables, Codespaces secrets and Dependabot
+  secrets (read) beside Contents and Metadata, or each repository adds four
+  identical `HTTP 403` warnings and the scan exits 3. Use distinct token
+  variables for `code.github` and `saas.github-apps`; the credential-mixing guard
+  separates scans, not token scope.
+
+Label, precision and risk-policy changes to review:
+
+- **`likelihood` value.** `findings[].likelihood` and the CSV `likelihood` column
+  report `strong` where earlier output said `confirmed`. Dashboards, `jq` filters,
+  SIEM rules and ticket automation that count or filter on `confirmed` must accept
+  `strong`; accept both while old reports are in circulation. `diff` reads
+  baselines written before the rename (the label is not compared and `confirmed`
+  parses as `strong`), so no baseline needs regenerating. Use `confidence`, a
+  number, for thresholds: `strong` does not mean verified.
+- **List-only repositories.** Findings disappear for repositories that only list
+  vendors (blocklists, allowlists, vendor policies, vendored signature or
+  inventory data). A bare data file that names four or more providers and is the
+  only evidence is no longer reported; keep its name a manifest name or add a
+  signature with a `file` signal if you rely on it.
+- **Plugin authors.** Evidence weights must be finite numbers in [0, 1]. A
+  violation fails the connector and the scan is incomplete.
+- **`risk_weights`.** A typo in a `capabilities` or `providers` key now fails the
+  scan setup (exit 1) instead of being ignored. Provider ids are checked when the
+  engine is built, after custom signature packs load. Check existing
+  configurations for keys that never matched anything, and dry-run a change.
+- **Scores.** Findings at five points of the score grid (raw 45 at confidence
+  0.25, 75 at 0.15, 85 at 0.25, 125 at 0.17 and 125 at 0.21) score one higher.
+  `diff` against an older baseline reports the changed `risk.score` and factor
+  weight for those findings only, and a level change for the one that crosses from
+  medium to high.
+
+Redaction and lexing changes to review:
+
+- **Redaction policy.** Credential operators, token boundaries, URL userinfo,
+  record-field names, unknown value types and private-key blocks are redacted
+  more completely (see the changelog). Reports can hold a little more
+  `[REDACTED]` than before: comparisons with a sensitive name, `creds` and
+  `db_pass`, record fields named for a credential word, and arrow functions whose
+  parameter is named for a credential, which keep the arrow but lose the body.
+  No finding, detection or exit code changes. The policy digest changes with the
+  rules, so verified-clean digests cached on findings are recomputed, and
+  `scanner_source_sha256` changes, so artifacts from an older build are not
+  comparable (as for any release).
+- **Earlier dumps.** `--dump-records` files written by an earlier version keep
+  their older, less redacted content. Regenerate them with this version before
+  you share them; a dump written now holds `[REDACTED]` for the newly covered
+  field names, and offline re-analysis of it sees the marker.
+- **Lexer.** Code that was hidden is now scanned when it followed a
+  keyword-named property (`o.of / 1; ...`), a comment ended by a bare CR,
+  U+2028 or U+2029, a JSX attribute string ending in a backslash, or a PHP
+  comment closed by `?>`; expect new findings in such files. New incomplete
+  (exit 3) cases are a `/` directly after `await` or `yield`, a regular
+  expression after `}` that holds a quote, backtick or slash, and a JSX file
+  that exhausts its look-ahead allowance (`file analysis incomplete
+  (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`;
+  hostile or machine-generated input, not configurable). Projects that vendor
+  `emoji-regex` or similar generated tables stop reporting
+  `incomplete source lexical analysis` for them.
+
+Operational notes:
+
+- With a Kubernetes ConfigMap mount, pass the resolved file path as the
+  scan configuration; links are deliberately not followed.
+- `XDG_STATE_HOME` is ignored when it is empty or relative.
+- Remove an `actions/cache` step that restores `--incremental` state. The
+  fingerprint includes file identity, so a fresh checkout never reused it.
+- Maintainers: `main` push CI runs are no longer cancelled by the next push,
+  so expect more concurrent CI minutes on busy days. A new connector family
+  directory or nested connector package must be listed in `CONNECTOR_FAMILIES`
+  in `tools/coverage_gate.py`, or the coverage gate fails.
+
+### Finding identity and comparison migration
+
+Finding IDs now separate stable source identity from inferred classification.
+A service principal transitioning from delegated to application permissions
+keeps its identity. Stable resource-type families separate different observation
+types on the same resource; plugins can provide an explicit stable
+`identity_discriminator` when needed. Never derive this discriminator from an
+inferred kind, risk level or current permissions.
+
+Reports declare `shadowscan.finding-identity/v2`. Rebuild comparison baselines
+after this upgrade: legacy or mismatched schemas cannot establish resolution
+and diff reports missing findings as unknown. Incremental cache format changes
+force a full rescan; cached approval is never reused. Review any downstream
+deduplication, SARIF alert history and ticket integrations that store old IDs.
+
+This candidate preserves the v2 algorithm (`ss-` plus the first 16 SHA-256 hex
+characters). Corrected JWT issuer labels can change provider-derived IDs for
+previously misclassified tokens; review those deltas when updating a baseline.
+
+Diffs now identify substantive changes in classification, permissions,
+capabilities, technologies, risk score/factors, registration and ownership,
+including changes within the same risk band. `changed_fields` identifies the
+changed attributes. Timestamp and evidence ordering alone do not create changes.
+`diff` and `inventory stubs` accept regular JSON report files up to 64 MiB,
+without input or ancestor symlinks. Duplicate keys, non-finite numbers, invalid
+finding fields and excessive nesting fail validation. All records are checked
+before stub generation writes files; this does not make multiple file writes
+transactional if a later filesystem operation fails.
+
+GitHub and GitLab API source downloads use immutable blob IDs returned by tree
+enumeration and verify each downloaded file against its Git object ID before
+scanning it. GitHub API findings include the tree SHA; GitLab API findings
+include the commit SHA resolved before pagination. Clone-mode findings include
+the checked-out commit and tree SHAs. These appear in each code finding's
+`metadata.source_snapshot`, alongside the provider, capture method and validated
+branch name when available. Missing or malformed snapshot identities and blob
+mismatches mark the scan incomplete; valid neighboring files remain usable.
+Symlinks and submodules are skipped with incomplete coverage in both modes: API mode
+skips them, and a clone reports submodules (gitlinks) through the filesystem scan of the
+checkout. Git LFS pointer files, which neither mode resolves, also make the scan
+incomplete. Provider settings,
+CI variable names and other metadata collected separately are not part of the
+source snapshot.
+
+Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
+Filesystem scans reject selected roots whose paths traverse a symbolic link.
+They then open each root once and read every file, including `CODEOWNERS`,
+relative to it without following a link in any path component. A scan needs
+read and search permission on the root and the directories below it, but on
+Linux and macOS only search permission on the directories above it (they are
+opened with `O_PATH` on Linux; on macOS the root is opened in one call with
+`O_NOFOLLOW_ANY`), so a checkout below a traverse-only directory such as a
+mode `0711` home directory is scanned completely. A root that cannot be opened
+this way is reported, by its `label` when one is set, as
+`could not open the scan root safely (<reason>)`, for example
+`permission denied`, and makes the scan incomplete. Source links encountered
+during a walk are skipped and mark coverage incomplete. A directory replaced
+by a link while the scan runs fails the reads below it and also marks
+coverage incomplete, so content outside the root is never analyzed. Review
+or explicitly exclude such paths before accepting a completeness gate.
+Pre/post content hashes can detect ordinary concurrent edits but do not form an
+atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
+and revert between those reads.
+
+Confined regular-file reads use `O_NOFOLLOW_ANY` on macOS too, both for full
+paths and paths relative to an open scan root. The kernel rejects links in any
+component in the same lookup; the scanner does not call `realpath` to turn a
+rejected link into an accepted input. This also avoids opening every ancestor
+for reading. Nonblocking opens and `fstat` still reject FIFOs and other special
+files. On other supported POSIX platforms the component-by-component confined
+walk remains in use. Signature-pack directory enumeration fails if a subtree
+cannot be read or the entry budget is exceeded, including directory-only
+trees; correct those inputs before accepting the policy.
+
+Incremental state uses nonblocking advisory `flock` per cache slot
+(`<sha256>.lock`): shared for reading and exclusive for publication, as well as
+atomic writes and current-input fingerprint checks.
+Keep state in a dedicated private directory outside the scanned repository. A
+busy read lock causes a cache miss; a busy write lock skips that publication.
+Incremental state needs POSIX advisory locking (`fcntl`); platforms without it are ones the confined file reader already refuses, so no scan runs there. Symlinked, non-owner or non-private lock files are
+rejected. Use local filesystems with working advisory locks; a lock is not a
+distributed coordination service or a security boundary against another process
+with the same user ID.
+
+### Cloud collection changes
+
+AWS verifies the live account through STS before emitting account metadata,
+including when `account_id` is configured. For live scans, that setting is an
+expected account and a mismatch stops collection. AWS and OCI SDK clients have
+explicit 10-second connect and 30-second read timeouts with at most three
+attempts. These bounds do not replace the overall worker deadline. AWS Lambda
+and GCP project limits stop enumeration without materializing the full inventory.
+ECS discovery follows
+exact definition ARNs referenced by running tasks and service deployments,
+including referenced inactive revisions, and retains the latest active registered
+revision of each family as a separate evidence category. Stopped tasks and unused
+historical revisions are outside this collection scope. A registered-only label
+does not prove a definition is undeployed when discovery is incomplete.
+Late AWS list-page failures retain earlier observations, mark coverage incomplete,
+and cap pagination; a missing collection field is not an empty inventory. A
+malformed AWS or GCP record (a function without an ARN, a service without a
+config name) skips that record with a warning and incomplete coverage; the
+remaining resources, services and regions are still collected. AWS diagnostics
+for a failed SDK call name the operation and the provider's error code, never
+the provider's message text.
+The per-region `max_ecs_api_calls` limit defaults
+to 2000; exceeding it or encountering denied/partial calls marks coverage
+incomplete. Add the read permissions listed in [connectors.md](connectors.md).
+
+GCP Owner/Editor-only principals remain visible as privileged access findings.
+Neither broad role grants nor ECS deployment references establish that AI code
+actually executed. Use trusted runtime telemetry for additional attribution.
+GCP audit caller findings keep events from separate projects distinct, including
+when the service account principal is the same. Azure Resource Graph failures on
+later pages preserve earlier observations and mark collection incomplete.
+Cloud Run discovers concrete regions using the locations API before listing
+services; the v2 services endpoint does not accept a `-` location. Unreachable
+regions in GCP list responses make coverage incomplete while retaining reachable
+observations. The audit identity must have `run.locations.list` and
+`run.services.list` for this discovery path. Azure ARM inventory pages also retain
+observations after later failures; diagnostic-setting coverage remains unknown
+unless every page was collected successfully.
+
+Foundry collection uses the verified classic Agent Service `/assistants` route
+with `api-version=v1` and validates its pagination envelope. Newer `/agents`
+families are outside that contract. OCI Function collection now reads both
+application and function details, merges inherited configuration with function
+overrides, and treats denied detail access as incomplete. Ensure the audit
+identity can read those details, not just enumerate summary records.
+
+Google Workspace per-user token envelopes preserve the parent user in both
+single-object and array forms. Regenerate earlier offline analyses affected by
+lost user attribution before using their counts as governance evidence.
+
+### Consolidated candidate compatibility
 
 The consolidated candidate preserves the PR #30 runtime policies and reconciles
 verified additional fixes with PR #31, which merged during that work. The

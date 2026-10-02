@@ -541,8 +541,11 @@ def test_structured_provider_usage_without_model_is_still_llm_evidence(index):
 def test_shared_fallback_or_placeholder_does_not_prove_a_workload(index, record, caller):
     record.update(timestamp="2026-09-22T10:00:00Z")
     findings, activity = _scan(index, [record], caller=caller)
-    assert findings
-    assert activity["status"] == "unknown"
+    # A bare ``assert []`` once failed on a single CI run and could not be
+    # reproduced; keep the inputs and outcome in the message so a recurrence
+    # identifies the case without a rerun.
+    assert findings, f"no findings for {record!r} bound to {caller!r}; activity={activity!r}"
+    assert activity["status"] == "unknown", f"{record!r} bound to {caller!r}: {activity!r}"
 
 
 def test_generic_service_binding_declares_its_limit_and_production_label(index):
