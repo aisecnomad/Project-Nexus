@@ -87,7 +87,9 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   unsupported Git behavior or failed metadata reads makes coverage incomplete.
   Clone calls have a separate HTTPS-only policy: credentials stay scoped to the
   approved origin and redirects are disabled. Hooks and inherited Git overrides
-  are suppressed. Unsafe branch values are dropped with incomplete diagnostics.
+  are suppressed, and clones verify the objects they receive. A termination signal
+  or the job deadline stops in-flight clones and removes their checkouts. Unsafe
+  branch values are dropped with incomplete diagnostics.
   Remote repository data cannot select an internal offline filesystem path.
   Keep Git patched and use disposable workers for untrusted inputs.
 * Reports and generated inventory stubs are written atomically with mode 0600.

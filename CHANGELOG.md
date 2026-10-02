@@ -245,6 +245,50 @@ field precision. Behavior changes that affect an existing baseline are listed in
   totals 0 to 300 and confidences 0.000 to 1.000, five clamped scores move by one
   and one crosses a level (medium to high).
 
+#### Remote collection: clones, listings and HTTP
+
+- A scan that is terminated (SIGINT, SIGTERM, SIGHUP) or hits
+  `--job-deadline-seconds` stops its in-flight `git clone` process groups and
+  deletes the temporary checkout of the repository being scanned before it exits.
+  Git used to keep running in its own session, without size or time limits and
+  with the clone credential in its environment, and the checkout stayed on disk.
+  No new clone starts afterwards, and an interrupted clone is not retried through
+  the sampled API fallback. SIGKILL and OOM kills cannot be handled in process.
+- `code.github` and `code.gitlab` read the organisation, user or group listing to
+  the end before the first repository is cloned or scanned, in an order a push
+  cannot change (GitHub `sort=full_name`, GitLab `order_by=id`). The listing was
+  ordered by recent activity and paged lazily, so a push to a not-yet-listed
+  repository during the scan moved it behind the cursor: it was never examined
+  and the scan stayed complete (exit 0). When more repositories exist than
+  `max_repos` or `max_projects`, the covered subset is the first N in stable
+  order. GitLab listings are compared with `X-Total` and `X-Total-Pages`; entries
+  that do not add up make the scan incomplete. GitHub reports no total, so a
+  repository deleted (not pushed) mid-listing can still hide another.
+- A clone, and API mode, report Git LFS pointer files (small files opening with
+  `version https://git-lfs.github.com/spec/v1`): `Git LFS pointer files in <repo>
+  are not resolved; source coverage partial` makes the scan incomplete (an error
+  under `strict_coverage`). Submodules are reported by the gitlink check merged
+  from main.
+- `topics`, `repos` and `projects` of `code.github` and `code.gitlab` must be
+  lists of non-empty strings, and `max_repos`, `max_projects` and `clone_depth`
+  whole numbers. `--set topics=llm` was iterated as the characters `l`, `l`, `m`,
+  examined no repository and finished complete with exit 0; it now stops the
+  connector with an error that names the option.
+- Cloning requires Git 2.32 or newer: the clone protections travel in
+  `GIT_CONFIG_COUNT` and `GIT_CONFIG_GLOBAL`, which an older Git ignores
+  silently (a 302 to another host was followed and the scan finished). With an
+  older or unidentifiable Git the connectors use sampled API mode and the scan is
+  incomplete. Clones also verify received objects (`transfer.fsckObjects`).
+- The HTTP destination policy refuses `168.63.129.16` (Azure wire server) and
+  site-local IPv6 `fec0::/10`. A URL containing whitespace or control characters
+  is refused instead of being cleaned by the parser while git rejects it, and an
+  API tree that names a `.git` path component aborts that repository's snapshot.
+- Documentation: the GitHub token needs Contents and Metadata plus Secrets,
+  Variables, Codespaces secrets and Dependabot secrets (read). Without them every
+  repository adds four identical `repository metadata HTTP 403` warnings and the
+  scan exits 3. Use separate token variables for `code.github` (which reads
+  untrusted content) and `saas.github-apps` (which needs organisation admin).
+
 #### Redaction and report output
 
 - Credential redaction reads an operator whole. `'api_key' => '<value>'` used to

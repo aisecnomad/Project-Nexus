@@ -336,8 +336,11 @@ separate Job and enforce a network path through an approved egress proxy; a
 standard Kubernetes NetworkPolicy cannot filter destinations by DNS name.
 
 Opt-in Git history enrichment requires Git 2.45+;
-verify the distribution Git version if that feature is needed. Keep runtime
-secrets out of the build context.
+verify the distribution Git version if that feature is needed. Cloning requires
+Git 2.32 or newer; with an older or unidentifiable Git the scan uses sampled API mode
+and is incomplete. The gitlink inventory of a clone additionally needs Git 2.45; with
+Git 2.32 to 2.44 a clone is scanned but reports `could not inventory gitlinks safely;
+submodule coverage unknown`. Keep runtime secrets out of the build context.
 
 For record replay, read `exports/manifest.json` and use the `filename` for the
 intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
@@ -497,8 +500,11 @@ metadata discovery for `run` and stdin reads for `jwt`. A YAML-only deadline sta
 after the configuration has been read and validated. Use an external supervisor
 to bound process startup, Click argument parsing and YAML preflight. The value
 must be positive and finite; omission or YAML `null` leaves it disabled. Expiry
-terminates the scanner with exit `3`, without guaranteeing a final report or
-cleanup. A blocked output stream cannot delay that exit. Completed CLI
+terminates the scanner with exit `3`, without guaranteeing a final report. It first
+stops in-flight `git clone` process groups and deletes their temporary checkouts (best
+effort, bounded to a few seconds); SIGTERM, SIGINT and SIGHUP do the same before the
+scanner exits. SIGKILL and OOM kills cannot, so keep the external job deadline and
+process-group or container cleanup. A blocked output stream cannot delay that exit. Completed CLI
 invocations disarm their watchdog. `Engine` embedding does not arm it: the host
 application owns process supervision. Keep the external job deadline and process
 group/container cleanup to reap child processes and bound native code that holds
@@ -872,6 +878,32 @@ New warnings (the scan stays complete):
 - Gateway scans note how many static-asset and probe requests were not counted.
   Tooling that fails on any warning should key on `incomplete` or the exit code.
 
+Remote collection changes to review:
+
+- **Listings.** Repositories are now listed in a fixed order before any is
+  cloned. Over `max_repos` or `max_projects` the covered subset changes from the
+  most recently active N to the first N by name (GitHub) or id (GitLab); the scan
+  is incomplete either way. A bare string for `topics`, `repos` or `projects`, or
+  a non-integer cap, is an error (exit 3) where it used to scan nothing.
+- **Git.** Cloning needs Git 2.32 or newer, and the gitlink inventory of a clone
+  needs 2.45: with 2.32 to 2.44 a clone is scanned but every repository reports
+  `could not inventory gitlinks safely`, and with older or unidentifiable Git the
+  connector uses sampled API mode. Both end incomplete. Clones that hold Git LFS
+  pointer files are incomplete, and a repository with malformed objects at its tip
+  is refused by `fsckObjects` and scanned through the sampled API fallback.
+- **Termination.** SIGINT, SIGTERM, SIGHUP and the job deadline now stop live
+  clones and delete their checkouts. Keep the external deadline and container or
+  process-group cleanup for SIGKILL and out-of-memory kills.
+- **Destinations.** `168.63.129.16` and `fec0::/10` are refused like the other
+  metadata and private destinations unless `allow_private_origin` is set, and a
+  URL with whitespace or control characters is an error rather than a cleaned
+  value; a base URL with a stray trailing space now fails.
+- **GitHub token.** Grant Secrets, Variables, Codespaces secrets and Dependabot
+  secrets (read) beside Contents and Metadata, or each repository adds four
+  identical `HTTP 403` warnings and the scan exits 3. Use distinct token
+  variables for `code.github` and `saas.github-apps`; the credential-mixing guard
+  separates scans, not token scope.
+
 Label, precision and risk-policy changes to review:
 
 - **`likelihood` value.** `findings[].likelihood` and the CSV `likelihood` column
@@ -975,7 +1007,10 @@ the checked-out commit and tree SHAs. These appear in each code finding's
 `metadata.source_snapshot`, alongside the provider, capture method and validated
 branch name when available. Missing or malformed snapshot identities and blob
 mismatches mark the scan incomplete; valid neighboring files remain usable.
-Symlinks and submodules are skipped with incomplete coverage. Provider settings,
+Symlinks and submodules are skipped with incomplete coverage in both modes: API mode
+skips them, and a clone reports submodules (gitlinks) through the filesystem scan of the
+checkout. Git LFS pointer files, which neither mode resolves, also make the scan
+incomplete. Provider settings,
 CI variable names and other metadata collected separately are not part of the
 source snapshot.
 

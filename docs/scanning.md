@@ -53,7 +53,7 @@ The following coverage rules define how omitted source is handled:
   gaps, including declarations inside materialized nested directories. Ordinary
   files in materialized submodule directories are scanned by the same confined
   walker. GitHub/GitLab clone collection additionally inventories gitlinks in
-  the committed `HEAD` tree; local scans do so only with `use_git: true` and a
+  the committed `HEAD` tree (this needs Git 2.45 or newer); local scans do so only with `use_git: true` and a
   local `.git` directory. Malformed declarations or a failed authorized Git
   inventory make coverage incomplete. Explicitly excluded submodule paths are
   outside the declared scan scope. A nonempty directory establishes only that
