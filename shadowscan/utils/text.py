@@ -108,7 +108,11 @@ def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
 
 
 def parse_timestamp(value: Any) -> datetime | None:
-    """Best-effort timestamp parsing (ISO 8601, epoch seconds / millis)."""
+    """Best-effort timestamp parsing.
+
+    ISO 8601, epoch seconds / millis / micros / nanos, Go ``time.Time.String()``
+    output and RFC 2822 dates. Anything else is ``None``.
+    """
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -122,7 +126,13 @@ def parse_timestamp(value: Any) -> datetime | None:
             return None
         if not math.isfinite(v):
             return None
-        if v > 1e12:
+        # Seconds, then milli-, micro- and nanoseconds; each unit's range ends
+        # before the next begins for dates before the year 33658.
+        if v > 1e18:
+            v /= 1e9
+        elif v > 1e15:
+            v /= 1e6
+        elif v > 1e12:
             v /= 1000.0
         try:
             return datetime.fromtimestamp(v, tz=UTC)
@@ -142,7 +152,33 @@ def parse_timestamp(value: Any) -> datetime | None:
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
         except ValueError:
             continue
-    return None
+    return _go_or_rfc2822_time(s)
+
+
+# Go's time.Time.String(): "2006-01-02 15:04:05.999999999 -0700 MST", with an
+# optional monotonic clock reading ("m=+0.000000001"). Every part is bounded.
+_GO_TIME_RX = re.compile(
+    r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))? ([+-]\d{4})"
+    r"(?: [A-Za-z0-9+:-]{1,16})?(?: m=[+-]\d{1,20}(?:\.\d{1,9})?)?"
+)
+
+
+def _go_or_rfc2822_time(s: str) -> datetime | None:
+    """Parse Go ``time.Time.String()`` output or an RFC 2822 date (mail, HTTP, syslog exporters)."""
+    from email.utils import parsedate_to_datetime
+
+    go = _GO_TIME_RX.fullmatch(s)
+    if go:
+        fraction = (go.group(2) or "")[:6].ljust(6, "0")
+        try:
+            return datetime.strptime(f"{go.group(1)}.{fraction} {go.group(3)}", "%Y-%m-%d %H:%M:%S.%f %z")
+        except ValueError:
+            return None
+    try:
+        dt = parsedate_to_datetime(s)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def to_iso(dt: datetime | None) -> str | None:
@@ -194,11 +230,27 @@ def truncate(s: str | None, n: int = 200) -> str | None:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-_HOST_IN_URL = re.compile(r"^(?:[a-z][a-z0-9+.-]*://)?([^/:?#]+)(?::\d+)?", re.IGNORECASE)
+_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*+://", re.IGNORECASE)
 
 
 def host_of(url: str | None) -> str | None:
+    """Return the lowercase host of ``url`` (RFC 3986 authority; scheme optional).
+
+    Userinfo before the last ``@`` and the port are removed, and a bracketed
+    IPv6 literal is returned without its brackets. A URL such as
+    ``https://api.openai.com:443@evil.example/`` therefore names ``evil.example``,
+    the host a client connects to, never the userinfo.
+    """
     if not url:
         return None
-    m = _HOST_IN_URL.match(url.strip())
-    return m.group(1).lower() if m else None
+    rest = url.strip()
+    scheme = _URL_SCHEME.match(rest)
+    if scheme:
+        rest = rest[scheme.end() :]
+    authority = re.split(r"[/?#]", rest, maxsplit=1)[0].rpartition("@")[2]
+    if authority.startswith("["):
+        end = authority.find("]")
+        host = authority[1:end] if end > 0 else ""
+    else:
+        host = authority.split(":", 1)[0]
+    return host.lower() or None

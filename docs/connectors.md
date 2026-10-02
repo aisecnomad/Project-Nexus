@@ -239,8 +239,8 @@ Live collection also needs `org_url` (`https://<org>.okta.com`, env
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
-app-only `appRoleAssignments` (role ids resolved to names such as
-`Mail.ReadWrite`), tenant app registrations, managed identities. First-party
+app-only `appRoleAssignments` (role ids resolved to the names their resource
+defines, such as `Mail.ReadWrite`), tenant app registrations, managed identities. First-party
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
@@ -303,7 +303,9 @@ ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
 unverified token's issuer does not choose or authorize a key source. The JWKS URL
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
-`metadata.verified` as signature evidence, not permission to act.
+`metadata.verified` as signature evidence, not permission to act. Without
+`jwks_url`, every token reports `metadata.verified: false` and a "signature not
+checked" evidence line: its claims are unauthenticated.
 
 Tokens come from `input` (one token per line, or JSON) or from the `tokens`
 list in the connector entry. Keep live tokens out of committed configuration.
@@ -334,6 +336,11 @@ Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
 `correlation_bindings`, and `label` (or `gateway_name` when the entry has no
 label), which names the gateway on findings: it becomes the provider and the
 account of callers without a tenant/account scope.
+
+Static assets and health probes are recognised from the request path alone,
+never its query string, and their count is reported as a scan note. In
+`key=value` text lines, quoted values honour `\"` and `\\` escapes; a line that
+repeats a key or leaves a quote open is malformed and makes the scan incomplete.
 
 ## Low-code
 
@@ -404,8 +411,11 @@ not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
 Findings use the immutable workspace ID as `account`; the display name is stored
 in `metadata.workspace_name`. An offline export without a team record requires
-an explicit `team_id`. Conflicting envelopes or record-level workspace IDs make
-the scan incomplete and prevent attribution. Update inventory account bindings
+an explicit `team_id`. Conflicting or malformed workspace envelopes make the
+scan incomplete and prevent attribution. A record that names another or an
+invalid workspace ID (for example a Slack Connect bot) is skipped and counted,
+and the scan is incomplete; the workspace's other records are still reported.
+Update inventory account bindings
 and collect a fresh comparison baseline when upgrading from name-based IDs.
 
 ### `saas.microsoft-teams`
@@ -447,7 +457,9 @@ Server-to-Server OAuth app, or `access_token` (env `ZOOM_ACCESS_TOKEN`).
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
-and privileged/data scopes (`keep_all: true` to emit everything).
+and privileged/data scopes (`keep_all: true` to emit everything). Records
+without an app name are skipped and counted, and an export where no record
+maps to a name makes the scan incomplete instead of looking empty.
 `platform` (default `saas`) names the export's source, for example
 `google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
 and resource IDs and sets the provider, so keep it stable between scans.

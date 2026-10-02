@@ -11,6 +11,7 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud.azure import AzureConnector
 from shadowscan.connectors.identity.entra import EntraConnector
 from shadowscan.models import ScanStats
+from shadowscan.risk import assess
 
 
 def _run_records(run_connector, tmp_path, connector, records, **config):
@@ -218,6 +219,104 @@ def test_entra_live_collection_preserves_conflicting_role_labels(index):
     assert target.metadata["application_permissions"] == ["role-1"]
     assert any(finding.resource == "entra:sp:neighbor" for finding in findings)
     assert sum("conflicting role labels" in warning for warning in context.stats.warnings) == 1
+
+
+GRAPH_MAIL_ROLE = "e2a3a72e-5f79-4c64-b1b1-878b674786c9"
+ENTRA_GRAPH = {
+    "_kind": "servicePrincipal",
+    "id": "sp-graph",
+    "appId": "00000003-0000-0000-c000-000000000000",
+    "displayName": "Microsoft Graph",
+    "appOwnerOrganizationId": "f8cdef31-a31e-4b4a-93e4-5f571e91255a",
+    "appRoles": [{"id": GRAPH_MAIL_ROLE, "value": "Mail.ReadWrite"}],
+}
+ENTRA_AGENT = {
+    "_kind": "servicePrincipal",
+    "id": "sp-victim",
+    "appId": "agent-app",
+    "displayName": "OpenAI ChatGPT Agent",
+    "servicePrincipalType": "Application",
+    "appOwnerOrganizationId": "99999999-0000-0000-0000-000000000000",
+}
+ENTRA_MAIL_GRANT = {
+    "_kind": "appRoleAssignment",
+    "principalId": "sp-victim",
+    "appRoleId": GRAPH_MAIL_ROLE,
+    "resourceId": "sp-graph",
+}
+# App role ids are unique per resource only: this principal reuses Graph's id.
+ENTRA_ROLE_SQUATTER = {
+    "_kind": "servicePrincipal",
+    "id": "sp-hostile",
+    "appId": "hostile-app",
+    "displayName": "Totally Benign Calendar Sync",
+    "servicePrincipalType": "Application",
+    "appOwnerOrganizationId": "88888888-0000-0000-0000-000000000000",
+    "appRoles": [{"id": GRAPH_MAIL_ROLE, "value": "Calendar.Read.Harmless"}],
+}
+
+
+def _agent_finding(findings):
+    return next(finding for finding in findings if finding.resource == "entra:sp:sp-victim")
+
+
+def test_entra_role_label_of_another_resource_cannot_relabel_a_grant(run_connector, tmp_path):
+    baseline, _ = _run_records(
+        run_connector, tmp_path, "identity.entra", [ENTRA_GRAPH, ENTRA_AGENT, ENTRA_MAIL_GRANT]
+    )
+    poisoned, ctx = _run_records(
+        run_connector,
+        tmp_path,
+        "identity.entra",
+        [ENTRA_GRAPH, ENTRA_AGENT, ENTRA_MAIL_GRANT, ENTRA_ROLE_SQUATTER],
+    )
+
+    agent = _agent_finding(poisoned)
+    assert agent.metadata["application_permissions"] == ["Mail.ReadWrite"]
+    assert "policy.privileged-scopes" in agent.tags
+    poisoned_risk, baseline_risk = assess(agent), assess(_agent_finding(baseline))
+    assert (poisoned_risk.score, poisoned_risk.level) == (baseline_risk.score, baseline_risk.level)
+    assert not ctx.stats.incomplete
+
+
+def test_entra_unknown_resource_role_stays_unresolved(run_connector, tmp_path):
+    # Graph is missing from the export: the squatter's label must not resolve Graph's role.
+    findings, _ = _run_records(
+        run_connector, tmp_path, "identity.entra", [ENTRA_AGENT, ENTRA_MAIL_GRANT, ENTRA_ROLE_SQUATTER]
+    )
+    assert _agent_finding(findings).metadata["application_permissions"] == [GRAPH_MAIL_ROLE]
+    assert "Calendar.Read.Harmless" not in _agent_finding(findings).permissions
+
+
+def test_entra_requested_permission_labels_follow_the_resource_app(run_connector, tmp_path):
+    registration = {
+        "_kind": "application",
+        "id": "reg-agent",
+        "appId": "agent-app",
+        "displayName": "OpenAI ChatGPT Agent",
+        "requiredResourceAccess": [
+            {
+                "resourceAppId": ENTRA_GRAPH["appId"],
+                "resourceAccess": [{"id": GRAPH_MAIL_ROLE, "type": "Role"}],
+            }
+        ],
+    }
+    findings, _ = _run_records(
+        run_connector, tmp_path, "identity.entra", [ENTRA_ROLE_SQUATTER, ENTRA_GRAPH, registration]
+    )
+    app = next(finding for finding in findings if finding.resource == "entra:app:agent-app")
+    assert app.metadata["requested_permissions"] == ["Mail.ReadWrite"]
+
+
+def test_entra_non_string_resource_reference_is_malformed(run_connector, tmp_path):
+    findings, ctx = _run_records(
+        run_connector,
+        tmp_path,
+        "identity.entra",
+        [ENTRA_GRAPH, ENTRA_AGENT, {**ENTRA_MAIL_GRANT, "resourceId": 7}],
+    )
+    assert ctx.stats.incomplete
+    assert "unsupported or malformed Graph record" in " ".join(ctx.stats.warnings)
 
 
 POWER_RISKY = {
