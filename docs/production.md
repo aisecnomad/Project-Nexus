@@ -55,7 +55,8 @@ finish incomplete because the earlier result hid a gap.
   hand rather than relying on the risk level.
 - **Private CA.** Set `ca_bundle` on `identity.jwt` to a PEM file to scan an
   endpoint behind internal PKI; TLS verification stays on and the bundle replaces
-  the default store. Other connectors do not accept it yet.
+  the default store. A relative path resolves beside the configuration file.
+  Other connectors do not accept it yet.
 - **Known limits.** The default 120 s connector deadline cannot finish a roughly
   20,000-file repository or a 30 MiB gateway log (raise
   `connector_timeout_seconds`); gateway finding IDs are scan-local unless
@@ -512,8 +513,9 @@ Configuration rejects duplicate authored YAML keys and unknown top-level or
 `fail_on` thresholds or `parallel` values stop the scan before collection.
 Environment references are validated in disabled connector declarations too;
 remove unused placeholders or give intentionally optional values a fallback.
-Relative inventory globs and `options.workdir`, like other configured paths,
-resolve beside the configuration file, independent of the process directory.
+Relative inventory globs and `options.workdir`, like other configured paths
+(including `identity.jwt` `ca_bundle`), resolve beside the configuration file,
+independent of the process directory.
 
 The new policies also expose `--connector-timeout-seconds`,
 `--allow-credential-mixing/--deny-credential-mixing` and
