@@ -52,6 +52,46 @@ independent human review); each behavior change has a regression test.
   `docs/connectors.md` lists the GitHub credential-name permissions and adds
   least-privilege rows and option lists for Slack, ServiceNow and Notion. A
   repository test now checks the "25 of 27 connectors ship fixtures" claim.
+### Confined file portability and plugin deadlines
+
+- On platforms exposing `O_NOFOLLOW_ANY` without Linux `O_PATH` (including
+  supported macOS versions), confined file reads use one kernel-checked path
+  lookup, including reads relative to an already-open scan root. This avoids
+  opening every ancestor for reading while still rejecting symbolic links in
+  every component. FIFO protection and regular-file verification remain in
+  force; paths are never resolved through symlinks as a fallback.
+- Signature directory traversal now fails on unreadable subdirectories and
+  enforces its entry budget for directory-only trees. A partial signature pack
+  must not silently become an accepted policy or digest.
+- `pytest` console invocations can import checkout-only evaluation and canary
+  tooling without a caller-supplied `PYTHONPATH`; macOS CI exercises this entry
+  point as part of the full suite.
+- Optional `options.plugin_execution: process` / `--plugin-execution process`
+  runs approved third-party connectors in dedicated spawned workers, including
+  plugin import. Deadline expiry terminates the worker and marks its results
+  incomplete. Crashes, malformed output and output above the 16 MiB transport
+  limit also fail closed. The default remains `thread`; built-ins retain their
+  existing execution path. Process mode provides lifecycle isolation, not a
+  security sandbox or rollback of external effects.
+
+### October 1 discovery review corrections
+
+- Code collection identifies declared submodules whose source has not been
+  materialized and reports incomplete coverage instead of a complete empty
+  result. Remote clone collection also checks the Git tree for submodule
+  entries. Submodule URLs are never fetched automatically.
+- Ordinary Spring AI `ChatClient` and LangChain4j `AiServices` construction,
+  and standalone Java tool declarations, no longer establish an agent or
+  tool-use capability. Explicit agent construction and bounded, concrete tool
+  registration remain evidence.
+- Import-bound source calls distinguish configured workload capabilities from
+  features merely offered by their framework. Empty tool/handoff collections
+  and disabled delegation no longer add those capabilities or their risk
+  factors. Review changed findings and rebuild enforcement baselines.
+- Authored evaluation cases now check capability labels as well as kind and
+  product attribution. The frozen independent corpus and its labels are
+  unchanged; these regressions do not establish fresh field accuracy, live
+  tenant acceptance or independent human review.
 
 ### October 1 code.filesystem coverage and precision
 
@@ -844,7 +884,7 @@ Fixes and additions:
 #### Governance and documentation
 
 - `CONTRIBUTING.md` documents the actual single-maintainer, self-merge process with automated checks and requires independent human review before any tagged release; `docs/production.md` gives operators the commands to verify ruleset and review state themselves.
-- The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs under `docs/hardening-logs/`; the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
+- The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs (they now live under `archive/reviews/`); the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
 
 ### Production acceptance fixes (2026-09-25)
 

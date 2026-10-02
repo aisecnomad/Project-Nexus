@@ -3,7 +3,7 @@
   "metadata": {
     "name": "Project Nexus authored finding attribution regressions",
     "type": "synthetic",
-    "provenance": "Handwritten short source samples for known kind, product and provider checks. No credentials, live tenants, independent human labels, or field accuracy claims.",
+    "provenance": "Handwritten short source samples for known kind, product, provider and capability checks. No credentials, live tenants, independent human labels, or field accuracy claims.",
     "known_gap_policy": {
       "max_count": 1,
       "expires_on": "2026-12-31"
@@ -26,7 +26,8 @@
         "expected_findings": [
           {
             "kind": "framework-usage",
-            "product_signature": "framework.langgraph"
+            "product_signature": "framework.langgraph",
+            "capabilities": []
           }
         ],
         "forbidden_findings": [
@@ -66,7 +67,8 @@
           {
             "kind": "agent",
             "product_signature": "framework.langgraph",
-            "provider_signature": "provider.openai"
+            "provider_signature": "provider.openai",
+            "capabilities": []
           }
         ],
         "forbidden_findings": [
@@ -105,7 +107,8 @@
         "expected_findings": [
           {
             "kind": "framework-usage",
-            "product_signature": "framework.langgraph"
+            "product_signature": "framework.langgraph",
+            "capabilities": []
           }
         ],
         "forbidden_findings": [
@@ -141,7 +144,10 @@
         "expected_findings": [
           {
             "kind": "agent",
-            "product_signature": "framework.spring-ai"
+            "product_signature": "framework.spring-ai",
+            "capabilities": [
+              "tool-use"
+            ]
           }
         ],
         "forbidden_findings": [
@@ -219,7 +225,8 @@
         "expected_findings": [
           {
             "kind": "agent",
-            "product_signature": "framework.openai-agents-sdk"
+            "product_signature": "framework.openai-agents-sdk",
+            "capabilities": []
           }
         ],
         "forbidden_findings": [
@@ -333,6 +340,273 @@
               "provider.anthropic",
               "provider.aws-bedrock"
             ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "java-spring-chat-without-tools",
+      "family": "agent",
+      "description": "A Spring AI text-only ChatClient request establishes framework usage without tool capability",
+      "files": {
+        "Chat.java": "import org.springframework.ai.chat.client.ChatClient;\nclass Chat {\n  String answer(Object model) {\n    return ChatClient.create(model).prompt(\"Summarize\").call().content();\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.spring-ai"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.spring-ai",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.spring-ai"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent"
+          }
+        ]
+      }
+    },
+    {
+      "id": "java-langchain4j-service-without-tools",
+      "family": "agent",
+      "description": "A LangChain4j AI Service proxy without tool registration is framework usage",
+      "files": {
+        "Chat.java": "import dev.langchain4j.service.AiServices;\nclass Chat {\n  Object assistant(Object model) {\n    return AiServices.create(Assistant.class, model);\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain4j"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.langchain4j",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.langchain4j"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "forbidden_findings": [
+          {
+            "kind": "agent"
+          }
+        ]
+      }
+    },
+    {
+      "id": "java-langchain4j-service-with-tools",
+      "family": "agent",
+      "description": "A LangChain4j service builder explicitly registers tools",
+      "files": {
+        "Chat.java": "import dev.langchain4j.service.AiServices;\nclass Chat {\n  Object assistant(Object model) {\n    return AiServices.builder(Assistant.class).chatModel(model).tools(new WeatherTools()).build();\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchain4j"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.langchain4j",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.langchain4j"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "py-openai-agent-empty-tools-handoffs",
+      "family": "agent",
+      "description": "An OpenAI SDK agent with empty tools and handoffs has neither tool nor multi-agent capability",
+      "files": {
+        "agent.py": "from agents import Agent\nagent = Agent(name=\"Summary\", instructions=\"Summarize text\", tools=[], handoffs=[])\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.openai-agents-sdk"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "py-crewai-agent-tools-delegation-disabled",
+      "family": "agent",
+      "description": "A CrewAI agent with empty tools and disabled delegation has no tool or multi-agent capability",
+      "files": {
+        "agent.py": "from crewai import Agent\nagent = Agent(role=\"Summary\", goal=\"Summarize\", backstory=\"A summarizer\", tools=[], allow_delegation=False)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.crewai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.crewai",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.crewai"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "py-openai-agent-tools-handoffs",
+      "family": "agent",
+      "description": "An OpenAI SDK agent with tools and a nonempty handoff list retains both supported capabilities",
+      "files": {
+        "agent.py": "from agents import Agent\ndef lookup(ticket):\n    return ticket\nbilling = Agent(name=\"Billing\", instructions=\"Explain invoices\")\nagent = Agent(name=\"Triage\", instructions=\"Route requests\", tools=[lookup], handoffs=[billing])\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk",
+            "capabilities": [
+              "multi-agent",
+              "tool-use"
+            ]
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.openai-agents-sdk"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "java-spring-builder-with-tools",
+      "family": "agent",
+      "description": "A Spring AI ChatClient builder explicitly registers default tools",
+      "files": {
+        "Chat.java": "import org.springframework.ai.chat.client.ChatClient;\nclass Chat {\n  Object assistant(Object model) {\n    return ChatClient.builder(model).defaultTools(new WeatherTools()).build();\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.spring-ai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.spring-ai",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.spring-ai"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "py-pydantic-registered-tool-plain",
+      "family": "agent",
+      "description": "A Pydantic AI plain tool decorator registers a tool even when the constructor has no tools option",
+      "files": {
+        "agent.py": "from pydantic_ai import Agent\nagent = Agent(\"openai:gpt-4o\")\n@agent.tool_plain\ndef lookup(ticket: str) -> str:\n    return ticket\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.pydantic-ai"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.pydantic-ai",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.pydantic-ai"
+            ],
+            "provider_signatures": []
           }
         ]
       }

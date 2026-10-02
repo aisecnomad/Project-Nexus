@@ -10,6 +10,39 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 1 discovery review migration
+
+Review finding kinds, capabilities and risk scores before replacing an existing
+baseline. Ordinary Java chat-client construction and standalone tool declarations
+are framework evidence; they do not by themselves establish an agent. Explicit
+agent factories and supported concrete tool-registration patterns remain evidence
+of construction or configuration, never proof of runtime execution.
+
+Supported import-bound constructors in OpenAI Agents SDK, CrewAI, Pydantic AI,
+LangGraph and LangChain no longer inherit a framework's advertised features as
+configured workload capabilities. Empty tool/handoff collections and disabled
+delegation do not contribute those capabilities or their risk factors. Unknown
+features can remain potential capabilities in metadata; review the supporting
+source before relying on a capability label for enforcement.
+
+Submodule declarations whose source is missing or empty make source coverage
+incomplete (exit 3). Clone collection also checks the immutable Git tree for
+submodule entries. The scanner does not initialize submodules or contact their
+URLs. Supply the intended source in a separately reviewed checkout or explicitly
+exclude it from the declared scan scope; do not interpret an incomplete result
+as an absence of agents. See [coverage policy](scanning.md#coverage-policy) for
+the collection modes and limitations.
+
+The new kind and capability examples are authored regressions. Keep the frozen
+AI-labeled corpus unchanged and obtain fresh human-reviewed field evidence using
+the [holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+Include ordinary Java chat applications, explicit empty/disabled capabilities,
+positive tool/delegation controls and incomplete source checkouts in the sampling
+plan. Predeclare kind, product and capability labels before revealing scanner
+results. AWS/Slack live acceptance still requires the authorized complete and
+permission-denied [tenant canaries](canaries.md); other deployment scopes require
+their own connector-specific evidence.
+
 ## September 27 migration and acceptance
 
 The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
@@ -311,6 +344,7 @@ intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
 ```yaml
 options:
   plugins: []
+  plugin_execution: thread
   allow_signature_override: false
   allow_private_origin: false
   allow_credential_mixing: false
@@ -328,6 +362,26 @@ connectors:
 Approved plugins still run trusted Python code. `shadowscan connectors` lists
 installed plugin metadata without importing it. A plugin must be explicitly
 allowed on each scan, even if a prior scan imported it.
+
+Use `options.plugin_execution: process` or `--plugin-execution process` to run
+approved third-party connectors in dedicated spawned workers. Built-in
+connectors keep their existing thread execution; the default for plugins also
+remains `thread`. Plugin import and execution happen in the child. The original
+connector deadline includes worker startup and result transfer; expired results
+are discarded, and termination escalates from TERM to KILL with bounded cleanup.
+A parent supervision guard allows up to two additional seconds for cleanup.
+Worker crashes, invalid result schemas and output above the 16 MiB JSON
+transport limit make the scan incomplete. There is no automatic thread fallback.
+
+Process mode is lifecycle isolation, not a security sandbox. Workers inherit the
+scanner's privileges and environment, and killing one does not undo remote
+changes, completed cache/export writes, or terminate its independently spawned
+descendants. Continue to use an external job deadline and disposable workers
+with appropriately restricted credentials and filesystem/network access.
+Embedded Python entry points must use the usual `if __name__ == "__main__"`
+guard for spawning. Plugin workers are daemonic and cannot themselves start
+`multiprocessing.Process` children. See [connectors](connectors.md) for the
+plugin execution contract.
 
 Keep scans of repository content separate from jobs holding live cloud, identity,
 SaaS or low-code credentials. By default, configuration rejects a selected code
@@ -452,7 +506,7 @@ risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be 
 finite number. It starts when the connector worker begins, and split filesystem
 roots share that connector's deadline. The engine stops accepting a connector's
 results after the deadline and records incomplete coverage. Python
-worker threads cannot safely be killed: a blocked SDK call can continue after
+worker threads (the default backend) cannot safely be killed: a blocked SDK call can continue after
 that soft deadline. The CLI normally exits after emitting an incomplete report,
 but a filesystem replacement already in progress can finish after the timeout
 report. Such cache or record artifacts are unaccepted even if present; timed-out
@@ -813,6 +867,17 @@ or explicitly exclude such paths before accepting a completeness gate.
 Pre/post content hashes can detect ordinary concurrent edits but do not form an
 atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
 and revert between those reads.
+
+Confined regular-file reads use `O_NOFOLLOW_ANY` on macOS too, both for full
+paths and paths relative to an open scan root. The kernel rejects links in any
+component in the same lookup; the scanner does not call `realpath` to turn a
+rejected link into an accepted input. This also avoids opening every ancestor
+for reading. Nonblocking opens and `fstat` still reject FIFOs and other special
+files. On other supported POSIX platforms the component-by-component confined
+walk remains in use. Signature-pack directory enumeration fails if a subtree
+cannot be read or the entry budget is exceeded, including directory-only
+trees; correct those inputs before accepting the policy.
+
 Incremental state uses nonblocking advisory `flock` per cache slot
 (`<sha256>.lock`): shared for reading and exclusive for publication, as well as
 atomic writes and current-input fingerprint checks.
@@ -886,11 +951,22 @@ list without removing the existing checks or approval rule. Its enforcement
 state has changed more than once during 2026-09: the 2026-09-24 review recorded
 it disabled; on 2026-09-25 (13:10 UTC) a merge attempted without an approving
 review was refused with "Repository rule violations found", so it was enforced
-at that moment; and on 2026-09-27 (10:40 UTC) both rulesets were read back with
-`enforcement: disabled`, so nothing was enforced on `main` at that time. Treat
+at that moment; on 2026-09-27 (10:40 UTC), and again on 2026-10-01 during the
+discovery review, both rulesets were read back with `enforcement: disabled`.
+The October 1 branch response also reported `protected: false`. Treat
 no observation as permanent; only the live commands below describe the current
 state. Keep the CodeQL job's displayed name `analyze` consistent with the
 required check.
+
+An administrator must activate both existing rulesets in
+[repository rules](https://github.com/aisecnomad/Project-Nexus/rules), add
+`CI gate` to `Require CI and CodeQL`, and retain its current required checks,
+strict up-to-date policy, one non-author approving review, stale-review
+dismissal, signature requirements and empty bypass list. Save the change and
+read back the effective rules on `main`; editing this guide or merging its PR
+does not change repository settings. Do not claim that protection was restored
+until that readback confirms it. If the API connection lacks administration
+access, use an authorized administrator session rather than weakening the rules.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-09-25 (including
