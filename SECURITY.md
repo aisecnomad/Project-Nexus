@@ -101,7 +101,8 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
 * Report evidence is redacted before it is shortened. Redaction withholds
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
   `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
-  JWTs, PEM private keys, URL userinfo and credential query or webhook path
+  JWTs, private key blocks (PEM, PGP, SSH2 and PuTTY, an unterminated one to the
+  end of the text), URL userinfo and credential query or webhook path
   segments. A token or JWT is withheld behind a JSON-escaped line break or tab
   (`\n`, `\t`), a percent escape (`%3D`) or an underscore, and the prefixes no
   ordinary word contains (`sk-proj-`, `ghp_`, `AKIA`, `eyJ` and similar) also
@@ -113,11 +114,14 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   every operator that joins a name to a value, with the operator kept (`=>`,
   `:=`, `||=`, `+=`, `.=`, `?=`); a quoted word or an opaque value compared with a
   sensitive name (`if token == "..."`, `!=`, `===`, `=~`);
+  names such as `passphrase`, `db_pass`, `smtp_pwd`, `SECRET_KEY_BASE`, `creds` and
+  npm's `_auth`, and an ODBC connection string's `Pwd=`;
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
   `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
   C `#define`; command-line options such as `--api-key`, `--token`,
-  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"`, `-p` after
+  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"` (and any header whose name ends in a
+  credential word, such as `X-Token: value` or `X-Functions-Key: value`), `-p` after
   `docker login` and other registry or cloud logins (`az`, `az acr`, `oc`,
   `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into
   `--password-stdin`; literal defaults of credentials read from the
@@ -195,7 +199,8 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   with a sensitive name (`token == hunter2`), a literal written before the
   operator (`"..." == token`) or compared with a subscript
   (`headers["token"] == "..."`); a readable value glued to the colon of a
-  sensitive name (`password:hunter2`); a field of a structured record whose
+  sensitive name (`password:hunter2`) or under a bare `pwd` (the shell's
+  working directory has that name); a field of a structured record whose
   name does not end in a credential word as above (`OpenAIKey`, `key1`, a
   bare `auth` or `pass`) and holds a value that looks like no credential; a name/value
   record in text whose value field comes before its name

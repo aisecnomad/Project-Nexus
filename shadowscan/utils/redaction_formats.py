@@ -94,8 +94,15 @@ _JWT = re.compile(
     r"(?<![A-Za-z0-9_-])(?P<lead>(?:(?!" + _JWT_HEADER + r")[A-Za-z0-9_-])*+)"
     r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+)"
 )
+# Private key blocks, to the end of the text when unterminated: PEM ('BEGIN PRIVATE KEY',
+# 'BEGIN OPENSSH PRIVATE KEY', PGP's '... PRIVATE KEY BLOCK'), RFC 4716's
+# '---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----' and a PuTTY key file, whose private part
+# ends at its 'Private-MAC:' line.
 _PEM = re.compile(
-    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)",
+    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----.*?"
+    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----|\Z)"
+    r"|---- BEGIN SSH2 (?:ENCRYPTED )?PRIVATE KEY ----.*?(?:---- END SSH2 (?:ENCRYPTED )?PRIVATE KEY ----|\Z)"
+    r"|PuTTY-User-Key-File-[0-9]+:.*?(?:Private-MAC:[^\r\n]*|\Z)",
     re.DOTALL,
 )
 _AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")

@@ -53,6 +53,10 @@ _SENSITIVE_SUFFIXES = (
     "hookurl",
     # Azure API Management and AI services (Ocp-Apim-Subscription-Key).
     "subscriptionkey",
+    # A passphrase, Rails' SECRET_KEY_BASE and 'creds' (like 'credentials').
+    "passphrase",
+    "secretkeybase",
+    "creds",
 )
 _SENSITIVE_NAMES = {
     "token",
@@ -176,9 +180,26 @@ def _sensitive_key(key: str) -> bool:
     )
 
 
+# 'db_pass' and 'smtp_pwd' name a password; 'forward_pass' and 'first_pass' do not, and a
+# bare 'pass' or 'pwd' is a statement, a result or the shell's directory. Only a pass or
+# pwd that follows a word for something one logs in to counts.
+_LOGIN_PASS_NAME = re.compile(
+    r"(?i)(?:[a-z0-9]+_)*(?:db|database|smtp|imap|pop3?|mail|ftp|sftp|ssh|redis|mysql|pg|postgres|mongo)"
+    r"_(?:pass|pwd)"
+    r"|(?:[a-z0-9]+_)*(?:admin|root|user|proxy|login|ldap|service|svc|wifi|sql|vpn)_(?:pass|pwd)"
+)
+
+
 def _sensitive_assignment_key(key: str) -> bool:
     """Sensitive-key test for assignments and mapping entries inside text."""
-    return _sensitive_name(key) or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(key.strip()) is not None
+    stripped = key.strip()
+    return (
+        _sensitive_name(key)
+        or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(stripped) is not None
+        # npm's '//registry.example.com/:_auth=<base64 of user:password>'.
+        or stripped.lower() == "_auth"
+        or _LOGIN_PASS_NAME.fullmatch(stripped) is not None
+    )
 
 
 def _redact_value(value: Any) -> Any:

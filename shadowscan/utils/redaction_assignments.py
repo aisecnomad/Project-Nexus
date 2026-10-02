@@ -22,6 +22,7 @@ from shadowscan.utils.redaction_rules import (
     _credential_literal,
     _credential_name,
     _interpolated,
+    _kept_value,
     _name_before,
     _redact_value,
     _sensitive_assignment_key,
@@ -315,6 +316,24 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
         value = match.group("value")
         if not _CLI_WORD.fullmatch(value) and _credential_literal(value, positional=True):
             spans.append(match.span("value"))
+    return _withhold_spans(text, spans)
+
+
+# ODBC and ADO.NET connection strings spell the password 'Pwd': 'Server=h;Uid=u;Pwd=v;'.
+# 'PWD' also names a shell's working directory and 'pwd' a command, so only a 'Pwd=' that
+# follows a ';' is read, and its value stays when it is empty or only a reference.
+_CONNECTION_PASSWORD = re.compile(r"(?<=;)[ \t]*(?i:pwd)[ \t]*=(?P<value>[^;\"'\r\n]+)")
+
+
+def _redact_connection_passwords(text: str) -> str:
+    """Withhold the value of a connection string's ``Pwd=`` member."""
+    if ";" not in text:
+        return text
+    spans = [
+        match.span("value")
+        for match in _CONNECTION_PASSWORD.finditer(text)
+        if not _kept_value(match.group("value"))
+    ]
     return _withhold_spans(text, spans)
 
 

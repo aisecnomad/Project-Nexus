@@ -41,6 +41,7 @@ from shadowscan.utils import (
     redaction_statements,
 )
 from shadowscan.utils.redaction_assignments import (
+    _redact_connection_passwords,
     _redact_fallback_defaults,
     _redact_mapping_values,
     _redact_opaque_assignments,
@@ -188,6 +189,7 @@ def _redact_extended(text: str) -> str:
     text = _redact_markup_settings(text)
     text = _redact_record_settings(text)
     text = _redact_user_secrets(text)
+    text = _redact_connection_passwords(text)
     text = _redact_opaque_assignments(text, extended=True)
     text = _redact_fallback_defaults(text, extended=True)
     text = _redact_opaque_options(text)

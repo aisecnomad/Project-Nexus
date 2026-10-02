@@ -478,3 +478,55 @@ def test_unknown_leaf_types_never_reach_a_record_dump(tmp_path):
     connector = Connector(ConnectorContext(config={"_dump_path": str(target)}, index=_index()))
     connector.run()
     assert target.exists() and LEAF_KEY not in target.read_text()
+
+
+KEY_BODY = "\n".join("Zm9vYmFyU3ludGhldGljS2V5TWF0ZXJpYWw" + chr(ord("a") + line) * 6 for line in range(6))
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n{KEY_BODY}\n=ab12\n-----END PGP PRIVATE KEY BLOCK-----",
+        f"-----BEGIN RSA PRIVATE KEY-----\n{KEY_BODY}\n-----END RSA PRIVATE KEY-----",
+        f'---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\nComment: "key"\n{KEY_BODY}\n---- END SSH2 ENCRYPTED PRIVATE KEY ----',
+        f"PuTTY-User-Key-File-2: ssh-rsa\nEncryption: none\nComment: key\nPublic-Lines: 2\n{KEY_BODY}\n"
+        f"Private-Lines: 2\n{KEY_BODY}\nPrivate-MAC: 0123456789abcdef0123456789abcdef01234567",
+        f"PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: aes256-cbc\nComment: key\nPublic-Lines: 2\n{KEY_BODY}\n"
+        f"Key-Derivation: Argon2id\nPrivate-Lines: 2\n{KEY_BODY}\nPrivate-MAC: 0123456789abcdef0123456789abcdef01234567",
+    ],
+)
+def test_every_private_key_block_is_withheld_with_its_line_count(block):
+    source = f"before\n{block}\nafter\n"
+    safe = sanitize_text(source)
+    assert KEY_BODY.splitlines()[0] not in safe and "0123456789abcdef" not in safe
+    assert safe.startswith("before\n" + REDACTED) and safe.endswith("\nafter\n")
+    assert safe.count("\n") == source.count("\n")
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+        "---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----",
+        "PuTTY-User-Key-File-2: ssh-rsa",
+    ],
+)
+def test_an_unterminated_key_block_is_withheld_to_the_end_of_the_text(start):
+    source = f"note\n{start}\n{KEY_BODY}\nnot a marker line\n"
+    safe = sanitize_text(source)
+    assert safe.startswith("note\n" + REDACTED) and KEY_BODY.splitlines()[-1] not in safe
+    assert "not a marker line" not in safe
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQENBGZ\n-----END PGP PUBLIC KEY BLOCK-----",
+        "---- BEGIN SSH2 PUBLIC KEY ----\nAAAAB3NzaC1yc2E\n---- END SSH2 PUBLIC KEY ----",
+        "-----BEGIN CERTIFICATE-----\nMIIBkTCB\n-----END CERTIFICATE-----",
+        "see PuTTY-User-Key-File formats in the PuTTY manual",
+    ],
+)
+def test_public_keys_and_prose_about_key_formats_are_kept(text):
+    assert sanitize_text(text) == text

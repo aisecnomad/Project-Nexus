@@ -274,6 +274,30 @@ FORMS: list[tuple[str, str, str]] = [
     # documented gaps below).
     (f'{{"name": "OpenAI:Secret", "value": "p}}{HEX}"}}', HEX, '{"name": "OpenAI:Secret", "value": "'),
     (f'- {{name: AzureOpenAI__Key, value: "p}}{HEX}"}}', HEX, "- {name: AzureOpenAI__Key, value: "),
+    # Names that name a password whatever the value: a passphrase, a login's pass/pwd, Rails'
+    # SECRET_KEY_BASE, 'creds', npm's _auth and an ODBC connection string's Pwd.
+    ("passphrase = 'hunter2pw'", "hunter2pw", "passphrase = "),
+    (f"ssh_passphrase: {PASSWORD}", PASSWORD, "ssh_passphrase: "),
+    ("db_pass = 'hunter2pw'", "hunter2pw", "db_pass = "),
+    ("DB_PASS=hunter2pw", "hunter2pw", "DB_PASS="),
+    ("smtp_pwd: hunter2pw", "hunter2pw", "smtp_pwd: "),
+    ("SECRET_KEY_BASE=hunter2pw", "hunter2pw", "SECRET_KEY_BASE="),
+    (f"secret_key_base: {HEX}{HEX}", HEX, "secret_key_base: "),
+    ("creds = 'hunter2pw'", "hunter2pw", "creds = "),
+    (f"//registry.example.com/:_auth={BASE64}", BASE64, "//registry.example.com/:_auth="),
+    ("Server=db.example.com;Database=app;Uid=svc;Pwd=hunter2pw;Encrypt=yes", "hunter2pw", "Uid=svc;Pwd="),
+    ("Data Source=db;User Id=svc; PWD=hunter2pw", "hunter2pw", "User Id=svc; PWD="),
+    # Custom authentication headers, with or without a blank after the colon.
+    (f'curl -H "X-Token: {HEX}" https://api.example.com', HEX, 'curl -H "X-Token: '),
+    (f'curl -H "Private-Token: {HEX}" https://gitlab.example.com', HEX, 'curl -H "Private-Token: '),
+    (
+        f'curl -H "x-functions-key: {HEX}" https://app.azurewebsites.net/api/x',
+        HEX,
+        'curl -H "x-functions-key: ',
+    ),
+    (f"curl --header 'X-Auth-Token: {HEX}' https://api.example.com", HEX, "curl --header 'X-Auth-Token: "),
+    (f'wget --header="X-Token: {HEX}" https://api.example.com', HEX, 'wget --header="X-Token: '),
+    (f'curl -H "X-Token:{HEX}" https://api.example.com', HEX, 'curl -H "X-Token:'),
 ]
 
 
@@ -601,6 +625,26 @@ def test_words_that_merely_contain_a_token_prefix_are_preserved(source):
         "if (key === 'createdAt') {",
         "key != 'users-by-id'",
         "if headers['token'] == 'expected': pass",
+        # A shell's working directory, a bare 'pass', and passes of a program are no passwords.
+        "pwd=$PWD",
+        "cd $(pwd)",
+        "pwd = os.getcwd()",
+        "echo pwd",
+        "PWD=/home/user",
+        "pass = True",
+        "pass: true",
+        "forward_pass = model(x)",
+        "first_pass = True",
+        "bypass = true",
+        "compass = 5",
+        "Pwd=;",
+        "Server=db;Pwd=${DB_PWD};Encrypt=yes",
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQENBGZ\n-----END PGP PUBLIC KEY BLOCK-----",
+        # References to a header's value stay.
+        "curl -H 'X-Token: $TOKEN' https://api.example.com",
+        'curl -H "Private-Token: ${GITLAB_TOKEN}" https://gitlab.example.com',
+        "curl -H 'X-Request-Id: 8f2a9c1be84d03aa17c6b2d9e0f4a8c3' https://api.example.com",
+        "curl -H 'Idempotency-Key: 8f2a9c1be84d03aa17c6b2d9e0f4a8c3' https://api.example.com",
     ],
 )
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
