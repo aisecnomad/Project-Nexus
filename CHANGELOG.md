@@ -283,6 +283,10 @@ about field precision. Migration notes are in `docs/production.md` under
 - CI: the DCO check reads a sign-off after a `---` line in the commit
   message. Dependabot opens its YAML metadata with such a line, so its
   sign-off was never read and every Dependabot pull request failed the check.
+- The CI lock takes Dependabot's eight pending development-tool updates
+  (coverage 7.16.2, filelock 4.0.6, identify 2.6.20, librt 0.16.0, msgpack
+  1.2.3, nodeenv 1.11.0, platformdirs 4.12.1, virtualenv 21.13.0), regenerated
+  with the documented command and uv 0.12.18.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 
