@@ -422,7 +422,15 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
 # ODBC and ADO.NET connection strings spell the password 'Pwd': 'Server=h;Uid=u;Pwd=v;'.
 # 'PWD' also names a shell's working directory and 'pwd' a command, so only a 'Pwd=' that
 # follows a ';' is read, and its value stays when it is empty or only a reference.
-_CONNECTION_PASSWORD = re.compile(r"(?<=;)[ \t]*(?i:pwd)[ \t]*=(?P<value>[^;\"'\r\n]+)")
+# ODBC puts a value that holds ';' in braces and doubles a '}' inside them
+# ('Pwd={a;b}}c}'); the value runs to its closing brace, and on to the next ';'
+# past anything a malformed value has after it ('Pwd={a}b;'). A brace that does
+# not close within 256 characters on its line, or opens a '{{' template, is
+# read up to the ';' as before, which keeps each read bounded.
+_CONNECTION_PASSWORD = re.compile(
+    r"(?<=;)[ \t]*(?i:pwd)[ \t]*="
+    r"(?P<value>[ \t]*+\{(?!\{)(?:[^}\r\n]|\}\}){0,256}+\}[^;\"'\r\n]*+|[^;\"'\r\n]+)"
+)
 
 
 def _redact_connection_passwords(text: str) -> str:

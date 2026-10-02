@@ -150,7 +150,8 @@ coverage, even when a response includes an empty collection field.
   `:=`, `||=`, `+=`, `.=`, `?=`); a quoted word or an opaque value compared with a
   sensitive name (`if token == "..."`, `!=`, `===`, `=~`);
   names such as `passphrase`, `db_pass`, `smtp_pwd`, `SECRET_KEY_BASE`, `creds` and
-  npm's `_auth`, and an ODBC connection string's `Pwd=`;
+  npm's `_auth`, and an ODBC connection string's `Pwd=` (a braced value whole,
+  `Pwd={a;b}`);
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
   `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and

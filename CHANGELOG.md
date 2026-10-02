@@ -197,6 +197,12 @@ integrating them:
   the operator's `=` as the credential, the assignment rules then found no
   operator, and `S` was shown. A credential glued to an `=` (`Basic =S`) is
   still withheld.
+- Redaction: a braced ODBC connection string password is withheld whole, with
+  anything a malformed value has after its closing brace up to the `;`. ODBC
+  puts a value that holds `;` in braces and doubles a `}` inside them; the
+  `Pwd=` rule read the value to its first `;` and showed the rest
+  (`Pwd={a;S}`, `Pwd={a}};S}`). A brace that does not close within 256
+  characters on its line, or opens a `{{` template, is read as before.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

@@ -344,6 +344,8 @@ REDACTION_SHAPES: dict[str, Any] = {
     "block scalars": lambda n: "password: |\n  " * (n // 15),
     "headers": lambda n: '-H "X-Token: ' * (n // 12),
     "connection strings": lambda n: ";Pwd=" * (n // 5),
+    "braced connection passwords": lambda n: ";Pwd={" * (n // 6),
+    "doubled braces": lambda n: ";Pwd={" + "}}" * (n // 2),
     "registry logins": lambda n: "docker login " * (n // 13),
     "xml elements": lambda n: "<password>" * (n // 10),
     "provider tokens": lambda n: "sk-proj-" * (n // 8),

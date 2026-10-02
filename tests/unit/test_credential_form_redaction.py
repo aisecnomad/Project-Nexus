@@ -441,6 +441,62 @@ def test_a_scheme_named_value_after_an_operator_is_withheld(name, operator):
     assert sanitize_text(safe) == safe
 
 
+ODBC_FIRST, ODBC_SECOND = BASE62[:20], BASE62[20:]
+
+
+@pytest.mark.parametrize(
+    ("source", "kept"),
+    [
+        (
+            "Driver={ODBC Driver 18};Server=h;Uid=u;Pwd={" + ODBC_FIRST + ";" + ODBC_SECOND + "};Database=d",
+            "Driver={ODBC Driver 18};Server=h;Uid=u;Pwd=" + REDACTED + ";Database=d",
+        ),
+        # A '}' in the value is doubled.
+        (
+            "Server=h;Uid=u;Pwd={" + ODBC_FIRST + "}};" + ODBC_SECOND + "};Database=d",
+            "Server=h;Uid=u;Pwd=" + REDACTED + ";Database=d",
+        ),
+        # A malformed value goes on past its closing brace to the ';'.
+        (
+            "Server=h;Uid=u;Pwd={" + ODBC_FIRST + "}" + ODBC_SECOND + "};Database=d",
+            "Server=h;Uid=u;Pwd=" + REDACTED + ";Database=d",
+        ),
+        ("Server=h;Uid=u;PWD= {" + ODBC_FIRST + ";" + ODBC_SECOND + "}", "Server=h;Uid=u;PWD=" + REDACTED),
+        (
+            "Server=h;Pwd={" + ODBC_FIRST + "\";'" + ODBC_SECOND + "};Database=d",
+            "Server=h;Pwd=" + REDACTED + ";Database=d",
+        ),
+        (
+            '{"ConnectionStrings": {"Default": "Driver={x};Server=h;Pwd={'
+            + ODBC_FIRST
+            + ";"
+            + ODBC_SECOND
+            + '};"}}',
+            '{"ConnectionStrings": {"Default": "Driver={x};Server=h;Pwd=' + REDACTED + ';"}}',
+        ),
+    ],
+)
+def test_a_braced_connection_string_password_is_withheld_whole(source, kept):
+    # ODBC puts a value that holds ';' in braces; the value was read to the
+    # first ';' and the rest of the password was shown.
+    safe = sanitize_text(source)
+    assert ODBC_FIRST not in safe and ODBC_SECOND not in safe
+    assert safe == kept
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Driver={ODBC Driver 18};Server={{ host }};Pwd={{ pwd }};Database={db}",
+        "Server=db;Pwd={${DB_PWD}};Encrypt=yes",
+        "Server=db;Pwd={};Encrypt=yes",
+    ],
+)
+def test_a_braced_connection_string_reference_is_kept(source):
+    assert sanitize_text(source) == source
+
+
 @pytest.mark.parametrize("scheme", ["Bearer", "Basic", "SSWS"])
 def test_an_operator_after_a_scheme_name_is_not_read_as_its_credential(scheme):
     # Only a credential follows the scheme; '=' never starts one.
