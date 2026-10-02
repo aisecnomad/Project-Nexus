@@ -100,15 +100,18 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   option exists.
 * Report evidence is redacted before it is shortened. Redaction withholds
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
-  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
-  JWTs, PEM private keys, URL userinfo and credential query or webhook path
-  segments. It also withholds values that their context names as credentials:
+  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-`, `dop_v1_` and
+  `fw_`, also next to non-Latin text), JWTs, PEM private keys, armored PGP
+  private key blocks, URL userinfo, credential query keys (including `auth`,
+  `pwd` and `pat`) and webhook path segments, every cookie in a `Cookie`
+  header, and compact `name:value` headers and passwords (`x-api-key:value`). It also withholds values that their context names as credentials:
   assignments, including annotated, multiline and R (`<-`) expressions;
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
   `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
   C `#define`; command-line options such as `--api-key`, `--token`,
-  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"`, `-p` after
+  `--password`, `--passphrase`, `--pat`, `--auth`, `curl -u user:secret`,
+  `-H "X-Api-Key:value"`, `-p` after
   `docker login` and other registry or cloud logins (`az`, `az acr`, `oc`,
   `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into
   `--password-stdin`; literal defaults of credentials read from the

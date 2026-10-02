@@ -31,13 +31,20 @@ has a regression test.
   notices that do not mark the scan incomplete. Reports list disabled or
   `--only`-excluded connectors in `collection_scope.not_run`. The AWS CloudTrail
   management-events notice no longer forces exit 3.
-- **Credential redaction.** Command-line credential flags (`--api-key=S`,
-  `--token S`, `--pat`, `--passphrase`, `-u user:S`), escaped-quote JSON, inline
-  headers, multiple cookies, values containing `;`, PGP key blocks, more token
-  formats (including `sk-ant-oat01-`) and URL query keys are redacted, and sets
-  and bytes are traversed. A quadratic JWT pattern that could stall a scan for
-  minutes was replaced by a linear one. The unkeyed SHA-256 `credential:sha256:`
-  binding digest is unchanged; see `docs/production.md`.
+- **Credential redaction.** Newly withheld: values of the `--passphrase`,
+  `--pat` and `--auth` options (withheld as a `--password` value is, so a
+  lowercase word after a space stays; in an argv list the value after these
+  options and `--pass`, `--pwd` or `--password` is always withheld); whole
+  armored PGP private key blocks, including one after a credential name; every
+  cookie in a `Cookie` header; compact headers and passwords without a space
+  (`x-api-key:S`, `password:S`); unquoted values containing `;`; values in
+  escaped-quote JSON; the URL query keys `auth`, `pwd` and `pat`; Fireworks
+  `fw_` keys; and provider tokens next to non-Latin text. Sets and bytes are
+  traversed. Some text is over-redacted: `ffmpeg -pass 1` loses its pass
+  number, `NAME=S;rest` loses the text after `;`, and `Authorization:` loses
+  its scheme name. A quadratic JWT pattern that could stall a scan for minutes
+  was replaced by a linear one. The unkeyed SHA-256 `credential:sha256:` digest
+  is unchanged; see `docs/production.md`.
 - **Gateway attribution.** Access-log hosts are read only from the trailing
   unquoted `host=` token, so a user agent or path cannot hide or forge LLM
   traffic. Generic vendor hosts (`api.cloudflare.com`, `huggingface.co`) are
@@ -71,7 +78,8 @@ has a regression test.
   resolves beside the configuration file).
 - Dialogflow CX and Discovery Engine use their regional endpoints. ServiceNow
   collection pages until an empty page. A weekly scheduled `pip-audit` workflow
-  was added. Unquoted Cursor `globs: **/*.ts` no longer causes a false exit 3,
+  was added. The Anthropic signature recognises `sk-ant-oat01-` OAuth tokens.
+  Unquoted Cursor `globs: **/*.ts` no longer causes a false exit 3,
   and `host_of` strips URL userinfo and handles IPv6 literals.
 
 ### October 1 discovery review corrections
