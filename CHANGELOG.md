@@ -492,49 +492,76 @@ persisting credential-shaped text. These changes close the confirmed gaps; each
 has a regression test.
 
 - **Silent coverage gaps now mark the scan incomplete.** A source or config file
-  with a NUL byte or other undecodable content (UTF-8/16/32 files with a byte
-  order mark are now decoded instead), a FIFO, socket or device named like a
-  config file, a directory tree nested too deeply for the Python 3.11 walker,
-  unsupported files in a gateway log directory (`access.log.1`, `.bak`, `.zst`),
+  with a NUL byte in its first 8 KiB and no byte-order mark (UTF-8/16/32 files
+  with a byte-order mark are now decoded instead; other invalid UTF-8 is still
+  decoded with replacement characters), a FIFO, socket or device named like a
+  config file, a directory named like an MCP configuration file (`.mcp.json/`),
+  a directory tree nested too deeply for the Python 3.11 walker, any file
+  without a supported export suffix in a connector's offline input directory (a
+  rotated `access.log.1`, a `.bak` or `.zst` copy, a `README.md`),
   `saas.generic` rows without a resolvable name, wrong-schema `saas.generic` and
   `lowcode.zapier` objects, and negative or absurd gateway token and cost values
   each produce a specific incomplete diagnostic. A symlinked card inside an
-  inventory directory stops setup instead of being skipped.
+  inventory directory stops setup instead of being skipped. A recognised binary
+  artifact (executable, archive, image, PDF or SQLite database, by its header)
+  stays a quiet skip when it has no file extension, when only a directory-wide
+  signature glob such as `.cursor/rules/**` selected it, or when it is a `.ts`
+  MPEG transport-stream video segment; unrecognised binary content is a gap.
 - **Disclosure without failure.** Code scans list default-excluded directory
   names (`build`, `vendor`, `external`, ...) once per root, and default-scope AWS
   and GCP scans name the regions or locations that were not scanned. Both are
   notices that do not mark the scan incomplete. Reports list disabled or
   `--only`-excluded connectors in `collection_scope.not_run`. The AWS CloudTrail
   management-events notice no longer forces exit 3.
-- **Credential redaction.** Command-line credential flags (`--api-key=S`,
-  `--token S`, `--pat`, `--passphrase`, `-u user:S`), escaped-quote JSON, inline
-  headers, multiple cookies, values containing `;`, PGP key blocks, more token
-  formats (including `sk-ant-oat01-`) and URL query keys are redacted, and sets
-  and bytes are traversed. A quadratic JWT pattern that could stall a scan for
-  minutes was replaced by a linear one. The unkeyed SHA-256 `credential:sha256:`
-  binding digest is unchanged; see `docs/production.md`.
+- **Credential redaction.** Newly withheld: values of the `--passphrase`,
+  `--pat` and `--auth` options (withheld as a `--password` value is, so a
+  lowercase word after a space stays; in an argv list the value after these
+  options and `--pass`, `--pwd` or `--password` is always withheld); whole
+  armored PGP private key blocks, including one after a credential name; every
+  cookie in a `Cookie` header; compact headers and passwords without a space
+  (`x-api-key:S`, `password:S`); unquoted values containing `;`; values in
+  escaped-quote JSON; the URL query keys `auth`, `pwd` and `pat`; Fireworks
+  `fw_` keys; and provider tokens next to non-Latin text. Sets and bytes are
+  traversed. Some text is over-redacted: `ffmpeg -pass 1` loses its pass
+  number, `NAME=S;rest` loses the text after `;`, and `Authorization:` loses
+  its scheme name. A quadratic JWT pattern that could stall a scan for minutes
+  was replaced by a linear one. The unkeyed SHA-256 `credential:sha256:` digest
+  is unchanged; see `docs/production.md`.
 - **Gateway attribution.** Access-log hosts are read only from the trailing
   unquoted `host=` token, so a user agent or path cannot hide or forge LLM
   traffic. Generic vendor hosts (`api.cloudflare.com`, `huggingface.co`) are
-  hints rather than LLM-usage evidence, PyPI `swarm` no longer maps to OpenAI
-  Swarm, and standard OIDC scope names are no longer "privileged".
+  hints rather than LLM-usage evidence, except Cloudflare Workers AI inference
+  paths (`/accounts/<id>/ai/run/`, `/accounts/<id>/ai/v1/`), which stay LLM
+  traffic. PyPI `swarm` no longer maps to OpenAI Swarm. Scope names are matched by bare name across providers, so names that
+  are routine on another provider no longer match `policy.privileged-scopes`:
+  OIDC `offline_access`, Salesforce `full`, `web` and `refresh_token`, GitLab
+  `api`, GitHub `workflow` and Slack `admin`. Findings that held only these
+  scopes lose that risk factor and can drop a risk level.
   `identity.jwt` ignores empty or false agent claims, labels GitHub Actions,
-  GitLab CI and Kubernetes tokens `workload`, and marks tokens scanned without a
+  GitLab CI and Kubernetes service-account tokens `workload` (a Kubernetes
+  service-account subject or claims make a `workload` for any issuer, including
+  GKE), counts a GitHub Actions `actor` or `triggering_actor` as an agent hint
+  only when it names an AI agent or product, and marks tokens scanned without a
   JWKS (`signature_verified: false`). Gateway registry matches on
   operator-asserted or unverified caller names carry
   `metadata.registry_match_assurance` and the `registry-identity-unverified` tag.
-- **Engine and reports.** A connector raising `SystemExit` or another
-  `BaseException` is an incomplete connector, not a process exit. Incomplete CSV
+- **Engine and reports.** A connector or third-party plugin raising
+  `SystemExit` or another `BaseException` other than `KeyboardInterrupt`, while
+  it is imported, its class is verified, an engine hook runs or it collects, is
+  an incomplete connector (exit 3 with a report), not a process exit. Only the
+  exception type is reported. `KeyboardInterrupt` still ends the scan. Incomplete CSV
   reports start with a `SCAN-INCOMPLETE` status row. Saved CSV and HTML render
   terminal control characters visibly. `shadowscan diff --fail-on-new` exits 2 on
   new or higher-risk findings. Exit codes 1 and the usage-error 2 are documented.
-- **HTTP client.** Okta `X-Rate-Limit-Reset` is honored, a whole-response read is
-  capped at `max_read_seconds` (default 120), retries stop at the connector
-  deadline, and `identity.jwt` accepts an explicit `ca_bundle` for private PKI
-  (verification stays on).
+- **HTTP client.** Okta `X-Rate-Limit-Reset` is honored, retries stop at the
+  connector deadline, a response body must also finish before that deadline
+  (in addition to the read deadline below), and `identity.jwt` accepts an
+  explicit `ca_bundle` for private PKI (verification stays on; a relative path
+  resolves beside the configuration file).
 - Dialogflow CX and Discovery Engine use their regional endpoints. ServiceNow
   collection pages until an empty page. A weekly scheduled `pip-audit` workflow
-  was added. Unquoted Cursor `globs: **/*.ts` no longer causes a false exit 3,
+  was added. The Anthropic signature recognises `sk-ant-oat01-` OAuth tokens.
+  Unquoted Cursor `globs: **/*.ts` no longer causes a false exit 3,
   and `host_of` strips URL userinfo and handles IPv6 literals.
 ### October 1 review corrections
 
@@ -675,8 +702,17 @@ independent human review); each behavior change has a regression test.
   point as part of the full suite.
 - Optional `options.plugin_execution: process` / `--plugin-execution process`
   runs approved third-party connectors in dedicated spawned workers, including
-  plugin import. Deadline expiry terminates the worker and marks its results
-  incomplete. Crashes, malformed output and output above the 16 MiB transport
+  plugin import. Connector deadline expiry terminates the worker and marks its
+  results incomplete. A worker also stops itself two seconds after that
+  deadline, or as soon as the scanner process exits (including the job-deadline
+  watchdog, SIGTERM and SIGKILL), and a `KeyboardInterrupt` during collection
+  kills running workers. Processes a plugin starts itself are not terminated.
+  Workers write record exports only into the private export directory the
+  scanner prepared, and exit as soon as their result is sent, so lingering
+  non-daemon plugin threads cannot turn a delivered result into a timeout.
+  Result transport serializes like the JSON report (`str()` for values such as
+  `datetime`, sets and bytes; NaN and infinity still fail closed).
+  Crashes, malformed output and output above the 16 MiB transport
   limit also fail closed. The default remains `thread`; built-ins retain their
   existing execution path. Process mode provides lifecycle isolation, not a
   security sandbox or rollback of external effects.

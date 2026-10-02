@@ -410,16 +410,19 @@ def _redact_options(text: str, *, opaque: bool) -> str:
         if mode in {"", "opaque"} and (logins or mysql):
             # A login's '-p' and a MySQL client's '-pValue' ('-pSecret') come first.
             mode = _cli_password_mode(text, match, logins, mysql) or mode
-        if not mode or (mode == "opaque") != opaque:
-            continue
         # An opening quote belongs to the option unless it closes a preceding word.
         quote = text[start - 1] if start and text[start - 1] in "\"'" else ""
         if quote and start > 1 and _CLI_BOUNDARY.match(text, start - 2):
             quote = ""
-        if start - len(quote) < cursor:
+        inside = start - len(quote) < cursor
+        # An option inside a value withheld before it is part of that value,
+        # but its own value after that one is still read ('--auth x=--pwd v',
+        # '--passphrase x#--key v'): main withheld each. Inside an 'opaque'
+        # value, read last, it is skipped, as main's last pass skipped it.
+        if not mode or (inside and opaque) or (not inside and (mode == "opaque") != opaque):
             continue
         span = _option_value_span(text, match, mode, quote, runs)
-        if span is None:
+        if span is None or span[0] < cursor:
             continue
         spans.append(span)
         cursor = span[1]

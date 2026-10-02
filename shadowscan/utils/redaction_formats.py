@@ -109,10 +109,18 @@ _JWT = re.compile(
 # '---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----' and a PuTTY key file, whose private part
 # ends at its 'Private-MAC:' line.
 _PEM = re.compile(
-    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----.*?"
-    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----|\Z)"
+    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)"
     r"|---- BEGIN SSH2 (?:ENCRYPTED )?PRIVATE KEY ----.*?(?:---- END SSH2 (?:ENCRYPTED )?PRIVATE KEY ----|\Z)"
     r"|PuTTY-User-Key-File-[0-9]+:.*?(?:Private-MAC:[^\r\n]*|\Z)",
+    re.DOTALL,
+)
+# OpenPGP's armored 'PRIVATE KEY BLOCK'. The established passes withhold it
+# first, as they do a PEM key, wherever that shows nothing their order
+# withholds (see redaction._withhold_key_blocks); otherwise every line from
+# the block on is withheld.
+_ADDED_PEM = re.compile(
+    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----.*?"
+    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----|\Z)",
     re.DOTALL,
 )
 _AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
@@ -285,11 +293,19 @@ def _redact_query_text(text: str) -> str:
 
 
 # Cookie headers hold several ``name=value`` pairs separated by ';', any of
-# which can be a session credential; the whole header value is withheld.
+# which can be a session credential and may be quoted (sid="v"), so the whole
+# header value is withheld, to the end of the line. A header may follow a JSON
+# string escape ('\\r\\nCookie: ...'). The pass runs after the statement
+# rules: a value they already withheld as a quoted marker that a ',', ')',
+# ']' or '}' then ends is an argument ('get(url, cookie=session_cookie,
+# timeout=5)'), and what follows it is the next argument, not another cookie.
 _COOKIE_HEADER = re.compile(
-    r"(?i)(?<![\w.-])(?P<key>set-cookie2?|cookie2?)(?P<sep>[ \t]*[:=][ \t]*)"
-    r"(?P<value>[^\s\"'][^\r\n\"']*)"
+    r"(?i)(?:(?<![\w.-])|(?<=\\[nrtbf])|(?<=\\u[0-9a-f]{4}))(?P<key>set-cookie2?|cookie2?)"
+    r"(?P<sep>[ \t]*[:=][ \t]*)(?=\S)"
 )
+_LINE_END = re.compile(r"[\r\n]")
+_COOKIE_ARGUMENT = re.compile(r"(?P<quote>[\"'])\[REDACTED\](?P=quote)[ \t]*[,)\]}]")
+_ALPHANUMERIC_TEXT = re.compile(r"[A-Za-z0-9]")
 # ``api-key:value`` with no space (an HTTP header written inline). Limited to
 # these header and field names: a suffix rule would also rewrite identifiers
 # such as ``example-credential:provider.openai`` or ``arn:...:secret:name``.
@@ -309,6 +325,10 @@ _COMPACT_HEADER_NAMES = frozenset(
     }
 )
 _COMPACT_COLON = re.compile(r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*):(?=[^\s\"'\\])")
+# The letters of a JSON string escape that ends the text before a name
+# ('\\npassword:v', '\\r\\nX-Api-Key:v', '\\u000apassword:v'). The key above
+# starts at the escape's letter, since a backslash may precede a name.
+_ESCAPE_LETTERS = re.compile(r"[nrtbf]|u[0-9A-Fa-f]{4}")
 # A ``${NAME}`` reference is one unit of the value, so a placeholder is read
 # whole and kept; its content is a name, so a failed read stops at once.
 _COMPACT_VALUE = re.compile(
@@ -325,19 +345,42 @@ def _quoted_context(text: str, position: int) -> bool:
 
 
 def _redact_cookie_headers(text: str) -> str:
-    """Withhold whole ``Cookie`` and ``Set-Cookie`` header values."""
-    if "ookie" not in text:
+    """Withhold whole ``Cookie`` and ``Set-Cookie`` header values (see ``_COOKIE_HEADER``).
+
+    Runs after the statement rules. After '=', an argument they already
+    withheld ends the argument (see ``_COOKIE_ARGUMENT``) and the rest of its
+    line is read for another header ('get(u, cookie=c, timeout=5) Cookie: ...');
+    any other value is withheld to the end of its line. The marker stays bare
+    after '=' (the statement rules, run again once this pass changed the text,
+    quote it where it is an argument) and is quoted after a colon, unless it
+    sits inside a quoted string, so the mapping rules read one scalar.
+    """
+    if "ookie" not in text and "OOKIE" not in text and "ookie" not in text.lower():
         return text
-
-    def header(match: re.Match[str]) -> str:
-        raw = match.group("value")
+    out: list[str] = []
+    pos = 0
+    while (match := _COOKIE_HEADER.search(text, pos)) is not None:
+        start = match.end()
+        assigned = "=" in match.group("sep")
+        if assigned:
+            argument = _COOKIE_ARGUMENT.match(text, start)
+            if argument is not None:
+                out.append(text[pos : argument.end()])
+                pos = argument.end()
+                continue
+        line_end = _LINE_END.search(text, start)
+        end = len(text) if line_end is None else line_end.start()
+        raw = text[start:end]
         bare = raw.rstrip(" \t")
-        if bare == REDACTED:
-            return match.group()
-        withheld = REDACTED if _quoted_context(text, match.start("key")) else '"' + REDACTED + '"'
-        return match.group("key") + match.group("sep") + withheld + raw[len(bare) :]
-
-    return _COOKIE_HEADER.sub(header, text)
+        out.append(text[pos:start])
+        if _ALPHANUMERIC_TEXT.search(bare.replace(REDACTED, "")) is None:
+            out.append(raw)  # already withheld: only markers and punctuation are left
+        else:
+            quoted = not assigned and not _quoted_context(text, match.start("key"))
+            out.append(('"' + REDACTED + '"' if quoted else REDACTED) + raw[len(bare) :])
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def _redact_compact_colons(text: str) -> str:
@@ -348,7 +391,12 @@ def _redact_compact_colons(text: str) -> str:
     while match := _COMPACT_COLON.search(text, position):
         position = match.end()
         key = match.group("key")
-        if _KEY_NORMALISE.sub("", key.lower()) not in _COMPACT_HEADER_NAMES:
+        name = _KEY_NORMALISE.sub("", key.lower())
+        if name not in _COMPACT_HEADER_NAMES and match.start() and text[match.start() - 1] == "\\":
+            escape = _ESCAPE_LETTERS.match(key)
+            if escape is not None:
+                name = _KEY_NORMALISE.sub("", key[escape.end() :].lower())
+        if name not in _COMPACT_HEADER_NAMES:
             continue
         value = _COMPACT_VALUE.match(text, position)
         if value is None:

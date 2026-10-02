@@ -524,6 +524,10 @@ class ZapierConnector(_AutomationBase):
         total = unnamed = 0
         for rec in records:
             self.ctx.examined()
+            if self._blank_row(rec):
+                # Spreadsheet exports often end with comma-only rows. They carry
+                # no Zap and need no diagnostic, as in saas.generic.
+                continue
             total += 1
             if isinstance(rec, dict) and not self._identified(rec, *_ZAP_IDENTITY_FIELDS):
                 unnamed += 1
@@ -539,6 +543,20 @@ class ZapierConnector(_AutomationBase):
             )
         elif unnamed:
             self.ctx.warn(f"lowcode.zapier: skipped {unnamed} of {total} records without a zap name or id")
+
+    @staticmethod
+    def _blank_row(rec: dict[str, Any]) -> bool:
+        """A CSV row whose every cell is empty or whitespace.
+
+        Only text cells count: a JSON object with null or non-text values
+        still goes to the record check, so a wrong-schema object stays a
+        diagnostic.
+        """
+        return (
+            isinstance(rec, dict)
+            and bool(rec)
+            and all(isinstance(value, str) and not value.strip() for value in rec.values())
+        )
 
     def _zap_finding(self, rec: dict[str, Any]) -> Finding | None:
         # JSON exports may carry numeric titles; CSV columns are always text.
