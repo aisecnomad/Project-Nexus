@@ -106,6 +106,7 @@ _CREDENTIAL_GROUP_IDS = frozenset({"id", "objectid"})
 # reaches a report through ``json.dumps(default=str)`` or ``repr`` as it is, so it is
 # turned into text first (see ``_plain``).
 _SCALARS = (bool, int, float, datetime.date, datetime.time, datetime.timedelta, decimal.Decimal, uuid.UUID)
+_PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
 
 
 def _member_order(member: Any) -> tuple[str, str]:
@@ -123,7 +124,7 @@ def _plain(item: Any) -> Any:
     any other object, an exception included, its ``str`` -- which ``sanitize`` then
     reads like any other text.
     """
-    if item is None or isinstance(item, (str, Mapping, list, tuple, *_SCALARS)):
+    if item is None or isinstance(item, _PLAIN_TYPES):
         return item
     if isinstance(item, (bytes, bytearray, memoryview)):
         if len(item) > _MAX_SANITIZATION_CHARS:
@@ -196,7 +197,7 @@ def _redact_extended(text: str) -> str:
     # A bare marker that these passes leave after a sensitive key's colon
     # ('api_key : <opaque>') is read by the established mapping pass as the start
     # of a mapping value; normalize it here so that sanitizing again changes nothing.
-    return _redact_mapping_values(text)
+    return _redact_mapping_values(text) if REDACTED in text else text
 
 
 def _sanitize_established(text: str) -> str:

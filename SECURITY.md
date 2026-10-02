@@ -195,8 +195,8 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   (`https://tok?en@host`), or a numeric password followed by one
   (`https://user:12345?x@host`, which reads as a port); a token glued to a
   letter (`apisk-proj-...`) or, for a shorter prefix, a digit; a value named
-  only by a comment (`x = "..."  # openai key`); a readable bare word compared
-  with a sensitive name (`token == hunter2`), a literal written before the
+  only by a comment (`x = "..."  # openai key`); a bare value that is not an
+  opaque key compared with a sensitive name (`token == hunter2`), a literal written before the
   operator (`"..." == token`) or compared with a subscript
   (`headers["token"] == "..."`); a readable value glued to the colon of a
   sensitive name (`password:hunter2`) or under a bare `pwd` (the shell's

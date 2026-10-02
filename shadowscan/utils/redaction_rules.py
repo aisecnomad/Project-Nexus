@@ -192,7 +192,8 @@ _LOGIN_PASS_NAME = re.compile(
 
 def _sensitive_assignment_key(key: str) -> bool:
     """Sensitive-key test for assignments and mapping entries inside text."""
-    stripped = key.strip()
+    # A name glued to '.=' or '-=' ('db_pass.= v') is read with the operator's first character.
+    stripped = key.strip().rstrip(".-")
     return (
         _sensitive_name(key)
         or _ASSIGNMENT_CREDENTIAL_NAME.fullmatch(stripped) is not None
@@ -221,8 +222,10 @@ _OPAQUE_NAME_WORDS = frozenset(
         "apikey",
         "credential",
         "credentials",
+        "creds",
         "key",
         "pass",
+        "passphrase",
         "passwd",
         "password",
         "pwd",

@@ -96,7 +96,7 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
                 pass
             elif char == "[":
                 brackets.append(char)
-            elif char == ".":
+            elif char == "." and not text.startswith(".=", position):
                 attribute = _TARGET_ATTRIBUTE.match(text, position)
                 if attribute is None:
                     break
@@ -123,6 +123,8 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
                             "+=",
                             "-=",
                             ".=",
+                            "<<-",
+                            "<-",
                             "=",
                         )
                         if text.startswith(op, position)

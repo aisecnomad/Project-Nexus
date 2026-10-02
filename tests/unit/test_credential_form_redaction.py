@@ -277,6 +277,10 @@ FORMS: list[tuple[str, str, str]] = [
     # Names that name a password whatever the value: a passphrase, a login's pass/pwd, Rails'
     # SECRET_KEY_BASE, 'creds', npm's _auth and an ODBC connection string's Pwd.
     ("passphrase = 'hunter2pw'", "hunter2pw", "passphrase = "),
+    (f"<cfg creds:{HEX} />", HEX, "<cfg creds:"),
+    (f"<cfg passphrase:{BASE62} />", BASE62, "<cfg passphrase:"),
+    ("db_pass.= 'hunter2pw'", "hunter2pw", "db_pass.= "),
+    (f"AZURE_OPENAI_KEY.='{BASE62}'", BASE62, "AZURE_OPENAI_KEY.="),
     (f"ssh_passphrase: {PASSWORD}", PASSWORD, "ssh_passphrase: "),
     ("db_pass = 'hunter2pw'", "hunter2pw", "db_pass = "),
     ("DB_PASS=hunter2pw", "hunter2pw", "DB_PASS="),
@@ -718,6 +722,15 @@ def test_a_quoted_word_compared_with_a_sensitive_name_is_withheld(op):
     # A hard-coded credential is as exposed in a comparison as in an assignment.
     safe = sanitize_text(f"if (token {op} 'hunter2') {{")
     assert safe == f"if (token {op} '{REDACTED}') {{"
+
+
+@pytest.mark.parametrize("op", ["==", "===", "!=", "!=="])
+def test_a_backtick_string_compared_with_a_sensitive_name_is_a_literal(op):
+    # A template literal holds the credential like a quoted string does, symbols included.
+    safe = sanitize_text(f"if (token {op} `Zq7!x%y`) {{")
+    assert safe == f"if (token {op} {REDACTED}) {{"
+    assert sanitize_text(safe) == safe
+    assert sanitize_text(f"if (token {op} `${{other}}`) {{") == f"if (token {op} `${{other}}`) {{"
 
 
 def test_operator_forms_the_reviewer_reproduced_keep_their_operator():

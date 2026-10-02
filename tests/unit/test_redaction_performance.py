@@ -200,3 +200,25 @@ assert safe.startswith('postgres://' + REDACTED + '@'), safe[:40]
 text = ' '.join(['https://u:' + 'a/' * 20 + 'b@h/p'] * 20_000)
 assert sanitize_text(text).count(REDACTED) == 20_000
 """)
+
+
+def test_operator_patterns_read_hostile_text_in_linear_time():
+    # Every operator is read whole by one atomic group, a name is read once, and a long
+    # unterminated mapping is withheld in one scan.
+    _bounded_process("""
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize_text
+n = 200_000
+shapes = [
+    'password' + '=' * n, 'password' + '|' * n + '=', 'password ' + '=> ' * (n // 3), 'a=' * (n // 2),
+    'password == ' * (n // 12), 'password ||= ' * (n // 13), 'api_key := ' * (n // 11), 'key ?= ' * (n // 7),
+    'password' + '!=' * (n // 2), "'password' => 'x' ," * (n // 19), 'api_key.' * (n // 8) + '= 1',
+    'key <' + '-' * n, 'password =~ /' * (n // 13), 'key ==== ' * (n // 9), 'password' + ' ' * n + '= x',
+    'db_pass.=' * (n // 9), 'passphrase:' * (n // 11), ';Pwd=' * (n // 5), 'PuTTY-User-Key-File-2:' * (n // 22),
+    'token => {' * (n // 10), '(token => ' * (n // 10),
+]
+for shape in shapes:
+    try:
+        sanitize_text(shape)
+    except SanitizationLimitError:
+        pass  # a nesting limit fails closed, quickly
+""")

@@ -413,11 +413,14 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
         sep: str = m.group("sep")
         operator = sep.strip(" \t\r\n\"'")
         if _sensitive_assignment_key(key):
-            if operator in _COMPARISONS and not _credential_literal(bare, positional=bool(quote)):
+            if operator in _COMPARISONS:
                 # Only a literal that could be a credential is withheld from a comparison:
-                # a quoted word ('token == "v"'), not "(" or "/*", and a bare opaque value,
-                # not an operand ('token == other', 'token != None').
-                return full
+                # a quoted word ('token == "v"', also in backticks), not "(" or "/*", and a
+                # bare opaque value, not an operand ('token == other', 'token != None').
+                template = len(bare) > 1 and bare[0] == bare[-1] == "`"
+                literal = bare[1:-1] if template else bare
+                if not _credential_literal(literal, positional=bool(quote) or template):
+                    return full
             if not quote and operator == "=>" and bare.startswith(("{", "[", "(")):
                 # A hash entry's nested mapping is withheld whole by the mapping pass; this
                 # is an arrow function's body ('token => {').
