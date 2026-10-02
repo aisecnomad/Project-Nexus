@@ -40,10 +40,12 @@ def _report(*resources: str) -> dict:
 @pytest.mark.parametrize("relation", ["new", "resolved", "unknown", "changed"])
 def test_comparison_sanitizes_all_published_records_without_mutating_inputs(relation):
     before, after = _report("repo"), _report("repo")
+    # Build the side without the finding as a real report, whose summary
+    # matches its findings; an emptied array with a stale summary is unknown.
     if relation == "new":
-        before["findings"] = []
+        before = _report()
     elif relation in {"resolved", "unknown"}:
-        after["findings"] = []
+        after = _report()
     if relation == "unknown":
         after["summary"]["complete"] = False
     if relation == "changed":

@@ -408,8 +408,11 @@ it. `tools/evaluation/corpus.json` carries regression cases for each rule.
 changes, including permissions, classification, ownership, registration and risk
 score/factors within the same risk band. Each changed item includes
 `changed_fields`. Missing findings count as resolved only when both reports
-completed, declare the same supported finding-identity schema and have the same
-`collection_scope` fingerprint. This opaque digest covers
+completed, declare the same supported finding-identity schema, carry a
+`summary` whose `total` (and `by_surface`/`by_kind` counts) match their
+`findings` array, and have the same `collection_scope` fingerprint. A truncated
+or filtered report is therefore unknown (exit 3), not a resolution. The
+fingerprint is an opaque digest that covers
 selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public

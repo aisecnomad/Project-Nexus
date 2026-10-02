@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,12 @@ def _report(*findings: dict, complete: bool = True) -> dict:
         },
     ).to_dict()
     report["findings"] = list(findings)
+    # Keep the summary describing the injected records, as a real report's does.
+    report["summary"].update(
+        total=len(findings),
+        by_surface=dict(Counter(finding["surface"] for finding in findings)),
+        by_kind=dict(Counter(finding["kind"] for finding in findings)),
+    )
     return report
 
 
@@ -91,6 +98,31 @@ def test_unavailable_or_changed_scope_is_unknown(tmp_path, mutation):
     result = _invoke(tmp_path, before, after)
     assert result.exit_code == 3, result.output
     assert "0 resolved" in result.output and "1 unknown" in result.output
+
+
+@pytest.mark.parametrize("side", ["baseline", "current"])
+@pytest.mark.parametrize("mutation", ["emptied", "missing_total", "by_surface", "by_kind"])
+def test_summary_that_does_not_match_findings_is_unknown(tmp_path, side, mutation):
+    # Emptying the findings array of a complete report printed "1 resolved", exit 0.
+    before, after = _report(_finding("agent")), _report(_finding("agent"))
+    report = before if side == "baseline" else after
+    if mutation == "emptied":
+        report["findings"] = []
+    elif mutation == "missing_total":
+        report["summary"].pop("total")
+    else:
+        report["summary"][mutation] = {"cloud" if mutation == "by_surface" else "workflow": 1}
+    result = _invoke(tmp_path, before, after, "--json")
+    assert result.exit_code == 3, result.output
+    output = json.loads(result.output)
+    assert output["comparable"] is False and output["resolved"] == []
+    assert (
+        f"{side} summary counts do not match its findings (truncated or edited report)" in output["reasons"]
+    )
+    if mutation == "emptied" and side == "current":
+        assert [finding["resource"] for finding in output["unknown"]] == ["agent"]
+        text = _invoke(tmp_path, before, after)
+        assert text.exit_code == 3 and "0 resolved" in text.output and "1 unknown" in text.output
 
 
 def test_scope_mismatch_is_nonzero_even_without_missing_findings(tmp_path):
