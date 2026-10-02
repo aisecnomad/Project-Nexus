@@ -367,6 +367,25 @@ field precision. Behavior changes that affect an existing baseline are listed in
   connector page named. A consistency test now fails when a key reported by
   `shadowscan connectors --json` is undocumented.
 
+### October 1 discovery review corrections
+
+- Code collection identifies declared submodules whose source has not been
+  materialized and reports incomplete coverage instead of a complete empty
+  result. Remote clone collection also checks the Git tree for submodule
+  entries. Submodule URLs are never fetched automatically.
+- Ordinary Spring AI `ChatClient` and LangChain4j `AiServices` construction,
+  and standalone Java tool declarations, no longer establish an agent or
+  tool-use capability. Explicit agent construction and bounded, concrete tool
+  registration remain evidence.
+- Import-bound source calls distinguish configured workload capabilities from
+  features merely offered by their framework. Empty tool/handoff collections
+  and disabled delegation no longer add those capabilities or their risk
+  factors. Review changed findings and rebuild enforcement baselines.
+- Authored evaluation cases now check capability labels as well as kind and
+  product attribution. The frozen independent corpus and its labels are
+  unchanged; these regressions do not establish fresh field accuracy, live
+  tenant acceptance or independent human review.
+
 ### October 1 code.filesystem coverage and precision
 
 - A coding-agent instruction document that links to another one in the same

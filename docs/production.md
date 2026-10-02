@@ -10,6 +10,39 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 1 discovery review migration
+
+Review finding kinds, capabilities and risk scores before replacing an existing
+baseline. Ordinary Java chat-client construction and standalone tool declarations
+are framework evidence; they do not by themselves establish an agent. Explicit
+agent factories and supported concrete tool-registration patterns remain evidence
+of construction or configuration, never proof of runtime execution.
+
+Supported import-bound constructors in OpenAI Agents SDK, CrewAI, Pydantic AI,
+LangGraph and LangChain no longer inherit a framework's advertised features as
+configured workload capabilities. Empty tool/handoff collections and disabled
+delegation do not contribute those capabilities or their risk factors. Unknown
+features can remain potential capabilities in metadata; review the supporting
+source before relying on a capability label for enforcement.
+
+Submodule declarations whose source is missing or empty make source coverage
+incomplete (exit 3). Clone collection also checks the immutable Git tree for
+submodule entries. The scanner does not initialize submodules or contact their
+URLs. Supply the intended source in a separately reviewed checkout or explicitly
+exclude it from the declared scan scope; do not interpret an incomplete result
+as an absence of agents. See [coverage policy](scanning.md#coverage-policy) for
+the collection modes and limitations.
+
+The new kind and capability examples are authored regressions. Keep the frozen
+AI-labeled corpus unchanged and obtain fresh human-reviewed field evidence using
+the [holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+Include ordinary Java chat applications, explicit empty/disabled capabilities,
+positive tool/delegation controls and incomplete source checkouts in the sampling
+plan. Predeclare kind, product and capability labels before revealing scanner
+results. AWS/Slack live acceptance still requires the authorized complete and
+permission-denied [tenant canaries](canaries.md); other deployment scopes require
+their own connector-specific evidence.
+
 ## September 27 migration and acceptance
 
 The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
@@ -1033,11 +1066,22 @@ list without removing the existing checks or approval rule. Its enforcement
 state has changed more than once during 2026-09: the 2026-09-24 review recorded
 it disabled; on 2026-09-25 (13:10 UTC) a merge attempted without an approving
 review was refused with "Repository rule violations found", so it was enforced
-at that moment; and on 2026-09-27 (10:40 UTC) both rulesets were read back with
-`enforcement: disabled`, so nothing was enforced on `main` at that time. Treat
+at that moment; on 2026-09-27 (10:40 UTC), and again on 2026-10-01 during the
+discovery review, both rulesets were read back with `enforcement: disabled`.
+The October 1 branch response also reported `protected: false`. Treat
 no observation as permanent; only the live commands below describe the current
 state. Keep the CodeQL job's displayed name `analyze` consistent with the
 required check.
+
+An administrator must activate both existing rulesets in
+[repository rules](https://github.com/aisecnomad/Project-Nexus/rules), add
+`CI gate` to `Require CI and CodeQL`, and retain its current required checks,
+strict up-to-date policy, one non-author approving review, stale-review
+dismissal, signature requirements and empty bypass list. Save the change and
+read back the effective rules on `main`; editing this guide or merging its PR
+does not change repository settings. Do not claim that protection was restored
+until that readback confirms it. If the API connection lacks administration
+access, use an authorized administrator session rather than weakening the rules.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-09-25 (including

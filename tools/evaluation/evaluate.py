@@ -38,7 +38,9 @@ MAX_FILE_BYTES = 32_000
 MAX_TOTAL_FILE_BYTES = 1_000_000
 _ID = re.compile(r"[a-z][a-z0-9_-]{1,79}\Z")
 _SIGNATURE = re.compile(r"[a-z0-9][a-z0-9._-]{0,100}\Z")
+_CAPABILITY = re.compile(r"[a-z][a-z0-9-]{0,79}\Z")
 _FINDING_SELECTORS = ("expected_findings", "forbidden_findings")
+_SelectorKey = tuple[str, str | None, str | None, tuple[str, ...] | None]
 
 
 class CorpusError(ValueError):
@@ -88,22 +90,31 @@ def _safe_name(name: Any) -> bool:
     )
 
 
+def _selector_key(selector: dict[str, Any]) -> _SelectorKey:
+    return (
+        selector["kind"],
+        selector.get("product_signature"),
+        selector.get("provider_signature"),
+        tuple(sorted(selector["capabilities"])) if "capabilities" in selector else None,
+    )
+
+
 def _validate_finding_selectors(assertions: dict[str, Any], where: str) -> None:
     """Constrain explicit labels to scanner fields, with one bounded selector per rule."""
     for relation in _FINDING_SELECTORS:
         selectors = assertions.get(relation, [])
         if not isinstance(selectors, list) or len(selectors) > 20:
             raise CorpusError(f"{where}: {relation} must contain at most 20 finding selectors")
-        seen: set[tuple[str, str | None, str | None]] = set()
+        seen: set[_SelectorKey] = set()
         for selector in selectors:
             _keys(
                 selector,
                 {"kind"},
-                {"product_signature", "provider_signature"},
+                {"product_signature", "provider_signature", "capabilities"},
                 f"{where} {relation} selector",
             )
             try:
-                kind = Kind(selector["kind"])
+                Kind(selector["kind"])
             except (ValueError, TypeError) as exc:
                 raise CorpusError(f"{where}: unknown {relation} finding kind") from exc
             for field in ("product_signature", "provider_signature"):
@@ -118,26 +129,30 @@ def _validate_finding_selectors(assertions: dict[str, Any], where: str) -> None:
                 raise CorpusError(f"{where}: product_signature must not be a provider ID")
             if provider is not None and not provider.startswith("provider."):
                 raise CorpusError(f"{where}: provider_signature must be a provider ID")
-            key = (kind.value, product, provider)
+            if "capabilities" in selector:
+                capabilities = selector["capabilities"]
+                if (
+                    not isinstance(capabilities, list)
+                    or len(capabilities) > 20
+                    or any(not isinstance(cap, str) or not _CAPABILITY.fullmatch(cap) for cap in capabilities)
+                    or len(set(capabilities)) != len(capabilities)
+                ):
+                    raise CorpusError(f"{where}: capabilities must contain up to 20 unique capability IDs")
+            key = _selector_key(selector)
             if key in seen:
                 raise CorpusError(f"{where}: duplicate {relation} selector")
             seen.add(key)
-    expected = {
-        (selector["kind"], selector.get("product_signature"), selector.get("provider_signature"))
-        for selector in assertions.get("expected_findings", [])
-    }
-    forbidden = {
-        (selector["kind"], selector.get("product_signature"), selector.get("provider_signature"))
-        for selector in assertions.get("forbidden_findings", [])
-    }
+    expected = {_selector_key(selector) for selector in assertions.get("expected_findings", [])}
+    forbidden = {_selector_key(selector) for selector in assertions.get("forbidden_findings", [])}
     if expected & forbidden:
         raise CorpusError(f"{where}: a finding selector cannot be both expected and forbidden")
-    for required_kind, required_product, required_provider in expected:
-        for excluded_kind, excluded_product, excluded_provider in forbidden:
+    for required_kind, required_product, required_provider, required_caps in expected:
+        for excluded_kind, excluded_product, excluded_provider, excluded_caps in forbidden:
             if (
                 required_kind == excluded_kind
                 and (excluded_product is None or excluded_product == required_product)
                 and (excluded_provider is None or excluded_provider == required_provider)
+                and (excluded_caps is None or excluded_caps == required_caps)
             ):
                 raise CorpusError(f"{where}: forbidden selector covers an expected finding")
 
@@ -388,6 +403,7 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
             "frameworks": sorted(set(f.frameworks)),
             "model_providers": sorted(set(f.model_providers)),
             "signatures": sorted(set(f.frameworks + f.model_providers)),
+            "capabilities": sorted(set(f.capabilities)),
             "confidence": f.confidence,
             **(
                 {
@@ -409,11 +425,14 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
 
 
 def _finding_checks(case: Case, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Match attribution and, when labeled, the exact capability set on one finding."""
     checks = []
     for relation in _FINDING_SELECTORS:
         for selector in case.assertions.get(relation, []):
-            observed = any(
-                finding["kind"] == selector["kind"]
+            candidates = [
+                finding
+                for finding in findings
+                if finding["kind"] == selector["kind"]
                 and (
                     "product_signature" not in selector
                     or selector["product_signature"] in finding["frameworks"]
@@ -422,14 +441,23 @@ def _finding_checks(case: Case, findings: list[dict[str, Any]]) -> list[dict[str
                     "provider_signature" not in selector
                     or selector["provider_signature"] in finding["model_providers"]
                 )
-                for finding in findings
+            ]
+            complete = "capabilities" not in selector or all("capabilities" in f for f in candidates)
+            observed = any(
+                "capabilities" not in selector
+                or (
+                    "capabilities" in finding
+                    and sorted(selector["capabilities"]) == sorted(finding["capabilities"])
+                )
+                for finding in candidates
             )
             checks.append(
                 {
                     "relation": relation,
                     "selector": selector,
                     "observed": observed,
-                    "passed": observed if relation == "expected_findings" else not observed,
+                    "passed": complete and (observed if relation == "expected_findings" else not observed),
+                    **({"capabilities_complete": complete} if "capabilities" in selector else {}),
                 }
             )
     return checks
@@ -467,11 +495,14 @@ def _assertions(
     failures = []
     for check in checks:
         if not check["passed"]:
-            action = (
-                "expected finding missing"
-                if check["relation"] == "expected_findings"
-                else "forbidden finding observed"
-            )
+            if check.get("capabilities_complete") is False:
+                action = "finding capability evidence missing"
+            else:
+                action = (
+                    "expected finding missing"
+                    if check["relation"] == "expected_findings"
+                    else "forbidden finding observed"
+                )
             failures.append(f"{action}: {json.dumps(check['selector'], sort_keys=True)}")
     if exact_set is not None and not exact_set["passed"]:
         failures.append(
@@ -552,11 +583,17 @@ def finding_assertion_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         name: {"checks": 0, "passed": 0, "failed": 0}
         for name in (*_FINDING_SELECTORS, "kind_only", "product_signature", "provider_signature")
     }
+    if any("capabilities" in check["selector"] for row in rows for check in row["finding_checks"]):
+        groups["capabilities"] = {"checks": 0, "passed": 0, "failed": 0}
     for row in rows:
         for check in row["finding_checks"]:
             selector = check["selector"]
             fields = [check["relation"]]
-            fields.extend(field for field in ("product_signature", "provider_signature") if field in selector)
+            fields.extend(
+                field
+                for field in ("product_signature", "provider_signature", "capabilities")
+                if field in selector
+            )
             if len(fields) == 1:
                 fields.append("kind_only")
             for field in fields:

@@ -175,14 +175,22 @@ def test_cli_scan_config_diff_and_stubs(tmp_path: Path, fixtures):
     )
     a = tmp_path / "a.json"
     b = tmp_path / "b.json"
-    # Keep the CLI output in the assertion message: an incomplete scan (exit 3)
-    # names its connector diagnostics there, which a bare exit code hides.
+
+    def failure_details(output: str, report: Path) -> str:
+        # With -o, the CLI prints only a fixed summary. Actual diagnostics live
+        # in the reporter-sanitized stats; never print findings or raw inputs.
+        try:
+            stats = json.loads(report.read_text())["stats"]
+        except (OSError, ValueError, KeyError):
+            stats = "no readable JSON report stats"
+        return f"{output}\nSanitized connector stats: {json.dumps(stats, indent=2)}"
+
     res = runner.invoke(
         main, ["scan", "-c", str(cfg), "--only", "cloud.aws", "--format", "json", "-o", str(a)]
     )
-    assert res.exit_code == 0, res.output
+    assert res.exit_code == 0, failure_details(res.output, a)
     res = runner.invoke(main, ["scan", "-c", str(cfg), "--format", "json", "-o", str(b)])
-    assert res.exit_code == 0, res.output
+    assert res.exit_code == 0, failure_details(res.output, b)
     res = runner.invoke(main, ["diff", str(a), str(b)])
     assert res.exit_code == 3 and "new" in res.output and "Slack" in res.output
     assert "scope differs" in res.output
