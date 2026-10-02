@@ -966,7 +966,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             "force schema: litellm|portkey|kong|cloudflare|helicone|langfuse|bedrock|azure-openai|vertex|"
             "openai-usage|anthropic-usage|access-log|generic (default auto)"
         ),
-        "min_events": "ignore callers with fewer events (default 1)",
+        "min_events": "ignore callers with fewer events, a positive integer (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
         "max_records": "stop after N records (default 5,000,000)",
         "label": (
@@ -992,7 +992,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             "keyed" if ctx.gateway_identity_key and ctx.gateway_identity_key_stable else "run"
         )
         self.format = ctx.get("format")
-        self.min_events = int(ctx.get("min_events", 1))
+        self.min_events = _positive_limit(ctx.get("min_events", 1), "min_events")
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
         self.max_records = _positive_limit(ctx.get("max_records", 5_000_000), "max_records")
         self.label = ctx.get("label") or ctx.get("gateway_name")

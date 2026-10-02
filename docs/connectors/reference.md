@@ -222,7 +222,7 @@ Offline input: JSONL / JSON / CSV / text access logs.
 | --- | --- |
 | `input` | log file or directory (JSONL / JSON / CSV / nginx-envoy text) |
 | `format` | force schema: litellm\|portkey\|kong\|cloudflare\|helicone\|langfuse\|bedrock\|azure-openai\|vertex\|openai-usage\|anthropic-usage\|access-log\|generic (default auto) |
-| `min_events` | ignore callers with fewer events (default 1) |
+| `min_events` | ignore callers with fewer events, a positive integer (default 1) |
 | `llm_hosts_only` | for access logs, keep only requests to known LLM/agent hosts (default true) |
 | `max_records` | stop after N records (default 5,000,000) |
 | `label` | gateway name recorded as the finding provider and as the account of unscoped callers (defaults to the entry's `label`) |
@@ -439,7 +439,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `client_secret` | env AZURE\_CLIENT\_SECRET |
 | `access_token` | pre-issued Graph token (env GRAPH\_ACCESS\_TOKEN) |
 | `include_store` | also list store apps in the catalog (default false; installations always inspected) |
-| `max_teams` | cap on teams whose installed apps are enumerated (default 300) |
+| `max_teams` | cap on teams whose installed apps are enumerated, a positive integer (default 300) |
 | `input` | offline: JSON export of teamsApps / installedApps |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
@@ -516,9 +516,9 @@ Requires: `boto3`. Offline input: JSONL dump of records.
 | `allow_instance_credentials` | allow EC2/ECS credential discovery (default false; inherited from options) |
 | `regions` | regions to scan (default \['us-east-1', 'us-west-2', 'eu-west-1', 'eu-central-1', 'ap-southeast-1', 'ap-northeast-1'\]; 'all' = every enabled region) |
 | `services` | subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, secrets, cloudtrail (default all) |
-| `cloudtrail_days` | look-back window for LLM invocation events (default 7, 0 disables) |
-| `max_lambda` | cap on Lambda functions per region (default 2000) |
-| `max_ecs_api_calls` | cap on ECS list/detail API calls per region (default 2000; reaching it marks coverage incomplete) |
+| `cloudtrail_days` | look-back window in days for LLM invocation events, a non-negative integer (default 7, 0 disables) |
+| `max_lambda` | cap on Lambda functions per region, a positive integer (default 2000) |
+| `max_ecs_api_calls` | cap on ECS list/detail API calls per region, a positive integer (default 2000; reaching it marks coverage incomplete) |
 | `input` | offline: JSONL of dumped records |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
@@ -559,8 +559,8 @@ Offline input: JSONL dump of records.
 | `access_token` | OAuth token (env GOOGLE\_OAUTH\_ACCESS\_TOKEN); otherwise Application Default Credentials via google-auth |
 | `credentials_file` | explicit Google credentials file (env GOOGLE\_APPLICATION\_CREDENTIALS); otherwise local gcloud ADC |
 | `allow_instance_credentials` | allow metadata-based Application Default Credentials (default false; inherited from options) |
-| `audit_days` | look back N days in Cloud Audit Logs for Vertex callers (default 0 = off) |
-| `max_projects` | default 200 |
+| `audit_days` | look back N days in Cloud Audit Logs for Vertex callers, a non-negative integer (default 0 = off) |
+| `max_projects` | cap on projects scanned, a positive integer (default 200) |
 | `max_pages` | maximum pages per paginated call, capped at 1000 (default 1000; resource lists stop at 500 pages and audit-log queries at 50 pages regardless) |
 | `input` | offline: JSONL dump of records |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |

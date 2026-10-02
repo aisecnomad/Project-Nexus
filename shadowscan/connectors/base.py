@@ -58,16 +58,26 @@ def _raise_connector_error(message: str) -> NoReturn:
     raise ConnectorError(message)
 
 
-def _positive_limit(value: Any, name: str) -> int:
+def _integer_option(value: Any, name: str, minimum: int, requirement: str) -> int:
+    """An integer connector option: booleans, fractions, non-finite and non-numeric values are errors."""
     if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
-        raise ConnectorError(f"{name} must be a positive integer")
+        raise ConnectorError(f"{name} must be {requirement}")
     try:
         limit = int(value)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ConnectorError(f"{name} must be a positive integer") from exc
-    if limit < 1:
-        raise ConnectorError(f"{name} must be a positive integer")
+        raise ConnectorError(f"{name} must be {requirement}") from exc
+    if limit < minimum:
+        raise ConnectorError(f"{name} must be {requirement}")
     return limit
+
+
+def _positive_limit(value: Any, name: str) -> int:
+    return _integer_option(value, name, 1, "a positive integer")
+
+
+def _non_negative_limit(value: Any, name: str) -> int:
+    """Like ``_positive_limit``, for options such as look-back windows where 0 switches a feature off."""
+    return _integer_option(value, name, 0, "a non-negative integer")
 
 
 class ConnectorContext:

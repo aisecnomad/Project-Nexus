@@ -32,7 +32,13 @@ from itertools import islice
 from typing import Any, ClassVar
 from urllib.parse import unquote
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.base import (
+    BaseConnector,
+    ConnectorContext,
+    ConnectorError,
+    _non_negative_limit,
+    _positive_limit,
+)
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
     RecordDispatch,
@@ -268,10 +274,13 @@ class AwsConnector(BaseConnector):
             "subset of: bedrock, agentcore, lambda, ecs, sagemaker, stepfunctions, qbusiness, lex, iam, "
             "secrets, cloudtrail (default all)"
         ),
-        "cloudtrail_days": "look-back window for LLM invocation events (default 7, 0 disables)",
-        "max_lambda": "cap on Lambda functions per region (default 2000)",
+        "cloudtrail_days": (
+            "look-back window in days for LLM invocation events, a non-negative integer "
+            "(default 7, 0 disables)"
+        ),
+        "max_lambda": "cap on Lambda functions per region, a positive integer (default 2000)",
         "max_ecs_api_calls": (
-            "cap on ECS list/detail API calls per region "
+            "cap on ECS list/detail API calls per region, a positive integer "
             "(default 2000; reaching it marks coverage incomplete)"
         ),
         "input": "offline: JSONL of dumped records",
@@ -296,13 +305,9 @@ class AwsConnector(BaseConnector):
         if "all" in self.regions and self.regions != ["all"]:
             raise ConnectorError("cloud.aws: regions 'all' cannot be combined with explicit regions")
         self.services = set(services)
-        self.cloudtrail_days = int(ctx.get("cloudtrail_days", 7))
-        self.max_lambda = int(ctx.get("max_lambda", 2000))
-        if self.max_lambda < 1:
-            raise ConnectorError("cloud.aws: max_lambda must be positive")
-        self.max_ecs_api_calls = int(ctx.get("max_ecs_api_calls", 2000))
-        if self.max_ecs_api_calls < 1:
-            raise ConnectorError("cloud.aws: max_ecs_api_calls must be positive")
+        self.cloudtrail_days = _non_negative_limit(ctx.get("cloudtrail_days", 7), "cloudtrail_days")
+        self.max_lambda = _positive_limit(ctx.get("max_lambda", 2000), "max_lambda")
+        self.max_ecs_api_calls = _positive_limit(ctx.get("max_ecs_api_calls", 2000), "max_ecs_api_calls")
         account = ctx.get("account_id")
         # YAML numeric account IDs are common; never pad an already-truncated
         # identifier or accept booleans/floats as a cloud account identity.

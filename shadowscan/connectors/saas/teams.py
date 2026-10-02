@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.common import config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -44,7 +44,7 @@ class TeamsConnector(BaseConnector):
         "include_store": (
             "also list store apps in the catalog (default false; installations always inspected)"
         ),
-        "max_teams": "cap on teams whose installed apps are enumerated (default 300)",
+        "max_teams": "cap on teams whose installed apps are enumerated, a positive integer (default 300)",
         "input": "offline: JSON export of teamsApps / installedApps",
     }
 
@@ -52,7 +52,7 @@ class TeamsConnector(BaseConnector):
         super().__init__(ctx)
         self.tenant = ctx.get("tenant_id", env="AZURE_TENANT_ID")
         self.include_store = config_boolean(ctx.get("include_store", False), "include_store")
-        self.max_teams = int(ctx.get("max_teams", 300))
+        self.max_teams = _positive_limit(ctx.get("max_teams", 300), "max_teams")
 
     def _client(self) -> HttpClient:
         token = self.ctx.get("access_token", env="GRAPH_ACCESS_TOKEN")

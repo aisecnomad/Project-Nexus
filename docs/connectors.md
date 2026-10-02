@@ -40,7 +40,12 @@ integer or the entry fails validation.
 Connectors that page through a live API accept `max_pages`, a positive integer
 (default 1000; larger values are capped at 1000). Zero, a negative or fractional
 number, a boolean or non-numeric text is a configuration error, never a silent
-one-page scan; reaching the page bound marks coverage incomplete.
+one-page scan; reaching the page bound marks coverage incomplete. The other
+integer limits (`max_lambda`, `max_ecs_api_calls`, `max_projects`,
+`min_events`, `max_teams`, `max_records`, `max_users`,
+`max_app_role_lookups`) follow the same rule, and the look-back windows
+`cloudtrail_days` and `audit_days` are non-negative integers, where 0 switches
+the lookup off: `cloudtrail_days: 0.5` is an error, not a disabled lookup.
 
 See [scan state and runtime correlation](scanning.md) for incremental scans,
 gateway workload bindings and completion semantics.

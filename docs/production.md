@@ -666,6 +666,16 @@ prove where it ends: the scan is incomplete with a warning naming the table.
 Pass the header through to the scanner; `max_pages` still needs to exceed the
 table's `X-Total-Count`/500.
 
+Check connector configurations for numeric options before upgrading:
+`max_lambda`, `max_ecs_api_calls` (`cloud.aws`), `max_projects` (`cloud.gcp`),
+`min_events` (`gateway.logs`) and `max_teams` (`saas.microsoft-teams`) must be
+positive integers, and `cloudtrail_days` (`cloud.aws`) and `audit_days`
+(`cloud.gcp`) non-negative integers, as `max_pages` already must be. A boolean,
+a fraction or non-numeric text now stops that connector with a configuration
+error (exit 3) instead of being truncated: `cloudtrail_days: 0.5` used to
+switch the CloudTrail lookup off without a diagnostic and `max_lambda: true`
+became 1. Integral values such as `7.0` or `"7"` are still accepted.
+
 ### October 2 production review migration
 
 Review framework attribution in projects using npm dependency aliases before

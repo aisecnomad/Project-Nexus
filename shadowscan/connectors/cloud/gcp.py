@@ -24,7 +24,13 @@ from urllib.parse import urlsplit
 
 from requests import RequestException, Session
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.base import (
+    BaseConnector,
+    ConnectorContext,
+    ConnectorError,
+    _non_negative_limit,
+    _positive_limit,
+)
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
     RecordDispatch,
@@ -155,8 +161,11 @@ class GcpConnector(BaseConnector):
         "allow_instance_credentials": (
             "allow metadata-based Application Default Credentials (default false; inherited from options)"
         ),
-        "audit_days": "look back N days in Cloud Audit Logs for Vertex callers (default 0 = off)",
-        "max_projects": "default 200",
+        "audit_days": (
+            "look back N days in Cloud Audit Logs for Vertex callers, a non-negative integer "
+            "(default 0 = off)"
+        ),
+        "max_projects": "cap on projects scanned, a positive integer (default 200)",
         "max_pages": (
             "maximum pages per paginated call, capped at 1000 (default 1000; resource lists stop at 500 "
             "pages and audit-log queries at 50 pages regardless)"
@@ -175,10 +184,8 @@ class GcpConnector(BaseConnector):
             self.projects = string_list(ctx.get("projects"), "projects", pattern=r"[A-Za-z0-9._:-]+") or []
         except ValueError as exc:
             raise ConnectorError(f"cloud.gcp: {exc}") from None
-        self.audit_days = int(ctx.get("audit_days", 0))
-        self.max_projects = int(ctx.get("max_projects", 200))
-        if self.max_projects < 1:
-            raise ConnectorError("cloud.gcp: max_projects must be positive")
+        self.audit_days = _non_negative_limit(ctx.get("audit_days", 0), "audit_days")
+        self.max_projects = _positive_limit(ctx.get("max_projects", 200), "max_projects")
         self.max_pages = max_pages_limit(ctx.get("max_pages", 1000))
         self.http: HttpClient | None = None
         self._locations_noted = False

@@ -73,7 +73,7 @@ def test_gcp_project_limit_stops_discovery_before_exhausting_all_pages(index):
 @pytest.mark.parametrize("cls,setting", [(AwsConnector, "max_lambda"), (GcpConnector, "max_projects")])
 @pytest.mark.parametrize("limit", [0, -1])
 def test_nonpositive_resource_limit_is_rejected_before_collection(index, cls, setting, limit):
-    with pytest.raises(ConnectorError, match=f"{setting} must be positive"):
+    with pytest.raises(ConnectorError, match=f"{setting} must be a positive integer"):
         cls(context(index, **{setting: limit}))
 
 

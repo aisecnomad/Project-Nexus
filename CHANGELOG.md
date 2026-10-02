@@ -69,6 +69,14 @@ integrating them:
   the response headers once the body is decoded, as `paginate_link(on_page=)`
   does. The ServiceNow guide no longer claims that collection advances by the
   rows returned, which it never did.
+- Integer options are validated like `max_pages`: `max_lambda`,
+  `max_ecs_api_calls`, `max_projects`, `min_events` and `max_teams` must be
+  positive integers, `cloudtrail_days` and `audit_days` non-negative integers.
+  `int()` used to accept booleans and truncate fractions, so
+  `cloudtrail_days: 0.5` silently switched CloudTrail lookups off, and text
+  such as `"abc"` raised a bare `ValueError`; each is now a configuration
+  error. The option descriptions and `docs/connectors/reference.md` name the
+  requirement.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

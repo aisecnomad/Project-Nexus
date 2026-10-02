@@ -2,6 +2,7 @@
 
 Some connectors clamped invalid values to a single page (``max(1, int(value))``)
 and accepted any upper bound, while others rejected them and capped at 1000.
+The other integer limits and look-back windows follow the same rule.
 """
 
 from __future__ import annotations
@@ -12,9 +13,12 @@ import pytest
 
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.connectors.base import ConnectorError
+from shadowscan.connectors.cloud.aws import AwsConnector
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.cloud.oci import OciConnector
 from shadowscan.connectors.common import MAX_PAGES, max_pages_limit
+from shadowscan.connectors.gateway.logs import GatewayLogConnector
+from shadowscan.connectors.saas.teams import TeamsConnector
 
 # A null setting is unset in connector configuration and takes the default.
 INVALID = [0, -1, True, False, 1.5, float("nan"), float("inf"), "abc", "1.5"]
@@ -88,3 +92,39 @@ def test_previously_unbounded_connector_stops_at_the_shared_cap(index, monkeypat
     get_connector_class("lowcode.zapier")(ctx).run()
     assert http.get_json.call_count == 1000
     assert ctx.stats.incomplete and "lowcode.zapier: pagination limit reached" in ctx.stats.warnings
+
+
+# Integer options other than max_pages. ``int()`` used to accept booleans (``true``
+# became 1) and truncate fractions: ``cloudtrail_days: 0.5`` became 0 and switched
+# the CloudTrail lookup off without a diagnostic.
+NOT_INTEGERS = [True, False, 1.5, float("nan"), float("inf"), "abc", "1.5"]
+LIMITS = [
+    (AwsConnector, "max_lambda"),
+    (AwsConnector, "max_ecs_api_calls"),
+    (GcpConnector, "max_projects"),
+    (GatewayLogConnector, "min_events"),
+    (TeamsConnector, "max_teams"),
+]
+WINDOWS = [(AwsConnector, "cloudtrail_days"), (GcpConnector, "audit_days")]
+
+
+@pytest.mark.parametrize("cls, setting", LIMITS)
+@pytest.mark.parametrize("value", [0, -1, *NOT_INTEGERS])
+def test_integer_limits_reject_values_that_are_not_positive_integers(index, cls, setting, value):
+    with pytest.raises(ConnectorError, match=f"{setting} must be a positive integer"):
+        cls(ConnectorContext(config={setting: value}, index=index))
+
+
+@pytest.mark.parametrize("cls, setting", WINDOWS)
+@pytest.mark.parametrize("value", [-1, *NOT_INTEGERS])
+def test_look_back_windows_reject_values_that_are_not_non_negative_integers(index, cls, setting, value):
+    with pytest.raises(ConnectorError, match=f"{setting} must be a non-negative integer"):
+        cls(ConnectorContext(config={setting: value}, index=index))
+
+
+@pytest.mark.parametrize("cls, setting", [*LIMITS, *WINDOWS])
+def test_integer_options_accept_integers_in_any_spelling(index, cls, setting):
+    for value in (3, "3", 3.0):
+        assert getattr(cls(ConnectorContext(config={setting: value}, index=index)), setting) == 3
+    if (cls, setting) in WINDOWS:  # zero switches a look-back window off
+        assert getattr(cls(ConnectorContext(config={setting: 0}, index=index)), setting) == 0
