@@ -264,7 +264,11 @@ def changed_since(before: os.stat_result, fd: int) -> bool:
 
 
 def read_policy_text(path: Path, max_bytes: int = MAX_POLICY_BYTES) -> str:
-    """Open each path component without following links; cap allocation before decoding."""
+    """Open each path component without following links; cap allocation before decoding.
+
+    A leading UTF-8 byte-order mark is dropped: spreadsheet "CSV UTF-8" and
+    some editors' JSON exports start with one.
+    """
     with open_confined_file(Path(os.path.abspath(path)), label="policy input") as (stream, before):
         if before.st_size > max_bytes:
             raise ValueError("policy input exceeds byte limit")
@@ -273,4 +277,4 @@ def read_policy_text(path: Path, max_bytes: int = MAX_POLICY_BYTES) -> str:
             raise ValueError("policy input exceeds byte limit")
         if changed_since(before, stream.fileno()):
             raise ValueError("policy input changed while reading")
-        return data.decode("utf-8")
+        return data.decode("utf-8-sig")

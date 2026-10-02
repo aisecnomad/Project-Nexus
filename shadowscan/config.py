@@ -56,7 +56,7 @@ import yaml
 
 from shadowscan.errors import SetupError, yaml_error_position
 from shadowscan.risk import RiskPolicy
-from shadowscan.utils.files import read_policy_text
+from shadowscan.utils.files import read_policy_text, require_no_symlinks
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
@@ -579,6 +579,14 @@ class ScanConfig:
     @classmethod
     def from_yaml(cls, path: str | Path) -> ScanConfig:
         p = Path(path)
+        try:
+            require_no_symlinks(p)
+        except ValueError:
+            # A Kubernetes ConfigMap mount, for example, is a chain of links.
+            raise ConfigValidationError(
+                f"scan configuration {p} is a symbolic link or inside one; links are not followed,"
+                " so pass the file's real path"
+            ) from None
         text = read_policy_text(p)
         try:
             data = yaml.load(text, Loader=_ConfigLoader)

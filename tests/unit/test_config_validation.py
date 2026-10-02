@@ -382,6 +382,30 @@ def test_config_relative_globs_and_workdir_use_configuration_directory(tmp_path)
     assert loaded.workdir == str(directory / "working")
 
 
+@pytest.mark.parametrize("layout", ["file", "directory"])
+def test_symlinked_config_names_the_link_rule_instead_of_yaml_structure(tmp_path, layout):
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+
+    # A Kubernetes ConfigMap mount links the file name through a ..data directory link.
+    real = tmp_path / "..2026_10_01" / "shadowscan.yaml"
+    real.parent.mkdir()
+    real.write_text("connectors: []\n")
+    if layout == "file":
+        path = tmp_path / "shadowscan.yaml"
+        path.symlink_to(real)
+    else:
+        (tmp_path / "..data").symlink_to(real.parent, target_is_directory=True)
+        path = tmp_path / "..data" / "shadowscan.yaml"
+    with pytest.raises(ConfigValidationError, match="symbolic link or inside one; links are not followed"):
+        ScanConfig.from_yaml(path)
+    result = CliRunner().invoke(main, ["scan", "-c", str(path)])
+    assert result.exit_code == 1
+    assert "links are not followed" in result.output and "YAML structure" not in result.output
+    assert ScanConfig.from_yaml(real).connectors == []
+
+
 def test_config_representations_never_show_connector_credentials(tmp_path):
     secrets = {
         "token": "opaque-token-value-1",
