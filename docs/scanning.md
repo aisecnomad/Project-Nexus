@@ -394,7 +394,12 @@ observation for a project other than those heuristics is an environment-variable
 or display-name reference, the heuristics are dropped and the finding is built
 from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
-names appear. MCP servers
+names appear. A data or prose file that only lists four or more products by
+domain or variable name (a proxy blocklist, a vendor policy, a copy of the
+signature packs) is a catalog: its mentions count only for a product with an
+import, dependency or code pattern elsewhere in the project, and the discounted
+files are listed in `metadata.catalog_mentions` (see
+[Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers
 `browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
 keeps the informational `always-on` tag but only marks a caller as agentic,
