@@ -494,6 +494,12 @@ field precision. Behavior changes that affect an existing baseline are listed in
 
 ### October 2 review corrections
 
+- Name/value credential redaction caches line bounds and the first content
+  position instead of repeatedly scanning or copying growing record prefixes.
+  This removes quadratic work on long lines of repeated record names while
+  preserving credential withholding and list boundaries. Deterministic
+  character-work regressions complement the existing timing checks.
+
 - JavaScript and TypeScript source calls that exceed the bounded semantic
   analysis budget now make coverage incomplete instead of silently losing
   agent-construction evidence. Valid neighboring findings are retained.

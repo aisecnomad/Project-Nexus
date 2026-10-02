@@ -91,6 +91,13 @@ requirements as unmet; do not substitute offline replays or AI-generated labels.
 
 ## October 2 detection and assurance migration
 
+Name/value credential redaction now reuses line bounds and first-content
+positions. Long lines containing repeated record names previously caused
+quadratic prefix scans and copies; those queries now perform linear character
+work. Credential withholding and record/list boundaries are unchanged. Existing
+matching budgets still fail closed, and timing regressions remain checks of the
+implementation rather than tenant throughput guarantees.
+
 JavaScript/TypeScript calls exceeding the bounded semantic-analysis budget now
 make the scan incomplete (exit 3). This includes long constructor arguments;
 an unchanged framework-usage finding is no longer evidence that agent analysis

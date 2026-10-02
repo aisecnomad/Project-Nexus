@@ -76,6 +76,53 @@ def test_context_named_credential_passes_scale_linearly(unit):
     assert large_time < max(small_time, 0.02) * 10, (small_time, large_time)
 
 
+class _MeasuredText(str):
+    """Count copied characters and searched ranges of the no-newline fixture.
+
+    A failed newline search traverses its entire range. Counting those ranges
+    and slices exposes repeated-prefix work without CI scheduling or clocks.
+    """
+
+    def __new__(cls, value):
+        text = super().__new__(cls, value)
+        text.work = 0
+        return text
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            start, stop, step = key.indices(len(self))
+            self.work += len(range(start, stop, step))
+        else:
+            self.work += 1
+        return super().__getitem__(key)
+
+    def find(self, sub, start=0, end=None):
+        begin, stop, _ = slice(start, end).indices(len(self))
+        self.work += max(0, stop - begin)
+        return super().find(sub, start, len(self) if end is None else end)
+
+    def rfind(self, sub, start=0, end=None):
+        begin, stop, _ = slice(start, end).indices(len(self))
+        self.work += max(0, stop - begin)
+        return super().rfind(sub, start, len(self) if end is None else end)
+
+
+@pytest.mark.parametrize(
+    "operation", ["_redact_name_value_pairs", "_redact_record_settings", "_redact_reversed_records"]
+)
+@pytest.mark.parametrize("unit", ["{name: API_KEY, ", '{"name": "API_KEY", '])
+def test_record_prefix_queries_do_linear_character_work(operation, unit):
+    def work(copies):
+        source = _MeasuredText(unit * copies)
+        assert getattr(redaction, operation)(source) == source
+        return source.work
+
+    small, large = work(1000), work(4000)
+    # Four times as many names may do at most five times the character work.
+    # The former per-name prefix copies/searches did sixteen times the work.
+    assert large <= small * 5, (small, large)
+
+
 # The pattern that decided whether an unquoted value was made of words.
 _WORDY = re.compile(r"(?:[A-Z][a-z]+|[a-z]{3,}|[A-Z]{2,}|[0-9]+|_)+")
 
