@@ -45,17 +45,50 @@ COLUMNS = [
 # after each delimiter or line break. Leading whitespace, including a no-break
 # space, and quotes may be trimmed, so they do not hide a trigger. A value that
 # starts with a tab or line break, or a later cell that does, is also neutralised.
-_FORMULA_CELL = re.compile(
-    r"^(?=[\t\r\n])"
-    r"|(?:^|(?<=[,;\t|\r\n]))(?=[\t\r]|[ \t\r\n\v\f\ufeff\u00a0\"]*[=+\-@])"
-)
+#
+# The marks are found in one backwards pass. Reading ahead from every cell start
+# (a lookahead over the whitespace that may precede a trigger) rescans a long
+# run of line breaks once per break, which is quadratic in the length of the run.
+_CELL_DELIMITERS = frozenset(",;\t|\r\n")
+_CELL_TRIMMED = frozenset(' \t\r\n\v\f\ufeff\u00a0"')
+_FORMULA_TRIGGERS = frozenset("=+-@")
+# Nothing to mark without a trigger or a tab, carriage return or line feed.
+_FORMULA_HINT = re.compile(r"[=+\-@\t\r\n]")
+
+
+def _formula_marks(value: str) -> list[int]:
+    """Offsets where a cell of ``value`` starts with a formula trigger, a tab or a carriage return.
+
+    Also offset 0 when the value starts with a line feed. In descending order.
+    """
+    marks: list[int] = []
+    trigger_ahead = False  # the first character after any trimmed ones is a trigger
+    for index in range(len(value) - 1, -1, -1):
+        char = value[index]
+        if char in _FORMULA_TRIGGERS:
+            trigger_ahead = True
+        elif char not in _CELL_TRIMMED:
+            trigger_ahead = False
+        if index == 0:
+            if char in "\t\r\n" or trigger_ahead:
+                marks.append(0)
+        elif (char in "\t\r" or trigger_ahead) and value[index - 1] in _CELL_DELIMITERS:
+            marks.append(index)
+    return marks
 
 
 def _safe_cell(value: object) -> object:
     """Force every formula-like cell in an untrusted string to spreadsheet text."""
-    if isinstance(value, str):
-        return _FORMULA_CELL.sub("'", value)
-    return value
+    if not isinstance(value, str) or _FORMULA_HINT.search(value) is None:
+        return value
+    pieces: list[str] = []
+    cursor = 0
+    for mark in reversed(_formula_marks(value)):
+        pieces.append(value[cursor:mark])
+        pieces.append("'")
+        cursor = mark
+    pieces.append(value[cursor:])
+    return "".join(pieces)
 
 
 def render_csv(result: ScanResult) -> str:

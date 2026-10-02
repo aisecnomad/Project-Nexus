@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import csv
+import datetime
 import io
 import json
 import stat
 
 import jwt
 import pytest
+from rich.console import Console
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector, ConnectorContext
@@ -17,7 +19,9 @@ from shadowscan.connectors.identity.jwt import JwtConnector
 from shadowscan.connectors.saas.generic import GenericSaaSConnector
 from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface
+from shadowscan.reporters import render
 from shadowscan.reporters.csv_ import render_csv
+from shadowscan.reporters.table import print_table
 from shadowscan.signatures.loader import Signature
 from shadowscan.signatures.matcher import SignatureIndex
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize, sanitize_text
@@ -112,6 +116,42 @@ def test_gcp_api_key_string_never_reaches_report_or_record_dump(tmp_path, index)
     assert len(dump_files) == 1
     assert json.loads(dump_files[0].read_text())["keyString"] == REDACTED
     assert secret not in result.to_json() and secret not in dump_files[0].read_text()
+
+
+def test_generic_saas_record_dump_withholds_fields_named_for_a_credential_by_their_words(tmp_path, index):
+    names = [
+        "webhook_secret",
+        "signing_secret",
+        "bot_token",
+        "slack_token",
+        "npm_token",
+        "client_key",
+        "consumer_secret",
+        "openai_key",
+        "authorization_token",
+        "verification_token",
+        "pwd",
+        "passphrase",
+        "db_pass",
+        "security_token",
+        "jwtSecret",
+        "access_secret",
+    ]
+    secrets = {name: f"synthetic-{name}-value-0123456789" for name in names}
+    export = tmp_path / "apps.jsonl"
+    record = {"id": "app-1", "name": "Slack bot", "users": 4, "next_token": "page-2"}
+    export.write_text(json.dumps({**record, **secrets}) + "\n")
+    dumped = tmp_path / "dumped"
+    config = ScanConfig(
+        connectors=[ConnectorSpec("saas.generic", {"input": str(export)})], dump_records=str(dumped)
+    )
+    result = Engine(config, index).run()
+    assert result.complete
+    (dump_file,) = dumped.glob("*.jsonl")
+    row = json.loads(dump_file.read_text())
+    assert {name: row[name] for name in names} == dict.fromkeys(names, REDACTED)
+    assert {key: row[key] for key in record} == record
+    assert not any(secret in dump_file.read_text() for secret in secrets.values())
 
 
 @pytest.mark.parametrize(
@@ -363,3 +403,130 @@ def test_long_secret_is_redacted_before_excerpt_truncation():
     excerpt = _excerpt([f"token={credential}"], 1, credential)
     assert credential not in excerpt
     assert credential[:120] not in excerpt
+
+
+LEAF_KEY = "sk" + "-proj-" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
+
+
+class _PluginObject:
+    """An arbitrary object a plugin may leave in metadata; only its repr shows the value."""
+
+    def __repr__(self) -> str:
+        return f"PluginObject(token={LEAF_KEY})"
+
+
+def _leaf_finding():
+    return _finding(
+        metadata={
+            "b": LEAF_KEY.encode(),
+            "ba": bytearray(LEAF_KEY.encode()),
+            "s": {LEAF_KEY},
+            "fs": frozenset({LEAF_KEY}),
+            "e": ValueError(LEAF_KEY),
+            "o": _PluginObject(),
+            "nested": [{"deeper": (b"\xff" + LEAF_KEY.encode(),)}],
+        }
+    )
+
+
+def test_unknown_leaf_types_are_stringified_and_sanitized():
+    clean = sanitize({"b": LEAF_KEY.encode(), "s": {LEAF_KEY, "other"}, "e": ValueError(LEAF_KEY), "n": 3})
+    assert LEAF_KEY not in repr(clean)
+    assert clean["n"] == 3
+    assert clean["b"] == REDACTED
+    assert sorted(clean["s"]) == sorted([REDACTED, "other"])
+    assert clean["e"] == REDACTED
+    # Bytes that are not text are decoded with replacement characters, not an error.
+    assert sanitize({"x": b"\xff\xfe ok"}) == {"x": "�� ok"}
+    # Plain JSON-like leaves and the standard library's scalars keep their type.
+    scalars = {"i": 1, "f": 1.5, "t": True, "none": None, "when": datetime.date(2024, 1, 2)}
+    assert sanitize(scalars) == scalars
+
+
+@pytest.mark.parametrize("fmt", ["json", "html", "markdown", "csv", "sarif"])
+def test_unknown_leaf_types_never_reach_a_report(fmt):
+    result = ScanResult(findings=[_leaf_finding()])
+    assert LEAF_KEY not in render(result, fmt)
+    assert LEAF_KEY not in repr(result.findings[0].metadata)
+
+
+def test_unknown_leaf_types_never_reach_the_terminal_table():
+    out = io.StringIO()
+    print_table(ScanResult(findings=[_leaf_finding()]), console=Console(file=out, width=200), verbose=True)
+    assert LEAF_KEY not in out.getvalue()
+
+
+def test_unknown_leaf_types_never_reach_a_record_dump(tmp_path):
+    target = tmp_path / "records.jsonl"
+
+    class Connector(BaseConnector):
+        name = "test.leaf"
+
+        def collect(self):
+            yield {
+                "id": "1",
+                "payload": LEAF_KEY.encode(),
+                "labels": {LEAF_KEY},
+                "error": RuntimeError(LEAF_KEY),
+            }
+
+        def analyze(self, records):
+            for _ in records:
+                self.ctx.examined()
+            yield from ()
+
+    connector = Connector(ConnectorContext(config={"_dump_path": str(target)}, index=_index()))
+    connector.run()
+    assert target.exists() and LEAF_KEY not in target.read_text()
+
+
+KEY_BODY = "\n".join("Zm9vYmFyU3ludGhldGljS2V5TWF0ZXJpYWw" + chr(ord("a") + line) * 6 for line in range(6))
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n{KEY_BODY}\n=ab12\n-----END PGP PRIVATE KEY BLOCK-----",
+        f"-----BEGIN RSA PRIVATE KEY-----\n{KEY_BODY}\n-----END RSA PRIVATE KEY-----",
+        f'---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\nComment: "key"\n{KEY_BODY}\n---- END SSH2 ENCRYPTED PRIVATE KEY ----',
+        f"PuTTY-User-Key-File-2: ssh-rsa\nEncryption: none\nComment: key\nPublic-Lines: 2\n{KEY_BODY}\n"
+        f"Private-Lines: 2\n{KEY_BODY}\nPrivate-MAC: 0123456789abcdef0123456789abcdef01234567",
+        f"PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: aes256-cbc\nComment: key\nPublic-Lines: 2\n{KEY_BODY}\n"
+        f"Key-Derivation: Argon2id\nPrivate-Lines: 2\n{KEY_BODY}\nPrivate-MAC: 0123456789abcdef0123456789abcdef01234567",
+    ],
+)
+def test_every_private_key_block_is_withheld_with_its_line_count(block):
+    source = f"before\n{block}\nafter\n"
+    safe = sanitize_text(source)
+    assert KEY_BODY.splitlines()[0] not in safe and "0123456789abcdef" not in safe
+    assert safe.startswith("before\n" + REDACTED) and safe.endswith("\nafter\n")
+    assert safe.count("\n") == source.count("\n")
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+        "---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----",
+        "PuTTY-User-Key-File-2: ssh-rsa",
+    ],
+)
+def test_an_unterminated_key_block_is_withheld_to_the_end_of_the_text(start):
+    source = f"note\n{start}\n{KEY_BODY}\nnot a marker line\n"
+    safe = sanitize_text(source)
+    assert safe.startswith("note\n" + REDACTED) and KEY_BODY.splitlines()[-1] not in safe
+    assert "not a marker line" not in safe
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQENBGZ\n-----END PGP PUBLIC KEY BLOCK-----",
+        "---- BEGIN SSH2 PUBLIC KEY ----\nAAAAB3NzaC1yc2E\n---- END SSH2 PUBLIC KEY ----",
+        "-----BEGIN CERTIFICATE-----\nMIIBkTCB\n-----END CERTIFICATE-----",
+        "see PuTTY-User-Key-File formats in the PuTTY manual",
+    ],
+)
+def test_public_keys_and_prose_about_key_formats_are_kept(text):
+    assert sanitize_text(text) == text

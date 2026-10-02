@@ -67,7 +67,7 @@ def test_indexed_assignment_withholds_complete_expression(lhs, rhs):
     assert sanitize_text(safe) == safe
 
 
-@pytest.mark.parametrize("operator", ["=", "+=", "&&=", "||=", "??="])
+@pytest.mark.parametrize("operator", ["=", "+=", "-=", ".=", "&&=", "||=", "??=", "<-", "<<-"])
 def test_indexed_write_keeps_following_statements(operator):
     source = f'config["password"] {operator} "{SECRET}"; import langchain\nmodel = "public"\n'
     safe = sanitize_text(source)

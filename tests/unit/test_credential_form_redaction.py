@@ -274,6 +274,34 @@ FORMS: list[tuple[str, str, str]] = [
     # documented gaps below).
     (f'{{"name": "OpenAI:Secret", "value": "p}}{HEX}"}}', HEX, '{"name": "OpenAI:Secret", "value": "'),
     (f'- {{name: AzureOpenAI__Key, value: "p}}{HEX}"}}', HEX, "- {name: AzureOpenAI__Key, value: "),
+    # Names that name a password whatever the value: a passphrase, a login's pass/pwd, Rails'
+    # SECRET_KEY_BASE, 'creds', npm's _auth and an ODBC connection string's Pwd.
+    ("passphrase = 'hunter2pw'", "hunter2pw", "passphrase = "),
+    (f"<cfg creds:{HEX} />", HEX, "<cfg creds:"),
+    (f"<cfg passphrase:{BASE62} />", BASE62, "<cfg passphrase:"),
+    ("db_pass.= 'hunter2pw'", "hunter2pw", "db_pass.= "),
+    (f"AZURE_OPENAI_KEY.='{BASE62}'", BASE62, "AZURE_OPENAI_KEY.="),
+    (f"ssh_passphrase: {PASSWORD}", PASSWORD, "ssh_passphrase: "),
+    ("db_pass = 'hunter2pw'", "hunter2pw", "db_pass = "),
+    ("DB_PASS=hunter2pw", "hunter2pw", "DB_PASS="),
+    ("smtp_pwd: hunter2pw", "hunter2pw", "smtp_pwd: "),
+    ("SECRET_KEY_BASE=hunter2pw", "hunter2pw", "SECRET_KEY_BASE="),
+    (f"secret_key_base: {HEX}{HEX}", HEX, "secret_key_base: "),
+    ("creds = 'hunter2pw'", "hunter2pw", "creds = "),
+    (f"//registry.example.com/:_auth={BASE64}", BASE64, "//registry.example.com/:_auth="),
+    ("Server=db.example.com;Database=app;Uid=svc;Pwd=hunter2pw;Encrypt=yes", "hunter2pw", "Uid=svc;Pwd="),
+    ("Data Source=db;User Id=svc; PWD=hunter2pw", "hunter2pw", "User Id=svc; PWD="),
+    # Custom authentication headers, with or without a blank after the colon.
+    (f'curl -H "X-Token: {HEX}" https://api.example.com', HEX, 'curl -H "X-Token: '),
+    (f'curl -H "Private-Token: {HEX}" https://gitlab.example.com', HEX, 'curl -H "Private-Token: '),
+    (
+        f'curl -H "x-functions-key: {HEX}" https://app.azurewebsites.net/api/x',
+        HEX,
+        'curl -H "x-functions-key: ',
+    ),
+    (f"curl --header 'X-Auth-Token: {HEX}' https://api.example.com", HEX, "curl --header 'X-Auth-Token: "),
+    (f'wget --header="X-Token: {HEX}" https://api.example.com', HEX, 'wget --header="X-Token: '),
+    (f'curl -H "X-Token:{HEX}" https://api.example.com', HEX, 'curl -H "X-Token:'),
 ]
 
 
@@ -332,6 +360,98 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
     assert "https://api.openai.com/v1" in safe
     assert safe.count(REDACTED) >= 2
     assert sanitize_text(safe) == safe
+
+
+# Prefixes no ordinary word contains. Assembled at runtime, like TOKENS.
+_JWT_BODY = (
+    "eyJ"
+    + _random(string.ascii_letters + string.digits, 20)
+    + "."
+    + _random(ALNUM, 40)
+    + "."
+    + _random(ALNUM, 20)
+)
+SPECIFIC_TOKENS = [
+    "sk" + "-proj-" + _random(ALNUM, 40),
+    "sk" + "-ant-" + _random(ALNUM + "_-", 40),
+    "gh" + "p_" + _random(ALNUM, 36),
+    "gh" + "o_" + _random(ALNUM, 36),
+    "github" + "_pat_" + _random(ALNUM + "_", 50),
+    "gl" + "pat-" + _random(ALNUM + "_-", 20),
+    "xox" + "b-" + _random(string.digits, 11) + "-" + _random(ALNUM, 24),
+    "AI" + "za" + _random(ALNUM + "_-", 35),
+    "ya29" + "." + _random(ALNUM + "_-", 40),
+    "AK" + "IA" + _random(string.ascii_uppercase + string.digits, 16),
+    "AS" + "IA" + _random(string.ascii_uppercase + string.digits, 16),
+    "hf" + "_" + _random(ALNUM, 34),
+    _JWT_BODY,
+]
+# What may stand before a token without being part of a word: \n is the two
+# characters backslash and n, as in JSON text; %3D is a percent escape.
+TOKEN_GLUE = [
+    "key:\\n{t}",
+    "\\r\\n{t}",
+    "\\t{t}",
+    "?next=%2Fv1%3Fapi_key%3D{t}",
+    "a%0A{t}",
+    "\\u0022{t}",
+    "\\x22{t}",
+    "cfg_{t}",
+    "__{t}",
+    "id7{t}",
+    "42{t}",
+    "{t}",
+]
+
+
+@pytest.mark.parametrize("glue", TOKEN_GLUE)
+@pytest.mark.parametrize("secret", SPECIFIC_TOKENS)
+def test_specific_tokens_are_withheld_after_escapes_underscores_and_digits(glue, secret):
+    # '\b' hid them: 'n' (of an escaped line break), 'D' (of '%3D'), '_' and digits are word characters.
+    source = glue.format(t=secret)
+    safe = sanitize_text(source)
+    assert secret not in safe
+    assert REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize("glue", TOKEN_GLUE[:7])
+def test_generic_tokens_are_withheld_after_escapes(glue):
+    for secret in ("sk" + "-" + BASE62, "app" + "-" + BASE62[:24], "npm" + "_" + BASE62[:36]):
+        safe = sanitize_text(glue.format(t=secret))
+        assert secret not in safe and REDACTED in safe
+
+
+@pytest.mark.parametrize("scheme", ["Bearer", "Basic", "SSWS"])
+@pytest.mark.parametrize("glue", ["header:\\n{s} {v}", "\\r\\n{s} {v}", "?h=%0A{s} {v}", "x {s} {v}"])
+def test_authorization_schemes_are_withheld_after_escaped_line_breaks(scheme, glue):
+    safe = sanitize_text(glue.format(s=scheme, v=HEX))
+    assert HEX not in safe and REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # An ordinary word that ends in the prefix's text is not a token.
+        "risk-assessment-" + BASE62,
+        "disk-" + BASE62[:20],
+        "task-runner-0123456789",
+        "see the risk-management-framework-2024 overview",
+        "mask-image-" + BASE62[:10],
+        "weeksk-" + BASE62[:20],
+        "Xsk-proj-" + BASE62,
+        "xghp_" + BASE62[:36],
+        "oghp_" + BASE62[:36],
+        "qAKIA" + "IOSFODNN7EXAMPLE",
+        "pubeyJ" + BASE62[:20] + "." + BASE62[:30] + "." + BASE62[:10],
+        # Digits stay part of a word for the prefixes that ordinary text can contain.
+        "2sk-" + BASE62[:20],
+        "9app-" + BASE62[:24],
+    ],
+)
+def test_words_that_merely_contain_a_token_prefix_are_preserved(source):
+    assert sanitize_text(source) == source
 
 
 @pytest.mark.parametrize(
@@ -470,10 +590,174 @@ def test_recognizable_token_prefixes_are_withheld_in_plain_text(secret):
         'dotnet user-secrets set "AzureOpenAI:Endpoint" "https://contoso.openai.azure.com/"',
         'dotnet user-secrets set "AzureOpenAI:Key" "$AZURE_OPENAI_KEY"',
         "dotnet user-secrets list --project src/Api",
+        # Operators read whole: comparisons, arrows, hash rockets and compound assignments
+        # of ordinary names and values are code, not credentials.
+        "x == 1",
+        "if (a === b) {",
+        "if count != 0:",
+        "items.map(x => x.id)",
+        "const f = (a, b) => a + b",
+        "fetch(url).then(res => { return res.json() })",
+        "const handler = (token) => { return token }",
+        "my %h = (user => 'bob', port => 3306);",
+        "{ :user => 'bob', :port => 3306 }",
+        "key => users",
+        "'key' => 'users'",
+        "'cacheKey' => 'user:123'",
+        "'token_type' => 'Bearer',",
+        "max_tokens => 1024",
+        "total ||= 5",
+        "count += 1",
+        "name .= 'x'",
+        "total -= 3",
+        "flag ?= 1",
+        "if (a <= b && c >= d) {",
+        # A sensitive name compared with something that is not a credential literal.
+        "if token == None:",
+        "if (token === undefined) {",
+        "if password != null",
+        "if user.password == other.password:",
+        "assert token != expected_token",
+        "if (password == other_password) {",
+        "token == ''",
+        "if token == '(':",
+        "if token == '/*':",
+        "if password =~ /^[a-z0-9]+$/",
+        "token_count == 5",
+        "api_key_header == 'X-API-Key'",
+        "if (key == 'users') {",
+        "if (key === 'createdAt') {",
+        "key != 'users-by-id'",
+        "if headers['token'] == 'expected': pass",
+        # A shell's working directory, a bare 'pass', and passes of a program are no passwords.
+        "pwd=$PWD",
+        "cd $(pwd)",
+        "pwd = os.getcwd()",
+        "echo pwd",
+        "PWD=/home/user",
+        "pass = True",
+        "pass: true",
+        "forward_pass = model(x)",
+        "first_pass = True",
+        "bypass = true",
+        "compass = 5",
+        "Pwd=;",
+        "Server=db;Pwd=${DB_PWD};Encrypt=yes",
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQENBGZ\n-----END PGP PUBLIC KEY BLOCK-----",
+        # References to a header's value stay.
+        "curl -H 'X-Token: $TOKEN' https://api.example.com",
+        'curl -H "Private-Token: ${GITLAB_TOKEN}" https://gitlab.example.com',
+        "curl -H 'X-Request-Id: 8f2a9c1be84d03aa17c6b2d9e0f4a8c3' https://api.example.com",
+        "curl -H 'Idempotency-Key: 8f2a9c1be84d03aa17c6b2d9e0f4a8c3' https://api.example.com",
     ],
 )
 def test_names_references_placeholders_and_ordinary_arguments_are_preserved(source):
     assert sanitize_text(source) == source
+
+
+NAMES = ["api_key", "apiKey", "password", "secret", "token", "client_secret"]
+# The operators a literal can follow, with the operator spelled as it must survive.
+OPERATORS = ["=", ":", ":=", "=>", "==", "===", "!=", "=~", "||=", "+=", ".=", "?=", "<-"]
+QUOTES = ["'", '"', "", "`"]  # "" is a bare opaque hex literal
+CONTEXTS = {
+    "code": "{lhs}{q}{v}{q};",
+    "yaml": "service:\n  {lhs}{q}{v}{q}\n  port: 8080\n",
+    "json": '{{"{name}" {op} {q}{v}{q}, "port": 8080}}',
+    "shell": "DEBUG=1 {lhs}{q}{v}{q} ./run.sh",
+}
+
+
+def _operator_case(name, op, quote, context):
+    """The source text, the literal in it and the text before the literal that must survive."""
+    value = HEX if quote == "" else BASE62
+    lhs = f"{name}: " if op == ":" else f"{name} {op} "
+    source = CONTEXTS[context].format(lhs=lhs, name=name, op=op, q=quote, v=value)
+    return source, value, f'"{name}" {op} ' if context == "json" else lhs
+
+
+@pytest.mark.parametrize("context", CONTEXTS)
+def test_a_literal_after_any_operator_never_survives_and_the_operator_does(context):
+    # The separator pattern used to read '=' out of '=>', '==' and '=~', put the marker
+    # where the operator's second character was and leave the literal, and the compound
+    # operators ('||=', '+=', '.=') and '!=' were not read at all.
+    failures = []
+    for name in NAMES:
+        for op in OPERATORS:
+            for quote in QUOTES:
+                source, value, kept = _operator_case(name, op, quote, context)
+                safe = sanitize_text(source)
+                if value in safe:
+                    failures.append(("leak", source, safe))
+                elif REDACTED not in safe:
+                    failures.append(("no marker", source, safe))
+                elif kept not in safe:
+                    failures.append(("operator", source, safe))
+                if sanitize_text(safe) != safe:
+                    failures.append(("not idempotent", source, safe))
+    assert failures == []
+
+
+@pytest.mark.parametrize("op", OPERATORS)
+@pytest.mark.parametrize("name", ["key", "openaiKey", "OPENAI_KEY", "db_pass"])
+def test_an_opaque_literal_after_any_operator_is_withheld_from_credential_words(name, op):
+    # Names whose last word names a credential lose opaque literals, whatever joins them.
+    lhs = f"{name}: " if op == ":" else f"{name} {op} "
+    for quote in QUOTES:
+        value = HEX if quote == "" else BASE62
+        source = f"{lhs}{quote}{value}{quote}"
+        safe = sanitize_text(source)
+        assert value not in safe and op in safe, (source, safe)
+        assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize("op", [op for op in OPERATORS if op not in {"==", "===", "!=", "=~"}])
+def test_a_readable_quoted_value_after_an_assignment_operator_is_withheld(op):
+    for name in NAMES:
+        safe = sanitize_text(f"{name} {op} 'hunter2'\n")
+        assert "hunter2" not in safe and REDACTED in safe, (name, op, safe)
+
+
+@pytest.mark.parametrize("op", ["==", "===", "!=", "=~"])
+def test_a_quoted_word_compared_with_a_sensitive_name_is_withheld(op):
+    # A hard-coded credential is as exposed in a comparison as in an assignment.
+    safe = sanitize_text(f"if (token {op} 'hunter2') {{")
+    assert safe == f"if (token {op} '{REDACTED}') {{"
+
+
+@pytest.mark.parametrize("op", ["==", "===", "!=", "!=="])
+def test_a_backtick_string_compared_with_a_sensitive_name_is_a_literal(op):
+    # A template literal holds the credential like a quoted string does, symbols included.
+    safe = sanitize_text(f"if (token {op} `Zq7!x%y`) {{")
+    assert safe == f"if (token {op} {REDACTED}) {{"
+    assert sanitize_text(safe) == safe
+    assert sanitize_text(f"if (token {op} `${{other}}`) {{") == f"if (token {op} `${{other}}`) {{"
+
+
+def test_operator_forms_the_reviewer_reproduced_keep_their_operator():
+    value = BASE62
+    assert sanitize_text(f"'api_key' => '{value}'") == f"'api_key' => \"{REDACTED}\""
+    assert sanitize_text(f"if token == '{value}':") == f"if token == '{REDACTED}':"
+    assert sanitize_text(f"$cfg = ['api_key' => '{value}', 'host' => 'db'];") == (
+        f"$cfg = ['api_key' => \"{REDACTED}\", 'host' => 'db'];"
+    )
+    # The arrow of a function whose parameter is named for a credential stays too.
+    assert sanitize_text("handler(token => { go(token) })") == f'handler(token => "{REDACTED}")'
+
+
+@pytest.mark.parametrize("separator", [" : ", ": ", ":"])
+def test_an_opaque_value_after_a_sensitive_name_and_colon_is_withheld_and_stable(separator):
+    for name in NAMES:
+        safe = sanitize_text(f"{name}{separator}{HEX} trailing")
+        assert HEX not in safe, (name, separator, safe)
+        assert sanitize_text(safe) == safe
+
+
+def test_shell_defaults_and_fingerprints_are_not_read_as_a_name_colon_value():
+    fingerprint = "credential:sha256:" + "a" * 64
+    for source in (f"${{AZURE_OPENAI_KEY:-{HEX}}}", fingerprint):
+        safe = sanitize_text(source)
+        assert sanitize_text(safe) == safe
+    assert sanitize_text(fingerprint) == fingerprint
 
 
 def test_argv_options_named_for_a_credential_lose_opaque_values_everywhere():

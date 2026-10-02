@@ -171,7 +171,7 @@ def _rule(f: Finding, rid: str) -> dict[str, Any]:
     return {
         "id": rid,
         "name": _rule_name(rid),
-        "shortDescription": {"text": f"{f.kind.value} ({technology})"},
+        "shortDescription": {"text": f"{f.kind.value} ({_message_text(technology)})"},
         "fullDescription": {
             "text": f"ShadowScan detected a {f.kind.value} on the {f.surface.value} surface."
         },
@@ -189,11 +189,22 @@ def _rule(f: Finding, rid: str) -> dict[str, Any]:
     }
 
 
+def _message_text(value: object) -> str:
+    """Text for a SARIF message string, with the characters of an embedded link escaped.
+
+    A viewer renders '[text](destination)' in a message as a link (SARIF 2.1.0, 3.11.6),
+    and a title, risk factor or diagnostic is taken from the scanned data. A backslash,
+    '[' and ']' therefore get a backslash, which the specification defines for them.
+    """
+    return str(value).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
 def _result(f: Finding, rid: str) -> dict[str, Any]:
-    message = f"{f.title} — risk {f.risk.level.value} ({f.risk.score}), confidence {f.confidence:.2f}"
+    title = _message_text(f.title)
+    message = f"{title} — risk {f.risk.level.value} ({f.risk.score}), confidence {f.confidence:.2f}"
     if f.shadow:
         message += " — SHADOW (not in inventory)"
-    factors = "; ".join(x.description for x in f.risk.factors if x.weight > 0)
+    factors = "; ".join(_message_text(x.description) for x in f.risk.factors if x.weight > 0)
     res: dict[str, Any] = {
         "ruleId": rid,
         "level": _LEVEL[f.risk.level],
@@ -237,7 +248,7 @@ def _invocation(result: ScanResult) -> dict[str, Any]:
     notifications = [
         {
             "level": "error" if st["errors"] or st["skipped"] else "warning",
-            "message": {"text": f"{st['connector']}: {msg}"},
+            "message": {"text": f"{_message_text(st['connector'])}: {_message_text(msg)}"},
         }
         for st in publication_stats(result)
         for msg in dict.fromkeys(
