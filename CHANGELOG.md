@@ -131,6 +131,14 @@ integrating them:
   It used to switch the escape character, so a trailing backtick joined the
   next `RUN pip install ...` into a shell comment and hid its dependencies
   while Docker ran it.
+- Java sources are lexed after Unicode escapes are translated, as javac does
+  (JLS 3.3), and the masked spans are mapped back onto the source. Only escaped
+  line breaks in `//` comments were handled: `/* ... \u002a/` (or `*\u002f`)
+  closes a block comment and `\u0022` closes a string, so code after them, such
+  as an import, used to stay masked. An escape that spells a printable ASCII
+  character in code (`\u0069mport`) hides that code from the matchers, which
+  read the source as written: such a file's lexical analysis is reported as
+  incomplete.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

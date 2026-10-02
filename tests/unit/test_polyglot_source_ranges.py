@@ -405,6 +405,66 @@ def test_kotlin_does_not_translate_unicode_escapes_in_comments():
     assert [source[start:end] for start, end in ignored] == [source.split("\n")[0]]
 
 
+@pytest.mark.parametrize("closer", [r"\u002a/", r"*\u002f", r"\u002a\u002f", r"\uuu002A/", r"\\\u002a/"])
+def test_java_unicode_escapes_can_close_a_block_comment(closer: str):
+    # javac translates escapes before it lexes, so "\u002a/" closes the comment
+    # and the import after it is code. It used to stay masked as comment text.
+    source = (
+        f"/* build helpers {closer} import dev.langchain4j.service.AiServices; /* end */\nclass App {{}}\n"
+    )
+    ignored, ambiguous = noncode_ranges(source, "java", ".java")
+    assert not ambiguous
+    assert [source[start:end] for start, end in ignored] == [f"/* build helpers {closer}", "/* end */"]
+
+
+@pytest.mark.parametrize("text", [r"\\u002a/", r"\u002a\\u002f", "\\" + "u005c" + "u002a/"])
+def test_java_text_that_does_not_spell_a_closer_stays_in_the_block_comment(text: str):
+    source = f"/* note {text} import dev.langchain4j.service.AiServices; */\nclass App {{}}\n"
+    ignored, _ = noncode_ranges(source, "java", ".java")
+    assert [source[start:end] for start, end in ignored] == [source.split("\n")[0]]
+
+
+def test_java_unicode_escaped_quotes_end_a_string():
+    source = 'String s = "\\u0022; Object a = AiServices.builder(Foo.class).build(); String t = \\u0022";\n'
+    ignored, ambiguous = noncode_ranges(source, "java", ".java")
+    assert not ambiguous
+    assert not any(start <= source.index("AiServices") < end for start, end in ignored)
+
+
+@pytest.mark.parametrize(
+    "spelled", [r"\u0069mport dev.langchain4j.service.AiServices", r"new \u0041iServices()"]
+)
+def test_java_code_spelled_with_unicode_escapes_is_incomplete(spelled: str):
+    # The matchers read the source as written, so an escaped letter in code hides it from them.
+    _, ambiguous = noncode_ranges(f"class App {{ void f() {{ {spelled}; }} }}\n", "java", ".java")
+    assert ambiguous
+
+
+def test_java_unicode_escapes_in_literals_comments_and_blanks_stay_complete():
+    source = (
+        "char quote = '\\u0022';\nString s = \"caf\\u00e9 \\u0041\";\n// \\u0041 note\n"
+        "int\\u0020x = 1; String caf\\u00e9 = s;\n"
+    )
+    ignored, ambiguous = noncode_ranges(source, "java", ".java")
+    assert not ambiguous
+    assert "'\\u0022'" in [source[start:end] for start, end in ignored]
+
+
+def test_java_import_after_an_escaped_comment_closer_is_reported(tmp_path: Path, run_connector):
+    # The import is code to javac; the comment that seemed to hold it closed at "*/".
+    (tmp_path / "Bot.java").write_text(
+        "package demo;\n\n/* helpers \\u002a/\nimport dev.langchain4j.service.AiServices;\n/* end */\n\n"
+        "public class Bot {}\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete
+    assert any(
+        e.signal.startswith("import:") and e.signature == "framework.langchain4j"
+        for finding in findings
+        for e in finding.evidence
+    )
+
+
 LIVE_CALLS = {
     "Agent.java": "AiServices.builder(Foo.class);",
     "Agent.cs": "AIFunctionFactory.Create(foo);",

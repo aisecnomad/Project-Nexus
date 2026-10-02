@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import re
 import tokenize
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -905,9 +906,10 @@ _COMMENT_END_LF = re.compile("\n")
 _COMMENT_END_CR = re.compile("[\n\r]")
 # C# new-line characters also include NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR.
 _COMMENT_END_UNICODE = re.compile("[\n\r\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
-# Java translates unicode escapes before it lexes: `// note \u000a import x;` ends the comment at the
-# escape (group 1). A backslash starts an escape only after an even number of backslashes.
-_COMMENT_END_JAVA = re.compile(r"[\n\r]|(?<!\\)(?:\\\\)*(\\u+000[aAdD])")
+# javac translates Unicode escapes before it lexes (JLS 3.3): a backslash preceded by an even number of
+# backslashes, one or more "u" and four hex digits. A run of backslashes is matched only from its start
+# and possessively, so the search is linear however long the run.
+_JAVA_UNICODE_ESCAPE = re.compile(r"(?<!\\)(\\++)u++([0-9A-Fa-f]{4})")
 # A PHP line comment also ends at a closing tag: `// note ?> html <?php code();` leaves PHP mode.
 _COMMENT_END_PHP = re.compile(r"[\n\r]|\?>")
 _RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
@@ -935,7 +937,9 @@ def _comment_end_pattern(language: str, dialect: str | None) -> re.Pattern[str]:
         return _COMMENT_END_UNICODE
     if language == "php":
         return _COMMENT_END_PHP
-    return _COMMENT_END_JAVA if language == "java" and dialect == ".java" else _COMMENT_END_CR
+    # Java's escaped line breaks (`// note \u000a import x;`) are translated before lexing
+    # (_translated_java_ranges), so the comment then ends at a real one.
+    return _COMMENT_END_CR
 
 
 def _ruby_percent_delimiter(text: str, start: int) -> bool:
@@ -984,7 +988,65 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
     incomplete. Go imports are special: their signatures start at the opening
     quote of the import path, so those quoted paths stay visible to matching.
     """
+    if language == "java" and dialect == ".java" and "\\u" in text:
+        translation = _java_unicode_translation(text)
+        if translation is not None:
+            return _translated_java_ranges(text, *translation)
     return _SourceLexer(text, language, dialect).run()
+
+
+def _java_unicode_translation(text: str) -> tuple[str, list[int], list[int]] | None:
+    """Translate Java Unicode escapes as javac does before it lexes; None when there are none.
+
+    Returns the translated text, the offset in ``text`` of each translated
+    character followed by ``len(text)``, and the translated offsets of the
+    characters that escapes produced. A character an escape produces does not
+    start another escape (``\\u005cu0041`` is a backslash, then ``u0041``).
+    """
+    pieces: list[str] = []
+    origin: list[int] = []
+    produced: list[int] = []
+    previous = 0
+    for match in _JAVA_UNICODE_ESCAPE.finditer(text):
+        if not len(match[1]) % 2:
+            continue  # the backslash before "u" is escaped by the one before it
+        start = match.end(1) - 1
+        pieces.append(text[previous:start])
+        origin.extend(range(previous, start))
+        produced.append(len(origin))
+        pieces.append(chr(int(match[2], 16)))
+        origin.append(start)
+        previous = match.end()
+    if not produced:
+        return None
+    pieces.append(text[previous:])
+    origin.extend(range(previous, len(text) + 1))
+    return "".join(pieces), origin, produced
+
+
+def _translated_java_ranges(
+    text: str, translated: str, origin: list[int], produced: list[int]
+) -> tuple[list[tuple[int, int]], bool]:
+    """Lex the translated source, as javac reads it, and map its spans back onto ``text``.
+
+    ``\\u002a/`` closes a block comment, ``\\u0022`` a string and ``\\u000a`` a line
+    comment: read as written, each would mask the code after it. Matchers still
+    read ``text`` as written, so an escape that spells a printable ASCII
+    character in code (``\\u0069mport``) hides that code from them: the lexical
+    analysis is incomplete. Escapes inside literals and comments, of blanks and
+    of other characters (``caf\\u00e9``) need nothing.
+    """
+    lexer = _SourceLexer(translated, "java", ".java")
+    spans, incomplete = lexer.run()
+    starts = [start for start, _ in spans]
+    for position in produced:
+        character = translated[position]
+        if character.isascii() and not character.isspace():
+            index = bisect_right(starts, position) - 1
+            if index < 0 or position >= spans[index][1]:
+                incomplete = True
+                break
+    return [(origin[start], origin[end]) for start, end in spans], incomplete
 
 
 def _block_comment_end(text: str, start: int, opener: str, closer: str, *, nested: bool) -> tuple[int, bool]:
@@ -1147,7 +1209,7 @@ class _SourceLexer:
     def _line_comment_end(self, start: int) -> int:
         """Return where the ``//`` or ``#`` comment at ``start`` ends: at its language's first line break."""
         match = self.comment_end.search(self.text, start)
-        return self.size if match is None else match.start(match.lastindex or 0)
+        return self.size if match is None else match.start()
 
     def _php_template(self, i: int) -> int:
         """Mask template text up to and including the next PHP opening tag."""
