@@ -1,0 +1,21 @@
+[
+  {
+    "_kind": "iam-policy",
+    "_project": "acme-search",
+    "version": 3,
+    "bindings": [
+      {
+        "role": "roles/aiplatform.user",
+        "members": ["serviceAccount:worker@acme-search.iam.gserviceaccount.com"],
+        "condition": {
+          "title": "Time limited model access",
+          "expression": "request.time < timestamp('2030-01-01T00:00:00Z')"
+        }
+      },
+      {
+        "role": "roles/aiplatform.user",
+        "members": ["serviceAccount:worker@acme-search.iam.gserviceaccount.com"]
+      }
+    ]
+  }
+]

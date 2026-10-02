@@ -88,6 +88,11 @@ enrichment is disabled by default; `use_git: true` explicitly enables it for
 reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
+Local metadata must be self-contained: config includes, internal links and
+alternate/common metadata directories are rejected. Local `config` and
+`config.worktree` reads are bounded to 1 MiB; unsupported section syntax,
+encodings, continuations or multiline values make coverage incomplete before
+Git runs. Use immutable checkouts; preflight does not sandbox Git.
 
 Submodule declarations are inspected without running Git. Missing, empty or
 unsafe declared module directories make coverage incomplete. Clone collection
@@ -230,6 +235,13 @@ A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server
 capabilities are derived from the tool names the server registers
 (`metadata.mcp_tools`, for example `write_file` implies `data-access`).
+Python registrations require supported stable MCP imports and receivers;
+JavaScript registrations use filtered lexical forms. Comments and example
+strings do not establish registrations. Exceeding the per-file or project
+name limit makes coverage incomplete, and named tools cannot suppress
+separate execution-sink evidence. Empty, explicitly disabled or unverified
+provider tool options do not establish configured tool-use; supported
+import-bound requests and linked enabled dispatch provide that evidence.
 
 An MCP server entry that declares itself disabled (`disabled: true` or
 `enabled: false`) is still reported. The flag is client-specific (Cline and Roo

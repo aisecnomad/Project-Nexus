@@ -284,6 +284,21 @@ def test_engine_publishes_selected_scope_and_real_removal_resolves(tmp_path, ind
     assert comparison["comparable"] is True and comparison["resolved"]
 
 
+def test_generic_malformed_name_cannot_resolve_previously_discovered_app(tmp_path, index):
+    source = tmp_path / "apps.json"
+    config = ScanConfig(connectors=[ConnectorSpec("saas.generic", {"input": str(source)})])
+    source.write_text(json.dumps([{"id": "client-1", "name": "Claude", "scopes": ["Mail.ReadWrite"]}]))
+    before = Engine(config, index=index).run().to_dict()
+    assert before["summary"]["complete"] and len(before["findings"]) == 1
+    source.write_text(json.dumps([{"id": "client-1", "scopes": ["Mail.ReadWrite"]}]))
+    after = Engine(config, index=index).run().to_dict()
+    result = _invoke(tmp_path, before, after, "--json")
+    assert result.exit_code == 3, result.output
+    comparison = json.loads(result.output)
+    assert comparison["resolved"] == []
+    assert [finding["resource"] for finding in comparison["unknown"]] == ["saas:app:client-1"]
+
+
 def test_invalid_config_does_not_echo_secret_yaml(tmp_path):
     config = tmp_path / "invalid.yaml"
     config.write_text("connectors: [ private-api-token\n")

@@ -8,13 +8,16 @@ every report. The finding must still be reported with the value withheld.
 from __future__ import annotations
 
 import io
+import json
 import random
 import re
 import string
 
 import pytest
+from click.testing import CliRunner
 from rich.console import Console
 
+from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.reporters import RENDERERS
@@ -40,6 +43,41 @@ RUNNER_TOKEN = "glrt" + "-" + _random(string.ascii_letters + string.digits + "_-
 AZURE = "https://contoso.openai.azure.com/"
 
 CASES = {
+    "csharp-credential-source-trivia": (
+        "Program.cs",
+        (
+            "using Azure.AI.OpenAI;\n"
+            f'var one = new OpenAIClient(new Uri("{AZURE}"), new AzureKeyCredential ("{HEX}"));\n'
+            f'var two = new OpenAIClient(new Uri("{AZURE}"), new AzureKeyCredential/* key */("{HEX}"));\n'
+            f'var three = new OpenAIClient(new Uri("{AZURE}"), new AzureKeyCredential(("{HEX}")));\n'
+            f'var four = new OpenAIClient(new Uri("{AZURE}"), new AzureKeyCredential($"{HEX}"));\n'
+        ),
+        HEX,
+    ),
+    "python-credential-multiline-and-interpolation": (
+        "client.py",
+        (
+            "from azure.ai.inference import ChatCompletionsClient\n"
+            f"client = ChatCompletionsClient(\"{AZURE}\", AzureKeyCredential('''\n{HEX}\n'''))\n"
+            f'other = ChatCompletionsClient("{AZURE}", AzureKeyCredential(f"{HEX}{{suffix}}"))\n'
+        ),
+        HEX,
+    ),
+    "json-value-before-credential-name": (
+        "config.json",
+        f'{{"endpoint": "{AZURE}", "settings": [{{"value": "{HEX}", "name": "Password"}}]}}\n',
+        HEX,
+    ),
+    "yaml-value-before-credential-name": (
+        "config.yml",
+        f'env:\n  - value: "{HEX} {AZURE}"\n    name: OPENAI_API_KEY\n',
+        HEX,
+    ),
+    "json-brace-inside-credential-value": (
+        "config.json",
+        f'{{"endpoint": "{AZURE}", "settings": [{{"name": "Password", "value": "p}}{HEX}"}}]}}\n',
+        HEX,
+    ),
     "csharp-azure-key-credential": (
         "Program.cs",
         (
@@ -425,3 +463,27 @@ def test_a_callee_that_names_nothing_leaves_the_scan_complete(tmp_path, index):
     result = _scan(tmp_path, index)
     assert result.complete, [error for stats in result.stats for error in stats.errors]
     assert any("OpenAI" in finding.title for finding in result.findings)
+
+
+@pytest.mark.parametrize("scan_secrets", [False, True])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "csharp-credential-source-trivia",
+        "python-credential-multiline-and-interpolation",
+        "json-value-before-credential-name",
+        "yaml-value-before-credential-name",
+        "json-brace-inside-credential-value",
+    ],
+)
+def test_fixed_credential_forms_are_redacted_in_actual_cli_json(tmp_path, scan_secrets, case):
+    relative, source, secret = CASES[case]
+    (tmp_path / relative).write_text(source, encoding="utf-8")
+    args = ["code", str(tmp_path), "--format", "json"]
+    if not scan_secrets:
+        args.append("--no-secrets")
+    completed = CliRunner().invoke(main, args)
+    assert completed.exit_code == 0, completed.output
+    report = json.loads(completed.stdout)
+    assert report["summary"]["complete"] and report["findings"]
+    assert secret not in completed.output and REDACTED in completed.stdout

@@ -5,6 +5,39 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 2 integrity and capability corrections
+
+- Selected source and configuration files use strict supported text decoding,
+  including Python's supported PEP 263 declarations and BOM-declared
+  UTF-16/UTF-32. NUL bytes no longer silently exclude source from analysis;
+  malformed configuration and unsupported encodings make coverage incomplete.
+- MCP registration analysis distinguishes executable registrations from
+  comments and examples, accepts supported decorator options, and preserves
+  independent execution-sink evidence. Analysis limits must not imply complete
+  capability coverage. Empty or explicitly disabled provider tool options no
+  longer establish tool-use.
+- GCP IAM collection requests policy version 3 and retains conditional-binding
+  evidence. Ambiguous/degraded permissions and unresolved child records in
+  Auth0/ServiceNow make coverage incomplete. SaaS exports missing a usable app
+  name cannot produce a complete empty scan or resolve previous findings.
+- Git metadata enrichment remains opt-in and now rejects metadata indirections,
+  including local `include`/`includeIf` configuration sections, and bounds
+  captured output. Bounded confined config reads reject unsupported section
+  syntax, encodings, continuations and multiline values before Git runs.
+  Credential source sanitization handles supported
+  whitespace, wrapper and record forms without treating its output as public
+  data. See the security policy for remaining limits.
+- Proposed ruleset update payloads and offline verification tooling prepare
+  mandatory aggregate CI and non-author review enforcement. Merging these
+  files does not activate GitHub settings; live readback remains required.
+- The documentation toolchain lock shares the reviewed `platformdirs` pin with
+  CI, restoring the documented combined installation. Shared-pin consistency
+  checks prevent independently refreshed locks from making that install fail.
+- These changes are supported by authored regression tests. They do not
+  establish independent human review, fresh field accuracy or live tenant
+  acceptance. Review changed capabilities/risk scores and collect a new baseline
+  before enforcement.
+
 ### October 2 integration of the open pull requests
 
 The open pull requests #107 and #110 to #122 landed together through #123,

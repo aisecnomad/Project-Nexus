@@ -282,16 +282,95 @@ class ServiceNowConnector(BaseConnector):
                 f = self._oauth_finding(rec)
                 if f:
                     yield f
+        matched_tools: set[str] = set()
+        matched_triggers: set[str] = set()
         for a in agents:
             self.ctx.examined()
-            key_candidates = {str(_reference(a.get("sys_id"))), str(_val(a.get("name")))}
+            key_candidates = {
+                value
+                for value in (_reference(a.get("sys_id")), _val(a.get("name")))
+                if isinstance(value, str) and value.strip()
+            }
+            matched_tools.update(key_candidates)
             my_tools = [t for k, ts in tools.items() for t in ts if k in key_candidates]
             yield self._agent_finding(a, my_tools)
         for u in usecases:
             self.ctx.examined()
-            key_candidates = {str(_reference(u.get("sys_id"))), str(_val(u.get("name")))}
+            key_candidates = {
+                value
+                for value in (_reference(u.get("sys_id")), _val(u.get("name")))
+                if isinstance(value, str) and value.strip()
+            }
+            matched_triggers.update(key_candidates)
             my_triggers = [t for k, ts in triggers.items() for t in ts if k in key_candidates]
             yield self._usecase_finding(u, my_triggers)
+        for parent_table, children, matched in (
+            ("sn_aia_agent", tools, matched_tools),
+            ("sn_aia_usecase", triggers, matched_triggers),
+        ):
+            for parent in sorted(children.keys() - matched):
+                self.ctx.examined(len(children[parent]))
+                self.ctx.warn(
+                    "lowcode.servicenow: child records reference an unresolved parent; coverage incomplete"
+                )
+                yield self._unresolved_child_finding(parent_table, parent, children[parent])
+
+    def _unresolved_child_finding(
+        self, parent_table: str, parent: str, children: list[dict[str, Any]]
+    ) -> Finding:
+        """Keep observed tool/trigger configuration without inventing a parent agent."""
+        tools = parent_table == "sn_aia_agent"
+        child_type = "tool" if tools else "trigger"
+        f = Finding(
+            surface=Surface.LOWCODE,
+            connector=self.name,
+            kind=Kind.AGENT_CONFIG,
+            title=f"ServiceNow {child_type} configuration for unresolved parent",
+            resource=f"servicenow:unresolved:{parent_table}:{parent}",
+            resource_type="unresolved-parent-configuration",
+            provider="servicenow",
+            account=self.instance or None,
+            identity_discriminator="unresolved-parent",
+            metadata={
+                "identity_unresolved": True,
+                "parent_table": parent_table,
+                "parent_reference": parent,
+                "child_count": len(children),
+                "children": [
+                    {
+                        "id": _reference(child.get("sys_id")),
+                        "name": _val(child.get("name")),
+                        "type": _val(child.get("type")) or _val(child.get("tool_type"))
+                        if tools
+                        else _val(child.get("trigger_type")),
+                    }
+                    for child in children[:30]
+                ],
+            },
+        )
+        f.add_tag("unresolved-identity")
+        f.add_framework("platform.servicenow-now-assist")
+        if tools:
+            f.add_capability("tool-use")
+            if any(
+                "script" in str(_val(child.get("type")) or _val(child.get("tool_type")) or "").lower()
+                for child in children
+            ):
+                f.add_capability("code-exec")
+        else:
+            f.add_capability("autonomous")
+            f.add_tag("event-triggered")
+        f.add_evidence(
+            Evidence(
+                signal=f"servicenow:unresolved-{child_type}",
+                description=(
+                    f"Observed {len(children)} {child_type} record(s) referencing {parent_table} {parent}; "
+                    "the parent is missing from the inventory and its identity and execution are unknown"
+                ),
+                weight=0.5,
+            )
+        )
+        return finalize(f, self.index)
 
     def _optional_name_matches(self, *texts: str | None) -> list[Match]:
         if self._name_matching_limited:

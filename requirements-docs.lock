@@ -5,6 +5,8 @@
 # 2026-09-25 (mkdocstrings and its closure on 2026-10-02). Every entry ships
 # a wheel, so the install runs --only-binary=:all: and never builds a source
 # distribution.
+# platformdirs was aligned to the reviewed CI pin and its published artifact
+# hashes on 2026-10-02 so the combined development install remains resolvable.
 #
 # Install with --require-hashes --only-binary=:all: so the docs build never
 # resolves from the live index on a version pin alone. Dependabot does not
@@ -12,6 +14,8 @@
 #   printf 'mkdocs-material==<version>\nmkdocstrings[python]==<version>\n' > requirements-docs.in
 #   pip-compile --generate-hashes --strip-extras --no-emit-index-url \
 #     --no-emit-trusted-host --no-annotate --no-header \
+#     --constraint requirements-ci.lock --constraint requirements.lock \
+#     --constraint requirements-build.lock \
 #     --output-file requirements-docs.lock requirements-docs.in
 # then restore this header, run `make docs`, and commit the lock and
 # pyproject.toml together.
@@ -345,9 +349,9 @@ paginate==0.5.7 \
 pathspec==1.1.1 \
     --hash=sha256:17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a \
     --hash=sha256:a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189
-platformdirs==4.11.13 \
-    --hash=sha256:228b2283af5c1f32673cdf55271216a52bbd8258cb31374e302ad7bd26cd7513 \
-    --hash=sha256:6985eefdc2298693e4ce1fe124645524cb967428eb6384e0ce5b49767e7ea8ba
+platformdirs==4.12.1 \
+    --hash=sha256:38da801a4af303033cbffccb39030db22bf0473e6414309b02acebeee7ca8bf1 \
+    --hash=sha256:7f251621befae78b2cb74616f9fc99d3fa3db0afba5035987731f8dcd430337d
 pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
     --hash=sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c

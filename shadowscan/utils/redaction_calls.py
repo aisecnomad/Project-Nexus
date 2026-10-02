@@ -727,16 +727,24 @@ def _credential_literals(
         # replacement field makes the string a computed value.
         if "$" in prefix and not _csharp_replacement(value):
             prefix = prefix.replace("$", "")
-        if _interpolated(prefix, char, value):
-            continue  # interpolated text is assembled elsewhere
+        interpolated = _interpolated(prefix, char, value)
+        if interpolated:
+            material = _credential_static_material(
+                lexer, opening + len(delimiter), closing if terminated else stop, prefix, char
+            )
+            # Reference fields alone publish no credential. Opaque static
+            # material beside them is confidential even when the value is
+            # computed at runtime. Never join fragments across a field.
+            if not any(_credential_literal(part, positional=False) for part in material.split()):
+                continue
         positional = sdk or (level == 2 and not named and not (index == 0 and positional_count > 1))
         # Multiline literals may wrap a credential across physical lines. Do
         # not let those line breaks hide its shape or its constructor context;
         # placeholders are checked before compacting their separate words.
         tested = "".join(value.split()) if multiline else value
-        if multiline and _placeholder(value):
+        if multiline and not interpolated and _placeholder(value):
             continue
-        if not _credential_literal(tested, positional=positional):
+        if not interpolated and not _credential_literal(tested, positional=positional):
             continue
         conversion = _LITERAL_CONVERSION.match(text, stop, end)
         tail = _call_argument_start(text, conversion.end() if conversion else stop, end)
@@ -748,6 +756,44 @@ def _credential_literals(
         literal_start = literal.start("prefix") if literal.group("prefix") else opening
         found.append((literal_start, stop if whole or not (bounded and terminated) else end))
     return found
+
+
+def _credential_static_material(lexer: _CallLexer, start: int, end: int, prefix: str, quote: str) -> str:
+    """Only the static material of an interpolated credential string.
+
+    Balanced replacement fields are skipped without evaluation, including
+    quoted strings inside them. Pure variable references remain visible;
+    an opaque static key beside one makes the whole literal confidential.
+    """
+    text = lexer.text
+    brace_fields = "f" in prefix.lower() or "$" in prefix
+    pieces: list[str] = []
+    position = start
+    while position < end:
+        lexer.tick()
+        char = text[position]
+        if brace_fields and text.startswith("{{", position):
+            pieces.append("{")
+            position += 2
+            continue
+        marker = (brace_fields and char == "{") or (quote == "`" and text.startswith("${", position))
+        if not marker:
+            pieces.append(char)
+            position += 1
+            continue
+        position += 1 if char == "{" else 2
+        depth = 1
+        while position < end and depth:
+            lexer.tick()
+            char = text[position]
+            if char in "\"'`":
+                position = lexer.string_end(position)
+                continue
+            depth += (char == "{") - (char == "}")
+            position += 1
+        # Never join two static fragments into a new opaque token.
+        pieces.append(" ")
+    return "".join(pieces)
 
 
 _CALL_ARGUMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*[ \t]*(?:=(?!=)|:(?![:=]))")

@@ -474,12 +474,17 @@ class GcpConnector(BaseConnector):
         try:
             policy = self.http.post_json(
                 f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}:getIamPolicy",
-                json={},
+                json={"options": {"requestedPolicyVersion": 3}},
             )
             if not isinstance(policy, dict) or "error" in policy:
                 self.ctx.warn(f"cloud.gcp: invalid IAM policy response for {project}")
             else:
-                yield {"_kind": "iam-policy", "_project": project, "bindings": policy.get("bindings", [])}
+                yield {
+                    "_kind": "iam-policy",
+                    "_project": project,
+                    "version": policy.get("version"),
+                    "bindings": policy.get("bindings", []),
+                }
         except (HttpError, RequestException, ValueError) as exc:
             self.ctx.warn(f"cloud.gcp: IAM policy not readable for {project} ({failure_summary(exc)})")
 
@@ -891,14 +896,56 @@ class GcpConnector(BaseConnector):
     def _h_iam_policy(self, rec: dict[str, Any]) -> Iterator[Finding]:
         project = rec.get("_project")
         per_member: dict[str, list[str]] = {}
-        for b in rec.get("bindings") or []:
-            role = b.get("role", "")
-            if self.index.match_scope(role) or role in _BROAD_ROLES:
-                for m in b.get("members") or []:
+        member_bindings: dict[str, list[dict[str, Any]]] = {}
+        degraded_members: set[str] = set()
+        bindings = rec.get("bindings", [])
+        if not isinstance(bindings, list):
+            self.ctx.warn("cloud.gcp: invalid IAM bindings; coverage incomplete")
+            return
+        for b in bindings:
+            if not isinstance(b, dict) or not isinstance(b.get("role"), str) or not b["role"].strip():
+                self.ctx.warn("cloud.gcp: invalid IAM role binding; coverage incomplete")
+                continue
+            role = b["role"]
+            members = b.get("members")
+            if not isinstance(members, list) or not members:
+                self.ctx.warn("cloud.gcp: IAM binding has no valid members; coverage incomplete")
+                continue
+            valid_members = [m for m in members if isinstance(m, str) and m.strip()]
+            if len(valid_members) != len(members):
+                self.ctx.warn("cloud.gcp: invalid IAM binding member; coverage incomplete")
+            condition = b.get("condition")
+            invalid_condition = "condition" in b and (
+                not isinstance(condition, dict)
+                or not isinstance(condition.get("expression"), str)
+                or not condition["expression"].strip()
+            )
+            if invalid_condition:
+                self.ctx.warn("cloud.gcp: invalid IAM condition; coverage incomplete")
+            # Version 1 replaces conditional role names with *_withcond_<hash>
+            # and removes their conditions. Retain potential access evidence,
+            # but disclose that the constraint was not collected.
+            degraded = "_withcond_" in role
+            canonical_role = role.split("_withcond_", 1)[0] if degraded else role
+            if degraded:
+                self.ctx.warn("cloud.gcp: conditional IAM binding has no condition; coverage incomplete")
+            if self.index.match_scope(canonical_role) or canonical_role in _BROAD_ROLES:
+                for m in valid_members:
                     per_member.setdefault(m, []).append(role)
+                    binding: dict[str, Any] = {"role": role}
+                    if "condition" in b:
+                        if invalid_condition:
+                            degraded_members.add(m)
+                        else:
+                            binding["condition"] = condition
+                    if degraded:
+                        degraded_members.add(m)
+                        binding["condition_coverage"] = "unknown"
+                    member_bindings.setdefault(m, []).append(binding)
         for member, roles in per_member.items():
             roles = sorted(set(roles))
-            broad_roles = [role for role in roles if role in _BROAD_ROLES]
+            canonical_roles = [role.split("_withcond_", 1)[0] for role in roles]
+            broad_roles = sorted({role for role in canonical_roles if role in _BROAD_ROLES})
             f = cloud_finding(
                 self.name,
                 "gcp",
@@ -909,13 +956,17 @@ class GcpConnector(BaseConnector):
                 account=project,
                 surface=Surface.IDENTITY,
             )
-            llm = scan_iam_actions(self.index, f, roles, location=f"projects/{project}")
+            llm = scan_iam_actions(self.index, f, canonical_roles, location=f"projects/{project}")
+            f.permissions = roles
             if not llm and not broad_roles:
                 continue
             f.add_evidence(
                 Evidence(
                     signal="gcp:iam",
-                    description=f"{member} holds {', '.join(roles)}",
+                    description=(
+                        f"Recorded IAM bindings for {member}: {', '.join(roles)}, subject to any "
+                        "conditions (not evaluated)"
+                    ),
                     weight=0.45 if member.startswith("serviceAccount:") else 0.25,
                 )
             )
@@ -946,6 +997,9 @@ class GcpConnector(BaseConnector):
                     "roles": roles,
                     "broad_roles": broad_roles,
                     "evidence_class": "access-grant",
+                    "policy_version": rec.get("version"),
+                    "iam_bindings": member_bindings[member],
+                    "condition_coverage": "unknown" if member in degraded_members else "observed",
                 }
             )
             yield done(f, self.index, Kind.IAM_GRANT)

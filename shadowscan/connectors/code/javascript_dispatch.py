@@ -274,6 +274,11 @@ class _Parser:
             or tools.value in _RESERVED
         ):
             raise _Unsupported
+        choice = options.get("tool_choice")
+        if choice is not None and (not choice.literal or choice.value not in {"auto", "required"}):
+            # An explicit disabled or unknown selection cannot establish that
+            # this request produces the function calls consumed below.
+            raise _Unsupported
         self.take(")")
         self.take(";")
 

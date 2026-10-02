@@ -104,6 +104,24 @@ def test_connected_provider_tool_loop_is_an_agent(tmp_path, run_connector, sourc
     assert any("conversation feedback" in evidence.description for evidence in agents[0].evidence)
 
 
+@pytest.mark.parametrize("choice", ["'none'", "{'type': 'none'}"])
+@pytest.mark.parametrize("source", [LOOP, ANTHROPIC_LOOP])
+def test_disabled_provider_selection_cannot_establish_dispatch(tmp_path, run_connector, source, choice):
+    if source == LOOP:
+        source = source.replace(
+            'model="example-model", messages=messages,',
+            f'tool_choice={choice}, model="example-model", messages=messages,',
+        )
+    else:
+        source = source.replace(
+            "max_tokens=1024, tools=tools", f"max_tokens=1024, tool_choice={choice}, tools=tools"
+        )
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not any(finding.kind == Kind.AGENT for finding in findings)
+    assert not any("tool-use" in finding.capabilities for finding in findings)
+
+
 @pytest.mark.parametrize(
     "source",
     [

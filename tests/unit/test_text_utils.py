@@ -220,7 +220,9 @@ def test_read_text_decodes_python_source_with_its_declared_codec(tmp_path):
 
 def test_read_text_declared_codec_applies_to_python_sources_only(tmp_path):
     (tmp_path / "notes.md").write_bytes(b"# coding: latin-1\n\xe9\n")
-    assert read_text(tmp_path / "notes.md", 1000) == "# coding: latin-1\n" + chr(0xFFFD) + "\n"
+    errors: list[str] = []
+    assert read_text(tmp_path / "notes.md", 1000, errors) is None
+    assert errors == [BINARY_CONTENT_ERROR]
 
 
 def test_read_text_python_source_its_codec_cannot_decode_is_a_gap(tmp_path):
