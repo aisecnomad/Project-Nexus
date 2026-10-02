@@ -329,6 +329,37 @@ def test_empty_string_and_glob_helpers():
         check_glob("[abc", "bad")
 
 
+def test_empty_match_check_uses_the_matchers_regex_engine():
+    import regex
+
+    from shadowscan.signatures import matcher, schema
+
+    # The standard library cannot compile \p{L}, so the old check let \p{L}*
+    # through; the matcher compiles it and it then matches everywhere.
+    assert matches_empty_string(r"\p{L}*") and matches_empty_string(r"\p{L}*", regex.IGNORECASE)
+    assert not matches_empty_string(r"\p{L}+Agent") and not matches_empty_string(r"\bagent\b")
+    assert schema.EMPTY_MATCH_TIMEOUT_SECONDS == matcher.REGEX_TIMEOUT_SECONDS
+    for signal in (
+        {"type": "code", "patterns": [r"\p{L}*"]},
+        {"type": "domain", "values": [r"re:\p{L}*"]},
+    ):
+        sig = _signature()
+        sig["signals"] = [signal]
+        with pytest.raises(ValueError, match="matches the empty string"):
+            signature_from_dict(sig)
+
+
+def test_empty_match_check_fails_closed_when_the_search_times_out(monkeypatch):
+    from shadowscan.signatures import schema
+
+    class Slow:
+        def search(self, text, timeout):
+            raise TimeoutError
+
+    monkeypatch.setattr(schema.regex, "compile", lambda pattern, flags: Slow())
+    assert matches_empty_string("anything")
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

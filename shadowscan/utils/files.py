@@ -28,28 +28,54 @@ def require_no_symlinks(path: Path) -> Path:
     return absolute
 
 
-def policy_files(root: Path, suffixes: set[str]) -> Iterator[Path]:
-    """Walk a policy directory without following links or special files."""
+SKIPPED_LINK = "symbolic link"
+SKIPPED_UNSUPPORTED = "unsupported file type"
+
+
+def policy_files(
+    root: Path, suffixes: set[str], skipped: list[tuple[str, str]] | None = None
+) -> Iterator[Path]:
+    """Walk a policy directory without following links or special files.
+
+    When ``skipped`` is given, each entry passed over is appended to it as
+    ``(path relative to root, reason)``: a symbolic link (``SKIPPED_LINK``)
+    or a file without a supported suffix or that is not a regular file
+    (``SKIPPED_UNSUPPORTED``). Only names are recorded, never contents.
+    """
     root = require_no_symlinks(root)
     if not root.is_dir():
         raise FileNotFoundError(f"policy directory not found: {root}")
+    notes = skipped if skipped is not None else []
     count = 0
     for directory, dirs, files in os.walk(root, followlinks=False):
         count += len(dirs)
-        dirs[:] = sorted(d for d in dirs if not (Path(directory) / d).is_symlink())
+        base = Path(directory)
+        notes += [
+            ((base / d).relative_to(root).as_posix(), SKIPPED_LINK) for d in dirs if (base / d).is_symlink()
+        ]
+        dirs[:] = sorted(d for d in dirs if not (base / d).is_symlink())
         for name in sorted(files):
             count += 1
             if count > MAX_POLICY_FILES:
                 raise ValueError("policy directory exceeds file limit")
-            path = Path(directory) / name
-            if path.suffix.lower() not in suffixes or path.is_symlink():
-                continue
-            if stat.S_ISREG(path.stat(follow_symlinks=False).st_mode):
+            path = base / name
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                notes.append((relative, SKIPPED_LINK))
+            elif path.suffix.lower() in suffixes and stat.S_ISREG(path.stat(follow_symlinks=False).st_mode):
                 yield path
+            else:
+                notes.append((relative, SKIPPED_UNSUPPORTED))
 
 
-def policy_glob(pattern: Path) -> Iterator[Path]:
-    """Expand glob components without recursive glob's symlink traversal."""
+def policy_glob(pattern: Path, skipped_links: list[str] | None = None) -> Iterator[Path]:
+    """Expand glob components without recursive glob's symlink traversal.
+
+    When ``skipped_links`` is given, each symbolic link the pattern would
+    otherwise have entered or matched is appended to it once, by path.
+    """
+    links = skipped_links if skipped_links is not None else []
+    noted: set[str] = set()
     absolute = Path(os.path.abspath(pattern))
     components = absolute.parts[1:]
     stack = [(Path(absolute.anchor), 0)]
@@ -64,6 +90,9 @@ def policy_glob(pattern: Path) -> Iterator[Path]:
         if examined > MAX_POLICY_FILES:
             raise ValueError("inventory glob exceeds entry limit")
         if parent.is_symlink():
+            if str(parent) not in noted:
+                noted.add(str(parent))
+                links.append(str(parent))
             continue
         if position == len(components):
             if parent.is_file():
@@ -83,6 +112,11 @@ def policy_glob(pattern: Path) -> Iterator[Path]:
                 if examined > MAX_POLICY_FILES:
                     raise ValueError("inventory glob exceeds entry limit")
                 if entry.is_symlink():
+                    if (
+                        pattern_part == "**" or fnmatchcase(entry.name, pattern_part)
+                    ) and entry.path not in noted:
+                        noted.add(entry.path)
+                        links.append(entry.path)
                     continue
                 if pattern_part == "**":
                     if entry.is_dir(follow_symlinks=False):
@@ -230,7 +264,11 @@ def changed_since(before: os.stat_result, fd: int) -> bool:
 
 
 def read_policy_text(path: Path, max_bytes: int = MAX_POLICY_BYTES) -> str:
-    """Open each path component without following links; cap allocation before decoding."""
+    """Open each path component without following links; cap allocation before decoding.
+
+    A leading UTF-8 byte-order mark is dropped: spreadsheet "CSV UTF-8" and
+    some editors' JSON exports start with one.
+    """
     with open_confined_file(Path(os.path.abspath(path)), label="policy input") as (stream, before):
         if before.st_size > max_bytes:
             raise ValueError("policy input exceeds byte limit")
@@ -239,4 +277,4 @@ def read_policy_text(path: Path, max_bytes: int = MAX_POLICY_BYTES) -> str:
             raise ValueError("policy input exceeds byte limit")
         if changed_since(before, stream.fileno()):
             raise ValueError("policy input changed while reading")
-        return data.decode("utf-8")
+        return data.decode("utf-8-sig")

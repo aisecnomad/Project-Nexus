@@ -144,6 +144,23 @@ class _ConnectorRunner:
         state.deadline = time.monotonic() + timeout
         try:
             return self._run_job(number, spec, state)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - e.g. sys.exit() while importing a plugin
+            # The supervisor re-raises a worker's exception in the main
+            # thread, so a SystemExit here would end the scan without a report.
+            message = f"{spec.name}: connector worker failed ({type(exc).__name__})"
+            log.warning("connector failed; diagnostic recorded in incomplete scan stats")
+            stats = ScanStats(
+                connector=spec.id,
+                started_at=state.started_at or now_iso(),
+                finished_at=now_iso(),
+                incomplete=True,
+                skipped=True,
+                skip_reason=message,
+                errors=[message],
+            )
+            return spec, [], stats
         finally:
             # Include sanitization, cache writes and callbacks in the
             # measured runtime, even if completion precedes the next poll.
@@ -277,7 +294,10 @@ class _ConnectorRunner:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
                 return spec, fs, st
-        except Exception as exc:  # noqa: BLE001 - isolate construction as well as collection failures
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - isolate construction and collection failures,
+            # including a plugin's sys.exit(), which must not end the scan as a clean pass.
             message = ctx.sanitize_message(f"{spec.name}: {type(exc).__name__}: {exc}")
             st = ctx.stats or ScanStats(connector=spec.id, started_at=started_at)
             st.connector = spec.id
@@ -386,6 +406,64 @@ def _sanitize_diagnostics(st: ScanStats) -> None:
         st.incomplete = True
         st.errors = ["connector diagnostics omitted: sanitization safety limit exceeded"]
         st.warnings = []
+
+
+_MAX_INVENTORY_WARNINGS = 20
+
+
+def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
+    """Local source trees scanned in this run, as configured and as resolved."""
+    roots = []
+    for spec in specs:
+        if spec.name != "code.filesystem" or spec.config.get("input"):
+            continue
+        raw = spec.config.get("paths") or [spec.config.get("path")]
+        if isinstance(raw, list):
+            roots += [(path, Path(os.path.realpath(path))) for path in raw if isinstance(path, str) and path]
+    return roots
+
+
+def _inventory_warnings(
+    paths: list[str], inventory: Inventory | None, specs: list[ConnectorSpec]
+) -> list[str]:
+    """Approvals that scanned content could change, or that approve every finding.
+
+    Advisory, not incomplete: ``shadowscan code . --inventory agent-card.yaml``
+    is legitimate locally, but in CI a pull request can edit an inventory kept
+    in the scanned tree and approve its own findings.
+    """
+    if inventory is None:
+        return []
+    warnings: list[str] = []
+    candidates = [(path, Path(os.path.realpath(path))) for path in paths]
+    # A directory or glob outside a scanned tree can still load files from inside it.
+    candidates += [(source, Path(os.path.realpath(source))) for source in inventory.sources]
+    for shown_root, root in _scanned_roots(specs):
+        reported: list[Path] = []
+        for shown, location in candidates:
+            if location.is_relative_to(root) and not any(location.is_relative_to(done) for done in reported):
+                reported.append(location)
+                warnings.append(
+                    f"inventory {shown} is inside scanned path {shown_root}; "
+                    "scanned content could alter approvals"
+                )
+    for entry in inventory.entries:
+        if any(not pattern.strip("*") for pattern in entry.resources):
+            source = f" in {entry.source}" if entry.source else ""
+            scoped = entry.surfaces or entry.providers or entry.accounts or entry.regions
+            warnings.append(
+                f"inventory entry {entry.agent_id}{source} has resource pattern '*', which approves every"
+                f" finding{' its scope constraints allow' if scoped else ''}"
+            )
+    warnings += [
+        f"inventory {link}: symbolic link skipped (links are not followed)"
+        for link in inventory.skipped_links
+    ]
+    warnings = list(dict.fromkeys(warnings))
+    if len(warnings) > _MAX_INVENTORY_WARNINGS:
+        omitted = len(warnings) - _MAX_INVENTORY_WARNINGS
+        warnings = [*warnings[:_MAX_INVENTORY_WARNINGS], f"{omitted} further inventory warnings omitted"]
+    return warnings
 
 
 class _Supervisor:
@@ -635,6 +713,19 @@ class Engine:
         result.finished_at = now_iso()
         return result
 
+    def _inventory_stats(self, specs: list[ConnectorSpec], started_at: str) -> list[ScanStats]:
+        """Record inventory placement and wildcard approvals as warnings in every report format."""
+        warnings = _inventory_warnings(self.config.inventory, self.inventory, specs)
+        if not warnings:
+            return []
+        # Logs can travel beyond the private report: keep paths out of them.
+        log.warning("inventory approval warning recorded in scan stats (engine.inventory)")
+        stats = ScanStats(
+            connector="engine.inventory", started_at=started_at, finished_at=now_iso(), warnings=warnings
+        )
+        _sanitize_diagnostics(stats)
+        return [stats]
+
     @staticmethod
     def _selection_stats(specs: list[ConnectorSpec]) -> list[ScanStats]:
         if specs:
@@ -745,7 +836,7 @@ class Engine:
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
         result.collection_scope = build_collection_scope(self.config, self.index, specs)
-        stats = self._selection_stats(specs)
+        stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
         cache = IncrementalCache(self.config, self.index)
         dump_records = self.config.dump_records
         dump_directory = prepare_private_directory(dump_records) if dump_records else None

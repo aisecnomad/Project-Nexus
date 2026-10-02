@@ -111,7 +111,8 @@ Without `root_ids`, the canonical local path determines a distinct root suffix.
 Using a scalar `path` with its own connector `label` preserves the older ID.
 
 The default state location is `$XDG_STATE_HOME/shadowscan`, or
-`~/.local/state/shadowscan`. `--state-dir` overrides it; YAML relative paths are
+`~/.local/state/shadowscan` when `XDG_STATE_HOME` is unset, empty or relative
+(as the XDG specification requires). `--state-dir` overrides it; YAML relative paths are
 resolved against the configuration file. Keep the directory outside every scan
 input. State uses a private 0700 directory and atomic 0600 JSON files containing
 sanitized, unscored findings, not source content or raw credentials. Protect the
@@ -408,8 +409,11 @@ it. `tools/evaluation/corpus.json` carries regression cases for each rule.
 changes, including permissions, classification, ownership, registration and risk
 score/factors within the same risk band. Each changed item includes
 `changed_fields`. Missing findings count as resolved only when both reports
-completed, declare the same supported finding-identity schema and have the same
-`collection_scope` fingerprint. This opaque digest covers
+completed, declare the same supported finding-identity schema, carry a
+`summary` whose `total` (and `by_surface`/`by_kind` counts) match their
+`findings` array, and have the same `collection_scope` fingerprint. A truncated
+or filtered report is therefore unknown (exit 3), not a resolution. The
+fingerprint is an opaque digest that covers
 selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public

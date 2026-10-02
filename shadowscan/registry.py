@@ -39,7 +39,13 @@ import yaml
 
 from shadowscan.errors import SetupError, SetupPathError
 from shadowscan.models import Finding, Surface
-from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
+from shadowscan.utils.files import (
+    SKIPPED_LINK,
+    policy_files,
+    policy_glob,
+    read_policy_text,
+    require_no_symlinks,
+)
 from shadowscan.utils.identity import (
     has_aws_account_scope,
     has_google_workspace_account_scope,
@@ -151,6 +157,8 @@ class Inventory:
     def __init__(self, entries: list[InventoryEntry] | None = None):
         self.entries: list[InventoryEntry] = entries or []
         self.sources: list[str] = []
+        # Symbolic links a directory or glob passed over; links are never followed.
+        self.skipped_links: list[str] = []
         # Bound the cache even when callers repeatedly replace inventory entries.
         self._name_patterns: OrderedDict[str, re.Pattern[str]] = OrderedDict()
 
@@ -165,12 +173,23 @@ class Inventory:
             path = Path(p).expanduser()
             files: list[Path]
             if path.is_dir():
-                files = list(policy_files(path, {".yaml", ".yml", ".json", ".csv"}))
+                skipped: list[tuple[str, str]] = []
+                files = list(policy_files(path, {".yaml", ".yml", ".json", ".csv"}, skipped))
+                inv.skipped_links += [str(path / name) for name, reason in skipped if reason == SKIPPED_LINK]
             elif path.exists() or path.is_symlink():
                 require_no_symlinks(path)
                 files = [path]
             elif any(ch in str(path) for ch in "*?["):
-                files = sorted(policy_glob(path))
+                links: list[str] = []
+                files = sorted(policy_glob(path, links))
+                inv.skipped_links += links
+                if not files:
+                    # Like a missing literal path: a typo must not load an empty inventory.
+                    raise SetupPathError(
+                        sanitize_text(
+                            f"inventory glob matched no files (symbolic links are not followed): {p}"
+                        )
+                    )
             else:
                 # A missing path is reported by name only: the message must stay
                 # safe for the CLI to print verbatim (see shadowscan.errors).

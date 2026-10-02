@@ -205,8 +205,12 @@ risk scoring. `weight` controls confidence in the evidence, not finding severity
   signature only claims idioms that are unique to it, so a generic constructor can never pin the wrong framework.
 
 Pack traversal does not follow symlinks. Explicit unsafe paths fail validation;
-directory walks skip symlinked entries. YAML parsing has construction budgets
-before schema validation, including bounds on aliases and merge expansion.
+directory walks skip symlinked entries and log a warning naming each one. A
+configured pack directory that contributes no `.yaml` or `.yml` pack (empty,
+other file types only, or symlinks only) is an error that names the directory
+and the entries it skipped; it never loads as an empty pack. YAML parsing has
+construction budgets before schema validation, including bounds on aliases and
+merge expansion.
 
 ### Dependency exclusions
 

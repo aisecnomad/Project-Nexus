@@ -79,7 +79,9 @@ def test_diff_terminal_output_neutralizes_imported_title_and_resource(tmp_path):
     ).to_dict()
     after = tmp_path / "after.json"
     after.write_text(json.dumps(report))
+    # A baseline without the finding; its summary must match its findings.
     report["findings"] = []
+    report["summary"].update(total=0, by_surface={}, by_kind={}, by_risk_level={})
     before = tmp_path / "before.json"
     before.write_text(json.dumps(report))
     result = CliRunner().invoke(main, ["diff", str(before), str(after)])
