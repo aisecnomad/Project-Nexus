@@ -8,6 +8,13 @@ scanning enabled. A warning, partial scan, skipped connector, or unstable
 repeated scan stops evaluation instead of counting missing detections as true
 negatives.
 
+Corpus paths must identify distinct files and directories under conservative
+case-folded, Unicode-normalized comparison. A file cannot also be a parent
+directory, and each path component must fit within 255 UTF-8 bytes. Layouts
+that would alias or fail to materialize on a supported host are rejected before
+scanning. Sample creation never overwrites an existing path; an unexpected host
+alias stops evaluation instead of changing the labeled input.
+
 The seven bundled corpora (synthetic, public, realistic, review, field review,
 attribution and independent) are regression checks on known inputs. The
 synthetic, realistic, review, attribution and public sets were written or selected

@@ -36,6 +36,59 @@ def _by_type(findings: list[Any]) -> dict[str, list[Any]]:
     return grouped
 
 
+@pytest.mark.parametrize(
+    "operation,kind",
+    [
+        ("list_agent_endpoints", "genai-agent-endpoint"),
+        ("list_knowledge_bases", "genai-knowledge-base"),
+        ("list_endpoints", "genai-endpoint"),
+        ("list_dedicated_ai_clusters", "genai-cluster"),
+        ("list_models", "genai-custom-model"),
+        ("list_oda_instances", "oda-instance"),
+        ("list_model_deployments", "model-deployment"),
+        ("list_container_instances", "container-instance"),
+    ],
+)
+def test_oci_live_records_cannot_override_collected_scope(index, sdk, monkeypatch, operation, kind):
+    scanner = connector(index)
+    client = Mock()
+    record = SimpleNamespace(
+        id="upstream-resource",
+        type="CUSTOM",
+        _kind="tenancy",
+        _region="other-region",
+        _compartment="other-compartment",
+    )
+    monkeypatch.setattr(scanner, "_client", lambda *args, **kwargs: client)
+    monkeypatch.setattr(
+        scanner, "_all", lambda fn, *args, **kwargs: [record] if fn._mock_name == operation else []
+    )
+    monkeypatch.setattr(scanner, "_d", lambda obj: dict(vars(obj)))
+    (collected,) = scanner._collect_region_comp(REGION, COMPARTMENT)
+    assert collected["id"] == "upstream-resource" and collected["_kind"] == kind
+    assert collected["_region"] == REGION and collected["_compartment"] == COMPARTMENT
+
+
+def test_oci_live_dynamic_groups_keep_collected_record_kind(index, sdk, monkeypatch):
+    scanner = connector(index, compartments=[COMPARTMENT], regions=[REGION], tenancy=TENANCY)
+    client = Mock()
+    monkeypatch.setattr(scanner, "_init", lambda: None)
+    monkeypatch.setattr(scanner, "_client", lambda *args, **kwargs: client)
+    monkeypatch.setattr(
+        scanner,
+        "_all",
+        lambda fn, *args, **kwargs: (
+            [{"id": "upstream-resource", "_kind": "tenancy"}]
+            if fn._mock_name == "list_dynamic_groups"
+            else []
+        ),
+    )
+    monkeypatch.setattr(scanner, "_d", lambda obj: obj)
+    monkeypatch.setattr(scanner, "_collect_region_comp", lambda *args: iter([]))
+    records = list(scanner.collect())
+    assert [record["_kind"] for record in records] == ["tenancy", "dynamic-group"]
+
+
 # ------------------------------------------------------------------ offline
 def test_oci_offline_export_covers_every_handler_kind(run_connector, fixtures):
     findings, ctx = run_connector("cloud.oci", input=str(fixtures / "cloud" / "oci_extended_records.jsonl"))

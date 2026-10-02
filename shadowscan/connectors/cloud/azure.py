@@ -282,11 +282,11 @@ class AzureConnector(BaseConnector):
                 role_id = str(get_path(ra, "properties.roleDefinitionId", default="")).rsplit("/", 1)[-1]
                 if role_id in AI_ROLE_IDS:
                     yield {
+                        **(ra.get("properties") or {}),
                         "_kind": "role-assignment",
                         "_subscription": sub,
                         "role_id": role_id,
                         "role": AI_ROLE_IDS[role_id],
-                        **(ra.get("properties") or {}),
                         "id": ra.get("id"),
                     }
 
@@ -341,7 +341,7 @@ class AzureConnector(BaseConnector):
         t = str(r.get("type", "")).lower()
         if t == "microsoft.cognitiveservices/accounts":
             for d in self._list(f"{rid}/deployments", "2024-10-01", allow_partial=True) or []:
-                yield {"_kind": "deployment", "_account": rid, "_account_name": r.get("name"), **d}
+                yield {**d, "_kind": "deployment", "_account": rid, "_account_name": r.get("name")}
             diag = self._list(
                 f"{rid}/providers/Microsoft.Insights/diagnosticSettings",
                 "2021-05-01-preview",

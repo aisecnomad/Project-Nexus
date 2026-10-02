@@ -1736,7 +1736,7 @@ class FilesystemConnector(BaseConnector):
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
-            self._register_mcp_tools(file)
+            self._register_mcp_tools(file, ignored)
 
     def _bound_matches(
         self,
@@ -1808,10 +1808,10 @@ class FilesystemConnector(BaseConnector):
             self._record_content(file, m, self._file_excerpt(file, m.line))
 
     @staticmethod
-    def _register_mcp_tools(file: _SourceFile) -> None:
+    def _register_mcp_tools(file: _SourceFile, ignored: list[tuple[int, int]]) -> None:
         """Remember the MCP tool names a source file registers, bounded per project."""
         tools = file.proj.mcp_tools
-        for tool in mcp_tool_names(file.text):
+        for tool in mcp_tool_names(file.text, ignore_spans=ignored):
             known = tools.get(tool)
             if known is None:
                 if len(tools) < _MAX_MCP_TOOLS:

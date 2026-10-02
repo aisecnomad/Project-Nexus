@@ -46,12 +46,19 @@ test-fast: ## Run tests without coverage (faster iteration)
 
 .PHONY: coverage-gate
 coverage-gate: ## Enforce per-connector coverage floor
-	python -m coverage json -o /tmp/shadowscan-coverage.json
-	python -m tools.coverage_gate /tmp/shadowscan-coverage.json
+	@set -euo pipefail; \
+	coverage_file="$$(mktemp "$${TMPDIR:-/tmp}/shadowscan-coverage.XXXXXX")"; \
+	trap 'rm -f "$$coverage_file"' EXIT; \
+	python -m coverage json -o "$$coverage_file"; \
+	python -m tools.coverage_gate "$$coverage_file"
 
 .PHONY: signatures
 signatures: ## Validate all signature schemas and regexes
 	python -m shadowscan.signatures.validate
+
+.PHONY: secrets
+secrets: ## Check tracked Python/YAML files for hardcoded secret patterns
+	python tools/check_secrets.py --tracked
 
 .PHONY: audit
 audit: ## Audit dependencies for known vulnerabilities
@@ -70,7 +77,7 @@ evaluate: ## Run the bundled detection regression corpora
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint format-check typecheck signatures audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck signatures secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 # --- Build -----------------------------------------------------------------
@@ -82,13 +89,21 @@ build: ## Build distributable wheel
 
 .PHONY: wheel-validate
 wheel-validate: build ## Validate the wheel installs and works outside checkout
-	python -m venv /tmp/shadowscan-wheel-test
-	/tmp/shadowscan-wheel-test/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-	/tmp/shadowscan-wheel-test/bin/python -m pip install --no-deps dist/project_nexus_shadowscan-*.whl
-	/tmp/shadowscan-wheel-test/bin/python -m pip check
-	cd /tmp && /tmp/shadowscan-wheel-test/bin/python -m shadowscan.signatures.validate
-	cd /tmp && /tmp/shadowscan-wheel-test/bin/shadowscan --help
-	rm -rf /tmp/shadowscan-wheel-test
+	@set -euo pipefail; \
+	wheels=(dist/project_nexus_shadowscan-*.whl); \
+	if [ "$${#wheels[@]}" -ne 1 ] || [ ! -f "$${wheels[0]}" ]; then \
+		echo "wheel-validate requires exactly one scanner wheel in dist; remove stale build artifacts" >&2; \
+		exit 1; \
+	fi; \
+	wheel_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/shadowscan-wheel-test.XXXXXX")"; \
+	trap 'rm -rf "$$wheel_dir"' EXIT; \
+	python -m venv "$$wheel_dir"; \
+	"$$wheel_dir/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements.lock; \
+	"$$wheel_dir/bin/python" -m pip install --no-deps "$${wheels[0]}"; \
+	"$$wheel_dir/bin/python" -m pip check; \
+	cd "$$wheel_dir"; \
+	"$$wheel_dir/bin/python" -m shadowscan.signatures.validate; \
+	"$$wheel_dir/bin/shadowscan" --help
 
 .PHONY: docker
 docker: ## Build worker from the reviewed Dockerfile base digest

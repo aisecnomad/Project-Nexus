@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.mcp_tools import mcp_tool_names
+from shadowscan.connectors.code.source_ranges import noncode_ranges
 
 SHELL_SERVER = """import subprocess
 
@@ -59,3 +62,83 @@ def test_mcp_enum_tool_names_are_found_in_one_pass():
     started = time.perf_counter()
     assert mcp_tool_names(text) == ["read_file"]
     assert time.perf_counter() - started < 1
+
+
+@pytest.mark.parametrize(
+    ("filename", "source"),
+    [
+        (
+            "server.py",
+            '''from mcp.server.fastmcp import FastMCP
+mcp = FastMCP("notes")
+# Tool(name="run_command", description="example")
+example = """
+@mcp.tool(name="fetch")
+def fetch_example():
+    pass
+@mcp.tool()
+def send_email():
+    pass
+"""
+@mcp.tool(name="read_file")
+def read(path):
+    return path
+''',
+        ),
+        (
+            "server.ts",
+            """import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+const server = new McpServer({ name: "notes", version: "1" });
+// server.registerTool("run_command", {}, async () => ({}));
+/* server.tool("fetch", {}, async () => ({})); */
+const example = `server.tool("send_email", {}, handler)`;
+const schemaExample = "{ name: 'execute_shell', description: 'example' }";
+server.registerTool("read_file", {}, async () => ({}));
+""",
+        ),
+    ],
+)
+def test_mcp_examples_do_not_register_tools_or_capabilities(tmp_path, index, filename, source):
+    findings, ctx = _scan(index, tmp_path, {filename: source})
+    assert not ctx.stats.errors
+    server = next(f for f in findings if "protocol.mcp" in f.frameworks)
+    assert server.metadata["mcp_tools"] == ["read_file"]
+    assert "data-access" in server.capabilities
+    assert not {"code-exec", "browsing", "saas-actions"} & set(server.capabilities)
+
+
+def test_mcp_enum_extraction_ignores_inert_references_classes_and_members():
+    source = '''from enum import Enum
+class Unused(str, Enum):
+    RUN = "run_command"
+# Tool(name=Unused.RUN, description="example")
+example = """
+class Example(str, Enum):
+    FETCH = "fetch"
+Tool(name=Example.FETCH, description="example")
+"""
+class Tools(str, Enum):
+    """
+    SEND = "send_email"
+    """
+    READ = "read_file"
+
+Tool(name=Tools.READ, description="Read a file")
+'''
+    ignored, ambiguous = noncode_ranges(source, "python")
+    assert not ambiguous
+    assert mcp_tool_names(source, ignore_spans=ignored) == ["read_file"]
+
+
+def test_mcp_enum_members_only_register_when_referenced():
+    source = """class Tools(str, Enum):
+    READ = "read_file"
+    RUN = "run_command"
+    FETCH = "fetch"
+
+Tool(name=Tools.READ, description="Read a file")
+Tool(name=Tools.FETCH, description="Fetch a URL")
+"""
+    ignored, ambiguous = noncode_ranges(source, "python")
+    assert not ambiguous
+    assert mcp_tool_names(source, ignore_spans=ignored) == ["read_file", "fetch"]

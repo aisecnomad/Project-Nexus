@@ -88,6 +88,19 @@ def test_every_stats_publisher_redacts_direct_caller_diagnostics() -> None:
     assert STATS_SECRET in stats.errors[0]
 
 
+def test_json_redacts_credential_copies_across_connector_statistics() -> None:
+    credential = ScanStats("first", "now", errors=["--api-key", STATS_SECRET])
+    reflected = ScanStats("second", "now", warnings=[f"reflected caller {STATS_SECRET}"])
+    result = ScanResult(stats=[credential, reflected])
+
+    output = render_json(result)
+
+    assert STATS_SECRET not in output
+    assert "REDACTED" in output
+    assert credential.errors == ["--api-key", STATS_SECRET]
+    assert reflected.warnings == [f"reflected caller {STATS_SECRET}"]
+
+
 def test_table_preflights_stats_before_publishing_any_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

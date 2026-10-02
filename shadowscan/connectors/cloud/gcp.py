@@ -336,12 +336,25 @@ class GcpConnector(BaseConnector):
                 "projects",
                 filter="lifecycleState:ACTIVE",
             )
-            projects = (p["projectId"] for p in listed if p.get("projectId"))
+            projects = self._project_ids(listed)
         for i, project in enumerate(projects):
             if i >= self.max_projects:
                 self.ctx.warn("cloud.gcp: max_projects reached")
                 break
             yield from self._collect_project(project)
+
+    def _project_ids(self, projects: Iterable[dict[str, Any]]) -> Iterator[str]:
+        """Validate discovered scope before it becomes an authenticated API path."""
+        for project in projects:
+            project_id = project.get("projectId")
+            if (
+                not isinstance(project_id, str)
+                or project_id in {".", ".."}
+                or not re.fullmatch(r"[A-Za-z0-9._:-]+", project_id)
+            ):
+                self.ctx.warn("cloud.gcp: invalid discovered project identifier; coverage unknown")
+                continue
+            yield project_id
 
     def _collect_project(self, project: str) -> Iterator[dict[str, Any]]:
         services = self._pages(
@@ -359,7 +372,7 @@ class GcpConnector(BaseConnector):
             for loc in ["global", *self.locations]:
                 url = f"https://dialogflow.googleapis.com/v3/projects/{project}/locations/{loc}/agents"
                 for agent in self._pages(url, "agents"):
-                    yield {"_kind": "dialogflow-agent", "_project": project, "_location": loc, **agent}
+                    yield {**agent, "_kind": "dialogflow-agent", "_project": project, "_location": loc}
         if _uses(enabled, "discoveryengine.googleapis.com"):
             for loc in ["global", "us", "eu"]:
                 url = (
@@ -367,19 +380,19 @@ class GcpConnector(BaseConnector):
                     "/collections/default_collection/engines"
                 )
                 for eng in self._pages(url, "engines"):
-                    yield {"_kind": "discovery-engine", "_project": project, "_location": loc, **eng}
+                    yield {**eng, "_kind": "discovery-engine", "_project": project, "_location": loc}
         if _uses(enabled, "run.googleapis.com"):
             yield from self._collect_cloud_run(project)
         if _uses(enabled, "cloudfunctions.googleapis.com"):
             url = f"https://cloudfunctions.googleapis.com/v2/projects/{project}/locations/-/functions"
             for fn in self._pages(url, "functions"):
-                yield {"_kind": "cloud-function", "_project": project, **fn}
+                yield {**fn, "_kind": "cloud-function", "_project": project}
         yield from self._collect_iam_policy(project)
         yield from self._collect_service_accounts(project)
         if _uses(enabled, "apikeys.googleapis.com"):
             url = f"https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys"
             for key in self._pages(url, "keys"):
-                yield {"_kind": "api-key", "_project": project, **key}
+                yield {**key, "_kind": "api-key", "_project": project}
         if _uses(enabled, "secretmanager.googleapis.com"):
             url = f"https://secretmanager.googleapis.com/v1/projects/{project}/secrets"
             for s in self._pages(url, "secrets"):
@@ -397,9 +410,9 @@ class GcpConnector(BaseConnector):
         for loc in self.locations:
             base = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{project}/locations/{loc}"
             for re_ in self._pages(f"{base}/reasoningEngines", "reasoningEngines"):
-                yield {"_kind": "reasoning-engine", "_project": project, "_location": loc, **re_}
+                yield {**re_, "_kind": "reasoning-engine", "_project": project, "_location": loc}
             for ep in self._pages(f"{base}/endpoints", "endpoints"):
-                yield {"_kind": "vertex-endpoint", "_project": project, "_location": loc, **ep}
+                yield {**ep, "_kind": "vertex-endpoint", "_project": project, "_location": loc}
 
     def _collect_cloud_run(self, project: str) -> Iterator[dict[str, Any]]:
         # Cloud Run v2 services.list rejects the '-' wildcard. Enumerate

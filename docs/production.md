@@ -10,6 +10,40 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 2 hygiene review migration
+
+Re-run scans and compare MCP tool/capability labels before updating enforcement
+baselines: inert examples and unreferenced enum members no longer count as
+registered tools. Live GCP, Azure, OCI and Slack records keep collector-assigned
+classification and scope when response fields share those names. Invalid
+discovered GCP project identifiers are skipped with incomplete coverage.
+
+Gateway records with timestamps outside the representable UTC range now fail
+before updating caller state. A malformed record still makes coverage incomplete,
+while valid neighboring observations remain available for review.
+
+Tenant-canary verification now groups records and findings by exact resource
+identity before checking controls and reads record dumps incrementally under
+the existing size cap. The declared scope and acceptance selectors still apply;
+this optimization does not establish a tenant-scale latency or memory SLO.
+
+Re-render retained sensitive reports where possible: diagnostic sanitization
+now preserves context across errors, warnings and skip reasons, and JSON
+statistics are checked together. Continue treating reports as sensitive; no
+redaction rule recognizes every possible secret or private datum.
+
+CI and `make check` now enforce the bounded secret-pattern gate for tracked
+Python/YAML source. The intentional test and signature-data exemptions require
+review. The evaluation path contract now rejects ambiguous case/Unicode names,
+file/directory collisions and components over 255 UTF-8 bytes. Correct such
+layouts before re-running a private holdout; do not silently rename its samples
+after freezing the acceptance policy.
+
+These checks are offline regression evidence. They do not establish independent
+human approval, a representative field accuracy measurement or live tenant
+acceptance. Verify the current required-check configuration under
+[release verification](#release-verification) before merging or deploying.
+
 ## October 1 discovery review migration
 
 Review finding kinds, capabilities and risk scores before replacing an existing
@@ -905,19 +939,24 @@ it disabled; on 2026-09-25 (13:10 UTC) a merge attempted without an approving
 review was refused with "Repository rule violations found", so it was enforced
 at that moment; on 2026-09-27 (10:40 UTC), and again on 2026-10-01 during the
 discovery review, both rulesets were read back with `enforcement: disabled`.
-The October 1 branch response also reported `protected: false`. Treat
-no observation as permanent; only the live commands below describe the current
+The October 1 branch response also reported `protected: false`. During the
+October 2 hygiene review, both rulesets were read back as `enforcement: active`
+and the branch response reported `protected: true`. `Require CI and CodeQL`
+retained one required approval, stale-review dismissal, strict checks and no
+bypass actors; its required checks still omitted `CI gate`. `Protect main`
+separately retained administrator and integration bypass actors. Treat no
+observation as permanent; only the live commands below describe the current
 state. Keep the CodeQL job's displayed name `analyze` consistent with the
 required check.
 
-An administrator must activate both existing rulesets in
+An administrator must keep both existing rulesets active in
 [repository rules](https://github.com/aisecnomad/Project-Nexus/rules), add
 `CI gate` to `Require CI and CodeQL`, and retain its current required checks,
 strict up-to-date policy, one non-author approving review, stale-review
 dismissal, signature requirements and empty bypass list. Save the change and
 read back the effective rules on `main`; editing this guide or merging its PR
-does not change repository settings. Do not claim that protection was restored
-until that readback confirms it. If the API connection lacks administration
+does not change repository settings. Do not claim that the full merge gate is
+enforced until readback confirms `CI gate` is required. If the API connection lacks administration
 access, use an authorized administrator session rather than weakening the rules.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a

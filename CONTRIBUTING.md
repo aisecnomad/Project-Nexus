@@ -126,6 +126,7 @@ exact supported Python matrix and dependency pins.
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% per connector |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
+| Secrets | `make secrets` | No recognized credential patterns in tracked Python/YAML source |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
 
@@ -142,6 +143,7 @@ python -m shadowscan.signatures.validate
 ruff check shadowscan tests tools
 mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 pip-audit --progress-spinner off
+make secrets
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate
 make evaluate
@@ -154,6 +156,12 @@ extras for users, but the test suite is gated with them installed, so use
 cloud connectors; do not commit live tenant exports.
 
 Do not commit private adjudicated evaluation corpora.
+
+The secret-pattern gate runs in CI and `make check`, as well as the local
+pre-commit hook. It reports masked locations and fails on unreadable source.
+Tracked-file mode excludes `tests/` and signature data containing intentional
+synthetic credential patterns. Those exemptions require review; the bounded
+pattern check does not establish that the repository contains no secrets.
 
 ## Pull requests
 

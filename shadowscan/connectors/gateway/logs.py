@@ -1425,6 +1425,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             # Validate before changing any caller counts, preserving atomic
             # accumulation when individually finite costs overflow in aggregate.
             raise ValueError("gateway cost total exceeds finite numeric range")
+        # A valid offset-bearing ISO date can still fall outside datetime's
+        # range when converted to UTC. Check both ends before retaining any
+        # caller state; otherwise a rejected record poisons first/last seen
+        # and can suppress this caller's valid neighboring observations.
+        for moment in (ev.timestamp, ev.interval_end):
+            if moment is not None:
+                moment.astimezone(UTC)
         if c is None:
             c = callers[identity] = _Caller(ev.caller, ev.caller_kind, ev.caller_label, scope=dict(ev.scope))
         c.scope_redacted = c.scope_redacted or ev.scope_redacted

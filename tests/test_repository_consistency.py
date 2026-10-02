@@ -14,7 +14,11 @@ the HTTP read deadline match the shipped code. Run both modules with
 from __future__ import annotations
 
 import functools
+import os
 import re
+import shutil
+import subprocess
+import textwrap
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
@@ -353,6 +357,103 @@ def test_makefile_lint_and_typecheck_paths_match_ci() -> None:
     ci_ruff = {arg for arg in _first_tool_arguments(ci, "ruff") if arg != "check"}
     make_ruff = {arg for arg in _first_tool_arguments(makefile, "ruff") if arg != "check"}
     assert make_ruff == ci_ruff, "make lint drifted from CI"
+
+
+def test_secret_pattern_check_is_a_required_local_and_ci_gate() -> None:
+    command = "python tools/check_secrets.py --tracked"
+    ci = _load_yaml(GITHUB / "workflows" / "ci.yml")
+    for name in ("test", "test-macos"):
+        steps = ci["jobs"][name]["steps"]
+        assert any(step.get("run") == command for step in steps), f"{name} omits the secret pattern check"
+    makefile = _read(ROOT / "Makefile")
+    check = next(line for line in makefile.splitlines() if line.startswith("check:"))
+    assert "secrets" in check.split("##", 1)[0].split()
+    assert command in makefile
+
+
+@pytest.mark.parametrize("target", ["wheel-validate", "coverage-gate"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_make_validation_uses_private_temporary_paths_and_always_cleans_up(
+    tmp_path: Path, target: str, fails: bool
+) -> None:
+    """Execute the actual recipe while stubbing costly package/coverage tools."""
+    make = shutil.which("make")
+    assert make is not None
+    source = tmp_path / "checkout"
+    source.mkdir()
+    shutil.copyfile(ROOT / "Makefile", source / "Makefile")
+    (source / "dist").mkdir()
+    (source / "dist/project_nexus_shadowscan-0.1.1-py3-none-any.whl").touch()
+    scratch = tmp_path / "temporary files"
+    scratch.mkdir()
+    # Another run's directory must remain untouched, even when validation fails.
+    previous = scratch / "shadowscan-wheel-test"
+    previous.mkdir()
+    sentinel = previous / "retain"
+    sentinel.write_text("another developer's environment", encoding="utf-8")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    shim = binary / "python"
+    shim.write_text(
+        textwrap.dedent("""\
+            #!/bin/bash
+            set -euo pipefail
+            if [ "${1:-}" = -m ] && [ "${2:-}" = venv ]; then
+                printf '%s\\n' "$3" >> "$TOOL_LOG"
+                mkdir -p "$3/bin"
+                cp "$0" "$3/bin/python"
+                cp "$0" "$3/bin/shadowscan"
+            elif [ "${2:-}" = coverage ]; then
+                printf '%s\\n' "$5" >> "$TOOL_LOG"
+                printf '{}\\n' > "$5"
+            fi
+            if [ "${2:-}" = "$FAIL_MODULE" ]; then exit 9; fi
+            """),
+        encoding="utf-8",
+    )
+    shim.chmod(0o700)
+    log = tmp_path / "tool.log"
+    module = "shadowscan.signatures.validate" if target == "wheel-validate" else "tools.coverage_gate"
+    result = subprocess.run(
+        [make, "--no-print-directory", "-o", "build", target],
+        cwd=source,
+        env={
+            **os.environ,
+            "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+            "TMPDIR": str(scratch),
+            "TOOL_LOG": str(log),
+            "FAIL_MODULE": module if fails else "never",
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert (result.returncode != 0) is fails, result.stdout + result.stderr
+    paths = [Path(path) for path in log.read_text(encoding="utf-8").splitlines()]
+    assert len(paths) == 1
+    assert paths[0].parent == scratch
+    assert paths[0] != previous
+    assert not paths[0].exists(), "temporary validation artifacts survive completion"
+    assert sentinel.read_text(encoding="utf-8") == "another developer's environment"
+
+
+def test_make_wheel_validation_rejects_stale_multiple_wheels(tmp_path: Path) -> None:
+    make = shutil.which("make")
+    assert make is not None
+    shutil.copyfile(ROOT / "Makefile", tmp_path / "Makefile")
+    wheels = tmp_path / "dist"
+    wheels.mkdir()
+    for version in ("0.1.0", "0.1.1"):
+        (wheels / f"project_nexus_shadowscan-{version}-py3-none-any.whl").touch()
+    result = subprocess.run(
+        [make, "--no-print-directory", "-o", "build", "wheel-validate"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert "requires exactly one scanner wheel" in result.stderr
 
 
 def test_makefile_evaluates_the_same_corpora_as_ci() -> None:

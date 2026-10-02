@@ -52,6 +52,23 @@ def slack(index, monkeypatch, responses, **config):
     return connector, calls
 
 
+def test_slack_live_team_and_logs_keep_collected_record_kinds(index, monkeypatch):
+    connector, _ = slack(
+        index,
+        monkeypatch,
+        {
+            "/team.info": {"ok": True, "team": {"id": "T1", "name": "Example", "_kind": "bot_user"}},
+            "/team.integrationLogs": {
+                "ok": True,
+                "logs": [{"app_id": "A1", "app_type": "app", "app_name": "Claude", "_kind": "team"}],
+                "paging": {"pages": 1},
+            },
+        },
+    )
+    records = list(connector.collect())
+    assert [record["_kind"] for record in records] == ["team", "integration_log"]
+
+
 @pytest.mark.parametrize(
     "path",
     [

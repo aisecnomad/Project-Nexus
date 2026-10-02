@@ -56,6 +56,8 @@ jobs:
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
       - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+      - name: Check tracked source files for hardcoded secret patterns
+        run: python tools/check_secrets.py --tracked
       - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
         run: |
@@ -109,6 +111,8 @@ jobs:
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
       - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+      - name: Check tracked source files for hardcoded secret patterns
+        run: python tools/check_secrets.py --tracked
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off

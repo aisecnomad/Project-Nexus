@@ -259,7 +259,7 @@ class OciConnector(BaseConnector):
         }
         yield from self._iter_policies(identity, compartments)
         for dg in self._all(identity.list_dynamic_groups, self.tenancy):
-            yield {"_kind": "dynamic-group", **self._d(dg)}
+            yield {**self._d(dg), "_kind": "dynamic-group"}
         for region in regions:
             for comp in compartments:
                 yield from self._collect_region_comp(region, comp)
@@ -313,33 +313,33 @@ class OciConnector(BaseConnector):
                 rec["_tools"] = []
             yield rec
         for e in self._all(agents.list_agent_endpoints, compartment_id=comp):
-            yield {"_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp, **self._d(e)}
+            yield {**self._d(e), "_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp}
         for kb in self._all(agents.list_knowledge_bases, compartment_id=comp):
-            yield {"_kind": "genai-knowledge-base", "_region": region, "_compartment": comp, **self._d(kb)}
+            yield {**self._d(kb), "_kind": "genai-knowledge-base", "_region": region, "_compartment": comp}
 
     def _collect_genai(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         genai = self._client(oci.generative_ai.GenerativeAiClient, region)
         for ep in self._all(genai.list_endpoints, comp):
-            yield {"_kind": "genai-endpoint", "_region": region, "_compartment": comp, **self._d(ep)}
+            yield {**self._d(ep), "_kind": "genai-endpoint", "_region": region, "_compartment": comp}
         for cl in self._all(genai.list_dedicated_ai_clusters, comp):
-            yield {"_kind": "genai-cluster", "_region": region, "_compartment": comp, **self._d(cl)}
+            yield {**self._d(cl), "_kind": "genai-cluster", "_region": region, "_compartment": comp}
         for m in self._all(genai.list_models, comp):
             d = self._d(m)
             # Custom (fine-tuned) models are type CUSTOM and reference a base model;
             # FINE_TUNE is a capability that *base* models advertise, and OCI custom
             # models are built on the same vendors as the base catalogue.
             if d.get("type") == "CUSTOM" or d.get("base_model_id"):
-                yield {"_kind": "genai-custom-model", "_region": region, "_compartment": comp, **d}
+                yield {**d, "_kind": "genai-custom-model", "_region": region, "_compartment": comp}
 
     def _collect_oda(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         oda = self._client(oci.oda.OdaClient, region)
         for inst in self._all(oda.list_oda_instances, comp):
-            yield {"_kind": "oda-instance", "_region": region, "_compartment": comp, **self._d(inst)}
+            yield {**self._d(inst), "_kind": "oda-instance", "_region": region, "_compartment": comp}
 
     def _collect_model_deployments(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         ds = self._client(oci.data_science.DataScienceClient, region)
         for md in self._all(ds.list_model_deployments, comp):
-            yield {"_kind": "model-deployment", "_region": region, "_compartment": comp, **self._d(md)}
+            yield {**self._d(md), "_kind": "model-deployment", "_region": region, "_compartment": comp}
 
     def _collect_function_apps(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         fn = self._client(oci.functions.FunctionsManagementClient, region)
@@ -364,7 +364,7 @@ class OciConnector(BaseConnector):
                     }
                 )
             d["_containers"] = containers
-            yield {"_kind": "container-instance", "_region": region, "_compartment": comp, **d}
+            yield {**d, "_kind": "container-instance", "_region": region, "_compartment": comp}
 
     def _collect_secret_names(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         vaults = self._client(oci.vault.VaultsClient, region)
