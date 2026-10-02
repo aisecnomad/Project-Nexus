@@ -41,12 +41,19 @@ def test_bound_calls_beyond_the_limit_stop_the_binder(index):
         _matches(index, within + "OpenAI();\n")
 
 
-def test_a_call_without_balanced_arguments_is_not_evidence(index):
+def test_call_text_limit_is_an_explicit_coverage_gap(index, tmp_path, run_connector):
     request = "OpenAI.chat.completions.create({ tools: [lookup] "
     balanced = _matches(index, IMPORT + request + "})\n")
-    unbalanced = _matches(index, IMPORT + request + "x" * MAX_CALL_TEXT + "\n})\n")
     assert ("provider.openai", "code", 2) in balanced  # a request offering tools
-    assert unbalanced and all(line == 1 for _, _, line in unbalanced)
+    over_limit = IMPORT + request + "x" * MAX_CALL_TEXT + "\n})\n"
+    # An uninspected call is a coverage gap, not proof of absent tool usage.
+    # The binder signals its budget failure and the connector fails closed.
+    with pytest.raises(SourceBudgetExceeded, match="source binding call text limit exceeded"):
+        _matches(index, over_limit)
+    (tmp_path / "app.js").write_text(over_limit)
+    _, context = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert context.stats.incomplete
+    assert any("source binding call text limit exceeded" in error for error in context.stats.errors)
 
 
 def test_declarations_in_comments_bind_nothing(index):
