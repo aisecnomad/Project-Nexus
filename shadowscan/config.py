@@ -338,8 +338,10 @@ class ConnectorSpec:
         )
 
 
-# Locations of credential files are withheld from representations too.
-_CREDENTIAL_FILE_KEYS = frozenset({"service_account_file", "credentials_file", "token_file"})
+# Locations of credential files are withheld from representations too, as are
+# keys whose values are credentials whatever their shape: identity.jwt `tokens`
+# can hold opaque or malformed tokens that no value pattern recognizes.
+_WITHHELD_KEYS = frozenset({"service_account_file", "credentials_file", "token_file", "tokens"})
 
 
 def _redacted_config(config: Any) -> Any:
@@ -350,7 +352,7 @@ def _redacted_config(config: Any) -> Any:
         shown = sanitize(dict(config), redact_short_secrets=True)
     except Exception:  # noqa: BLE001 - a representation must not fail or fall back to raw values
         return dict.fromkeys(config, REDACTED)
-    return {key: REDACTED if key in _CREDENTIAL_FILE_KEYS else value for key, value in shown.items()}
+    return {key: REDACTED if key in _WITHHELD_KEYS else value for key, value in shown.items()}
 
 
 @dataclass(slots=True)

@@ -447,6 +447,8 @@ def test_config_representations_never_show_connector_credentials(tmp_path):
         "password": "opaque-password-value-4",
         "service_account_file": "/secure/keys/opaque-account-file-5.json",
         "credentials_file": "/secure/keys/opaque-credentials-file-6.json",
+        # identity.jwt tokens that are not well-formed JWTs match no value pattern.
+        "tokens": ["opaque-session-token-7"],
     }
     spec = config_module.ConnectorSpec("acme.plugin", config={**secrets, "org": "acme-org"})
     config = ScanConfig(connectors=[spec], plugins=["acme.plugin"])
@@ -458,7 +460,7 @@ def test_config_representations_never_show_connector_credentials(tmp_path):
     )
     loaded = ScanConfig.from_yaml(path)
     for shown in (repr(config), str(config), repr(spec), f"{config!s}", repr(loaded), str(loaded.connectors)):
-        assert not any(value in shown for value in secrets.values()), shown
+        assert not any(str(value).strip("[]'") in shown for value in secrets.values()), shown
         assert "opaque" not in shown
         assert "acme-org" in shown and "[REDACTED]" in shown
     assert all(f"'{key}'" in repr(spec) for key in secrets)
