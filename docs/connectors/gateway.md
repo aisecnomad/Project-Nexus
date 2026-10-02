@@ -41,10 +41,12 @@ truncated inside the user agent) or a repeated key makes the line malformed
 quotes lets a client write the same text through its user agent. When such a
 token names an LLM host and would have made a request LLM traffic, the request
 is not counted and a warning makes the scan incomplete; log the host as an
-unquoted token after the last quoted field to attribute that traffic. A known
-inference path (`/v1/chat/completions`, `:generateContent`, ...) is never
-excluded as a static asset or probe, and `;name=value` path parameters are
-removed before the static-asset test.
+unquoted token after the last quoted field to attribute that traffic.
+`;name=value` path parameters are removed before the static-asset and probe
+test, and an inference operation with a static suffix
+(`/v1/chat/completions.css`, which a suffix-matching router serves as the
+endpoint) is not a static asset. Static files under an inference-like prefix
+(`/agents/app.js`, `/v1/images/logo.png`) still are.
 
 Directory inputs read files with a supported suffix (`.json`, `.jsonl`,
 `.ndjson`, `.csv`, `.log`, `.txt`, `.gz`). Other files, such as rotated logs

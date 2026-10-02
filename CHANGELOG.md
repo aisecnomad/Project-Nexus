@@ -50,9 +50,12 @@ integrating them:
   A host token in or before a quoted trailer field, which a client can write
   when the gateway does not escape quotes, is still not trusted; when it alone
   would have made a request LLM traffic the scan is now incomplete with a
-  warning, where such requests used to be skipped with exit 0. Known inference
-  paths are no longer excluded as static assets (`/v1/chat/completions.css`),
-  and `;name=value` path parameters are removed before the static-asset test.
+  warning, where such requests used to be skipped with exit 0. An inference
+  operation with a static suffix (`/v1/chat/completions.css`, which a
+  suffix-matching router serves as the endpoint) is no longer excluded as a
+  static asset, while static files under inference-like prefixes
+  (`/agents/app.js`, `/v1/images/logo.png`) still are, and `;name=value` path
+  parameters are removed before the static-asset test.
 - `framework.vercel-ai-sdk`: the `stopWhen:` and `tools: { … tool(` code
   patterns were quadratic on planted input. A 30 KB file with `stopWhen:`
   followed by blanks timed out signature matching, so the file's evidence was

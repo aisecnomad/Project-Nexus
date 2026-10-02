@@ -520,6 +520,31 @@ def test_path_parameters_and_format_suffixes_cannot_hide_inference(tmp_path, run
     ]
 
 
+def test_static_files_under_inference_like_prefixes_stay_static(tmp_path, run_connector):
+    # Only an inference operation itself may carry a static suffix. A web page's
+    # assets under /agents/ or an image API's files are not LLM traffic.
+    line = (
+        '10.9.9.9 - - [10/Oct/2025:03:00:0{n} +0000] "GET {path} HTTP/1.1" 200 512 "-" "Mozilla/5.0"'
+        " host=www.example.com"
+    )
+    paths = [
+        "/agents/app.js",
+        "/agent/logo.svg",
+        "/v1/images/logo.png",
+        "/v1/files/site.css",
+        "/api/chat/widget.js",
+        "/mcp/icon.ico",
+    ]
+    path = tmp_path / "access.log"
+    path.write_text("\n".join(line.format(n=n, path=p) for n, p in enumerate(paths)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert findings == []
+    assert not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: requests for static assets or health probes not counted as LLM traffic: 6"
+    ]
+
+
 def test_logfmt_tokens_inside_a_value_or_quoted_text_are_not_fields(tmp_path, run_connector):
     # A client-controlled query string or request line logged as one token
     # must not set the model, key or host of the record.

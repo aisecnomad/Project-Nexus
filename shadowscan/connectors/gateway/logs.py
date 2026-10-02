@@ -351,6 +351,17 @@ _STATIC_OR_PROBE_PATH = re.compile(
     re.I,
 )
 _PATH_PARAMETERS = re.compile(r";[^/]*+")
+# An inference operation that a suffix-matching router also serves with a static
+# suffix (/v1/chat/completions.css) is not a static asset. Only the operation
+# itself is exempt: files under an agent-like prefix (/agents/app.js,
+# /v1/images/logo.png) are still a web page's or an image API's static assets.
+_SUFFIXED_INFERENCE_OPERATION = re.compile(
+    r"(?:/v1/(?:chat/completions|completions|responses|messages|embeddings)"
+    r"|[:/](?:generateContent|streamGenerateContent)|/invoke(?:-with-response-stream)?|/converse(?:-stream)?"
+    r"|/api/(?:chat|generate))"
+    r"\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)$",
+    re.I,
+)
 # Access-log trailer keys that name the requested host, and the host a value starts with.
 _TRAILER_HOST_KEYS = frozenset({"host", "authority", "upstream_host", "server_name"})
 _HOST_VALUE = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -396,12 +407,16 @@ def _has_unparsed_timestamp(rec: dict[str, Any]) -> bool:
 def _is_static_or_probe(path: str | None) -> bool:
     """Whether the routed request path names a static asset or probe.
 
-    The query string, fragment and ``;name=value`` path parameters are removed first.
+    The query string, fragment and ``;name=value`` path parameters are removed
+    first, and a known inference operation with a static suffix is not static.
     """
     if not path:
         return False
     request_path = _PATH_PARAMETERS.sub("", path.partition("?")[0].partition("#")[0])
-    return _STATIC_OR_PROBE_PATH.search(request_path) is not None
+    return (
+        _STATIC_OR_PROBE_PATH.search(request_path) is not None
+        and _SUFFIXED_INFERENCE_OPERATION.search(request_path) is None
+    )
 
 
 def _logfmt_pairs(line: str) -> dict[str, str]:
@@ -1550,9 +1565,12 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         return "operator-asserted" if schema in {"generic", "access-log"} else "provider-authenticated-field"
 
     def _is_llm_traffic(self, ev: Event) -> bool:
+        # Static assets and probes are excluded first, except an inference
+        # operation with a static suffix, which a suffix-matching router serves
+        # as the endpoint (_is_static_or_probe).
+        if _is_static_or_probe(ev.path):
+            return False
         text = " ".join(x for x in (ev.host, ev.path) if x)
-        # A known inference endpoint is never a static asset or probe: a
-        # suffix-matching router serves /v1/chat/completions.css as the endpoint.
         if ev.path and re.search(
             r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads"
             r"|runs|audio|images|files|batches|realtime)"
@@ -1564,8 +1582,6 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             text,
         ):
             return True
-        if _is_static_or_probe(ev.path):
-            return False
         if ev.schema == "access-log" and ev.path:
             # A known provider/agent host identifies inference traffic even
             # when the operation is not an enumerated endpoint; static assets
