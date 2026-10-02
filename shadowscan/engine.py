@@ -144,6 +144,23 @@ class _ConnectorRunner:
         state.deadline = time.monotonic() + timeout
         try:
             return self._run_job(number, spec, state)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - e.g. sys.exit() while importing a plugin
+            # The supervisor re-raises a worker's exception in the main
+            # thread, so a SystemExit here would end the scan without a report.
+            message = f"{spec.name}: connector worker failed ({type(exc).__name__})"
+            log.warning("connector failed; diagnostic recorded in incomplete scan stats")
+            stats = ScanStats(
+                connector=spec.id,
+                started_at=state.started_at or now_iso(),
+                finished_at=now_iso(),
+                incomplete=True,
+                skipped=True,
+                skip_reason=message,
+                errors=[message],
+            )
+            return spec, [], stats
         finally:
             # Include sanitization, cache writes and callbacks in the
             # measured runtime, even if completion precedes the next poll.
@@ -277,7 +294,10 @@ class _ConnectorRunner:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
                 return spec, fs, st
-        except Exception as exc:  # noqa: BLE001 - isolate construction as well as collection failures
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - isolate construction and collection failures,
+            # including a plugin's sys.exit(), which must not end the scan as a clean pass.
             message = ctx.sanitize_message(f"{spec.name}: {type(exc).__name__}: {exc}")
             st = ctx.stats or ScanStats(connector=spec.id, started_at=started_at)
             st.connector = spec.id
