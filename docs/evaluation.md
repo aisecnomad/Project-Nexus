@@ -60,10 +60,10 @@ python -m tools.evaluation.benchmark --files 1000 --runs 3 \
 Use distinct output filenames: reports are created as private mode `0600` files
 and will not overwrite existing ones. Exit 0 means all labels and structural
 assertions passed, or that every failing case carries `known_gap: true` within
-the corpus's valid waiver budget; exit 1 means at least one unwaived regression,
-an over-budget or expired waiver, or a stale waiver whose case now passes; exit
-2 means an invalid corpus, incomplete scan, nondeterministic observations, or
-output error. A corpus containing a `known_gap` must declare
+the corpus's valid waiver budget; exit 1 means at least one unwaived regression
+or a stale waiver whose case now passes; exit 2 means an invalid corpus
+(including a missing, expired or over-budget known-gap policy), incomplete
+scan, nondeterministic observations, or output error. A corpus containing a `known_gap` must declare
 `known_gap_policy.max_count` and `known_gap_policy.expires_on`. The evaluator
 rejects a missing or expired policy and fails when the number of flags exceeds
 the cap. A `known_gap` case is a temporary, documented miss or false positive.

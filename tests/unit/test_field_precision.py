@@ -9,7 +9,7 @@ loops written with streaming, raw-response or helper calls.
 
 from __future__ import annotations
 
-import glob
+from pathlib import Path
 
 import pytest
 import yaml
@@ -122,12 +122,19 @@ def test_supporting_tools_alone_are_not_titled_as_an_llm_sdk(tmp_path, index):
     assert project.title.startswith("AI tooling in repository root: Web search")
 
 
+SIGNATURE_DATA = Path(__file__).resolve().parents[2] / "shadowscan" / "signatures" / "data"
+
+
 def test_every_ambiguous_signal_can_be_corroborated():
-    for path in glob.glob("shadowscan/signatures/data/**/*.yaml", recursive=True):
+    # Anchored to this file: a path relative to the working directory found no pack
+    # outside the repository root, and the test then passed without checking one.
+    packs = sorted(path for suffix in ("*.yaml", "*.yml") for path in SIGNATURE_DATA.rglob(suffix))
+    assert packs
+    for path in packs:
         with open(path, encoding="utf-8") as handle:
             documents = (yaml.safe_load(handle) or {}).get("signatures", [])
         for data in documents:
-            signature = signature_from_dict(data, path)
+            signature = signature_from_dict(data, str(path))
             if any(signal.ambiguous for signal in signature.signals):
                 assert any(
                     signal.type in {"import", "dependency"} or signal.type == "code" and not signal.ambiguous

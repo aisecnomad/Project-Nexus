@@ -38,9 +38,16 @@ FROM chainguard/wolfi-base:latest@sha256:824f77df45397eb954dfb963db255907ee8842e
 # image digest fixes the package set the build starts from; apk still reads the
 # live Wolfi repository and checks its signatures against the keys in the base
 # image, so the image is not byte-for-byte reproducible from this file alone.
+#
+# Temporary exception: python-3.12 3.12.15-r1, published on 2026-10-02, has no
+# SHA-224 or SHA3-224 (no builtin _sha2 module, and its OpenSSL refuses both),
+# while pip uses SHA-224 for its cache keys, so every pip install fails on it.
+# Both stages stay on 3.12.15-r0, the last revision that built this image (the
+# runtime copies a virtual environment bound to its interpreter). Drop both pins
+# once a newer revision passes `python3.12 -c "import hashlib; hashlib.sha224"`.
 # hadolint ignore=DL3018
 RUN apk upgrade --no-cache \
-    && apk add --no-cache python-3.12 py3.12-pip
+    && apk add --no-cache python-3.12=3.12.15-r0 python-3.12-base=3.12.15-r0 py3.12-pip
 
 WORKDIR /opt/shadowscan
 COPY pyproject.toml requirements.lock requirements-build.lock README.md LICENSE NOTICE /opt/shadowscan/
@@ -50,16 +57,20 @@ COPY shadowscan /opt/shadowscan/shadowscan
 # copies; pip itself stays in this stage. Do not `pip install --upgrade pip`
 # from a floating index; Wolfi's pip installs both locks under
 # --require-hashes. requirements-build.lock pins the [build-system] backend
-# declared in pyproject.toml, and --no-build-isolation then builds the package
-# with that backend instead of letting pip download one from the live index on
-# a version pin alone.
+# declared in pyproject.toml. It goes into a separate build environment that
+# builds the wheel with --no-build-isolation, instead of letting pip download a
+# backend from the live index on a version pin alone, and is never copied: the
+# runtime environment holds only the runtime lock and the built wheel.
 RUN python3.12 -m venv --without-pip /opt/venv \
+    && python3.12 -m venv --without-pip /opt/build \
     && python3.12 -m pip --python /opt/venv/bin/python install --no-cache-dir --require-hashes \
         --only-binary=:all: -r requirements.lock \
-    && python3.12 -m pip --python /opt/venv/bin/python install --no-cache-dir --require-hashes \
+    && python3.12 -m pip --python /opt/build/bin/python install --no-cache-dir --require-hashes \
         --only-binary=:all: -r requirements-build.lock \
+    && python3.12 -m pip --python /opt/build/bin/python wheel --no-cache-dir --no-deps \
+        --no-build-isolation --wheel-dir /opt/wheel /opt/shadowscan \
     && python3.12 -m pip --python /opt/venv/bin/python install --no-cache-dir --no-deps \
-        --no-build-isolation /opt/shadowscan \
+        /opt/wheel/project_nexus_shadowscan-*.whl \
     && python3.12 -m pip --python /opt/venv/bin/python check
 
 FROM chainguard/wolfi-base:latest@sha256:824f77df45397eb954dfb963db255907ee8842e3446353ce93d688e5e862f51d
@@ -72,9 +83,10 @@ LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nex
 # and the build tools stay in the build stage. The worker never needs to gain
 # privileges, so no file keeps a setuid or setgid bit; the build fails if one
 # remains. The base image provides the nonroot account (65532).
+# python-3.12 is pinned with the build stage (see there).
 # hadolint ignore=DL3018
 RUN apk upgrade --no-cache \
-    && apk add --no-cache python-3.12 git \
+    && apk add --no-cache python-3.12=3.12.15-r0 python-3.12-base=3.12.15-r0 git \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
     && test -z "$(find / -xdev -type f -perm /6000 -print -quit)" \
     && mkdir -p /work /output \

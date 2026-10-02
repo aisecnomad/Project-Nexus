@@ -8,6 +8,8 @@ repos:
       # Fixtures reproduce foreign files byte for byte and the retained licence
       # texts are digest-bound to their upstream copies; never rewrite them.
       - id: trailing-whitespace
+        # Two trailing spaces are a Markdown line break (.editorconfig keeps them).
+        args: [--markdown-linebreak-ext=md]
         exclude: ^(tests/fixtures/|tools/evaluation/independent_licenses/)
       - id: end-of-file-fixer
         exclude: ^(tests/fixtures/|tools/evaluation/independent_licenses/)
@@ -21,17 +23,25 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=500]
       - id: detect-private-key
-        # Synthetic PEM markers exercise the redaction tests.
-        exclude: ^tests/unit/test_redaction_security\.py$
+        # The redaction rules and their tests name PEM, PGP and PuTTY key markers
+        # around synthetic placeholders; none of these files holds key material.
+        exclude: |
+          (?x)^(
+            shadowscan/utils/redaction_formats\.py|
+            tests/unit/test_(redaction_security|redaction_cli_and_formats|redaction_pass_order|redaction_performance|regex_linearity)\.py
+          )$
       - id: no-commit-to-branch
         args: [--branch=main]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: a56c0b927e6465d37cae3e97d35d4d18ab2b96cd # v0.16.9
     hooks:
-      - id: ruff
+      # CI lints and formats Python only; the format hook would also rewrite
+      # Python blocks in Markdown.
+      - id: ruff-check
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
+        types_or: [python, pyi]
 
   # Keep the ruff and mypy version comments equal to the pins in
   # requirements-ci-constraints.txt so the hooks run the same versions as CI.

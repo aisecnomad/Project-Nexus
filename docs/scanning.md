@@ -584,8 +584,8 @@ entries cause a full rescan.
 | CLI exit | Meaning |
 |---|---|
 | `0` | Scan completed and the configured risk threshold was not reached. |
-| `1` | Setup or configuration error (invalid config, missing inventory or signature path, unwritable report); no scan result. |
-| `2` | Completed scan reached `--fail-on` (Click also uses 2 for invocation errors). |
+| `1` | Usage, setup or configuration error (unknown option or command, invalid config, missing inventory or signature path, unwritable report); no scan result. |
+| `2` | Completed scan reached `--fail-on`. |
 | `3` | Collection or analysis was incomplete, including empty or partly invalid connector selection. |
 
 An incomplete scan that also reaches `--fail-on` exits 3. In CI, fail on any

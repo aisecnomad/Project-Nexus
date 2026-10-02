@@ -11,7 +11,7 @@ that provisions agent resources.
     an export file. For code connectors `--dump-records` records repository
     listings and scan roots only, so those records are not replayable.
 
-### `code.filesystem`
+## `code.filesystem`
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
 package, …); each root yields one
@@ -265,7 +265,7 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
-### `code.github`
+## `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
@@ -312,7 +312,7 @@ connector uses sampled API mode and the scan is incomplete. (The gitlink
 inventory of a clone needs Git 2.45; with 2.32 to 2.44 a clone is scanned but
 reports that submodule coverage is unknown.)
 
-### `code.gitlab`
+## `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
 clone or API mode; also CI/CD variable names (masked flag), group service
 accounts, group/project access tokens, project bots and GitLab Duo enablement.

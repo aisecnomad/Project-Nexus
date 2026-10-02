@@ -5,14 +5,13 @@ from __future__ import annotations
 import gzip
 import json
 import time
-from unittest.mock import Mock
 
 import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.gateway.logs import GatewayLogConnector, parse_text_line
-from shadowscan.connectors.lowcode import automation, servicenow
+from shadowscan.connectors.lowcode import automation
 from shadowscan.models import ScanStats
 
 # ------------------------------------------------- access-log host spoofing
@@ -432,14 +431,3 @@ def test_zapier_row_with_data_but_no_zap_identity_is_still_incomplete(run_connec
     assert ctx.stats.incomplete
     # One aggregated diagnostic names the records without a zap name or id.
     assert len(ctx.stats.warnings) == 1 and "zap name or id" in ctx.stats.warnings[0]
-
-
-# ------------------------------------------------------------- ServiceNow
-
-
-def _snow(index, responses):
-    connector = servicenow.ServiceNowConnector(ConnectorContext(index=index, config={}))
-    connector._auth = Mock()
-    connector.http = Mock()
-    connector.http.get_json.side_effect = responses
-    return connector

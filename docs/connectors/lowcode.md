@@ -8,7 +8,7 @@ and workflow automation tools.
     All low-code connectors support both live API collection and offline
     export analysis.
 
-### `lowcode.power-platform`
+## `lowcode.power-platform`
 BAP admin API (environments), Power Automate admin flows, Power Apps admin
 apps (AI connector references: `shared_openai`, `shared_azureopenai`,
 `shared_aibuilder`, `shared_microsoftcopilotstudio`…), Dataverse `bots` +
@@ -22,14 +22,14 @@ incomplete while retaining findings from other environments. Before relying on
 live coverage, verify the application's Power Platform roles and known apps
 in a read-only tenant canary.
 
-### `lowcode.salesforce`
+## `lowcode.salesforce`
 SOQL/Tooling: `BotDefinition`/`BotVersion` (Einstein bots & Agentforce
 agents), `GenAiPlannerDefinition`/`GenAiPluginDefinition`/`GenAiFunctionDefinition`
 (topics, actions, Apex/Flow targets), `GenAiPromptTemplate`, `FlowDefinitionView`
 with AI hints, `ConnectedApplication` + `OauthToken` (user-authorised apps,
 aggregated). Auth: `access_token` or client-credentials connected app.
 
-### `lowcode.servicenow`
+## `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
 `sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer. Live
 collection reads each table in windows of 500 rows (`sysparm_offset` 0, 500,
@@ -41,7 +41,7 @@ cannot prove where the table ends: an empty page then ends the table with a
 warning and the scan is incomplete. `max_pages` bounds each table, and reaching
 it is incomplete.
 
-### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
+## `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
 GenAI/agentic providers); triggers (schedule/webhook → autonomous), code

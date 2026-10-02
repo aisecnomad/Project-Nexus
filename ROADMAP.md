@@ -16,8 +16,8 @@ fail-closed trust model.
   Completing the packet is not a release approval.
 - Grow the first-contribution surface: documentation, signatures, offline
   fixtures, evaluation cases.
-- Recruit an independent reviewer who can satisfy the active non-author
-  approval rule and review the exact release candidate.
+- Recruit an independent reviewer who can satisfy the non-author approval rule
+  and review the exact release candidate.
 - Complete fresh human-labeled holdout and scope-specific live tenant
   acceptance; retain the evidence before enabling enforcement.
 - Require the aggregate `CI gate` in the live branch rules and exercise the

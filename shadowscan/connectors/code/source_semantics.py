@@ -46,6 +46,7 @@ from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
 from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.text import line_counter
 
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
@@ -958,11 +959,12 @@ def _javascript_bindings(
             imports.append((bindings[name], line))
 
     rx = regex.compile(r"\bimport\s+(?!type\b)([^;]{1,2000}?)\s+from\s*(['\"])([^'\"\r\n]{1,240})\2")
+    line_at = line_counter(text)
     for match in rx.finditer(text, timeout=pattern_timeout(), concurrent=False):
         if excluded(match.start()):
             continue
         spec, module = match.group(1), match.group(3)
-        line = text.count("\n", 0, match.start()) + 1
+        line = line_at(match.start())
         declaration_spans.append(match.span())
         namespace = re.search(r"\*\s+as\s+([\w$]+)", spec)
         if namespace:
@@ -981,11 +983,12 @@ def _javascript_bindings(
         r"\b(?:const|let|var)\s+([\w$]+|\{[^}\r\n]{1,1000}\})\s*=\s*"
         r"require\s*\(\s*(['\"])([^'\"\r\n]{1,240})\2\s*\)"
     )
+    line_at = line_counter(text)
     for match in rx.finditer(text, timeout=pattern_timeout(), concurrent=False):
         if excluded(match.start()):
             continue
         spec, module = match.group(1), match.group(3)
-        line = text.count("\n", 0, match.start()) + 1
+        line = line_at(match.start())
         declaration_spans.append(match.span())
         if spec.startswith("{"):
             for item in spec[1:-1].split(","):
@@ -1184,6 +1187,7 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
         rf"(?<![\w$.])((?:{roots})(?:\s*\.\s*[A-Za-z_$][\w$]*)*)"
         rf"\s*(?:<[^;(){{}}]{{1,1000}}>)?\s*\("
     )
+    line_at = line_counter(text)
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
         binding = bindings.get(parts[0])
@@ -1205,7 +1209,7 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
             _Call(
                 _Binding(binding.module, symbol, binding.constructed),
                 text[opening:end],
-                text.count("\n", 0, match.start()) + 1,
+                line_at(match.start()),
                 masked[opening:end],
                 tool_factories=tool_factories,
                 start=match.start(),

@@ -14,7 +14,7 @@ All cloud connectors need the matching extra (`aws`, `gcp`, `azure` or `oci`)
 for live mode, or a JSONL record dump for offline mode. They use read-only
 list/describe/get calls only.
 
-### `cloud.aws`
+## `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
 guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
 browsers, code interpreters, workload identities), model invocation logging
@@ -84,7 +84,7 @@ external model paths (`AWS_DATA_PATH`, user SDK model directories) cannot replac
 service endpoint rules, including after role assumption. This does not replace
 worker egress controls or establish the trustworthiness of installed SDK packages.
 
-### `cloud.gcp`
+## `cloud.gcp`
 Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
 and endpoints per location, Dialogflow CX agents, Discovery Engine /
 Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
@@ -109,7 +109,7 @@ limits discovery without loading all projects first; `max_pages` (default and
 maximum 1000) bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.
 
-### `cloud.azure`
+## `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
 accounts + deployments + diagnostic settings, AI Foundry accounts/projects
 (+ agents via the project endpoint), hub-based ML workspaces, Bot Service,
@@ -141,7 +141,7 @@ require their own contract and are not implied by this support. Missing, denied
 or malformed collections remain incomplete; pagination must finish before
 absence can be inferred.
 
-### `cloud.oci`
+## `cloud.oci`
 Generative AI Agents (agents, endpoints, tools, knowledge bases), Digital
 Assistant, GenAI endpoints/clusters/custom models, Data Science model
 deployments, Functions, Container Instances, Vault secret names, IAM policies
@@ -157,7 +157,7 @@ SDK objects become records through `oci.util.to_dict`, or through the model's
 declared fields when the SDK cannot be imported; an object that cannot be
 converted is skipped with a warning and makes the scan incomplete.
 
-### Scaling
+## Scaling
 
 Cloud collection issues its detail calls one at a time: Lambda tags per
 function, SageMaker, Step Functions and OCI details per resource, GCP keys per
@@ -167,7 +167,7 @@ scans, and bound the work with scope options (`regions`, `locations`,
 `projects`, `subscriptions`, `compartments`, `services`) or split the estate
 into several connector entries.
 
-### Offline record kinds
+## Offline record kinds
 Offline exports are JSONL files with one record per line. Each record's `_kind`
 selects how it is analyzed; produce exports with `--dump-records` from a live
 run rather than writing records by hand.

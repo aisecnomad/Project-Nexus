@@ -10,7 +10,7 @@ import pytest
 
 from shadowscan.utils import text
 from shadowscan.utils.redaction import credential_id, sanitize
-from shadowscan.utils.text import BINARY_CONTENT_ERROR, parse_timestamp, read_text, redact
+from shadowscan.utils.text import BINARY_CONTENT_ERROR, line_counter, parse_timestamp, read_text, redact
 
 
 @pytest.mark.parametrize(
@@ -270,3 +270,29 @@ def test_compact_calendar_days_are_dates_not_epoch_seconds():
     assert parse_timestamp("20241399") is None  # an impossible day is no timestamp
     assert parse_timestamp("1704067200") == datetime(2024, 1, 1, tzinfo=UTC)
     assert parse_timestamp("12345678") == datetime.fromtimestamp(12345678, tz=UTC)
+
+
+class _CountingText(str):
+    """A string that records how many characters ``count`` scans."""
+
+    scanned = 0
+
+    def count(self, sub, start=None, end=None):
+        first = 0 if start is None else start
+        _CountingText.scanned += (len(self) if end is None else end) - first
+        return super().count(sub, start, end)
+
+
+def test_line_counter_scans_each_character_once_for_ordered_offsets():
+    # Counting from the start for every regex match was quadratic: a file with
+    # thousands of imports exhausted the match deadline and the scan went incomplete.
+    _CountingText.scanned = 0
+    text = _CountingText("import a from 'x';\n" * 2000)
+    line_at = line_counter(text)
+    assert [line_at(19 * i) for i in range(2000)] == list(range(1, 2001))
+    assert _CountingText.scanned <= len(text)
+
+
+def test_line_counter_recounts_an_earlier_offset():
+    line_at = line_counter("a\nb\nc\n")
+    assert [line_at(4), line_at(0), line_at(2), line_at(2), line_at(6)] == [3, 1, 2, 2, 4]

@@ -149,4 +149,7 @@ An approved entry lends its `owner` to the finding.
 | Low | 1–24 |
 | Info | 0 (also accepted by `--fail-on`) |
 
-Use `--fail-on` to gate CI pipelines on a minimum risk level.
+`--fail-on` turns a minimum risk level into exit code 2. The levels are
+heuristic labels, not CVSS severities: read
+[Severity is not an enforcement signal](../severity.md) before using one as a
+CI gate.

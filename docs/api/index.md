@@ -15,13 +15,13 @@ These pages are built from source docstrings using
 | [Risk](risk.md) | Risk scoring and policy |
 | [Merge](merge.md) | Finding deduplication and merge logic |
 | [Correlation](correlation.md) | Cross-surface finding correlation |
+| [Inventory registry](registry.md) | Sanctioned agent inventory and reconciliation |
 
 ## Connector Framework
 
 | Module | Description |
 |--------|-------------|
 | [Base connector](base.md) | ABC for all connectors |
-| [Registry](registry.md) | Inventory reconciliation |
 
 ## Utilities
 

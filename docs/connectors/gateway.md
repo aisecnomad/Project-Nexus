@@ -8,7 +8,7 @@ and specific framework user-agent strings.
     The gateway connector is inherently offline — it reads log files and
     exports from LLM proxies. It does not call any live API.
 
-### `gateway.logs`
+## `gateway.logs`
 Auto-detects the schema per record: `litellm`, `portkey`, `kong`, `cloudflare`,
 `helicone`, `langfuse`, `bedrock` (model invocation logs, CloudWatch export or
 S3), `azure-openai` (diagnostic `RequestResponse`/`Audit`), `vertex` (Cloud

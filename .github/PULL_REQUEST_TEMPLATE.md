@@ -20,6 +20,9 @@
 - [ ] `pytest -q --cov=shadowscan --cov-fail-under=80` passes
 - [ ] `make audit` (`pip-audit`) reports no known vulnerabilities
 - [ ] `python -m shadowscan.signatures.validate` passes
+- [ ] `make secrets` finds no hardcoded credentials
+- [ ] `make policy` passes (when `.github/`, a top-level document or a docs page changed)
+- [ ] Every commit carries a `Signed-off-by` trailer (`git commit -s`; see the DCO in `CONTRIBUTING.md`)
 - [ ] No raw credentials, JWTs, or unsanitized configuration in logs or reports
 - [ ] `CHANGELOG.md` updated under Unreleased (if user-facing)
 

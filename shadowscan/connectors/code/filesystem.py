@@ -65,7 +65,7 @@ from typing import Any, ClassVar
 import regex
 import yaml
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.code.catalogs import (
     CATALOG_MIN_SIGNATURES,
     catalog_metadata,
@@ -149,6 +149,7 @@ from shadowscan.utils.safe_yaml import (
     strict_bounded_safe_load,
 )
 from shadowscan.utils.text import (
+    line_counter,
     notebook_to_source,
     parse_timestamp,
     read_text,
@@ -1016,6 +1017,20 @@ def validate_root_ids(paths: Any, root_ids: Any) -> list[str]:
     return root_ids
 
 
+def _scan_timeout(value: Any) -> float:
+    """The per-file matching budget in seconds: above 0, at most 60, never a boolean."""
+    message = "code.filesystem: scan_timeout must be a number of seconds above 0 and at most 60"
+    if isinstance(value, bool):
+        raise ConnectorError(message)
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ConnectorError(message) from exc
+    if not 0 < seconds <= 60:  # also NaN
+        raise ConnectorError(message)
+    return seconds
+
+
 class FilesystemConnector(BaseConnector):
     @classmethod
     def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
@@ -1106,18 +1121,18 @@ class FilesystemConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext) -> None:
         super().__init__(ctx)
-        self.max_file_size = int(ctx.get("max_file_size", 1_000_000))
-        self.max_files = int(ctx.get("max_files", 100_000))
-        self.scan_timeout = float(ctx.get("scan_timeout", 2.0))
+        # Booleans and fractions are errors, not limits: `max_file_size: true` was a
+        # 1-byte limit that skipped every file and `max_files: 1.9` silently became 1.
+        self.max_file_size = _positive_limit(
+            ctx.get("max_file_size", 1_000_000), "code.filesystem: max_file_size"
+        )
+        self.max_files = _positive_limit(ctx.get("max_files", 100_000), "code.filesystem: max_files")
+        self.scan_timeout = _scan_timeout(ctx.get("scan_timeout", 2.0))
         # max_ast_nodes and max_notebook_size are validated below.
         self.max_ast_nodes: int | None = ctx.get("max_ast_nodes")
         self.max_notebook_size: int = ctx.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)
         if type(self.max_notebook_size) is not int or self.max_notebook_size < 1:
             raise ConnectorError("code.filesystem: max_notebook_size must be a positive integer")
-        if self.max_file_size < 1 or self.max_files < 1 or not 0 < self.scan_timeout <= 60:
-            raise ConnectorError(
-                "code.filesystem: limits must be positive; scan_timeout must be at most 60 seconds"
-            )
         if self.max_ast_nodes is not None and (
             type(self.max_ast_nodes) is not int or not 1_000 <= self.max_ast_nodes <= 2_000_000
         ):
@@ -2120,9 +2135,10 @@ class FilesystemConnector(BaseConnector):
                         wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
         if rel in scan.infra_files:
             scan.infra_project[rel] = file.proj_root
+            line_at = line_counter(text)
             for model in _IAC_MODEL_RE.finditer(text):
                 for mm in self.index.match_model(model.group(1)):
-                    mm.line = text.count("\n", 0, model.start()) + 1
+                    mm.line = line_at(model.start())
                     scan.infra_models.setdefault(rel, []).append(mm)
 
     def _scan_content(self, scan: _ScanState, file: _SourceFile) -> None:

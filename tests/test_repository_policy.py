@@ -419,23 +419,26 @@ def _dockerfile_instructions(text: str) -> list[tuple[str, str]]:
     return instructions
 
 
-# Options that may accompany an unhashed `pip install --no-deps` of local source.
+# Options that may accompany an unhashed `pip install --no-deps` or `pip wheel --no-deps` of
+# local source. A --wheel-dir argument is a path, so it must be local too.
 _LOCAL_INSTALL_OPTIONS = {
     "--no-deps",
     "--no-cache-dir",
     "--no-build-isolation",
     "--no-index",
+    "--wheel-dir",
     "-q",
     "--quiet",
 }
 
 
 def _pip_install_is_hash_checked(command: str) -> bool:
-    """`pip install` verifies hashes, or installs only local source without dependencies."""
+    """`pip install` or `pip wheel` verifies hashes, or uses only local source without dependencies."""
     tokens = command.split()
     if "--require-hashes" in tokens:
         return True
-    arguments = tokens[tokens.index("install") + 1 :]
+    subcommand = next(index for index, token in enumerate(tokens) if token in {"install", "wheel"})
+    arguments = tokens[subcommand + 1 :]
     options = [token for token in arguments if token.startswith("-")]
     paths = [token for token in arguments if not token.startswith("-")]
     return (
@@ -469,10 +472,9 @@ def _dockerfile_violations(text: str) -> list[str]:
             problems.append(f"ADD fetches a remote source: {arguments}")
         elif keyword == "RUN":
             for command in re.split(r"&&|\|\||;|\|", arguments):
-                if re.search(r"\bpip3?(?:\s+--python\s+\S+)?\s+install\b", command) and not (
-                    _pip_install_is_hash_checked(command)
-                ):
-                    problems.append(f"pip install without --require-hashes: {command.strip()}")
+                pip = re.search(r"\bpip3?(?:\s+--python\s+\S+)?\s+(install|wheel)\b", command)
+                if pip and not _pip_install_is_hash_checked(command):
+                    problems.append(f"pip {pip.group(1)} without --require-hashes: {command.strip()}")
     if user is None or user in {"root", "0"}:
         problems.append(f"the final stage runs as {user or 'root (no USER)'}; end with a non-root USER")
     return problems
@@ -786,9 +788,18 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         ),
         pytest.param(
             "Dockerfile",
-            _replace("--no-build-isolation /opt/shadowscan", "--no-build-isolation /opt/shadowscan requests"),
+            _replace(
+                "/opt/wheel/project_nexus_shadowscan-*.whl",
+                "/opt/wheel/project_nexus_shadowscan-*.whl requests",
+            ),
             "pip install without --require-hashes",
             id="unhashed-no-deps-package",
+        ),
+        pytest.param(
+            "Dockerfile",
+            _replace("wheel --no-cache-dir --no-deps", "wheel --no-cache-dir"),
+            "pip wheel without --require-hashes",
+            id="unhashed-wheel-dependencies",
         ),
         pytest.param(
             ".dockerignore",
@@ -1027,12 +1038,14 @@ def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> N
 def test_container_updates_installed_base_packages_before_dependency_install() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     build, runtime = dockerfile.split("\nFROM ", 2)[1:]
-    assert build.index("RUN apk upgrade --no-cache") < build.index(
-        "&& apk add --no-cache python-3.12 py3.12-pip"
-    )
-    assert runtime.index("RUN apk upgrade --no-cache") < runtime.index(
-        "&& apk add --no-cache python-3.12 git"
-    )
+    # The interpreter may carry a temporary revision pin, identical in both stages.
+    python = r"python-3\.12(?:=(?P<pin>\S+) python-3\.12-base=(?P=pin))?"
+    build_add = re.search(rf"&& apk add --no-cache {python} py3\.12-pip\n", build)
+    runtime_add = re.search(rf"&& apk add --no-cache {python} git ", runtime)
+    assert build_add and runtime_add, "both stages install python-3.12 (and pip or git) with apk"
+    assert build_add["pin"] == runtime_add["pin"], "the build and runtime interpreters must match"
+    assert build.index("RUN apk upgrade --no-cache") < build_add.start()
+    assert runtime.index("RUN apk upgrade --no-cache") < runtime_add.start()
     # pip and the build tools never reach the runtime stage.
     assert "pip" not in runtime.split("RUN apk upgrade", 1)[1].split("\nCOPY --from=build")[0].replace(
         "python-3.12", ""
@@ -1054,12 +1067,7 @@ def test_container_build_removes_setuid_and_setgid_bits_and_checks_none_remain()
     runtime = dockerfile.split("\nFROM ", 2)[2]
     strip = runtime.index("&& find / -xdev -type f -perm /6000 -exec chmod a-s {} +")
     check = runtime.index('&& test -z "$(find / -xdev -type f -perm /6000 -print -quit)"')
-    assert (
-        runtime.index("apk add --no-cache python-3.12 git")
-        < strip
-        < check
-        < runtime.index("USER 65532:65532")
-    )
+    assert runtime.index("apk add --no-cache python-3.12") < strip < check < runtime.index("USER 65532:65532")
 
 
 def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:

@@ -2,8 +2,8 @@ __pycache__/
 *.pyc
 *.egg-info/
 .eggs/
-build/
-dist/
+/build/
+/dist/
 .venv/
 venv/
 .pytest_cache/
@@ -18,9 +18,11 @@ htmlcov/
 .tox/
 .nox/
 *.sarif
-report.*
-shadowscan-report*
-exports/
+# Root-level scan and site output; unanchored, these would also hide source
+# files such as shadowscan/reporters/report.py.
+/report.*
+/shadowscan-report*
+/exports/
 .env
 .env.*
 !.env.example
@@ -31,4 +33,4 @@ exports/
 .vscode/
 
 .shadowscan-state/
-site/
+/site/

@@ -1,11 +1,13 @@
 # Enforce and verify the merge policy
 
 The versioned [ruleset policy](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/rulesets/require-ci-and-review.json)
-is a desired configuration, not evidence that GitHub is enforcing it. On
-2026-10-01, both visible repository rulesets were read back as disabled.
-Separate classic branch protection was unavailable to the integration used for
-that read. Check the live settings rather than treating this dated observation
-as permanent.
+is a desired configuration, not evidence that GitHub is enforcing it. Both
+visible repository rulesets have been enabled and disabled several times since
+2026-09; the dated readbacks are under
+[merge gate and review status](../production.md#merge-gate-and-review-status),
+and the most recent one found both disabled. Separate classic branch protection
+was unavailable to the integration used for those reads. Check the live
+settings rather than treating any dated observation as permanent.
 
 The policy retains the existing CodeQL, signature and status requirements and
 adds the aggregate `CI gate`. Required checks are bound to the GitHub Actions
@@ -48,9 +50,10 @@ only that snapshot; it does not authenticate its origin, freshness, human
 reviewer, or protection by other rulesets.
 
 Also inspect `Protect main` (23892853), preserve any stricter history policy,
-and review its bypass actors before enabling it. The active no-bypass review/CI
-ruleset must remain independently enforced. Do not add a bypass actor or reduce
-the approval requirement to make a maintainer-authored change mergeable.
+and review its bypass actors before enabling it. Enforce the no-bypass
+review/CI ruleset in its own right: `Protect main` names bypass actors and does
+not substitute for it. Do not add a bypass actor or reduce the approval
+requirement to make a maintainer-authored change mergeable.
 
 ## Verify a candidate before merge or deployment
 

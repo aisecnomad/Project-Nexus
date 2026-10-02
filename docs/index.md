@@ -12,8 +12,9 @@ These pages live in the
 [repository documentation directory](https://github.com/aisecnomad/Project-Nexus/tree/main/docs).
 GitHub Pages is enabled at
 <https://aisecnomad.github.io/Project-Nexus/>; that URL currently serves the
-repository README, not this MkDocs set. The Docs workflow builds the site on
-every `main` change and publishes only when a maintainer runs
+repository README, not this MkDocs set. The Docs workflow builds the site when
+a `main` change touches its sources (CI's docs job builds every commit) and
+publishes only when a maintainer runs
 `docs.yml` with `publish=true` after Pages is pointed at GitHub Actions.
 Until that publish path is used, treat `docs/` in the revision you are
 reading as the source of truth. To preview locally, install the documentation

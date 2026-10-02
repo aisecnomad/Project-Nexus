@@ -1042,6 +1042,38 @@ def test_every_reporter_renders_a_repository_with_non_utf8_names(tmp_path, fmt):
     assert output.read_text(encoding="utf-8")
 
 
+# ------------------------------------------------------- numeric limits
+@pytest.mark.parametrize("option", ["max_file_size", "max_files"])
+@pytest.mark.parametrize("value", [True, False, 1.9, 0, -5, "abc", [100]], ids=repr)
+def test_integer_limits_reject_booleans_fractions_and_non_numbers(tmp_path, run_connector, option, value):
+    # `max_file_size: true` was a 1-byte limit that skipped every file, and 1.9 became 1.
+    with pytest.raises(ConnectorError) as raised:
+        run_connector("code.filesystem", path=str(tmp_path), **{option: value})
+    assert str(raised.value) == f"code.filesystem: {option} must be a positive integer"
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 61, float("nan"), float("inf"), "soon", [2]], ids=repr)
+def test_scan_timeout_must_be_a_bounded_number_of_seconds(tmp_path, run_connector, value):
+    with pytest.raises(ConnectorError) as raised:
+        run_connector("code.filesystem", path=str(tmp_path), scan_timeout=value)
+    assert (
+        str(raised.value)
+        == "code.filesystem: scan_timeout must be a number of seconds above 0 and at most 60"
+    )
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({"max_file_size": 2048, "max_files": 10, "scan_timeout": 0.5}, (2048, 10, 0.5)),
+        ({"max_file_size": "2048", "max_files": 10.0, "scan_timeout": "60"}, (2048, 10, 60.0)),
+    ],
+)
+def test_numeric_limits_keep_accepting_numbers_and_numeric_text(config, expected):
+    connector = FilesystemConnector(ConnectorContext(config={"path": ".", **config}))
+    assert (connector.max_file_size, connector.max_files, connector.scan_timeout) == expected
+
+
 # ------------------------------------------------------- list-typed options
 @pytest.mark.parametrize(
     "value",

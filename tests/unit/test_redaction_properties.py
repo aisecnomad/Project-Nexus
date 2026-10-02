@@ -17,10 +17,6 @@ from hypothesis import given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text  # noqa: E402
-from shadowscan.utils.redaction_rules import _MAX_SANITIZATION_CHARS  # noqa: E402
-
-# Bound generated text to stay within sanitization limits.
-_SAFE_MAX = min(_MAX_SANITIZATION_CHARS, 50_000)
 
 # Characters that commonly appear in credentials and source code.
 _CREDENTIAL_ALPHABET = string.ascii_letters + string.digits + "/-_=+.@#$%^&*(){}[]|\\:;\"'<>,?! \t\n"

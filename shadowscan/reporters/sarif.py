@@ -4,6 +4,12 @@ Every finding becomes a result; code findings carry physical locations
 (``path:line`` from evidence), other surfaces carry logical locations
 (resource ids). Rules are generated per (kind, primary signature).
 
+Risk levels are heuristic discovery scores, not CVSS. A rule carries its
+heuristic level under ``shadowscan/heuristic-risk`` and never the
+``security-severity`` property or the ``security`` tag, which GitHub code
+scanning reads as a CVSS-like security severity. No discovery hit is reported
+at level ``error``; that level is kept for tool failures (see docs/severity.md).
+
 The log is kept valid for the SARIF 2.1.0 schema and for GitHub code scanning,
 which rejects a whole upload over one malformed field: a ``region`` is only
 emitted with a ``startLine`` (SARIF section 3.30), rule names match
@@ -25,20 +31,20 @@ from shadowscan import __version__
 from shadowscan.models import Finding, RiskLevel, ScanResult, Surface
 from shadowscan.reporters._publication import publication_stats
 
+# A discovery hit is evidence for an analyst to confirm, not a vulnerability:
+# even a heuristic critical finding is a warning. ``error`` is reserved for
+# tool execution failures (connector errors and skips in ``_invocation``).
 _LEVEL = {
-    RiskLevel.CRITICAL: "error",
-    RiskLevel.HIGH: "error",
+    RiskLevel.CRITICAL: "warning",
+    RiskLevel.HIGH: "warning",
     RiskLevel.MEDIUM: "warning",
     RiskLevel.LOW: "note",
     RiskLevel.INFO: "note",
 }
-_SECURITY_SEVERITY = {
-    RiskLevel.CRITICAL: "9.5",
-    RiskLevel.HIGH: "7.5",
-    RiskLevel.MEDIUM: "5.0",
-    RiskLevel.LOW: "2.5",
-    RiskLevel.INFO: "1.0",
-}
+_PROJECT_URI = "https://github.com/aisecnomad/Project-Nexus"
+_SEVERITY_GUIDE = f"{_PROJECT_URI}/blob/main/docs/severity.md"
+_HEURISTIC_RISK = "shadowscan/heuristic-risk"
+_SCORE_BASIS = "shadowscan/score-basis"
 _LOC = re.compile(r"^(?P<path>.+?)(?::(?P<line>\d+))?$")
 _RANK = {RiskLevel.INFO: 0, RiskLevel.LOW: 1, RiskLevel.MEDIUM: 2, RiskLevel.HIGH: 3, RiskLevel.CRITICAL: 4}
 _RULE_NAME_CHARS = re.compile(r"[^A-Za-z0-9_]")
@@ -166,7 +172,7 @@ def _physical_locations(f: Finding) -> list[dict[str, Any]]:
 
 
 def _rule(f: Finding, rid: str) -> dict[str, Any]:
-    """A reporting descriptor from the first finding of a rule; severity is raised later."""
+    """A reporting descriptor from the first finding of a rule; its level is raised later."""
     technology = (f.frameworks or f.model_providers or ["generic"])[0]
     return {
         "id": rid,
@@ -177,14 +183,18 @@ def _rule(f: Finding, rid: str) -> dict[str, Any]:
         },
         "help": {
             "text": (
-                "Review the agent, confirm ownership, register it in the agent inventory and "
-                "remediate the listed risk factors."
+                "A heuristic discovery hit: not a CVSS-scored vulnerability and not proof that an "
+                "agent runs. Confirm ownership and runtime evidence before registering the agent "
+                "in the inventory, blocking it or remediating the listed risk factors. How the "
+                f"heuristic risk level is derived: {_SEVERITY_GUIDE}"
             )
         },
+        "helpUri": _SEVERITY_GUIDE,
         "defaultConfiguration": {"level": _LEVEL[f.risk.level]},
         "properties": {
-            "tags": ["security", "ai-agent", f.surface.value, f.kind.value],
-            "security-severity": _SECURITY_SEVERITY[f.risk.level],
+            "tags": ["ai-agent", f.surface.value, f.kind.value],
+            _HEURISTIC_RISK: f.risk.level.value,
+            _SCORE_BASIS: "heuristic-not-cvss",
         },
     }
 
@@ -223,6 +233,8 @@ def _result(f: Finding, rid: str) -> dict[str, Any]:
                 # A property bag's reserved ``tags`` key is a set of distinct strings.
                 "tags": list(dict.fromkeys(f.tags)),
                 "shadow": f.shadow,
+                # The SARIF level folds critical, high and medium into one warning.
+                "risk_level": f.risk.level.value,
                 "risk_score": f.risk.score,
                 "confidence": f.confidence,
             }
@@ -279,11 +291,11 @@ def render_sarif(result: ScanResult) -> str:
         if rid not in rules:
             rules[rid] = _rule(f, rid)
         results.append(_result(f, rid))
-    # Code-scanning UIs show a rule's severity for all of its alerts: use the
+    # Code-scanning UIs show a rule's level for all of its alerts: use the
     # most severe result, independent of report ordering.
     for rid, level in worst.items():
         rules[rid]["defaultConfiguration"]["level"] = _LEVEL[level]
-        rules[rid]["properties"]["security-severity"] = _SECURITY_SEVERITY[level]
+        rules[rid]["properties"][_HEURISTIC_RISK] = level.value
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -293,7 +305,7 @@ def render_sarif(result: ScanResult) -> str:
                     "driver": {
                         "name": "ShadowScan",
                         "version": __version__,
-                        "informationUri": "https://github.com/aisecnomad/Project-Nexus",
+                        "informationUri": _PROJECT_URI,
                         "rules": list(rules.values()),
                     }
                 },

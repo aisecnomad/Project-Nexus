@@ -213,9 +213,10 @@ A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding (`metadata.manifests`). MCP server capabilities come
 from the tool names the server registers outside tests (`metadata.mcp_tools`);
 comments and string examples do not establish registrations, and enum-based
-names count only the referenced members. Static registration evidence does
-not prove the server executed those tools.
-a server without recognised tools keeps the capabilities its code implies.
+names count only the referenced members. Exceeding the per-file or project name
+limit makes coverage incomplete. Static registration evidence does not prove
+the server executed those tools. A server without recognised tools keeps the
+capabilities its code implies.
 
 Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
 `url`, `serverUrl` and `endpoint`; an entry with more than one of them is

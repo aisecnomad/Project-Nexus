@@ -117,3 +117,21 @@ def test_declarations_in_comments_bind_nothing(index):
     text = '// const OpenAI = require("openai");\n/* import OpenAI from "openai"; */\nOpenAI();\n'
     assert _matches(index, text) == []
     assert _matches(index, text.replace("// ", "").replace("/* ", "").replace(" */", ""))
+
+
+def test_declaration_lines_stay_exact_with_incremental_numbering(index):
+    # Lines are numbered incrementally (shadowscan.utils.text.line_counter) so a file with
+    # thousands of imports stays linear; declarations in comments are skipped, not counted twice.
+    text = (
+        "// import Anthropic from '@anthropic-ai/sdk';\n"
+        + IMPORT
+        + "const x = 1;\n" * 50
+        + "/* const g = require('@google/generative-ai'); */\n"
+        + 'const Anthropic = require("@anthropic-ai/sdk");\n'
+        + "const client = new OpenAI();\n"
+        + "const other = new Anthropic();\n"
+    )
+    assert set(_matches(index, text)) == {
+        ("provider.openai", "import", 2),
+        ("provider.anthropic", "import", 54),
+    }

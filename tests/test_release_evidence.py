@@ -471,7 +471,9 @@ def test_release_evidence_is_not_silently_overwritten(candidate: Path) -> None:
 
 
 def test_release_workflow_limits_signing_to_artifacts_without_executing_source() -> None:
-    workflow = yaml.safe_load(Path(".github/workflows/release.yml").read_text())
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / ".github/workflows/release.yml").read_text()
+    )
     # PyYAML follows YAML 1.1, where GitHub's YAML 1.2 'on' key parses as True.
     triggers = workflow.get("on", workflow.get(True))
     assert set(triggers) == {"workflow_dispatch"}
