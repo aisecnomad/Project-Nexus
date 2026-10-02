@@ -2,6 +2,178 @@
 
 ## 0.1.1 — Unreleased
 
+### October 2 review fixes (AI-assisted, not independently reviewed)
+
+Fixes for defects found by an AI-assisted review of commit `d65b27f`. The
+reviewers reproduced each one against that commit before it was fixed, and each
+has a regression test. Neither the review nor the fixes had a second-person
+review; the offline evaluation corpora are author-written and say nothing about
+field precision. Behavior changes that affect an existing baseline are listed in
+[production.md](docs/production.md#october-2-review-changes).
+
+#### Connectors: gateway, identity, low-code, SaaS and cloud
+
+- `cloud.oci`: IAM policy statements are matched in linear time. The previous
+  pattern retried a lazy scan from every `allow` word, so a 48 KB hostile
+  statement took seconds (1 MiB about an hour) while holding the GIL and
+  defeating `--connector-timeout-seconds`. A statement longer than 8192
+  characters is a malformed record: that policy is skipped with a warning, the
+  scan is incomplete, and valid neighbouring records are kept.
+- `gateway.logs`: a client-chosen query string or fragment can no longer hide an
+  inference call as a static asset or health probe (`POST
+  /v1/chat/completions?_=.js` used to give 0 findings and a complete scan). Only
+  the request path is tested and a probe name must be the last path segment, so
+  `/healthz/../v1/chat/completions` is no longer excluded either. The number of
+  excluded requests is reported as a scan note (a warning that does not make
+  the scan incomplete).
+- `gateway.logs`: `key=value` (logfmt) lines honour `\"` and `\\` escapes in
+  quoted values, so a quoted client value can no longer inject `api_key=`,
+  `user=` or `model=` pairs and attribute events to another caller. A line that
+  repeats a key or leaves a quote open is malformed (scan incomplete); other
+  lines are kept.
+- Gateway provider attribution follows the RFC 3986 authority: userinfo up to
+  the last `@` is dropped (`https://api.openai.com:443@evil.example/` names
+  `evil.example`), bracketed IPv6 literals lose brackets and port, and an empty
+  host is `None`.
+- Timestamps in microsecond and nanosecond epochs, Go `time.Time.String()`
+  output and RFC 2822 dates are now parsed; they used to become empty, so
+  events silently lost their time. Gateway records whose timestamp field no
+  supported format parses are counted in a warning and make the scan incomplete.
+- `identity.entra`: app-role and scope labels are resolved per resource. Another
+  service principal that reuses a privileged role id with a harmless label can
+  no longer relabel a grant (a `Mail.ReadWrite` grant used to print as a raw
+  GUID, dropping risk from high to medium and losing `policy.privileged-scopes`).
+  Conflicting labels for one resource and role keep the id and make the scan
+  incomplete; a non-string `resourceId`/`resourceAppId` makes the record
+  malformed.
+- `lowcode.servicenow`: a page with fewer rows than `sysparm_limit` no longer
+  ends collection of a table (ACLs filter rows after the limit is applied, so
+  100 of 500 rows could come back with exit 0). Collection continues until an
+  empty page; reaching `max_pages` first makes the scan incomplete. Each table
+  costs one extra request.
+- `lowcode.power-platform`: one flow, app or bot record that cannot be analysed
+  (signature-matching timeout or malformed fields) is skipped with a warning and
+  the scan is incomplete; the records around it are still reported. A 3 MiB flow
+  definition used to abort the connector with 0 findings. Signature matching
+  examines at most the first 300000 characters of a definition, as the other
+  low-code connectors do.
+- `saas.generic` and `lowcode.zapier`: an export whose columns map to no app or
+  zap name no longer gives 0 findings, a complete scan and exit 0. When no
+  record has a name, a warning lists the accepted column names (never record
+  values); when only some lack one they are skipped with a counted warning.
+  Either way the scan is incomplete.
+- `saas.slack`: a record naming another workspace (for example a Slack Connect
+  bot with a foreign `team_id`) or an invalid workspace ID is skipped and
+  counted in a warning, and the scan is incomplete; the workspace's other apps
+  are still reported. One such record used to withhold every Slack finding.
+- `identity.jwt`: without `jwks_url`, every token finding carries
+  `metadata.verified: false` (with `verification_scope: "none"`,
+  `issuer_verified: false`, `authorization_validated: false`) and a
+  `jwt:signature` evidence line saying that claims are unverified. Previously
+  there was no `verified` key, so an unsigned or tampered token read like a
+  checked one. Confidence and risk are unchanged.
+
+#### Engine, configuration, inventory, YAML and signature packs
+
+- YAML with a malformed explicitly tagged scalar (`!!bool x`, `!!int >`,
+  `!!timestamp ---`, an impossible date) is reported as malformed input
+  everywhere ShadowScan reads YAML. PyYAML let `KeyError`, `IndexError`,
+  `AttributeError` and `ValueError` escape, so one such file discarded the valid
+  records of its neighbours, the connector error quoted the scalar, and a scan
+  configuration with such a value printed a traceback. The bounded loaders raise
+  `YAMLConstructionError` whose message gives only the line and column. A
+  `RecursionError` during construction is a `YAMLResourceLimitError`.
+- A connector or plugin that calls `sys.exit()` or raises another
+  non-`Exception` `BaseException` during import, construction or collection is a
+  failed connector: its error is recorded, the scan is incomplete (exit 3) and
+  the report is still written. Previously the `SystemExit` ended the process
+  with the plugin's exit status and no report, so `sys.exit(0)` read as a clean
+  pass. `KeyboardInterrupt` still stops the scan.
+- A scan warns when an inventory file or directory, or a file it loads, is
+  inside a local path scanned by `code.filesystem` in the same run (scanned
+  content, for example a pull request, could approve its own findings), and once
+  per entry with a `*`-only resource pattern, which approves every finding. The
+  warnings appear in a new `engine.inventory` entry of the report's `stats` and
+  in table output; they do not make the scan incomplete or change the exit code.
+  `shadowscan diff` ignores `engine.*` stats entries when it compares completion
+  coverage.
+- A configured custom signature pack directory that contributes no
+  `.yaml`/`.yml` pack (empty, other file types only, or only symbolic links) is
+  an error naming the directory and the skipped entries, in scans,
+  `signatures list/show/test` and `python -m shadowscan.signatures.validate`.
+  Symbolic links skipped inside pack directories, inventory directories or
+  inventory globs are reported by name; links are still never followed. An
+  inventory glob that matches no file is an error like a missing literal path
+  instead of an empty inventory that marks every finding shadow.
+- `shadowscan diff` requires each report's `summary.total` (and `by_surface` /
+  `by_kind` counts when present) to match its `findings` array before missing
+  findings can count as resolved. Emptying the `findings` array of a complete
+  report used to print "1 resolved" with exit 0; such a report is now
+  incomparable, its missing findings are listed as unknown and the exit is 3.
+- `repr()`/`str()` of `ConnectorSpec` and of a `ScanConfig` holding it no longer
+  print connector credentials. Values pass the report redaction rules and
+  credential-file locations (`service_account_file`, `credentials_file`,
+  `token_file`) are withheld.
+- Inventories, configuration files, signature packs and reports accept a
+  leading UTF-8 byte-order mark (spreadsheet "CSV UTF-8" inventories were
+  rejected). A scan configuration that is a symbolic link, or reached through
+  one (a Kubernetes ConfigMap mount), still fails, but the message now says that
+  links are not followed and to pass the real path.
+- Signature validation checks for empty-matching patterns with the same `regex`
+  engine, flags and 0.1 s timeout as the matcher. A pattern only the `regex`
+  module understands, such as `\p{L}*`, previously passed validation yet matched
+  everywhere; it is now rejected.
+- The default incremental state directory ignores an empty or relative
+  `XDG_STATE_HOME`, as the XDG specification requires. An empty value used to
+  put private state under `./shadowscan` in the repository being scanned.
+- `shadowscan diff` text output no longer runs Rich's syntax highlighter over
+  imported titles and resources, which was quadratic (a 50,000-character title
+  took about 19 s).
+- `--incremental` with `--dump-records` logs that the cache is not used instead
+  of disabling it silently. `docs/operations/ci.md` no longer recommends
+  restoring incremental state with `actions/cache`: the fingerprint includes
+  file identity, so a fresh checkout never reuses restored state.
+
+#### CI, repository policy and developer tooling
+
+- CI no longer cancels a `main` push run when the next push arrives:
+  `cancel-in-progress` is `${{ github.event_name == 'pull_request' }}`. Before,
+  29 of 83 `main` push runs ended `cancelled`, leaving merged commits without a
+  complete CI record.
+- The repository policy tests check workflows with either YAML extension (a
+  `.yaml` workflow used to skip every check) and add invariants for: no
+  `workflow_run` trigger; no job- or step-level `continue-on-error`; no
+  `|| true`, `--exit-zero` or `--ignore-vuln`; no coverage floor below 80; no
+  event text, `head_ref`, `ref_name`, `inputs.*` or `toJSON` dumps interpolated
+  into `run:`; no publication command anywhere (`gh release`, `twine upload`,
+  `uv|poetry|hatch publish`, `pypi-publish`, `docker push`, `git push`); a
+  release workflow that stays `workflow_dispatch`-only with `id-token: write`
+  only in its checkout-free `attest` job; Dockerfiles with digest-pinned `FROM`,
+  a final non-root `USER`, no `ADD <url>` and hash-checked `pip install`; and an
+  allow-list-style `.dockerignore`. Each rule runs on the real file and on a
+  mutated copy (32 mutations) to show that it still catches the violation.
+- The `no-hardcoded-secrets` hook recognises 28 synthetic credential families
+  (the previous patterns found 7): GitHub `github_pat_`/`gho_`/`ghu_`/`ghs_`/
+  `ghr_`, AWS `ASIA` keys and `aws_secret_access_key = ...`, Google `AIza`, Slack
+  `xoxp-`/`xoxa-`/`xoxr-`, Hugging Face `hf_`, Stripe live keys, signed JWTs,
+  PEM private-key headers, Azure `AccountKey=`/`SharedAccessKey=` and passwords
+  in URLs. It prints at most four characters plus the match length (it used to
+  print twelve), fails on an unreadable file, runs on every text file, and CI
+  runs the same script over `git ls-files`.
+- `tools/coverage_gate.py` fails closed: a module with statements in an unlisted
+  connector family, in a nested package, or directly under
+  `shadowscan/connectors/` (other than `base.py`, `common.py` and `offline.py`)
+  fails the gate with a message naming the reason, where it used to be skipped
+  while the gate printed "Checked N modules". A malformed coverage report exits
+  2. `tests/test_coverage_gate.py` pins the 75% floor and the exit codes.
+- `make audit` (and so `make check`) audits the four hash locks as CI does.
+- Documentation: `docs/testing.md` lists the expected skips (core-only installs
+  skip about 60 cloud-SDK tests, Git < 2.45 and root-only permission tests);
+  `docs/evaluation.md` states the real 5 to 7 files per realistic-corpus case; and
+  `docs/connectors.md` documents the 44 connector configuration keys that no
+  connector page named. A consistency test now fails when a key reported by
+  `shadowscan connectors --json` is undocumented.
+
 ### October 1 code.filesystem coverage and precision
 
 - A coding-agent instruction document that links to another one in the same
