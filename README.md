@@ -16,20 +16,21 @@ agent registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
 Counts and severity labels need an analyst review before they drive enforcement.
 
-Example findings (totals vary as signatures evolve):
+Example output, abridged to the first columns (totals vary as signatures evolve;
+`--max-rows 5` shows the five highest-risk rows of the bundled offline demo):
 
 ```
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 99 findings  •  95 shadow (inventory: 3 registered agents)                  │
-│ critical 12  high 52  medium 35  •  code 11 identity 19 cloud 27 …          │
+│ critical 11  high 53  medium 35  •  cloud 27 identity 19 saas 17 …          │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
- CRITICAL 95  SHADOW  code      mcp-server   MCP configuration: .mcp.json (inline GitHub PAT, Zapier remote MCP, docker/postgres)
- CRITICAL 90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
- HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper
- MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered via its card's resource binding; owner from the AWS resource tag
+ CRITICAL  95  SHADOW  code      mcp-server   MCP configuration: .mcp.json
+ CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
+ CRITICAL  90  SHADOW  identity  oauth-grant  Entra service principal: Otter.ai
+ CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
 ```
 
 ## The Why
@@ -249,8 +250,12 @@ declared `oversize_skip_globs` remain warnings. An in-root link stays complete
 when its own name is never read (a lockfile or an image) or when it is a source
 file whose target is analyzed in the same project with the same test
 classification; directory links are incomplete because their alias paths are
-not scanned. Evidence found only in test or fixture code cannot establish an
-agent unless `--include-tests` is set.
+not scanned. A file the scanner analyzes by name but cannot read as text (a NUL
+byte outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) is a gap
+too. A non-empty `bin/`, `build/`, `dist/`, `vendor/` or similar directory that
+the walk skips by default is listed in a warning; `--no-default-excludes` scans
+those directories. Evidence found only in test or fixture code cannot establish
+an agent unless `--include-tests` is set.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
@@ -287,7 +292,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
   "account": "123456789012", "region": "us-east-1", "owner": null,
   "frameworks": ["cloud.aws-bedrock-agents"], "model_providers": ["provider.openai"],
   "capabilities": ["tool-use"], "tags": ["plaintext-credential", "secret-in-env"],
-  "confidence": 1.0, "likelihood": "confirmed",
+  "confidence": 1.0, "likelihood": "strong",
   "shadow": true, "registry_match": null,
   "risk": {"score": 90, "level": "critical", "factors": [
       {"id": "shadow", "description": "not present in the sanctioned agent inventory", "weight": 25},
@@ -326,7 +331,7 @@ links, @-mentions or e-mail links; code spans keep identifiers verbatim.
 ```yaml
 options:
   risk_basis: danger          # combined (default) | danger: level from capabilities, not registration
-  risk_weights:               # integers -100..100; unknown groups, kinds or governance keys are rejected
+  risk_weights:               # integers -100..100; unknown groups, kinds, capabilities, provider ids or governance keys are rejected (tags may be custom)
     capabilities: {code-exec: 25}
     tags: {meeting-bot: 20}
     providers: {provider.deepseek: 20}

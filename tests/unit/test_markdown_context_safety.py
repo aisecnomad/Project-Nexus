@@ -5,6 +5,7 @@ from __future__ import annotations
 import html as html_module
 import re
 
+import pytest
 from markdown_it import MarkdownIt
 
 from shadowscan.config import ConnectorSpec, ScanConfig
@@ -21,7 +22,7 @@ from shadowscan.models import (
     Surface,
 )
 from shadowscan.reporters.html import render_html
-from shadowscan.reporters.markdown import render_markdown
+from shadowscan.reporters.markdown import _text, render_markdown
 
 
 def _html_and_headings(report: str) -> tuple[str, list[str]]:
@@ -182,6 +183,71 @@ def test_markdown_report_neutralises_mentions_and_email_autolinks():
     assert "[@]acme/security" in prose and "[@]langchain/core" in prose
     # Code spans are never linkified or mentioned, so identifiers stay verbatim.
     assert "`git@github.com:acme/agent.git`" in report
+
+
+# What GitHub Flavored Markdown links (the autolink extension): http://, https:// and ftp://
+# after anything but a letter, and www. after anything but a letter or digit. markdown-it
+# cannot be asked here (its linkify needs a package this project does not use), so the
+# check applies these two rules to the rendered text.
+_GFM_AUTOLINK = re.compile(r"(?i)(?<![a-z])(?:https?|ftp)://|(?<![a-z0-9])www\.")
+
+_LINKABLE = [
+    "https://evil.example/x",
+    "http://evil.example",
+    "ftp://evil.example/pub",
+    "HTTPS://EVIL.EXAMPLE",
+    "www.evil.example",
+    "_https://evil.example",
+    "_www.evil.example",
+    "0http://evil.example",
+    "1www.evil.example",
+    "-https://evil.example",
+    "(https://evil.example)",
+    "*www.evil.example",
+    "~http://evil.example",
+    "/https://evil.example",
+    ":https://evil.example",
+    "a https://evil.example b",
+]
+
+
+@pytest.mark.parametrize("value", _LINKABLE)
+def test_no_form_gfm_links_survives_text_escaping(value):
+    escaped = _text(f"see {value} now")
+    assert _GFM_AUTOLINK.search(escaped) is None, escaped
+    assert _GFM_AUTOLINK.search(_text(value)) is None
+    # The host stays readable.
+    assert "evil" in escaped.lower() or "evil" in escaped
+
+
+def test_words_that_only_end_in_a_scheme_are_left_alone():
+    assert _text("xhttps://host") == "xhttps://host"
+    assert _text("awww.host") == "awww.host"
+
+
+def test_markdown_report_has_no_autolink_in_any_untrusted_field():
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Agent _https://evil.example and 0http://evil.example",
+        resource="repo _www.evil.example",
+        resource_type="repository",
+        owner="ftp://evil.example/pub",
+        evidence=[
+            Evidence(signal="code", description="see _https://evil.example/login or (www.evil.example)")
+        ],
+    )
+    finding.risk = Risk(30, RiskLevel.MEDIUM, [RiskFactor("factor", "visit 0https://evil.example", 10)])
+    report = render_markdown(
+        ScanResult(
+            findings=[finding],
+            stats=[ScanStats("code.filesystem", "2026-01-01", warnings=["_http://evil.example failed"])],
+        )
+    )
+    prose = re.sub(r"`+[^`]*`+", "", report)  # code spans are never linked
+    assert _GFM_AUTOLINK.search(prose) is None, prose
+    assert "hxxps://evil.example" in report
 
 
 def test_html_report_has_no_link_or_mention_surface_for_the_same_values():

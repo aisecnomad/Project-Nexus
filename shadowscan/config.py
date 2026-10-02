@@ -56,8 +56,8 @@ import yaml
 
 from shadowscan.errors import SetupError, yaml_error_position
 from shadowscan.risk import RiskPolicy
-from shadowscan.utils.files import read_policy_text
-from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.files import read_policy_text, require_no_symlinks
+from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
@@ -129,9 +129,12 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "cloud.azure": frozenset({"allow_instance_credentials", "include_app_settings"}),
     "cloud.gcp": frozenset({"allow_instance_credentials"}),
     "cloud.oci": frozenset({"allow_instance_credentials"}),
-    "code.filesystem": frozenset({"include_tests", "scan_secrets", "strict_coverage", "use_git"}),
+    "code.filesystem": frozenset(
+        {"default_excludes", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+    ),
     "code.github": frozenset(
         {
+            "default_excludes",
             "include_archived",
             "include_forks",
             "include_tests",
@@ -141,7 +144,14 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
         }
     ),
     "code.gitlab": frozenset(
-        {"include_archived", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+        {
+            "default_excludes",
+            "include_archived",
+            "include_tests",
+            "scan_secrets",
+            "strict_coverage",
+            "use_git",
+        }
     ),
     "gateway.logs": frozenset({"llm_hosts_only"}),
     "identity.entra": frozenset({"include_first_party"}),
@@ -339,6 +349,29 @@ class ConnectorSpec:
     @property
     def id(self) -> str:
         return self.label or self.name
+
+    def __repr__(self) -> str:
+        # Connector settings carry credentials. A debug log of a spec, or of the
+        # ScanConfig holding it, shows the keys and redacted values only.
+        return (
+            f"{type(self).__name__}(name={self.name!r}, config={_redacted_config(self.config)!r},"
+            f" enabled={self.enabled!r}, label={self.label!r})"
+        )
+
+
+# Locations of credential files are withheld from representations too.
+_CREDENTIAL_FILE_KEYS = frozenset({"service_account_file", "credentials_file", "token_file"})
+
+
+def _redacted_config(config: Any) -> Any:
+    """A connector configuration for display: the report redaction rules plus credential-file locations."""
+    if not isinstance(config, dict):
+        return REDACTED
+    try:
+        shown = sanitize(dict(config), redact_short_secrets=True)
+    except Exception:  # noqa: BLE001 - a representation must not fail or fall back to raw values
+        return dict.fromkeys(config, REDACTED)
+    return {key: REDACTED if key in _CREDENTIAL_FILE_KEYS else value for key, value in shown.items()}
 
 
 @dataclass(slots=True)
@@ -556,6 +589,14 @@ class ScanConfig:
     @classmethod
     def from_yaml(cls, path: str | Path) -> ScanConfig:
         p = Path(path)
+        try:
+            require_no_symlinks(p)
+        except ValueError:
+            # A Kubernetes ConfigMap mount, for example, is a chain of links.
+            raise ConfigValidationError(
+                f"scan configuration {p} is a symbolic link or inside one; links are not followed,"
+                " so pass the file's real path"
+            ) from None
         text = read_policy_text(p)
         try:
             data = yaml.load(text, Loader=_ConfigLoader)

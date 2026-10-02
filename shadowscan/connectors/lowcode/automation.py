@@ -467,6 +467,10 @@ class MakeConnector(_AutomationBase):
 
 
 # ---------------------------------------------------------------- Zapier
+# Fields that name or identify a zap in API records and account exports.
+_ZAP_IDENTITY_FIELDS = ("title", "name", "Title", "Zap", "id", "Id")
+
+
 class ZapierConnector(_AutomationBase):
     name: ClassVar[str] = "lowcode.zapier"
     provider: ClassVar[str | None] = "zapier"
@@ -504,11 +508,24 @@ class ZapierConnector(_AutomationBase):
             self.ctx.warn("lowcode.zapier: pagination limit reached")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        total = unnamed = 0
         for rec in records:
             self.ctx.examined()
+            total += 1
+            if isinstance(rec, dict) and not self._identified(rec, *_ZAP_IDENTITY_FIELDS):
+                unnamed += 1
+                continue
             f = self._guarded_finding(rec, self._zap_finding, "zap")
             if f:
                 yield f
+        # Renamed export columns must not look like an account without AI zaps.
+        if unnamed and unnamed == total:
+            self.ctx.warn(
+                "lowcode.zapier: no record has a zap name or id; expected a column named one of "
+                f"{', '.join(_ZAP_IDENTITY_FIELDS)}"
+            )
+        elif unnamed:
+            self.ctx.warn(f"lowcode.zapier: skipped {unnamed} of {total} records without a zap name or id")
 
     def _zap_finding(self, rec: dict[str, Any]) -> Finding | None:
         # JSON exports may carry numeric titles; CSV columns are always text.

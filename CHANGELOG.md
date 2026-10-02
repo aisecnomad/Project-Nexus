@@ -2,6 +2,416 @@
 
 ## 0.1.1 — Unreleased
 
+### October 2 review fixes (AI-assisted, not independently reviewed)
+
+Fixes for defects found by an AI-assisted review of commit `d65b27f`. The
+reviewers reproduced each one against that commit before it was fixed, and each
+has a regression test. Neither the review nor the fixes had a second-person
+review; the offline evaluation corpora are author-written and say nothing about
+field precision. Behavior changes that affect an existing baseline are listed in
+`docs/production.md` under "October 2 review changes".
+
+#### Connectors: gateway, identity, low-code, SaaS and cloud
+
+- `cloud.oci`: IAM policy statements are matched in linear time. The previous
+  pattern retried a lazy scan from every `allow` word, so a 48 KB hostile
+  statement took seconds (1 MiB about an hour) while holding the GIL and
+  defeating `--connector-timeout-seconds`. A statement longer than 8192
+  characters is a malformed record: that policy is skipped with a warning, the
+  scan is incomplete, and valid neighbouring records are kept.
+- `gateway.logs`: a client-chosen query string or fragment can no longer hide an
+  inference call as a static asset or health probe (`POST
+  /v1/chat/completions?_=.js` used to give 0 findings and a complete scan). Only
+  the request path is tested and a probe name must be the last path segment, so
+  `/healthz/../v1/chat/completions` is no longer excluded either. The number of
+  excluded requests is reported as a scan note (a warning that does not make
+  the scan incomplete).
+- `gateway.logs`: `key=value` (logfmt) lines honour `\"` and `\\` escapes in
+  quoted values, so a quoted client value can no longer inject `api_key=`,
+  `user=` or `model=` pairs and attribute events to another caller. A line that
+  repeats a key or leaves a quote open is malformed (scan incomplete); other
+  lines are kept.
+- Gateway provider attribution follows the RFC 3986 authority: userinfo up to
+  the last `@` is dropped (an authority of `api.openai.com:443@evil.example`
+  names `evil.example`), bracketed IPv6 literals lose brackets and port, and an
+  empty host is `None`.
+- Timestamps in microsecond and nanosecond epochs, Go `time.Time.String()`
+  output and RFC 2822 dates are now parsed; they used to become empty, so
+  events silently lost their time. Gateway records whose timestamp field no
+  supported format parses are counted in a warning and make the scan incomplete.
+- `identity.entra`: app-role and scope labels are resolved per resource. Another
+  service principal that reuses a privileged role id with a harmless label can
+  no longer relabel a grant (a `Mail.ReadWrite` grant used to print as a raw
+  GUID, dropping risk from high to medium and losing `policy.privileged-scopes`).
+  Conflicting labels for one resource and role keep the id and make the scan
+  incomplete; a non-string `resourceId`/`resourceAppId` makes the record
+  malformed.
+- `lowcode.servicenow`: a page with fewer rows than `sysparm_limit` no longer
+  ends collection of a table (ACLs filter rows after the limit is applied, so
+  100 of 500 rows could come back with exit 0). Collection continues until an
+  empty page; reaching `max_pages` first makes the scan incomplete. Each table
+  costs one extra request.
+- `lowcode.power-platform`: one flow, app or bot record that cannot be analysed
+  (signature-matching timeout or malformed fields) is skipped with a warning and
+  the scan is incomplete; the records around it are still reported. A 3 MiB flow
+  definition used to abort the connector with 0 findings. Signature matching
+  examines at most the first 300000 characters of a definition, as the other
+  low-code connectors do.
+- `saas.generic` and `lowcode.zapier`: an export whose columns map to no app or
+  zap name no longer gives 0 findings, a complete scan and exit 0. When no
+  record has a name, a warning lists the accepted column names (never record
+  values); when only some lack one they are skipped with a counted warning.
+  Either way the scan is incomplete.
+- `saas.slack`: a record naming another workspace (for example a Slack Connect
+  bot with a foreign `team_id`) or an invalid workspace ID is skipped and
+  counted in a warning, and the scan is incomplete; the workspace's other apps
+  are still reported. One such record used to withhold every Slack finding.
+- `identity.jwt`: without `jwks_url`, every token finding carries
+  `metadata.verified: false` (with `verification_scope: "none"`,
+  `issuer_verified: false`, `authorization_validated: false`) and a
+  `jwt:signature` evidence line saying that claims are unverified. Previously
+  there was no `verified` key, so an unsigned or tampered token read like a
+  checked one. Confidence and risk are unchanged.
+
+#### Engine, configuration, inventory, YAML and signature packs
+
+- YAML with a malformed explicitly tagged scalar (`!!bool x`, `!!int >`,
+  `!!timestamp ---`, an impossible date) is reported as malformed input
+  everywhere ShadowScan reads YAML. PyYAML let `KeyError`, `IndexError`,
+  `AttributeError` and `ValueError` escape, so one such file discarded the valid
+  records of its neighbours, the connector error quoted the scalar, and a scan
+  configuration with such a value printed a traceback. The bounded loaders raise
+  `YAMLConstructionError` whose message gives only the line and column. A
+  `RecursionError` during construction is a `YAMLResourceLimitError`.
+- An integer or float scalar longer than 10,000 characters is a YAML resource
+  limit (`YAMLResourceLimitError`; the scan is incomplete) instead of being
+  converted. YAML 1.1 builds a sexagesimal integer (`1:1:1:...`) by repeated
+  big-integer multiplication, which is quadratic: 80 KB took 0.5 s, 1 MB about a
+  minute, and the 64 MiB input limit alone allowed hours.
+- A connector or plugin that calls `sys.exit()` or raises another
+  non-`Exception` `BaseException` during import, construction or collection is a
+  failed connector: its error is recorded, the scan is incomplete (exit 3) and
+  the report is still written. Previously the `SystemExit` ended the process
+  with the plugin's exit status and no report, so `sys.exit(0)` read as a clean
+  pass. `KeyboardInterrupt` still stops the scan.
+- A scan warns when an inventory file or directory, or a file it loads, is
+  inside a local path scanned by `code.filesystem` in the same run (scanned
+  content, for example a pull request, could approve its own findings), and once
+  per entry with a `*`-only resource pattern, which approves every finding. The
+  warnings appear in a new `engine.inventory` entry of the report's `stats` and
+  in table output; they do not make the scan incomplete or change the exit code.
+  `shadowscan diff` ignores `engine.*` stats entries when it compares completion
+  coverage.
+- A configured custom signature pack directory that contributes no
+  `.yaml`/`.yml` pack (empty, other file types only, or only symbolic links) is
+  an error naming the directory and the skipped entries, in scans,
+  `signatures list/show/test` and `python -m shadowscan.signatures.validate`.
+  Symbolic links skipped inside pack directories, inventory directories or
+  inventory globs are reported by name; links are still never followed. An
+  inventory glob that matches no file is an error like a missing literal path
+  instead of an empty inventory that marks every finding shadow.
+- `shadowscan diff` requires each report's `summary.total` (and `by_surface` /
+  `by_kind` counts when present) to match its `findings` array before missing
+  findings can count as resolved. Emptying the `findings` array of a complete
+  report used to print "1 resolved" with exit 0; such a report is now
+  incomparable, its missing findings are listed as unknown and the exit is 3.
+- `repr()`/`str()` of `ConnectorSpec` and of a `ScanConfig` holding it no longer
+  print connector credentials. Values pass the report redaction rules and
+  credential-file locations (`service_account_file`, `credentials_file`,
+  `token_file`) are withheld.
+- Inventories, configuration files, signature packs and reports accept a
+  leading UTF-8 byte-order mark (spreadsheet "CSV UTF-8" inventories were
+  rejected). A scan configuration that is a symbolic link, or reached through
+  one (a Kubernetes ConfigMap mount), still fails, but the message now says that
+  links are not followed and to pass the real path.
+- Signature validation checks for empty-matching patterns with the same `regex`
+  engine, flags and 0.1 s timeout as the matcher. A pattern only the `regex`
+  module understands, such as `\p{L}*`, previously passed validation yet matched
+  everywhere; it is now rejected.
+- The default incremental state directory ignores an empty or relative
+  `XDG_STATE_HOME`, as the XDG specification requires. An empty value used to
+  put private state under `./shadowscan` in the repository being scanned.
+- `shadowscan diff` text output no longer runs Rich's syntax highlighter over
+  imported titles and resources, which was quadratic (a 50,000-character title
+  took about 19 s).
+- Inventory approval patterns are checked for citation markers (`[cite: 1]`,
+  `[cite_start]`) in a single pass. The regular expression rescanned to the end
+  of the item from every `[cite:` that had no closing `]`: 120 KB of `[cite:`
+  took 13.6 s, and a megabyte about twenty minutes.
+- `--incremental` with `--dump-records` logs that the cache is not used instead
+  of disabling it silently. `docs/operations/ci.md` no longer recommends
+  restoring incremental state with `actions/cache`: the fingerprint includes
+  file identity, so a fresh checkout never reuses restored state.
+
+#### code.filesystem: silent coverage gaps and denial of service
+
+- Files that start with a UTF-8, UTF-16 or UTF-32 byte-order mark are decoded
+  and the mark is removed. A UTF-16 `requirements.txt` (what Windows PowerShell
+  5.1 `pip freeze >` writes), a UTF-16 `.env` and BOM-prefixed Python or JSON
+  sources used to read as nothing and gave a complete, empty scan. A Python
+  source is decoded with the codec its PEP 263 cookie declares; a codec that
+  cannot decode it is a gap, and `punycode` is refused because its decoder is
+  quadratic.
+- A file the scanner analyzes by name that still holds a NUL byte in its first
+  8 KiB (and is not a byte-order-marked text file) is a coverage gap, `binary or
+  undecodable content in analyzable file`, so the scan is incomplete (exit 3).
+  Compiled or packed artifacts without any file extension (ELF, Mach-O, wasm,
+  archives, images, PDF) and names the scanner never analyzes stay quiet.
+- The built-in directory exclusions are disclosed: a skipped non-empty `bin`,
+  `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`, `third_party`,
+  `thirdparty` or `external` directory is listed once per scan root in a warning
+  (the scan stays complete). The new `default_excludes` option and `shadowscan
+  code --no-default-excludes` scan them (also accepted by `code.github` and
+  `code.gitlab`); version-control metadata stays excluded. The incremental
+  fingerprint follows the option.
+- Two quadratic patterns that hold the GIL, so neither
+  `--connector-timeout-seconds` nor `--job-deadline-seconds` could interrupt
+  them, are linear now and run under a matching budget: the agent-definition
+  front matter (20 KB of blank lines took about 2.5 s) and the Terraform and
+  CloudFormation IAM wildcard check (a 110 KB `.tf` made a scan take 137 s). A
+  timeout is a file-level gap and the findings of other files are kept. Only
+  horizontal whitespace may follow a front-matter marker now.
+- `PackageReference` and `PackageVersion` items in `Directory.Build.props`,
+  `Directory.Build.targets` and shared `*.props`/`*.targets` files are read as
+  NuGet manifests (a `Microsoft.SemanticKernel` reference there gave no finding).
+- `exclude` and `paths` must be lists of non-empty strings. A bare string was
+  iterated per character, became the patterns `/` and `*`, excluded the whole
+  tree and reported a complete, empty scan (`paths: "/srv/repo"` would have
+  scanned `/`). The error names the option, never its value.
+- A file or directory whose name is not valid UTF-8 no longer breaks the table,
+  CSV, HTML, Markdown and SARIF reporters. Each undecodable byte is shown as a
+  `\xNN` escape in reports while the file is still read under its real name.
+- The directory walk uses an explicit stack. A chain about a thousand
+  directories deep used to raise `RecursionError` on Python 3.11 and lose every
+  finding.
+- Python (or a notebook) that the running interpreter cannot parse, for example
+  a PEP 695 `type A = int` on 3.11, adds a warning that import-bound analysis
+  was skipped instead of dropping it silently; the lexical evidence is kept.
+- An empty directory, or one holding only data files, named like an SDK
+  (`openai`, `agents`, `langchain`) no longer makes every import of that SDK
+  read as repository code. A `name.py` module, a package with `__init__.py` and
+  a directory without it that holds Python source (a bounded look of 256
+  entries and 8 levels) still count as local code.
+- MCP servers that declare themselves disabled (`disabled: true`,
+  `enabled: false`) are reported with the tag `declared-disabled` and
+  `disabled: true` in `metadata.servers`, and `metadata.disabled` is set when
+  none is enabled. The flag is client-specific (Cline honors it, Claude Code
+  does not) and repository-controlled, so honoring it let a repository hide a
+  server. `server_count` still counts the servers not declared disabled. The
+  three `mcp-disabled-*` evaluation cases are now labelled present and the
+  documented authored-corpus counts change from 29/48 to 32/45 positives and
+  negatives; the evaluation harness scans cases with `default_excludes: false`.
+
+#### Detection precision, labels and risk policy
+
+- The top bucket of the `likelihood` field is renamed from `confirmed` to
+  `strong` in every report format. It was only ever `confidence >= 0.85`, never a
+  verification state; the thresholds are unchanged. Reports, `diff` baselines and
+  incremental-cache entries that carry `confirmed` are still read, as `strong`
+  (the label is derived from `confidence` and is not part of finding identity).
+  Python callers: `Likelihood.CONFIRMED` is now `Likelihood.STRONG`. Anything that
+  filters or counts on the string `confirmed` must accept `strong`; use
+  `confidence` for thresholds.
+- A data or prose file that only lists products no longer establishes a
+  technology. A YAML, JSON, TOML, INI, XML, CSV, text or Markdown file that names
+  four or more products through domains or environment-variable names, and holds
+  no import, dependency, code, file-name, image, IaC, model or credential
+  evidence, is a catalog (a proxy blocklist, an egress allowlist, a vendor policy,
+  a copy of the signature packs). Its mentions count only for a signature with
+  library evidence elsewhere in the project. A repository whose only content was
+  such a list reported "LLM usage: CrewAI" at confidence 1.0 and high risk; it
+  now yields no finding, and `metadata.catalog_mentions` lists the discounted
+  files when a finding remains. Source code, manifest-named files (dotenv,
+  Compose, Helm values, workflows, requirements, IaC) and data files naming one to
+  three products are unchanged. Scanning `shadowscan/signatures/data` no longer
+  reports LangGraph, CrewAI, Google ADK and Agno. Known cost: a bare data file
+  that names four or more providers and is the only evidence (for example an
+  Envoy routing table kept in YAML) is no longer reported; its deployment is still
+  found through its dependency, import, image, IaC or file-name evidence.
+- `Evidence` refuses a weight that is not a finite number between 0 and 1, at
+  construction and on assignment. A NaN or infinite weight clamped to 1.0 inside
+  the noisy-OR and produced confidence 1.0. A plugin that passes such a weight now
+  fails its connector (the scan is incomplete) instead of reporting an inflated
+  confidence.
+- `options.risk_weights` keys under `capabilities` and `providers` are
+  validated: a capability must be one of the ten capability names and a provider
+  must be a provider signature id of the loaded packs, with a "did you mean" hint.
+  `capabilities: {code-execution: 99}` used to exit 0 and change nothing; it now
+  stops the scan setup. Tags stay open-ended, so an unfamiliar tag key is accepted
+  and logged once per process.
+- The risk score scales by confidence with exact arithmetic. Binary floats had
+  drifted (`0.6 + 0.4 * 0.15` is `0.6599999999999999`), so a raw 75 at confidence
+  0.15 scored 49 (medium) instead of 49.5, which rounds to 50 (high). Over raw
+  totals 0 to 300 and confidences 0.000 to 1.000, five clamped scores move by one
+  and one crosses a level (medium to high).
+
+#### Remote collection: clones, listings and HTTP
+
+- A scan that is terminated (SIGINT, SIGTERM, SIGHUP) or hits
+  `--job-deadline-seconds` stops its in-flight `git clone` process groups and
+  deletes the temporary checkout of the repository being scanned before it exits.
+  Git used to keep running in its own session, without size or time limits and
+  with the clone credential in its environment, and the checkout stayed on disk.
+  No new clone starts afterwards, and an interrupted clone is not retried through
+  the sampled API fallback. SIGKILL and OOM kills cannot be handled in process.
+- `code.github` and `code.gitlab` read the organisation, user or group listing to
+  the end before the first repository is cloned or scanned, in an order a push
+  cannot change (GitHub `sort=full_name`, GitLab `order_by=id`). The listing was
+  ordered by recent activity and paged lazily, so a push to a not-yet-listed
+  repository during the scan moved it behind the cursor: it was never examined
+  and the scan stayed complete (exit 0). When more repositories exist than
+  `max_repos` or `max_projects`, the covered subset is the first N in stable
+  order. GitLab listings are compared with `X-Total` and `X-Total-Pages`; entries
+  that do not add up make the scan incomplete. GitHub reports no total, so a
+  repository deleted (not pushed) mid-listing can still hide another.
+- A clone, and API mode, report Git LFS pointer files (small files opening with
+  `version https://git-lfs.github.com/spec/v1`): `Git LFS pointer files in <repo>
+  are not resolved; source coverage partial` makes the scan incomplete (an error
+  under `strict_coverage`). Submodules are reported by the gitlink check merged
+  from main.
+- `topics`, `repos` and `projects` of `code.github` and `code.gitlab` must be
+  lists of non-empty strings, and `max_repos`, `max_projects` and `clone_depth`
+  whole numbers. `--set topics=llm` was iterated as the characters `l`, `l`, `m`,
+  examined no repository and finished complete with exit 0; it now stops the
+  connector with an error that names the option.
+- Cloning requires Git 2.32 or newer: the clone protections travel in
+  `GIT_CONFIG_COUNT` and `GIT_CONFIG_GLOBAL`, which an older Git ignores
+  silently (a 302 to another host was followed and the scan finished). With an
+  older or unidentifiable Git the connectors use sampled API mode and the scan is
+  incomplete. Clones also verify received objects (`transfer.fsckObjects`).
+- The HTTP destination policy refuses `168.63.129.16` (Azure wire server) and
+  site-local IPv6 `fec0::/10`. A URL containing whitespace or control characters
+  is refused instead of being cleaned by the parser while git rejects it, and an
+  API tree that names a `.git` path component aborts that repository's snapshot.
+- Documentation: the GitHub token needs Contents and Metadata plus Secrets,
+  Variables, Codespaces secrets and Dependabot secrets (read). Without them every
+  repository adds four identical `repository metadata HTTP 403` warnings and the
+  scan exits 3. Use separate token variables for `code.github` (which reads
+  untrusted content) and `saas.github-apps` (which needs organisation admin).
+
+#### Redaction and report output
+
+- Credential redaction reads an operator whole. `'api_key' => '<value>'` used to
+  become `'api_key' =[REDACTED] '<value>'` and `if token == '<value>':` became
+  `if token =[REDACTED] '<value>':` (the marker replaced the operator's second
+  character and the literal stayed in the report); `!=`, `||=`, `+=` and `.=`
+  were not read at all. `=>`, `==`, `===`, `!=`, `!==`, `=~`, `:=`, `||=`, `&&=`,
+  `??=`, `+=`, `-=`, `.=`, `?=` and `<-` now join a name to a value like `=` and
+  `:` do: the literal is withheld and the operator is kept. A comparison with a
+  sensitive name withholds only a quoted word or an opaque value, so `x == 1`
+  and `key => users` stay.
+- Provider tokens and JWTs are withheld when a word character precedes them:
+  after a JSON-escaped line break or tab (`\n`, `\t`, `\x22`), a percent escape
+  (`%3D`) or `_`, and, for the unmistakable prefixes (`sk-proj-` and the other
+  `sk-<qualifier>-` forms, `ghp_`, `github_pat_`, `xox*-`, `AIza`, `AKIA`, `eyJ`),
+  after a digit. Words that merely end in a prefix's text (`risk-`, `disk-`) stay.
+  The JWT rule reads each run of base64url characters once (a 400 KB run of
+  `eyJ-eyJ-...` took about a minute).
+- URL userinfo is withheld whole when the password holds a raw `/`, `?` or `#`
+  (`postgres://u:example#pw@h`, `https://svc:example7?x@llm-gw.example/v1`); URLs
+  such as `https://host/path?x=a@b` are unchanged.
+- `--dump-records` and report metadata withhold structured fields by the words of
+  their name. `webhook_secret`, `signing_secret`, `bot_token`, `client_key`,
+  `openai_key`, `pwd`, `passphrase`, `db_pass` and `jwtSecret` kept their raw
+  values in the `NNNN-*.jsonl` dump of a `saas.generic` export. Cursors
+  (`next_token`, `skipToken`), tokenizer tokens, switches (`requires_auth`) and
+  the bare `key` of tags and objects are unchanged.
+- A value of an unknown type in finding metadata or a record dump (bytes, a set,
+  an exception, a plugin's object) is converted to text and redacted like any
+  other value instead of reaching a report raw through `json.dumps(default=str)`
+  or `repr`.
+- Private-key blocks in PGP, RFC 4716 (SSH2) and PuTTY forms are withheld with
+  their line count; `passphrase`, `SECRET_KEY_BASE`, `creds`, `db_pass`,
+  `smtp_pwd`-style names, npm's `_auth` and an ODBC `Pwd=` member are withheld
+  whatever the value, as are authentication headers named for a credential word
+  (`curl -H "X-Token: v"`).
+- `-f csv` neutralizes formula cells in one linear pass. A run of 20,000 CRLF
+  pairs in a title, owner or evidence text took about five seconds and every
+  doubling cost four times as much. The inserted markers are unchanged.
+- The terminal shows zero-width characters, the byte-order mark and Unicode tag
+  characters as escapes. A lone surrogate in a name read from an export no longer
+  fails `-o x.csv|md|html` or prints a traceback; it is written as `\ud800`.
+- Markdown reports defang `http://`, `https://` and `ftp://` after any non-letter
+  and `www.` after any non-alphanumeric (`_https://host` was still an autolink),
+  and SARIF message text escapes `\`, `[` and `]` so scanned text cannot write a
+  `[text](destination)` link. These two follow the GFM and SARIF 3.11.6 rules and
+  were not checked in a viewer. `SECURITY.md` lists what can still remain.
+
+#### Source lexer
+
+- The JavaScript lexer no longer treats a keyword-named property or method as a
+  keyword. After `o.of`, `o?.in`, `this.#typeof` or `o.for(x)` a `/` is a
+  division, so `o.of / 1; <code>; 2 / 1;` can no longer turn the code between
+  the two slashes into a "regular expression" that hides it (the scan reported
+  0 findings and was complete). `of` is a keyword only after an operand, and a
+  regular expression after a spread is lexed as one. A `/` after `await` or
+  `yield` cannot be classified without a parse and makes the file's lexical
+  analysis incomplete. So does a regular expression after a closing brace that
+  holds a quote, backtick or slash, which a block-then-regex statement could use
+  to hide the rest of a line.
+- Line comments end at the language's real line terminators: LF, CR, U+2028 and
+  U+2029 in JavaScript and TypeScript (also inside a JSX tag), `?>` in PHP,
+  escaped line breaks in Java. Replacing every LF of 1,221 real JavaScript files
+  with CR, U+2028 or U+2029 changed what 838 of them hid before and none after.
+  A backslash no longer escapes the quote of a JSX attribute string.
+- The JSX look-ahead has a per-file allowance. A 250 KB run of `<A>(` took over
+  a minute and discarded the results of the whole scan; it now ends in under a
+  second as an incomplete file while the other files are scanned. A megabyte of
+  `#` in Swift (13 s) and the Java escape search are no longer quadratic.
+- A regular-expression literal up to 262,144 characters lexes completely. The
+  `emoji-regex` tables found in most npm trees (10 to 17 KB on one line) used to
+  make the whole scan incomplete.
+
+#### CI, repository policy and developer tooling
+
+- CI no longer cancels a `main` push run when the next push arrives:
+  `cancel-in-progress` is `${{ github.event_name == 'pull_request' }}`. Before,
+  29 of 83 `main` push runs ended `cancelled`, leaving merged commits without a
+  complete CI record.
+- The repository policy tests check workflows with either YAML extension (a
+  `.yaml` workflow used to skip every check) and add invariants for: no
+  `workflow_run` trigger; no job- or step-level `continue-on-error`; no
+  `|| true`, `--exit-zero` or `--ignore-vuln`; no coverage floor below 80; no
+  event text, `head_ref`, `ref_name`, `inputs.*` or `toJSON` dumps interpolated
+  into `run:`; no publication command anywhere (`gh release`, `twine upload`,
+  `uv|poetry|hatch publish`, `pypi-publish`, `docker push`, `git push`); a
+  release workflow that stays `workflow_dispatch`-only with `id-token: write`
+  only in its checkout-free `attest` job; Dockerfiles with digest-pinned `FROM`,
+  a final non-root `USER`, no `ADD <url>` and hash-checked `pip install`; and an
+  allow-list-style `.dockerignore`. Each rule runs on the real file and on a
+  mutated copy (32 mutations) to show that it still catches the violation.
+- The `no-hardcoded-secrets` hook recognises many more credential shapes: of 28
+  planted synthetic examples the previous patterns found 7 and the new ones find
+  all 28. They include GitHub `github_pat_`/`gho_`/`ghu_`/`ghs_`/
+  `ghr_`, AWS `ASIA` keys and `aws_secret_access_key = ...`, Google `AIza`, Slack
+  `xoxp-`/`xoxa-`/`xoxr-`, Hugging Face `hf_`, Stripe live keys, signed JWTs,
+  PEM private-key headers, Azure `AccountKey=`/`SharedAccessKey=` and passwords
+  in URLs. It prints at most four characters plus the match length (it used to
+  print twelve), fails on an unreadable file, runs on every text file, and CI
+  runs the same script over `git ls-files`.
+- `tools/coverage_gate.py` fails closed: a module with statements in an unlisted
+  connector family, in a nested package, or directly under
+  `shadowscan/connectors/` (other than `base.py`, `common.py` and `offline.py`)
+  fails the gate with a message naming the reason, where it used to be skipped
+  while the gate printed "Checked N modules". A malformed coverage report exits
+  2. `tests/test_coverage_gate.py` pins the 75% floor and the exit codes.
+- `make audit` (and so `make check`) audits the four hash locks as CI does.
+- `make secrets` (part of `make check`) runs the credential check that CI runs
+  over every tracked file; a consistency test pins both commands.
+- `tests/unit/test_regex_linearity.py` fails when a module-level regular
+  expression is superlinear on hostile input (CPython's `re` cannot be
+  interrupted, so such a pattern defeats the connector and job deadlines), and
+  times the redaction passes end to end. Mutation tests were added for the
+  credential-mixing guard, symlink reporting in inventory globs, the incremental
+  cache's refusal to store incomplete results, the shipped YAML alias budget
+  and the Makefile coverage floor.
+- Documentation: `docs/testing.md` lists the expected skips (core-only installs
+  skip about 60 cloud-SDK tests, Git < 2.45 and root-only permission tests);
+  `docs/evaluation.md` states the real 5 to 7 files per realistic-corpus case; and
+  `docs/connectors.md` documents the 44 connector configuration keys that no
+  connector page named. A consistency test now fails when a key reported by
+  `shadowscan connectors --json` is undocumented.
+
 ### October 1 discovery review corrections
 
 - Code collection identifies declared submodules whose source has not been
@@ -812,7 +1222,7 @@ Fixes and additions:
 #### Governance and documentation
 
 - `CONTRIBUTING.md` documents the actual single-maintainer, self-merge process with automated checks and requires independent human review before any tagged release; `docs/production.md` gives operators the commands to verify ruleset and review state themselves.
-- The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs under `docs/hardening-logs/`; the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
+- The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs (they now live under `archive/reviews/`); the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
 
 ### Production acceptance fixes (2026-09-25)
 

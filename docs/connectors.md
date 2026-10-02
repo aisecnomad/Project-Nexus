@@ -114,8 +114,8 @@ is capped at 0.6 confidence. These are static candidate classifications, not pro
 that code ran or that a deployment is autonomous.
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
-A2A, M365 and CrewAI manifests yield incomplete coverage instead of confirmed
-agents. JSON/YAML descriptions are not executed or treated as source; low-code
+A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
+agent findings. JSON/YAML descriptions are not executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history
@@ -140,7 +140,7 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
 `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
@@ -148,7 +148,19 @@ checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
-`metadata` is a mapping merged into every finding's metadata.
+`metadata` is a mapping merged into every finding's metadata. The walk skips a
+built-in list of directory names (`bin`, `build`, `dist`, `vendor`,
+`node_modules`, virtualenvs, caches, ...); a skipped non-empty `bin`, `build`,
+`dist`, `out`, `target`, `obj`, `coverage`, `vendor`, `third_party`,
+`thirdparty` or `external` directory is reported as a warning, and
+`default_excludes: false` (`--no-default-excludes`) scans them. The full list
+and the quiet/disclosed split are in [connectors/code.md](connectors/code.md).
+`oversize_skip_globs` replaces the default list of case-insensitive file-name
+globs. The defaults cover lockfiles, minified bundles, source maps, images,
+fonts, archives and compiled artifacts, and a glob with `/` matches the relative
+path. A file over `max_file_size` that matches one is skipped with a warning
+and the scan stays complete, even under `strict_coverage`. Any other oversize
+analyzable file makes coverage incomplete.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
 relative to it without following a link in any path component. A root that
@@ -163,8 +175,10 @@ elsewhere). See the [code connector guide](connectors/code.md) for details.
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
-matching LLM providers. Token: fine-grained PAT or GitHub App token with
-`contents:read`, `metadata:read`; `secrets:read` for secret names. Offline
+matching LLM providers. Token: a fine-grained PAT or GitHub App token with
+read-only **Contents** and **Metadata** (the clone or API snapshot) and the four
+repository permissions listed below (CI credential names); a classic PAT needs the
+`repo` scope. Offline
 input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.
@@ -175,6 +189,12 @@ also makes coverage incomplete; the connector will not scan a different repo
 as a substitute for the requested one. An org or user listing entry whose
 `full_name` is not a plain `owner/name` is an error that makes the scan
 incomplete; that repository is never requested or cloned.
+The listing is read to the end, in `full_name` order, before the first
+repository is cloned or scanned. A push during the scan therefore cannot move a
+repository that was not listed yet out of the listing, which an
+activity-ordered, lazily paged listing allowed. If the listing fails part-way
+(or exceeds `max_repos`) the repositories already listed are still scanned and
+the scan is incomplete.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
@@ -182,9 +202,30 @@ before cloning and samples the local checkout, including `.git`, while Git runs.
 The clone is stopped when observed size exceeds the cap or cannot be measured,
 and checked again after Git exits. `clone_timeout_seconds` (default 120) bounds
 each clone.
+A clone populates no submodule (see the
+[coverage policy](scanning.md#coverage-policy)) and runs no Git LFS smudge
+filter: a repository with LFS pointer files (small text files that open with
+`version https://git-lfs.github.com/spec/v1`) holds the pointers, not the large
+files, so such a repository makes the scan incomplete (an error under
+`strict_coverage`), as does a clone that could not be checked for them. API mode
+reports LFS pointer files the same way.
 An oversized repository or missing/malformed size estimate falls back to sampled
 API mode without launching Git and marks coverage incomplete. A failed clone or
 Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
+A clone also makes Git verify every object it receives (`transfer.fsckObjects`,
+`fetch.fsckObjects`), so a repository with malformed objects fails to clone and
+is scanned through the incomplete API fallback. A clone URL or API link that
+contains whitespace or control characters is refused outright rather than
+cleaned up, and an API tree path with a `.git` component (any case) aborts that
+repository's API snapshot.
+Cloning requires Git 2.32 or newer: the protections that keep a clone on its
+origin and out of local configuration are passed through `GIT_CONFIG_COUNT` and
+`GIT_CONFIG_GLOBAL`, which older versions ignore without an error. With an older
+or unidentifiable Git (`git --version` is read once per process) the connector
+uses sampled API mode and the scan is incomplete. The submodule inventory of a
+clone uses the hardened metadata path, which needs Git 2.45; with Git 2.32 to
+2.44 a clone is scanned but reports
+`could not inventory gitlinks safely; submodule coverage unknown`.
 The provider's size is an estimate, and polling can overshoot between samples.
 Neither check limits network transfer or guarantees a hard disk ceiling. Run
 remote scans with a host/container wall-clock limit and a writable disk quota.
@@ -194,7 +235,41 @@ Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
 `mode`, `include_archived`, `include_forks`, `max_repos`, `clone_depth`,
 `topics`. The filesystem scanner options `exclude`, `max_file_size`,
 `max_files`, `scan_timeout`, `scan_secrets` and `use_git` are forwarded to
-every repository scan.
+every repository scan. `repos` and `topics` must be lists of non-empty strings,
+and `max_repos` and `clone_depth` whole numbers; anything else (including a bare
+string such as `--set topics=llm`, which would be read as single characters)
+stops the connector with an error that names the option, and the scan exits 3.
+With `--set`, write `a,b` or a JSON list such as `'["a"]'`.
+
+**Token permissions for CI credential names.** For every repository it reaches,
+the connector also lists the *names* (never the values) of four credential
+collections. Each needs its own read-only repository permission:
+
+| Endpoint (under `/repos/{owner}/{repo}/`) | Fine-grained / App permission (read) |
+|---|---|
+| `actions/secrets` | Secrets |
+| `actions/variables` | Variables |
+| `codespaces/secrets` | Codespaces secrets |
+| `dependabot/secrets` | Dependabot secrets |
+
+A token with only Contents and Metadata is denied all four, and each denial adds
+the warning `code.github: repository metadata HTTP 403; coverage unknown` (the
+status of the response: 403 for a missing permission, 404 where the feature is
+not available on the repository). Four identical warnings per repository, an
+incomplete scan and exit 3 are therefore the expected outcome of a token that
+lacks those permissions; the code findings themselves are unaffected. The
+warning does not say which endpoint was denied. There is no option to skip these
+endpoints: grant the four permissions, or accept an incomplete scan.
+
+**Use a dedicated token variable.** `token` defaults to the environment variable
+`GITHUB_TOKEN` (then `GH_TOKEN`), and so does `saas.github-apps`, which needs an
+organisation-admin token. `code.github` clones and parses untrusted repository
+content with its token in the process, so give each connector its own variable
+(for example `token: ${GITHUB_CODE_TOKEN}` here and `token: ${GITHUB_APPS_TOKEN}`
+for `saas.github-apps`) and never export the admin token as `GITHUB_TOKEN` where
+code scans run. The rule that code scans and live credentialed connectors need
+separate scans (`allow_credential_mixing`) keeps the two out of one scan; it does
+not narrow what a shared token can do.
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -216,13 +291,19 @@ configured project names and export before treating an empty result as clean.
 A group listing entry whose project `id` is not a positive integer is an
 error that makes the scan incomplete; that project is skipped before any
 request is made for it, and the other projects are still scanned.
+As for `code.github`, the group listing (ordered by project `id`) is read to the
+end before the first project is cloned. It is also compared with the totals
+GitLab reports (`X-Total`, `X-Total-Pages`; GitLab omits them for very large
+groups): entries that do not add up make coverage incomplete.
 Polling cannot provide a hard disk or network-transfer limit; enforce a writable
 disk quota on the worker.
 
 Options: `group` (env `GITLAB_GROUP`) or `projects`; `token` (env
 `GITLAB_TOKEN`); `api_url` (env `GITLAB_API_URL`), `mode`, `include_archived`,
 `max_projects`. The same filesystem scanner options as `code.github` are
-forwarded to every project scan.
+forwarded to every project scan. `projects` must be a list of non-empty strings
+(numeric project ids may be written unquoted) and `max_projects` a whole number;
+other values stop the connector with an error that names the option (exit 3).
 
 ## Identity
 
@@ -233,11 +314,13 @@ match AI SaaS signatures or hold privileged scopes, and service apps
 Token: SSWS API token (`token`, env `OKTA_API_TOKEN`) or OAuth bearer
 (`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read`; `bearer` wins when
 both are set. Options: `include_inactive`, `fetch_tokens`.
+Live collection also needs `org_url` (`https://<org>.okta.com`, env
+`OKTA_ORG_URL`).
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
-app-only `appRoleAssignments` (role ids resolved to names such as
-`Mail.ReadWrite`), tenant app registrations, managed identities. First-party
+app-only `appRoleAssignments` (role ids resolved to the names their resource
+defines, such as `Mail.ReadWrite`), tenant app registrations, managed identities. First-party
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
@@ -246,6 +329,14 @@ coverage incomplete. Their permission evidence remains available for investigati
 and cannot establish an approved registry binding. A service principal exported
 with conflicting records is reported the same way, keeping AI evidence from up to
 16 of its snapshots (64 evidence items) without choosing one snapshot's identity.
+
+Client credentials: `tenant_id`, `client_id` and `client_secret` (env
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`).
+`include_first_party: true` also reports Microsoft first-party service
+principals that match no AI signature; Copilot ones are always kept.
+`max_app_role_lookups` caps the per-service-principal `appRoleAssignments`
+calls (default 2000). Reaching the cap leaves app-only permissions partial and
+the scan incomplete.
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
@@ -268,11 +359,16 @@ unverifiable scope makes collection incomplete; retained observations cannot be
 approved or merged with observations from another unresolved connector instance.
 Google Workspace inventory bindings must include the matching customer in
 `discovery.accounts`. Regenerate older cards whose account list is empty.
+`max_users` caps the users enumerated (default 10000); reaching it makes the
+scan incomplete.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
 audiences and scopes, AI-named apps. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
+Options: `domain` (tenant domain such as `acme.eu.auth0.com`, env
+`AUTH0_DOMAIN`) and the M2M application's `client_id` and `client_secret` (env
+`AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`).
 
 ### `identity.jwt`
 Decodes tokens (never stored) and classifies the holder as `human`, `service`,
@@ -287,7 +383,12 @@ ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
 unverified token's issuer does not choose or authorize a key source. The JWKS URL
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
-`metadata.verified` as signature evidence, not permission to act.
+`metadata.verified` as signature evidence, not permission to act. Without
+`jwks_url`, every token reports `metadata.verified: false` and a "signature not
+checked" evidence line: its claims are unauthenticated.
+
+Tokens come from `input` (one token per line, or JSON) or from the `tokens`
+list in the connector entry. Keep live tokens out of committed configuration.
 
 CLI equivalents: `--jwks-url`, `--expected-issuer`, and repeatable
 `--jwt-algorithm`. The latter two require `--jwks-url`.
@@ -316,6 +417,11 @@ Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
 label), which names the gateway on findings: it becomes the provider and the
 account of callers without a tenant/account scope.
 
+Static assets and health probes are recognised from the request path alone,
+never its query string, and their count is reported as a scan note. In
+`key=value` text lines, quoted values honour `\"` and `\\` escapes; a line that
+repeats a key or leaves a quote open is malformed and makes the scan incomplete.
+
 ## Low-code
 
 ### `lowcode.power-platform`
@@ -331,6 +437,11 @@ token audience. A denied child request or failed continuation marks coverage
 incomplete while retaining findings from other environments. Before relying on
 live coverage, verify the application's Power Platform roles and known apps
 in a read-only tenant canary.
+Options: `tenant_id`, `client_id` and `client_secret` (env `AZURE_TENANT_ID`,
+`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`; the client must be a Power Platform
+application user). `environments` restricts live collection to the listed
+environments, matched by name or display name. `include_bots` defaults to
+true; `false` skips the Dataverse query for Copilot Studio agents.
 
 ### `lowcode.salesforce`
 SOQL/Tooling: `BotDefinition`/`BotVersion` (Einstein bots & Agentforce
@@ -338,10 +449,20 @@ agents), `GenAiPlannerDefinition`/`GenAiPluginDefinition`/`GenAiFunctionDefiniti
 (topics, actions, Apex/Flow targets), `GenAiPromptTemplate`, `FlowDefinitionView`
 with AI hints, `ConnectedApplication` + `OauthToken` (user-authorised apps,
 aggregated). Auth: `access_token` or client-credentials connected app.
+Options: `instance_url` (`https://<org>.my.salesforce.com`, env
+`SFDC_INSTANCE_URL`), `access_token` (env `SFDC_ACCESS_TOKEN`) or the connected
+app's `client_id` and `client_secret` (env `SFDC_CLIENT_ID`,
+`SFDC_CLIENT_SECRET`), `api_version` (default `v62.0`) and `max_pages` (per
+query, at most 1000).
 
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
 `sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
+
+Options: `instance` (env `SNOW_INSTANCE`), `username` and `password` (env
+`SNOW_USERNAME`, `SNOW_PASSWORD`) or `token` (env `SNOW_TOKEN`) for a bearer
+token instead of basic auth; `max_pages` (per table, at most 1000); `input`
+for an offline JSON export of the table records.
 
 ### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
@@ -353,6 +474,9 @@ steps (→ code-exec), models. Live pagination is bounded by `max_pages`
 An n8n workflow needs a nonempty provider ID for a usable resource identity.
 Exported blueprints without an ID retain detected AI evidence under an unresolved
 identity, make collection incomplete, and cannot be approved by a registry card.
+n8n authenticates with `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`),
+against `api_url` (env `N8N_API_URL`, for example
+`https://n8n.example.com/api/v1`).
 
 ## SaaS
 
@@ -367,8 +491,11 @@ not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
 Findings use the immutable workspace ID as `account`; the display name is stored
 in `metadata.workspace_name`. An offline export without a team record requires
-an explicit `team_id`. Conflicting envelopes or record-level workspace IDs make
-the scan incomplete and prevent attribution. Update inventory account bindings
+an explicit `team_id`. Conflicting or malformed workspace envelopes make the
+scan incomplete and prevent attribution. A record that names another or an
+invalid workspace ID (for example a Slack Connect bot) is skipped and counted,
+and the scan is incomplete; the workspace's other records are still reported.
+Update inventory account bindings
 and collect a fresh comparison baseline when upgrading from name-based IDs.
 
 ### `saas.microsoft-teams`
@@ -377,6 +504,10 @@ installed apps per team (capped by `max_teams`).
 Malformed app IDs, conflicting expanded identities and malformed nested
 definitions or permissions make collection incomplete. An installation ID is
 not a fallback catalog app ID. Valid neighboring records remain available.
+Options: `tenant_id`, `client_id` and `client_secret` (env `AZURE_TENANT_ID`,
+`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`) or `access_token` (env
+`GRAPH_ACCESS_TOKEN`). `include_store: true` also lists store apps in the
+catalog; installed apps are always inspected.
 
 ### `saas.github-apps`
 Org installations with permissions and repository selection (AI reviewers,
@@ -384,6 +515,11 @@ coding agents), Copilot billing/seat settings, fine-grained PATs approved for
 the org. An installation is reported when its slug or its words match an AI
 signature or an AI-like name; `include_unrecognized_apps: true` also reports
 other write-capable apps, tagged `unrecognized-app` at possible confidence.
+`token` (env `GITHUB_TOKEN`) must be an organisation-admin token. Name a variable
+of its own for it (for example `token: ${GITHUB_APPS_TOKEN}`) rather than relying
+on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
+untrusted repositories; the rule that code scans and live connectors run
+separately does not narrow a shared token's scope.
 
 ### `saas.atlassian` · `saas.notion` · `saas.zoom`
 UPM user-installed apps (Jira/Confluence) and Notion bot users. Zoom's
@@ -396,10 +532,22 @@ installation export. Notion rejects a missing/repeated pagination cursor and
 caps live pages (`max_pages`, at most 1000); either condition makes the scan
 incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
 
+Atlassian options: `site` (`https://<org>.atlassian.net`, env
+`ATLASSIAN_SITE`), a site admin `email` and `api_token` (env `ATLASSIAN_EMAIL`,
+`ATLASSIAN_API_TOKEN`), and `products` (`jira`, `confluence`; default both).
+Zoom options: `account_id`, `client_id` and `client_secret` (env
+`ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`) for a
+Server-to-Server OAuth app, or `access_token` (env `ZOOM_ACCESS_TOKEN`).
+
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
-and privileged/data scopes (`keep_all: true` to emit everything).
+and privileged/data scopes (`keep_all: true` to emit everything). Records
+without an app name are skipped and counted, and an export where no record
+maps to a name makes the scan incomplete instead of looking empty.
+`platform` (default `saas`) names the export's source, for example
+`google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
+and resource IDs and sets the provider, so keep it stable between scans.
 
 ## Cloud
 
@@ -412,6 +560,13 @@ container. Those values are ordinary configuration rather than credentials, so
 they are not also removed from sibling fields such as ARNs; values under
 sensitive names and recognizable credential formats are removed everywhere.
 Findings record environment variable names only.
+
+Instance and workload credentials are used only when the scan-wide
+`options.allow_instance_credentials` is true (default false). These are EC2 or
+ECS roles, Azure managed identity, GCP metadata Application Default
+Credentials, and OCI instance or resource principals. The engine replaces an
+`allow_instance_credentials` value in a connector entry with the scan-wide
+value; see [Production](production.md).
 
 ### `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
@@ -476,6 +631,11 @@ Unreachable locations reported by GCP make the scan incomplete. `max_projects`
 limits discovery without loading all projects first; `max_pages` (default 1000)
 bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.
+`locations` lists the Vertex AI and Dialogflow locations to query (default
+`us-central1`, `us-east4`, `us-west1`, `europe-west1`, `europe-west4`,
+`asia-southeast1`, `asia-northeast1`). `credentials_file` names an explicit
+Google credentials file (env `GOOGLE_APPLICATION_CREDENTIALS`); otherwise the
+local gcloud Application Default Credentials are used.
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
@@ -492,6 +652,10 @@ Foundry agent discovery targets the classic Agent Service contract:
 require their own contract and are not implied by this support. Missing, denied
 or malformed collections remain incomplete; pagination must finish before
 absence can be inferred.
+`subscriptions` lists the subscription IDs to scan (default: every visible
+subscription). `include_app_settings` (default true) reads Web and Function
+app settings, recording names and checking values for credentials; `false`
+skips them.
 
 ### `cloud.oci`
 Generative AI Agents (agents, endpoints, tools, knowledge bases), Digital

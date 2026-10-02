@@ -26,9 +26,12 @@ from shadowscan.utils.redaction_rules import (
     _sensitive_assignment_key,
 )
 
-# R assigns with '<-' and '<<-'; the scan treats them like '='.
+# R assigns with '<-' and '<<-', Go with ':=' and several languages with '||=', '+=' and
+# '.='; the scan treats them like '='. '=>' (hash rocket, arrow), '==' and '=~' contain an
+# '=' that assigns nothing: they are read whole, and left to the assignment rules.
 _PYTHON_ASSIGNMENT_KEY = re.compile(
-    r"(?<![\w.-])(?P<key>[A-Za-z_][A-Za-z0-9_.]*)[ \t]*(?P<separator>:|=(?!=)|<<?-(?!-))"
+    r"(?<![\w.-])(?P<key>[A-Za-z_][A-Za-z0-9_.]*)[ \t]*"
+    r"(?P<separator>:=|:|\|\|=|&&=|\?\?=|[-+.]=|=(?![=>~])|<<?-(?!-))"
 )
 _INDEXED_ASSIGNMENT_KEY = re.compile(
     r"\[[ \t\r\n]*(?P<quote>[\"'`])(?P<key>[A-Za-z_][A-Za-z0-9_.-]{0,100})"
@@ -93,7 +96,7 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
                 pass
             elif char == "[":
                 brackets.append(char)
-            elif char == ".":
+            elif char == "." and not text.startswith(".=", position):
                 attribute = _TARGET_ATTRIBUTE.match(text, position)
                 if attribute is None:
                     break
@@ -118,13 +121,17 @@ def _indexed_assignment_candidates(text: str) -> Iterator[tuple[int, str, str, i
                             "||=",
                             "??=",
                             "+=",
+                            "-=",
+                            ".=",
+                            "<<-",
+                            "<-",
                             "=",
                         )
                         if text.startswith(op, position)
                     ),
                     None,
                 )
-                if operator and not text.startswith(("==", "=>"), position):
+                if operator and not text.startswith(("==", "=>", "=~"), position):
                     yield match.start(), key, "=", position + len(operator)
                 break
             position += 1
