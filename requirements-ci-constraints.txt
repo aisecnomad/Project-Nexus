@@ -23,7 +23,7 @@ identify==2.6.19
 iniconfig==2.3.0
 jsonschema-specifications==2025.9.1
 jsonschema==4.26.0
-librt==0.15.0 ; sys_platform == "linux"
+librt==0.16.0 ; sys_platform == "linux"
 license-expression==30.4.4
 msgpack==1.2.2
 mypy==2.3.1
