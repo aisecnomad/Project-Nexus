@@ -232,7 +232,8 @@ def test_exit_while_loading_a_plugin_is_an_incomplete_connector(monkeypatch, ind
 
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lookup)
     result = Engine(_entra_config(), index).run()
-    assert result.stats[0].errors == [f"identity.entra: connector worker failed ({raised})"]
+    # The lookup fails before a worker exists; the diagnostic names that step.
+    assert result.stats[0].errors == [f"identity.entra: connector lookup raised {raised}"]
     assert result.stats[0].skipped
     assert not result.complete and _exit_code(result, None) == 3
 
