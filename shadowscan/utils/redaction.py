@@ -845,14 +845,9 @@ def _check_sanitization_structure(value: Any) -> None:
     memo: dict[int, tuple[int, int, int]] = {}
 
     def cost(item: Any) -> tuple[int, int, int]:
-        if isinstance(item, (set, frozenset)):
-            # Read as a list of its members (see ``_plain``).
-            nodes = 1 + len(item)
-            chars = sum(len(member) for member in item if isinstance(member, (str, bytes)))
-            if nodes > _MAX_SANITIZATION_NODES or chars > _MAX_SANITIZATION_CHARS:
-                raise SanitizationLimitError("sanitization expanded output limit exceeded")
-            return nodes, chars, 2
-        if not isinstance(item, (Mapping, list, tuple)):
+        # A set is read as a list of its members (see ``_plain``), and a member
+        # can itself be a tuple or a set: each member is costed as a list item.
+        if not isinstance(item, _CONTAINERS):
             if isinstance(item, (bytes, bytearray, memoryview)):
                 return 1, len(item), 1
             return 1, len(item) if isinstance(item, str) else 0, 1

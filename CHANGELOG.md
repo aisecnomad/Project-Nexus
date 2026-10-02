@@ -203,6 +203,12 @@ integrating them:
   `Pwd=` rule read the value to its first `;` and showed the rest
   (`Pwd={a;S}`, `Pwd={a}};S}`). A brace that does not close within 256
   characters on its line, or opens a `{{` template, is read as before.
+- `sanitize` costs each member of a set or frozenset as it costs a list item.
+  The members were counted as leaves, so a set around a tuple nested more
+  than 64 deep passed the structure check and its copy was cut short with a
+  marker, and a set around a tuple of large texts was copied past the
+  expanded-output limit. Both now fail the sanitization limit (exit 3), as
+  the same tuple in a list does.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

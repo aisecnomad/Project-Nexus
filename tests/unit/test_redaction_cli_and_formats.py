@@ -513,6 +513,21 @@ def test_set_values_count_toward_sanitization_limits():
         sanitize({"big": frozenset(f"v{i}" for i in range(150_000))})
 
 
+def test_a_container_in_a_set_counts_toward_sanitization_limits():
+    # A set's members were counted as leaves, so a set around a deep or wide
+    # tuple passed the structure check: the copy then cut the deep one short
+    # with a marker instead of failing the nesting limit, and copied the wide
+    # one past the size limit.
+    deep: object = "leaf"
+    for _ in range(100):
+        deep = (deep,)
+    wide = ("x" * 1024 * 1024,) * 65
+    for value in (frozenset({deep}), {"field": {deep}}, {"field": frozenset({wide})}):
+        with pytest.raises(SanitizationLimitError):
+            sanitize(value)
+    assert sanitize({"field": {("a", ("b", "c"))}}) == {"field": [("a", ("b", "c"))]}
+
+
 @pytest.mark.parametrize(
     "text",
     [
