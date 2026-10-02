@@ -8,15 +8,29 @@ input must keep scoring exactly as before the hardening.
 from __future__ import annotations
 
 import copy
+import json
+import logging
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
-from shadowscan.config import ConnectorSpec, ScanConfig
+import shadowscan.risk as risk_module
+from shadowscan.cli import main
+from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel, ScanStats, Surface, now_iso
-from shadowscan.risk import CAPABILITY_WEIGHTS, KIND_BASE, PROVIDER_WEIGHTS, TAG_WEIGHTS, RiskPolicy, assess
+from shadowscan.risk import (
+    CAPABILITY_WEIGHTS,
+    KIND_BASE,
+    PROVIDER_WEIGHTS,
+    TAG_WEIGHTS,
+    RiskPolicy,
+    assess,
+    provider_ids,
+)
+from shadowscan.signatures.schema import CAPABILITIES
 
 GARBAGE = ["many", "", None, [3], {"n": 3}, True, float("nan"), float("inf"), "3.5", object()]
 
@@ -552,3 +566,137 @@ def test_engine_completes_when_report_derived_findings_carry_garbage_metadata(mo
     assert result.findings == sorted(
         result.findings, key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title)
     )
+
+
+# ------------------------------------------------------------------ risk_weights typos
+
+
+@pytest.mark.parametrize("key", ["code-execution", "codeexec", "tool_use", "multi-agents", "network"])
+def test_unknown_capability_key_is_rejected_by_key_not_value(key):
+    # A capability typo used to exit 0 and change nothing.
+    with pytest.raises(ValueError) as failure:
+        RiskPolicy.from_options({"capabilities": {key: 99}})
+    message = str(failure.value)
+    assert f"risk_weights.capabilities.{key} is not a capability" in message
+    assert "99" not in message and "code-exec" in message  # the value is not echoed; the choices are listed
+    with pytest.raises(ConfigValidationError, match=f"options.risk_weights.capabilities.{key}"):
+        ScanConfig(risk_weights={"capabilities": {key: 99}})
+
+
+def test_capability_typo_suggests_the_closest_name():
+    with pytest.raises(ValueError, match=r"did you mean code-exec\?"):
+        RiskPolicy.from_options({"capabilities": {"code-execution": 99}})
+
+
+def test_every_capability_in_the_vocabulary_is_accepted_and_applies():
+    assert set(CAPABILITIES) == set(CAPABILITY_WEIGHTS)
+    policy = RiskPolicy.from_options({"capabilities": dict.fromkeys(CAPABILITIES, 7)})
+    assert {weight for weight, _ in policy.capabilities.values()} == {7}
+    risk = assess(_finding(capabilities=["code-exec"], owner="team"), policy=policy)
+    assert next(f for f in risk.factors if f.id == "capability:code-exec").weight == 7
+
+
+def test_provider_ids_are_checked_against_the_loaded_signatures(index):
+    known = provider_ids(index)
+    assert set(PROVIDER_WEIGHTS) <= known  # every built-in provider weight names a real signature
+    policy = RiskPolicy.from_options({"providers": {"provider.deepseek": 20}}, known_providers=known)
+    assert policy.providers["provider.deepseek"][0] == 20
+    with pytest.raises(ValueError) as failure:
+        RiskPolicy.from_options({"providers": {"provider.opneai": 88}}, known_providers=known)
+    message = str(failure.value)
+    assert "risk_weights.providers.provider.opneai is not a model provider signature id" in message
+    assert "did you mean provider.openai?" in message and "88" not in message
+    # Without the loaded signatures there is nothing to check against: the key is only validated for shape.
+    assert (
+        RiskPolicy.from_options({"providers": {"provider.opneai": 88}}).providers["provider.opneai"][0] == 88
+    )
+
+
+def test_engine_rejects_an_unknown_provider_id_before_any_connector_runs(index, monkeypatch):
+    constructed = []
+
+    def forbidden(name):
+        constructed.append(name)
+        raise AssertionError("no connector may be constructed")
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", forbidden)
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem")], risk_weights={"providers": {"provider.opneai": 5}}
+    )
+    with pytest.raises(ConfigValidationError, match=r"options\.risk_weights\.providers\.provider\.opneai"):
+        Engine(cfg, index)
+    # A configuration changed after construction is caught before the run, like the other options.
+    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem")])
+    engine = Engine(cfg, index)
+    cfg.risk_weights = {"providers": {"provider.opneai": 5}}
+    with pytest.raises(ConfigValidationError, match=r"risk_weights\.providers\.provider\.opneai"):
+        engine.run()
+    assert constructed == []
+
+
+def test_engine_accepts_the_readme_risk_policy_and_custom_provider_signatures(tmp_path, index):
+    readme = {
+        "capabilities": {"code-exec": 25},
+        "tags": {"meeting-bot": 20},
+        "providers": {"provider.deepseek": 20},
+        "kinds": {"agent": 20},
+        "governance": {"shadow": 15, "no-owner": 5, "registered": -10},
+    }
+    Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem")], risk_weights=readme), index)
+    # A provider defined by the organisation's own signature pack is a valid id once that pack is loaded.
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "acme.yaml").write_text(
+        "- id: custom.acme-llm\n  name: Acme LLM\n  category: provider\n  signals:\n"
+        "    - type: domain\n      values: [api.acme-llm.example]\n      weight: 0.9\n"
+    )
+    weights = {"providers": {"custom.acme-llm": 12}}
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem")], signature_dirs=[str(pack)], risk_weights=weights
+    )
+    assert "custom.acme-llm" in provider_ids(Engine(cfg).index)
+    with pytest.raises(ConfigValidationError, match="custom.acme-llm"):
+        Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem")], risk_weights=weights), index)
+
+
+def test_cli_scan_fails_on_a_capability_typo_without_echoing_the_value(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("openai\n")
+    cfg = tmp_path / "scan.yaml"
+    cfg.write_text(
+        f"connectors:\n  - name: code.filesystem\n    path: {repo}\n"
+        "options:\n  risk_weights:\n    capabilities: {code-execution: 97}\n"
+    )
+    res = CliRunner().invoke(main, ["scan", "-c", str(cfg), "--format", "json"])
+    assert res.exit_code != 0 and "risk_weights.capabilities.code-execution" in res.output
+    assert "97" not in res.output
+    cfg.write_text(cfg.read_text().replace("code-execution", "code-exec"))
+    res = CliRunner().invoke(main, ["scan", "-c", str(cfg), "--format", "json"])
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)["findings"]
+
+
+def test_unknown_tag_key_warns_once_and_is_still_accepted(caplog, monkeypatch):
+    # Tags are open-ended (signature packs, plugins and identity types add their own), so a
+    # tag that is not one of the built-in weighted tags can be valid: warn, never reject.
+    monkeypatch.setattr(risk_module, "_WARNED_TAGS", set())
+    with caplog.at_level(logging.WARNING, logger="shadowscan.risk"):
+        policy = RiskPolicy.from_options({"tags": {"plaintext-credentail": 31, "plaintext-credential": 30}})
+        RiskPolicy.from_options({"tags": {"plaintext-credentail": 31}})
+        ScanConfig(risk_weights={"tags": {"plaintext-credentail": 31}})
+    messages = [record.getMessage() for record in caplog.records if record.name == "shadowscan.risk"]
+    assert len(messages) == 1
+    assert "risk_weights.tags.plaintext-credentail is not a built-in tag" in messages[0]
+    assert "did you mean plaintext-credential?" in messages[0] and "31" not in messages[0]
+    assert policy.tags["plaintext-credentail"][0] == 31 and policy.tags["plaintext-credential"][0] == 30
+    # The typo scores nothing for a finding that carries the real tag; the real one still scores.
+    risk = assess(_finding(tags=["plaintext-credential"], owner="team"), policy=policy)
+    assert next(f for f in risk.factors if f.id == "tag:plaintext-credential").weight == 30
+
+
+def test_builtin_tag_keys_do_not_warn(caplog, monkeypatch):
+    monkeypatch.setattr(risk_module, "_WARNED_TAGS", set())
+    with caplog.at_level(logging.WARNING, logger="shadowscan.risk"):
+        RiskPolicy.from_options({"tags": dict.fromkeys(TAG_WEIGHTS, 1)})
+    assert not [record for record in caplog.records if record.name == "shadowscan.risk"]

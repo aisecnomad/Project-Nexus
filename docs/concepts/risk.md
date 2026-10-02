@@ -89,7 +89,17 @@ a zero weight add no factor. Some factors depend on finding metadata:
 `mcp-stdio` (5), `mcp-auto-approve` (10), `mcp-plain-http` (10), `sub-agents`
 (3 per definition, at most 10), `volume` (5 from 1,000 gateway events, 10 from
 10,000) and `blast-radius` (5 from 10 users or installations, 10 from 100).
-`options.risk_weights` overrides weights; see the README's risk policy.
+`options.risk_weights` overrides weights; see the README's risk policy. Its
+keys are checked, so a typo cannot silently change nothing: unknown groups,
+`kinds` and `governance` keys are rejected, `capabilities` keys must be one of
+the capability names (`code-exec`, `autonomous`, `saas-actions`, `data-access`,
+`browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`, `rag`),
+and `providers` keys must be the id of a provider signature in the loaded
+signature packs (for example `provider.deepseek`, or an id from your own pack).
+The error names the key and never echoes the value. `tags` is open-ended
+(signature packs, plugins and identity types add their own tags), so an
+unfamiliar tag key is accepted and logged once as a warning, with a suggestion
+when it resembles a built-in tag.
 
 ### Confidence scaling
 

@@ -16,14 +16,19 @@ agent can do separately from whether anyone approved it. A
 
 from __future__ import annotations
 
+import difflib
+import logging
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
 from shadowscan.signatures import SignatureIndex
+from shadowscan.signatures.schema import CAPABILITIES
+
+log = logging.getLogger(__name__)
 
 KIND_BASE: dict[Kind, int] = {
     Kind.AGENT: 15,
@@ -135,6 +140,32 @@ GOVERNANCE_FACTORS = frozenset(GOVERNANCE_WEIGHTS)
 RISK_BASES = frozenset({"combined", "danger"})
 _WEIGHT_GROUPS = ("kinds", "capabilities", "tags", "providers", "governance")
 _KEY_RE = re.compile(r"[a-z0-9][a-z0-9._:-]{0,99}\Z")
+# Tags are open-ended (signature packs, plugins and identity types add their own), so an
+# unrecognised tag key cannot be rejected. It is reported once per process instead.
+_WARNED_TAGS: set[str] = set()
+
+
+def provider_ids(index: SignatureIndex) -> frozenset[str]:
+    """The signature ids a finding can list as ``model_providers``: the provider-category signatures."""
+    return frozenset(sid for sid, signature in index.signatures.items() if signature.category == "provider")
+
+
+def _did_you_mean(key: str, choices: Collection[str]) -> str:
+    close = difflib.get_close_matches(key, sorted(choices), n=1)
+    return f" (did you mean {close[0]}?)" if close else ""
+
+
+def _warn_unknown_tags(keys: Collection[str]) -> None:
+    for key in sorted(keys):
+        if key in TAG_WEIGHTS or key in _WARNED_TAGS:
+            continue
+        _WARNED_TAGS.add(key)
+        log.warning(
+            "risk_weights.tags.%s is not a built-in tag%s; it only applies when a connector, plugin or "
+            "signature emits that tag, so check the spelling",
+            key,
+            _did_you_mean(key, TAG_WEIGHTS),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,8 +180,20 @@ class RiskPolicy:
     basis: str = "combined"
 
     @classmethod
-    def from_options(cls, weights: Mapping[str, Any] | None = None, basis: str = "combined") -> RiskPolicy:
-        """Validate ``options.risk_weights`` / ``options.risk_basis``; raise ValueError on any problem."""
+    def from_options(
+        cls,
+        weights: Mapping[str, Any] | None = None,
+        basis: str = "combined",
+        *,
+        known_providers: Collection[str] | None = None,
+    ) -> RiskPolicy:
+        """Validate ``options.risk_weights`` / ``options.risk_basis``; raise ValueError on any problem.
+
+        Capability keys must be in the closed capability vocabulary. Provider ids are the signature
+        ids of the loaded index, so they are checked only when the caller passes them as
+        ``known_providers`` (see :func:`provider_ids`). Tags are open-ended: an unfamiliar tag key
+        is reported once in the log and still accepted.
+        """
         if not isinstance(basis, str) or basis not in RISK_BASES:
             raise ValueError("risk_basis must be combined or danger")
         weights = {} if weights is None else weights
@@ -185,6 +228,23 @@ class RiskPolicy:
             if key not in GOVERNANCE_WEIGHTS:
                 raise ValueError(f"risk_weights.governance.{key} must be one of shadow, registered, no-owner")
             governance[key] = value
+        capabilities = group("capabilities")
+        for key in sorted(capabilities):
+            if key not in CAPABILITIES:
+                raise ValueError(
+                    f"risk_weights.capabilities.{key} is not a capability{_did_you_mean(key, CAPABILITIES)}; "
+                    f"use one of {', '.join(sorted(CAPABILITIES))}"
+                )
+        providers = group("providers")
+        if known_providers is not None:
+            for key in sorted(providers):
+                if key not in known_providers:
+                    raise ValueError(
+                        f"risk_weights.providers.{key} is not a model provider "
+                        f"signature id{_did_you_mean(key, known_providers)}"
+                    )
+        tags = group("tags")
+        _warn_unknown_tags(tags)
 
         def described(
             defaults: Mapping[str, tuple[int, str]], overrides: dict[str, int], noun: str
@@ -196,9 +256,9 @@ class RiskPolicy:
 
         return cls(
             kinds=kinds,
-            capabilities=described(CAPABILITY_WEIGHTS, group("capabilities"), "capability"),
-            tags=described(TAG_WEIGHTS, group("tags"), "tag"),
-            providers=described(PROVIDER_WEIGHTS, group("providers"), "provider"),
+            capabilities=described(CAPABILITY_WEIGHTS, capabilities, "capability"),
+            tags=described(TAG_WEIGHTS, tags, "tag"),
+            providers=described(PROVIDER_WEIGHTS, providers, "provider"),
             governance=governance,
             basis=basis,
         )
