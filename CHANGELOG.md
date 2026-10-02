@@ -9,7 +9,7 @@ reviewers reproduced each one against that commit before it was fixed, and each
 has a regression test. Neither the review nor the fixes had a second-person
 review; the offline evaluation corpora are author-written and say nothing about
 field precision. Behavior changes that affect an existing baseline are listed in
-[production.md](docs/production.md#october-2-review-changes).
+`docs/production.md` under "October 2 review changes".
 
 #### Connectors: gateway, identity, low-code, SaaS and cloud
 
