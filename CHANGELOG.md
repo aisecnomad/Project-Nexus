@@ -134,6 +134,10 @@ field precision. Behavior changes that affect an existing baseline are listed in
 - `shadowscan diff` text output no longer runs Rich's syntax highlighter over
   imported titles and resources, which was quadratic (a 50,000-character title
   took about 19 s).
+- Inventory approval patterns are checked for citation markers (`[cite: 1]`,
+  `[cite_start]`) in a single pass. The regular expression rescanned to the end
+  of the item from every `[cite:` that had no closing `]`: 120 KB of `[cite:`
+  took 13.6 s, and a megabyte about twenty minutes.
 - `--incremental` with `--dump-records` logs that the cache is not used instead
   of disabling it silently. `docs/operations/ci.md` no longer recommends
   restoring incremental state with `actions/cache`: the fingerprint includes
@@ -304,6 +308,15 @@ field precision. Behavior changes that affect an existing baseline are listed in
   while the gate printed "Checked N modules". A malformed coverage report exits
   2. `tests/test_coverage_gate.py` pins the 75% floor and the exit codes.
 - `make audit` (and so `make check`) audits the four hash locks as CI does.
+- `make secrets` (part of `make check`) runs the credential check that CI runs
+  over every tracked file; a consistency test pins both commands.
+- `tests/unit/test_regex_linearity.py` fails when a module-level regular
+  expression is superlinear on hostile input (CPython's `re` cannot be
+  interrupted, so such a pattern defeats the connector and job deadlines), and
+  times the redaction passes end to end. Mutation tests were added for the
+  credential-mixing guard, symlink reporting in inventory globs, the incremental
+  cache's refusal to store incomplete results, the shipped YAML alias budget
+  and the Makefile coverage floor.
 - Documentation: `docs/testing.md` lists the expected skips (core-only installs
   skip about 60 cloud-SDK tests, Git < 2.45 and root-only permission tests);
   `docs/evaluation.md` states the real 5 to 7 files per realistic-corpus case; and
