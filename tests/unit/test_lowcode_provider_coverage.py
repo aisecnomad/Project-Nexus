@@ -121,6 +121,52 @@ def test_servicenow_page_limit_and_repeated_pages_are_bounded(index, monkeypatch
     assert connector.ctx.stats.incomplete
 
 
+def _snow_page(start, count):
+    return {
+        "result": [
+            {"sys_id": f"agent-{number}", "name": "Assistant"} for number in range(start, start + count)
+        ]
+    }
+
+
+def test_servicenow_short_page_is_not_the_last_page(index, monkeypatch):
+    # ACLs filter rows after sysparm_limit: 100 of 500 rows came back while
+    # more existed, and collection stopped with 100 findings, complete.
+    monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
+    monkeypatch.setattr(servicenow, "name_matches", Mock(return_value=[]))
+    connector = _live(
+        index,
+        servicenow.ServiceNowConnector,
+        [
+            _snow_page(0, 100),
+            _snow_page(100, 37),
+            {"result": []},
+            RuntimeError("guard against unbounded loop"),
+        ],
+    )
+    findings = connector.run()
+    assert len(findings) == 137
+    assert connector.http.get_json.call_count == 3
+    offsets = [call.kwargs["params"]["sysparm_offset"] for call in connector.http.get_json.call_args_list]
+    assert offsets == [0, 500, 1000]
+    assert not connector.ctx.stats.incomplete and not connector.ctx.stats.warnings
+
+
+def test_servicenow_short_pages_up_to_the_page_bound_are_incomplete(index, monkeypatch):
+    monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
+    monkeypatch.setattr(servicenow, "name_matches", Mock(return_value=[]))
+    connector = _live(
+        index,
+        servicenow.ServiceNowConnector,
+        [_snow_page(0, 100), _snow_page(100, 100), RuntimeError("guard against unbounded loop")],
+        max_pages=2,
+    )
+    assert len(connector.run()) == 200
+    assert connector.http.get_json.call_count == 2
+    assert connector.ctx.stats.incomplete
+    assert any("pagination limit reached" in warning for warning in connector.ctx.stats.warnings)
+
+
 def test_servicenow_name_matching_timeout_preserves_native_agents(index, monkeypatch):
     monkeypatch.setattr(servicenow, "TABLES", {"sn_aia_agent": "sys_id,name"})
     calls = 0
@@ -311,6 +357,62 @@ def test_salesforce_normal_query_pagination_is_complete(index, monkeypatch):
     assert connector.http.get_json.call_args.kwargs == {"params": None}
 
 
+POWER_AI_FLOW = {
+    "_kind": "flow",
+    "name": "flow-ai",
+    "properties": {
+        "displayName": "Summarise with OpenAI",
+        "connectionReferences": {"shared_openai": {"connectionName": "shared_openai"}},
+    },
+}
+
+
+def test_power_platform_oversized_flow_keeps_valid_neighbours(tmp_path, run_connector):
+    # A 3 MiB definition used to exhaust the matching budget and abort the
+    # connector: 0 findings, even for valid flows after it.
+    words = ["invoke", "openai", "api_key", "model=", "import", "tool", "{{", "}}", "https://example.com/x"]
+    definition = " ".join(f"{words[i % len(words)]}_{i:x}" for i in range(320_000))
+    assert len(definition) > 3 * 1024 * 1024
+    big = {
+        "_kind": "flow",
+        "name": "flow-big",
+        "properties": {"displayName": "Huge flow", "definition": definition},
+    }
+    export = tmp_path / "flows.json"
+    export.write_text(json.dumps([big, POWER_AI_FLOW]))
+    findings, ctx = run_connector("lowcode.power-platform", input=str(export))
+    assert "Power Automate flow using OpenAI (independent publisher): Summarise with OpenAI" in [
+        finding.title for finding in findings
+    ]
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert any("definition exceeds 300000 characters" in warning for warning in ctx.stats.warnings)
+
+
+def test_power_platform_match_timeout_skips_only_that_record(tmp_path, run_connector, monkeypatch):
+    from shadowscan.connectors.lowcode import power_platform
+
+    real = power_platform.blob_matches
+
+    def blob_matches(index, text, **kwargs):
+        if "hostile-marker" in text:
+            raise MatchTimeoutError("untrusted definition text must not be logged")
+        return real(index, text, **kwargs)
+
+    monkeypatch.setattr(power_platform, "blob_matches", blob_matches)
+    hostile = {"_kind": "flow", "name": "flow-x", "properties": {"definition": {"note": "hostile-marker"}}}
+    export = tmp_path / "flows.json"
+    export.write_text(json.dumps([hostile, POWER_AI_FLOW]))
+    findings, ctx = run_connector("lowcode.power-platform", input=str(export))
+    assert [finding.title for finding in findings] == [
+        "Power Automate flow using OpenAI (independent publisher): Summarise with OpenAI"
+    ]
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert ctx.stats.warnings == [
+        "lowcode.power-platform: skipped a flow record that could not be analysed "
+        "(MatchTimeoutError); coverage incomplete"
+    ]
+
+
 @pytest.mark.parametrize("graph", [{}, {"nodes": None}, {"nodes": {}}, {"nodes": [], "error": "denied"}])
 def test_n8n_missing_or_invalid_graph_preserves_next_workflow(index, graph):
     connector = N8nConnector(ConnectorContext(index=index))
@@ -424,3 +526,14 @@ def test_make_invalid_page_is_incomplete_not_fatal(index, monkeypatch):
     assert connector.run() == []
     assert not connector.ctx.stats.errors
     assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings
+
+
+@pytest.mark.parametrize("max_pages", [0, -3, "many", 2.5, True])
+def test_automation_page_limits_must_be_positive_integers(index, max_pages):
+    # ``max(1, int(value))`` used to coerce or clamp an invalid limit silently.
+    connector = _live(
+        index, N8nConnector, [], api_url="https://n8n.example/api/v1", api_key="key", max_pages=max_pages
+    )
+    assert connector.run() == []
+    assert connector.ctx.stats.skipped and connector.ctx.stats.incomplete
+    assert "max_pages must be a positive integer" in (connector.ctx.stats.skip_reason or "")

@@ -1,0 +1,297 @@
+"""Code-scan integrity: undecodable files, BOMs, hostile layouts and coverage notices."""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import stat
+
+import pytest
+
+from shadowscan.connectors.code.filesystem import _parse_mcp_servers
+from shadowscan.models import Kind
+from shadowscan.utils.text import host_of, read_text
+
+BINARY_GAP = "binary or undecodable content in analyzable file"
+SECRET = "sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h"
+ELF_HEAD = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8 + b"\x03\x00>\x00\x01\x00\x00\x00"
+
+
+def _gaps(messages: list[str]) -> list[str]:
+    return [m for m in messages if BINARY_GAP in m]
+
+
+# ------------------------------------------------------------ NUL / encodings
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_js_with_nul_in_comment_marks_scan_incomplete(tmp_path, run_connector, strict):
+    # Node runs a script with a NUL in a comment, so skipping it silently
+    # would let a hidden agent look resolved.
+    (tmp_path / "index.js").write_bytes(b"// agent \x00\nconst OpenAI = require('openai');\n")
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=strict
+    )
+    assert ctx.stats.incomplete
+    # Binary content under an analyzable name is always a coverage error.
+    channel = ctx.stats.errors
+    assert len(_gaps(channel)) == 1 and "index.js" in _gaps(channel)[0]
+    assert not findings
+
+
+def test_nul_past_sniff_window_is_still_analyzed(tmp_path, run_connector):
+    (tmp_path / "index.js").write_bytes(
+        b"const OpenAI = require('openai');\n" + b"// " + b"x" * 9000 + b"\x00\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert findings and not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "encoding",
+    ["utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be"],
+)
+def test_bom_utf_wide_requirements_txt_is_decoded(tmp_path, run_connector, encoding):
+    boms = {
+        "utf-16-le": b"\xff\xfe",
+        "utf-16-be": b"\xfe\xff",
+        "utf-32-le": b"\xff\xfe\x00\x00",
+        "utf-32-be": b"\x00\x00\xfe\xff",
+    }
+    (tmp_path / "requirements.txt").write_bytes(
+        boms[encoding] + "langchain==0.3.0\nopenai\n".encode(encoding)
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert any("framework.langchain" in f.frameworks for f in findings)
+
+
+def test_bom_utf16_env_file_credential_is_found(tmp_path, run_connector):
+    (tmp_path / ".env").write_bytes(b"\xff\xfe" + f"OPENAI_API_KEY={SECRET}\r\n".encode("utf-16-le"))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, (ctx.stats.errors, ctx.stats.warnings)
+    assert any(f.kind == Kind.SECRET for f in findings)
+    assert SECRET not in json.dumps([f.to_dict() for f in findings], default=str)
+
+
+def test_utf16_without_bom_is_a_coverage_gap(tmp_path, run_connector):
+    (tmp_path / "requirements.txt").write_bytes("langchain==0.3.0\nopenai\n".encode("utf-16-le"))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert _gaps(ctx.stats.errors) and not findings
+
+
+def test_read_text_decodes_boms_and_strips_utf8_bom(tmp_path):
+    cases = {
+        "u8.txt": b"\xef\xbb\xbfhello",
+        "u16le.txt": b"\xff\xfe" + "hello".encode("utf-16-le"),
+        "u16be.txt": b"\xfe\xff" + "hello".encode("utf-16-be"),
+        "u32le.txt": b"\xff\xfe\x00\x00" + "hello".encode("utf-32-le"),
+        "u32be.txt": b"\x00\x00\xfe\xff" + "hello".encode("utf-32-be"),
+    }
+    for name, data in cases.items():
+        path = tmp_path / name
+        path.write_bytes(data)
+        errors: list[str] = []
+        assert read_text(path, 1000, errors) == "hello", name
+        assert not errors, name
+
+
+def test_read_text_reports_nul_content_without_bom(tmp_path):
+    path = tmp_path / "x.js"
+    path.write_bytes(b"a\x00b")
+    errors: list[str] = []
+    assert read_text(path, 100, errors) is None
+    assert errors == [BINARY_GAP]
+
+
+def test_real_binary_files_stay_quiet(tmp_path, run_connector):
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 64
+    (tmp_path / "logo.png").write_bytes(png)
+    (tmp_path / "app.bin").write_bytes(b"\x00\x01" + b"from langchain import x" * 10)
+    (tmp_path / "libfoo.so").write_bytes(ELF_HEAD)
+    # A compiled executable without any extension is not analyzable content.
+    (tmp_path / "agentd").write_bytes(ELF_HEAD + b"\x00" * 64)
+    (tmp_path / "README.md").write_text("plain readme")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert findings == []
+    assert not ctx.stats.incomplete
+    assert not ctx.stats.errors and not _gaps(ctx.stats.warnings)
+
+
+def test_binary_magic_does_not_hide_an_analyzable_name(tmp_path, run_connector):
+    # An ELF-looking prefix on a script name the scanner analyzes is still a gap.
+    (tmp_path / "run.sh").write_bytes(ELF_HEAD + b"\nOPENAI=1\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
+
+
+# ------------------------------------------------------------------ UTF-8 BOM
+
+
+def test_utf8_bom_mcp_json_is_analyzed(tmp_path, run_connector):
+    body = json.dumps(
+        {"mcpServers": {"fs": {"command": "npx", "args": ["@modelcontextprotocol/server-filesystem"]}}}
+    )
+    (tmp_path / ".mcp.json").write_bytes(b"\xef\xbb\xbf" + body.encode())
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert [f.kind for f in findings] == [Kind.MCP_SERVER]
+
+
+def test_utf8_bom_yaml_mcp_config_is_analyzed(tmp_path, run_connector):
+    body = "mcpServers:\n  fs:\n    command: npx\n    args: ['@modelcontextprotocol/server-filesystem']\n"
+    (tmp_path / "smithery.yaml").write_bytes(b"\xef\xbb\xbf" + body.encode())
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert any(f.kind == Kind.MCP_SERVER for f in findings)
+
+
+def test_mcp_parser_does_not_see_the_bom_after_read_text(tmp_path):
+    path = tmp_path / ".mcp.json"
+    path.write_bytes(b"\xef\xbb\xbf" + b'{"mcpServers": {}}')
+    errors: list[str] = []
+    text = read_text(path, 1000, errors)
+    assert text is not None and not text.startswith("﻿")
+    parse_errors: list[str] = []
+    _parse_mcp_servers(".mcp.json", text, parse_errors)
+    assert not parse_errors
+
+
+# --------------------------------------------------------------- deep nesting
+
+
+# ------------------------------------------------- non-regular config entries
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs FIFOs")
+@pytest.mark.parametrize("name", [".mcp.json", "requirements.txt", "agent.py"])
+def test_fifo_named_like_an_analyzable_file_is_a_coverage_gap(tmp_path, run_connector, name):
+    os.mkfifo(tmp_path / name)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert any(name in w and "not a regular file" in w for w in ctx.stats.warnings)
+
+
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="needs unix sockets")
+def test_socket_named_like_a_config_file_is_a_coverage_gap(tmp_path, run_connector):
+    sock = socket.socket(socket.AF_UNIX)
+    try:
+        try:
+            sock.bind(str(tmp_path / ".mcp.json"))
+        except OSError:
+            pytest.skip("unix sockets unavailable")
+        assert stat.S_ISSOCK((tmp_path / ".mcp.json").lstat().st_mode)
+        _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    finally:
+        sock.close()
+    assert ctx.stats.incomplete
+    assert any(".mcp.json" in w and "not a regular file" in w for w in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_directory_named_like_a_config_file_is_a_coverage_gap(tmp_path, run_connector, strict):
+    (tmp_path / ".mcp.json").mkdir()
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=strict
+    )
+    assert any("framework.crewai" in f.frameworks for f in findings)
+    assert ctx.stats.incomplete
+    channel = ctx.stats.errors if strict else ctx.stats.warnings
+    assert any(".mcp.json" in m and "not a regular file" in m for m in channel)
+
+
+def test_ordinary_directories_with_source_like_names_stay_quiet(tmp_path, run_connector):
+    for name in ("next.js", "chart.json", "notes.md", "docs.txt"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "x.md").write_text("plain")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+# ------------------------------------------------ default exclude disclosure
+
+
+# --------------------------------------------------------- Cursor .mdc front matter
+
+
+@pytest.mark.parametrize(
+    "front",
+    [
+        "globs: **/*.ts",
+        "globs: *.ts",
+        "globs: *.tsx,*.ts",
+        "globs:\n  - **/*.ts\n  - *.md",
+        "globs: [**/*.ts, *.md]",
+        "paths:\n  - **/*.py",
+    ],
+)
+def test_unquoted_glob_front_matter_is_not_an_invalid_agent_definition(tmp_path, run_connector, front):
+    rules = tmp_path / ".cursor" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "style.mdc").write_text(
+        f"---\ndescription: Style\n{front}\nalwaysApply: false\n---\nUse tabs.\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    defs = [d for f in findings for d in f.metadata.get("agent_definitions", [])]
+    assert defs, [f.metadata for f in findings]
+    assert defs[0].get("description") == "Style"
+    assert defs[0].get("alwaysApply") is False
+
+
+def test_malformed_front_matter_still_fails_closed(tmp_path, run_connector):
+    rules = tmp_path / ".cursor" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "bad.mdc").write_text("---\ndescription: [unterminated\nglobs: **/*.ts\n---\nbody\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert any("invalid agent definition YAML" in e for e in ctx.stats.errors)
+
+
+def test_real_yaml_aliases_elsewhere_in_front_matter_are_unchanged(tmp_path):
+    from shadowscan.connectors.code.filesystem import _quote_glob_values
+
+    front = "base: &b one\nname: *b\nglobs: **/*.ts\n"
+    fixed = _quote_glob_values(front)
+    assert "name: *b" in fixed and "globs: '**/*.ts'" in fixed
+
+
+# ----------------------------------------------------------------- host_of
+
+
+@pytest.mark.parametrize(
+    ("url", "host"),
+    [
+        ("https://api.openai.com/v1", "api.openai.com"),
+        ("HTTPS://API.OpenAI.com:443/v1?x=1#f", "api.openai.com"),
+        ("api.openai.com:443/v1", "api.openai.com"),
+        ("api.openai.com", "api.openai.com"),
+        ("  https://api.openai.com  ", "api.openai.com"),
+        ("https://api.openai.com:443@evil.example/v1", "evil.example"),
+        ("https://user:pw@api.openai.com/v1", "api.openai.com"),
+        ("https://user@api.openai.com:8443", "api.openai.com"),
+        ("https://u:p@w@api.openai.com/", "api.openai.com"),
+        ("user:pw@api.openai.com/v1", "api.openai.com"),
+        ("https://[::1]:8080/x", "::1"),
+        ("https://[2001:DB8::1]/x", "2001:db8::1"),
+        ("https://user@[::1]:80/", "::1"),
+        ("https://api.openai.com?next=https://evil.example", "api.openai.com"),
+        ("https://api.openai.com#@evil.example", "api.openai.com"),
+        ("https://api.openai.com/v1/@evil.example", "api.openai.com"),
+    ],
+)
+def test_host_of_parses_the_rfc3986_authority(url, host):
+    assert host_of(url) == host
+
+
+@pytest.mark.parametrize(
+    "url", [None, "", "   ", "https://", "https:///path", "https://[::1", "https://user@/x"]
+)
+def test_host_of_returns_none_without_a_host(url):
+    assert host_of(url) is None
+
+
+# ------------------------------------------------------------- inventory links

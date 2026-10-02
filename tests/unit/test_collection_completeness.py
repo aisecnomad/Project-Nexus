@@ -290,3 +290,72 @@ def test_automation_pagination_is_bounded(index, monkeypatch, cls, config, respo
     findings = connector.run()
     assert http.get_json.call_count <= 2
     _assert_incomplete(connector, findings)
+
+
+@pytest.mark.parametrize(
+    "connector,export,body",
+    [
+        (
+            "saas.generic",
+            "apps.csv",
+            "Cloud App,Vendor Name,Granted Permissions,Total Users\n"
+            "OpenAI ChatGPT,OpenAI,https://www.googleapis.com/auth/gmail.readonly,214\n"
+            "Fireflies.ai Notetaker,Fireflies,calendar.readonly,50\n",
+        ),
+        (
+            "lowcode.zapier",
+            "zaps.csv",
+            'Zap Name,Apps Used,State\nSummarise tickets,"Zendesk, ChatGPT, Slack",on\n',
+        ),
+        (
+            "lowcode.zapier",
+            "zaps.json",
+            json.dumps(
+                [{"Zap Name": "Summarise tickets", "Apps Used": "Zendesk, ChatGPT, Slack", "State": "on"}]
+            ),
+        ),
+    ],
+)
+def test_export_without_a_mappable_name_column_is_incomplete(
+    run_connector, tmp_path, connector, export, body
+):
+    # Renamed columns used to give 0 findings, a complete scan and exit 0.
+    path = tmp_path / export
+    path.write_text(body)
+    findings, ctx = run_connector(connector, input=str(path))
+    assert findings == []
+    _assert_incomplete(SimpleNamespace(ctx=ctx), findings)
+    (warning,) = ctx.stats.warnings
+    assert "expected a column named one of" in warning
+    assert "ChatGPT" not in warning and "Summarise" not in warning  # column aliases, never values
+
+
+@pytest.mark.parametrize(
+    "connector,records,warning",
+    [
+        (
+            "saas.generic",
+            [
+                {"name": "OpenAI ChatGPT", "publisher": "OpenAI", "scopes": "https://mail.google.com/"},
+                {"app": "", "vendor": "Anthropic", "permissions": "files.readwrite"},
+            ],
+            "saas.generic: skipped 1 of 2 records without an app name",
+        ),
+        (
+            "lowcode.zapier",
+            [
+                {"title": "Summarise tickets", "steps": ["Zendesk", "ChatGPT"], "status": "on", "id": "z1"},
+                {"Zap Name": "Unmapped", "Apps Used": "ChatGPT"},
+            ],
+            "lowcode.zapier: skipped 1 of 2 records without a zap name or id",
+        ),
+    ],
+)
+def test_records_without_a_name_are_counted_and_named_neighbours_kept(
+    run_connector, tmp_path, connector, records, warning
+):
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(records))
+    findings, ctx = run_connector(connector, input=str(path))
+    assert len(findings) == 1
+    assert ctx.stats.incomplete and ctx.stats.warnings == [warning]

@@ -40,7 +40,7 @@ reviewed commit rather than trusting these recorded results.
 At the time of this 2026-09-24 review, the separate authored synthetic suite
 passed 39 cases (16 positives, 23 negatives), and the earlier public-source
 sample passed five. The currently committed `tools/evaluation/corpus.json` has
-since grown to 77 authored synthetic cases (29 positives, 48 negatives); the
+since grown to 77 authored synthetic cases (32 positives, 45 negatives); the
 case count alone does not establish that the current scanner passes them. Check
 the final commit's CI evaluation. One **synthetic** PHP fixture was corrected to
 a negative: a bare `create_agent(...)` call with no framework binding cannot
@@ -71,8 +71,9 @@ acceptance before enabling enforcement.
 
 Use the commands in [evaluation.md](evaluation.md) and [canaries.md](canaries.md).
 When this dated result was recorded, CI covered Python 3.11/3.12. The current
-workflow covers Linux 3.11–3.13 and macOS 3.11/3.13 for lint, types, tests and
-the overall 80% and per-connector 75% coverage floors. Linux additionally runs
+workflow covers Linux 3.11–3.13 and macOS 3.11/3.13 for lint, types and tests;
+Linux 3.11 enforces the overall 80% and per-connector 75% coverage floors on
+statements and branches. Linux additionally runs
 the full runtime dependency audit, installed-wheel and container checks. It also
 validates the annotation ledger and frozen corpus, and retains evaluation JSON
 artifacts with each run.

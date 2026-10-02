@@ -18,7 +18,7 @@ from urllib.parse import quote
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import config_boolean, finalize
+from shadowscan.connectors.common import config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -77,7 +77,7 @@ class OktaConnector(BaseConnector):
         try:
             yield from self.http.paginate_link(path, params={"limit": 200})
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            status = failure_summary(exc)
             self.ctx.warn(f"identity.okta: collection incomplete for {path} ({status})")
 
     def _app_valid(self, app: Any) -> bool:

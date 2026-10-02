@@ -400,22 +400,27 @@ def _case_source(value: Any, files: dict[str, str], where: str) -> dict[str, Any
 
 def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str, Any]]]:
     ctx = ConnectorContext(
-        config={"path": str(root), "label": f"eval:{case.id}", "use_git": False, "scan_secrets": True},
+        config={
+            "path": str(root),
+            "label": f"eval:{case.id}",
+            "use_git": False,
+            "scan_secrets": True,
+            # A case's files are the repository under test: none may sit in a directory
+            # the walk skips by default (a case with scripts under bin/ was never scanned).
+            "default_excludes": False,
+        },
         index=index,
     )
     started = time.perf_counter()
     findings = FilesystemConnector(ctx).run()
     elapsed = time.perf_counter() - started
-    if (
-        ctx.stats is None
-        or ctx.stats.incomplete
-        or ctx.stats.skipped
-        or ctx.stats.errors
-        or ctx.stats.warnings
-    ):
+    # The default-exclude notice is informational (it never marks a scan
+    # incomplete); every other warning still invalidates the evaluation.
+    warnings = list(ctx.stats.warnings) if ctx.stats else []
+    if ctx.stats is None or ctx.stats.incomplete or ctx.stats.skipped or ctx.stats.errors or warnings:
         raise RuntimeError(
             f"{case.id}: scan incomplete: "
-            + "; ".join((ctx.stats.errors + ctx.stats.warnings) if ctx.stats else ["no status"])
+            + "; ".join((ctx.stats.errors + warnings) if ctx.stats else ["no status"])
         )
     return elapsed, [
         {
@@ -429,7 +434,13 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
             **(
                 {
                     "server_count": f.metadata.get("server_count"),
-                    "server_names": sorted(str(server["name"]) for server in f.metadata.get("servers", [])),
+                    # Active servers only: a server that declares itself disabled is listed
+                    # in the metadata (tagged declared-disabled) but is not counted here.
+                    "server_names": sorted(
+                        str(server["name"])
+                        for server in f.metadata.get("servers", [])
+                        if not server["disabled"]
+                    ),
                 }
                 if f.kind == Kind.MCP_SERVER
                 else {}

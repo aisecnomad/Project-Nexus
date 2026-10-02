@@ -16,6 +16,68 @@ from shadowscan.models import ScanStats
 from shadowscan.utils.http import HttpError
 
 
+@pytest.mark.parametrize("provider", ["notion", "atlassian"])
+@pytest.mark.parametrize("mode", ["live", "offline"])
+@responses.activate
+def test_provider_error_with_empty_collection_is_incomplete(
+    fixtures, tmp_path, run_connector, provider, mode
+):
+    payload = json.loads((fixtures / "saas" / "live_collection_errors.json").read_text())[provider]
+    if mode == "offline":
+        source = tmp_path / "provider-error.json"
+        source.write_text(json.dumps(payload))
+        config = {"input": str(source)}
+    elif provider == "notion":
+        responses.get("https://api.notion.com/v1/users", json=payload)
+        config = {"token": "example-token"}
+    else:
+        responses.get("https://acme.atlassian.net/rest/plugins/1.0/", json=payload)
+        config = {
+            "site": "https://acme.atlassian.net",
+            "email": "admin@example.test",
+            "api_token": "example-token",
+            "products": ["jira"],
+        }
+    findings, ctx = run_connector(f"saas.{provider}", **config)
+    assert findings == []
+    assert ctx.stats.incomplete and (ctx.stats.warnings or ctx.stats.errors)
+    assert "synthetic-provider-error-details" not in str(ctx.stats.warnings + ctx.stats.errors)
+
+
+@responses.activate
+def test_notion_later_error_page_keeps_previous_integrations(fixtures, run_connector):
+    url = "https://api.notion.com/v1/users"
+    records = json.loads((fixtures / "saas" / "notion_users.json").read_text())["results"]
+    responses.get(url, json={"results": records, "has_more": True, "next_cursor": "next"})
+    payload = json.loads((fixtures / "saas" / "live_collection_errors.json").read_text())["notion"]
+    responses.get(url, json=payload)
+
+    findings, ctx = run_connector("saas.notion", token="example-token")
+
+    assert {f.resource for f in findings} == {"notion:bot:n2", "notion:bot:n3"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+
+
+@responses.activate
+def test_atlassian_error_envelope_keeps_neighboring_product(fixtures, run_connector):
+    payload = json.loads((fixtures / "saas" / "live_collection_errors.json").read_text())["atlassian"]
+    responses.get("https://acme.atlassian.net/rest/plugins/1.0/", json=payload)
+    responses.get(
+        "https://acme.atlassian.net/wiki/rest/plugins/1.0/",
+        json={"plugins": [{"key": "ai.glean.confluence", "name": "Glean AI", "userInstalled": True}]},
+    )
+
+    findings, ctx = run_connector(
+        "saas.atlassian",
+        site="https://acme.atlassian.net",
+        email="admin@example.test",
+        api_token="example-token",
+    )
+
+    assert [f.resource for f in findings] == ["atlassian:confluence:app:ai.glean.confluence"]
+    assert ctx.stats.incomplete and not ctx.stats.errors
+
+
 def _installation(app_id: int, slug: str) -> dict:
     return {
         "id": app_id,

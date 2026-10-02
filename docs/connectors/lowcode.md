@@ -31,13 +31,18 @@ aggregated). Auth: `access_token` or client-credentials connected app.
 
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
-`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
+`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer. Live
+collection advances by the rows actually returned and stops only on an empty
+page, so a server-side page cap below the requested 500 rows does not hide the
+rest of a table; `max_pages` still bounds it and reaching it is incomplete.
 
 ### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
 GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
-steps (→ code-exec), models.
+steps (→ code-exec), models. A Zapier export record needs an `id`, `title`,
+`name` or `Zap` field; any other object is reported as an unsupported record
+and makes the scan incomplete.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

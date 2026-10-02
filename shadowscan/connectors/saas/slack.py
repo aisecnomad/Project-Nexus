@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -32,7 +32,10 @@ class _SlackExport:
 
     def __init__(self) -> None:
         self.teams: dict[str, str | None] = {}
-        self.record_teams: set[str] = set()
+        # Non-team records with the workspace ids they name (None: an invalid
+        # id), held until the export's workspace is known.
+        self.pending: list[tuple[str, dict[str, Any], set[str | None]]] = []
+        self.foreign_records = 0
         self.invalid_scope = False
         self.bots: dict[str, dict[str, Any]] = {}
         self.conflicting_bots: set[str] = set()
@@ -139,7 +142,7 @@ class SlackConnector(BaseConnector):
         try:
             data = http.get_json(path, params=params)
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            reason = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            reason = failure_summary(exc)
             self.ctx.warn(f"saas.slack: {path}: {reason}; coverage unknown", incomplete=True)
             return None
         if not isinstance(data, dict) or data.get("ok") is not True:
@@ -204,6 +207,14 @@ class SlackConnector(BaseConnector):
         if workspace is None:
             return
         team_id, scope_source = workspace
+        self._index_workspace_records(export, team_id)
+        if export.foreign_records:
+            # A record of another workspace (for example a Slack Connect bot)
+            # is not attributed here, and it must not hide this workspace's apps.
+            self.ctx.warn(
+                f"saas.slack: skipped {export.foreign_records} records that name another or an invalid "
+                "workspace; coverage incomplete"
+            )
         team_name = export.teams.get(team_id)
         bots, logs = export.bots, export.logs
         conflicting_apps, conflicting_bots = export.conflicting_apps, export.conflicting_bots
@@ -260,6 +271,7 @@ class SlackConnector(BaseConnector):
                 yield f
 
     def _index_records(self, records: Iterable[dict[str, Any]]) -> _SlackExport:
+        """Index workspace (team) records; hold the others until the workspace is known."""
         export = _SlackExport()
         for rec in records:
             kind = self._record_kind(rec)
@@ -268,15 +280,24 @@ class SlackConnector(BaseConnector):
                 if rec.get("_kind") == "team" or _infer(rec) == "team":
                     export.invalid_scope = True
                 continue
+            teams: set[str | None] = set()
             for field in ("team_id", "team") if kind == "bot_user" else ("team_id",):
                 if field in rec:
-                    if not self._workspace_id_valid(rec[field]):
-                        export.invalid_scope = True
-                    else:
-                        export.record_teams.add(rec[field])
+                    teams.add(rec[field] if self._workspace_id_valid(rec[field]) else None)
             if kind == "team":
+                export.invalid_scope = export.invalid_scope or None in teams
                 export.teams[rec["id"]] = rec.get("name") or rec.get("domain")
-            elif kind == "bot_user":
+            else:
+                export.pending.append((kind, rec, teams))
+        return export
+
+    def _index_workspace_records(self, export: _SlackExport, team_id: str) -> None:
+        """Index the records of workspace ``team_id``; count those naming another or an invalid one."""
+        for kind, rec, teams in export.pending:
+            if teams - {team_id}:
+                export.foreign_records += 1
+                continue
+            if kind == "bot_user":
                 app_id = get_path(rec, "profile.api_app_id") or rec.get("id")
                 app_key = str(app_id)
                 existing = export.bots.get(app_key)
@@ -321,7 +342,6 @@ class SlackConnector(BaseConnector):
                     or rec.get("service_type")
                 )
                 export.logs.setdefault(str(key), []).append(rec)
-        return export
 
     def _workspace(self, export: _SlackExport) -> tuple[str, str] | None:
         """The single workspace the export belongs to and where its id came from, or None."""
@@ -343,11 +363,6 @@ class SlackConnector(BaseConnector):
             scope_source = "operator-configured"
         if team_id is None:
             self.ctx.warn("saas.slack: workspace identity missing; supply team_id for an offline export")
-            return None
-        if export.record_teams - {team_id}:
-            self.ctx.warn(
-                "saas.slack: record workspace does not match declared workspace; findings not attributed"
-            )
             return None
         return team_id, scope_source
 

@@ -65,7 +65,7 @@ class _CanaryLoader(BoundedSafeLoader):
         self.flatten_mapping(node)
         keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
         if any(not isinstance(key, str) for key in keys) or len(keys) != len(set(keys)):
-            raise ValueError("canary mapping keys must be unique strings")
+            raise CanaryConfigError("canary mapping keys must be unique strings")
         return super().construct_mapping(node, deep=deep)
 
 

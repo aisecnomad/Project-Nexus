@@ -14,6 +14,8 @@ the HTTP read deadline match the shipped code. Run both modules with
 from __future__ import annotations
 
 import functools
+import itertools
+import json
 import os
 import re
 import shutil
@@ -23,18 +25,23 @@ import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 from urllib.parse import unquote
 
 import pytest
 import yaml
 
-from shadowscan.connectors import builtin_connector_names
+from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
+from shadowscan.connectors.cloud.gcp import GcpConnector
+from shadowscan.connectors.common import MAX_PAGES
+from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
 from shadowscan.utils import http
 
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
-WORKFLOWS = sorted((GITHUB / "workflows").glob("*.yml"))
+# GitHub runs both YAML spellings; test_repository_policy.py checks the glob.
+WORKFLOWS = sorted(path for path in (GITHUB / "workflows").glob("*.y*ml") if path.is_file())
 FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if path.name != "config.yml")
 ADVISORY_URL = "https://github.com/aisecnomad/Project-Nexus/security/advisories/new"
 
@@ -359,18 +366,6 @@ def test_makefile_lint_and_typecheck_paths_match_ci() -> None:
     assert make_ruff == ci_ruff, "make lint drifted from CI"
 
 
-def test_secret_pattern_check_is_a_required_local_and_ci_gate() -> None:
-    command = "python tools/check_secrets.py --tracked"
-    ci = _load_yaml(GITHUB / "workflows" / "ci.yml")
-    for name in ("test", "test-macos"):
-        steps = ci["jobs"][name]["steps"]
-        assert any(step.get("run") == command for step in steps), f"{name} omits the secret pattern check"
-    makefile = _read(ROOT / "Makefile")
-    check = next(line for line in makefile.splitlines() if line.startswith("check:"))
-    assert "secrets" in check.split("##", 1)[0].split()
-    assert command in makefile
-
-
 @pytest.mark.parametrize("target", ["wheel-validate", "coverage-gate"])
 @pytest.mark.parametrize("fails", [False, True])
 def test_make_validation_uses_private_temporary_paths_and_always_cleans_up(
@@ -431,9 +426,12 @@ def test_make_validation_uses_private_temporary_paths_and_always_cleans_up(
     assert (result.returncode != 0) is fails, result.stdout + result.stderr
     paths = [Path(path) for path in log.read_text(encoding="utf-8").splitlines()]
     assert len(paths) == 1
-    assert paths[0].parent == scratch
-    assert paths[0] != previous
-    assert not paths[0].exists(), "temporary validation artifacts survive completion"
+    # The wheel recipe builds its environment inside a private directory; the
+    # coverage recipe writes a private file.
+    private = paths[0].parent if target == "wheel-validate" else paths[0]
+    assert private.parent == scratch
+    assert private != previous
+    assert not private.exists(), "temporary validation artifacts survive completion"
     assert sentinel.read_text(encoding="utf-8") == "another developer's environment"
 
 
@@ -464,6 +462,46 @@ def test_makefile_evaluates_the_same_corpora_as_ci() -> None:
     )
     for corpus in ci_corpora:
         assert (ROOT / corpus).is_file(), f"CI references a missing corpus {corpus}"
+
+
+def _lock_audit_loop(text: str) -> str:
+    """The `for lock in ...; do pip-audit ...; done` loop, without shell and make syntax."""
+    flat = " ".join(text.replace("\\\n", " ").replace("$$", "$").replace(";", " ").split())
+    match = re.search(r"for lock in .*? done", flat)
+    assert match is not None, "no lock audit loop found"
+    return match.group()
+
+
+def test_make_audit_checks_the_environment_and_every_lock_like_ci() -> None:
+    """`make check` must not pass while CI's audit of the hash locks fails."""
+    makefile = _read(ROOT / "Makefile")
+    recipe = makefile.split("\naudit:", 1)[1].split("\n.PHONY", 1)[0]
+    ci_script = "\n".join(_ci_run_lines())
+    for command in ("pip-audit --skip-editable --progress-spinner off",):
+        assert command in recipe and command in ci_script
+    assert _lock_audit_loop(recipe) == _lock_audit_loop(ci_script)
+    locks = re.search(r"for lock in (.*?) do", _lock_audit_loop(recipe))
+    assert locks is not None
+    assert set(locks.group(1).split()) == {path.name for path in ROOT.glob("requirements*.lock")}
+    assert "set -e; for lock in" in recipe, "the first failing lock must fail make audit"
+
+
+def test_changelog_has_no_relative_links() -> None:
+    """The docs site includes CHANGELOG.md from docs/changelog.md, so a relative link breaks one rendering."""
+    prose = re.sub(r"`[^`\n]*`", "", _read(ROOT / "CHANGELOG.md"))  # code spans show link syntax, not links
+    links = re.findall(r"\]\((?!https?://|mailto:|#)([^)\s]+)\)", prose)
+    assert not links, f"name the file in a code span instead of linking it: {sorted(set(links))}"
+
+
+def test_make_secrets_runs_the_ci_credential_check_and_is_part_of_make_check() -> None:
+    """The credential hook only protects a commit if the local gate runs what CI runs."""
+    makefile = _read(ROOT / "Makefile")
+    command = "git ls-files -z | xargs -0 python tools/check_secrets.py"
+    recipe = makefile.split("\nsecrets:", 1)[1].split("\n.PHONY", 1)[0]
+    assert command in recipe
+    assert command in "\n".join(_ci_run_lines())
+    check = re.search(r"^check:(.*?)##", makefile, re.M)
+    assert check is not None and "secrets" in check.group(1).split()
 
 
 def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
@@ -503,6 +541,9 @@ def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
     locked = {name.lower(): version for name, version in pins}
     for requirement in _pyproject()["project"]["optional-dependencies"]["docs"]:
         name, _, floor = requirement.partition(">=")
+        # The lock pins the distribution; an extra ("mkdocstrings[python]")
+        # names its handler, locked under its own name.
+        name = name.partition("[")[0]
         assert locked.get(name.lower()) == floor, f"{requirement} and requirements-docs.lock disagree"
     install = "--require-hashes --only-binary=:all: -r requirements-docs.lock"
     for workflow in ("docs.yml", "ci.yml"):
@@ -585,6 +626,29 @@ def test_example_action_pins_match_the_repository_workflows() -> None:
             )
 
 
+def test_secret_check_runs_on_the_same_files_in_the_hook_and_ci() -> None:
+    """The script owns its exclusions, so the hook and CI cannot drift apart."""
+    hooks = {
+        hook["id"]: hook
+        for repo in _load_yaml(ROOT / ".pre-commit-config.yaml")["repos"]
+        for hook in repo.get("hooks", [])
+    }
+    hook = hooks["no-hardcoded-secrets"]
+    assert hook["entry"] == "python tools/check_secrets.py"
+    assert hook.get("types") == ["text"], "the hook must scan every text file"
+    assert not {"exclude", "files", "types_or"} & hook.keys(), "exclusions belong in the script"
+    steps = [
+        step
+        for job in _load_yaml(GITHUB / "workflows" / "ci.yml")["jobs"].values()
+        for step in job.get("steps") or []
+        if "tools/check_secrets.py" in str(step.get("run", ""))
+    ]
+    assert len(steps) == 1, "CI must run the secret check exactly once per test job"
+    lines = [line.strip() for line in steps[0]["run"].splitlines()]
+    assert lines[0] == "set -euo pipefail", "a failed `git ls-files` must fail the step"
+    assert "git ls-files -z | xargs -0 python tools/check_secrets.py" in lines
+
+
 def test_pre_commit_hooks_select_files_with_types_or() -> None:
     """`types` is an AND filter; a hook listing two types would never run."""
     config = _load_yaml(ROOT / ".pre-commit-config.yaml")
@@ -626,9 +690,51 @@ def test_codeql_action_steps_share_one_release() -> None:
 
 # --- Documented counts match the code -----------------------------------------
 
-_COUNT_CLAIM = re.compile(r"(\d+) signatures / (\d+) signals")
-_BARE_SIGNATURE_CLAIM = re.compile(r"\b(\d+) signatures\b")
+# A claim about the shipped total: a signature count stated with its signal
+# count ("215 signatures / 1001 signals", "178 signatures, 790 signals"), or
+# one stated as the whole set ("all 212 signatures", "ships 215 signatures",
+# "215 built-in signatures"). Other prose may count a subset ("two packs add
+# 12 signatures") without claiming the total. Matching runs on text with its
+# whitespace collapsed, so a claim wrapped across lines is still found.
+_NUMBER = r"(\d[\d,]*)"
+_PAIRED_SIGNATURE_CLAIM = re.compile(rf"\b{_NUMBER} signatures ?(?:/|,|and) ?{_NUMBER} signals\b")
+_TOTAL_SIGNATURE_CLAIM = re.compile(
+    rf"\b(?:all|ships|ship|bundles|includes) {_NUMBER} signatures\b"
+    rf"|\b{_NUMBER} (?:bundled|built-in|shipped) signatures\b"
+)
 _CONNECTOR_CLAIM = re.compile(r"\*\*(\d+) connectors\*\*")
+
+
+def _count(text: str) -> int:
+    return int(text.replace(",", ""))
+
+
+def _signature_claims(text: str) -> list[tuple[int, int | None]]:
+    """``(signatures, signals or None)`` for every total-count claim in a document."""
+    text = " ".join(text.split())
+    claims: list[tuple[int, int | None]] = [
+        (_count(match.group(1)), _count(match.group(2))) for match in _PAIRED_SIGNATURE_CLAIM.finditer(text)
+    ]
+    for match in _TOTAL_SIGNATURE_CLAIM.finditer(text):
+        claims.append((_count(match.group(1) or match.group(2)), None))
+    return claims
+
+
+@pytest.mark.parametrize(
+    "text,claims",
+    [
+        ("215 signatures / 1001 signals, YAML-defined", [(215, 1001)]),
+        ("signature validation (178\n  signatures, 790 signals)", [(178, 790)]),
+        ("216 signatures and 1,001 signals", [(216, 1001)]),
+        ("shadowscan signatures list   # show all 212 signatures", [(212, None)]),
+        ("ShadowScan ships 215\nsignatures / 1001 signals.", [(215, 1001), (215, None)]),
+        ("the 215 built-in signatures", [(215, None)]),
+        ("two packs add 12 signatures; 3 signatures share one prefix", []),
+        ("the validator rejected 2 signatures", []),
+    ],
+)
+def test_signature_count_claims_are_recognised(text: str, claims: list[tuple[int, int | None]]) -> None:
+    assert _signature_claims(text) == claims
 
 
 def _current_docs() -> list[Path]:
@@ -643,17 +749,17 @@ def _current_docs() -> list[Path]:
 def test_documented_signature_counts_match_the_shipped_packs(index) -> None:
     signatures = list(index.signatures.values())
     actual = (len(signatures), sum(len(signature.signals) for signature in signatures))
-    claims = [(path, match) for path in _current_docs() for match in _COUNT_CLAIM.finditer(_read(path))]
-    assert claims, "README should state the signature and signal counts"
-    for path, match in claims:
-        claimed = (int(match.group(1)), int(match.group(2)))
-        assert claimed == actual, f"{_relative(path)} claims {claimed}, packs ship {actual}"
-    for path in _current_docs():
-        for _, line in _prose_lines(_read(path)):
-            for match in _BARE_SIGNATURE_CLAIM.finditer(line):
-                assert int(match.group(1)) == actual[0], (
-                    f"{_relative(path)} says {match.group(0)}, packs ship {actual[0]}"
-                )
+    claims = [(path, claim) for path in _current_docs() for claim in _signature_claims(_read(path))]
+    assert any(path.name == "README.md" and signals is not None for path, (_, signals) in claims), (
+        "README should state the signature and signal counts"
+    )
+    for path, (count, signals) in claims:
+        assert count == actual[0] and signals in (None, actual[1]), (
+            f"{_relative(path)} claims {count} signatures"
+            + (f" / {signals} signals" if signals is not None else "")
+            + f"; packs ship {actual[0]} / {actual[1]}. Describe a subset without "
+            "'all', 'ships' or 'built-in' if it is not the shipped total."
+        )
 
 
 def test_documented_connector_counts_match_the_registry() -> None:
@@ -666,19 +772,97 @@ def test_documented_connector_counts_match_the_registry() -> None:
         )
 
 
-def test_gcp_pagination_caps_are_not_dropped_from_the_per_surface_page() -> None:
-    """Regression for a real fork: docs/connectors/cloud.md once dropped the
-    max_pages / 500-page / 50-page-audit-log-cap sentence that docs/connectors.md
-    still documents, understating GCP's collection limits on the page readers
-    actually navigate to from the site nav.
-    """
-    canonical = _read(ROOT / "docs" / "connectors.md")
-    per_surface = _read(ROOT / "docs" / "connectors" / "cloud.md")
-    sentence = "resource lists stop at 500 pages and audit-log\nqueries at 50 pages regardless."
-    assert sentence in canonical, "docs/connectors.md no longer documents the GCP pagination caps"
-    assert sentence in per_surface, (
-        "docs/connectors/cloud.md is missing the GCP pagination caps documented in docs/connectors.md"
+# Connector configuration keys that may stay undocumented, each with a reason.
+# Keep this empty unless a key is deliberately internal.
+_UNDOCUMENTED_CONNECTOR_KEYS: dict[str, str] = {}
+
+
+def test_every_connector_configuration_key_is_documented() -> None:
+    """Every key `shadowscan connectors --json` lists is named in docs/connectors*.md."""
+    docs = "\n".join(
+        _read(path)
+        for path in [ROOT / "docs" / "connectors.md", *sorted((ROOT / "docs" / "connectors").glob("*.md"))]
     )
+    listed = set()
+    missing = []
+    for name in builtin_connector_names():
+        connector = get_connector_class(name)
+        for key in {**connector.config_keys, **connector.shared_config_keys}:
+            listed.add(f"{name}.{key}")
+            # Backticked as `key`, `key: value` or `key=value`.
+            if f"{name}.{key}" not in _UNDOCUMENTED_CONNECTOR_KEYS and not re.search(
+                rf"`{re.escape(key)}[`:= ]", docs
+            ):
+                missing.append(f"{name}.{key}")
+    assert not missing, f"document these connector configuration keys in docs/connectors*.md: {missing}"
+    assert _UNDOCUMENTED_CONNECTOR_KEYS.keys() <= listed, "stale undocumented-key exemptions"
+
+
+def test_documented_realistic_corpus_file_range_matches_the_corpus() -> None:
+    cases = json.loads(_read(ROOT / "tools" / "evaluation" / "realistic_corpus.json"))["cases"]
+    counts = [len(case["files"]) for case in cases]
+    match = re.search(
+        r"snapshots \((\d+) to (\d+) files each\)", " ".join(_read(ROOT / "docs" / "evaluation.md").split())
+    )
+    assert match is not None, "docs/evaluation.md should state the realistic corpus file range"
+    assert (int(match.group(1)), int(match.group(2))) == (min(counts), max(counts)), (
+        f"docs/evaluation.md claims {match.group(0)!r}; the corpus has {min(counts)} to {max(counts)} files per case"
+    )
+
+
+def _gcp_pagination(index) -> dict[str, int]:
+    """The page limits the GCP connector applies, measured by paging until it stops.
+
+    Every response offers a fresh page token, so each paginated call runs to the
+    connector's own cap. Nothing leaves the process: the transport is a stub.
+    """
+    connector = GcpConnector(ConnectorContext(config={"max_pages": 1_000_000}, index=index))
+    connector.ctx.stats = ScanStats(connector="cloud.gcp", started_at="2026-01-01T00:00:00Z")
+    tokens = itertools.count()
+    connector._get = Mock(
+        side_effect=lambda url, **params: {"items": [], "nextPageToken": f"t{next(tokens)}"}
+    )
+    list(connector._pages("https://compute.googleapis.com/compute/v1/projects", "items"))
+    connector.http = Mock()
+    connector.http.post_json.side_effect = lambda url, json: {
+        "entries": [],
+        "nextPageToken": f"t{next(tokens)}",
+    }
+    list(connector._collect_audit("demo"))
+    default = GcpConnector(ConnectorContext(config={}, index=index)).max_pages
+    return {
+        "default": default,
+        "lists": connector._get.call_count,
+        "audit": connector.http.post_json.call_count,
+    }
+
+
+def test_documented_gcp_pagination_caps_match_the_connector(index) -> None:
+    """Both GCP pages and the connector's own help state the caps it applies.
+
+    Regression for a real fork: docs/connectors/cloud.md once dropped the caps
+    sentence that docs/connectors.md still carried, understating GCP's
+    collection limits on the page the site navigation links to.
+    """
+    pages = _gcp_pagination(index)
+    caps = (
+        f"resource lists stop at {pages['lists']} pages and "
+        f"audit-log queries at {pages['audit']} pages regardless"
+    )
+    # Every connector caps max_pages at MAX_PAGES; the docs state both bounds.
+    bounds = (
+        f"default and maximum {MAX_PAGES}"
+        if pages["default"] == MAX_PAGES
+        else f"default {pages['default']}, maximum {MAX_PAGES}"
+    )
+    default = f"`max_pages` ({bounds})"
+    for path in (ROOT / "docs" / "connectors.md", ROOT / "docs" / "connectors" / "cloud.md"):
+        assert any(default in text and caps in text for text in _paragraphs(path)), (
+            f"{_relative(path)} must say in one paragraph that {default} applies and that {caps}"
+        )
+    help_text = " ".join(GcpConnector.config_keys["max_pages"].split())
+    assert f"capped at {MAX_PAGES}" in help_text and f"default {pages['default']}" in help_text
+    assert caps in help_text
 
 
 # --- Documented report and transport behaviour matches the code --------------
@@ -706,7 +890,9 @@ def test_documented_csv_markers_match_the_reporter() -> None:
     # Consumers strip the markers the documents describe. A consumer told only
     # about a leading marker corrupts every value with a marker inside it.
     candidates = [chr(code) for code in range(1, 128)] + ["\x85", "\xa0", "\u2028", "\u2029"]
-    inside = {sep for sep in candidates if _safe_cell(f"a{sep}=1") != f"a{sep}=1"}
+    # A control character is rendered visibly in the cell; only a "'" before
+    # the formula marks it.
+    inside = {sep for sep in candidates if _safe_cell(f"a{sep}=1") == f"a{sep}'=1"}
     assert inside, "the CSV reporter no longer marks a formula inside a cell; update this test"
     unnamed = inside - _CSV_SEPARATOR_NAMES.keys()
     assert not unnamed, f"name {sorted(unnamed)!r} here and in the CSV documentation"
@@ -735,3 +921,18 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
+
+
+_FIXTURE_CLAIM = re.compile(r"(\d+) of (\d+) connectors ship fixtures")
+
+
+def test_documented_fixture_connector_count_matches_the_demo_configuration() -> None:
+    demo = yaml.safe_load((ROOT / "examples" / "shadowscan.offline.yaml").read_text(encoding="utf-8"))
+    configured = {entry["name"] for entry in demo["connectors"]}
+    assert configured <= set(builtin_connector_names())
+    actual = (len(configured), len(builtin_connector_names()))
+    claims = [(path, match) for path in _current_docs() for match in _FIXTURE_CLAIM.finditer(_read(path))]
+    assert claims, "the README should state how many connectors the offline demo covers"
+    for path, match in claims:
+        claimed = (int(match.group(1)), int(match.group(2)))
+        assert claimed == actual, f"{_relative(path)} claims {claimed}, the demo configures {actual}"

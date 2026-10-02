@@ -6,13 +6,21 @@ import html
 import re
 
 from shadowscan.models import Finding, ScanResult
-from shadowscan.reporters._publication import publication_stats, related_finding_ids
+from shadowscan.reporters._publication import (
+    publication_stats,
+    related_finding_ids,
+    without_connector_prefix,
+)
 
 _LEVEL_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
 _LEVEL_ORDER = ["critical", "high", "medium", "low", "info"]
 _MARKDOWN_META = re.compile(r"([\\`*_\[\]~|])")
 _BACKTICKS = re.compile(r"`+")
-_AUTOLINK = re.compile(r"(?i)\b(?:(https?)://|(www)\.)")
+# GFM links 'http://', 'https://' and 'ftp://' after any character that is not a letter (a
+# digit, '_' or '-' before the scheme does not stop it: '_https://host', '0http://host')
+# and 'www.' after anything that is not a letter or digit ('_www.host'). A '\b' would miss
+# the cases that follow a word character.
+_AUTOLINK = re.compile(r"(?i)(?:(?<![a-z])(https?|ftp)://|(?<![a-z0-9])(www)\.)")
 _LINE_BREAKS = {
     "\r": r"\r",
     "\n": r"\n",
@@ -64,7 +72,7 @@ def _text(value: object) -> str:
 def _defang_autolink(match: re.Match[str]) -> str:
     scheme = match.group(1)
     if scheme:
-        return "hxxps://" if scheme.lower() == "https" else "hxxp://"
+        return {"https": "hxxps://", "http": "hxxp://"}.get(scheme.lower(), "fxp://")
     return "www[.]"
 
 
@@ -165,7 +173,10 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("")
     for st in stats:
         for diagnostic in [*st["errors"], *st["warnings"]]:
-            lines.append(f"- **{_text(st['connector'])}:** {_text(diagnostic)}")
+            lines.append(
+                f"- **{_text(st['connector'])}:** "
+                f"{_text(without_connector_prefix(st['connector'], diagnostic))}"
+            )
     lines.append("")
     return "\n".join(lines)
 

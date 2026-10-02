@@ -85,6 +85,7 @@ def bundled_source_index() -> SourceIndex:
                 "review_corpus.json",
                 "field_review_corpus.json",
                 "attribution_corpus.json",
+                "current_idioms_corpus.json",
             )
         ),
     ):

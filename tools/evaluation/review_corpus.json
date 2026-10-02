@@ -7,6 +7,45 @@
   },
   "cases": [
     {
+      "id": "npm-alias-framework-target",
+      "family": "framework",
+      "description": "A local npm alias for LangGraph establishes dependency usage, without proving agent construction.",
+      "files": {
+        "package.json": "{\"private\": true, \"dependencies\": {\"workflow-runtime\": \"npm:@langchain/langgraph@^1.0\"}}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langgraph"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0,
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": ["framework.langgraph"],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "npm-alias-name-is-not-framework",
+      "family": "framework",
+      "description": "An ordinary utility installed under an AI package's name is not framework evidence; the npm scheme is case-insensitive.",
+      "files": {
+        "package.json": "{\"private\": true, \"dependencies\": {\"@langchain/langgraph\": \"NPM:lodash@^4.17\"}}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langgraph"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": []
+      }
+    },
+    {
       "id": "local-agent-module",
       "family": "agent",
       "description": "An ordinary local module shadows the external agents package.",

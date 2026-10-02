@@ -15,8 +15,11 @@ Offline export: JSONL of dumped records (``_kind`` per record).
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Iterator
-from typing import Any, ClassVar
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from datetime import UTC, date, datetime, time
+from typing import Any, ClassVar, TypeGuard
+
+import regex
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import (
@@ -31,14 +34,23 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials
-from shadowscan.connectors.common import apply_matches, model_matches
+from shadowscan.connectors.common import apply_matches, max_pages_limit, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
 from shadowscan.utils.text import truncate
 
-GENAI_POLICY_RX = re.compile(
-    r"(?i)\b(?:allow)\b.*?\b(?:to\s+)?(manage|use|read|inspect)\s+"
+# "Allow <subject> to <verb> <resource family>": IAM policy statements are
+# untrusted text. A single "allow .*? <verb> <family>" search retried its lazy
+# scan from every "allow", which is quadratic (48 KB of "allow " took seconds
+# while holding the GIL), so the two parts are matched separately and only
+# forward; see _policy_grant.
+_POLICY_ALLOW = regex.compile(r"(?i)\ballow\b")
+_POLICY_GRANT = regex.compile(
+    r"(?i)\b(?:to\s++)?(manage|use|read|inspect)\s++"
     r"(generative-ai[a-z-]*|oda[a-z-]*|data-science[a-z-]*|all-resources|ai-service[a-z-]*)\b"
 )
+# OCI policy statements are short; a longer one is a malformed record.
+MAX_POLICY_STATEMENT_CHARS = 8192
 _POLICY_SUBJECT = re.compile(r"(?i)allow\s+(?:group|dynamic-group|service|any-user)\s+([^\s]+)")
 # Serving images and settings that indicate an LLM model deployment.
 _LLM_DEPLOYMENT_HINTS = ("vllm", "tgi", "llm", "text-generation", "model_deploy_predict_endpoint")
@@ -71,6 +83,46 @@ def _resource_id(value: Any) -> str:
     return value
 
 
+def _policy_grant(statement: Any) -> tuple[str, str] | None:
+    """Return the lower-case (verb, resource family) of an AI grant in ``statement``.
+
+    Same result as one search for ``\\ballow\\b.*?<grant>``: the earliest grant
+    after the first ``allow`` of a line that starts on that line. Later
+    ``allow`` words on the same line cannot match more, and both searches only
+    move forward, so matching is linear in the statement length.
+    """
+    if not isinstance(statement, str):
+        raise TypeError("policy statement must be a string")
+    if len(statement) > MAX_POLICY_STATEMENT_CHARS:
+        raise ValueError("policy statement exceeds the length limit")
+    grant = None
+    pos = 0
+    try:
+        while allow := _POLICY_ALLOW.search(statement, pos, timeout=pattern_timeout(), concurrent=False):
+            line_end = statement.find("\n", allow.end())
+            line_end = len(statement) if line_end < 0 else line_end
+            if grant is None or grant.start() < allow.end():
+                grant = _POLICY_GRANT.search(
+                    statement, allow.end(), timeout=pattern_timeout(), concurrent=False
+                )
+                if grant is None:
+                    return None
+            if grant.start() < line_end:
+                return grant.group(1).lower(), grant.group(2).lower()
+            pos = line_end + 1
+    except (TimeoutError, MatchTimeoutError) as exc:
+        raise ValueError("policy statement matching timed out") from exc
+    return None
+
+
+def _may_grant_ai(statement: Any) -> bool:
+    """Collection filter: keep AI grants and statements that analyze() must report as malformed."""
+    try:
+        return _policy_grant(statement) is not None
+    except (TypeError, ValueError):
+        return True
+
+
 def _tool_config_type(tool: dict[str, Any]) -> Any:
     config = tool.get("tool_config")
     return config.get("tool_config_type") if isinstance(config, dict) else None
@@ -80,6 +132,39 @@ def _tool_type(tool: dict[str, Any]) -> str:
     """Tool type from the tool configuration, else the legacy ``type`` field."""
     config = tool.get("tool_config")
     return str(config.get("tool_config_type") if isinstance(config, dict) else tool.get("type") or "?")
+
+
+def _model_dict(value: Any) -> Any:
+    """``oci.util.to_dict`` without the SDK: plain data, with models mapped through their field lists.
+
+    SDK models keep each field in a ``_``-prefixed attribute behind a property
+    named by the keys of ``swagger_types`` and ``attribute_map``, so their
+    ``__dict__`` holds none of the names analysis reads. Any other object, or a
+    model missing a declared field, raises rather than yield a partial record.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
+    if isinstance(value, (date, time)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {key: _model_dict(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_model_dict(item) for item in value]
+    fields = getattr(value, "swagger_types", None) or getattr(value, "attribute_map", None)
+    if not isinstance(fields, Mapping):
+        raise TypeError("not an OCI SDK model")
+    return {name: _model_dict(getattr(value, name)) for name in fields}
+
+
+def _sdk_record(obj: Any) -> Any:
+    """``oci.util.to_dict`` when the SDK is importable, else the same mapping without it."""
+    try:
+        import oci
+    except ImportError:
+        return _model_dict(obj)
+    return oci.util.to_dict(obj)
 
 
 class OciConnector(BaseConnector):
@@ -106,14 +191,14 @@ class OciConnector(BaseConnector):
         ),
         "tenancy": "tenancy OCID (default: from the config profile or the principal signer)",
         "compartments": "compartment OCIDs (default: all active compartments in the tenancy)",
-        "max_pages": "cap on pages per paginated list call, at least 1 (default 1000)",
+        "max_pages": "maximum pages per paginated list call, capped at 1000 (default 1000)",
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
-        self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
+        self.max_pages = max_pages_limit(ctx.get("max_pages", 1000))
         self._config: dict[str, Any] = {}
         self._signer: Any = None
         self._clients: dict[tuple[Any, str | None], Any] = {}
@@ -223,15 +308,23 @@ class OciConnector(BaseConnector):
         self.ctx.warn(f"cloud.oci: pagination limit reached for {operation}")
         return records
 
-    @staticmethod
-    def _d(obj: Any) -> dict[str, Any]:
-        import oci
+    def _d(self, obj: Any) -> dict[str, Any] | None:
+        """An SDK object as a plain record, or None when it cannot be converted.
 
+        ``oci.util.to_dict`` returns objects it does not recognise unchanged, so
+        only a dict is a record. A skipped object marks coverage incomplete
+        instead of becoming a silently partial record.
+        """
         try:
-            result: dict[str, Any] = oci.util.to_dict(obj)
-            return result
-        except Exception:  # noqa: BLE001
-            return dict(getattr(obj, "__dict__", {}) or {})
+            record = _sdk_record(obj)
+        except Exception:  # noqa: BLE001 - one unconvertible object must not end collection
+            record = None
+        if not isinstance(record, dict):
+            self.ctx.warn(
+                f"cloud.oci: could not convert {type(obj).__name__} to a record; coverage incomplete"
+            )
+            return None
+        return record
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -259,7 +352,8 @@ class OciConnector(BaseConnector):
         }
         yield from self._iter_policies(identity, compartments)
         for dg in self._all(identity.list_dynamic_groups, self.tenancy):
-            yield {**self._d(dg), "_kind": "dynamic-group"}
+            if (group := self._d(dg)) is not None:
+                yield {**group, "_kind": "dynamic-group"}
         for region in regions:
             for comp in compartments:
                 yield from self._collect_region_comp(region, comp)
@@ -268,7 +362,7 @@ class OciConnector(BaseConnector):
         for comp in compartments:
             for p in self._all(identity.list_policies, comp):
                 stmts = list(p.statements or [])
-                if any(GENAI_POLICY_RX.search(s) for s in stmts):
+                if any(_may_grant_ai(s) for s in stmts):
                     yield {
                         "_kind": "policy",
                         "_compartment": comp,
@@ -304,42 +398,50 @@ class OciConnector(BaseConnector):
         agents = self._client(oci.generative_ai_agent.GenerativeAiAgentClient, region)
         for a in self._all(agents.list_agents, compartment_id=comp):
             rec = self._d(a)
+            if rec is None:
+                continue
             rec.update({"_kind": "genai-agent", "_region": region, "_compartment": comp})
             if hasattr(agents, "list_tools"):
                 tools = self._all(agents.list_tools, compartment_id=comp, agent_id=a.id)
-                rec["_tools"] = [self._d(t) for t in tools]
+                rec["_tools"] = [tool for t in tools if (tool := self._d(t)) is not None]
             else:
                 self.ctx.warn("cloud.oci: list_tools unavailable in installed SDK", incomplete=True)
                 rec["_tools"] = []
             yield rec
         for e in self._all(agents.list_agent_endpoints, compartment_id=comp):
-            yield {**self._d(e), "_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp}
+            if (endpoint := self._d(e)) is not None:
+                yield {**endpoint, "_kind": "genai-agent-endpoint", "_region": region, "_compartment": comp}
         for kb in self._all(agents.list_knowledge_bases, compartment_id=comp):
-            yield {**self._d(kb), "_kind": "genai-knowledge-base", "_region": region, "_compartment": comp}
+            if (base := self._d(kb)) is not None:
+                yield {**base, "_kind": "genai-knowledge-base", "_region": region, "_compartment": comp}
 
     def _collect_genai(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         genai = self._client(oci.generative_ai.GenerativeAiClient, region)
         for ep in self._all(genai.list_endpoints, comp):
-            yield {**self._d(ep), "_kind": "genai-endpoint", "_region": region, "_compartment": comp}
+            if (endpoint := self._d(ep)) is not None:
+                yield {**endpoint, "_kind": "genai-endpoint", "_region": region, "_compartment": comp}
         for cl in self._all(genai.list_dedicated_ai_clusters, comp):
-            yield {**self._d(cl), "_kind": "genai-cluster", "_region": region, "_compartment": comp}
+            if (cluster := self._d(cl)) is not None:
+                yield {**cluster, "_kind": "genai-cluster", "_region": region, "_compartment": comp}
         for m in self._all(genai.list_models, comp):
             d = self._d(m)
             # Custom (fine-tuned) models are type CUSTOM and reference a base model;
             # FINE_TUNE is a capability that *base* models advertise, and OCI custom
             # models are built on the same vendors as the base catalogue.
-            if d.get("type") == "CUSTOM" or d.get("base_model_id"):
+            if d is not None and (d.get("type") == "CUSTOM" or d.get("base_model_id")):
                 yield {**d, "_kind": "genai-custom-model", "_region": region, "_compartment": comp}
 
     def _collect_oda(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         oda = self._client(oci.oda.OdaClient, region)
         for inst in self._all(oda.list_oda_instances, comp):
-            yield {**self._d(inst), "_kind": "oda-instance", "_region": region, "_compartment": comp}
+            if (instance := self._d(inst)) is not None:
+                yield {**instance, "_kind": "oda-instance", "_region": region, "_compartment": comp}
 
     def _collect_model_deployments(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         ds = self._client(oci.data_science.DataScienceClient, region)
         for md in self._all(ds.list_model_deployments, comp):
-            yield {**self._d(md), "_kind": "model-deployment", "_region": region, "_compartment": comp}
+            if (deployment := self._d(md)) is not None:
+                yield {**deployment, "_kind": "model-deployment", "_region": region, "_compartment": comp}
 
     def _collect_function_apps(self, oci: Any, region: str, comp: str) -> Iterator[dict[str, Any]]:
         fn = self._client(oci.functions.FunctionsManagementClient, region)
@@ -349,12 +451,16 @@ class OciConnector(BaseConnector):
         ci = self._client(oci.container_instances.ContainerInstanceClient, region)
         for inst in self._all(ci.list_container_instances, comp):
             d = self._d(inst)
+            if d is None:
+                continue
             containers = []
             for c in self._all(ci.list_containers, comp, container_instance_id=inst.id):
                 try:
                     cd = self._d(ci.get_container(c.id).data)
                 except Exception as exc:  # noqa: BLE001 - continue other containers
                     self.ctx.warn(f"cloud.oci: container detail collection failed ({type(exc).__name__})")
+                    continue
+                if cd is None:
                     continue
                 containers.append(
                     {
@@ -819,8 +925,14 @@ class OciConnector(BaseConnector):
         f.add_tag("managed-secret")
         return done(f, self.index, Kind.SECRET)
 
-    def _h_policy(self, rec: dict[str, Any]) -> Finding:
+    def _h_policy(self, rec: dict[str, Any]) -> Finding | None:
         stmts = rec.get("statements") or []
+        if any(isinstance(s, str) and len(s) > MAX_POLICY_STATEMENT_CHARS for s in stmts):
+            self.ctx.warn(
+                f"cloud.oci: policy statement longer than {MAX_POLICY_STATEMENT_CHARS} characters; "
+                "policy record skipped"
+            )
+            return None
         f = cloud_finding(
             self.name,
             "oci",
@@ -834,9 +946,9 @@ class OciConnector(BaseConnector):
         )
         subjects: list[str] = []
         for s in stmts:
-            m = GENAI_POLICY_RX.search(s)
-            if m:
-                verb, family = m.group(1).lower(), m.group(2).lower()
+            grant = _policy_grant(s)
+            if grant:
+                verb, family = grant
                 scopes = self.index.match_scope(family) + self.index.match_scope(f"{verb} {family}")
                 apply_matches(f, scopes, weight_scale=0.6)
                 subj = _POLICY_SUBJECT.search(s)
@@ -891,5 +1003,5 @@ class OciConnector(BaseConnector):
         return done(f, self.index, Kind.SERVICE_IDENTITY)
 
 
-def _has_id(summary: Any) -> bool:
+def _has_id(summary: Any) -> TypeGuard[dict[str, Any]]:
     return isinstance(summary, dict) and isinstance(summary.get("id"), str) and bool(summary["id"].strip())

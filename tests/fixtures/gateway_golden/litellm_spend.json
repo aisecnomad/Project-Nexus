@@ -12090,7 +12090,7 @@
     }
    ],
    "confidence": 0.951,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -12181,6 +12181,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.openai|model": 1,
@@ -12322,7 +12323,7 @@
     }
    ],
    "confidence": 0.999,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -12415,6 +12416,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.anthropic|model": 1,

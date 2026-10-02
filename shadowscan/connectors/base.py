@@ -86,6 +86,7 @@ class ConnectorContext:
         cancelled: Event | None = None,
         publication_lock: LockType | None = None,
         gateway_identity_key: bytes | None = None,
+        gateway_identity_key_stable: bool = False,
     ) -> None:
         self.config: dict[str, Any] = dict(config or {})
         self.index: SignatureIndex = index or get_index()
@@ -96,7 +97,10 @@ class ConnectorContext:
         self.cancelled = cancelled
         self.publication_lock = publication_lock
         # Private scan context, separate from user configuration and reports.
+        # The key is random for each scan unless it is stable: the operator's
+        # SHADOWSCAN_IDENTITY_KEY, which keeps identities equal across scans.
         self.gateway_identity_key = gateway_identity_key
+        self.gateway_identity_key_stable = gateway_identity_key_stable
         self.stats: ScanStats | None = None
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
@@ -242,7 +246,8 @@ class BaseConnector(ABC):
 
     # Jobs of a connector that sets this share one private key per scan run
     # (ConnectorContext.gateway_identity_key): identical sources in a report
-    # get the same opaque identities, which separate runs cannot link.
+    # get the same opaque identities, which separate runs cannot link unless
+    # the operator supplies a stable SHADOWSCAN_IDENTITY_KEY.
     uses_run_identity_key: ClassVar[bool] = False
 
     @classmethod
@@ -267,6 +272,17 @@ class BaseConnector(ABC):
         its own validation reports the scan as incomplete.
         """
         return False
+
+    @classmethod
+    def scanned_local_paths(cls, config: dict[str, Any]) -> list[str]:
+        """Local files or directories this connector scans as the subject of the run, as configured.
+
+        The engine compares them with the approval inventories of the scan: an inventory inside a
+        scanned tree can be edited by the content under review (a pull request approving its own
+        findings), so it warns. Empty for a connector that reads no local tree, including a
+        filesystem connector that replays an ``input`` export.
+        """
+        return []
 
     def __init__(self, ctx: ConnectorContext) -> None:
         self.ctx = ctx
@@ -321,6 +337,7 @@ class BaseConnector(ABC):
     _MAX_OFFLINE_TOTAL_BYTES: ClassVar[int] = _offline.MAX_OFFLINE_TOTAL_BYTES
     _MAX_OFFLINE_ENTRIES: ClassVar[int] = _offline.MAX_OFFLINE_ENTRIES
     _MAX_INVALID_LINE_ERRORS: ClassVar[int] = _offline.MAX_INVALID_LINE_ERRORS
+    _MAX_LISTED_UNSUPPORTED: ClassVar[int] = _offline.MAX_LISTED_UNSUPPORTED
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         """Validate exports under shared input budgets and preserve valid records."""
@@ -328,6 +345,10 @@ class BaseConnector(ABC):
 
     def _offline_budget(self) -> OfflineInputBudget:
         return OfflineInputBudget(self.max_input_bytes, self.max_input_files)
+
+    @staticmethod
+    def _empty_export_message(budget: OfflineInputBudget) -> str:
+        return _offline.empty_export_message(budget)
 
     def _offline_files(self, path: str, suffixes: AbstractSet[str] | None = None) -> Iterator[Path]:
         return _offline.offline_files(self, path, suffixes)

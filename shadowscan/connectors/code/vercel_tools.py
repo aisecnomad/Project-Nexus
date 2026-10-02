@@ -6,6 +6,11 @@ explicit execution callback establishes model-selected dispatch. Dynamic
 objects, unknown option spreads, duplicate properties and unknown tool choices
 remain SDK usage evidence. A tool map spread invalidates earlier definitions;
 explicit callbacks after it remain observable. No JavaScript is executed.
+
+A multi-step tool loop is the other agent shape: a stop condition past the
+first step (``stopWhen``, or ``maxSteps`` before AI SDK 5) returns tool
+results to the model until it stops calling tools. Its tools are usually
+imported definitions, so only their presence and explicit disabling are read.
 """
 
 from __future__ import annotations
@@ -20,6 +25,10 @@ _FUNCTION = re.compile(rf"\s*(?:async\s+)?function(?:\s+{_NAME})?\s*\([^()]*\)\s
 _ARROW = re.compile(rf"\s*(?:async\b\s*)?(?:\([^()]*\)|{_NAME})\s*=>")
 _METHOD = re.compile(r"\s*(?:async\s+)?execute\s*\([^()]*\)\s*\{")
 _PAIRS = {"(": ")", "[": "]", "{": "}"}
+# Option values that leave an option at its default.
+_UNSET = frozenset({"undefined", "null"})
+# stepCountIs(1) (isStepCount in AI SDK 7) is the default: no step after a tool call.
+_ONE_STEP = re.compile(rf"\s*(?:{_NAME}\s*\.\s*)?(?:stepCountIs|isStepCount)\s*\(\s*1\s*\)\s*")
 
 
 def _parts(raw: str, masked: str) -> list[tuple[str, str]] | None:
@@ -156,3 +165,81 @@ def has_executable_vercel_tools(arguments: str, masked: str, tool_factories: tup
         if _execution_callback(*definition["execute"]):
             return True
     return False
+
+
+def _options(raw: str, masked: str) -> dict[str, tuple[str, str]] | None:
+    """Return the plain and shorthand properties of an inline options object.
+
+    Unlike ``_object``, members that cannot be the options read here (methods
+    such as ``onFinish() {}``, quoted or computed keys) are skipped rather than
+    rejected. A spread may override every earlier property and a repeated key
+    is ambiguous, as in ``_object``.
+    """
+    inner = _unwrap(raw, masked, "{")
+    if inner is None:
+        return None
+    fields: dict[str, tuple[str, str]] = {}
+    for source, code in _parts(*inner) or []:
+        if code.lstrip().startswith("..."):
+            fields.clear()
+            continue
+        match = _KEY.match(code)
+        if match:
+            key, value = match[1], (source[match.end() :], code[match.end() :])
+        elif re.fullmatch(rf"\s*{_NAME}\s*", code):
+            key, value = code.strip(), (source, code)
+        else:
+            continue
+        if key in fields:
+            return None
+        fields[key] = value
+    return fields
+
+
+def _set(options: dict[str, tuple[str, str]], key: str) -> str | None:
+    """Return the masked value of an option that is present and not explicitly unset."""
+    value = options.get(key)
+    if value is None or value[1].strip() in _UNSET:
+        return None
+    return value[1]
+
+
+def _continues_after_tools(options: dict[str, tuple[str, str]]) -> bool:
+    """Whether a stop condition lets generation continue after a tool step."""
+    stop = _set(options, "stopWhen")
+    if stop is not None:
+        # The default stops after the first step. A larger step count,
+        # hasToolCall(...) or any other condition runs further steps.
+        return _ONE_STEP.fullmatch(stop) is None
+    steps = _set(options, "maxSteps")
+    if steps is not None:
+        # Compare the digits as text: a numeral can exceed what int() parses.
+        count = re.fullmatch(r"\s*([0-9]+)\s*", steps)
+        return count is None or count[1].lstrip("0") not in {"", "1"}
+    return False
+
+
+def has_vercel_tool_loop(arguments: str, masked: str) -> bool:
+    """Whether a resolved generateText/streamText call runs a multi-step tool loop.
+
+    The tool set may be any nonempty value, including imported tools whose
+    execution callbacks live elsewhere. Explicitly disabled selection
+    (``toolChoice: 'none'`` or an empty ``activeTools`` list) is not a loop;
+    a dynamic choice or tool list may enable tools and still counts.
+    """
+    inner = _unwrap(arguments, masked, "(")
+    options = _options(*inner) if inner is not None else None
+    if options is None or not _continues_after_tools(options):
+        return False
+    tools = _set(options, "tools")
+    if tools is None or re.fullmatch(r"\s*\{\s*\}\s*", tools):
+        return False
+    choice = options.get("toolChoice")
+    if choice is not None and _literal(choice[0]) == "none":
+        return False
+    for key in ("activeTools", "experimental_activeTools"):
+        active = options.get(key)
+        array = _unwrap(*active, "[") if active is not None else None
+        if array is not None and not _parts(*array):
+            return False
+    return True

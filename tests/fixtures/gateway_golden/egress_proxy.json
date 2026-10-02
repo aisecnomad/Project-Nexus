@@ -2521,6 +2521,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "technologies": []
    },
    "identity_discriminator": "caller",
@@ -2610,8 +2611,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.988,
-   "likelihood": "confirmed",
+   "confidence": 0.975,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -2698,6 +2699,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -70,6 +71,70 @@ def test_package_json_go_cargo_maven_gradle_nuget():
         '<Project><ItemGroup><PackageReference Include="Microsoft.Agents.AI" Version="1.0.0" /></ItemGroup></Project>',
     )
     assert ("nuget", "Microsoft.Agents.AI") in deps
+
+
+@pytest.mark.parametrize(
+    "section, dev",
+    [
+        ("dependencies", False),
+        ("devDependencies", True),
+        ("peerDependencies", False),
+        ("optionalDependencies", False),
+    ],
+)
+@pytest.mark.parametrize(
+    "spec, target",
+    [
+        ("npm:@langchain/langgraph@^1.0", "@langchain/langgraph"),
+        ("npm:@langchain/langgraph", "@langchain/langgraph"),
+        ("npm:langchain@>=0.3 <1", "langchain"),
+        ("npm:langchain", "langchain"),
+        ("npm:lodash@latest", "lodash"),
+        ("NPM:@langchain/langgraph@^1.0", "@langchain/langgraph"),
+        ("npm:@_scope/foo@1", "@_scope/foo"),
+        ("npm:@.scope/foo@1", "@.scope/foo"),
+        ("npm:@scope/-foo@1", "@scope/-foo"),
+        ("npm:foo!@1", "foo!"),
+        ("npm:foo(bar)@1", "foo(bar)"),
+    ],
+)
+def test_npm_alias_dependency_uses_target_identity(section, dev, spec, target):
+    alias = "@langchain/langgraph" if target == "lodash" else "workflow-runtime"
+    _, result = _deps("package.json", json.dumps({section: {alias: spec}}))
+    assert not result.errors
+    assert [(dep.ecosystem, dep.name, dep.spec, dep.dev) for dep in result.deps] == [
+        ("npm", target, spec, dev)
+    ]
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "npm:",
+        "npm:@scope",
+        "npm:@scope/",
+        "npm:../langchain",
+        "npm:langchain/extra",
+        "npm:@scope/.foo",
+        "npm:_foo",
+        "npm:-foo",
+    ],
+)
+def test_malformed_npm_alias_does_not_fall_back_to_alias_name(spec):
+    deps, result = _deps(
+        "package.json", json.dumps({"dependencies": {"@langchain/langgraph": spec, "openai": "^4"}})
+    )
+    assert deps == {("npm", "openai")}
+    assert result.errors == ["dependencies dependency has an invalid npm alias target"]
+
+
+@pytest.mark.parametrize(
+    "spec", ["^1.0", "workspace:*", "file:../runtime", "https://example.test/runtime.tgz"]
+)
+def test_non_alias_npm_dependencies_keep_declared_names(spec):
+    deps, result = _deps("package.json", json.dumps({"dependencies": {"langchain": spec}}))
+    assert deps == {("npm", "langchain")}
+    assert not result.errors
 
 
 def test_dockerfile_compose_and_terraform_artifacts():
@@ -190,6 +255,40 @@ def test_vcs_egg_fragments_and_editable_dependencies():
         ("langgraph", 2),
         ("langchain", 3),
     }
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "eng/common.props",
+        "eng/Versions.PROPS",
+        "src/App/Shared.targets",
+    ],
+)
+def test_msbuild_props_and_targets_are_nuget_manifests(rel):
+    name = rel.rsplit("/", 1)[-1]
+    assert is_manifest_name(name)
+    deps, result = _deps(
+        rel,
+        '<Project><ItemGroup><PackageReference Include="Microsoft.SemanticKernel" Version="1.0.0" />'
+        '<PackageVersion Include="ModelContextProtocol" Version="0.2" /></ItemGroup></Project>',
+    )
+    assert deps == {("nuget", "Microsoft.SemanticKernel"), ("nuget", "ModelContextProtocol")}
+    assert not result.errors
+
+
+@pytest.mark.parametrize("name", ["Directory.Build.targets", "common.props"])
+def test_msbuild_entity_declarations_are_rejected_not_expanded(name):
+    bomb = (
+        '<!DOCTYPE lolz [<!ENTITY lol0 "lol"><!ENTITY lol1 "&lol0;&lol0;&lol0;&lol0;&lol0;&lol0;&lol0;">]>'
+        '<Project><ItemGroup><PackageReference Include="&lol1;" /></ItemGroup></Project>'
+    )
+    result = parse_manifest(name, bomb)
+    assert result is not None and result.deps == []
+    assert result.errors == ["NuGet DTD/entity declarations are unsupported"]
 
 
 def test_containerfile_is_parsed_like_a_dockerfile():

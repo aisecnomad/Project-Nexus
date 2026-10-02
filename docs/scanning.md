@@ -3,7 +3,8 @@
 ## Coverage policy
 
 A code scan is *complete* when every file it was asked to assess was assessed.
-The following coverage rules define how omitted source is handled:
+Situations that are deliberately outside a repository's own content, and gaps
+that are never silent:
 
 * **Symbolic links** are never followed. A link is skipped silently when its
   own name is one the scanner never reads (a lockfile, generated bundle or
@@ -28,16 +29,69 @@ The following coverage rules define how omitted source is handled:
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
+* **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
+  byte-order mark is decoded and the mark removed. A Python source is decoded
+  with the codec its `# coding:` cookie declares. Any other file the scanner
+  analyzes by name (source, configuration, documents, `.env`, extensionless
+  files) that has a NUL byte in its first 8 KiB, or that its declared codec
+  cannot decode, makes the scan incomplete (exit code 3) with `binary or
+  undecodable content in analyzable file`; it is never silently treated as
+  empty. A compiled or packed artifact with no file extension and a known
+  header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
+  GIF, PDF) is skipped quietly, as are names the scanner never analyzes
+  (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
+  of binary data that carries an analyzed extension.
+* **Default-excluded directories.** The walk skips a built-in list of directory
+  names (see `default_excludes` in the [code connector](connectors/code.md)).
+  Tool metadata, caches, virtualenvs and dependency trees are skipped without
+  comment. A skipped `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`,
+  `vendor`, `third_party`, `thirdparty` or `external` directory that holds a
+  file is a warning (the scan stays complete) naming each such directory name
+  with its count, because projects also keep their own code there.
+  `default_excludes: false` (`--no-default-excludes`) scans them.
 * **Submodules** are never initialized or fetched. Bounded `.gitmodules`
   declarations identify missing, empty or unsafe source directories as coverage
   gaps, including declarations inside materialized nested directories. Ordinary
   files in materialized submodule directories are scanned by the same confined
   walker. GitHub/GitLab clone collection additionally inventories gitlinks in
-  the committed `HEAD` tree; local scans do so only with `use_git: true` and a
+  the committed `HEAD` tree (this needs Git 2.45 or newer); local scans do so only with `use_git: true` and a
   local `.git` directory. Malformed declarations or a failed authorized Git
   inventory make coverage incomplete. Explicitly excluded submodule paths are
   outside the declared scan scope. A nonempty directory establishes only that
   source is available to scan, not that it matches an authentic remote commit.
+* **Undecodable or binary content** in a file whose name the scanner would
+  analyze (source, manifests, `.env`, configuration, MCP and agent files,
+  notebooks) makes the scan incomplete with `binary or undecodable content in
+  analyzable file`. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
+  parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
+  not text in any supported encoding, yet interpreters such as Node and `sh`
+  still run a script with a NUL in a comment, so it is a gap, not an empty file;
+  this includes UTF-16 without a byte-order mark. Names the scanner never reads
+  (images, archives, `.bin`, compiled artifacts) and compiled executables
+  without any file extension stay silent. An operator can exclude a known binary
+  with an `exclude` file glob.
+* **Entries that are not regular files** (a directory, FIFO, socket or device)
+  named like a file the scanner analyzes, such as `.mcp.json` or
+  `requirements.txt`, make the scan incomplete, as a symbolic link of the same
+  name does. A directory is only reported when its name is an MCP configuration
+  name or carries a file-name signature; its contents are still scanned.
+* **Directory nesting** of any depth is walked on an explicit stack, so a tree
+  deeper than the Python runtime's recursion limit loses no findings.
+
+Default directory excludes are part of the documented scope and never make a
+scan incomplete, but they are not silent. The names in `DEFAULT_EXCLUDES` are
+skipped at any depth (`bin`, `build`, `dist`, `external`, `obj`, `out`, `target`,
+`vendor`, `third_party`, `coverage` and others, plus version-control metadata,
+dependency trees and tool caches). For each scan root one warning lists the
+non-empty first-party-capable directories that were skipped, with how many
+carried each name (`default-excluded directories not scanned: build (2),
+vendor (1); set default_excludes: false to scan them`). Version-control
+metadata, dependency trees, virtual environments and tool caches (`.git`,
+`node_modules`, `venv`, `__pycache__`, `.idea` and similar) are not listed, and
+neither is a name the operator listed in `exclude`. Code under a listed name was
+not assessed; `default_excludes: false` (`--no-default-excludes`) scans it, or
+scan that directory as its own root.
 
 Default local scans do not execute Git: an undeclared gitlink without a
 `.gitmodules` file is therefore not discoverable in that mode. The opt-in Git
@@ -62,6 +116,15 @@ evidence there. Deciding that is linear in the module and matches at most
 A large module that does import such a library, or has more imports than that,
 still reports
 `import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
+
+The JavaScript and TypeScript lexer that masks comments, strings and JSX text
+has a look-ahead allowance of its own: a fixed floor plus four characters of
+look-ahead per character of the file. Real components use under one percent of
+it. A JSX file that exhausts it, such as tens of thousands of repeated `<A>(`,
+ends in well under a second with
+`file analysis incomplete (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`
+instead of stalling the scan until the connector deadline. Other files are
+unaffected and the scan exits 3.
 
 ## Test and fixture code
 
@@ -127,7 +190,8 @@ Without `root_ids`, the canonical local path determines a distinct root suffix.
 Using a scalar `path` with its own connector `label` preserves the older ID.
 
 The default state location is `$XDG_STATE_HOME/shadowscan`, or
-`~/.local/state/shadowscan`. `--state-dir` overrides it; YAML relative paths are
+`~/.local/state/shadowscan` when `XDG_STATE_HOME` is unset, empty or relative
+(as the XDG specification requires). `--state-dir` overrides it; YAML relative paths are
 resolved against the configuration file. Keep the directory outside every scan
 input. State uses a private 0700 directory and atomic 0600 JSON files containing
 sanitized, unscored findings, not source content or raw credentials. Protect the
@@ -324,7 +388,8 @@ exact `api-key:credential:sha256:...` binding computed privately from the raw
 key, which the connector checks in memory without writing that public digest to
 findings. Keep binding configuration private: publishing a public digest of a
 guessable key would itself disclose the key. The exported HMAC is scan-local
-and cannot be pasted into a future binding. Other caller names changed by
+unless a stable identity key is set (below), and in either case cannot be
+pasted into a binding. Other caller names changed by
 credential redaction remain `unverified` for runtime attribution. Do not put
 raw API keys into bindings.
 
@@ -342,6 +407,25 @@ key for each scan. Direct connector instances use independent keys. Redacted sco
 marked incomplete; gateway exports are noncomparable across independent runs.
 Resolve the scope/credential overlap before interpreting a report comparison
 as evidence that a finding was resolved.
+
+To compare gateway callers across scans, set `SHADOWSCAN_IDENTITY_KEY` to at
+least 32 random bytes, hex or base64 encoded (for example the output of
+`openssl rand -hex 32`), in the environment of every scan that should be
+comparable. Hex is tried first. The engine then uses this key instead of a new
+key per scan: identical inputs and configuration give identical caller, scope
+and source pseudonyms and finding IDs, findings carry
+`metadata.identity_scope: keyed`, and the `collection_scope` fingerprint covers
+the gateway configuration through an HMAC under the key. The key is read only
+from the environment, never from a configuration file, and is never logged or
+written to reports, caches or record exports. A set value that does not decode
+to at least 32 bytes stops the command before any collection (exit 1). Treat
+the key as a secret: with it and a report, anyone can test guesses of short API
+keys, labels and bindings against the pseudonyms, and reports made under one key
+can be linked to each other. A different key changes every gateway ID and the
+collection scope, so `diff` never resolves findings across keys; rotating the key
+requires a fresh baseline. A caller that is missing from a complete export of
+the same source under the same key is reported resolved: the new export has no
+requests from it, which does not prove that the workload was removed.
 
 Code findings with frameworks gain `metadata.runtime_activity`:
 
@@ -370,9 +454,11 @@ Gateway finding IDs include the canonical input path and relevant connector
 configuration (label, format, filters and bindings). This changes IDs from older
 reports. Repeating an identical configured source within one connector instance
 is idempotent for nonredacted principal/service callers; API-key callers and
-redacted scopes use connector-local HMAC IDs. Gateway exports are noncomparable
-across independent scans to avoid claiming that a missing scan-local ID is a
-resolved finding. Distinct exports retain
+redacted scopes use connector-local HMAC IDs. Without `SHADOWSCAN_IDENTITY_KEY`,
+gateway exports are noncomparable across independent scans to avoid claiming
+that a missing scan-local ID is a resolved finding: their findings carry
+`metadata.identity_scope: run`, and `diff` lists them as not comparable (see
+[comparing reports](#comparing-reports)). Distinct exports retain
 separate provenance. Overlapping exports count observations from each source,
 so aggregate counts are not guaranteed to represent unique requests.
 
@@ -393,7 +479,7 @@ options. Extra statements, nested scopes, mutations and dynamic options cannot
 establish this proof. Unsupported shapes, including files longer than such a
 program can be, still produce ordinary SDK evidence and leave coverage complete.
 
-Several rules keep weak observations from producing confirmed or high-risk
+Several rules keep weak observations from producing strong or high-risk
 findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
 sequences after the provider prefix) is never a `secret` finding; it is listed
@@ -410,7 +496,12 @@ observation for a project other than those heuristics is an environment-variable
 or display-name reference, the heuristics are dropped and the finding is built
 from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
-names appear. MCP servers
+names appear. A data or prose file that only lists four or more products by
+domain or variable name (a proxy blocklist, a vendor policy, a copy of the
+signature packs) is a catalog: its mentions count only for a product with an
+import, dependency or code pattern elsewhere in the project, and the discounted
+files are listed in `metadata.catalog_mentions` (see
+[Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers
 `browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
 keeps the informational `always-on` tag but only marks a caller as agentic,
@@ -424,22 +515,49 @@ it. `tools/evaluation/corpus.json` carries regression cases for each rule.
 changes, including permissions, classification, ownership, registration and risk
 score/factors within the same risk band. Each changed item includes
 `changed_fields`. Missing findings count as resolved only when both reports
-completed, declare the same supported finding-identity schema and have the same
-`collection_scope` fingerprint. This opaque digest covers
+completed, declare the same supported finding-identity schema, carry a
+`summary` whose `total` (and `by_surface`/`by_kind` counts) match their
+`findings` array, and have the same `collection_scope` fingerprint. A truncated
+or filtered report is therefore unknown (exit 3), not a resolution. The
+fingerprint is an opaque digest that covers
 selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public
 digest does not hide guessable paths or labels; keep these settings nonsecret.
-Credential-bearing configurations omit the digest, and gateway exports cannot
-attest comparable scope because private caller/scope identities may change
-between scans.
+Credential-bearing configurations omit the digest. Gateway exports attest
+comparable scope only when `SHADOWSCAN_IDENTITY_KEY` is set: an HMAC under that
+key stands in for their configuration, which can hold guessable labels and
+bindings. Without the key their private caller/scope identities change between
+scans.
 
 Incomplete scans, changed scope, older reports without provenance, live provider
 collections and third-party connectors cannot establish equivalent coverage.
 Their missing findings are reported as `unknown`, and diff exits 3. New and
 changed findings remain visible. Currently only local repositories and offline
 exports from built-in connectors can attest comparable scope; live account and
-permission coverage require additional provider-specific provenance.
+permission coverage require additional provider-specific provenance. The digest
+covers the resolved absolute scan paths, so compare scans of the same checkout
+location; a label does not stand in for the path, because a narrower scan under
+the same label would otherwise make out-of-scope findings look resolved.
+
+By default `diff` exits 0 when the comparison is complete, whatever it finds.
+`--fail-on-new` exits 2 when there are new findings or a finding's risk level
+rose; an incomplete comparison still exits 3.
+
+Connectors that were disabled or left out by `--only` do not make a scan
+incomplete (that is operator intent), but the JSON report lists them as
+`collection_scope.not_run` with the reason. The list is not part of the scope
+digest.
+
+A finding with `metadata.identity_scope: run`, which `gateway.logs` findings
+carry unless `SHADOWSCAN_IDENTITY_KEY` is set, has an ID derived from a key that
+is random for each scan: the same caller has a different ID in the next report.
+Diff therefore never reports such a finding as new, resolved or unknown because
+the other report lacks its ID. It lists it under `not_comparable` (`baseline` or
+`current`; marked `<` or `>` in text output), states the reason and exits 3. A
+finding whose ID appears in both reports is compared as usual. Any declared
+`identity_scope` other than `keyed`, the scope of findings made under
+`SHADOWSCAN_IDENTITY_KEY`, is treated the same way.
 
 Finding IDs do not depend on inferred kind. Stable resource-type families (or an
 explicit plugin `identity_discriminator`) separate distinct observations on a
@@ -452,14 +570,21 @@ entries cause a full rescan.
 | CLI exit | Meaning |
 |---|---|
 | `0` | Scan completed and the configured risk threshold was not reached. |
+| `1` | Setup or configuration error (invalid config, missing inventory or signature path, unwritable report); no scan result. |
 | `2` | Completed scan reached `--fail-on` (Click also uses 2 for invocation errors). |
 | `3` | Collection or analysis was incomplete, including empty or partly invalid connector selection. |
+
+An incomplete scan that also reaches `--fail-on` exits 3. In CI, fail on any
+non-zero exit rather than only on 2 and 3.
 
 `--min-confidence` and YAML `options.min_confidence` accept finite values in
 `[0, 1]`; invalid thresholds stop the scan instead of silently clearing the gate.
 
 Incomplete results preserve valid findings, set `summary.complete` to false and
 SARIF `invocations[].executionSuccessful` to false, and include diagnostics.
+An incomplete CSV report starts with a `SCAN-INCOMPLETE` status row
+(`kind` = `scan-status`, the unfinished connectors in `connector`) right after the
+header, so it cannot be mistaken for a complete scan with no findings.
 Failed or denied live collection for an enabled source marks coverage incomplete;
 review per-connector diagnostics and rerun after restoring access.
 Malformed files are isolated, so one bad manifest cannot suppress neighboring

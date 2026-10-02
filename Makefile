@@ -34,7 +34,7 @@ format-check: ## Check ruff formatting without changes
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py
 
 .PHONY: test
 test: ## Run test suite with coverage
@@ -43,6 +43,10 @@ test: ## Run test suite with coverage
 .PHONY: test-fast
 test-fast: ## Run tests without coverage (faster iteration)
 	python -m pytest -q -x
+
+.PHONY: test-parallel
+test-parallel: ## Run tests in parallel with pytest-xdist
+	python -m pytest -q -n auto --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
 
 .PHONY: coverage-gate
 coverage-gate: ## Enforce per-connector coverage floor
@@ -57,12 +61,16 @@ signatures: ## Validate all signature schemas and regexes
 	python -m shadowscan.signatures.validate
 
 .PHONY: secrets
-secrets: ## Check tracked Python/YAML files for hardcoded secret patterns
-	python tools/check_secrets.py --tracked
+secrets: ## Fail on hardcoded credentials in tracked files, as CI does
+	git ls-files -z | xargs -0 python tools/check_secrets.py
 
 .PHONY: audit
-audit: ## Audit dependencies for known vulnerabilities
+audit: ## Audit the environment and every hash-locked dependency set, as CI does
 	pip-audit --skip-editable --progress-spinner off
+	set -e; for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do \
+		pip-audit --require-hashes --strict --progress-spinner off \
+			--disable-pip --no-deps -r "$$lock"; \
+	done
 
 .PHONY: evaluate
 evaluate: ## Run the bundled detection regression corpora
@@ -72,6 +80,7 @@ evaluate: ## Run the bundled detection regression corpora
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
 		--annotations tools/evaluation/independent_annotations.json
 
@@ -90,20 +99,22 @@ build: ## Build distributable wheel
 .PHONY: wheel-validate
 wheel-validate: build ## Validate the wheel installs and works outside checkout
 	@set -euo pipefail; \
-	wheels=(dist/project_nexus_shadowscan-*.whl); \
-	if [ "$${#wheels[@]}" -ne 1 ] || [ ! -f "$${wheels[0]}" ]; then \
-		echo "wheel-validate requires exactly one scanner wheel in dist; remove stale build artifacts" >&2; \
-		exit 1; \
-	fi; \
-	wheel_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/shadowscan-wheel-test.XXXXXX")"; \
-	trap 'rm -rf "$$wheel_dir"' EXIT; \
-	python -m venv "$$wheel_dir"; \
-	"$$wheel_dir/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements.lock; \
-	"$$wheel_dir/bin/python" -m pip install --no-deps "$${wheels[0]}"; \
-	"$$wheel_dir/bin/python" -m pip check; \
-	cd "$$wheel_dir"; \
-	"$$wheel_dir/bin/python" -m shadowscan.signatures.validate; \
-	"$$wheel_dir/bin/shadowscan" --help
+		set -- dist/project_nexus_shadowscan-*.whl; \
+		if [ "$$#" -ne 1 ] || [ ! -f "$$1" ]; then \
+			echo "wheel-validate requires exactly one scanner wheel in dist; remove stale build artifacts" >&2; \
+			exit 1; \
+		fi; \
+		wheel="$$1"; \
+		wheel_test_root="$$(cd "$${TMPDIR:-/tmp}" && pwd -P)"; \
+		wheel_test_dir="$$(mktemp -d "$$wheel_test_root/shadowscan-wheel-test.XXXXXXXX")"; \
+		trap 'rm -rf -- "$$wheel_test_dir"' EXIT; \
+		python -m venv "$$wheel_test_dir/venv"; \
+		"$$wheel_test_dir/venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements.lock; \
+		"$$wheel_test_dir/venv/bin/python" -m pip install --no-deps "$$wheel"; \
+		"$$wheel_test_dir/venv/bin/python" -m pip check; \
+		cd "$$wheel_test_dir"; \
+		"$$wheel_test_dir/venv/bin/python" -m shadowscan.signatures.validate; \
+		"$$wheel_test_dir/venv/bin/shadowscan" --help
 
 .PHONY: docker
 docker: ## Build worker from the reviewed Dockerfile base digest

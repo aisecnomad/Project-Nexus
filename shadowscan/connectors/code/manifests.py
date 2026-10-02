@@ -142,6 +142,7 @@ MANIFEST_FILENAMES = {
 }
 
 _REQ_LINE = re.compile(r"^[ \t]*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*([<>=!~;@ ].*)?$")
+_REQ_DIRECT_REF = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\]\s*)?@\s*\S")
 _GIT_URL = re.compile(
     r"(?:git\+)?(?:https?|ssh|git)://[^\s#]+?/([A-Za-z0-9_.-]+?)(?:\.git)?(?:@[^\s#]+)?(?:#.*)?$"
 )
@@ -154,6 +155,13 @@ def parse_requirements(text: str) -> ManifestResult:
         if line.startswith(("-e ", "--editable ")):
             line = line.split(None, 1)[1].strip()
         if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        # A PEP 508 direct reference declares its distribution name before
+        # the URL. Prefer that name over a URL basename or legacy #egg hint,
+        # and preserve fragments, extras and environment markers in the spec.
+        direct = _REQ_DIRECT_REF.match(line, timeout=_pattern_timeout(), concurrent=False)
+        if direct:
+            res.deps.append(Dep("pypi", direct.group(1), line, i))
             continue
         if line.startswith(("http://", "https://", "git+", "ssh://", "git://")) or "://" in line:
             # The fragment is part of a VCS requirement, not a comment.
@@ -171,17 +179,6 @@ def parse_requirements(text: str) -> ManifestResult:
                 res.deps.append(Dep("pypi", m.group(1), line, i))
             continue
         line = line.split("#", 1)[0].strip()
-        if "@" in line and not line.startswith("-e"):
-            # PEP 508 direct reference: name @ url
-            name = line.split("@", 1)[0].strip()
-            if re.fullmatch(
-                r"[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?",
-                name,
-                timeout=_pattern_timeout(),
-                concurrent=False,
-            ):
-                res.deps.append(Dep("pypi", name.split("[", 1)[0], line, i))
-                continue
         m = _REQ_LINE.match(line, timeout=_pattern_timeout(), concurrent=False)
         if m:
             res.deps.append(Dep("pypi", m.group(1), (m.group(3) or "").strip() or None, i))
@@ -320,6 +317,15 @@ def parse_conda_env(text: str) -> ManifestResult:
     return res
 
 
+# An npm alias installs the registry package named after ``npm:``. The map
+# key is only its local import name; attributing that key can both miss a
+# framework and invent one when a known name aliases an unrelated package.
+# Keep the version/range opaque, like ordinary dependency versions. Registry
+# names include legacy URL-safe punctuation and scoped names can begin with
+# underscore/hyphen; current publishing rules are stricter than installation.
+_NPM_ALIAS = re.compile(r"(?i:npm:)((?:@[A-Za-z0-9._~!'()*-]+/)?[A-Za-z0-9._~!'()*-]+)(?:@.*)?")
+
+
 def parse_package_json(text: str) -> ManifestResult:
     res = ManifestResult()
     try:
@@ -338,7 +344,17 @@ def parse_package_json(text: str) -> ManifestResult:
             if not isinstance(spec, str):
                 res.errors.append(f"{section} dependency version must be a string")
                 continue
-            res.deps.append(Dep("npm", name, str(spec), dev=dev))
+            if spec[:4].lower() == "npm:":
+                alias = _NPM_ALIAS.fullmatch(spec, timeout=_pattern_timeout(), concurrent=False)
+                if (
+                    alias is None
+                    or alias.group(1).startswith((".", "_", "-"))
+                    or alias.group(1).rsplit("/", 1)[-1].startswith(".")
+                ):
+                    res.errors.append(f"{section} dependency has an invalid npm alias target")
+                    continue
+                name = alias.group(1)
+            res.deps.append(Dep("npm", name, spec, dev=dev))
     scripts = _mapping(data.get("scripts"), res, "scripts")
     for _, cmd in scripts.items():
         if isinstance(cmd, str):
@@ -922,7 +938,9 @@ def is_manifest_name(name: str) -> bool:
         return True
     return (
         (lower.startswith("requirements") and lower.endswith((".txt", ".in")))
-        or lower.endswith((".csproj", ".fsproj", ".vbproj", ".tf", ".bicep", ".gradle"))
+        # MSBuild imports carry PackageReference items too (Directory.Build.props,
+        # Directory.Build.targets, shared eng/*.props): parse_manifest routes them to NuGet.
+        or lower.endswith((".csproj", ".fsproj", ".vbproj", ".props", ".targets", ".tf", ".bicep", ".gradle"))
         or lower.startswith("dockerfile")
         or lower.endswith(".dockerfile")
         or lower == "containerfile"

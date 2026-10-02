@@ -231,7 +231,10 @@ while True:
         result = lookup(**json.loads(call.function.arguments))
         messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
 """
-    findings, ctx = scan(tmp_path, run_connector, chat + "\n" + FILTERED)
+    # Independent modules share a project finding. Concatenating the second
+    # module after an infinite chat loop would make its construction unreachable.
+    (tmp_path / "chat.py").write_text(chat)
+    findings, ctx = scan(tmp_path, run_connector, FILTERED)
     assert not ctx.stats.incomplete, ctx.stats.errors
     agents = [finding for finding in findings if finding.kind == Kind.AGENT]
     assert len(agents) == 1

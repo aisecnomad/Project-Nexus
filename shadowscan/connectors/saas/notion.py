@@ -12,8 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError, _positive_limit
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.common import finalize, max_pages_limit
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -32,6 +32,12 @@ class NotionConnector(BaseConnector):
         "input": "offline: /v1/users JSON",
     }
 
+    @staticmethod
+    def _is_error_record(data: dict[str, Any]) -> bool:
+        # Notion's native error discriminator does not require an `error` key.
+        # Apply the same check to live pages and offline collection envelopes.
+        return BaseConnector._is_error_record(data) or data.get("object") == "error"
+
     def collect(self) -> Iterable[dict[str, Any]]:
         token = self.ctx.get("token", env="NOTION_TOKEN")
         if not token:
@@ -40,7 +46,7 @@ class NotionConnector(BaseConnector):
             "https://api.notion.com",
             headers={"Authorization": f"Bearer {token}", "Notion-Version": "2022-06-28"},
         )
-        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        max_pages = max_pages_limit(self.ctx.get("max_pages", 1000))
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(max_pages):
@@ -51,6 +57,8 @@ class NotionConnector(BaseConnector):
             if not isinstance(data, dict) or not isinstance(data.get("results"), list):
                 self.ctx.warn("saas.notion: invalid users page; collection incomplete")
                 return
+            if self._is_error_record(data):
+                self.ctx.warn("saas.notion: users page reported a provider error; collection incomplete")
             yield from data["results"]
             if not isinstance(data.get("has_more"), bool):
                 self.ctx.warn("saas.notion: invalid has_more in users page; collection incomplete")

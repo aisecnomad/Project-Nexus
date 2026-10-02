@@ -13,7 +13,8 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.gateway.logs import GatewayLogConnector, _has_tool_calls, normalise
 from shadowscan.correlation import correlate_runtime
-from shadowscan.engine import Engine, merge
+from shadowscan.engine import Engine
+from shadowscan.merge import merge
 from shadowscan.models import Finding, Kind, ScanStats, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 

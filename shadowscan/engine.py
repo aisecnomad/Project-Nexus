@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -16,19 +17,25 @@ from threading import Event, Lock
 from typing import Any
 
 from shadowscan import __version__
-from shadowscan.comparison import build_collection_scope
-from shadowscan.config import ConnectorSpec, ScanConfig, validate_min_confidence
-from shadowscan.connectors import ConnectorContext, get_connector_class
+from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
+from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
+from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
-from shadowscan.connectors.common import merge_duplicate_metadata
-from shadowscan.correlation import correlate_runtime
+from shadowscan.correlation import correlate, correlate_runtime
+from shadowscan.errors import SetupError
 from shadowscan.incremental import IncrementalCache
-from shadowscan.models import Finding, Kind, ScanResult, ScanStats, now_iso
+from shadowscan.merge import merge
+from shadowscan.models import Finding, ScanResult, ScanStats, now_iso
 from shadowscan.registry import Inventory
-from shadowscan.risk import RiskPolicy, assess
+from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
-from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin
+from shadowscan.utils.http import (
+    reset_allow_private_origin,
+    reset_request_deadline,
+    set_allow_private_origin,
+    set_request_deadline,
+)
 from shadowscan.utils.output import prepare_private_directory, write_private_text
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 
@@ -49,6 +56,36 @@ _TIMEOUT_WARNING = (
     "when a hard execution limit is required."
 )
 
+# The operator's stable identity key comes from IDENTITY_KEY_ENV only, never
+# from a configuration field.
+_MIN_IDENTITY_KEY_BYTES = 32
+_HEX_KEY = re.compile(r"(?:[0-9A-Fa-f]{2})+")
+
+
+def _stable_identity_key() -> bytes | None:
+    """Decode ``SHADOWSCAN_IDENTITY_KEY``, or None when it is not set.
+
+    Gateway pseudonyms and finding IDs use a random key per scan unless the
+    operator supplies at least 32 secret bytes, hex or base64 encoded (hex is
+    tried first). The key must never reach a log, report, cache, record export
+    or diagnostic, and a set but unusable value stops the scan rather than
+    silently falling back to unlinkable per-scan identities.
+    """
+    value = os.environ.get(IDENTITY_KEY_ENV)
+    if value is None:
+        return None
+    text = value.strip()
+    try:
+        key = bytes.fromhex(text) if _HEX_KEY.fullmatch(text) else base64.b64decode(text, validate=True)
+    except ValueError:  # binascii.Error, or text that is not ASCII
+        key = b""
+    if len(key) < _MIN_IDENTITY_KEY_BYTES:
+        # SetupError text is printed verbatim: name the variable, never its value.
+        raise SetupError(
+            f"{IDENTITY_KEY_ENV} must hold at least {_MIN_IDENTITY_KEY_BYTES} bytes, hex or base64 encoded"
+        )
+    return key
+
 
 @dataclass
 class _JobState:
@@ -57,6 +94,17 @@ class _JobState:
     completed_at: float | None = None
     cancelled: Event = field(default_factory=Event)
     publication_lock: Lock = field(default_factory=Lock)
+    isolated_process: bool = False
+    kill_process: Callable[[], None] | None = None
+
+    @property
+    def supervision_deadline(self) -> float | None:
+        if self.deadline is None:
+            return None
+        # The process runner enforces the original deadline, including IPC.
+        # Retain a last-resort parent guard while allowing bounded TERM/KILL
+        # cleanup to finish before treating its supervision thread as abandoned.
+        return self.deadline + (2.0 if self.isolated_process else 0.0)
 
 
 def _hooks(resolved: _Resolved) -> type[BaseConnector]:
@@ -135,15 +183,38 @@ class _ConnectorRunner:
         self._dump_directory = dump_directory
         self._exports = exports
         # Identical sources in one report share an opaque identity, while
-        # separate Engine.run calls cannot link redacted caller/scope IDs.
-        self._run_identity_key = secrets.token_bytes(32)
+        # separate Engine.run calls cannot link redacted caller/scope IDs
+        # unless the operator supplied a stable key.
+        self._identity_key_stable = engine._identity_key is not None
+        self._run_identity_key = engine._identity_key or secrets.token_bytes(32)
 
     def run(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
         state.started_at = now_iso()
         timeout = self._config.connector_timeout_seconds
         state.deadline = time.monotonic() + timeout
         try:
+            if state.isolated_process:
+                from shadowscan.plugin_process import run_plugin_process
+
+                return run_plugin_process(self, number, spec, state)
             return self._run_job(number, spec, state)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - e.g. sys.exit() while importing a plugin
+            # The supervisor re-raises a worker's exception in the main
+            # thread, so a SystemExit here would end the scan without a report.
+            message = f"{spec.name}: connector worker failed ({type(exc).__name__})"
+            log.warning("connector failed; diagnostic recorded in incomplete scan stats")
+            stats = ScanStats(
+                connector=spec.id,
+                started_at=state.started_at or now_iso(),
+                finished_at=now_iso(),
+                incomplete=True,
+                skipped=True,
+                skip_reason=message,
+                errors=[message],
+            )
+            return spec, [], stats
         finally:
             # Include sanitization, cache writes and callbacks in the
             # measured runtime, even if completion precedes the next poll.
@@ -269,16 +340,21 @@ class _ConnectorRunner:
             cancelled=state.cancelled,
             publication_lock=state.publication_lock,
             gateway_identity_key=identity_key,
+            gateway_identity_key_stable=identity_key is not None and self._identity_key_stable,
         )
         fs: list[Finding] = []
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._config.allow_private_origin)
+        limits_token = set_request_deadline(state.deadline, state.cancelled)
         try:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
                 return spec, fs, st
-        except Exception as exc:  # noqa: BLE001 - isolate construction as well as collection failures
-            message = ctx.sanitize_message(f"{spec.name}: {type(exc).__name__}: {exc}")
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - isolate construction and collection failures,
+            # including a plugin's sys.exit(), which must not end the scan as a clean pass.
+            message = ctx.sanitize_message(_failure_message(spec, exc))
             st = ctx.stats or ScanStats(connector=spec.id, started_at=started_at)
             st.connector = spec.id
             st.finished_at = now_iso()
@@ -288,6 +364,7 @@ class _ConnectorRunner:
             st.errors.append(message)
             log.warning("connector failed; diagnostic recorded in incomplete scan stats")
         finally:
+            reset_request_deadline(limits_token)
             reset_allow_private_origin(origin_token)
         st.findings = len(fs)
         _sanitize_diagnostics(st)
@@ -378,6 +455,18 @@ class _ConnectorRunner:
         return st, False
 
 
+def _failure_message(spec: ConnectorSpec, exc: BaseException) -> str:
+    """Describe a connector failure once, without a repr-quoted KeyError or a doubled connector prefix."""
+    if isinstance(exc, KeyError) and len(exc.args) == 1 and isinstance(exc.args[0], str):
+        return f"{spec.name}: {exc.args[0]}"
+    if type(exc) is ConnectorError:
+        # The message a connector writes for itself, as BaseConnector.run reports it.
+        text = str(exc)
+        return text if text.startswith(f"{spec.name}:") else f"{spec.name}: {text}"
+    detail = str(exc)
+    return f"{spec.name}: {type(exc).__name__}" + (f": {detail}" if detail else "")
+
+
 def _sanitize_diagnostics(st: ScanStats) -> None:
     try:
         # Preserve credential context across diagnostics until every field has
@@ -389,6 +478,65 @@ def _sanitize_diagnostics(st: ScanStats) -> None:
         st.errors = ["connector diagnostics omitted: sanitization safety limit exceeded"]
         st.warnings = []
         st.skip_reason = None
+
+
+_MAX_INVENTORY_WARNINGS = 20
+
+
+def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
+    """Local source trees scanned in this run, as configured and as resolved."""
+    roots = []
+    for spec in specs:
+        try:
+            # Built-in connectors only: this lookup never imports a plugin outside a job's deadline.
+            declared = _hooks(get_connector_class(spec.name)).scanned_local_paths(spec.config)
+        except Exception:  # noqa: BLE001 - an unknown or unapproved connector declares no tree
+            continue
+        roots += [(path, Path(os.path.realpath(path))) for path in declared]
+    return roots
+
+
+def _inventory_warnings(
+    paths: list[str], inventory: Inventory | None, specs: list[ConnectorSpec]
+) -> list[str]:
+    """Approvals that scanned content could change, or that approve every finding.
+
+    Advisory, not incomplete: ``shadowscan code . --inventory agent-card.yaml``
+    is legitimate locally, but in CI a pull request can edit an inventory kept
+    in the scanned tree and approve its own findings.
+    """
+    if inventory is None:
+        return []
+    warnings: list[str] = []
+    candidates = [(path, Path(os.path.realpath(path))) for path in paths]
+    # A directory or glob outside a scanned tree can still load files from inside it.
+    candidates += [(source, Path(os.path.realpath(source))) for source in inventory.sources]
+    for shown_root, root in _scanned_roots(specs):
+        reported: list[Path] = []
+        for shown, location in candidates:
+            if location.is_relative_to(root) and not any(location.is_relative_to(done) for done in reported):
+                reported.append(location)
+                warnings.append(
+                    f"inventory {shown} is inside scanned path {shown_root}; "
+                    "scanned content could alter approvals"
+                )
+    for entry in inventory.entries:
+        if any(not pattern.strip("*") for pattern in entry.resources):
+            source = f" in {entry.source}" if entry.source else ""
+            scoped = entry.surfaces or entry.providers or entry.accounts or entry.regions
+            warnings.append(
+                f"inventory entry {entry.agent_id}{source} has resource pattern '*', which approves every"
+                f" finding{' its scope constraints allow' if scoped else ''}"
+            )
+    warnings += [
+        f"inventory {link}: symbolic link skipped (links are not followed)"
+        for link in inventory.skipped_links
+    ]
+    warnings = list(dict.fromkeys(warnings))
+    if len(warnings) > _MAX_INVENTORY_WARNINGS:
+        omitted = len(warnings) - _MAX_INVENTORY_WARNINGS
+        warnings = [*warnings[:_MAX_INVENTORY_WARNINGS], f"{omitted} further inventory warnings omitted"]
+    return warnings
 
 
 class _Supervisor:
@@ -425,15 +573,16 @@ class _Supervisor:
                 state = self._states[number]
                 if (
                     state.completed_at is not None
-                    and state.deadline is not None
-                    and state.completed_at >= state.deadline
+                    and state.supervision_deadline is not None
+                    and state.completed_at >= state.supervision_deadline
                 ):
                     expired.append(future)
                 else:
                     self.completed[number] = future.result()
                     pending.remove(future)
             for future in pending - done:
-                deadline = self._states[self._futures[future][0]].deadline
+                state = self._states[self._futures[future][0]]
+                deadline = state.supervision_deadline
                 if deadline is not None and time.monotonic() >= deadline:
                     expired.append(future)
             for future in expired:
@@ -460,6 +609,8 @@ class _Supervisor:
         else:
             state.cancelled.set()
         self.timed_out.add(number)
+        if state.kill_process is not None:
+            state.kill_process()
         if future.running():
             self._engine.abandoned_workers.append(spec.id)
             self._engine._abandoned_futures.append(future)
@@ -520,9 +671,12 @@ class Engine:
         self.config = config
         config.validate_security_options()
         config.validate_connector_specs()
+        # Process configuration, never ScanConfig, so it cannot reach caches or reports.
+        self._identity_key = _stable_identity_key()
         self._index_supplied = index is not None
         self._signature_digest: str | None = None
         self.index = index if index is not None else self._load_index()
+        self._validate_risk_policy()
         self.progress = progress or (lambda cid, msg: None)
         # Connector ids whose worker threads outlived ``connector_timeout_seconds`` in
         # the last run. Their threads may still be blocked inside an SDK call;
@@ -574,6 +728,15 @@ class Engine:
         if self._signature_digest is None or self._pack_digest() != self._signature_digest:
             self.index = self._load_index()
 
+    def _validate_risk_policy(self) -> None:
+        """Reject a risk_weights provider id that no loaded provider signature has."""
+        try:
+            RiskPolicy.from_options(
+                self.config.risk_weights, self.config.risk_basis, known_providers=provider_ids(self.index)
+            )
+        except ValueError as exc:
+            raise ConfigValidationError(f"options.{exc}") from None
+
     def _refresh_inventory(self) -> None:
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
@@ -597,6 +760,7 @@ class Engine:
         # connector sees the configuration.
         self.config.validate_connector_specs()
         self._refresh_index()
+        self._validate_risk_policy()
         self._refresh_inventory()
 
     # -------------------------------------------------------------- selection
@@ -613,6 +777,20 @@ class Engine:
             (number, spec)
             for number, spec in enumerate(self.config.connectors, 1)
             if spec.enabled and (not only or spec.id in only or spec.name in only)
+        ]
+
+    def _not_run(self, jobs: list[_Job]) -> list[dict[str, str]]:
+        """Configured connectors that were deliberately not run, for the report's reader.
+
+        Disabling a connector or narrowing with ``--only`` is operator intent
+        and never makes a scan incomplete, but the report would otherwise show
+        no trace that a configured source was left out.
+        """
+        selected = {number for number, _ in jobs}
+        return [
+            {"connector": spec.id, "reason": "disabled" if not spec.enabled else "not selected by --only"}
+            for number, spec in enumerate(self.config.connectors, 1)
+            if number not in selected
         ]
 
     @staticmethod
@@ -637,6 +815,19 @@ class Engine:
         ]
         result.finished_at = now_iso()
         return result
+
+    def _inventory_stats(self, specs: list[ConnectorSpec], started_at: str) -> list[ScanStats]:
+        """Record inventory placement and wildcard approvals as warnings in every report format."""
+        warnings = _inventory_warnings(self.config.inventory, self.inventory, specs)
+        if not warnings:
+            return []
+        # Logs can travel beyond the private report: keep paths out of them.
+        log.warning("inventory approval warning recorded in scan stats (engine.inventory)")
+        stats = ScanStats(
+            connector="engine.inventory", started_at=started_at, finished_at=now_iso(), warnings=warnings
+        )
+        _sanitize_diagnostics(stats)
+        return [stats]
 
     @staticmethod
     def _selection_stats(specs: list[ConnectorSpec]) -> list[ScanStats]:
@@ -665,7 +856,13 @@ class Engine:
         started_at: str,
     ) -> tuple[dict[int, _JobResult], set[int]]:
         """Run every selected connector under deadline supervision."""
-        states = {number: _JobState() for number, _ in jobs}
+        states = {
+            number: _JobState(
+                isolated_process=self.config.plugin_execution == "process"
+                and spec.name not in builtin_connector_names()
+            )
+            for number, spec in jobs
+        }
         runner = _ConnectorRunner(self, cache, dump_directory, exports)
         workers = max(1, min(self.config.parallel, len(jobs) or 1))
         # Supervise the single-worker path too. A ThreadPoolExecutor context
@@ -747,8 +944,14 @@ class Engine:
         jobs = self._select_jobs(only)
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
-        result.collection_scope = build_collection_scope(self.config, self.index, specs)
-        stats = self._selection_stats(specs)
+        result.collection_scope = build_collection_scope(
+            self.config, self.index, specs, identity_key=self._identity_key
+        )
+        not_run = self._not_run(jobs)
+        if not_run:
+            # Outside the fingerprint and comparability: operator intent only.
+            result.collection_scope["not_run"] = not_run
+        stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
         cache = IncrementalCache(self.config, self.index)
         dump_records = self.config.dump_records
         dump_directory = prepare_private_directory(dump_records) if dump_records else None
@@ -775,6 +978,8 @@ class Engine:
             )
         if self.config.min_confidence > 0:
             findings = [f for f in findings if f.confidence >= self.config.min_confidence]
+            _prune_related(findings)
+            _prune_runtime_links(findings)
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
         if dump_directory:
             self._write_manifest(dump_directory, export_entries, result.started_at, stats)
@@ -784,167 +989,43 @@ class Engine:
         return result
 
 
-# ------------------------------------------------------------------ merging
+def _prune_related(findings: list[Finding]) -> None:
+    """Drop ``metadata['related']`` links to findings absent from ``findings``.
 
-# Classification precedence when two observations of one finding disagree.
-_KIND_PRIORITY = {Kind.AGENT: 3, Kind.SERVICE_IDENTITY: 2, Kind.OAUTH_GRANT: 1}
-
-
-def _merge_classification(cur: Finding, f: Finding) -> None:
-    """Select the classification and its resource subtype as one pair.
-
-    A lexical subtype tie-break keeps repeated/grouped merges associative
-    without attaching the first record's subtype to another record's kind.
+    Correlation runs before the confidence threshold. A report must not link
+    to a finding it omits; removing those identifiers from every list keeps
+    the remaining pairs symmetric, as :func:`correlate` created them.
     """
-    classifications = [(finding.kind, finding.resource_type) for finding in (cur, f)]
-    classification = max(
-        classifications,
-        key=lambda value: (_KIND_PRIORITY.get(value[0], 0), value[0].value, value[1]),
-    )
-    for key, current_values in (
-        ("observed_kinds", {kind.value for kind, _ in classifications}),
-        ("observed_resource_types", {resource_type for _, resource_type in classifications}),
-    ):
-        for finding in (cur, f):
-            previous = finding.metadata.get(key)
-            if isinstance(previous, list):
-                current_values.update(value for value in previous if isinstance(value, str))
-        if len(current_values) > 1:
-            cur.metadata[key] = sorted(current_values)
-    cur.kind, cur.resource_type = classification
-
-
-def _merge_observations(cur: Finding, f: Finding) -> None:
-    """Union evidence, technologies, capabilities, tags, permissions and models."""
-    seen = {(e.signal, e.location, e.description) for e in cur.evidence}
-    for e in f.evidence:
-        evidence_key = (e.signal, e.location, e.description)
-        if evidence_key not in seen:
-            seen.add(evidence_key)
-            cur.evidence.append(e)
-    for fw in f.frameworks:
-        cur.add_framework(fw)
-    for p in f.model_providers:
-        cur.add_model_provider(p)
-    for c in f.capabilities:
-        cur.add_capability(c)
-    for t in f.tags:
-        cur.add_tag(t)
-    for p in f.permissions:
-        if p not in cur.permissions:
-            cur.permissions.append(p)
-    for m in f.models:
-        if m not in cur.models:
-            cur.models.append(m)
-    cur.owner = cur.owner or f.owner
-
-
-def merge(findings: list[Finding]) -> list[Finding]:
-    """Merge findings with the same id (same object seen by the same connector twice).
-
-    The first observation takes precedence for owner and metadata; lists such
-    as evidence and frameworks are unioned. Metadata keys that combine across
-    observations follow :func:`shadowscan.connectors.common.merge_duplicate_metadata`.
-    """
-    by_id: dict[str, Finding] = {}
+    retained = {f.id for f in findings}
     for f in findings:
-        cur = by_id.get(f.id)
-        if cur is None:
-            by_id[f.id] = f
+        links = f.metadata.get("related")
+        if not isinstance(links, list):
             continue
-        _merge_classification(cur, f)
-        _merge_observations(cur, f)
-        merge_duplicate_metadata(cur, f)
-        # Widen the window only now: metadata merging may record each
-        # observation's own window (per-source runtime snapshots).
-        cur.first_seen = min((x for x in (cur.first_seen, f.first_seen) if x), default=None)
-        cur.last_seen = max((x for x in (cur.last_seen, f.last_seen) if x), default=None)
-        cur.recompute_confidence()
-    return list(by_id.values())
+        kept = [link for link in links if link in retained]
+        if len(kept) == len(links):
+            continue
+        if kept:
+            f.metadata["related"] = kept
+        else:
+            del f.metadata["related"]
 
 
-# -------------------------------------------------------------- correlation
+def _prune_runtime_links(findings: list[Finding]) -> None:
+    """Drop ``runtime_activity`` references to gateway findings absent from ``findings``.
 
-_NAME_KEYS = (
-    "agent_name",
-    "name",
-    "display_name",
-    "app_slug",
-    "okta_name",
-    "developer_name",
-    "schema_name",
-    "app_id",
-    "client_id",
-    "msa_app_id",
-    "bot_id",
-    "principal",
-    "caller",
-    "repository",
-    "project",
-    "function_name",
-    "agent_id",
-)
-
-
-def _norm(s: Any) -> str | None:
-    if s is None:
-        return None
-    t = re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
-    return t if len(t) >= 5 else None
-
-
-def correlate(findings: list[Finding]) -> None:
-    """Link findings across surfaces that describe the same agent / identity / resource.
-
-    Keys: resource ids (ARNs, app/client ids), normalised names and repository labels found in
-    metadata. Linked ids are stored in ``metadata['related']`` on both sides.
+    Gateway identities are scan-local, so an omitted gateway finding's ID names
+    nothing outside this report. The observation itself stays: its events,
+    window and scope are what the exported log recorded, whatever the gateway
+    finding's own confidence.
     """
-    keys: dict[str, set[str]] = {}
+    retained = {f.id for f in findings}
     for f in findings:
-        cand: set[str] = set()
-        res = _norm(f.resource)
-        if res:
-            cand.add(f"res:{res}")
-        for k in _NAME_KEYS:
-            v = f.metadata.get(k)
-            if isinstance(v, str):
-                n = _norm(v)
-                if n:
-                    cand.add(f"name:{n}")
-        if f.kind in {Kind.AGENT, Kind.BOT_APP, Kind.SERVICE_IDENTITY, Kind.OAUTH_GRANT, Kind.MCP_SERVER}:
-            tail = f.title.split(":", 1)[-1].strip() if ":" in f.title else None
-            n = _norm(tail)
-            if n and len(n) >= 8:
-                cand.add(f"name:{n}")
-        # cloud resources referenced from other findings' metadata / evidence locations
-        for e in f.evidence:
-            if e.location and e.location.startswith(("arn:", "projects/", "/subscriptions/", "ocid1.")):
-                n = _norm(e.location)
-                if n:
-                    cand.add(f"res:{n}")
-        for k in cand:
-            keys.setdefault(k, set()).add(f.id)
-    related: dict[str, set[str]] = {}
-    for ids in keys.values():
-        if 1 < len(ids) <= 25:
-            for i in ids:
-                related.setdefault(i, set()).update(ids - {i})
-    if not related:
-        return
-    by_id = {f.id: f for f in findings}
-    for fid, others in related.items():
-        linked_finding = by_id.get(fid)
-        if linked_finding:
-            # Only link across different connectors / surfaces (within one
-            # connector, duplicates are merged already).
-            links = sorted(
-                o
-                for o in others
-                if by_id.get(o)
-                and (
-                    by_id[o].connector != linked_finding.connector
-                    or by_id[o].surface != linked_finding.surface
-                )
-            )
-            if links:
-                linked_finding.metadata["related"] = links
+        activity = f.metadata.get("runtime_activity")
+        sources = activity.get("sources") if isinstance(activity, dict) else None
+        for source in sources if isinstance(sources, list) else []:
+            if isinstance(source, dict) and source.get("gateway_finding_id") not in retained:
+                source["gateway_finding_id"] = None
+        for ev in f.evidence:
+            ids = ev.attributes.get("gateway_finding_ids")
+            if isinstance(ids, list):
+                ev.attributes["gateway_finding_ids"] = [i for i in ids if i in retained]
