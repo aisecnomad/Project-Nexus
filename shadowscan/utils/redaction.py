@@ -384,6 +384,32 @@ def _inline_option_value(item: Any) -> str | None:
     return value if _opaque_option(option) and _opaque_literal(value) else None
 
 
+def _argv_bytes_value(option: Any, value: Any) -> bool:
+    """Whether ``value``, the argv element after ``option``, is a credential only the input shows.
+
+    The first two passes read an option and its value as text: they withhold
+    a bytes value after a text option in place but do not remember it, and do
+    not read a bytes option at all. Option names decide as they do there.
+    """
+    if not isinstance(option, (bytes, bytearray)) and not isinstance(value, (bytes, bytearray)):
+        return False
+    if isinstance(option, (bytes, bytearray)):
+        option = _decoded(option)
+    if not isinstance(option, str) or not option.startswith("-") or "=" in option:
+        return False
+    text = _decoded(value) if isinstance(value, (bytes, bytearray)) else value
+    return _sensitive_key(option.lstrip("-")) or _extended_argv_value(option, text)
+
+
+def _environment_values(block: Any) -> list[Any]:
+    """The values of an environment block: a mapping's values, or the values of a list's records."""
+    if isinstance(block, Mapping):
+        return list(block.values())
+    if isinstance(block, list):
+        return [entry.get("value") or entry.get("Value") for entry in block if isinstance(entry, Mapping)]
+    return []
+
+
 def _record_has_secret_value(item: Mapping, *, environment: bool = False, extended: bool = False) -> bool:
     """Whether a name/value record's name marks its value as a credential.
 
@@ -482,13 +508,8 @@ class _Sanitizer:
                     self.remember(child)
                 child_environment = environment or name.lower() in _ENVIRONMENT_KEYS
                 if established and self.env_values_are_secrets and child_environment:
-                    if isinstance(child, Mapping):
-                        for env_value in child.values():
-                            self.remember(env_value)
-                    elif isinstance(child, list):
-                        for entry in child:
-                            if isinstance(entry, Mapping):
-                                self.remember(entry.get("value") or entry.get("Value"))
+                    for env_value in _environment_values(child):
+                        self.remember(env_value)
                 self.discover(child, depth + 1, environment=child_environment)
         elif isinstance(item, (list, tuple)):
             previous = None
@@ -666,12 +687,18 @@ class _NestedSanitizer(_Sanitizer):
 
     The credential an argv element passes inline ('--api-key=v') is read
     here too: the earlier passes withhold it in place, reading their own
-    copy, so only the input still shows v to remove from other fields.
+    copy, so only the input still shows v to remove from other fields. So
+    are the bytes values the established pass does not remember (see
+    ``_Sanitizer.remember``): an argv value after a credential option, or
+    after an option given as bytes (see ``_argv_bytes_value``), and, when
+    ``env_values_are_secrets``, an environment value.
     """
 
-    def __init__(self, *, redact_short_secrets: bool) -> None:
+    def __init__(self, *, redact_short_secrets: bool, env_values_are_secrets: bool = False) -> None:
         super().__init__(
-            redact_short_secrets=redact_short_secrets, env_values_are_secrets=False, extended=True
+            redact_short_secrets=redact_short_secrets,
+            env_values_are_secrets=env_values_are_secrets,
+            extended=True,
         )
         # An aliased object can occur both outside and inside a credential
         # container. Revisit it under the stricter parent, but still bound cycles.
@@ -720,14 +747,21 @@ class _NestedSanitizer(_Sanitizer):
                 # Bytes under a sensitive key: the established pass knows only text.
                 if member or (key_sensitive and isinstance(child, (bytes, bytearray))):
                     self.remember(child)
+                child_environment = environment or lower_name in _ENVIRONMENT_KEYS
+                if self.env_values_are_secrets and child_environment:
+                    # The established pass remembers the text values alone.
+                    for env_value in _environment_values(child):
+                        if isinstance(env_value, (bytes, bytearray)):
+                            self.remember(env_value)
                 self.discover(
                     child,
                     depth + 1,
-                    environment=environment or lower_name in _ENVIRONMENT_KEYS,
+                    environment=child_environment,
                     credential=key_sensitive or member,
                     credential_group=child_group,
                 )
         elif isinstance(item, (list, tuple, set, frozenset)):
+            previous: Any = None
             for child in item:
                 if credential:
                     self.remember(child)
@@ -738,6 +772,9 @@ class _NestedSanitizer(_Sanitizer):
                     inline = _inline_option_value(child)
                     if inline is not None:
                         self.remember(inline)
+                    elif _argv_bytes_value(previous, child):
+                        self.remember(child)
+                previous = child
                 self.discover(
                     child,
                     depth + 1,
@@ -830,7 +867,9 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
         sanitizer.discover(copy)
         sanitizer.order()
         copy = sanitizer.clean(copy)
-    nested = _NestedSanitizer(redact_short_secrets=redact_short_secrets)
+    nested = _NestedSanitizer(
+        redact_short_secrets=redact_short_secrets, env_values_are_secrets=env_values_are_secrets
+    )
     nested.discover(value)
     nested.known -= passes[0].known
     if not nested.known:

@@ -348,6 +348,33 @@ def test_set_and_bytes_values_are_sanitized():
     assert isinstance(result["raw"], bytes) and isinstance(result["buffer"], bytearray)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"args": ["--token", SECRET.encode()]},
+        {"args": ["--password", bytearray(SECRET.encode())]},
+        {"args": ("--api-key", SECRET.encode())},
+        {"args": [b"--token", SECRET.encode()]},
+        {"args": [b"--token", SECRET]},
+        {"args": [b"--pat", SECRET.encode()]},
+        {"env": {"X": SECRET.encode()}},
+        {"env": [{"name": "X", "value": SECRET.encode()}]},
+        {"environment": {"nested": {"X": SECRET.encode()}}},
+    ],
+)
+def test_bytes_argv_and_environment_values_are_removed_from_sibling_fields(value):
+    # The established pass remembers text alone, and the later passes read
+    # its copy, where these values were already withheld (or, after a bytes
+    # option, never read): a copy in another field was shown.
+    for short in (False, True):
+        result = sanitize({**value, "note": f"saw {SECRET}"}, redact_short_secrets=short)
+        assert SECRET not in repr(result)
+    # Ordinary environments keep their values out of the sibling rule, as text values do.
+    kept = sanitize({"env": {"X": SECRET.encode()}, "note": SECRET}, env_values_are_secrets=False)
+    assert kept["note"] == SECRET
+    assert sanitize({"args": ["--model", b"gpt-4o"], "note": "gpt-4o"})["note"] == "gpt-4o"
+
+
 def test_bytes_with_invalid_utf8_are_sanitized_without_error():
     token = "ghp_" + "a1B2c3D4e5F6g7H8i9J0"
     result = sanitize({"blob": b"\xff\xfe" + token.encode() + b"\x80"})
