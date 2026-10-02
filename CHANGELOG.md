@@ -155,6 +155,13 @@ integrating them:
   bracket) is now left out of import binding alone, with a warning naming it,
   and its framework patterns count as lexical evidence; the other cells are
   bound as usual.
+- `code.filesystem` reports a file it reads that is a Git LFS pointer as a
+  coverage gap (scan incomplete; an error under `strict_coverage`) instead of
+  analyzing the pointer text as the file. Only live clones and API snapshots
+  checked for pointers, so a local checkout or a directory of offline clones
+  made without git-lfs, with `agent.py` stored in LFS, gave no finding and a
+  complete scan. A pointer in place of a file the scanner never reads (an
+  image, a model) is not a gap; the live-clone check is unchanged.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

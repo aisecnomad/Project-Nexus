@@ -170,6 +170,11 @@ and `strict_coverage` keep such an error incomplete. A notebook larger than
 `max_file_size` because of saved outputs is analyzed by its code cells up to
 `max_notebook_size` (default 20 MiB); its outputs are then not scanned for
 credentials, which leaves coverage incomplete unless `scan_secrets` is off.
+A file the scanner reads that is a Git LFS pointer (a checkout or offline clone
+made without git-lfs) is not the content it stands for: it is reported as
+`Git LFS pointer file, not the content it stands for; coverage incomplete` (an
+error under `strict_coverage`) and not analyzed. A pointer in place of a file
+the scanner never reads, such as an image or a model, is not a gap.
 Import-bound analysis is skipped for a Python module none of whose imports can
 resolve to a signature: no import, and no attribute of an imported module, forms
 an import statement that a signature's import pattern could match. Such a module

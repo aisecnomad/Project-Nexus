@@ -715,6 +715,11 @@ a notebook with an unfinished scratch cell, which used to report nothing, can
 report findings, with a warning that names the cell that does not parse.
 Review such changed classifications before updating baselines.
 
+Local scans and offline clone directories now make the scan incomplete when a
+file the scanner reads is a Git LFS pointer. Check out such repositories with
+git-lfs installed (`git lfs pull`) before scanning, or the scan stays
+incomplete (exit 3).
+
 These fixes come from an AI-assisted review and have offline regression tests
 only; they are not independent human review or field precision evidence.
 

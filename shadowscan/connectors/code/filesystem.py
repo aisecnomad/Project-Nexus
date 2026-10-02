@@ -127,6 +127,8 @@ from shadowscan.signatures.matcher import (
 )
 from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
 from shadowscan.utils.git import (
+    LFS_POINTER_MAX_BYTES,
+    LFS_POINTER_PREFIX,
     MAX_GITMODULES_BYTES,
     MetadataOutputLimitError,
     MetadataTimeoutError,
@@ -334,6 +336,8 @@ _NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
 # A name no real file can have (a path component cannot contain NUL), so only
 # a wildcard glob segment such as ``**`` matches it.
 _ANY_FILE_NAME = "\x00"
+# The first line of a Git LFS pointer file (at most LFS_POINTER_MAX_BYTES long).
+_LFS_POINTER_TEXT = LFS_POINTER_PREFIX.decode("ascii")
 
 
 def _never_read_by_name(name: str) -> bool:
@@ -1826,6 +1830,15 @@ class FilesystemConnector(BaseConnector):
             else:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
         if text is None:
+            return None
+        if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
+            # A checkout made without git-lfs holds a pointer in place of the
+            # file: its content was never read, whatever the name promises.
+            message = f"code.filesystem: {rel}: Git LFS pointer file, not the content it stands for"
+            if self.strict_coverage:
+                self.ctx.error(f"{message}; coverage incomplete")
+            else:
+                self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
             return None
         if path.suffix.lower() != ".ipynb":
             return text, None, ()

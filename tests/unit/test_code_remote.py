@@ -17,6 +17,7 @@ import responses
 
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code import remote
+from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector, _GitLabMetadata
 from shadowscan.connectors.code.remote import (
@@ -1269,3 +1270,43 @@ def test_unusable_version_probe_output_is_unknown_not_supported(monkeypatch, res
 def test_the_installed_git_banner_is_understood():
     # Catches a banner format the parser misses on the platform that runs the suite.
     assert git_module.git_version() is not None
+
+
+# A checkout made without git-lfs (or a directory of offline clones) holds the
+# pointer, not the file: read as content it looked like a complete scan.
+@pytest.mark.parametrize("name", ["agent.py", "config/llm.yaml", "notebook.ipynb", "Dockerfile"])
+def test_analyzable_lfs_pointer_is_a_coverage_gap_in_a_local_scan(tmp_path, index, name):
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(LFS_POINTER)
+    (tmp_path / "requirements.txt").write_text("langgraph\n")
+    note = (
+        f"code.filesystem: {name}: Git LFS pointer file, not the content it stands for; coverage incomplete"
+    )
+    for strict in (False, True):
+        connector = FilesystemConnector(
+            ConnectorContext(config={"path": str(tmp_path), "strict_coverage": strict}, index=index)
+        )
+        findings = connector.run()
+        stats = connector.ctx.stats
+        assert stats is not None and stats.incomplete and findings  # the neighbouring evidence stays
+        assert (stats.errors, stats.warnings) == (([note], []) if strict else ([], [note]))
+
+
+def test_lfs_pointer_of_a_file_the_scanner_never_reads_is_not_a_gap(tmp_path, index):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "model.bin").write_text(LFS_POINTER)
+    (tmp_path / "requirements.txt").write_text("langgraph\n")
+    connector = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))
+    assert connector.run() and connector.ctx.stats is not None
+    assert not connector.ctx.stats.incomplete and not connector.ctx.stats.warnings
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_offline_clone_with_an_lfs_pointer_is_incomplete(tmp_path, index, run_connector, cls):
+    clone = tmp_path / "acme__app"
+    clone.mkdir()
+    (clone / "agent.py").write_text(LFS_POINTER)
+    _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert any("agent.py: Git LFS pointer file" in warning for warning in ctx.stats.warnings)
