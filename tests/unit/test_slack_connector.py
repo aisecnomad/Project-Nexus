@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -306,3 +307,40 @@ def test_slack_non_dict_list_entries_are_skipped_not_fatal(run_connector):
     findings, ctx = run_connector("saas.slack", token="xoxb-synthetic-test-token-000000")
     assert {f.title for f in findings} == {"Slack app (bot): Otter.ai", "Slack app: ChatGPT"}
     assert not ctx.stats.errors and ctx.stats.incomplete
+
+
+def test_record_of_another_workspace_is_skipped_not_scan_wide(run_connector, tmp_path):
+    # One Slack Connect bot from another workspace used to withhold every finding.
+    records = [
+        {"_kind": "team", "id": "T0AAA", "name": "Acme", "domain": "acme"},
+        {
+            "id": "U1",
+            "is_bot": True,
+            "team_id": "T0AAA",
+            "profile": {"api_app_id": "A1", "real_name": "OpenAI ChatGPT Bot"},
+            "name": "chatgpt",
+        },
+        {
+            "id": "U2",
+            "is_bot": True,
+            "team_id": "T0ZZZ",
+            "profile": {"api_app_id": "A1", "real_name": "Some Connect Bot"},
+            "name": "connect",
+        },
+        {
+            "id": "U3",
+            "is_bot": True,
+            "team_id": 7,
+            "profile": {"api_app_id": "A3", "real_name": "x"},
+            "name": "x",
+        },
+    ]
+    export = tmp_path / "slack.json"
+    export.write_text(json.dumps(records))
+    findings, ctx = run_connector("saas.slack", input=str(export))
+    assert [f.resource for f in findings] == ["slack:app:A1"]
+    assert findings[0].metadata["workspace_name"] == "Acme"
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert ctx.stats.warnings == [
+        "saas.slack: skipped 2 records that name another or an invalid workspace; coverage incomplete"
+    ]

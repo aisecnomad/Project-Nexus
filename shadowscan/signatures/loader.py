@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 from collections.abc import Iterator, Sequence
@@ -17,10 +18,11 @@ import yaml
 
 from shadowscan.errors import SetupError, SetupPathError, yaml_error_position
 from shadowscan.signatures.schema import require_list, validate_signature_shape
-from shadowscan.utils.files import policy_files, read_policy_text
+from shadowscan.utils.files import SKIPPED_LINK, policy_files, read_policy_text
 from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.safe_yaml import BoundedSafeLoader, YAMLResourceLimitError
 
+log = logging.getLogger("shadowscan.signatures")
 _MAX_PACK_MESSAGE_CHARS = 400
 
 
@@ -208,8 +210,34 @@ def signature_from_dict(d: dict[str, Any], source: str | None = None) -> Signatu
     return sig
 
 
-def _iter_yaml_files(root: Path) -> Iterator[Path]:
-    yield from policy_files(root, {".yaml", ".yml"})
+def _iter_yaml_files(root: Path, skipped: list[tuple[str, str]] | None = None) -> Iterator[Path]:
+    yield from policy_files(root, {".yaml", ".yml"}, skipped)
+
+
+_MAX_LISTED_SKIPS = 10
+
+
+def _pack_files(directory: Path, *, custom: bool) -> list[Path]:
+    """List a pack directory's YAML files; a custom directory without any is an error.
+
+    Links are never followed. Each skipped link is logged by name, and a
+    custom directory that contributes no pack names what it skipped.
+    """
+    skipped: list[tuple[str, str]] = []
+    files = list(_iter_yaml_files(directory, skipped))
+    for name, reason in skipped:
+        if reason == SKIPPED_LINK:
+            log.warning("%s", sanitize_text(f"signature directory {directory}: skipped symbolic link {name}"))
+    if custom and not files:
+        listed = [f"{name} ({reason})" for name, reason in skipped[:_MAX_LISTED_SKIPS]]
+        if len(skipped) > _MAX_LISTED_SKIPS:
+            listed.append(f"{len(skipped) - _MAX_LISTED_SKIPS} more")
+        detail = f"; skipped: {', '.join(listed)}" if listed else ""
+        raise SignaturePackError(
+            f"signature directory {directory} contains no .yaml or .yml signature packs"
+            f" (symbolic links are not followed){detail}"
+        )
+    return files
 
 
 class _UniqueKeyLoader(BoundedSafeLoader):
@@ -352,7 +380,7 @@ def load_signatures(
         if not d.is_dir():
             raise SetupPathError(sanitize_text(f"signature directory not found: {d}"))
         pack_ids: set[str] = set()
-        for f in _iter_yaml_files(d):
+        for f in _pack_files(d, custom=not (include_builtin and number == 0)):
             for sig in load_signature_file(f):
                 if sig.id in pack_ids:
                     raise SignaturePackError(f"{f}: duplicate signature id {sig.id!r} in {d}")

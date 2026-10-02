@@ -192,6 +192,40 @@ def test_vcs_egg_fragments_and_editable_dependencies():
     }
 
 
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "eng/common.props",
+        "eng/Versions.PROPS",
+        "src/App/Shared.targets",
+    ],
+)
+def test_msbuild_props_and_targets_are_nuget_manifests(rel):
+    name = rel.rsplit("/", 1)[-1]
+    assert is_manifest_name(name)
+    deps, result = _deps(
+        rel,
+        '<Project><ItemGroup><PackageReference Include="Microsoft.SemanticKernel" Version="1.0.0" />'
+        '<PackageVersion Include="ModelContextProtocol" Version="0.2" /></ItemGroup></Project>',
+    )
+    assert deps == {("nuget", "Microsoft.SemanticKernel"), ("nuget", "ModelContextProtocol")}
+    assert not result.errors
+
+
+@pytest.mark.parametrize("name", ["Directory.Build.targets", "common.props"])
+def test_msbuild_entity_declarations_are_rejected_not_expanded(name):
+    bomb = (
+        '<!DOCTYPE lolz [<!ENTITY lol0 "lol"><!ENTITY lol1 "&lol0;&lol0;&lol0;&lol0;&lol0;&lol0;&lol0;">]>'
+        '<Project><ItemGroup><PackageReference Include="&lol1;" /></ItemGroup></Project>'
+    )
+    result = parse_manifest(name, bomb)
+    assert result is not None and result.deps == []
+    assert result.errors == ["NuGet DTD/entity declarations are unsupported"]
+
+
 def test_containerfile_is_parsed_like_a_dockerfile():
     text = "FROM ghcr.io/berriai/litellm:main-latest\nENV OPENAI_API_KEY=\n"
     assert is_manifest_name("Containerfile")

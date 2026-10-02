@@ -145,7 +145,9 @@ class ServiceNowConnector(BaseConnector):
                         self.ctx.warn(f"lowcode.servicenow: invalid record in {table} page")
                         continue
                     yield {**r, "_table": table}
-                if len(rows) < _PAGE_SIZE:
+                # ACLs can filter rows after sysparm_limit is applied, so a
+                # short page is not the last one; only an empty page is.
+                if not rows:
                     break
             else:
                 self.ctx.warn(f"lowcode.servicenow: pagination limit reached for {table}")

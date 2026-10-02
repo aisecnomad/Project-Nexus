@@ -13,13 +13,16 @@ import re
 
 from shadowscan.utils.redaction_rules import (
     _CLI_WORD,
+    _COMPARISONS,
     _FINGERPRINT,
+    _OPERATOR,
     REDACTED,
     SanitizationLimitError,
     _blanks_before,
     _credential_literal,
     _credential_name,
     _interpolated,
+    _kept_value,
     _name_before,
     _redact_value,
     _sensitive_assignment_key,
@@ -41,13 +44,14 @@ from shadowscan.utils.redaction_rules import (
 # must leave the next parameter's name to be read with its own value.
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
-    r"(?P<sep>[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
+    r"(?P<sep>[\"']\s*:(?!=)\s*|[\"'][ \t]*" + _OPERATOR + r"[ \t]*|\s*" + _OPERATOR + r"\s*"
+    r"|:[ \t]+|:[ \t]*(?=[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
     r"|[^\s,;\}\]\)\"']+(?:(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
 )
 _MAPPING_VALUE = re.compile(
     r"(?<![\w.-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
-    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*(?::|=>)[ \t]*"
     r"(?P<value>[\"'`\[\{(])"
 )
 _YAML_MAPPING_LINE = re.compile(
@@ -191,7 +195,7 @@ def _redact_mapping_values(text: str) -> str:
 # at the separator, which is rarer than a name, and the name before it is
 # read backwards.
 _OPAQUE_VALUE = re.compile(
-    r"(?P<separator>:=|=(?![=>~])|:(?![:=]))[ \t]*"
+    r"(?P<separator>:=|=(?![=>~])|:(?![:=])|===?|=>|=~|<<?-(?!-))[ \t]*"
     r"(?:(?P<prefix>[rRbBuUfF]{1,2}|@)?(?P<quote>[\"'`])(?P<quoted>[^\"'`\r\n]{8,})(?P=quote)"
     r"|(?P<bare>[A-Za-z0-9+/_.~-]{8,}={0,2})(?![^\s,;)}\]]))"
 )
@@ -239,10 +243,16 @@ _NEXT_LINE_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 def _assigned_name(text: str, separator: int, *, numbered: bool = False) -> str:
     """The name assigned at ``separator``, past a closing quote and a simple type annotation.
 
-    A '?' before the separator is a nullable type ('String? =') or Make's '?='.
-    ``numbered`` is passed on to ``_credential_name``.
+    A '?' before the separator is a nullable type ('String? =') or Make's '?='. The
+    characters of a compound or comparison operator that come before its '=' ('||=',
+    '+=', '.=', '!=', '<=') are not part of the name. ``numbered`` is passed on to
+    ``_credential_name``.
     """
-    end = _blanks_before(text, separator)
+    end = separator
+    for _ in range(2):
+        if end > 0 and text[end - 1] in "|&?+-*/%^.!<>~":
+            end -= 1
+    end = _blanks_before(text, end)
     if end > 0 and text[end - 1] in "\"'":
         end -= 1
     elif end > 0 and text[end - 1] == "?":
@@ -253,6 +263,20 @@ def _assigned_name(text: str, separator: int, *, numbered: bool = False) -> str:
     if name and typed and not _credential_name(name, numbered=numbered):
         return _name_before(text, _blanks_before(text, colon - 1), "_$.-")  # 'openaiKey: string = "..."'
     return name
+
+
+def _marked_by_name(text: str, match: re.Match[str], name: str) -> bool:
+    """Whether the sensitive ``name`` right before the colon at ``match`` marks the value after it.
+
+    'key:v' is a scalar or a URL part, but 'password:<opaque>' is not; the shell's
+    '${NAME:-v}' default and the annotation hop of 'credential:sha256:<hex>' (the name is
+    then not the word before the colon) are read elsewhere.
+    """
+    return (
+        _sensitive_assignment_key(name)
+        and text.endswith(name, 0, match.start())
+        and not text.startswith(("-", "+", "?"), match.end("separator"))
+    )
 
 
 def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
@@ -274,6 +298,7 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
             (
                 match.group("separator") == ":"
                 and not (extended and text.startswith((" ", "\t"), match.end("separator")))
+                and not _marked_by_name(text, match, name)
             )
             or _wordy(value)
         ):
@@ -291,6 +316,24 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
         value = match.group("value")
         if not _CLI_WORD.fullmatch(value) and _credential_literal(value, positional=True):
             spans.append(match.span("value"))
+    return _withhold_spans(text, spans)
+
+
+# ODBC and ADO.NET connection strings spell the password 'Pwd': 'Server=h;Uid=u;Pwd=v;'.
+# 'PWD' also names a shell's working directory and 'pwd' a command, so only a 'Pwd=' that
+# follows a ';' is read, and its value stays when it is empty or only a reference.
+_CONNECTION_PASSWORD = re.compile(r"(?<=;)[ \t]*(?i:pwd)[ \t]*=(?P<value>[^;\"'\r\n]+)")
+
+
+def _redact_connection_passwords(text: str) -> str:
+    """Withhold the value of a connection string's ``Pwd=`` member."""
+    if ";" not in text:
+        return text
+    spans = [
+        match.span("value")
+        for match in _CONNECTION_PASSWORD.finditer(text)
+        if not _kept_value(match.group("value"))
+    ]
     return _withhold_spans(text, spans)
 
 
@@ -368,7 +411,20 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
         bare = raw[1:-1] if quote else raw
         key: str = m.group("key")
         sep: str = m.group("sep")
+        operator = sep.strip(" \t\r\n\"'")
         if _sensitive_assignment_key(key):
+            if operator in _COMPARISONS:
+                # Only a literal that could be a credential is withheld from a comparison:
+                # a quoted word ('token == "v"', also in backticks), not "(" or "/*", and a
+                # bare opaque value, not an operand ('token == other', 'token != None').
+                template = len(bare) > 1 and bare[0] == bare[-1] == "`"
+                literal = bare[1:-1] if template else bare
+                if not _credential_literal(literal, positional=bool(quote) or template):
+                    return full
+            if not quote and operator == "=>" and bare.startswith(("{", "[", "(")):
+                # A hash entry's nested mapping is withheld whole by the mapping pass; this
+                # is an arrow function's body ('token => {').
+                return full
             clean: str = _redact_value(bare)
         elif "=" in bare or ":" in bare:
             # Do not let an ordinary assignment swallow a nested credential,

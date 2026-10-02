@@ -2611,7 +2611,7 @@
     }
    ],
    "confidence": 0.988,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",

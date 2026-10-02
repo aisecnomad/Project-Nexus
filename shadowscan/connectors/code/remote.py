@@ -31,14 +31,20 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.models import Finding
 from shadowscan.utils.git import (
+    LFS_POINTER_MAX_BYTES,
+    LFS_POINTER_PREFIX,
     CloneSizeError,
     CloneTimeoutError,
+    checkout_has_lfs_pointers,
     clone_environment,
+    clone_git_supported,
     exceeds_clone_size,
     git_argv_prefix,
     has_clone_size_estimate,
     read_git_snapshot,
+    register_checkout,
     run_bounded_clone,
+    unregister_checkout,
     validate_git_ref,
 )
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
@@ -113,6 +119,45 @@ def remote_record(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if not key.startswith("_")}
 
 
+def config_string_list(value: Any, name: str, *, allow_int: bool = False) -> list[str]:
+    """Require a list of non-empty strings; an unset option is an empty list.
+
+    A bare string must not pass: iterating ``"llm"`` yields the characters ``l``, ``l``, ``m``, and a
+    topic filter or repository list built from them matches nothing while the scan reports itself
+    complete. Errors name the option, never its value.
+    """
+    if value is None:
+        return []
+    items = list(value) if isinstance(value, (list, tuple)) else None
+    if items is not None and allow_int:
+        items = [str(i) if isinstance(i, int) and not isinstance(i, bool) else i for i in items]
+    if items is None or any(not isinstance(item, str) or not item.strip() for item in items):
+        raise ConnectorError(f"{name} must be a list of non-empty strings (--set: a,b or a JSON list)")
+    return items
+
+
+def config_text(value: Any, name: str) -> str | None:
+    """An optional text option such as a login; blank (for example an empty variable) is unset."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ConnectorError(f"{name} must be a string")
+    return value.strip() or None
+
+
+def config_integer(value: Any, name: str) -> int:
+    """A whole number. A bool or a fraction is not one; text from ``${VAR}`` expansion must be digits."""
+    if isinstance(value, bool):
+        raise ConnectorError(f"{name} must be a whole number")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]{1,9}", value.strip()):
+        return int(value)
+    raise ConnectorError(f"{name} must be a whole number")
+
+
 class UnusualRepositoryPath(ConnectorError):
     """A legal Git path this scanner does not materialise (backslash, drive-like prefix)."""
 
@@ -127,6 +172,10 @@ def repository_target(root: str, path: str) -> Path:
     """
     rel = PurePosixPath(path)
     if not rel.parts or rel.is_absolute() or ".." in rel.parts or "\x00" in path:
+        raise ConnectorError("Refusing unsafe repository tree path")
+    # Git never stores a .git entry and refuses to check one out; a tree that names one (in any case, or
+    # with the trailing dots and blanks some file systems ignore) is hostile.
+    if any(part.rstrip(" .").casefold() == ".git" for part in rel.parts):
         raise ConnectorError("Refusing unsafe repository tree path")
     if "\\" in path or ":" in rel.parts[0]:
         raise UnusualRepositoryPath("Refusing unsafe repository tree path")
@@ -222,7 +271,7 @@ class RemoteRepositoryConnector(BaseConnector):
         return mode
 
     def _record_cap(self, value: Any) -> int:
-        cap = int(value)
+        cap = config_integer(value, self.limit_key)
         if cap < 1:
             raise ConnectorError(f"{self.name}: {self.limit_key} must be positive")
         return cap
@@ -237,6 +286,60 @@ class RemoteRepositoryConnector(BaseConnector):
 
     def _cap_reached(self) -> None:
         self.ctx.warn(f"{self.name}: {self.limit_key} ({self.max_records}) reached", incomplete=True)
+
+    # --------------------------------------------------------------- listing
+    def _paginate_listing(self, path: str, params: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Page through a provider listing and compare it with the totals the provider reports.
+
+        GitLab states ``X-Total`` and ``X-Total-Pages``; GitHub states neither. Entries that do not add up
+        to them mean the listing changed while it was read or left something out: coverage is unknown.
+        """
+        reported: dict[str, set[str]] = {"X-Total": set(), "X-Total-Pages": set()}
+        pages = 0
+
+        def note_page(resp: Any) -> None:
+            nonlocal pages
+            pages += 1
+            for header, values in reported.items():
+                if (value := resp.headers.get(header)) is not None:
+                    values.add(str(value))
+
+        count = 0
+        for item in self.http.paginate_link(path, params=params, on_page=note_page):
+            count += 1
+            yield item
+        # An empty collection arrives as one empty page, which GitLab may count as zero pages.
+        expected = {"X-Total": {count}, "X-Total-Pages": {pages} | ({0} if count == 0 else set())}
+        for header, values in reported.items():
+            if not values:
+                continue
+            numbers = {int(v) for v in values if v.isascii() and v.isdecimal() and len(v) <= 12}
+            if len(numbers) != len(values) or not numbers <= expected[header]:
+                self.ctx.warn(
+                    f"{self.name}: repository listing returned {count} entries in {pages} pages, which "
+                    f"does not match its reported {header}; coverage unknown",
+                    incomplete=True,
+                )
+
+    def _complete_listing(self, listing: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        """Finish enumerating before any repository is cloned or scanned.
+
+        Listings used to be consumed lazily: page N+1 was fetched only after every repository of page N had
+        been cloned and scanned. A push meanwhile can move a repository that was not listed yet behind the
+        cursor of an activity-ordered listing, and nothing noticed that it was never examined. Reading the
+        whole listing first (still bounded by the repository cap), in an order a push cannot change, leaves
+        nothing to move. A failure part-way keeps what was listed: those repositories are scanned, then the
+        failure ends the scan as incomplete, as it did before.
+        """
+        listed: list[dict[str, Any]] = []
+        failure: Exception | None = None
+        try:
+            listed.extend(listing)
+        except Exception as exc:  # noqa: BLE001 - re-raised once the repositories already listed are scanned
+            failure = exc
+        yield from listed
+        if failure is not None:
+            raise failure
 
     # --------------------------------------------------------------- offline
     @abstractmethod
@@ -297,6 +400,8 @@ class RemoteRepositoryConnector(BaseConnector):
                 # The scan root check rejects symlinked ancestors; the
                 # default temp directory has one on macOS (/var -> /private/var).
                 tmp = os.path.realpath(tempfile.mkdtemp(prefix=self.temp_prefix, dir=self.ctx.workdir))
+                # A termination signal or hard exit skips the finally below.
+                register_checkout(tmp)
                 local = fetch(repo, tmp)
                 if not local:
                     return
@@ -311,6 +416,7 @@ class RemoteRepositoryConnector(BaseConnector):
         finally:
             if tmp:
                 shutil.rmtree(tmp, ignore_errors=True)
+                unregister_checkout(tmp)
 
     @abstractmethod
     def _filesystem_options(self) -> dict[str, Any]:
@@ -389,7 +495,7 @@ class RemoteRepositoryConnector(BaseConnector):
         # Provenance is derived from the bytes actually selected for scanning;
         # provider JSON must not supply it.
         repo.pop("source_snapshot", None)
-        if self.mode == "clone" and shutil.which("git"):
+        if self.mode == "clone" and shutil.which("git") and clone_git_supported():
             dest = os.path.join(tmp, "repo")
             size = self._clone_size(repo)
             if exceeds_clone_size(size, self.size_unit, self.clone_max_bytes):
@@ -405,6 +511,7 @@ class RemoteRepositoryConnector(BaseConnector):
             else:
                 if self._clone(repo, dest):
                     self._set_clone_snapshot(repo, dest)
+                    self._report_clone_gaps(full, dest)
                     return dest
                 self.ctx.warn(
                     f"{self.name}: clone failed for {full}; using sampled API mode",
@@ -415,6 +522,12 @@ class RemoteRepositoryConnector(BaseConnector):
                     if os.path.islink(dest):
                         raise ConnectorError(f"{self.name}: partial clone destination is a symlink")
                     shutil.rmtree(dest)
+        elif self.mode == "clone" and shutil.which("git"):
+            # An older (or unreadable) Git ignores protections that keep the clone on its origin.
+            self.ctx.warn(
+                f"{self.name}: Git 2.32 or newer is required to clone {full}; using sampled API mode",
+                incomplete=True,
+            )
         elif self.mode == "clone":
             self.ctx.warn(
                 f"{self.name}: git is unavailable for {full}; using sampled API mode",
@@ -422,6 +535,35 @@ class RemoteRepositoryConnector(BaseConnector):
             )
         self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)
+
+    def _coverage_gap(self, message: str) -> None:
+        """Record content the scan could not read: a warning, or an error under ``strict_coverage``.
+
+        Both make the scan incomplete; the option decides only the channel, as in code.filesystem.
+        """
+        if self._filesystem_options().get("strict_coverage") is True:
+            self.ctx.error(message)
+        else:
+            self.ctx.warn(message, incomplete=True)
+
+    def _report_clone_gaps(self, full: Any, dest: str) -> None:
+        """Say that a clone holds Git LFS pointer files instead of the large files they stand for.
+
+        The clone runs no LFS smudge filter, so such a file is a short pointer text that the scan would
+        read as if it were the content, and the scan would look complete. Submodules are reported by the
+        filesystem scan of the checkout (``check_gitlink_coverage``).
+        """
+        if not os.path.isdir(dest):
+            return  # nothing was checked out; the scan of the missing path reports that itself
+        pointers = checkout_has_lfs_pointers(dest, check_deadline=self.ctx.check_deadline)
+        if pointers is None:
+            self._coverage_gap(
+                f"{self.name}: could not inspect {full} for Git LFS pointer files; source coverage unknown"
+            )
+        elif pointers:
+            self._coverage_gap(
+                f"{self.name}: Git LFS pointer files in {full} are not resolved; source coverage partial"
+            )
 
     def _set_clone_snapshot(self, repo: dict[str, Any], local: str) -> None:
         remaining = max(0.001, self.ctx.deadline - time.monotonic()) if self.ctx.deadline else 10.0
@@ -517,6 +659,7 @@ class RemoteRepositoryConnector(BaseConnector):
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
         written = 0
+        lfs_pointers = False
         for p in selected:
             try:
                 target = repository_target(dest, p)
@@ -547,4 +690,10 @@ class RemoteRepositoryConnector(BaseConnector):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
             written += 1
+            if len(content) <= LFS_POINTER_MAX_BYTES and content.startswith(LFS_POINTER_PREFIX):
+                lfs_pointers = True
+        if lfs_pointers:
+            self._coverage_gap(
+                f"{self.name}: Git LFS pointer files{where} are not resolved; source coverage partial"
+            )
         return dest, written
