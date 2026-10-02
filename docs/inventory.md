@@ -59,7 +59,10 @@ hr-helper,HR Helper,erin@acme.com,power-platform:bot:bot-1|okta:app:0oa9x,HR bot
 ```
 
 Pass any mix with `--inventory` (repeatable) or `inventory:` in the config;
-directories are searched recursively.
+directories are searched recursively. Symbolic links are never followed: a
+directory or glob that skips one records a warning naming it (`engine.inventory`
+in scan reports, stderr for `inventory check`). A glob that matches no files is
+an error, like a missing path, rather than an empty inventory.
 
 YAML and JSON list fields (`resources`, `names`, `surfaces`, `providers`,
 `accounts`, `regions`, `discriminators`, `frameworks`, `tags`) must be arrays of nonempty strings. Quote
@@ -91,6 +94,22 @@ Names, aliases, and agent-ID similarities produce `registry_suggestions` only.
 They never confer registered status, inherit an owner, or reduce risk. An
 explicit resource mismatch cannot fall through to name-based approval. Multiple
 matching inventory entries require review and leave the resource unregistered.
+
+### Inventory placement and wildcard warnings
+
+An inventory is an approval list, so whoever can edit it can approve findings.
+When an inventory file or directory (resolved with `realpath`), or a file it
+loads, lies inside a local path that the same run scans with `code.filesystem`
+(including `shadowscan code PATH`), the scan records the warning
+`inventory <name> is inside scanned path <path>; scanned content could alter approvals`.
+It also warns once per run for each entry whose resources include a pattern made
+only of `*`, which approves every finding its scope constraints allow. These
+warnings do not make a scan incomplete or change the exit code: a local
+`shadowscan code . --inventory agent-card.yaml` is legitimate. They appear under
+the `engine.inventory` entry of the report's `stats` (the table output always
+shows them), and a fixed-text log line points to them. In CI, keep the
+inventory outside the checkout that a pull request can change, as
+`examples/github-action-code-scan.yml` does.
 
 **Migration:** cards that previously matched by name need explicit resource
 bindings. The bundled `agent-card.yaml` contains example bindings for offline AWS

@@ -49,7 +49,9 @@ from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
+from shadowscan.utils.git import terminate_active_clones, terminate_clones_on_signal
 from shadowscan.utils.output import (
+    encodable_text,
     prepare_private_directory,
     terminal_report_text,
     terminal_text,
@@ -119,7 +121,7 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
             except (OverflowError, RecursionError, TypeError, ValueError):
                 raise click.ClickException("could not render report; result data is invalid") from None
     else:
-        click.echo(terminal_report_text(text, fmt))
+        click.echo(encodable_text(terminal_report_text(text, fmt)))
 
 
 def _exit_code(result: ScanResult, fail_on: str | None) -> int:
@@ -145,6 +147,8 @@ def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
             except Exception:  # noqa: BLE001 - still try the other stream and exit
                 pass
     finally:
+        # An abandoned worker may still be waiting to stop its own clone.
+        terminate_active_clones()
         os._exit(code)
 
 
@@ -204,7 +208,10 @@ def _run_and_emit_with_deadline(
         log.warning("plugin registry: %s", problem)
     try:
         engine = Engine(cfg, progress=progress if verbose else None)
-        result = engine.run(only=only)
+        # Connectors run on worker threads, which cannot install signal
+        # handlers: a termination signal must stop live clones from here.
+        with terminate_clones_on_signal():
+            result = engine.run(only=only)
     except SetupError as exc:
         # SetupError messages are credential-free by contract (shadowscan.errors).
         raise click.ClickException(str(exc)) from None
@@ -616,6 +623,11 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
 @click.option("--gitlab-group", help="scan every project of a GitLab group (GITLAB_TOKEN)")
 @click.option("--mode", type=click.Choice(["clone", "api"]), default=None, help="remote fetch mode")
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
+@click.option(
+    "--no-default-excludes",
+    is_flag=True,
+    help="also scan the directories skipped by default (bin, build, dist, vendor, node_modules, .git, ...)",
+)
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
 @click.option(
     "--strict-coverage",
@@ -635,6 +647,7 @@ def code(
     gitlab_group: str | None,
     mode: str | None,
     exclude: tuple[str, ...],
+    no_default_excludes: bool,
     no_secrets: bool,
     strict_coverage: bool,
     include_tests: bool,
@@ -644,6 +657,8 @@ def code(
     secrets."""
     specs: list[ConnectorSpec] = []
     common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
+    if no_default_excludes:
+        common["default_excludes"] = False
     if strict_coverage:
         common["strict_coverage"] = True
     if include_tests:
@@ -1098,6 +1113,9 @@ def inventory_check(paths: tuple[str, ...]) -> None:
         raise click.ClickException(
             "could not load inventory; check file access and document structure"
         ) from None
+    for link in inv.skipped_links:
+        message = f"warning: inventory {link}: symbolic link skipped (links are not followed)"
+        err_console.print(Text(terminal_text(message), style="yellow"))
     table = Table(title=f"{len(inv)} registered agents", header_style="bold")
     table.add_column("Agent id")
     table.add_column("Name")
@@ -1206,6 +1224,8 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
         )
         for reason in comparison["reasons"]:
             console.print(f"Comparison incomplete: {reason}", markup=False)
+        # Imported titles and resources are untrusted: Rich's highlighter is
+        # quadratic on long tokens (a 50k-character title took about 30 s).
         for marker, records in (
             ("+", new),
             ("-", resolved),
@@ -1215,12 +1235,12 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
         ):
             for d in sorted(records, key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
-                console.print(terminal_text(line), markup=False)
+                console.print(terminal_text(line), markup=False, highlight=False)
         for change in changed:
             x, y = change["before"], change["after"]
             fields_changed = ", ".join(change["changed_fields"])
             line = f"  ~ {y['title']}: {fields_changed} (risk {x['risk']['score']} → {y['risk']['score']})"
-            console.print(terminal_text(line), markup=False)
+            console.print(terminal_text(line), markup=False, highlight=False)
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
 

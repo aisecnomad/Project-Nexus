@@ -28,12 +28,32 @@ The following coverage rules define how omitted source is handled:
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
+* **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
+  byte-order mark is decoded and the mark removed. A Python source is decoded
+  with the codec its `# coding:` cookie declares. Any other file the scanner
+  analyzes by name (source, configuration, documents, `.env`, extensionless
+  files) that has a NUL byte in its first 8 KiB, or that its declared codec
+  cannot decode, makes the scan incomplete (exit code 3) with `binary or
+  undecodable content in analyzable file`; it is never silently treated as
+  empty. A compiled or packed artifact with no file extension and a known
+  header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
+  GIF, PDF) is skipped quietly, as are names the scanner never analyzes
+  (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
+  of binary data that carries an analyzed extension.
+* **Default-excluded directories.** The walk skips a built-in list of directory
+  names (see `default_excludes` in the [code connector](connectors/code.md)).
+  Tool metadata, caches, virtualenvs and dependency trees are skipped without
+  comment. A skipped `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`,
+  `vendor`, `third_party`, `thirdparty` or `external` directory that holds a
+  file is a warning (the scan stays complete) naming each such directory name
+  with its count, because projects also keep their own code there.
+  `default_excludes: false` (`--no-default-excludes`) scans them.
 * **Submodules** are never initialized or fetched. Bounded `.gitmodules`
   declarations identify missing, empty or unsafe source directories as coverage
   gaps, including declarations inside materialized nested directories. Ordinary
   files in materialized submodule directories are scanned by the same confined
   walker. GitHub/GitLab clone collection additionally inventories gitlinks in
-  the committed `HEAD` tree; local scans do so only with `use_git: true` and a
+  the committed `HEAD` tree (this needs Git 2.45 or newer); local scans do so only with `use_git: true` and a
   local `.git` directory. Malformed declarations or a failed authorized Git
   inventory make coverage incomplete. Explicitly excluded submodule paths are
   outside the declared scan scope. A nonempty directory establishes only that
@@ -62,6 +82,15 @@ evidence there. Deciding that is linear in the module and matches at most
 A large module that does import such a library, or has more imports than that,
 still reports
 `import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
+
+The JavaScript and TypeScript lexer that masks comments, strings and JSX text
+has a look-ahead allowance of its own: a fixed floor plus four characters of
+look-ahead per character of the file. Real components use under one percent of
+it. A JSX file that exhausts it, such as tens of thousands of repeated `<A>(`,
+ends in well under a second with
+`file analysis incomplete (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`
+instead of stalling the scan until the connector deadline. Other files are
+unaffected and the scan exits 3.
 
 ## Test and fixture code
 
@@ -127,7 +156,8 @@ Without `root_ids`, the canonical local path determines a distinct root suffix.
 Using a scalar `path` with its own connector `label` preserves the older ID.
 
 The default state location is `$XDG_STATE_HOME/shadowscan`, or
-`~/.local/state/shadowscan`. `--state-dir` overrides it; YAML relative paths are
+`~/.local/state/shadowscan` when `XDG_STATE_HOME` is unset, empty or relative
+(as the XDG specification requires). `--state-dir` overrides it; YAML relative paths are
 resolved against the configuration file. Keep the directory outside every scan
 input. State uses a private 0700 directory and atomic 0600 JSON files containing
 sanitized, unscored findings, not source content or raw credentials. Protect the
@@ -415,7 +445,7 @@ options. Extra statements, nested scopes, mutations and dynamic options cannot
 establish this proof. Unsupported shapes, including files longer than such a
 program can be, still produce ordinary SDK evidence and leave coverage complete.
 
-Several rules keep weak observations from producing confirmed or high-risk
+Several rules keep weak observations from producing strong or high-risk
 findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
 sequences after the provider prefix) is never a `secret` finding; it is listed
@@ -432,7 +462,12 @@ observation for a project other than those heuristics is an environment-variable
 or display-name reference, the heuristics are dropped and the finding is built
 from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
-names appear. MCP servers
+names appear. A data or prose file that only lists four or more products by
+domain or variable name (a proxy blocklist, a vendor policy, a copy of the
+signature packs) is a catalog: its mentions count only for a product with an
+import, dependency or code pattern elsewhere in the project, and the discounted
+files are listed in `metadata.catalog_mentions` (see
+[Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers
 `browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
 keeps the informational `always-on` tag but only marks a caller as agentic,
@@ -446,8 +481,11 @@ it. `tools/evaluation/corpus.json` carries regression cases for each rule.
 changes, including permissions, classification, ownership, registration and risk
 score/factors within the same risk band. Each changed item includes
 `changed_fields`. Missing findings count as resolved only when both reports
-completed, declare the same supported finding-identity schema and have the same
-`collection_scope` fingerprint. This opaque digest covers
+completed, declare the same supported finding-identity schema, carry a
+`summary` whose `total` (and `by_surface`/`by_kind` counts) match their
+`findings` array, and have the same `collection_scope` fingerprint. A truncated
+or filtered report is therefore unknown (exit 3), not a resolution. The
+fingerprint is an opaque digest that covers
 selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public

@@ -30,12 +30,17 @@ Precision safeguards
   environment-variable or display-name reference, the heuristics are dropped
   and the finding is built from the name references alone: evidence weights
   are halved, the finding is tagged ``env-names-only`` and confidence is
-  capped below the ``confirmed`` band.
+  capped below the ``strong`` band.
 * A detection-rule pack (a ShadowScan signature pack, Semgrep or Sigma rules,
   a gitleaks configuration; see ``rule_packs``) lists the names and hosts it
   detects. Its content is never usage or configuration evidence; the project
   finding lists such files under ``detection_rule_files``. File-name signals
   and credentials in them are still reported.
+* A data or prose file that only lists products (a blocklist, a vendor
+  policy, a copy of the signature packs: four or more products by domain or
+  variable name, no import, dependency, code or other structural evidence) is
+  a catalog. Its mentions count only for a signature with library evidence
+  elsewhere in the project (``shadowscan.connectors.code.catalogs``).
 """
 
 from __future__ import annotations
@@ -60,9 +65,16 @@ import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.code.catalogs import catalog_metadata, project_catalog_files
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
-from shadowscan.connectors.code.manifests import Artifact, Dep, is_manifest_name, parse_manifest
+from shadowscan.connectors.code.manifests import (
+    MANIFEST_PATTERN_SECONDS,
+    Artifact,
+    Dep,
+    is_manifest_name,
+    parse_manifest,
+)
 from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -83,7 +95,11 @@ from shadowscan.connectors.code.semantic_config import (
     structured_code_matches,
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
-from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded, bound_source_matches
+from shadowscan.connectors.code.source_semantics import (
+    SourceBudgetExceeded,
+    SourceNotParsed,
+    bound_source_matches,
+)
 from shadowscan.connectors.common import (
     apply_matches,
     cap_confidence,
@@ -118,7 +134,14 @@ from shadowscan.utils.safe_yaml import (
     YAMLResourceLimitError,
     strict_bounded_safe_load,
 )
-from shadowscan.utils.text import notebook_to_source, parse_timestamp, read_text, redact, truncate
+from shadowscan.utils.text import (
+    BINARY_CONTENT_ERROR,
+    notebook_to_source,
+    parse_timestamp,
+    read_text,
+    redact,
+    truncate,
+)
 
 # Manifests that configure the code of the project containing them. A2A cards
 # and M365 declarative agents declare a separately addressable agent (its own
@@ -183,6 +206,35 @@ DEFAULT_EXCLUDES = {
     "thirdparty",
     "external",
 }
+# The walk skips every DEFAULT_EXCLUDES name at any depth unless the connector
+# option `default_excludes` is false. Most are tool metadata, caches,
+# virtualenvs, dependency trees and IDE state that never hold a project's own
+# source: those are skipped without comment. The names here are build output or
+# vendored code by convention, but projects also keep first-party code in them
+# (scripts in bin/, an agent under vendor/ or build/). A directory with these
+# names that holds a file is reported as a scan warning (not incomplete) so the
+# omission is visible. This is the one definition of the split.
+DISCLOSED_DEFAULT_EXCLUDES = frozenset(
+    {
+        "bin",
+        "build",
+        "dist",
+        "out",
+        "target",
+        "obj",
+        "coverage",
+        "vendor",
+        "third_party",
+        "thirdparty",
+        "external",
+    }
+)
+# Version-control metadata is never project content (its index and objects are
+# binary, so each would be a coverage gap): it stays excluded even when
+# `default_excludes` is false.
+VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
+# Entries inspected to decide whether a skipped directory holds any file.
+_EMPTY_DIRECTORY_PROBE_ENTRIES = 256
 
 LOCK_FILES = {
     "package-lock.json",
@@ -306,6 +358,34 @@ def _marks_project(directory: Path, names: Iterable[str]) -> bool:
         name in PROJECT_ROOT_MARKERS and (name != "setup.py" or _packaging_setup_script(directory / name))
         for name in names
     )
+
+
+def _holds_file(directory: Path) -> bool:
+    """Whether a skipped ``directory`` holds anything that is not a directory.
+
+    Probes at most ``_EMPTY_DIRECTORY_PROBE_ENTRIES`` entries without following
+    a link (a link in place of the directory is not listed at all). A tree the
+    probe cannot finish or cannot list counts as non-empty, so the omission is
+    disclosed rather than assumed to be nothing.
+    """
+    try:
+        if directory.is_symlink():
+            return False
+    except OSError:
+        return True
+    pending = [directory]
+    inspected = 0
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    inspected += 1
+                    if inspected > _EMPTY_DIRECTORY_PROBE_ENTRIES or not entry.is_dir(follow_symlinks=False):
+                        return True
+                    pending.append(Path(entry.path))
+        except OSError:
+            return True
+    return False
 
 
 TEXT_CONFIG_EXTENSIONS = {
@@ -468,6 +548,7 @@ class _ScanState:
     label: str  # resource prefix of every finding
     # Descriptor of the directory files are read relative to, open during the walk.
     root_fd: int = -1
+    base: Path | None = None  # that directory (the scan root, or a single-file root's parent)
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
     # relpath, parsed servers
@@ -515,7 +596,7 @@ class _SourceFile:
     card_valid: bool = False
     is_mcp: bool = False
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
-    mcp_active: bool = False  # at least one configured MCP server is enabled
+    mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
 
     @property
     def name(self) -> str:
@@ -543,7 +624,7 @@ class _ProjectEvidence:
         # Environment-variable and display-name references are weak
         # anchors, so they are judged before heuristics join: an agent
         # loop or subprocess.run next to a .env.example must not promote
-        # the project to a confirmed agent with autonomous or code-exec
+        # the project to a strong agent with autonomous or code-exec
         # capabilities. Such a finding is built from the name references
         # alone. A live credential is not a name: it keeps full weights
         # and lets the heuristics count. Every anchor is non-heuristic,
@@ -669,6 +750,15 @@ _IAC_MODEL_RE = re.compile(
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
 
 
+def _pattern_timeout() -> float:
+    """Per-call ceiling for the regexes this module runs outside the signature matcher.
+
+    Like the manifest parsers, well above the matcher's 100 ms so an ordinary large file does not
+    time out under CPU contention between parallel connectors; the file's scan budget still caps it.
+    """
+    return pattern_timeout(MANIFEST_PATTERN_SECONDS)
+
+
 def _exception_name(exc: Exception) -> str:
     return type(exc).__name__
 
@@ -742,6 +832,11 @@ def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     return target if target == resolved_root or resolved_root in target.parents else None
 
 
+def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
+    """The project directory of ``path`` under its on-disk name; ``proj_root`` is the report-safe form."""
+    return root.joinpath(*path.relative_to(root).parts[: len(PurePosixPath(proj_root).parts)])
+
+
 def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[[str], bool]:
     """Return a cached check whether an import in ``path`` names a module of the scanned tree."""
     local_modules: dict[str, bool] = {}
@@ -757,7 +852,7 @@ def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[
                 module,
                 scan_root=root,
                 source_path=path,
-                project_root=root if proj_root == "." else root / proj_root,
+                project_root=root if proj_root == "." else _on_disk_project(root, path, proj_root),
             )
         return local_modules[name]
 
@@ -790,6 +885,22 @@ def deadline_margin(remaining: float) -> float:
     engine's own sanitization before it compares completion to the deadline.
     """
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
+
+
+def _validated_names(value: Any, key: str) -> list[str]:
+    """A list-typed option: a list of non-empty strings, or unset.
+
+    A bare string must not pass: iterated per character, ``exclude: "vendor/*"``
+    would become the patterns ``/`` and ``*`` and exclude the whole tree. The
+    message names the option, never its value.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ConnectorError(f"code.filesystem: {key} must be a list of non-empty strings")
+    return list(value)
 
 
 def _validated_globs(value: Any) -> list[str]:
@@ -857,6 +968,14 @@ class FilesystemConnector(BaseConnector):
             validate_root_ids(roots, root_ids)
         return True
 
+    @classmethod
+    def scanned_local_paths(cls, config: dict[str, Any]) -> list[str]:
+        # Engine hook: the configured paths are the scan subject, unless an export is replayed.
+        if config.get("input"):
+            return []
+        raw = config.get("paths") or [config.get("path")]
+        return [path for path in raw if isinstance(path, str) and path] if isinstance(raw, list) else []
+
     name: ClassVar[str] = "code.filesystem"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "filesystem"
@@ -867,7 +986,15 @@ class FilesystemConnector(BaseConnector):
     config_keys: ClassVar[dict[str, str]] = {
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
-        "exclude": "extra directory names / glob patterns to skip",
+        "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
+        "default_excludes": (
+            "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
+            "state, and build-output or vendored names such as bin, build, dist, vendor) at any depth "
+            "(default true); a skipped non-empty bin/build/dist/out/target/obj/coverage/vendor/"
+            "third_party/thirdparty/external directory is reported as a warning. false scans all of "
+            "them, including node_modules and virtualenvs unless `exclude` names them; VCS metadata "
+            "(.git, .hg, .svn) is never scanned"
+        ),
         "max_file_size": (
             "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs "
             "matches it (default 1,000,000 bytes)"
@@ -943,13 +1070,21 @@ class FilesystemConnector(BaseConnector):
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
-        extra = ctx.get("exclude", []) or []
-        self.exclude_names = set(DEFAULT_EXCLUDES) | {e for e in extra if "*" not in e and "/" not in e}
+        extra = _validated_names(ctx.get("exclude"), "exclude")
+        self.default_excludes = config_boolean(ctx.get("default_excludes", True), "default_excludes")
+        self._explicit_exclude_names = frozenset(e for e in extra if "*" not in e and "/" not in e)
+        self.exclude_names = (
+            set(DEFAULT_EXCLUDES) if self.default_excludes else set(VCS_METADATA_EXCLUDES)
+        ) | self._explicit_exclude_names
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
+        # Default-excluded directory names the current walk skipped, with counts.
+        self._default_skipped: dict[str, int] = {}
         self.label: str | None = ctx.get("label")
         # Every labeled `paths` root has its own identity, even if the list
         # shrinks to one. The engine marks a child split for incremental reuse.
         paths = ctx.get("paths")
+        # Iterated per character, a bare string would name roots such as "/".
+        _validated_names(paths, "paths")
         self._shared_label_roots = isinstance(paths, list) or ctx.get("_shared_label_roots") is True
         if self.label and isinstance(paths, list):
             validate_distinct_paths(paths)
@@ -1031,6 +1166,34 @@ class FilesystemConnector(BaseConnector):
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
         return False
+
+    def _disclosed_default_exclusion(self, rel: str, name: str) -> bool:
+        """Whether only a built-in exclusion of a disclosed name skips this directory.
+
+        A quiet name (``DISCLOSED_DEFAULT_EXCLUDES`` lists the others), and a
+        name or glob the operator excluded explicitly, skip without comment.
+        """
+        return (
+            self.default_excludes
+            and name in DISCLOSED_DEFAULT_EXCLUDES
+            and name not in self._explicit_exclude_names
+            and not self._excluded_file(rel)
+        )
+
+    def _report_default_excluded(self, scan: _ScanState) -> None:
+        """Warn once per root about the non-empty built-in-excluded directories the walk skipped."""
+        skipped, self._default_skipped = self._default_skipped, {}
+        if not skipped:
+            return
+        named = ", ".join(f"{name} ({count})" for name, count in sorted(skipped.items()))
+        paths = self.ctx.get("paths")
+        several = (isinstance(paths, list) and len(paths) > 1) or self.ctx.get("_shared_label_roots") is True
+        where = f"{scan.label}: " if several else ""
+        self.ctx.warn(
+            f"code.filesystem: {where}default-excluded directories not scanned: {named}; "
+            "set default_excludes: false to scan them",
+            incomplete=False,
+        )
 
     def _size_limit(self, name: str) -> int:
         """Bytes the reader accepts for ``name``: notebooks may carry large saved outputs."""
@@ -1240,9 +1403,9 @@ class FilesystemConnector(BaseConnector):
         # even when this source tree produces no findings (and no enrichment).
         if self.use_git and os.path.lexists(root / ".git"):
             self.check_gitlink_coverage(root)
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
+        for dirpath, dirnames, filenames in _walk_directories(root, walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
-            rel_dir = "." if rel_dir == "." else rel_dir
+            rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if ".gitmodules" in filenames:
                 self._check_submodule_declarations(root, rel_dir)
             kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
@@ -1254,7 +1417,8 @@ class FilesystemConnector(BaseConnector):
                 roots.append(rel_dir)
                 proj = rel_dir
             for fn in sorted(filenames):
-                rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
+                shown = _report_name(fn)
+                rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
                 if self._excluded_file(rel):
                     continue
                 p = Path(dirpath) / fn
@@ -1296,10 +1460,13 @@ class FilesystemConnector(BaseConnector):
         """
         kept = []
         for name in sorted(dirnames):
-            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
-            if self._excluded(rel, name):
-                continue
+            shown = _report_name(name)
+            rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
+            if self._excluded(rel, name):
+                if self._disclosed_default_exclusion(rel, name) and _holds_file(path):
+                    self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
+                continue
             try:
                 if path.is_symlink():
                     if not self._skip_link(root, resolved_root, rel, path, walk):
@@ -1442,6 +1609,7 @@ class FilesystemConnector(BaseConnector):
         """
         # A single-file root is read relative to its (equally checked) parent.
         base = scan.root.parent if scan.root.is_file() else scan.root
+        scan.base = base
         try:
             scan.root_fd = open_confined_directory(base)
         except (OSError, ValueError) as exc:
@@ -1449,11 +1617,13 @@ class FilesystemConnector(BaseConnector):
             reason = _root_open_failure(exc)
             self.ctx.error(f"code.filesystem: {scan.label}: could not open the scan root safely ({reason})")
             return
+        self._default_skipped = {}
         try:
             self._walk_entries(scan)
         finally:
             os.close(scan.root_fd)
             scan.root_fd = -1
+        self._report_default_excluded(scan)
 
     def _walk_entries(self, scan: _ScanState) -> None:
         """Start each file only while its matching budget fits before the connector deadline."""
@@ -1502,7 +1672,7 @@ class FilesystemConnector(BaseConnector):
         file_matches = self.index.match_file(rel)
         if not (_analyzed_by_name(path.name) or file_matches):
             return
-        loaded = self._read_source(rel, path, scan.root_fd)
+        loaded = self._read_source(rel, path, scan.root_fd, scan.base)
         if loaded is None:
             return
         text, raw_notebook = loaded
@@ -1537,16 +1707,24 @@ class FilesystemConnector(BaseConnector):
         # 4. special files
         self._record_special_files(scan, file)
 
-    def _read_source(self, rel: str, path: Path, root_fd: int) -> tuple[str, str | None] | None:
+    def _read_source(
+        self, rel: str, path: Path, root_fd: int, base: Path | None = None
+    ) -> tuple[str, str | None] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document.
 
-        ``rel`` is read relative to the open scan root ``root_fd``. A notebook's
-        text is its code cells. None means nothing is analyzed; the recorded
-        diagnostics say why.
+        The file is read relative to the open scan root ``root_fd``: by its on-disk
+        name (``path`` below ``base``), while ``rel`` is the report-safe name used in
+        diagnostics. A notebook's text is its code cells. None means nothing is
+        analyzed; the recorded diagnostics say why.
         """
         read_errors: list[str] = []
-        text = read_text(PurePosixPath(rel), self._size_limit(path.name), read_errors, dir_fd=root_fd)
+        on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
+        text = read_text(on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd)
         for issue in read_errors:
+            if issue == BINARY_CONTENT_ERROR and not _analyzed_by_name(path.name):
+                # Read only because a file-name signature matched (an image under
+                # a rules directory): binary content there was never analyzed.
+                continue
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
                     f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
@@ -1711,7 +1889,12 @@ class FilesystemConnector(BaseConnector):
             self._record(file.proj, m, file.rel, None)
 
     def _detect_mcp(self, file: _SourceFile) -> None:
-        """Parse an MCP client/server configuration; only an enabled server is MCP evidence."""
+        """Parse an MCP client/server configuration.
+
+        A server that declares itself disabled is still a configured server: the flag
+        is client-specific (Cline and Roo honour it, Claude Code does not) and comes
+        from the repository, so honouring it here would let a repository hide a server.
+        """
         file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text) or (
             file.name.lower() == "server.json" and '"mcpServers"' in file.text
         )
@@ -1728,7 +1911,7 @@ class FilesystemConnector(BaseConnector):
                 # configuration, so the IaC, configuration and lexical passes
                 # read it as usual instead of skipping it without a diagnostic.
                 file.is_mcp = False
-        file.mcp_active = any(not server["disabled"] for server in file.mcp_servers)
+        file.mcp_active = bool(file.mcp_servers)
         if file.mcp_active:
             for m in file.file_matches:
                 if m.signature_id == "protocol.mcp":
@@ -1757,7 +1940,7 @@ class FilesystemConnector(BaseConnector):
 
     def _record_content(self, file: _SourceFile, m: Match, snippet: str | None) -> None:
         # A bare key or matching filename is not evidence of a
-        # configured server when all entries are empty/disabled.
+        # configured server when the entries are all empty.
         if m.signature_id != "protocol.mcp" or not file.is_mcp or file.mcp_active:
             self._record(file.proj, m, file.rel, snippet)
 
@@ -1794,9 +1977,9 @@ class FilesystemConnector(BaseConnector):
         rel, text = file.rel, file.text
         # Excerpts come from the redacted source, which is only
         # produced for files that actually contain a wildcard.
-        if _IAM_WILDCARD_RE.search(text, timeout=pattern_timeout(), concurrent=False):
+        if _IAM_WILDCARD_RE.search(text, timeout=_pattern_timeout(), concurrent=False):
             for number, line_text in enumerate(self._redacted_lines(file), start=1):
-                if _IAM_WILDCARD_RE.search(line_text, timeout=pattern_timeout(), concurrent=False):
+                if _IAM_WILDCARD_RE.search(line_text, timeout=_pattern_timeout(), concurrent=False):
                     wildcard_hits = scan.iam_wildcards.setdefault(file.proj_root, [])
                     if len(wildcard_hits) < 20:
                         wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
@@ -1903,6 +2086,16 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
             else:
                 self.ctx.error(message)
+            return []
+        except SourceNotParsed as exc:
+            # Newer syntax than the interpreter knows, or a notebook's shell
+            # and magic lines: no import binding, but the lexical evidence
+            # stays. A warning, not a gap in what the file was asked to show.
+            self.ctx.warn(
+                f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
+                "lexical evidence retained",
+                incomplete=False,
+            )
             return []
 
     def _record_code_matches(
@@ -2428,13 +2621,16 @@ class FilesystemConnector(BaseConnector):
             for m, rel, _ in observations
         ):
             yield self._project_finding(label, root, proj, observations)
+        catalogs = project_catalog_files(proj) if proj.coding_agent_files else frozenset()
         for sig_id, files in proj.coding_agent_files.items():
             # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
             # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.
             # Config files, instruction docs, dependencies and code such as a
-            # workflow step or a YOLO-mode flag still establish the agent.
+            # workflow step or a YOLO-mode flag still establish the agent. A
+            # catalog (an allowlist of vendor hosts) establishes none.
             if not any(
-                m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name)
+                (m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name))
+                and rel not in catalogs
                 for m, rel, _ in proj.coding_agent_matches.get(sig_id, [])
             ):
                 continue
@@ -2442,7 +2638,7 @@ class FilesystemConnector(BaseConnector):
 
     @staticmethod
     def _project_observations(proj: _Project) -> list[_Observation]:
-        """Return a project's technology evidence without policy or uncorroborated ambiguous matches."""
+        """Return a project's technology evidence without policy, catalog or ambiguous-only matches."""
         observations = [
             (m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}
         ]
@@ -2455,7 +2651,16 @@ class FilesystemConnector(BaseConnector):
             for m, _, _ in observations
             if m.signal.type in _LIBRARY_SIGNALS and not m.signal.ambiguous
         }
-        return [t for t in observations if not t[0].signal.ambiguous or t[0].signature_id in independent]
+        # A catalog (a blocklist, a vendor policy, a copy of the signature
+        # packs) names many products and uses none, so its mentions are held
+        # to the same rule (see shadowscan.connectors.code.catalogs).
+        catalogs = project_catalog_files(proj)
+        return [
+            t
+            for t in observations
+            if (not t[0].signal.ambiguous or t[0].signature_id in independent)
+            and (t[1] not in catalogs or t[0].signature_id in independent)
+        ]
 
     def _project_finding(
         self,
@@ -2476,6 +2681,9 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("env-names-only")
         self._attach_example_credentials(f, proj)
         self._attach_project_metadata(f, root, proj, evidence)
+        catalogs = project_catalog_files(proj)
+        if catalogs:
+            f.metadata["catalog_mentions"] = catalog_metadata(catalogs)
         if evidence.test_only:
             f.add_tag("test-code-only")
         finalize(f, self.index)
@@ -2512,7 +2720,7 @@ class FilesystemConnector(BaseConnector):
             f.metadata["potential_capabilities"] = sorted(potential)
         # Repeated observations of one technology are correlated evidence.
         # Generic idioms share a single supporting group; loops in several
-        # worker files must never accumulate into a confirmed AI agent.
+        # worker files must never accumulate into a strong AI agent.
         for item in f.evidence:
             category = item.attributes.get("category")
             item.attributes["confidence_group"] = (
@@ -2737,6 +2945,8 @@ class FilesystemConnector(BaseConnector):
         return f"{what} in {where}: {detail}"
 
     def _mcp_finding(self, label: str, root: Path, rel: str, servers: list[dict[str, Any]]) -> Finding:
+        # Every configured server is evidence, including one that declares itself
+        # disabled (see _detect_mcp); each record carries its own ``disabled`` flag.
         enabled = [server for server in servers if not server["disabled"]]
         f = self._base(label, root, rel, Kind.MCP_SERVER, f"MCP configuration: {rel}", "mcp-config")
         sig = self.index.get("protocol.mcp")
@@ -2752,7 +2962,7 @@ class FilesystemConnector(BaseConnector):
             )
         )
         remote_hosts: list[str] = []
-        for s in enabled:
+        for s in servers:
             urls = s.get("urls")
             if not isinstance(urls, list):
                 urls = [s["url"]] if s.get("url") else []
@@ -2785,9 +2995,14 @@ class FilesystemConnector(BaseConnector):
                 if any(k in cmd for k in keywords):
                     f.add_capability(capability)
                     break
-        f.metadata["servers"] = enabled
+        f.metadata["servers"] = servers
+        # Servers that are not declared disabled; the others are counted apart.
         f.metadata["server_count"] = len(enabled)
         f.metadata["disabled_server_count"] = len(servers) - len(enabled)
+        if len(enabled) < len(servers):
+            f.add_tag("declared-disabled")
+            if not enabled:
+                f.metadata["disabled"] = True
         f.metadata["remote_urls"] = remote_hosts
         f.metadata["client"] = _mcp_client_for(rel)
         f.owner = self._owner_for(root, rel) or f.owner
@@ -3036,7 +3251,7 @@ class FilesystemConnector(BaseConnector):
 
     def _parse_agent_definition(self, rel: str, text: str) -> dict[str, Any]:
         info: dict[str, Any] = {"file": rel, "name": PurePosixPath(rel).stem}
-        m = _FRONTMATTER.match(text, timeout=pattern_timeout(), concurrent=False)
+        m = _FRONTMATTER.match(text, timeout=_pattern_timeout(), concurrent=False)
         if m:
             try:
                 fm = strict_bounded_safe_load(m.group(1)) or {}
@@ -3143,6 +3358,61 @@ def _project_root(root: Path, rel: str, cache: dict[str, str] | None = None) -> 
         for ancestor in passed:
             cache.setdefault(ancestor, result)
     return result
+
+
+def _walk_directories(
+    top: Path, onerror: Callable[[OSError], None]
+) -> Iterator[tuple[str, list[str], list[str]]]:
+    """Walk ``top`` top-down like ``os.walk(top, followlinks=False, onerror=onerror)``, without recursion.
+
+    ``os.walk`` recurses before Python 3.12, so a tree about a thousand directories
+    deep ends in a RecursionError that discards every finding. This keeps its
+    contract: a directory is yielded before its children, a link to a directory is
+    listed in ``dirnames`` but never entered, the caller may prune or reorder
+    ``dirnames`` in place, and a directory that cannot be listed is passed to
+    ``onerror`` and skipped.
+    """
+    stack = [os.fspath(top)]
+    while stack:
+        current = stack.pop()
+        dirs: list[str] = []
+        files: list[str] = []
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        is_dir = entry.is_dir()
+                    except OSError:
+                        is_dir = False
+                    (dirs if is_dir else files).append(entry.name)
+        except OSError as error:
+            onerror(error)
+            continue
+        yield current, dirs, files
+        for name in reversed(dirs):
+            child = os.path.join(current, name)
+            if not os.path.islink(child):
+                stack.append(child)
+
+
+def _report_name(name: str) -> str:
+    """A report-safe form of a path or path component read from disk.
+
+    ``os.walk`` returns the bytes of a name that is not UTF-8 as lone surrogates,
+    which no reporter can encode: each becomes a ``\\xNN`` escape. Valid names are
+    returned unchanged; I/O keeps using the ``Path`` that holds the on-disk name.
+    """
+    if name.isascii():
+        return name
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        try:
+            raw = name.encode("utf-8", errors="surrogateescape")
+        except UnicodeEncodeError:
+            raw = name.encode("utf-8", errors="backslashreplace")
+        return raw.decode("utf-8", errors="backslashreplace")
+    return name
 
 
 def _nearest_root(rel_dir: str, roots: list[str]) -> str:

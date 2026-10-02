@@ -21,10 +21,13 @@ module that imported the name silently keeps the old object.
 
 from __future__ import annotations
 
+import datetime
+import decimal
 import hashlib
 import re
 import sys
 import types
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -38,6 +41,7 @@ from shadowscan.utils import (
     redaction_statements,
 )
 from shadowscan.utils.redaction_assignments import (
+    _redact_connection_passwords,
     _redact_fallback_defaults,
     _redact_mapping_values,
     _redact_opaque_assignments,
@@ -51,7 +55,14 @@ from shadowscan.utils.redaction_commands import (
     _redact_opaque_options,
     _redact_user_secrets,
 )
-from shadowscan.utils.redaction_formats import _AUTH, _JWT, _PEM, _SECRET_TOKEN, _URL, _sanitize_url
+from shadowscan.utils.redaction_formats import (
+    _PEM,
+    _URL,
+    _redact_authorization,
+    _redact_jwts,
+    _redact_secret_tokens,
+    _sanitize_url,
+)
 from shadowscan.utils.redaction_markup import (
     _redact_markup_credentials,
     _redact_markup_settings,
@@ -71,6 +82,7 @@ from shadowscan.utils.redaction_rules import (
     _redact_value,
     _sensitive_assignment_key,
     _sensitive_key,
+    _sensitive_name,
     _setting_level,
     _setting_value_withheld,
 )
@@ -87,6 +99,43 @@ _CREDENTIAL_DESCRIPTORS = frozenset(
 # Descriptors that are opaque secret material inside a container named for
 # credentials ('credentials.id'), but name an identity elsewhere ('api_key.id').
 _CREDENTIAL_GROUP_IDS = frozenset({"id", "objectid"})
+
+
+# Leaves that keep their type: JSON's scalars and the standard library's, whose text is
+# bounded by their type. Any other leaf (bytes, a set, an exception, a plugin's object)
+# reaches a report through ``json.dumps(default=str)`` or ``repr`` as it is, so it is
+# turned into text first (see ``_plain``).
+_SCALARS = (bool, int, float, datetime.date, datetime.time, datetime.timedelta, decimal.Decimal, uuid.UUID)
+_PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
+
+
+def _member_order(member: Any) -> tuple[str, str]:
+    try:
+        return type(member).__name__, repr(member)
+    except Exception:  # an arbitrary object's own repr may fail
+        return type(member).__name__, ""
+
+
+def _plain(item: Any) -> Any:
+    """``item`` as a value ``sanitize`` can read and copy.
+
+    Text, mappings, lists, tuples and the scalars above are returned as they are. Bytes
+    become text (undecodable bytes are replaced), a set a list in a stable order, and
+    any other object, an exception included, its ``str`` -- which ``sanitize`` then
+    reads like any other text.
+    """
+    if item is None or isinstance(item, _PLAIN_TYPES):
+        return item
+    if isinstance(item, (bytes, bytearray, memoryview)):
+        if len(item) > _MAX_SANITIZATION_CHARS:
+            raise SanitizationLimitError("text sanitization size limit exceeded")
+        return bytes(item).decode("utf-8", errors="replace")
+    if isinstance(item, (set, frozenset)):
+        return sorted(item, key=_member_order)
+    try:
+        return str(item)
+    except Exception:  # an arbitrary object's own __str__ may fail
+        return f"<{type(item).__qualname__}>"
 
 
 def credential_id(value: Any) -> str:
@@ -141,9 +190,14 @@ def _redact_extended(text: str) -> str:
     text = _redact_markup_settings(text)
     text = _redact_record_settings(text)
     text = _redact_user_secrets(text)
+    text = _redact_connection_passwords(text)
     text = _redact_opaque_assignments(text, extended=True)
     text = _redact_fallback_defaults(text, extended=True)
-    return _redact_opaque_options(text)
+    text = _redact_opaque_options(text)
+    # A bare marker that these passes leave after a sensitive key's colon
+    # ('api_key : <opaque>') is read by the established mapping pass as the start
+    # of a mapping value; normalize it here so that sanitizing again changes nothing.
+    return _redact_mapping_values(text) if REDACTED in text else text
 
 
 def _sanitize_established(text: str) -> str:
@@ -161,10 +215,9 @@ def _sanitize_established(text: str) -> str:
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
     text = _redact_opaque_assignments(text)
-    text = _JWT.sub(REDACTED, text)
-    text = _SECRET_TOKEN.sub(REDACTED, text)
-    # The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
-    text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED + "\n" * m.group().count("\n"), text)
+    text = _redact_jwts(text)
+    text = _redact_secret_tokens(text)
+    text = _redact_authorization(text)
     # Fallback defaults come after plain assignments, which already withhold
     # 'OPENAI_API_KEY=${OPENAI_API_KEY:-v}' whole. Plain assignment redaction
     # can introduce a bracketed marker after a mapping colon (including
@@ -199,7 +252,7 @@ def _record_has_secret_value(item: Mapping, *, environment: bool = False, extend
     if not isinstance(name, str):
         return False
     if not extended:
-        return _sensitive_assignment_key(name) if environment else _sensitive_key(name)
+        return _sensitive_assignment_key(name) if environment else _sensitive_name(name)
     level = _setting_level(name, record=not environment)
     return _setting_value_withheld(level, item.get("value") or item.get("Value")) if level else False
 
@@ -251,6 +304,7 @@ class _Sanitizer:
             raise SanitizationLimitError("credential replacement work limit exceeded")
 
     def remember(self, child: Any) -> None:
+        child = _plain(child)
         if isinstance(child, str) and child:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 self.known.add(child)
@@ -261,6 +315,7 @@ class _Sanitizer:
                     self.known.add(escaped)
 
     def discover(self, item: Any, depth: int = 0, *, environment: bool = False) -> None:
+        item = _plain(item)
         identity = (id(item), environment)
         if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.discovered):
             return
@@ -380,6 +435,7 @@ class _Sanitizer:
                 self.cleaning.discard(id(item))
 
     def clean_value(self, item: Any, depth: int) -> Any:
+        item = _plain(item)
         if isinstance(item, Mapping):
             return self.clean_mapping(item, depth)
         if isinstance(item, (list, tuple)):
@@ -469,6 +525,7 @@ class _NestedSanitizer(_Sanitizer):
         established or the added rules, or a member of such a container.
         ``credential_group`` marks a container named for credentials.
         """
+        item = _plain(item)
         identity = (id(item), environment, credential, credential_group)
         if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.containers):
             return
@@ -617,7 +674,16 @@ def _check_sanitization_structure(value: Any) -> None:
     memo: dict[int, tuple[int, int, int]] = {}
 
     def cost(item: Any) -> tuple[int, int, int]:
+        if isinstance(item, (set, frozenset)):
+            # Read as a list of its members (see ``_plain``).
+            nodes = 1 + len(item)
+            chars = sum(len(member) for member in item if isinstance(member, (str, bytes)))
+            if nodes > _MAX_SANITIZATION_NODES or chars > _MAX_SANITIZATION_CHARS:
+                raise SanitizationLimitError("sanitization expanded output limit exceeded")
+            return nodes, chars, 2
         if not isinstance(item, (Mapping, list, tuple)):
+            if isinstance(item, (bytes, bytearray, memoryview)):
+                return 1, len(item), 1
             return 1, len(item) if isinstance(item, str) else 0, 1
         identity = id(item)
         if identity in active:

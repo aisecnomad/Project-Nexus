@@ -413,3 +413,52 @@ def test_config_relative_globs_and_workdir_use_configuration_directory(tmp_path)
     loaded = ScanConfig.from_yaml(config)
     assert loaded.inventory == [str(directory / "inventory" / "*.yaml")]
     assert loaded.workdir == str(directory / "working")
+
+
+@pytest.mark.parametrize("layout", ["file", "directory"])
+def test_symlinked_config_names_the_link_rule_instead_of_yaml_structure(tmp_path, layout):
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+
+    # A Kubernetes ConfigMap mount links the file name through a ..data directory link.
+    real = tmp_path / "..2026_10_01" / "shadowscan.yaml"
+    real.parent.mkdir()
+    real.write_text("connectors: []\n")
+    if layout == "file":
+        path = tmp_path / "shadowscan.yaml"
+        path.symlink_to(real)
+    else:
+        (tmp_path / "..data").symlink_to(real.parent, target_is_directory=True)
+        path = tmp_path / "..data" / "shadowscan.yaml"
+    with pytest.raises(ConfigValidationError, match="symbolic link or inside one; links are not followed"):
+        ScanConfig.from_yaml(path)
+    result = CliRunner().invoke(main, ["scan", "-c", str(path)])
+    assert result.exit_code == 1
+    assert "links are not followed" in result.output and "YAML structure" not in result.output
+    assert ScanConfig.from_yaml(real).connectors == []
+
+
+def test_config_representations_never_show_connector_credentials(tmp_path):
+    secrets = {
+        "token": "opaque-token-value-1",
+        "client_secret": "opaque-client-secret-value-2",
+        "api_key": "opaque-api-key-value-3",
+        "password": "opaque-password-value-4",
+        "service_account_file": "/secure/keys/opaque-account-file-5.json",
+        "credentials_file": "/secure/keys/opaque-credentials-file-6.json",
+    }
+    spec = config_module.ConnectorSpec("acme.plugin", config={**secrets, "org": "acme-org"})
+    config = ScanConfig(connectors=[spec], plugins=["acme.plugin"])
+    path = tmp_path / "shadowscan.yaml"
+    path.write_text(
+        "connectors:\n  - name: code.github\n    org: acme-org\n    token: opaque-token-value-1\n"
+        "  - name: identity.google-workspace\n    service_account_file: /secure/keys/opaque-account-file-5.json\n"
+        "  - name: cloud.gcp\n    credentials_file: /secure/keys/opaque-credentials-file-6.json\n"
+    )
+    loaded = ScanConfig.from_yaml(path)
+    for shown in (repr(config), str(config), repr(spec), f"{config!s}", repr(loaded), str(loaded.connectors)):
+        assert not any(value in shown for value in secrets.values()), shown
+        assert "opaque" not in shown
+        assert "acme-org" in shown and "[REDACTED]" in shown
+    assert all(f"'{key}'" in repr(spec) for key in secrets)

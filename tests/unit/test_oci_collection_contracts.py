@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +15,7 @@ import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
+from shadowscan.connectors.cloud import oci as oci_module
 from shadowscan.connectors.cloud.oci import OciConnector, _model_dict
 from shadowscan.models import Kind, ScanStats
 from shadowscan.utils.redaction import REDACTED, sanitize
@@ -118,6 +120,59 @@ def test_oci_malformed_export_records_are_reported_and_neighbours_kept(index, re
     assert scanner.ctx.stats.incomplete
     assert any(warning in w for w in scanner.ctx.stats.warnings)
     assert scanner.ctx.stats.objects_examined == 2
+
+
+@pytest.mark.parametrize(
+    "statement,grant",
+    [
+        ("Allow group GenAIUsers to use generative-ai-family in tenancy", ("use", "generative-ai-family")),
+        ("allow group Admins to MANAGE all-resources in tenancy", ("manage", "all-resources")),
+        ("Allow any-user to read oda-family in compartment bots", ("read", "oda-family")),
+        ("Allow group X to\ninspect data-science-models in tenancy", ("inspect", "data-science-models")),
+        # The grant must start on the line of an ``allow``, after it.
+        ("Allow group X to read buckets\nmanage generative-ai-family", None),
+        ("manage generative-ai-family allow group X", None),
+        ("Allow group NetOps to manage virtual-network-family in tenancy", None),
+    ],
+)
+def test_oci_policy_grant_matching_keeps_statement_semantics(statement, grant):
+    assert oci_module._policy_grant(statement) == grant
+
+
+def test_oci_policy_matching_is_linear_on_hostile_statements(index, monkeypatch):
+    # One search for "allow .*? <grant>" retried its lazy scan from every
+    # "allow": 48 KB took seconds, 1 MiB about an hour, holding the GIL.
+    hostile = "allow " * 16000  # 96 KB
+    monkeypatch.setattr(oci_module, "MAX_POLICY_STATEMENT_CHARS", 10 * len(hostile))
+    started = time.perf_counter()
+    assert oci_module._policy_grant(hostile) is None
+    assert oci_module._policy_grant(hostile + "to use generative-ai-family") == (
+        "use",
+        "generative-ai-family",
+    )
+    assert time.perf_counter() - started < 2
+
+
+def test_oci_overlong_policy_statement_is_skipped_and_scan_incomplete(index):
+    scanner = connector(index)
+    good = {
+        "_kind": "policy",
+        "id": "ocid1.policy.oc1..good",
+        "name": "genai-users",
+        "_compartment": COMPARTMENT,
+        "statements": ["Allow group GenAIUsers to use generative-ai-family in tenancy"],
+    }
+    hostile = {**good, "id": "ocid1.policy.oc1..bad", "name": "hostile", "statements": ["allow " * 16000]}
+    started = time.perf_counter()
+    findings = list(scanner.analyze([hostile, good]))
+    assert time.perf_counter() - started < 2
+    assert [f.resource for f in findings] == ["ocid1.policy.oc1..good"]
+    assert scanner.ctx.stats.incomplete
+    assert any("policy statement longer than" in w for w in scanner.ctx.stats.warnings)
+    assert not any("allow allow" in w for w in scanner.ctx.stats.warnings)
+    # Live collection keeps such a policy so that analysis reports it.
+    assert oci_module._may_grant_ai("allow " * 16000) and oci_module._may_grant_ai(7)
+    assert not oci_module._may_grant_ai("Allow group NetOps to manage virtual-network-family in tenancy")
 
 
 # ------------------------------------------------------------------- live

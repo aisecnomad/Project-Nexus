@@ -70,6 +70,14 @@ def test_unclosed_python_quote_with_standalone_cr_preserves_later_code():
     assert not any(start <= source.index("import openai") < end for start, end in spans)
 
 
+def test_python_comment_ends_at_a_standalone_cr():
+    # CR-only source is valid Python: the comment stops at the CR and the import after it is code.
+    source = "# inert note\rimport openai\rx = 1  # trailing\r"
+    spans, incomplete = noncode_ranges(source, "python")
+    assert not incomplete
+    assert [source[start:end] for start, end in spans] == ["# inert note", "# trailing"]
+
+
 def test_resumed_python_lexing_keeps_offsets_after_unicode_separators():
     source = 'x = "inert\u2028junk\u2028junk2\nimport openai; API_KEY="opaque-credential"\n'
     spans, incomplete = noncode_ranges(source, "python")

@@ -110,10 +110,15 @@ class GenericSaaSConnector(BaseConnector):
         return False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        analysed = unnamed = 0
         for rec in records:
             self.ctx.examined()
             if self._has_ambiguous_aliases(rec):
                 self.ctx.warn("saas.generic: skipped a record with ambiguous field aliases")
+                continue
+            analysed += 1
+            if not self._get(rec, "name"):
+                unnamed += 1
                 continue
             try:
                 f = self._finding(rec)
@@ -130,6 +135,15 @@ class GenericSaaSConnector(BaseConnector):
                 continue
             if f:
                 yield f
+        # An export whose columns map to no app name must not look like an
+        # inventory without AI apps. Name the accepted columns, never values.
+        if unnamed and unnamed == analysed:
+            self.ctx.warn(
+                "saas.generic: no record has an app name; expected a column named one of "
+                f"{', '.join(str(alias) for alias in self.fields['name'])} (or map one with fields.name)"
+            )
+        elif unnamed:
+            self.ctx.warn(f"saas.generic: skipped {unnamed} of {analysed} records without an app name")
 
     def _finding(self, rec: dict[str, Any]) -> Finding | None:
         name = self._get(rec, "name")
