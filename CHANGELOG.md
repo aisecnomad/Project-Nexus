@@ -23,6 +23,8 @@
   deadline, or as soon as the scanner process exits (including the job-deadline
   watchdog, SIGTERM and SIGKILL), and a `KeyboardInterrupt` during collection
   kills running workers. Processes a plugin starts itself are not terminated.
+  Workers write record exports only into the private export directory the
+  scanner prepared.
   Crashes, malformed output and output above the 16 MiB transport
   limit also fail closed. The default remains `thread`; built-ins retain their
   existing execution path. Process mode provides lifecycle isolation, not a

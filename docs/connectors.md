@@ -74,7 +74,9 @@ interpreter lock indefinitely still needs external supervision.
 
 This is **lifecycle isolation, not a security sandbox**. A child retains the
 scanner's operating-system privileges and environment, including credentials.
-Sibling connector configurations are not passed to it. Descendant subprocesses
+Sibling connector configurations are not passed to it. Record exports go only
+to the private export directory the scanner prepared (expanded, symlink-free,
+owned, mode 0700); the worker never derives that path again. Descendant subprocesses
 and external side effects are not rolled back by worker termination; plugins
 that launch other programs need external process-group/container supervision.
 A cache or record export published before termination may remain on disk; the

@@ -84,6 +84,7 @@ def _worker(
     number: int,
     deadline: float,
     identity_key: bytes,
+    dump_directory: Path | None,
 ) -> None:
     """Import and execute the approved plugin only inside its spawned process."""
     _exit_with_scanner(deadline)
@@ -102,7 +103,9 @@ def _worker(
         runner = _ConnectorRunner(
             engine,
             IncrementalCache(config, index),
-            Path(config.dump_records) if config.dump_records else None,
+            # The parent's prepare_private_directory result: expanded, symlink
+            # free, owned and 0700. Never re-derive it from the raw option.
+            dump_directory,
             exports,
         )
         runner._run_identity_key = identity_key
@@ -223,7 +226,14 @@ def _run_plugin_process(
     assert state.deadline is not None
     deadline = state.deadline
     # Do not transmit sibling configurations or load inventory in this child.
-    config = replace(runner._config, connectors=[spec], inventory=[], plugin_execution="thread")
+    dump_directory = runner._dump_directory
+    config = replace(
+        runner._config,
+        connectors=[spec],
+        inventory=[],
+        plugin_execution="thread",
+        dump_records=str(dump_directory) if dump_directory else None,
+    )
     parent, child = socket.socketpair()
     try:
         process = multiprocessing.get_context("spawn").Process(
@@ -235,6 +245,7 @@ def _run_plugin_process(
                 number,
                 deadline,
                 runner._run_identity_key,
+                dump_directory,
             ),
             daemon=True,
             name="shadowscan-plugin",
