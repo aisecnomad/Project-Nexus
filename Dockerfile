@@ -50,16 +50,20 @@ COPY shadowscan /opt/shadowscan/shadowscan
 # copies; pip itself stays in this stage. Do not `pip install --upgrade pip`
 # from a floating index; Wolfi's pip installs both locks under
 # --require-hashes. requirements-build.lock pins the [build-system] backend
-# declared in pyproject.toml, and --no-build-isolation then builds the package
-# with that backend instead of letting pip download one from the live index on
-# a version pin alone.
+# declared in pyproject.toml. It goes into a separate build environment that
+# builds the wheel with --no-build-isolation, instead of letting pip download a
+# backend from the live index on a version pin alone, and is never copied: the
+# runtime environment holds only the runtime lock and the built wheel.
 RUN python3.12 -m venv --without-pip /opt/venv \
+    && python3.12 -m venv --without-pip /opt/build \
     && python3.12 -m pip --python /opt/venv/bin/python install --no-cache-dir --require-hashes \
         --only-binary=:all: -r requirements.lock \
-    && python3.12 -m pip --python /opt/venv/bin/python install --no-cache-dir --require-hashes \
+    && python3.12 -m pip --python /opt/build/bin/python install --no-cache-dir --require-hashes \
         --only-binary=:all: -r requirements-build.lock \
+    && python3.12 -m pip --python /opt/build/bin/python wheel --no-cache-dir --no-deps \
+        --no-build-isolation --wheel-dir /opt/wheel /opt/shadowscan \
     && python3.12 -m pip --python /opt/venv/bin/python install --no-cache-dir --no-deps \
-        --no-build-isolation /opt/shadowscan \
+        /opt/wheel/project_nexus_shadowscan-*.whl \
     && python3.12 -m pip --python /opt/venv/bin/python check
 
 FROM chainguard/wolfi-base:latest@sha256:824f77df45397eb954dfb963db255907ee8842e3446353ce93d688e5e862f51d

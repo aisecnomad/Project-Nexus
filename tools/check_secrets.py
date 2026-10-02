@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Pre-commit hook: check for common hardcoded secret patterns.
 
 Usage: python tools/check_secrets.py FILE [FILE ...]

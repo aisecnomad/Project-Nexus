@@ -38,9 +38,19 @@ updates:
           - "urllib3"
           - "PyJWT"
           - "regex"
+      # Every other reviewed pin (transitive constraints included) in one pull
+      # request, rather than one per package: each needs the same hand-refreshed
+      # hash locks before CI can pass.
+      other:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
-    directory: /
+    # "/" covers .github/workflows; "/examples" the consumer workflow, whose pins
+    # must equal the workflows' (tests/test_repository_consistency.py).
+    directories:
+      - /
+      - /examples
     schedule:
       interval: weekly
       day: monday

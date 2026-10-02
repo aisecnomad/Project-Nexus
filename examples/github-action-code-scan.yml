@@ -23,12 +23,14 @@ on:
     - cron: "0 6 * * 1"
 permissions:
   contents: read
-  security-events: write
-  actions: read   # upload-sarif reads the workflow run; required in private repositories
 jobs:
   shadowscan:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write  # upload-sarif
+      actions: read   # upload-sarif reads the workflow run; required in private repositories
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,6 +41,9 @@ jobs:
       - name: Install reviewed ShadowScan revision
         env:
           SHADOWSCAN_REVISION: ${{ vars.SHADOWSCAN_REVISION }}
+        # Never the scanned checkout: `python -m` puts the working directory first on sys.path,
+        # so a pull request adding pip/__main__.py or shadowscan/ would run in place of the tools.
+        working-directory: ${{ runner.temp }}
         shell: bash
         run: |
           set -euo pipefail

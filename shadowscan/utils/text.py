@@ -7,6 +7,7 @@ import io
 import math
 import re
 import tokenize
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Any
@@ -370,6 +371,28 @@ def truncate(s: str | None, n: int = 200) -> str | None:
     if s is None:
         return None
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def line_counter(text: str) -> Callable[[int], int]:
+    """Map offsets in ``text`` to 1-based line numbers, counting each newline once.
+
+    Successive regex matches arrive in order, so each call counts only the
+    newlines since the previous offset: numbering every match of a scanned file
+    stays linear in its length. Counting from the start for every match is
+    quadratic, and a file with thousands of imports would then exhaust the match
+    deadline it is charged against. An earlier offset recounts from the start.
+    """
+    position, line = 0, 1
+
+    def line_at(offset: int) -> int:
+        nonlocal position, line
+        if offset < position:
+            position, line = 0, 1
+        line += text.count("\n", position, offset)
+        position = offset
+        return line
+
+    return line_at
 
 
 _URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*+://", re.IGNORECASE)

@@ -9,11 +9,14 @@ on:
       - "requirements-docs.lock"
       - "README.md"
       - "CHANGELOG.md"
+      - "RELEASE_NOTES.md"
       - "SECURITY.md"
       - "CONTRIBUTING.md"
       - "GOVERNANCE.md"
       - "CODE_OF_CONDUCT.md"
       - "SUPPORT.md"
+      # The API reference pages are generated from these docstrings.
+      - "shadowscan/**"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
@@ -22,11 +25,14 @@ on:
       - "requirements-docs.lock"
       - "README.md"
       - "CHANGELOG.md"
+      - "RELEASE_NOTES.md"
       - "SECURITY.md"
       - "CONTRIBUTING.md"
       - "GOVERNANCE.md"
       - "CODE_OF_CONDUCT.md"
       - "SUPPORT.md"
+      # The API reference pages are generated from these docstrings.
+      - "shadowscan/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
@@ -38,9 +44,11 @@ on:
 permissions:
   contents: read
 
+# A newer push or pull-request update supersedes a site build. A manual run,
+# which may publish, gets a group of its own: no push can cancel a deployment.
 concurrency:
-  group: docs-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: docs-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   build:

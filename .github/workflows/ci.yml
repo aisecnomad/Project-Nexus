@@ -91,7 +91,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-          # Hash-locked installs are safe to cache; the key follows both pin files.
+          # Hash-locked installs are safe to cache; the key follows every pin file.
           cache: pip
           cache-dependency-path: |
             requirements.lock
@@ -236,9 +236,10 @@ jobs:
           docker image inspect "$image_id" > "$evidence_dir/image-inspect.json"
           # Repository XML is parsed by Python's bundled expat, which an image
           # scan does not inventory; 2.8.5 carries the October 2026 expat fixes.
+          # The build backend and pip stay in the build stage.
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --entrypoint python "$image_id" \
-            -c 'import os, pyexpat, subprocess; assert os.geteuid() == 65532; expat = tuple(int(part) for part in pyexpat.EXPAT_VERSION.removeprefix("expat_").split(".")); assert expat >= (2, 8, 5), pyexpat.EXPAT_VERSION; subprocess.run(["python", "-m", "shadowscan.signatures.validate"], check=True)'
+            -c 'import importlib.util, os, pyexpat, subprocess; assert os.geteuid() == 65532; expat = tuple(int(part) for part in pyexpat.EXPAT_VERSION.removeprefix("expat_").split(".")); assert expat >= (2, 8, 5), pyexpat.EXPAT_VERSION; build_tools = [name for name in ("pip", "setuptools", "wheel") if importlib.util.find_spec(name)]; assert not build_tools, build_tools; subprocess.run(["python", "-m", "shadowscan.signatures.validate"], check=True)'
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --memory 1g --pids-limit 128 \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m \

@@ -419,23 +419,26 @@ def _dockerfile_instructions(text: str) -> list[tuple[str, str]]:
     return instructions
 
 
-# Options that may accompany an unhashed `pip install --no-deps` of local source.
+# Options that may accompany an unhashed `pip install --no-deps` or `pip wheel --no-deps` of
+# local source. A --wheel-dir argument is a path, so it must be local too.
 _LOCAL_INSTALL_OPTIONS = {
     "--no-deps",
     "--no-cache-dir",
     "--no-build-isolation",
     "--no-index",
+    "--wheel-dir",
     "-q",
     "--quiet",
 }
 
 
 def _pip_install_is_hash_checked(command: str) -> bool:
-    """`pip install` verifies hashes, or installs only local source without dependencies."""
+    """`pip install` or `pip wheel` verifies hashes, or uses only local source without dependencies."""
     tokens = command.split()
     if "--require-hashes" in tokens:
         return True
-    arguments = tokens[tokens.index("install") + 1 :]
+    subcommand = next(index for index, token in enumerate(tokens) if token in {"install", "wheel"})
+    arguments = tokens[subcommand + 1 :]
     options = [token for token in arguments if token.startswith("-")]
     paths = [token for token in arguments if not token.startswith("-")]
     return (
@@ -469,10 +472,9 @@ def _dockerfile_violations(text: str) -> list[str]:
             problems.append(f"ADD fetches a remote source: {arguments}")
         elif keyword == "RUN":
             for command in re.split(r"&&|\|\||;|\|", arguments):
-                if re.search(r"\bpip3?(?:\s+--python\s+\S+)?\s+install\b", command) and not (
-                    _pip_install_is_hash_checked(command)
-                ):
-                    problems.append(f"pip install without --require-hashes: {command.strip()}")
+                pip = re.search(r"\bpip3?(?:\s+--python\s+\S+)?\s+(install|wheel)\b", command)
+                if pip and not _pip_install_is_hash_checked(command):
+                    problems.append(f"pip {pip.group(1)} without --require-hashes: {command.strip()}")
     if user is None or user in {"root", "0"}:
         problems.append(f"the final stage runs as {user or 'root (no USER)'}; end with a non-root USER")
     return problems
@@ -786,9 +788,18 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         ),
         pytest.param(
             "Dockerfile",
-            _replace("--no-build-isolation /opt/shadowscan", "--no-build-isolation /opt/shadowscan requests"),
+            _replace(
+                "/opt/wheel/project_nexus_shadowscan-*.whl",
+                "/opt/wheel/project_nexus_shadowscan-*.whl requests",
+            ),
             "pip install without --require-hashes",
             id="unhashed-no-deps-package",
+        ),
+        pytest.param(
+            "Dockerfile",
+            _replace("wheel --no-cache-dir --no-deps", "wheel --no-cache-dir"),
+            "pip wheel without --require-hashes",
+            id="unhashed-wheel-dependencies",
         ),
         pytest.param(
             ".dockerignore",
