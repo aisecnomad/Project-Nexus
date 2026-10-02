@@ -14,6 +14,7 @@ import multiprocessing.connection
 import os
 import re
 import socket
+import sys
 import threading
 import time
 from dataclasses import asdict, replace
@@ -119,15 +120,27 @@ def _worker(
                 "exports": exports.entries([(number, spec)], set()),
             }
         )
+        status = 0
     except BaseException:  # noqa: BLE001 - a plugin may raise SystemExit; never echo its exception
         payload = b'{"error":"plugin worker failed or its result exceeded the transport limit"}'
+        status = 1
     try:
-        channel.settimeout(_remaining(deadline))
-        channel.sendall(payload)
-    except (OSError, TimeoutError):
-        pass
+        try:
+            channel.settimeout(_remaining(deadline))
+            channel.sendall(payload)
+        finally:
+            channel.close()
+    except BaseException:  # noqa: BLE001 - an unsent result is a failed worker
+        status = 1
     finally:
-        channel.close()
+        # Exit now: a plugin's lingering non-daemon threads or atexit handlers
+        # must not delay, and so discard, a result that was already sent.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:  # noqa: BLE001 - output goes to /dev/null
+                pass
+        os._exit(status)
 
 
 def _receive(channel: socket.socket, deadline: float) -> bytes:
