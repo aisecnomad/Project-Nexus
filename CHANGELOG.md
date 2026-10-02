@@ -767,6 +767,24 @@ independent human review); each behavior change has a regression test.
   existing execution path. Process mode provides lifecycle isolation, not a
   security sandbox or rollback of external effects.
 
+### October 2 repository hygiene
+
+- Agentforce metadata (`GenAiPlanner`, `GenAiPlugin`, `GenAiFunction`,
+  `GenAiPromptTemplate`, `BotDefinition`, `BotVersion`) that declares XML
+  entities or attribute defaults is no longer parsed and makes the scan
+  incomplete (`structured configuration declares XML entities or attribute
+  defaults; not parsed`), because Expat before 2.4 does not bound entity
+  expansion. Other XML files with such declarations are skipped without a
+  syntax warning; files without them are parsed as before.
+- `docs/connectors/reference.md` is generated from the connector classes
+  (`python -m tools.connector_reference`, checked by the docs consistency
+  tests), so documented keys cannot drift from `config_keys`.
+- Development: mypy checks every tool package and the pre-commit hook runs it
+  with the project's settings; ruff reports broad exception handlers (`BLE`),
+  and each suppression must state its reason; CodeQL cancels superseded
+  pull-request analyses; `.gitignore` covers local credentials and tool state,
+  and licence texts are kept byte-exact.
+
 ### October 1 discovery review corrections
 
 - Code collection identifies declared submodules whose source has not been

@@ -244,10 +244,10 @@ def _load_plugin(name: str, path: str) -> type[BaseConnector]:
         cls = _load(path)
     except _NotAConnectorError:
         raise _refuse(name, "not-a-connector", f"{where} is not a BaseConnector subclass") from None
-    except Exception as exc:  # noqa: BLE001 - any import failure refuses the plugin with a bounded diagnostic
+    except Exception as exc:  # any import failure refuses the plugin with a bounded diagnostic
         detail = f"{type(exc).__name__}: {_display(str(exc))}"
         raise _refuse(name, "load-failed", f"{where} could not be imported ({detail})") from exc
-    except BaseException as exc:  # noqa: BLE001 - sys.exit() at import must not end the scan
+    except BaseException as exc:  # sys.exit() at import must not end the scan
         if isinstance(exc, KeyboardInterrupt):
             raise
         # A SystemExit argument is text meant for a terminal and may carry a
@@ -288,7 +288,7 @@ def available_connectors() -> dict[str, str]:
     errors: list[PluginDiagnostic] = []
     try:
         discovered = list(entry_points(group="shadowscan.connectors"))
-    except Exception as exc:  # pragma: no cover - defensive against odd metadata
+    except Exception as exc:  # noqa: BLE001 - odd entry-point metadata  # pragma: no cover
         errors.append(
             PluginDiagnostic(
                 None, "unreadable-metadata", f"plugin metadata listing failed: {type(exc).__name__}"
@@ -301,7 +301,7 @@ def available_connectors() -> dict[str, str]:
         try:
             name = ep.name
             value = ep.value
-        except Exception as exc:  # pragma: no cover - broken metadata object
+        except Exception as exc:  # noqa: BLE001 - broken metadata object  # pragma: no cover
             errors.append(
                 PluginDiagnostic(
                     None, "unreadable-metadata", f"plugin entry is unreadable: {type(exc).__name__}"

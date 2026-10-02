@@ -228,7 +228,7 @@ def _run_and_emit_with_deadline(
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
     try:
         _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows)
-    except Exception:  # noqa: BLE001 - any emission failure must still release an abandoned CLI worker
+    except Exception:  # any emission failure must still release an abandoned CLI worker
         if engine.abandoned_workers:
             _exit_abandoned_workers(
                 1,
@@ -818,7 +818,7 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
             continue
         try:
             cls = get_connector_class(n)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - a connector that cannot load is listed with its error
             rows.append({"name": n, "error": str(exc)})
             continue
         config = dict(cls.config_keys)

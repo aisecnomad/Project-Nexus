@@ -184,7 +184,7 @@ def test_engine_timeout_returns_while_record_replacement_is_blocked(tmp_path, mo
     def supervise():
         try:
             outcome["result"] = engine.run()
-        except BaseException as exc:  # propagate from the test's supervisor thread
+        except BaseException as exc:  # noqa: BLE001 - propagated from the test's supervisor thread
             outcome["error"] = exc
         finally:
             returned.set()

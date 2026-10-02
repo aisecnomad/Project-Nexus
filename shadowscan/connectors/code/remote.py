@@ -410,7 +410,7 @@ class RemoteRepositoryConnector(BaseConnector):
                 yield from remote_findings(repo)
         except HttpError as exc:
             self.ctx.warn(f"{self.name}: {full}: {exc}", incomplete=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - one repository's failure is an error, not the scan's end
             self.ctx.error(f"{self.name}: {full}: {type(exc).__name__}: {exc}")
             self.log.debug("%s failure (%s)", self.record_noun, type(exc).__name__)
         finally:

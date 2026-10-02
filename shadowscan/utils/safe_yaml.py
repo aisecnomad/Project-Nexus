@@ -204,11 +204,6 @@ def bounded_safe_load(stream: Any) -> Any:
     return yaml.load(stream, Loader=BoundedSafeLoader)
 
 
-def bounded_safe_load_all(stream: Any) -> list[Any]:
-    """Load a bounded stream of YAML documents with the same limits as ``bounded_safe_load``."""
-    return list(yaml.load_all(stream, Loader=BoundedSafeLoader))
-
-
 class YAMLIntegrityError(yaml.YAMLError):
     """An offline mapping has ambiguous or unsupported keys, without source text."""
 

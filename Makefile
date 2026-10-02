@@ -34,7 +34,7 @@ format-check: ## Check ruff formatting without changes
 
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
-	mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py tools/container
+	mypy shadowscan tools
 
 .PHONY: test
 test: ## Run test suite with coverage
@@ -151,6 +151,10 @@ docs: ## Build documentation site locally with the locked toolchain
 docs-serve: ## Serve documentation site with live reload
 	python -m pip install -q --require-hashes --only-binary=:all: -r requirements-docs.lock
 	mkdocs serve
+
+.PHONY: connector-reference
+connector-reference: ## Regenerate docs/connectors/reference.md from the connector classes
+	python -m tools.connector_reference
 
 .PHONY: policy
 policy: ## Check workflow and issue-form safety policies

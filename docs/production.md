@@ -274,6 +274,14 @@ checker prepare the requested review and CI enforcement. They cannot activate
 live settings through the connected GitHub App. Administrator activation,
 independent human approval and approved tenant acceptance remain outstanding.
 
+## October 2 repository hygiene
+
+Agentforce metadata that declares XML entities or attribute defaults is no
+longer parsed, so a previously complete scan can become incomplete (exit 3):
+remove the declarations, or exclude the file if it is not deployed metadata.
+Embedders that imported the non-strict `bounded_safe_load_all` must switch to
+`strict_bounded_safe_load_all`.
+
 ## October 1 discovery review migration
 
 Review finding kinds, capabilities and risk scores before replacing an existing

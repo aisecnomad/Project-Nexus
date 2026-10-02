@@ -370,7 +370,7 @@ class JwtConnector(BaseConnector, _NoDump):
                 allowed_algorithms=self.ctx.get("allowed_algorithms"),
                 document_loader=self._jwks_document,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - any verification failure is an unverified signature
             self.ctx.warn(f"identity.jwt: signature verification failed ({type(exc).__name__})")
             return False
 

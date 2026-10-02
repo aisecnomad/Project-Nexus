@@ -124,7 +124,8 @@ exact supported Python matrix and dependency pins.
 | Gate | Command | Requirement |
 |------|---------|-------------|
 | Lint | `ruff check shadowscan tests tools` | No errors |
-| Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py tools/container` | No errors |
+| Format | `ruff format --check shadowscan tests tools` | No changes |
+| Types | `mypy shadowscan tools` | No errors |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
@@ -136,8 +137,11 @@ exact supported Python matrix and dependency pins.
 CI measures coverage on one Linux job (Python 3.11) and runs the same full
 suite untraced on the others; `pyproject.toml` enables branch coverage.
 
-Ruff enforces a 110-column line length outside `tests/` and flags loop
-variables captured by closures (B023). Mypy requires annotated definitions
+Ruff enforces a 110-column line length outside `tests/`, flags loop
+variables captured by closures (B023), flags a broad `except` that does not
+re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100).
+Suppress an intentional broad `except` with `# noqa: BLE001 - <reason>`; a
+repository test requires the reason. Mypy requires annotated definitions
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
 `pyproject.toml` holds the complete rule sets.
 
@@ -148,7 +152,8 @@ python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 make secrets
 ruff check shadowscan tests tools
-mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py tools/container
+ruff format --check shadowscan tests tools
+mypy shadowscan tools
 pip-audit --progress-spinner off
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate
@@ -199,8 +204,9 @@ secrets.
 - Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a change
   affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
-- Use the PR template checklist; it covers the main gates, and `make check` is
-  the authoritative local run of everything CI enforces.
+- Use the PR template checklist; it covers the main gates. `make check` runs
+  every local gate; CI also builds the documentation, audits each lock file and
+  validates the wheel and container (see [quality gates](#quality-gates)).
 
 Repository policy is tested. When you touch `.github/`, a top-level document or
 a docs page, run `make policy`: `tests/test_repository_policy.py` checks action
@@ -220,8 +226,10 @@ contract. In brief:
 3. Register in `shadowscan/connectors/__init__.py`.
 4. Add offline test fixtures under `tests/fixtures/`.
 5. Achieve ≥ 75% coverage of statements and branches (the per-connector floor).
-6. Document in `docs/connectors.md` with configuration keys, required API
-   scopes, and offline export format.
+6. Describe each key in `config_keys` and run `make connector-reference`, which
+   regenerates [docs/connectors/reference.md](docs/connectors/reference.md); a
+   test fails when it is stale. Document required API scopes and the offline
+   export format in the connector guide under `docs/connectors/`.
 
 `BaseConnector.load_offline` already reads `input` exports. Declare an
 [engine hook](docs/architecture.md#engine-hooks) only when the engine must

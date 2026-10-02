@@ -123,7 +123,7 @@ _PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
 def _member_order(member: Any) -> tuple[str, str]:
     try:
         return type(member).__name__, repr(member)
-    except Exception:  # an arbitrary object's own repr may fail
+    except Exception:  # noqa: BLE001 - an arbitrary object's own repr may raise anything
         return type(member).__name__, ""
 
 
@@ -145,7 +145,7 @@ def _plain(item: Any) -> Any:
         return sorted(item, key=_member_order)
     try:
         return str(item)
-    except Exception:  # an arbitrary object's own __str__ may fail
+    except Exception:  # noqa: BLE001 - an arbitrary object's own __str__ may raise anything
         return f"<{type(item).__qualname__}>"
 
 

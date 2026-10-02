@@ -13,16 +13,22 @@ venv/
 .coverage
 .coverage.*
 coverage.xml
+coverage.json
 htmlcov/
 .tox/
-.idea/
-.vscode/
+.nox/
 *.sarif
 report.*
 shadowscan-report*
 exports/
 .env
+.env.*
+!.env.example
+*.pem
+*.key
 .DS_Store
+.idea/
+.vscode/
 
 .shadowscan-state/
 site/

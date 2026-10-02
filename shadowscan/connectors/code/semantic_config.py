@@ -463,6 +463,18 @@ def is_agent_config_path(rel: str) -> bool:
 _XML_AMPLIFICATION_LIMIT = expat_errors.codes.get(
     getattr(expat_errors, "XML_ERROR_AMPLIFICATION_LIMIT_BREACH", "")
 )
+_XML_ENTITY_DECLARATIONS = "structured configuration declares XML entities or attribute defaults; not parsed"
+# Root elements of the Salesforce Agentforce metadata recognized below. A root
+# start tag always appears literally in the document (an entity reference
+# cannot open the root element), so a document without one cannot match.
+_AGENTFORCE_ROOTS = (
+    "GenAiPlanner",
+    "GenAiPlugin",
+    "GenAiFunction",
+    "GenAiPromptTemplate",
+    "BotDefinition",
+    "BotVersion",
+)
 
 
 def structured_code_matches(
@@ -500,18 +512,22 @@ def structured_code_matches(
         elif extension == ".toml":
             documents = [tomllib.loads(text)]
         elif extension in {".xml", ".props", ".targets", ".csproj", ".fsproj", ".vbproj"}:
-            # ElementTree never resolves external entities. XML examples in
-            # descriptions/CDATA do not become active Salesforce metadata.
+            # ElementTree never resolves external entities, but internal
+            # entities and attribute defaults expand in memory, and Expat
+            # before 2.4 has no amplification limit. A document declaring
+            # either is never parsed. Agentforce metadata declares neither, so
+            # such a candidate is refused as unknown content (as parse_pom
+            # does); any other document (an Ant build file, DocBook, a test
+            # fixture) cannot match and is skipped.
+            upper = text.upper()
+            if "<!ENTITY" in upper or "<!ATTLIST" in upper:
+                if any(name in text for name in _AGENTFORCE_ROOTS):
+                    limits.append(_XML_ENTITY_DECLARATIONS)
+                return []
+            # XML examples in descriptions/CDATA do not become active Salesforce metadata.
             root = ET.fromstring(text)
             tag = root.tag.rsplit("}", 1)[-1]
-            if tag in {
-                "GenAiPlanner",
-                "GenAiPlugin",
-                "GenAiFunction",
-                "GenAiPromptTemplate",
-                "BotDefinition",
-                "BotVersion",
-            } and len(root):
+            if tag in _AGENTFORCE_ROOTS and len(root):
                 return _matches(index, "platform.salesforce-agentforce", "<" + tag + ">")
             return []
         else:

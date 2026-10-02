@@ -26,7 +26,6 @@ from shadowscan.utils.safe_yaml import (
     YAMLConstructionError,
     YAMLResourceLimitError,
     bounded_safe_load,
-    bounded_safe_load_all,
     strict_bounded_safe_load,
     strict_bounded_safe_load_all,
 )
@@ -49,7 +48,6 @@ INVALID_SCALARS = {
 }
 LOADERS = {
     "bounded": bounded_safe_load,
-    "bounded-all": bounded_safe_load_all,
     "strict": strict_bounded_safe_load,
     "strict-config-keys": functools.partial(strict_bounded_safe_load, require_string_keys=False),
     "strict-all": strict_bounded_safe_load_all,

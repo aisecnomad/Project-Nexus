@@ -90,7 +90,7 @@ def _patterns() -> list[tuple[str, Any]]:
     for info in pkgutil.walk_packages(shadowscan.__path__, "shadowscan."):
         try:
             module = importlib.import_module(info.name)
-        except Exception:  # an optional SDK that is not installed
+        except ImportError:  # an optional SDK that is not installed
             continue
         for name, value in list(vars(module).items()):
             if not name.startswith("__"):
@@ -164,7 +164,7 @@ def _timed(call: Any, text: str, repeat: int = 1) -> float:
         started = time.perf_counter()
         try:
             call(text)
-        except Exception:  # a pattern that rejects the input still did its work
+        except Exception:  # noqa: BLE001 - a pattern that rejects the input still did its work
             pass
         best = min(best, time.perf_counter() - started)
     return best

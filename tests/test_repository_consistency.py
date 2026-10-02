@@ -531,6 +531,10 @@ def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
     for package in ("types-PyYAML", "types-requests"):
         pin = f"{package}=={constraints[package]}"
         assert pin in config_text, f"pre-commit additional dependency is not pinned: {package}"
+    runtime = dict(re.findall(r"^([A-Za-z0-9_.-]+)==(\S+)", _read(ROOT / "requirements.lock"), re.MULTILINE))
+    assert f"click=={runtime['click']}" in config_text, (
+        "pre-commit mypy must type-check against the locked click version"
+    )
 
 
 def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
@@ -656,6 +660,18 @@ def test_pre_commit_hooks_select_files_with_types_or() -> None:
         for hook in repo.get("hooks", []):
             types = hook.get("types") or []
             assert len(types) <= 1, f"hook {hook['id']} lists {types} under `types`; use `types_or`"
+
+
+def test_blind_except_suppressions_give_a_reason() -> None:
+    """Every suppressed broad `except` (ruff BLE001) states why it is intentional."""
+    bare = [
+        f"{path.relative_to(ROOT)}:{number}"
+        for directory in ("shadowscan", "tools", "tests")
+        for path in sorted((ROOT / directory).rglob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if re.search(r"#\s*noqa:\s*BLE001(?!\s+-\s+\S)", line)
+    ]
+    assert not bare, f"write `# noqa: BLE001 - <reason>`: {bare}"
 
 
 def test_dev_extra_is_fully_pinned_for_ci() -> None:
@@ -936,3 +952,12 @@ def test_documented_fixture_connector_count_matches_the_demo_configuration() -> 
     for path, match in claims:
         claimed = (int(match.group(1)), int(match.group(2)))
         assert claimed == actual, f"{_relative(path)} claims {claimed}, the demo configures {actual}"
+
+
+def test_connector_configuration_reference_is_current() -> None:
+    """docs/connectors/reference.md is generated from every built-in connector's keys."""
+    from tools.connector_reference import REFERENCE, render
+
+    assert REFERENCE.read_text(encoding="utf-8") == render(), (
+        "docs/connectors/reference.md is stale; run `make connector-reference`"
+    )

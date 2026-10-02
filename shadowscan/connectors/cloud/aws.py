@@ -374,7 +374,7 @@ class AwsConnector(BaseConnector):
             account = session.client("sts", config=self._sdk_config()).get_caller_identity()["Account"]
             if not _is_account_id(account):
                 raise ValueError("invalid STS account identifier")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ConnectorError(f"cloud.aws: cannot authenticate ({type(exc).__name__})") from exc
         if self.account is not None and self.account != account:
             raise ConnectorError(
@@ -398,7 +398,7 @@ class AwsConnector(BaseConnector):
         try:
             try:
                 paginator = client.get_paginator(op)
-            except Exception as exc:  # noqa: BLE001 - some operations are not pageable
+            except Exception as exc:  # some operations are not pageable
                 if type(exc).__name__ != "OperationNotPageableError":
                     raise
                 # Only failure to create a paginator permits the manual path.
@@ -474,7 +474,7 @@ class AwsConnector(BaseConnector):
         """
         try:
             return fn(*args, **kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - every failure below is reported as incomplete coverage
             code = _error_code(exc)
             msg = str(exc)
             operation = getattr(fn, "__name__", None)

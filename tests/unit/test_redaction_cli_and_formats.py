@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 
 from shadowscan.models import Kind
-from shadowscan.utils.redaction import REDACTED, credential_id, sanitize, sanitize_text
+from shadowscan.utils.redaction import (
+    REDACTED,
+    SanitizationLimitError,
+    credential_id,
+    sanitize,
+    sanitize_text,
+)
 
 SECRET = "Zx9qOpaqueSecretValue7731"
 
@@ -492,8 +498,8 @@ def _sanitize_seconds(text: str) -> float:
     started = time.perf_counter()
     try:
         sanitize_text(text)
-    except Exception as exc:  # a fail-closed limit is acceptable; a stall is not
-        assert exc.__class__.__name__ == "SanitizationLimitError"
+    except SanitizationLimitError:  # a fail-closed limit is acceptable; a stall is not
+        pass
     return time.perf_counter() - started
 
 

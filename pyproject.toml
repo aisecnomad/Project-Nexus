@@ -71,7 +71,10 @@ target-version = "py311"
 exclude = ["tests/fixtures", "examples"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4"]
+# BLE: a broad `except` that does not re-raise is flagged; an intentional one
+# carries `# noqa: BLE001 - <reason>` (tests/test_repository_consistency.py
+# requires the reason). RUF100: a `noqa` that suppresses nothing is flagged.
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "BLE", "RUF100"]
 ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
