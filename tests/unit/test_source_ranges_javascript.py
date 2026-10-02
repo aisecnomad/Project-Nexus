@@ -239,6 +239,78 @@ def test_await_and_yield_that_do_not_precede_a_slash_stay_complete() -> None:
     assert _masked(source) == []
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "if (x) { y(); }\n/'/.test(z); require('openai');\n",
+        'if (x) { y(); }\n/"/.test(z);\n',
+        "if (x) { y(); }\n/`/.test(z);\n",
+        "if (x) { y(); }\n/[//]/.test(z); code();\n",
+        "if (x) { y(); }\n/a\\//.test(z); code();\n",
+        "function f() {}\n/'/.test(s);\n",
+        "if (x) { y(); } /* note */ /'/.test(s);\n",
+        "const f = () => { return { a: 1 } /'/ };\n",
+        "const s = `${ (() => { return 1 })() }`; if (x) { y(); } /'/.test(s);\n",
+    ],
+    ids=[
+        "single-quote",
+        "double-quote",
+        "backtick",
+        "class-with-slashes",
+        "escaped-slash",
+        "function",
+        "comment-between",
+        "nested",
+        "template",
+    ],
+)
+def test_regex_after_a_closing_brace_that_could_hide_code_is_ambiguous(source: str) -> None:
+    # After a block a slash starts a regular expression and after an object literal it divides. Telling
+    # them apart needs a parse; the walk reads a division, and then a quote, a backtick or a slash in
+    # the "regular expression" opens a string or a comment that hides what follows. The scan must not
+    # claim to be complete.
+    _, ambiguous = noncode_ranges(source, "javascript", ".js")
+    assert ambiguous
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "if (x) { y(); }\nz();\n",
+        "if (x) { y(); } // note\nz();\n",
+        "if (x) { y(); } /* note */ z();\n",
+        "const half = {a: 1}.a / 2;\n",
+        "const t = `${a}/${b}`;\n",
+        "function f() { return 1 }\nconst r = /re/.test(s);\n",
+        # A slash after a brace that cannot hide anything: no closing slash, or nothing in the text
+        # between the slashes that opens a string or a comment.
+        "const q = {a: 1} / 2;\n",
+        "const q = {a: 1} / 2 / 3;\n",
+        "function f() {}\n/re/.test(s);\n",
+        # JSX in a .js file is lexed as code: its self-closing slashes follow expression braces.
+        "const A = () => <Foo bar={x}/>;\n",
+        "const A = () => <Foo bar={x} />;\n",
+        "const A = () => <Foo bar={x}/><Bar baz={y}/>;\n",
+    ],
+)
+def test_braces_whose_following_slash_cannot_hide_code_stay_complete(source: str) -> None:
+    _masked(source)  # asserts the lexing is complete
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "export const A = () => <Foo bar={{ c: 1 }} baz={d}/>;\n",
+        "export const B = () => <span>{month}/{day}/{year}</span>;\n",
+        "export const C = () => <b>{price}/mo</b>;\n",
+        "export const D = () => <p><Foo a={b}/><Bar c={d}/>{e}/{f}</p>;\n",
+    ],
+)
+def test_jsx_expression_braces_followed_by_a_slash_stay_complete(source: str) -> None:
+    _, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
+    assert not ambiguous
+
+
 EVASION_PAYLOAD = (
     'const OpenAI = require("openai"); const c = new OpenAI({ apiKey: loadKey() }); '
     'c.chat.completions.create({ model: "gpt-4o", messages: [] }); 2 / 1;\n'
@@ -279,6 +351,17 @@ def test_division_cannot_mask_the_code_between_two_slashes(tmp_path: Path, prefi
     report = _code_report(tmp_path, prefix + EVASION_PAYLOAD)
     assert report["summary"]["complete"]
     assert _fingerprint(report) == _fingerprint(control)
+
+
+def test_regex_statement_after_a_block_is_an_incomplete_scan_not_a_clean_one(tmp_path: Path) -> None:
+    # The quote in the regular expression opened a "string" that hid the rest of the line, including the
+    # payload, and the scan reported no findings and a complete result.
+    (tmp_path / "agent.js").write_text("if (ready) { warm(); }\n/'/.test(name); " + EVASION_PAYLOAD)
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.stdout)
+    assert not report["summary"]["complete"]
+    assert report["stats"][0]["errors"] == ["code.filesystem: agent.js: incomplete source lexical analysis"]
 
 
 # --- Line terminators -----------------------------------------------------------------------------
@@ -334,6 +417,7 @@ def test_line_comment_does_not_hide_the_code_of_a_file_node_runs(tmp_path: Path,
 # --- Bounded work ---------------------------------------------------------------------------------
 # Every "<" that might open a JSX element looks ahead over a bounded window. 62,500 repeats of "<A>(" took
 # over a minute (and lost every result of the scan with the deadline) before the look-ahead was budgeted.
+# The regular expression a slash after "}" might start is another look-ahead that is not consumed.
 
 LIMIT, AMBIGUOUS, COMPLETE = "limit", "ambiguous", "complete"
 HOSTILE = {
@@ -343,6 +427,8 @@ HOSTILE = {
     "unclosed-expressions": ("<a>{" * 62_500, AMBIGUOUS),
     "unterminated-comments": ("/* " * 83_334, AMBIGUOUS),
     "generic-arrow-heads": ("<T extends X>(" * 17_857, AMBIGUOUS),
+    "brace-slash-open-class": ("}/[" * 83_333, LIMIT),
+    "brace-slash-quote": ("}/'" * 83_333, AMBIGUOUS),
     "backticks": ("`" * 250_000, COMPLETE),
     "braces": ("{" * 250_000, COMPLETE),
     "angle-brackets": ("<" * 250_000, COMPLETE),

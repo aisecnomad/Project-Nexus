@@ -55,6 +55,8 @@ _MAX_REGEX_LITERAL_LENGTH = 262_144
 # ECMAScript line terminators: LF, CR, LINE SEPARATOR and PARAGRAPH SEPARATOR (CRLF counts once).
 _JS_LINE_TERMINATORS = "\n\r\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}"
 _JS_LINE_BREAK = re.compile(f"[{_JS_LINE_TERMINATORS}]")
+# What can open a string, a template or a comment when the body of a regular expression is read as code.
+_REGEX_BODY_OPENER = re.compile("[\"'`/]")
 
 
 def _js_line_end(text: str, pos: int) -> int:
@@ -97,20 +99,23 @@ def _property_name_start(text: str, pos: int) -> int:
     return -1
 
 
-def _javascript_regex_end(text: str, start: int) -> int | None:
+def _javascript_regex_end(text: str, start: int, budget: _LookaheadBudget | None = None) -> int | None:
     """Find the end of a regex literal, honoring escapes and character classes.
 
     A missing delimiter or an oversized literal is ambiguous; the caller masks
-    the remainder of that line and reports incomplete lexical analysis.
+    the remainder of that line and reports incomplete lexical analysis. A caller
+    that tries a candidate it will not consume passes ``budget``, which is charged
+    the length scanned, so that thousands of candidates cannot each rescan a line.
     """
     pos = start + 1
     in_class = False
+    end = None
     limit = min(len(text), start + _MAX_REGEX_LITERAL_LENGTH)
     while pos < limit and text[pos] not in _JS_LINE_TERMINATORS:
         char = text[pos]
         if char == "\\":
             if pos + 1 >= limit or text[pos + 1] in _JS_LINE_TERMINATORS:
-                return None
+                break
             pos += 2
             continue
         if char == "[" and not in_class:
@@ -123,9 +128,12 @@ def _javascript_regex_end(text: str, start: int) -> int | None:
             # check can reject duplicates or unsupported flag names.
             while pos < len(text) and (text[pos].isalnum() or text[pos] in "_$"):
                 pos += 1
-            return pos
+            end = pos
+            break
         pos += 1
-    return None
+    if budget is not None:
+        budget.spend(pos - start)
+    return end
 
 
 _MAX_TYPE_ARGUMENTS_LENGTH = 1024
@@ -582,6 +590,25 @@ class _JavaScriptLexer:
         if mode == "jsx_expression":
             self.modes[-1] = (self.modes[-1][0], i + 1)
 
+    def _flag_slash_after_brace(self, i: int) -> None:
+        """Mark the walk incomplete when the slash after the ``}`` at ``i`` could hide code.
+
+        After a block a slash starts a regular expression and after an object literal it divides.
+        Without a parse the two cannot be told apart, and this walk reads a division. That is harmless
+        unless the text up to the next slash is a valid regular expression holding a quote, a backtick
+        or a slash: read as code, `}` newline `/'/.test(x); code()` opens a "string" that masks the
+        rest of the line, and `[//]` opens a comment. Anything else reads the same either way, or is
+        exposed rather than hidden, so JSX text such as `{a}/{b}` in a `.js` file is not flagged.
+        """
+        text = self.text
+        slash = _skip_trivia(text, i + 1)
+        if 0 <= slash < self.size and text[slash] == "/":
+            end = _javascript_regex_end(text, slash, self.budget)
+            if end is not None and _REGEX_BODY_OPENER.search(
+                text, slash + 1, text.rfind("/", slash + 1, end)
+            ):
+                self.incomplete = True
+
     def _template(self, i: int) -> int:
         """Mask template text from ``i`` through the next ``${`` or the closing backtick."""
         text, size = self.text, self.size
@@ -763,6 +790,7 @@ class _JavaScriptLexer:
                 else:
                     modes[-1] = (mode, depth - 1)
                     can_start_regex[-1] = False
+                    self._flag_slash_after_brace(i)
                 return i + 1
             elif (
                 jsx
@@ -819,6 +847,8 @@ class _JavaScriptLexer:
             elif text[i] in "]}":
                 can_start_regex[-1] = False
                 control_pending[-1] = False
+                if text[i] == "}":
+                    self._flag_slash_after_brace(i)
                 i += 1
             elif text[i] in "+-" and i + 1 < size and text[i + 1] == text[i]:
                 # ++/-- in an expression are postfix; in expression-start position
