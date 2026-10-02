@@ -41,26 +41,34 @@ has a regression test.
 - **Gateway attribution.** Access-log hosts are read only from the trailing
   unquoted `host=` token, so a user agent or path cannot hide or forge LLM
   traffic. Generic vendor hosts (`api.cloudflare.com`, `huggingface.co`) are
-  hints rather than LLM-usage evidence, PyPI `swarm` no longer maps to OpenAI
-  Swarm. Scope names are matched by bare name across providers, so names that
+  hints rather than LLM-usage evidence, except Cloudflare Workers AI inference
+  paths (`/accounts/<id>/ai/run/`, `/accounts/<id>/ai/v1/`), which stay LLM
+  traffic. PyPI `swarm` no longer maps to OpenAI Swarm. Scope names are matched by bare name across providers, so names that
   are routine on another provider no longer match `policy.privileged-scopes`:
   OIDC `offline_access`, Salesforce `full`, `web` and `refresh_token`, GitLab
   `api`, GitHub `workflow` and Slack `admin`. Findings that held only these
   scopes lose that risk factor and can drop a risk level.
   `identity.jwt` ignores empty or false agent claims, labels GitHub Actions,
-  GitLab CI and Kubernetes tokens `workload`, and marks tokens scanned without a
+  GitLab CI and Kubernetes service-account tokens `workload` (a Kubernetes
+  service-account subject or claims make a `workload` for any issuer, including
+  GKE), counts a GitHub Actions `actor` or `triggering_actor` as an agent hint
+  only when it names an AI agent or product, and marks tokens scanned without a
   JWKS (`signature_verified: false`). Gateway registry matches on
   operator-asserted or unverified caller names carry
   `metadata.registry_match_assurance` and the `registry-identity-unverified` tag.
-- **Engine and reports.** A connector raising `SystemExit` or another
-  `BaseException` is an incomplete connector, not a process exit. Incomplete CSV
+- **Engine and reports.** A connector or third-party plugin raising
+  `SystemExit` or another `BaseException` other than `KeyboardInterrupt`, while
+  it is imported, its class is verified, an engine hook runs or it collects, is
+  an incomplete connector (exit 3 with a report), not a process exit. Only the
+  exception type is reported. `KeyboardInterrupt` still ends the scan. Incomplete CSV
   reports start with a `SCAN-INCOMPLETE` status row. Saved CSV and HTML render
   terminal control characters visibly. `shadowscan diff --fail-on-new` exits 2 on
   new or higher-risk findings. Exit codes 1 and the usage-error 2 are documented.
 - **HTTP client.** Okta `X-Rate-Limit-Reset` is honored, retries stop at the
   connector deadline, a response body must also finish before that deadline
   (in addition to the read deadline below), and `identity.jwt` accepts an
-  explicit `ca_bundle` for private PKI (verification stays on).
+  explicit `ca_bundle` for private PKI (verification stays on; a relative path
+  resolves beside the configuration file).
 - Dialogflow CX and Discovery Engine use their regional endpoints. ServiceNow
   collection pages until an empty page. A weekly scheduled `pip-audit` workflow
   was added. Unquoted Cursor `globs: **/*.ts` no longer causes a false exit 3,

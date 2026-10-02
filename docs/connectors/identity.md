@@ -59,7 +59,11 @@ Decodes tokens (never stored) and classifies the holder as `human`, `service`,
 conventions (Entra `idtyp=app`, Okta `cid == sub`, Auth0 `gty`, Google service
 accounts, Cognito, Keycloak, SPIFFE) plus RFC 8693 `act` chains and
 agent-related claims. GitHub Actions, Kubernetes service-account and GitLab CI
-job tokens are `workload` identities. An agent-related claim counts only with a
+job tokens are `workload` identities; a `system:serviceaccount:` subject or
+Kubernetes service-account claims make a `workload` whatever the issuer (GKE
+included). A GitHub Actions `actor` or `triggering_actor` is an agent hint only
+when it names an AI agent or product (`copilot-swe-agent[bot]`), not for a
+person or an ordinary `[bot]` App login. An agent-related claim counts only with a
 meaningful value: `bot: false`, `purpose: ""` or `tools: []` do not make an
 agent. Scopes/roles are classified by the policy signatures;
 lifetime and algorithm hygiene are flagged. Optional `jwks_url` verification

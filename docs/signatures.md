@@ -192,6 +192,8 @@ risk scoring. `weight` controls confidence in the evidence, not finding severity
   general `api.cloudflare.com`, the `huggingface.co` site) is corroboration only (weight 0.15 or less) in
   its own signal; the AI-specific hosts (`gateway.ai.cloudflare.com`, `router.huggingface.co`) carry the
   high weight, so a DNS script or a dataset download stays a low-confidence hint, not LLM usage.
+  `gateway.logs` still treats Cloudflare Workers AI inference paths (`/accounts/<id>/ai/run/`,
+  `/accounts/<id>/ai/v1/`) as LLM traffic on any host.
 * Dependency names that are also unrelated packages (the PyPI name `swarm`, which is not OpenAI Swarm) are
   not claimed; identify the product by its import, a vendor-qualified name or an idiom. A generic name that
   is the product's real package (npm `weave`) gets a low weight.
