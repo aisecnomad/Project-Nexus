@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, ScanResult, Surface
+from shadowscan.models import Evidence, Finding, Kind, Likelihood, Risk, RiskFactor, ScanResult, Surface
 
 
 def _finding() -> Finding:
@@ -155,3 +155,118 @@ def test_report_serialization_hides_private_state_and_tolerates_newer_fields():
     assert restored.id == finding.id and restored.risk.factors[0].id == "x"
     with pytest.raises(TypeError):
         Finding.from_dict("not an object")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------- likelihood label
+def test_likelihood_is_a_confidence_bucket_named_strong():
+    assert [member.value for member in Likelihood] == ["strong", "likely", "possible", "weak"]
+    assert not hasattr(Likelihood, "CONFIRMED")
+    for confidence, expected in [
+        (1.0, Likelihood.STRONG),
+        (0.85, Likelihood.STRONG),
+        (0.849, Likelihood.LIKELY),
+        (0.6, Likelihood.LIKELY),
+        (0.599, Likelihood.POSSIBLE),
+        (0.3, Likelihood.POSSIBLE),
+        (0.299, Likelihood.WEAK),
+        (0.0, Likelihood.WEAK),
+    ]:
+        assert Likelihood.from_confidence(confidence) is expected
+    for member in Likelihood:
+        assert Likelihood(member.value) is member
+
+
+def test_the_legacy_confirmed_spelling_reads_as_strong_and_nothing_else_does():
+    assert Likelihood("confirmed") is Likelihood.STRONG
+    for value in ["CONFIRMED", "Confirmed", " confirmed", "certain", "", None, 1]:
+        with pytest.raises(ValueError):
+            Likelihood(value)
+
+
+def test_finding_import_reads_reports_written_before_the_rename():
+    finding = _finding()
+    finding.evidence[0].weight = 0.9
+    finding.recompute_confidence()
+    payload = finding.to_dict()
+    assert payload["likelihood"] == "strong" and finding.likelihood is Likelihood.STRONG
+    payload["likelihood"] = "confirmed"
+    restored = Finding.from_dict(payload)
+    assert restored.likelihood is Likelihood.STRONG and restored.to_dict()["likelihood"] == "strong"
+    assert restored.id == finding.id  # the label is not part of a finding's identity
+    # The label is derived from confidence; a stored label never overrides it.
+    payload["confidence"] = 0.2
+    assert Finding.from_dict(payload).likelihood is Likelihood.WEAK
+    payload["likelihood"] = "certain"
+    with pytest.raises(ValueError):
+        Finding.from_dict(payload)
+
+
+def test_json_report_uses_the_new_label_only():
+    finding = _finding()
+    finding.evidence[0].weight = 0.95
+    finding.recompute_confidence()
+    report = ScanResult(findings=[finding]).to_json()
+    assert '"likelihood": "strong"' in report and "confirmed" not in report
+
+
+# ------------------------------------------------------------ evidence weights
+BAD_WEIGHTS = [float("nan"), float("inf"), float("-inf"), -0.01, 1.01, 7.5, 10**400, True, False, None, "0.5"]
+BAD_WEIGHT_IDS = [
+    "nan",
+    "inf",
+    "-inf",
+    "below",
+    "above",
+    "far-above",
+    "huge-int",
+    "true",
+    "false",
+    "none",
+    "text",
+]
+
+
+@pytest.mark.parametrize("weight", BAD_WEIGHTS, ids=BAD_WEIGHT_IDS)
+def test_evidence_rejects_weights_that_noisy_or_would_turn_into_certainty(weight):
+    # NaN used to survive min/max clamping as 1.0, so one corrupt weight made a strong finding.
+    with pytest.raises(ValueError, match="evidence weight"):
+        Evidence(signal="s", description="d", weight=weight)
+    evidence = Evidence(signal="s", description="d", weight=0.5)
+    with pytest.raises(ValueError, match="evidence weight"):
+        evidence.weight = weight
+    assert evidence.weight == 0.5
+
+
+@pytest.mark.parametrize("weight", [0, 1, 0.0, 1.0, 0.3, 1e-9, 0.9999999999999999])
+def test_evidence_accepts_every_weight_in_the_closed_unit_interval(weight):
+    evidence = Evidence(signal="s", description="d", weight=weight)
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="c",
+        kind=Kind.AGENT,
+        title="t",
+        resource="r",
+        resource_type="repository",
+        evidence=[evidence],
+    )
+    finding.recompute_confidence()
+    assert 0.0 <= finding.confidence <= 1.0
+    assert finding.confidence == round(float(weight), 3)
+
+
+def test_evidence_weight_error_does_not_echo_the_value():
+    with pytest.raises(ValueError) as failure:
+        Evidence(signal="s", description="d", weight="opaque-secret-value")  # type: ignore[arg-type]
+    assert "opaque-secret-value" not in str(failure.value)
+
+
+@pytest.mark.parametrize("weight", [float("nan"), float("inf"), 1.5, -0.2])
+def test_corrupt_report_or_cache_weight_is_refused_on_import(weight):
+    # Report import and incremental-cache loading both go through Finding.from_dict.
+    payload = _finding().to_dict()
+    payload["evidence"][0]["weight"] = weight
+    with pytest.raises(ValueError, match="evidence weight"):
+        Finding.from_dict(payload)
+    # An unchanged payload still loads, so the check is not a blanket refusal.
+    payload["evidence"][0]["weight"] = 0.4
+    assert Finding.from_dict(payload).evidence[0].weight == 0.4

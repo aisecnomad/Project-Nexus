@@ -16,14 +16,20 @@ agent can do separately from whether anyone approved it. A
 
 from __future__ import annotations
 
+import difflib
+import logging
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Any
 
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
 from shadowscan.signatures import SignatureIndex
+from shadowscan.signatures.schema import CAPABILITIES
+
+log = logging.getLogger(__name__)
 
 KIND_BASE: dict[Kind, int] = {
     Kind.AGENT: 15,
@@ -135,6 +141,32 @@ GOVERNANCE_FACTORS = frozenset(GOVERNANCE_WEIGHTS)
 RISK_BASES = frozenset({"combined", "danger"})
 _WEIGHT_GROUPS = ("kinds", "capabilities", "tags", "providers", "governance")
 _KEY_RE = re.compile(r"[a-z0-9][a-z0-9._:-]{0,99}\Z")
+# Tags are open-ended (signature packs, plugins and identity types add their own), so an
+# unrecognised tag key cannot be rejected. It is reported once per process instead.
+_WARNED_TAGS: set[str] = set()
+
+
+def provider_ids(index: SignatureIndex) -> frozenset[str]:
+    """The signature ids a finding can list as ``model_providers``: the provider-category signatures."""
+    return frozenset(sid for sid, signature in index.signatures.items() if signature.category == "provider")
+
+
+def _did_you_mean(key: str, choices: Collection[str]) -> str:
+    close = difflib.get_close_matches(key, sorted(choices), n=1)
+    return f" (did you mean {close[0]}?)" if close else ""
+
+
+def _warn_unknown_tags(keys: Collection[str]) -> None:
+    for key in sorted(keys):
+        if key in TAG_WEIGHTS or key in _WARNED_TAGS:
+            continue
+        _WARNED_TAGS.add(key)
+        log.warning(
+            "risk_weights.tags.%s is not a built-in tag%s; it only applies when a connector, plugin or "
+            "signature emits that tag, so check the spelling",
+            key,
+            _did_you_mean(key, TAG_WEIGHTS),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,8 +181,20 @@ class RiskPolicy:
     basis: str = "combined"
 
     @classmethod
-    def from_options(cls, weights: Mapping[str, Any] | None = None, basis: str = "combined") -> RiskPolicy:
-        """Validate ``options.risk_weights`` / ``options.risk_basis``; raise ValueError on any problem."""
+    def from_options(
+        cls,
+        weights: Mapping[str, Any] | None = None,
+        basis: str = "combined",
+        *,
+        known_providers: Collection[str] | None = None,
+    ) -> RiskPolicy:
+        """Validate ``options.risk_weights`` / ``options.risk_basis``; raise ValueError on any problem.
+
+        Capability keys must be in the closed capability vocabulary. Provider ids are the signature
+        ids of the loaded index, so they are checked only when the caller passes them as
+        ``known_providers`` (see :func:`provider_ids`). Tags are open-ended: an unfamiliar tag key
+        is reported once in the log and still accepted.
+        """
         if not isinstance(basis, str) or basis not in RISK_BASES:
             raise ValueError("risk_basis must be combined or danger")
         weights = {} if weights is None else weights
@@ -185,6 +229,23 @@ class RiskPolicy:
             if key not in GOVERNANCE_WEIGHTS:
                 raise ValueError(f"risk_weights.governance.{key} must be one of shadow, registered, no-owner")
             governance[key] = value
+        capabilities = group("capabilities")
+        for key in sorted(capabilities):
+            if key not in CAPABILITIES:
+                raise ValueError(
+                    f"risk_weights.capabilities.{key} is not a capability{_did_you_mean(key, CAPABILITIES)}; "
+                    f"use one of {', '.join(sorted(CAPABILITIES))}"
+                )
+        providers = group("providers")
+        if known_providers is not None:
+            for key in sorted(providers):
+                if key not in known_providers:
+                    raise ValueError(
+                        f"risk_weights.providers.{key} is not a model provider "
+                        f"signature id{_did_you_mean(key, known_providers)}"
+                    )
+        tags = group("tags")
+        _warn_unknown_tags(tags)
 
         def described(
             defaults: Mapping[str, tuple[int, str]], overrides: dict[str, int], noun: str
@@ -196,9 +257,9 @@ class RiskPolicy:
 
         return cls(
             kinds=kinds,
-            capabilities=described(CAPABILITY_WEIGHTS, group("capabilities"), "capability"),
-            tags=described(TAG_WEIGHTS, group("tags"), "tag"),
-            providers=described(PROVIDER_WEIGHTS, group("providers"), "provider"),
+            capabilities=described(CAPABILITY_WEIGHTS, capabilities, "capability"),
+            tags=described(TAG_WEIGHTS, tags, "tag"),
+            providers=described(PROVIDER_WEIGHTS, providers, "provider"),
             governance=governance,
             basis=basis,
         )
@@ -251,6 +312,16 @@ def _mcp_server_urls(server: dict[str, Any]) -> list[str]:
     return urls
 
 
+def _confidence_scale(confidence: float) -> Fraction:
+    """``0.6 + 0.4 * confidence`` as an exact fraction of the confidence's decimal spelling.
+
+    The documented score is ``round(raw * scale)`` with halves rounded to even. Binary floats drift
+    off that: ``0.6 + 0.4 * 0.15`` is ``0.6599999999999999``, so a raw 75 became 49.4999... and
+    scored 49 (medium) instead of 49.5 -> 50 (high). A non-finite confidence clamps to 1 as before.
+    """
+    return Fraction(3, 5) + Fraction(2, 5) * Fraction(repr(float(max(0.0, min(1.0, confidence)))))
+
+
 def assess(
     finding: Finding,
     index: SignatureIndex | None = None,
@@ -276,17 +347,17 @@ def assess(
     total = sum(f.weight for f in factors)
     danger_total = sum(f.weight for f in factors if f.id not in GOVERNANCE_FACTORS)
     # scale by confidence that this is really an agent / agent enabler
-    scale = 0.6 + 0.4 * max(0.0, min(1.0, finding.confidence))
-    scaled = int(round(total * scale))
+    scale = _confidence_scale(finding.confidence)
+    scaled = round(total * scale)
     score = max(0, min(100, scaled))
-    if scale < 1.0:
+    if scale < 1:
         # Scaling lowers a positive subtotal. A subtotal at or below zero is
         # already floored at 0, so the adjustment must never read as added risk.
         adjustment = min(0, scaled - total)
         factors.append(
             RiskFactor(
                 "confidence-scaling",
-                f"score multiplied by {scale:.2f} because confidence is {finding.confidence:.2f}; "
+                f"score multiplied by {float(scale):.2f} because confidence is {finding.confidence:.2f}; "
                 "this only ever lowers risk",
                 adjustment,
             )
@@ -301,7 +372,7 @@ def assess(
                 "bounds", "score floored at 0" if explained < 0 else "score capped at 100", score - explained
             )
         )
-    danger_score = max(0, min(100, int(round(danger_total * scale))))
+    danger_score = max(0, min(100, round(danger_total * scale)))
     return Risk(score=score, level=RiskLevel.from_score(score), factors=factors, danger_score=danger_score)
 
 

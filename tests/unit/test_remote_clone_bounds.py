@@ -5,8 +5,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import signal
+import subprocess
 import sys
+import threading
 import time
+from pathlib import Path
 from threading import Event, Timer
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -384,3 +388,300 @@ def test_clone_cancellation_kills_child_process(tmp_path, index):
     assert pidfile.exists()
     with pytest.raises(ProcessLookupError):
         os.kill(int(pidfile.read_text()), 0)
+
+
+# ---------------------------------------------------- interrupted scans leave no clone behind
+SLEEPER = "import os,pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(60)"
+# A child scanner: one fake long-running clone, started the way the CLI does (a worker thread under a
+# guard on the main thread) or directly on the main thread, with its temporary checkout registered.
+CLONE_CHILD = """
+import os, pathlib, sys, threading
+from shadowscan.utils.git import register_checkout, run_bounded_clone, terminate_clones_on_signal
+
+class Ctx:
+    deadline = None
+    def check_deadline(self):
+        pass
+
+pidfile, checkout, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+sleeper = [sys.executable, "-c", sys.argv[4], pidfile]
+register_checkout(checkout)
+
+def clone():
+    run_bounded_clone(sleeper, dict(os.environ), Ctx(), 120)
+
+try:
+    if mode == "main":
+        clone()
+    else:
+        with terminate_clones_on_signal():
+            worker = threading.Thread(target=clone)
+            worker.start()
+            worker.join()
+except KeyboardInterrupt:
+    print("interrupted", flush=True)
+"""
+
+
+def _process_running(pid: int) -> bool:
+    """Whether *pid* is alive; a zombie that no init reaps counts as gone."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[-1].split()[0]
+    except (OSError, IndexError):
+        return True
+    return state not in {"Z", "X"}
+
+
+def _wait_for(predicate, seconds=15.0) -> bool:
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _checkout(tmp_path: Path) -> Path:
+    checkout = tmp_path / "shadowscan-gh-test"
+    (checkout / "repo").mkdir(parents=True)
+    (checkout / "repo" / "partial.pack").write_bytes(b"partial")
+    return checkout
+
+
+def _started_child(tmp_path: Path, mode: str) -> tuple[subprocess.Popen[str], Path, Path]:
+    pidfile = tmp_path / "pid"
+    checkout = _checkout(tmp_path)
+    child = subprocess.Popen(
+        [sys.executable, "-c", CLONE_CHILD, str(pidfile), str(checkout), mode, SLEEPER],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert _wait_for(lambda: pidfile.exists() and pidfile.read_text()), "the clone never started"
+    except BaseException:
+        child.kill()
+        child.communicate(timeout=5)
+        raise
+    return child, pidfile, checkout
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+def test_terminating_active_clones_stops_git_deletes_checkout_and_refuses_new_clones(tmp_path, index):
+    pidfile = tmp_path / "pid"
+    checkout = _checkout(tmp_path)
+    git_module.register_checkout(str(checkout))
+    ctx = ConnectorContext(index=index)
+    outcome: list[BaseException] = []
+
+    def clone() -> None:
+        try:
+            run_bounded_clone([sys.executable, "-c", SLEEPER, str(pidfile)], os.environ.copy(), ctx, 30)
+        except BaseException as exc:  # noqa: BLE001 - reported to the asserting thread
+            outcome.append(exc)
+
+    worker = threading.Thread(target=clone)
+    worker.start()
+    try:
+        assert _wait_for(lambda: pidfile.exists() and pidfile.read_text())
+        git_module.terminate_active_clones()
+        worker.join(10)
+        assert not worker.is_alive()
+        # An interrupted clone is not a failed clone: the caller must not retry it through the API.
+        assert isinstance(outcome[0], git_module.CloneInterruptedError)
+        assert _wait_for(lambda: not _process_running(int(pidfile.read_text())), 5)
+        assert not checkout.exists()
+        # Another worker of the interrupted scan must not start the clone the exit would then orphan.
+        refused: list[BaseException] = []
+
+        def another_clone() -> None:
+            try:
+                run_bounded_clone([sys.executable, "-c", "pass"], os.environ.copy(), ctx, 30)
+            except BaseException as exc:  # noqa: BLE001 - reported to the asserting thread
+                refused.append(exc)
+
+        late = threading.Thread(target=another_clone)
+        late.start()
+        late.join(10)
+        assert [type(exc) for exc in refused] == [git_module.CloneInterruptedError]
+        # A new guarded run on the main thread starts clean (a library caller that survived Ctrl-C).
+        assert run_bounded_clone([sys.executable, "-c", "pass"], os.environ.copy(), ctx, 30)
+    finally:
+        git_module._INTERRUPTED.clear()
+        git_module.unregister_checkout(str(checkout))
+        worker.join(10)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+def test_finished_clones_leave_the_registry_empty(index):
+    ctx = ConnectorContext(index=index)
+    assert run_bounded_clone([sys.executable, "-c", "pass"], os.environ.copy(), ctx, 30)
+    assert not run_bounded_clone([sys.executable, "-c", "raise SystemExit(1)"], os.environ.copy(), ctx, 30)
+    with pytest.raises(CloneTimeoutError):
+        run_bounded_clone([sys.executable, "-c", "import time;time.sleep(30)"], os.environ.copy(), ctx, 0.3)
+    assert not git_module._ACTIVE_CLONES
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+@pytest.mark.parametrize("mode", ["main", "worker"])
+def test_sigterm_stops_the_clone_and_deletes_its_checkout(tmp_path, mode):
+    """The orphaned-clone defect: SIGTERM killed the scanner and left git running with the token."""
+    child, pidfile, checkout = _started_child(tmp_path, mode)
+    clone_pid = int(pidfile.read_text())
+    try:
+        child.send_signal(signal.SIGTERM)
+        child.communicate(timeout=15)
+        # The scanner still dies of the signal it was sent, exactly as before.
+        assert child.returncode == -signal.SIGTERM
+        assert _wait_for(lambda: not _process_running(clone_pid), 5), "git survived the scanner"
+        assert not checkout.exists()
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=5)
+        if _process_running(clone_pid):
+            os.killpg(clone_pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+@pytest.mark.parametrize("mode", ["main", "worker"])
+def test_sigint_stops_the_clone_then_interrupts_as_before(tmp_path, mode):
+    child, pidfile, checkout = _started_child(tmp_path, mode)
+    clone_pid = int(pidfile.read_text())
+    try:
+        child.send_signal(signal.SIGINT)
+        out, _ = child.communicate(timeout=15)
+        assert child.returncode == 0
+        assert "interrupted" in out, "the previous handler (KeyboardInterrupt) must still run"
+        assert _wait_for(lambda: not _process_running(clone_pid), 5)
+        assert not checkout.exists()
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=5)
+        if _process_running(clone_pid):
+            os.killpg(clone_pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+def test_termination_guard_chains_to_and_restores_the_previous_handler():
+    seen: list[int] = []
+    original = signal.signal(signal.SIGTERM, lambda signum, frame: seen.append(signum))
+    recorder = signal.getsignal(signal.SIGTERM)
+    try:
+        with git_module.terminate_clones_on_signal():
+            assert signal.getsignal(signal.SIGTERM) is not recorder
+            signal.raise_signal(signal.SIGTERM)
+            assert seen == [signal.SIGTERM]
+            with git_module.terminate_clones_on_signal():  # nested: already covered, nothing stacked
+                assert isinstance(signal.getsignal(signal.SIGTERM), git_module._TerminationHandler)
+            assert isinstance(signal.getsignal(signal.SIGTERM), git_module._TerminationHandler)
+        assert signal.getsignal(signal.SIGTERM) is recorder
+    finally:
+        signal.signal(signal.SIGTERM, original)
+        git_module._INTERRUPTED.clear()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+def test_termination_guard_leaves_ignored_signals_and_other_threads_alone():
+    original = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    try:
+        with git_module.terminate_clones_on_signal():
+            assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+        before = signal.getsignal(signal.SIGTERM)
+        seen: list[object] = []
+
+        def inside_worker() -> None:
+            with git_module.terminate_clones_on_signal():
+                seen.append(signal.getsignal(signal.SIGTERM))
+
+        worker = threading.Thread(target=inside_worker)
+        worker.start()
+        worker.join(10)
+        assert seen == [before], "only the main thread can, or should, install handlers"
+    finally:
+        signal.signal(signal.SIGHUP, original)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+def test_cli_scan_stops_live_clones_on_sigterm(tmp_path):
+    """The command, not the connector, owns the main thread: it must install the termination guard."""
+    script = """
+import os, sys, threading
+import shadowscan.cli as cli
+from shadowscan.models import ScanResult
+from shadowscan.utils.git import register_checkout, run_bounded_clone
+
+class Ctx:
+    deadline = None
+    def check_deadline(self):
+        pass
+
+pidfile, checkout, sleeper = sys.argv[1:4]
+
+class FakeEngine:
+    abandoned_workers = []
+    def __init__(self, cfg, progress=None):
+        pass
+    def run(self, only=None):
+        register_checkout(checkout)
+        command = [sys.executable, '-c', sleeper, pidfile]
+        worker = threading.Thread(target=lambda: run_bounded_clone(command, dict(os.environ), Ctx(), 120))
+        worker.start()
+        worker.join()
+        return ScanResult()
+
+cli._plugin_registry_problems = lambda: ()
+cli.Engine = FakeEngine
+cli.main(['code', '.'])
+"""
+    pidfile = tmp_path / "pid"
+    checkout = _checkout(tmp_path)
+    child = subprocess.Popen(
+        [sys.executable, "-c", script, str(pidfile), str(checkout), SLEEPER],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    clone_pid = 0
+    try:
+        assert _wait_for(lambda: pidfile.exists() and pidfile.read_text()), "the clone never started"
+        clone_pid = int(pidfile.read_text())
+        child.send_signal(signal.SIGTERM)
+        child.communicate(timeout=15)
+        assert child.returncode == -signal.SIGTERM
+        assert _wait_for(lambda: not _process_running(clone_pid), 5), "git survived the scanner"
+        assert not checkout.exists()
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=5)
+        if clone_pid and _process_running(clone_pid):
+            os.killpg(clone_pid, signal.SIGKILL)
+
+
+def test_github_token_without_credential_name_permissions_gets_four_identical_warnings(index):
+    """Documented in connectors.md: Contents + Metadata alone are denied all four endpoints."""
+    ctx = ConnectorContext(index=index)
+    ctx.stats = ScanStats(connector="code.github", started_at="2026-01-01T00:00:00Z")
+    connector = GitHubConnector(ctx)
+    requested = []
+
+    def denied(path, **kwargs):
+        requested.append(path)
+        raise HttpError(403, f"https://api.github.com{path}")
+
+    connector.http.paginate_link = Mock(side_effect=denied)
+    assert list(connector._repo_level_findings({"full_name": "org/repo"})) == []
+    assert requested == [
+        "/repos/org/repo/actions/secrets",
+        "/repos/org/repo/actions/variables",
+        "/repos/org/repo/codespaces/secrets",
+        "/repos/org/repo/dependabot/secrets",
+    ]
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == ["code.github: repository metadata HTTP 403; coverage unknown"] * 4

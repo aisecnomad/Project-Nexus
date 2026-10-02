@@ -40,10 +40,12 @@ def _report(*resources: str) -> dict:
 @pytest.mark.parametrize("relation", ["new", "resolved", "unknown", "changed"])
 def test_comparison_sanitizes_all_published_records_without_mutating_inputs(relation):
     before, after = _report("repo"), _report("repo")
+    # Build the side without the finding as a real report, whose summary
+    # matches its findings; an emptied array with a stale summary is unknown.
     if relation == "new":
-        before["findings"] = []
+        before = _report()
     elif relation in {"resolved", "unknown"}:
-        after["findings"] = []
+        after = _report()
     if relation == "unknown":
         after["summary"]["complete"] = False
     if relation == "changed":
@@ -120,6 +122,17 @@ def test_matching_scope_hash_does_not_hide_lost_connector_statistics(other_conne
     assert not result["comparable"] and not result["resolved"]
     assert len(result["unknown"]) == 1
     assert "connector completion coverage differs" in result["reasons"]
+
+
+def test_scan_level_advisory_warnings_do_not_change_connector_coverage():
+    before, after = _report("missing"), _report()
+    advisory = copy.deepcopy(after["stats"][0])
+    advisory.update(
+        connector="engine.inventory", warnings=["inventory approvals.yaml is inside scanned path ."]
+    )
+    after["stats"].append(advisory)
+    result = compare_reports(before, after)
+    assert result["comparable"] and len(result["resolved"]) == 1
 
 
 def test_unchanged_imported_record_is_validated_before_comparison_succeeds():

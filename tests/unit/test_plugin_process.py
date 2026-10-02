@@ -84,6 +84,12 @@ def installed_probe(tmp_path, monkeypatch):
     return marker
 
 
+# A spawned plugin re-imports the scanner and unpickles the signature index
+# before it runs; on a loaded macOS runner that start-up alone can pass two
+# seconds. The deadline leaves it room and the wall-clock bound scales with it.
+TIMEOUT_SECONDS = 5
+
+
 def _engine(**options):
     return Engine(
         ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY], plugin_execution="process", **options),
@@ -118,10 +124,10 @@ def test_timeout_kills_sigterm_ignoring_plugin_and_preserves_worker_capacity(
 ):
     monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", mode)
     directory = tmp_path / "exports"
-    engine = _engine(connector_timeout_seconds=2, dump_records=str(directory), parallel=1)
+    engine = _engine(connector_timeout_seconds=TIMEOUT_SECONDS, dump_records=str(directory), parallel=1)
     start = time.monotonic()
     result = engine.run()
-    assert time.monotonic() - start < 6
+    assert time.monotonic() - start < TIMEOUT_SECONDS * 3
     assert not result.complete and result.findings == []
     assert "connector_timeout" in result.stats[0].errors[0]
     assert engine.abandoned_workers == []
@@ -155,7 +161,7 @@ def test_terminated_plugin_releases_capacity_for_queued_sibling(installed_probe)
             plugins=[ENTRY],
             plugin_execution="process",
             parallel=1,
-            connector_timeout_seconds=2,
+            connector_timeout_seconds=TIMEOUT_SECONDS,
         ),
         SignatureIndex([]),
     )

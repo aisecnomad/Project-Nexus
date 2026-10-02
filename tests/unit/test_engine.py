@@ -503,3 +503,100 @@ def test_env_connector_enabled_flag_parsed_explicitly(monkeypatch):
     )
     with pytest.raises(ValueError, match="connector enabled"):
         ScanConfig.from_dict({"connectors": [{"name": "cloud.aws", "enabled": "perhaps"}]})
+
+
+# An inventory that the scanned content controls can approve that content.
+NARROW_CARD = "agents:\n  - id: reviewer\n    owner: x\n    resources: ['github:org/unrelated']\n"
+WILDCARD_CARD = "agents: [{agent_id: approved-everything, owner: x, resources: ['*']}]\n"
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "agent.py").write_text("from crewai import Agent\nAgent(role='r')\n")
+    return repo
+
+
+def _inventory_warnings(result) -> list[str]:
+    stats = [s for s in result.stats if s.connector == "engine.inventory"]
+    assert all(not (s.incomplete or s.skipped or s.errors) for s in stats)
+    return [warning for s in stats for warning in s.warnings]
+
+
+@pytest.mark.parametrize("layout", ["directory", "file"])
+def test_inventory_inside_scanned_path_is_a_warning_not_a_failure(tmp_path, index, layout):
+    repo = _repo(tmp_path)
+    (repo / "inventory").mkdir()
+    (repo / "inventory" / "agents.yaml").write_text(NARROW_CARD)
+    inventory = str(repo / "inventory") if layout == "directory" else str(repo / "inventory" / "agents.yaml")
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"paths": [str(repo)]})], inventory=[inventory]
+    )
+    result = Engine(config, index).run()
+    assert _inventory_warnings(result) == [
+        f"inventory {inventory} is inside scanned path {repo}; scanned content could alter approvals"
+    ]
+    assert result.complete and result.findings
+
+
+def test_inventory_outside_scanned_paths_is_not_reported(tmp_path, index):
+    repo = _repo(tmp_path)
+    (tmp_path / "agents.yaml").write_text(NARROW_CARD)
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"path": str(repo)})],
+        inventory=[str(tmp_path / "agents.yaml")],
+    )
+    result = Engine(config, index).run()
+    assert _inventory_warnings(result) == []
+    assert [s.connector for s in result.stats] == ["code.filesystem"]
+
+
+def test_inventory_directory_that_loads_files_from_a_scanned_tree_names_them(tmp_path, index):
+    repo = _repo(tmp_path)
+    (repo / "approvals.yaml").write_text(NARROW_CARD)
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"path": str(repo)})], inventory=[str(tmp_path)]
+    )
+    warnings = _inventory_warnings(Engine(config, index).run())
+    assert warnings == [
+        f"inventory {repo / 'approvals.yaml'} is inside scanned path {repo}; scanned content could alter approvals"
+    ]
+
+
+def test_wildcard_inventory_resource_is_reported_once_per_entry(tmp_path, index):
+    repo = _repo(tmp_path)
+    card = tmp_path / "agents.yaml"
+    card.write_text(
+        "agents:\n"
+        "  - {agent_id: approved-everything, owner: x, resources: ['*']}\n"
+        "  - {agent_id: every-code-finding, owner: x, resources: ['**'], surfaces: [code]}\n"
+    )
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"path": str(repo)})], inventory=[str(card)]
+    )
+    result = Engine(config, index).run()
+    assert _inventory_warnings(result) == [
+        f"inventory entry approved-everything in {card} has resource pattern '*', which approves every finding",
+        f"inventory entry every-code-finding in {card} has resource pattern '*', which approves every finding"
+        " its scope constraints allow",
+    ]
+    assert result.findings and result.complete
+
+
+def test_cli_shows_in_tree_inventory_warning_without_changing_the_gate(tmp_path):
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+
+    repo = _repo(tmp_path)
+    (repo / "inventory").mkdir()
+    (repo / "inventory" / "agents.yaml").write_text(WILDCARD_CARD)
+    args = ["code", str(repo), "--inventory", str(repo / "inventory"), "--fail-on", "high"]
+    result = CliRunner().invoke(main, args)
+    assert result.exit_code == 0, result.output
+    output = " ".join(result.output.split())
+    assert "is inside scanned path" in output and "approves every finding" in output
+    report = json.loads(CliRunner().invoke(main, [*args, "-f", "json"]).stdout)
+    assert report["summary"]["complete"] is True
+    [stats] = [s for s in report["stats"] if s["connector"] == "engine.inventory"]
+    assert len(stats["warnings"]) == 2 and not stats["errors"]

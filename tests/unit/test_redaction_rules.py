@@ -154,3 +154,130 @@ def test_short_credential_still_withholds_diagnostic_by_default():
 def test_usage_metric_names_stay_visible():
     metrics = {"token_count": 12, "input_tokens": 3, "output_tokens": 9}
     assert sanitize(metrics) == metrics
+
+
+# Fields of a generic SaaS export that kept their raw values in the record dump: the
+# whole-name rule knew nine names and about forty compound suffixes, and none of these.
+WORD_NAMED_SECRETS = [
+    "webhook_secret",
+    "signing_secret",
+    "bot_token",
+    "slack_token",
+    "npm_token",
+    "client_key",
+    "consumer_secret",
+    "openai_key",
+    "authorization_token",
+    "verification_token",
+    "pwd",
+    "passphrase",
+    "db_pass",
+    "security_token",
+    "jwtSecret",
+    "access_secret",
+]
+
+
+@pytest.mark.parametrize("name", WORD_NAMED_SECRETS)
+def test_fields_whose_last_word_names_a_credential_are_withheld(name):
+    secret = "opaque-credential-value-0123456789"
+    clean = sanitize({"id": "app-1", name: secret, "note": f"copied {secret} here"})
+    assert clean == {"id": "app-1", name: REDACTED, "note": f"copied {REDACTED} here"}
+    # Case, separators and trailing digits do not matter.
+    variants = [name + "2", name + "_2"]
+    if "_" in name:
+        variants += [name.upper(), name.replace("_", "-"), name.replace("_", ".")]
+        variants.append("".join(word.title() for word in name.split("_")))
+    for variant in variants:
+        assert sanitize({variant: secret}) == {variant: REDACTED}, variant
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # Cursors, which connectors page with.
+        "next_token",
+        "nextToken",
+        "NextToken",
+        "page_token",
+        "nextPageToken",
+        "continuation_token",
+        "pagination_token",
+        "sync_token",
+        "delta_token",
+        "skipToken",
+        # Names that do not end in a credential word.
+        "token_type",
+        "token_count",
+        "max_tokens",
+        "prompt_tokens",
+        "secret_name",
+        "tokenizer",
+        "keyword",
+        "monkey",
+        "bypass",
+        # A key that names no credential.
+        "key",
+        "Key",
+        "sort_key",
+        "partition_key",
+        "cache_key",
+        "primary_key",
+        "public_key",
+        "object_key",
+        "kid",
+        # A tokenizer's special tokens, a cancellation token and switches.
+        "eos_token",
+        "pad_token",
+        "CancellationToken",
+        "requires_auth",
+        "has_secret",
+        "use_token",
+        # A key named only 'pass' is a test result.
+        "pass",
+        # A name whose last word only names a credential keeps ordinary values.
+        "OpenAIKey",
+    ],
+)
+def test_fields_that_connectors_need_stay_visible(name):
+    record = {name: "ordinary-value", "n": 3}
+    assert sanitize(record) == record
+
+
+def test_aws_tags_and_object_keys_stay_visible():
+    tags = [{"Key": "Environment", "Value": "prod"}, {"Key": "Owner", "Value": "platform"}]
+    listing = {"Contents": [{"Key": "photos/2024/img.jpg", "Size": 12}], "NextToken": "page-2", "Tags": tags}
+    assert sanitize(listing) == listing
+    record = {"name": "OpenAIKey", "value": "photos/2024/img.jpg"}
+    assert sanitize(record) == record
+
+
+def test_existing_suffix_rules_are_kept():
+    for name in (
+        "access_key_id",
+        "accessKeyId",
+        "SecretAccessKey",
+        "client_secret",
+        "Authorization",
+        "apiKey",
+    ):
+        assert sanitize({name: "AKIAIOSFODNN7EXAMPLE"}) == {name: REDACTED}, name
+
+
+def test_the_words_of_a_setting_name_are_still_read_as_a_setting():
+    # The fields of a record are read by their words; the name of a setting is read as
+    # before, so an ordinary value under a name such as 'cache_key' stays.
+    for record in ({"name": "cache_key", "value": "users"}, {"name": "OpenAIKey", "value": "users"}):
+        assert sanitize(record) == record
+
+
+def test_credential_words_are_read_in_command_line_options_and_headers():
+    secret = "opaque-credential-value-0123456789"
+    assert sanitize({"args": ["--bot-token", secret, "--next-token", "page-2"]}) == {
+        "args": ["--bot-token", REDACTED, "--next-token", "page-2"]
+    }
+
+
+def test_the_word_rule_leaves_ordinary_keys_alone():
+    keys = [f"field_{index}" for index in range(2000)] + [f"api_field_{index}_name" for index in range(2000)]
+    assert sanitize(dict.fromkeys(keys, "v")) == dict.fromkeys(keys, "v")

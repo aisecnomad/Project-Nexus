@@ -33,7 +33,7 @@ score is auditable.
 **Positive:**
 
 - Low-confidence findings (a dependency import) are visually distinct from
-  confirmed findings (a running Bedrock Agent).
+  strong findings (a running Bedrock Agent).
 - Risk scaling reduces contributions from weak evidence. An operator still
   needs to validate false-positive behavior before choosing a CI threshold.
 - Every score is explainable: the `risk.factors` and `evidence` arrays in

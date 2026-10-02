@@ -61,21 +61,18 @@ This is the built worker image digest, distinct from the approved base digest:
 ## Incremental scanning
 
 Use `--incremental` with a private state directory outside the scanned checkout.
-If you cache state between trusted main-branch runs, scope the cache to the
-reviewed scanner revision and restore that exact path:
+A cached result is reused only when every input file keeps its identity as
+well as its content: device, inode, mode, size, and modification and change
+times are part of the input fingerprint. A fresh checkout recreates every
+file, so state restored into a new CI job (for example with `actions/cache`)
+is never reused. Restoring it only costs time. Incremental scanning pays off
+where the same working tree persists between scans, such as a workstation or
+a self-hosted runner that keeps its workspace. There, too, keep the state
+directory private (mode 0700) and outside every scanned path:
 
-```yaml
-- uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
-  if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-  with:
-    path: ${{ runner.temp }}/shadowscan-cache
-    key: shadowscan-${{ runner.os }}-${{ vars.SHADOWSCAN_REVISION }}-${{ hashFiles('shadowscan.yaml', '**/*.py', '**/*.js', '**/*.ts') }}
-    restore-keys: shadowscan-${{ runner.os }}-${{ vars.SHADOWSCAN_REVISION }}-
-
-- run: |
-    install -d -m 700 "$RUNNER_TEMP/shadowscan-cache"
-    shadowscan scan -c shadowscan.yaml --incremental \
-      --state-dir "$RUNNER_TEMP/shadowscan-cache" --fail-on high
+```sh
+install -d -m 700 "$HOME/.local/state/shadowscan"
+shadowscan scan -c shadowscan.yaml --incremental --fail-on high
 ```
 
 The repository's own `audit.yml` workflow also runs `pip-audit` against every hash lock weekly and on demand, independent of commits.
