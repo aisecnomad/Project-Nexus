@@ -12181,6 +12181,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.openai|model": 1,
@@ -12415,6 +12416,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.anthropic|model": 1,

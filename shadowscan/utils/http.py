@@ -437,7 +437,6 @@ class HttpClient:
         self.read_deadline = read_deadline
         self.max_retries = max_retries
         self.max_response_bytes = _positive_byte_limit(max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES)
-        self.requests_made = 0
         self.on_warning = on_warning
 
     def _url(self, path: str) -> str:
@@ -484,7 +483,6 @@ class HttpClient:
             if replaced:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
-            self.requests_made += 1
             try:
                 resp = self.session.request(method, url, **kwargs)
             except InvalidHeader:

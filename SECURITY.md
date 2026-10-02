@@ -177,7 +177,22 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
 * Redaction cannot withhold a credential that nothing names or shapes as one,
   so treat reports as confidential. These forms can remain: an unprefixed
   literal passed to an ordinary function or nested in another call inside a
-  credential constructor (`AzureKeyCredential(str("..."))`); a literal in a
+  credential constructor (`AzureKeyCredential(str("..."))`). A few LLM SDK
+  calls take a key positionally under a name that names no credential; the
+  literal at the key's position in these is withheld: Semantic Kernel's .NET
+  Azure OpenAI and OpenAI connectors
+  (`AddAzureOpenAIChatCompletion("deployment", endpoint, "...")`,
+  `AddOpenAIChatCompletion("model", "...")`, including the overloads that
+  take an endpoint `Uri` before the key, and their chat client, embedding,
+  text-to-image and audio siblings and the matching services), go-openai's
+  `openai.DefaultConfig("...")`, `openai.NewClient("...")` and
+  `openai.DefaultAzureConfig("...", url)`, `new OpenAiService("...")`
+  (com.theokanning.openai) and `new GoogleGenerativeAI("...")`. Where a
+  variable stands at the key's position, a later literal such as an
+  organization ID may be withheld instead. Any other SDK call is an ordinary
+  function, as are a key at a position no listed overload uses and a listed
+  call through an aliased import (`gogpt.DefaultConfig("...")`).
+  These forms can also remain: a literal in a
   credential call written in a form the call rules do not read: after a space
   or comment before the parenthesis (`AzureKeyCredential ("...")`, since
   prose writes a space there), inside redundant parentheses

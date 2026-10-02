@@ -20,6 +20,8 @@ from typing import Any
 import pytest
 import yaml
 
+from tools.coverage_gate import MIN_CONNECTOR_COVERAGE
+
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
 
@@ -501,21 +503,6 @@ def test_policy_exceptions_still_name_real_lines() -> None:
         )
 
 
-def test_ci_enforces_the_documented_coverage_floors() -> None:
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["tool"]["coverage"]["report"]["fail_under"] >= COVERAGE_FLOOR
-    jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
-    for name in ("test", "test-macos"):
-        scripts = [step.get("run", "") for step in jobs[name]["steps"]]
-        # Either spelling runs the same suite; the macOS job uses the console
-        # entry point on purpose, to prove it imports the checkout-only tools.
-        assert any(
-            re.search(r"(?:^|\s)(?:python -m )?pytest\b", script) and "--cov-fail-under=80" in script
-            for script in scripts
-        ), name
-        assert any("python -m tools.coverage_gate" in script for script in scripts), name
-
-
 def test_local_make_targets_enforce_the_same_coverage_floors_as_ci() -> None:
     """`make check` is documented as the local copy of CI, so its floors cannot be lower."""
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
@@ -812,6 +799,100 @@ def test_ci_gate_executes_fail_closed(
         },
     )
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
+
+
+def test_one_linux_leg_enforces_both_coverage_floors_and_every_leg_runs_the_suite() -> None:
+    jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
+    matrix = jobs["test"]["strategy"]["matrix"]
+    # Exactly one include entry, extending an existing leg rather than adding one.
+    (leg,) = matrix["include"]
+    assert leg == {"python": leg["python"], "coverage": True} and leg["python"] in matrix["python"]
+    steps = jobs["test"]["steps"]
+    pytest_steps = [
+        step for step in steps if re.search(r"(?:^|\s)(?:python -m )?pytest\b", step.get("run", ""))
+    ]
+    traced = [step for step in pytest_steps if "--cov=shadowscan" in step["run"]]
+    assert [step.get("if") for step in traced] == ["${{ matrix.coverage }}"]
+    assert "--cov-fail-under=80" in traced[0]["run"]
+    gate = [step for step in steps if "python -m tools.coverage_gate" in step.get("run", "")]
+    assert [step.get("if") for step in gate] == ["${{ matrix.coverage }}"]
+    assert steps.index(gate[0]) > steps.index(traced[0])
+    # Every other leg, and macOS, still runs the whole suite (no selection flags).
+    untraced = [step for step in pytest_steps if step not in traced]
+    assert [(step.get("if"), step["run"].strip()) for step in untraced] == [
+        ("${{ !matrix.coverage }}", "python -m pytest -q")
+    ]
+    # macOS runs the whole suite through the console entry point, which must
+    # import the checkout-only tools packages without a caller-supplied PYTHONPATH.
+    macos = [
+        step for step in jobs["test-macos"]["steps"] if re.search(r"(?:^|\s)pytest\b", step.get("run", ""))
+    ]
+    assert [(step.get("if"), step["run"].strip()) for step in macos][-1] == (None, "pytest -q")
+
+
+def test_coverage_floors_count_branches_and_are_not_lowered() -> None:
+    coverage = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["coverage"]
+    assert coverage["run"]["branch"] is True
+    assert coverage["report"]["fail_under"] >= 80
+    assert MIN_CONNECTOR_COVERAGE >= 75
+
+
+def _secret_check_step() -> str:
+    """The committed Linux CI step that scans every tracked file with tools/check_secrets.py."""
+    steps = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["test"]["steps"]
+    (step,) = [step for step in steps if "tools/check_secrets.py" in step.get("run", "")]
+    assert "if" not in step, "the secret check runs on every Linux leg"
+    assert "git ls-files -z | xargs -0 python tools/check_secrets.py" in step["run"]
+    return str(step["run"])
+
+
+def test_ci_secret_check_scans_tracked_files_only(tmp_path: Path) -> None:
+    script = _secret_check_step()
+    repo = tmp_path / "repo"
+    (repo / "tools").mkdir(parents=True)
+    shutil.copy(ROOT / "tools" / "check_secrets.py", repo / "tools")
+    token = "ghp_" + "A1b2C3d4" * 4 + "E5f6"  # shaped like a GitHub token; not a credential
+    planted = {
+        "app.py": "print('ok')\n",
+        "tests/test_fixture.py": f"TOKEN = {token!r}\n",  # excluded by the script itself
+        "shadowscan/signatures/data/pack.yaml": f"example: {token}\n",  # excluded by the script itself
+    }
+    for name, text in planted.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text, encoding="utf-8")
+    (repo / "untracked.py").write_text(f"TOKEN = {token!r}\n", encoding="utf-8")
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            args, cwd=repo, env=env, capture_output=True, text=True, timeout=120, check=False
+        )
+
+    assert run("git", "init", "-q").returncode == 0
+    assert run("git", "add", "tools", *planted).returncode == 0
+    clean = run("bash", "-e", "-c", script)
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    (repo / "notes.md").write_text(token, encoding="utf-8")
+    assert run("git", "add", "notes.md").returncode == 0
+    leaked = run("bash", "-e", "-c", script)
+    assert leaked.returncode != 0 and "notes.md:1: possible hardcoded GitHub token" in leaked.stdout, (
+        leaked.stdout + leaked.stderr
+    )
+    assert "untracked.py" not in leaked.stdout
+
+
+def test_ci_secret_check_passes_on_this_checkout() -> None:
+    if not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    result = subprocess.run(
+        ["bash", "-e", "-c", _secret_check_step()],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(

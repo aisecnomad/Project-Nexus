@@ -31,6 +31,11 @@ Precision safeguards
   and the finding is built from the name references alone: evidence weights
   are halved, the finding is tagged ``env-names-only`` and confidence is
   capped below the ``strong`` band.
+* A detection-rule pack (a ShadowScan signature pack, Semgrep or Sigma rules,
+  a gitleaks configuration; see ``rule_packs``) lists the names and hosts it
+  detects. Its content is never usage or configuration evidence; the project
+  finding lists such files under ``detection_rule_files``. File-name signals
+  and credentials in them are still reported.
 * A data or prose file that only lists products (a blocklist, a vendor
   policy, a copy of the signature packs: four or more products by domain or
   variable name, no import, dependency, code or other structural evidence) is
@@ -81,6 +86,7 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
+from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
     has_template_markers,
@@ -103,7 +109,8 @@ from shadowscan.connectors.common import (
     placeholder_reason,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.signatures import Match
+from shadowscan.signatures import Match, Signature
+from shadowscan.signatures.loader import builtin_signature_dir
 from shadowscan.signatures.matcher import (
     SOURCE_EXTENSIONS,
     MatchTimeoutError,
@@ -143,6 +150,8 @@ _PROJECT_MANIFESTS = frozenset({"crewai", "langgraph"})
 
 # Registered MCP tool names retained per project.
 _MAX_MCP_TOOLS = 200
+# Detection-rule pack paths listed in a project finding's metadata.
+_MAX_LISTED_RULE_FILES = 20
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
@@ -527,6 +536,8 @@ class _Project:
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
+    detection_rules: dict[str, int] = field(default_factory=dict)  # rule-pack format -> files
+    detection_rule_files: list[str] = field(default_factory=list)  # the first, in walk order
 
 
 @dataclass
@@ -785,6 +796,15 @@ def _root_open_failure(exc: OSError | ValueError) -> str:
 def _is_test_path(rel: str) -> bool:
     parts = rel.lower().split("/")
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
+
+
+# A signature's source names its pack file (as the validator's namespace check reads it).
+_BUNDLED_PACKS = os.path.join(os.path.abspath(builtin_signature_dir()), "")
+
+
+def _bundled_signature(signature: Signature) -> bool:
+    """Whether ``signature`` comes from the packs that ship with the scanner, not a custom pack."""
+    return signature.source is not None and signature.source.startswith(_BUNDLED_PACKS)
 
 
 _CODING_AGENT_DOC_NAMES = frozenset(
@@ -1670,6 +1690,10 @@ class FilesystemConnector(BaseConnector):
         self._record_file_matches(file)
         if self.scan_secrets:
             self._detect_secrets(scan, file)
+        if self._record_detection_rules(file):
+            # A rule pack lists the names and hosts it detects. Its content
+            # is data, not usage or configuration of those products.
+            return
         self._detect_mcp(file)
 
         # 2. manifests (dependencies, images, env names, IaC types)
@@ -1893,6 +1917,27 @@ class FilesystemConnector(BaseConnector):
                 if m.signature_id == "protocol.mcp":
                     self._record(file.proj, m, file.rel, None)
 
+    @staticmethod
+    def _record_detection_rules(file: _SourceFile) -> bool:
+        """Whether ``file`` is a detection-rule pack; if so, count it on its project.
+
+        File-name and credential evidence is already recorded and agent
+        manifests keep their own analysis. No rule-pack shape has an MCP
+        server table, so a pack that mentions MCP keys in its patterns is not
+        parsed as a client configuration.
+        """
+        if file.card_kind:
+            return False
+        parsed = None if file.structure is _NO_STRUCTURE else file.structure
+        rule_format = detection_rule_format(file.rel, file.text, parsed)
+        if rule_format is None:
+            return False
+        proj = file.proj
+        proj.detection_rules[rule_format] = proj.detection_rules.get(rule_format, 0) + 1
+        if len(proj.detection_rule_files) < _MAX_LISTED_RULE_FILES:
+            proj.detection_rule_files.append(file.rel)
+        return True
+
     def _record_content(self, file: _SourceFile, m: Match, snippet: str | None) -> None:
         # A bare key or matching filename is not evidence of a
         # configured server when the entries are all empty.
@@ -2056,15 +2101,20 @@ class FilesystemConnector(BaseConnector):
     def _record_code_matches(
         self, file: _SourceFile, code_matches: list[Match], file_uses_llm: bool, bound: list[Match]
     ) -> None:
+        # The binder's evidence for a signal on a line replaces its lexical match.
+        bound_signals = {(m.signature_id, id(m.signal), m.line) for m in bound}
         configured_spans = {
             m.extra["configured_call_span"] for m in bound if "configured_call_span" in m.extra
         }
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
-            if file.lang in {"python", "javascript"}:
-                if m.signature.category == "framework":
-                    continue  # import-bound calls establish the library
+            if file.lang not in {"python", "javascript"}:
+                # Other languages have lexical filtering but
+                # no import binder. Their code signatures need
+                # corroborating library evidence at emit time.
+                m.extra["lexical_source"] = file.lang
+            elif m.signature.category != "framework":
                 if (
                     m.signature_id in {"heuristic.tool-use", "heuristic.memory"}
                     and re.match(r"(?:tools|checkpointer)\s*[=:]", m.value)
@@ -2079,10 +2129,13 @@ class FilesystemConnector(BaseConnector):
                 ):
                     continue  # explicit disabled options do not register tools
                 m.extra["verified_agent"] = False
+            elif _bundled_signature(m.signature) or (m.signature_id, id(m.signal), m.line) in bound_signals:
+                continue  # import-bound calls establish the library
             else:
-                # Other languages have lexical filtering but
-                # no import binder. Their code signatures need
-                # corroborating library evidence at emit time.
+                # The bundled framework patterns are written for the import
+                # binder. A custom pack's pattern is plain lexical evidence,
+                # as in other languages, so a pack without a matching import
+                # still takes effect, corroborated at emit time.
                 m.extra["lexical_source"] = file.lang
             self._record_content(file, m, self._file_excerpt(file, m.line))
 
@@ -2706,6 +2759,13 @@ class FilesystemConnector(BaseConnector):
         )
         f.metadata["models"] = sorted({m.value for m, _, _ in matches if m.signal.type == "model"})
         f.models = f.metadata["models"]
+        if proj.detection_rules:
+            # Rule packs read as data, not as evidence (see rule_packs).
+            f.metadata["detection_rule_files"] = {
+                "count": sum(proj.detection_rules.values()),
+                "formats": dict(sorted(proj.detection_rules.items())),
+                "files": list(proj.detection_rule_files),
+            }
         if proj.agent_defs:
             f.metadata["agent_definitions"] = proj.agent_defs
         # Installed SDKs, imports and endpoint strings establish framework

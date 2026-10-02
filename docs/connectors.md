@@ -29,6 +29,11 @@ lists them after each connector's own keys. `code.filesystem`, `code.github` and
 ignore those three keys, but a value supplied for one must still be a positive
 integer or the entry fails validation.
 
+Connectors that page through a live API accept `max_pages`, a positive integer
+(default 1000; larger values are capped at 1000). Zero, a negative or fractional
+number, a boolean or non-numeric text is a configuration error, never a silent
+one-page scan; reaching the page bound marks coverage incomplete.
+
 See [scan state and runtime correlation](scanning.md) for incremental scans,
 gateway workload bindings and completion semantics.
 
@@ -166,7 +171,8 @@ including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
 Confidence groups cap repeated observations of the same technology. Unsupported
 dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
-languages use lexical signatures and require matching framework import/dependency
+languages, and framework code patterns from custom signature packs in any
+language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
@@ -527,7 +533,7 @@ Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
 GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
 steps (→ code-exec), models. Live pagination is bounded by `max_pages`
-(default 1000). Make scans one `team_id`, or every team of an
+(default and maximum 1000). Make scans one `team_id`, or every team of an
 `organization_id` when `team_id` is unset.
 An n8n workflow needs a nonempty provider ID for a usable resource identity.
 Exported blueprints without an ID retain detected AI evidence under an unresolved
@@ -673,6 +679,16 @@ are not evaluated; partial semantics make coverage incomplete. S3/IAM-only
 wildcards do not independently produce LLM grants. Effective access also depends
 on applicable policies outside this collector's view.
 
+Role trust policies are parsed, not searched as text. A service principal
+(`Principal.Service`) or OIDC provider (`Principal.Federated`) is trusted only
+through an `Allow` statement whose `Action` includes `sts:AssumeRole`,
+`sts:AssumeRoleWithWebIdentity` or `sts:AssumeRoleWithSAML` (IAM wildcards, any
+case). `Deny`, `NotAction` and `NotPrincipal` statements, and service names in a
+`Sid` or `Condition`, never establish trust; conditions are not evaluated. A
+trusted Bedrock or AgentCore principal tags the role `agent-execution-role`. The
+document may be an object, JSON text or URL-encoded JSON; a malformed one is
+reported as unknown trust (`malformed-trust-policy`) and makes the scan incomplete.
+
 AWS clients ignore configured endpoint URL overrides and use bundled SDK models;
 external model paths (`AWS_DATA_PATH`, user SDK model directories) cannot replace
 service endpoint rules, including after role assumption. This does not replace
@@ -690,8 +706,8 @@ shows access, not observed agent execution.
 Cloud Run discovery enumerates project locations and then lists services in each
 concrete region (`run.locations.list` and `run.services.list` permissions).
 Unreachable locations reported by GCP make the scan incomplete. `max_projects`
-limits discovery without loading all projects first; `max_pages` (default 1000)
-bounds every paginated call; resource lists stop at 500 pages and audit-log
+limits discovery without loading all projects first; `max_pages` (default and
+maximum 1000) bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.
 `locations` lists the Vertex AI and Dialogflow locations to query (default
 `us-central1`, `us-east4`, `us-west1`, `europe-west1`, `europe-west4`,
@@ -728,13 +744,16 @@ instance or resource principal.
 Options: `profile`, `config_file`, `auth`, `tenancy` (default: from the
 profile or the principal signer), `region` (session region for
 `instance_principal`; config auth uses the profile's region), `regions`,
-`compartments`, `max_pages` (default 1000).
+`compartments`, `max_pages` (default and maximum 1000).
 Function inspection retrieves application and function details, combines
 inherited configuration with function overrides, and supports both legacy image
 fields and `source_details.image`. Denied or invalid detail reads mark coverage
 incomplete while preserving available resource evidence. Audit credentials need
 the corresponding application/function read permissions; list-only access is
 insufficient to inspect configuration.
+SDK objects become records through `oci.util.to_dict`, or through the model's
+declared fields when the SDK cannot be imported; an object that cannot be
+converted is skipped with a warning and makes the scan incomplete.
 
 ## Least privilege
 

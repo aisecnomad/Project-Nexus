@@ -13,8 +13,8 @@ from typing import Any, ClassVar
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import failure_summary, finalize
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import failure_summary, finalize, max_pages_limit
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -80,7 +80,7 @@ class Auth0Connector(BaseConnector):
         """Bound pagination and retain collected identities when enrichment fails."""
         assert self.http
         seen: set[str] = set()
-        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        max_pages = max_pages_limit(self.ctx.get("max_pages", 1000))
         for page in range(max_pages):
             try:
                 batch = self.http.get_json(path, params={**params, "per_page": 100, "page": page})

@@ -52,9 +52,31 @@ def test_sub_millisecond_epochs_go_and_rfc2822_times_parse(value):
 
 @pytest.mark.parametrize(
     "value",
+    [1704067200.125, 1704067200125, 1704067200125000, 1704067200125000000],
+    ids=["seconds", "milliseconds", "microseconds", "nanoseconds"],
+)
+@pytest.mark.parametrize("as_text", [False, True], ids=["number", "text"])
+def test_epoch_unit_is_inferred_from_magnitude(value, as_text):
+    # Exporters such as OpenTelemetry and Envoy write microseconds or
+    # nanoseconds; those must not silently lose first/last-seen times.
+    raw = str(value) if as_text else value
+    assert parse_timestamp(raw) == datetime(2024, 1, 1, microsecond=125000, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "value",
     ["Mon, 31 Feb 2024 00:00:00 GMT", "2024-01-01 00:00:00 UTC m=+1", "yesterday", "Jan 2024", "1 2 3"],
 )
 def test_malformed_go_and_rfc2822_times_stay_unparsed(value):
+    assert parse_timestamp(value) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [10**21, 9 * 10**17, -1704067200125000],
+    ids=["twenty-two-digits", "beyond-year-9999", "negative"],
+)
+def test_epoch_values_outside_every_unit_remain_invalid(value):
     assert parse_timestamp(value) is None
 
 

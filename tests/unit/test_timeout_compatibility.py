@@ -73,7 +73,7 @@ def test_cli_alias_sets_canonical_setting(monkeypatch, flag):
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf"])
 def test_cli_alias_rejects_disabled_or_nonfinite_deadlines(value):
     result = CliRunner().invoke(main, ["run", "gateway.logs", "--connector-timeout", value])
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert "positive finite" in result.output
 
 

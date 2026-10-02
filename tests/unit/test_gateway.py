@@ -206,6 +206,29 @@ def test_activity_buckets_use_utc_regardless_of_export_offset(index):
     assert "always-on" in findings[0].tags
 
 
+@pytest.mark.parametrize("per_second", [1, 1000, 1_000_000, 1_000_000_000], ids=["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("as_text", [False, True], ids=["number", "text"])
+def test_generic_epoch_timestamps_keep_activity_window_in_every_unit(
+    tmp_path, run_connector, per_second, as_text
+):
+    # 48 requests from one caller, one per hour, as a generic export would
+    # write them in epoch seconds, milliseconds, microseconds or nanoseconds.
+    start = 1767225600  # 2026-01-01T00:00:00Z
+    rows = []
+    for hour in range(48):
+        stamp = (start + hour * 3600) * per_second
+        rows.append({"service": "svc-ops", "model": "gpt-4o", "timestamp": str(stamp) if as_text else stamp})
+    export = tmp_path / "gateway.jsonl"
+    export.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    findings, ctx = run_connector("gateway.logs", input=str(export))
+    assert not ctx.stats.incomplete and not ctx.stats.errors and not ctx.stats.warnings
+    assert len(findings) == 1 and findings[0].metadata["events"] == 48
+    assert findings[0].first_seen == "2026-01-01T00:00:00+00:00"
+    assert findings[0].last_seen == "2026-01-02T23:00:00+00:00"
+    observation = findings[0].metadata["runtime_observations"][0]
+    assert observation["timestamped_events"] == 48
+
+
 def test_known_llm_host_keeps_unlisted_operation_paths(tmp_path, run_connector):
     line = '10.0.0.9 - - [05/Jan/2026:09:00:00 +0000] "{method} {path} HTTP/1.1" 200 12 "-" "openai-python/1.51" host={host}'
     path = tmp_path / "egress.log"

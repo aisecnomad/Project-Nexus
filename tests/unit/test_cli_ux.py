@@ -175,14 +175,14 @@ def test_inventory_check_names_missing_path(tmp_path):
 # -------------------------------------------------------------- run --set
 def test_run_rejects_unknown_set_key_as_usage_error():
     result = CliRunner().invoke(main, ["run", "identity.okta", "--set", "fetch_tokenz=true"])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 1, result.output
     assert "does not accept 'fetch_tokenz'" in result.output
     assert "did you mean 'fetch_tokens'" in result.output
 
 
 def test_run_rejects_reserved_internal_keys_without_echoing_values():
     result = CliRunner().invoke(main, ["run", "identity.okta", "--set", "_dump_path=/private/anywhere"])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 1, result.output
     assert "reserved for internal use" in result.output
     assert "/private/anywhere" not in result.output
 
@@ -224,7 +224,7 @@ def test_signatures_test_dependency_kind_defaults_to_every_ecosystem():
 @pytest.mark.parametrize("value", ["-0.01", "1.01", "nan", "inf", "-inf"])
 def test_min_confidence_cli_rejects_invalid_threshold_before_scan(tmp_path, value):
     result = CliRunner().invoke(main, ["code", str(tmp_path), "--min-confidence", value, "--fail-on", "high"])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 1, result.output
     assert "min_confidence must be a finite number between 0 and 1" in result.output
 
 
@@ -233,7 +233,7 @@ def test_min_confidence_yaml_rejects_invalid_threshold_before_scan(tmp_path, val
     config = tmp_path / "scan.yaml"
     config.write_text(f"options:\n  min_confidence: {value}\nconnectors: []\n")
     result = CliRunner().invoke(main, ["scan", "-c", str(config), "--fail-on", "high"])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 1, result.output
     assert "min_confidence must be a finite number between 0 and 1" in result.output
 
 

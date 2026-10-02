@@ -20,8 +20,9 @@ The inventory can be supplied as:
 * a CSV with columns ``agent_id, name, owner, resources`` (resources separated by ``|``)
 
 Automatic approval requires an explicit, case-sensitive resource pattern and
-all configured ``surfaces``, ``providers``, ``accounts`` and ``regions`` constraints. Names
-and aliases are review suggestions only; they never confer sanctioned status.
+all configured ``surfaces``, ``providers``, ``accounts``, ``regions`` and
+``discriminators`` constraints. Names and aliases are review suggestions only;
+they never confer sanctioned status.
 """
 
 from __future__ import annotations
@@ -101,21 +102,33 @@ def _has_usable_scope_identity(finding: Finding) -> bool:
     )
 
 
-def _meta_names(finding: Finding) -> set[str]:
-    out: set[str] = set()
+def _has_usable_discriminator(finding: Finding) -> bool:
+    # Inventory lists hold stripped, nonempty strings: an empty or padded value
+    # could not be written as a binding that matches this finding again.
+    value = finding.identity_discriminator
+    return bool(value) and value == value.strip()
+
+
+def _metadata_names(finding: Finding) -> list[str]:
+    """Name strings in finding metadata, including names of listed agent definitions."""
+    out: list[str] = []
     for k in NAME_FIELDS:
         v = finding.metadata.get(k)
         if isinstance(v, str):
-            out.add(v.lower())
+            out.append(v)
         elif isinstance(v, list):
             for item in v:
                 if isinstance(item, str):
-                    out.add(item.lower())
+                    out.append(item)
                 elif isinstance(item, dict):
                     for kk in ("name", "agent_id", "display_name"):
                         if isinstance(item.get(kk), str):
-                            out.add(item[kk].lower())
+                            out.append(item[kk])
     return out
+
+
+def _meta_names(finding: Finding) -> set[str]:
+    return {name.lower() for name in _metadata_names(finding)}
 
 
 @dataclass(slots=True)
@@ -130,6 +143,7 @@ class InventoryEntry:
     providers: list[str] = field(default_factory=list)
     accounts: list[str] = field(default_factory=list)
     regions: list[str] = field(default_factory=list)
+    discriminators: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     source: str | None = None
     card: dict[str, Any] = field(default_factory=dict)
@@ -314,6 +328,7 @@ class Inventory:
             providers=lists["providers"],
             accounts=lists["accounts"],
             regions=lists["regions"],
+            discriminators=lists["discriminators"],
             tags=tags,
             source=str(path),
             card=doc,
@@ -341,6 +356,7 @@ class Inventory:
             providers=lists["providers"],
             accounts=lists["accounts"],
             regions=lists["regions"],
+            discriminators=lists["discriminators"],
             tags=lists["tags"],
             source=str(path),
             card=item,
@@ -404,6 +420,10 @@ class Inventory:
             # resource cannot confer approval across unrelated customers.
             and (not requires_card_account_scope(finding.provider) or bool(entry.accounts))
             and (not entry.regions or finding.region in entry.regions)
+            # Several observations can share one resource (a repository's
+            # agent project and its coding-agent configuration). The stable
+            # observation type keeps an approval to the one it names.
+            and (not entry.discriminators or finding.identity_discriminator in entry.discriminators)
         )
 
     def _name_pattern(self, name: str) -> re.Pattern[str]:
@@ -454,6 +474,7 @@ _LIST_FIELDS = {
     "providers",
     "accounts",
     "regions",
+    "discriminators",
     "tags",
 }
 _SIMPLE_FIELDS = _LIST_FIELDS | {"id", "agent_id", "name", "owner", "owner_team"}
@@ -586,14 +607,17 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
                 and _has_usable_scope_identity(finding)
                 and _has_valid_account_scope(finding)
                 and finding.metadata.get("identity_unresolved") is not True
+                and _has_usable_discriminator(finding)
             )
             else [finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})],
-            "names": sorted({str(finding.metadata.get(k)) for k in NAME_FIELDS if finding.metadata.get(k)}),
+            "names": sorted({name.strip() for name in _metadata_names(finding) if name.strip()}),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],
             "providers": [finding.provider] if finding.provider else [],
             "accounts": [finding.account] if finding.account else [],
             "regions": [finding.region] if finding.region else [],
+            # Other findings can share this resource; approve this observation only.
+            "discriminators": [finding.identity_discriminator] if _has_usable_discriminator(finding) else [],
         },
     }
 

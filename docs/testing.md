@@ -50,18 +50,39 @@ operator-run procedure described in [Tenant canaries](canaries.md).
 
 ```bash
 make test-fast      # stop at the first failure, no coverage
-make test           # full suite with the 80% aggregate coverage floor
-make coverage-gate  # 75% per-connector floor; run after make test
+make test           # full suite with line and branch coverage and the 80% aggregate floor
+make coverage-gate  # 75% floor for every connector module; run after make test
 ```
 
 `make coverage-gate` exports the coverage data recorded by the preceding
-`make test`. The per-connector floor needs the cloud SDKs installed, so run it
-after `make install` rather than `make install-dev`. The gate does not skip a
-connector module that its per-connector rule does not cover. A module in a
-connector family that `tools/coverage_gate.py` does not list, a module in a
-nested package, or an unlisted module directly under `shadowscan/connectors/`
-fails the gate. The exceptions are package `__init__` files and modules
-without statements.
+`make test`. Both floors count branches as well as statements, and the
+per-connector floor covers every module under `shadowscan/connectors/`,
+including the shared `base`, `common` and `offline` modules. It needs the cloud
+SDKs installed, so run it after `make install` rather than `make install-dev`.
+
+`tests/conftest.py` keeps the suite independent of the host:
+
+- **Name resolution.** Hostnames resolve to one fixed public address instead
+  of the host's DNS, so a sinkhole or split-horizon resolver cannot flip the
+  scanner's private-address checks. Names under the reserved `.example`,
+  `.invalid` and `.test` domains do not resolve, as on any real resolver. IP
+  literals and `localhost` resolve normally, and a test that patches
+  `socket.getaddrinfo` itself takes precedence.
+- **No outbound connections.** A socket connection to anything other than
+  loopback fails, and the test fails at teardown even if the code under test
+  handled the error. Serve test traffic from a loopback server.
+- **Signature-matching budgets.** Regex operations and inputs normally get
+  100 ms and two seconds. On a busy machine an expired budget silently drops
+  matches, so tests run with generous budgets. A test about the budgets
+  themselves is marked `@pytest.mark.production_budgets` and keeps the shipped
+  values; `--strict-markers` rejects a misspelt marker.
+- **Signature packs.** An `Engine` built without an index reparses the
+  signature packs. The suite reuses one index of the built-in packs, parsed at
+  session start, while their source digest is unchanged; organization pack
+  directories and override approval always load for real.
+
+Timing assertions use generous bounds, thread CPU time, or a fixed clock, so a
+loaded runner does not fail them.
 
 Useful pytest patterns:
 
@@ -138,8 +159,14 @@ The [CI workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/
 runs the same commands on Linux for Python 3.11, 3.12 and 3.13 and on macOS for
 3.11 and 3.13, installs the hash-locked dependency sets, audits every lock,
 builds and validates the wheel outside the checkout, and on Python 3.13 builds
-and smoke-tests the container image. The `CI gate` job requires every job,
-including DCO on pull requests, to succeed. [CI integration](operations/ci.md)
+and smoke-tests the container image. The Linux Python 3.11 job runs the suite
+with line and branch coverage and enforces both coverage floors; tracing slows
+the suite several-fold, so the other jobs run the same full suite without it.
+The Linux jobs also run the `no-hardcoded-secrets` pre-commit hook over every
+tracked file it selects. The `CI gate` job requires every job, including DCO on
+pull requests, to succeed. A new push to a pull request cancels its running
+checks, but a run on `main` always finishes, because release evidence needs a
+successful push run for the exact commit. [CI integration](operations/ci.md)
 describes running the scanner itself inside a pipeline.
 
 ## Troubleshooting
@@ -157,7 +184,10 @@ describes running the scanner itself inside a pipeline.
   bounded-YAML subprocess check falls back from `RLIMIT_AS` to `RLIMIT_DATA`;
   report a platform where neither applies.
 - **Coverage below a floor:** `python -m coverage report --skip-empty` shows
-  the missing lines. Add offline tests rather than lowering the floor.
+  the missing lines and the branches never taken (`12->15` means line 12 never
+  continued to line 15). Add offline tests rather than lowering the floor.
+- **`test attempted outbound connections`:** the test reached for the network.
+  Stub the transport, or serve the response from a loopback server.
 
 Bug fixes need a regression test, and connector changes need offline fixtures
 and documentation, as the

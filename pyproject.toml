@@ -80,8 +80,10 @@ ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Unknown markers fail collection: a misspelt opt-out marker such as
+# production_budgets would otherwise be ignored without a warning.
 pythonpath = ["."]
-addopts = "-q"
+addopts = "-q --strict-markers"
 
 [tool.ruff.format]
 quote-style = "double"
@@ -114,6 +116,9 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["shadowscan"]
 omit = ["shadowscan/signatures/data/*"]
+# Both floors (fail_under below and tools/coverage_gate.py) count branches as
+# well as statements: a line that ran says nothing about its untaken branch.
+branch = true
 
 [tool.coverage.report]
 show_missing = true

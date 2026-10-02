@@ -86,7 +86,7 @@ Existing Make targets provide the next steps:
 
 ```bash
 make test-fast       # full test suite without coverage, stop at first failure
-make test            # full suite with the overall coverage floor
+make test            # full suite with line and branch coverage and the overall floor
 make coverage-gate   # connector coverage; run after make test
 make check           # all local quality gates
 ```
@@ -102,8 +102,10 @@ python -m coverage json -o /tmp/shadowscan-coverage.json
 python -m tools.coverage_gate /tmp/shadowscan-coverage.json
 ```
 
-The gate requires the JSON report argument; running one test is not enough to
-measure every connector. See [quality gates](#quality-gates) for CI requirements.
+The gate requires the JSON report argument and branch data; running one test is
+not enough to measure every connector. See [quality gates](#quality-gates) for
+CI requirements, and the [testing guide](docs/testing.md#the-full-suite) for the
+isolation every test runs under.
 
 ## Trust model
 
@@ -123,12 +125,16 @@ exact supported Python matrix and dependency pins.
 |------|---------|-------------|
 | Lint | `ruff check shadowscan tests tools` | No errors |
 | Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release` | No errors |
-| Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
-| Connectors | `make coverage-gate` (after tests) | ≥ 75% per connector |
+| Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
+| Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Secrets | `make secrets` | No hardcoded credentials in tracked files |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
+| Secrets | `pre-commit run no-hardcoded-secrets --all-files` | No credential-shaped strings outside `tests/` |
+
+CI measures coverage on one Linux job (Python 3.11) and runs the same full
+suite untraced on the others; `pyproject.toml` enables branch coverage.
 
 Ruff enforces a 110-column line length outside `tests/` and flags loop
 variables captured by closures (B023). Mypy requires annotated definitions
@@ -200,7 +206,7 @@ contract. In brief:
 2. Implement `collect()` (live API) and `analyze()` (offline records → findings).
 3. Register in `shadowscan/connectors/__init__.py`.
 4. Add offline test fixtures under `tests/fixtures/`.
-5. Achieve ≥ 75% statement coverage.
+5. Achieve ≥ 75% coverage of statements and branches (the per-connector floor).
 6. Document in `docs/connectors.md` with configuration keys, required API
    scopes, and offline export format.
 

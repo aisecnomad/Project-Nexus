@@ -133,6 +133,28 @@ This checks built-ins plus the supplied directory; use `--no-builtin DIR` to
 validate an isolated custom pack. CI runs the same validator on every push and
 pull request. `shadowscan signatures test` exercises representative inputs.
 
+`signatures test` reports a signal's own weight and `agent_indicator`. The
+code connector then decides how much a `code` match counts:
+
+* In Python and JavaScript/TypeScript, calls are bound to their imports. A
+  call through an import that matches a signature's `import` signal is
+  checked against that signature's `code` patterns (the pattern must match at
+  the called name). For a custom pack, the signature's or signal's
+  `agent_indicator` applies to the bound call; built-in frameworks list their
+  agent constructors instead. The built-in `framework` patterns count only
+  this way: `Crew(` is CrewAI evidence when `Crew` was imported from
+  `crewai`, not when a local class has that name.
+* A custom pack's `framework` pattern also counts as a lexical match anywhere
+  in the source, in every language, unless the bound call on that line already
+  produced the same evidence. A lexical match promotes the project to an
+  `agent` only when the same signature also has an `import` or `dependency`
+  match in the project. Without one, the finding is `framework-usage`, with
+  that evidence capped at weight 0.6 (`confidence_group:
+  uncorroborated-lexical`). A pack with only a `code` signal therefore reports
+  usage, not an agent; add the product's package or import to promote it.
+* Other categories' unbound `code` matches in Python and JavaScript are
+  supporting evidence and never promote an agent by themselves.
+
 The schema requires a signature `id`, `category`, and nonempty `signals` list.
 Each signal has a supported `type` and that type's matcher fields. Unknown
 fields, incorrect types, duplicate YAML keys or IDs within a pack directory,
@@ -174,6 +196,29 @@ Signature packs do **not** support a `severity` field: severity is calculated
 centrally by the risk engine from the finding. Every `severity` field is rejected,
 including apparently valid values such as `high`, so it cannot silently bypass
 risk scoring. `weight` controls confidence in the evidence, not finding severity.
+
+## Rule packs inside scanned repositories
+
+A repository that stores detection rules lists the environment variables,
+hosts and identifiers those rules detect. The code connector treats these
+files as data: their content is never read as usage or configuration, so a
+pack of custom signatures does not make its own repository an AI project.
+It recognizes a YAML, JSON or TOML file only when the whole file has one of
+these shapes, with no top-level key the format does not define:
+
+| Format | Shape |
+|---|---|
+| ShadowScan signature pack | the loader's forms (`signatures:` alone, one signature, or a list), every signature with an `id`, a valid `category` and nonempty `signals` using schema field names |
+| Semgrep | `rules:` alone, every rule with an `id`, a `message` and a `pattern`, `patterns`, `pattern-either`, `pattern-regex`, `match`, `taint` or `pattern-sources` matcher |
+| Sigma | every document limited to Sigma rule fields, one with a `logsource` and a `detection` holding a `condition` |
+| gitleaks | `title`, `extend`, `allowlist(s)` and `[[rules]]`, every rule with an `id` and a `regex` or `path` |
+
+A file that adds anything else, such as an MCP server table beside gitleaks
+rules, is scanned as before. File-name signals and real-format credentials in
+a rule pack are still reported. The project finding lists recognized files
+under `metadata.detection_rule_files` (a count per format and the first 20
+paths). Scanning the scanner's own checkout still reports its Python sources
+and tests, which call and test the products they detect.
 
 ## Conventions
 

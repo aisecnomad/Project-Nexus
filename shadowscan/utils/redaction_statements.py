@@ -15,6 +15,7 @@ import io
 import re
 import token
 import tokenize
+from bisect import bisect_right
 from collections.abc import Iterator
 
 from shadowscan.utils.redaction_formats import _URL
@@ -156,6 +157,17 @@ _MAX_ASSIGNMENT_NESTING = 100
 _SCAN_LINE_LIMIT = 512
 # How far past a token's end the tokenizer may look while classifying it.
 _SCAN_LOOKAHEAD = 8
+# The tokenizer reads at most this many characters of a run of spaces, tabs and
+# form feeds; the rest of the run is skipped and positions are mapped back to
+# the text. Python 3.11's pure-Python tokenizer rescans a run once per character
+# when a character it cannot tokenize ('$', '?', a control character, a lone
+# quote) ends it, so one long run made a scan quadratic. Blanks only separate
+# tokens or sit inside a string or comment, so the shortened line yields the
+# same tokens, and every Python version reads it. Indentation the tokenizer
+# measures, in one linear pass, is kept whole. At least _SCAN_LOOKAHEAD, so no
+# token is nearer a cut in the shortened line than in the text.
+_MAX_TOKENIZED_BLANKS = 8
+_LONG_BLANK_RUN = re.compile(rf"[ \t\f]{{{_MAX_TOKENIZED_BLANKS + 1},}}")
 _QUOTE_ERRORS = frozenset({"'", '"'})
 # Token classes an annotation-only scan records for the candidates it encloses.
 _TOKEN_SPACE, _TOKEN_REAL, _TOKEN_ASSIGN, _TOKEN_CLOSE, _TOKEN_NEWLINE = range(5)
@@ -247,6 +259,10 @@ class _LineReader:
 
     A line cut at the limit ends the input there: ``cut`` is its offset.
     ``offsets`` holds the text offset of each line the tokenizer numbers.
+    Long blank runs are shortened (see ``_MAX_TOKENIZED_BLANKS``): ``shifts``
+    maps a shortened line's columns back, and ``offset`` gives the text offset
+    of any tokenizer position. The scan sets ``statement_start`` while the
+    next line starts a statement, whose leading blanks are its indentation.
     """
 
     def __init__(self, scanner: _AssignmentScanner, start: int, limit: int) -> None:
@@ -258,6 +274,10 @@ class _LineReader:
         self.length = len(scanner.text)
         self.limit = limit
         self.offsets = [start]
+        # Per shortened line: the columns that end a kept part of a run, and
+        # the characters removed from the line up to each of them.
+        self.shifts: dict[int, tuple[list[int], list[int]]] = {}
+        self.statement_start = True
         self.cut = -1
 
     def readline(self) -> str:
@@ -267,11 +287,40 @@ class _LineReader:
         if line and line[-1] != "\n" and offset < self.length:
             self.cut = offset
         self.offsets.append(offset)
-        return line
+        return self._shorten(line, len(self.offsets) - 1)
+
+    def _shorten(self, line: str, row: int) -> str:
+        """``line`` with each long blank run cut to its first characters, except measured indentation."""
+        pieces: list[str] = []
+        ends: list[int] = []
+        removed: list[int] = []
+        cursor = dropped = 0
+        for run in _LONG_BLANK_RUN.finditer(line):
+            if run.start() == 0 and self.statement_start:
+                continue
+            kept = run.start() + _MAX_TOKENIZED_BLANKS
+            pieces.append(line[cursor:kept])
+            ends.append(kept - dropped)
+            dropped += run.end() - kept
+            removed.append(dropped)
+            cursor = run.end()
+        if not pieces:
+            return line
+        self.shifts[row] = (ends, removed)
+        pieces.append(line[cursor:])
+        return "".join(pieces)
+
+    def offset(self, row: int, column: int) -> int:
+        """The text offset of the tokenizer's ``row`` and ``column``."""
+        shift = self.shifts.get(row)
+        if shift is not None:
+            index = bisect_right(shift[0], column)
+            column += shift[1][index - 1] if index else 0
+        return self.offsets[row - 1] + column
 
     def end(self, item: tokenize.TokenInfo) -> int:
         """The text offset just past ``item``."""
-        return self.offsets[item.end[0] - 1] + item.end[1]
+        return self.offset(*item.end)
 
     def undecided(self, stopped: tokenize.TokenInfo | None) -> bool:
         """Whether a scan that stopped at ``stopped`` (None: at an error) may depend on the cut.
@@ -352,7 +401,6 @@ class _AssignmentScanner:
         """
         text = self.text
         lines = _LineReader(self, candidate_end, limit)
-        offsets = lines.offsets
         assigned_at: int | None = None if annotated else candidate_end
         end = len(text)
         brackets: list[str] = []
@@ -364,7 +412,11 @@ class _AssignmentScanner:
         try:
             for item in tokenize.generate_tokens(lines.readline):
                 stopped = item
-                position = offsets[item.start[0] - 1] + item.start[1]
+                # The tokenizer yields every token of a line before it reads
+                # the next. That line starts a statement, whose leading blanks
+                # are measured indentation, only after a newline outside brackets.
+                lines.statement_start = item.type in _NEWLINE_TOKENS and not brackets
+                position = lines.offset(*item.start)
                 if item.type == token.ERRORTOKEN and not item.string.isspace():
                     # Incomplete single-quoted strings generate error tokens,
                     # not TokenError. A semicolon inside one is not a boundary.
@@ -422,11 +474,13 @@ class _AssignmentScanner:
                     previous_operator = ""
             else:
                 stopped = None
-        except (tokenize.TokenError, IndentationError, SyntaxError) as exc:
+        except (tokenize.TokenError, IndentationError, SyntaxError, UnicodeError) as exc:
             # Once '=' is seen, incomplete source must not expose any RHS,
             # including credential fragments on subsequent physical lines.
-            # Indentation and nesting errors depend on where a scan started.
-            definitive = not isinstance(exc, IndentationError) and "nest" not in str(exc)
+            # Indentation and nesting errors depend on where a scan started,
+            # and so may the codec errors Python 3.12+ tokenizers raise for a
+            # lone surrogate or a non-ASCII character after a lone '\r'.
+            definitive = not isinstance(exc, (IndentationError, UnicodeError)) and "nest" not in str(exc)
             stopped = None
         if lines.undecided(stopped):
             return None

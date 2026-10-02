@@ -1,5 +1,8 @@
 # Changelog
 
+The detailed engineering log, recorded per change. RELEASE_NOTES.md
+summarizes each release for people who install and operate ShadowScan.
+
 ## 0.1.1 — Unreleased
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
@@ -413,6 +416,52 @@ field precision. Behavior changes that affect an existing baseline are listed in
   `shadowscan connectors --json` is undocumented.
 
 
+
+### October 1 review remediation
+
+Fixes and recommendations from the 2026-10-01 repository review. Upgrade
+steps are in docs/production.md ("October 1 review changes").
+
+- **Exit codes:** usage errors exit 1 instead of 2, so exit 2 only means a
+  complete scan reached `--fail-on`.
+- **Gateway identity:** `diff` lists scan-local gateway findings under
+  `not_comparable` instead of as new. The opt-in `SHADOWSCAN_IDENTITY_KEY`
+  (environment only, at least 32 bytes) keeps gateway IDs and collection scope
+  stable across scans; git child processes never receive it.
+- **Confidence:** outside the code surface, repeated evidence of one signal
+  counts once. n8n, Make and Zapier findings score all their evidence before
+  they are finalized.
+- **Inventory:** cards accept `discovery.discriminators`; `inventory stubs`
+  binds each card to its own finding and writes plain-string names.
+- **Cloud:** `cloud.aws` parses role trust policies (`Deny`, `NotAction` and
+  `NotPrincipal` never establish trust; a malformed policy makes the scan
+  incomplete). `cloud.oci` converts SDK models without silently dropping
+  fields. Every connector validates `max_pages` and caps it at 1000.
+- **Detection:** Vercel AI SDK multi-step tool loops, including AI SDK 7
+  `isStepCount`, are agents. Custom-pack framework code patterns apply in
+  Python and JavaScript. ShadowScan, Semgrep, Sigma and gitleaks rule files are
+  treated as data and listed in `metadata.detection_rule_files`.
+- **Threshold filtering:** `--min-confidence` removes `related` links and
+  `runtime_activity` references to omitted findings.
+- **Timestamps:** microsecond and nanosecond epoch values are parsed.
+- **Redaction:** keys passed positionally to well-known LLM SDK calls are
+  withheld, including the endpoint-`Uri` overloads. Long blank runs no longer
+  make the Python 3.11 tokenizer quadratic, and Python 3.12+ codec errors no
+  longer make a file's analysis incomplete.
+- **Removed:** the unused `safe_yaml.bounded_safe_load_all` and
+  `HttpClient.requests_made`; use `strict_bounded_safe_load_all`.
+- **Evaluation:** `tools/evaluation/current_idioms_corpus.json` (24 cases)
+  runs in `make evaluate` and CI.
+- **Tests and CI:** tests resolve hostnames hermetically and fail on outbound
+  connections. Both coverage floors count branches, and the connector floor
+  covers every module under `shadowscan/connectors/`. Coverage is traced on
+  Linux 3.11 only, and a traced run takes about half as long. Matcher budgets
+  are generous in tests unless a test opts into the shipped values. CI never
+  cancels a running `main` build and runs the secret hook over tracked files.
+- **Governance and docs:** `.github/rulesets/main.json` versions the intended
+  `main` ruleset; the README regains its project-status section and an OpenSSF
+  Scorecard badge; RELEASE_NOTES.md summarizes releases for users; ADR-004
+  and ADR-005 propose a parsing strategy and code-scanner module boundaries.
 ### October 1 review fixes: bounded matching, link walks and record tolerance
 
 Fixes for the findings of an AI-assisted repository review (not an

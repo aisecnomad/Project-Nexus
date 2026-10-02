@@ -86,6 +86,7 @@ class ConnectorContext:
         cancelled: Event | None = None,
         publication_lock: LockType | None = None,
         gateway_identity_key: bytes | None = None,
+        gateway_identity_key_stable: bool = False,
     ) -> None:
         self.config: dict[str, Any] = dict(config or {})
         self.index: SignatureIndex = index or get_index()
@@ -96,7 +97,10 @@ class ConnectorContext:
         self.cancelled = cancelled
         self.publication_lock = publication_lock
         # Private scan context, separate from user configuration and reports.
+        # The key is random for each scan unless it is stable: the operator's
+        # SHADOWSCAN_IDENTITY_KEY, which keeps identities equal across scans.
         self.gateway_identity_key = gateway_identity_key
+        self.gateway_identity_key_stable = gateway_identity_key_stable
         self.stats: ScanStats | None = None
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
@@ -242,7 +246,8 @@ class BaseConnector(ABC):
 
     # Jobs of a connector that sets this share one private key per scan run
     # (ConnectorContext.gateway_identity_key): identical sources in a report
-    # get the same opaque identities, which separate runs cannot link.
+    # get the same opaque identities, which separate runs cannot link unless
+    # the operator supplies a stable SHADOWSCAN_IDENTITY_KEY.
     uses_run_identity_key: ClassVar[bool] = False
 
     @classmethod

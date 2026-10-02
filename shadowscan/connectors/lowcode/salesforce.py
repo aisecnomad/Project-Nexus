@@ -22,8 +22,14 @@ from typing import Any, ClassVar
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import apply_matches, failure_summary, finalize, name_matches
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import (
+    apply_matches,
+    failure_summary,
+    finalize,
+    max_pages_limit,
+    name_matches,
+)
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -123,7 +129,7 @@ class SalesforceConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        max_pages = max_pages_limit(self.ctx.get("max_pages", 1000))
         for kind, (api, soql) in QUERIES.items():
             path = (
                 f"/services/data/{self.api}/query"

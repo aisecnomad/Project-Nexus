@@ -14,6 +14,7 @@ The following in-tree files are regression suites only:
 - `tools/evaluation/realistic_corpus.json` and `review_corpus.json` (synthetic)
 - `tools/evaluation/field_review_corpus.json` (synthetic field-review regressions)
 - `tools/evaluation/attribution_corpus.json` (synthetic attribution regressions)
+- `tools/evaluation/current_idioms_corpus.json` (synthetic current SDK idiom regressions)
 
 The command rejects every corpus stored inside the source checkout, including
 future bundled suites. Private holdouts belong outside the repository.

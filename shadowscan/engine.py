@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -16,12 +17,13 @@ from threading import Event, Lock
 from typing import Any
 
 from shadowscan import __version__
-from shadowscan.comparison import build_collection_scope
+from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import merge_duplicate_metadata
 from shadowscan.correlation import correlate_runtime
+from shadowscan.errors import SetupError
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, now_iso
 from shadowscan.registry import Inventory
@@ -48,6 +50,36 @@ _TIMEOUT_WARNING = (
     "use timed-out artifacts as accepted results. Use an external process timeout "
     "when a hard execution limit is required."
 )
+
+# The operator's stable identity key comes from IDENTITY_KEY_ENV only, never
+# from a configuration field.
+_MIN_IDENTITY_KEY_BYTES = 32
+_HEX_KEY = re.compile(r"(?:[0-9A-Fa-f]{2})+")
+
+
+def _stable_identity_key() -> bytes | None:
+    """Decode ``SHADOWSCAN_IDENTITY_KEY``, or None when it is not set.
+
+    Gateway pseudonyms and finding IDs use a random key per scan unless the
+    operator supplies at least 32 secret bytes, hex or base64 encoded (hex is
+    tried first). The key must never reach a log, report, cache, record export
+    or diagnostic, and a set but unusable value stops the scan rather than
+    silently falling back to unlinkable per-scan identities.
+    """
+    value = os.environ.get(IDENTITY_KEY_ENV)
+    if value is None:
+        return None
+    text = value.strip()
+    try:
+        key = bytes.fromhex(text) if _HEX_KEY.fullmatch(text) else base64.b64decode(text, validate=True)
+    except ValueError:  # binascii.Error, or text that is not ASCII
+        key = b""
+    if len(key) < _MIN_IDENTITY_KEY_BYTES:
+        # SetupError text is printed verbatim: name the variable, never its value.
+        raise SetupError(
+            f"{IDENTITY_KEY_ENV} must hold at least {_MIN_IDENTITY_KEY_BYTES} bytes, hex or base64 encoded"
+        )
+    return key
 
 
 @dataclass
@@ -146,8 +178,10 @@ class _ConnectorRunner:
         self._dump_directory = dump_directory
         self._exports = exports
         # Identical sources in one report share an opaque identity, while
-        # separate Engine.run calls cannot link redacted caller/scope IDs.
-        self._run_identity_key = secrets.token_bytes(32)
+        # separate Engine.run calls cannot link redacted caller/scope IDs
+        # unless the operator supplied a stable key.
+        self._identity_key_stable = engine._identity_key is not None
+        self._run_identity_key = engine._identity_key or secrets.token_bytes(32)
 
     def run(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
         state.started_at = now_iso()
@@ -301,6 +335,7 @@ class _ConnectorRunner:
             cancelled=state.cancelled,
             publication_lock=state.publication_lock,
             gateway_identity_key=identity_key,
+            gateway_identity_key_stable=identity_key is not None and self._identity_key_stable,
         )
         fs: list[Finding] = []
         started_at = now_iso()
@@ -614,6 +649,8 @@ class Engine:
         self.config = config
         config.validate_security_options()
         config.validate_connector_specs()
+        # Process configuration, never ScanConfig, so it cannot reach caches or reports.
+        self._identity_key = _stable_identity_key()
         self._index_supplied = index is not None
         self._signature_digest: str | None = None
         self.index = index if index is not None else self._load_index()
@@ -879,7 +916,9 @@ class Engine:
         jobs = self._select_jobs(only)
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
-        result.collection_scope = build_collection_scope(self.config, self.index, specs)
+        result.collection_scope = build_collection_scope(
+            self.config, self.index, specs, identity_key=self._identity_key
+        )
         stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
         cache = IncrementalCache(self.config, self.index)
         dump_records = self.config.dump_records
@@ -907,6 +946,8 @@ class Engine:
             )
         if self.config.min_confidence > 0:
             findings = [f for f in findings if f.confidence >= self.config.min_confidence]
+            _prune_related(findings)
+            _prune_runtime_links(findings)
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
         if dump_directory:
             self._write_manifest(dump_directory, export_entries, result.started_at, stats)
@@ -1080,3 +1121,45 @@ def correlate(findings: list[Finding]) -> None:
             )
             if links:
                 linked_finding.metadata["related"] = links
+
+
+def _prune_related(findings: list[Finding]) -> None:
+    """Drop ``metadata['related']`` links to findings absent from ``findings``.
+
+    Correlation runs before the confidence threshold. A report must not link
+    to a finding it omits; removing those identifiers from every list keeps
+    the remaining pairs symmetric, as :func:`correlate` created them.
+    """
+    retained = {f.id for f in findings}
+    for f in findings:
+        links = f.metadata.get("related")
+        if not isinstance(links, list):
+            continue
+        kept = [link for link in links if link in retained]
+        if len(kept) == len(links):
+            continue
+        if kept:
+            f.metadata["related"] = kept
+        else:
+            del f.metadata["related"]
+
+
+def _prune_runtime_links(findings: list[Finding]) -> None:
+    """Drop ``runtime_activity`` references to gateway findings absent from ``findings``.
+
+    Gateway identities are scan-local, so an omitted gateway finding's ID names
+    nothing outside this report. The observation itself stays: its events,
+    window and scope are what the exported log recorded, whatever the gateway
+    finding's own confidence.
+    """
+    retained = {f.id for f in findings}
+    for f in findings:
+        activity = f.metadata.get("runtime_activity")
+        sources = activity.get("sources") if isinstance(activity, dict) else None
+        for source in sources if isinstance(sources, list) else []:
+            if isinstance(source, dict) and source.get("gateway_finding_id") not in retained:
+                source["gateway_finding_id"] = None
+        for ev in f.evidence:
+            ids = ev.attributes.get("gateway_finding_ids")
+            if isinstance(ids, list):
+                ev.attributes["gateway_finding_ids"] = [i for i in ids if i in retained]

@@ -11,7 +11,7 @@ import sys
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
-from typing import Any, NoReturn, TypeVar
+from typing import IO, Any, NoReturn, TypeVar
 
 import click
 import yaml
@@ -480,7 +480,54 @@ def _run_scan(cfg: ScanConfig, opts: ScanOptions, only: list[str] | None = None)
     _run_and_emit(cfg, opts.fmt, opts.output, verbose, opts.max_rows, only=only)
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+class _UsageError(click.UsageError):
+    """A Click usage error, shown unchanged, that exits 1 instead of 2.
+
+    Exit 2 means a complete scan reached ``--fail-on``. A mistyped option,
+    invalid value or missing file stops the command before it scans anything,
+    like a configuration error, so a CI gate must not read it as a policy result.
+    """
+
+    exit_code = 1
+
+    def __init__(self, error: click.UsageError) -> None:
+        super().__init__(error.message, error.ctx)
+        self.error = error
+
+    def format_message(self) -> str:
+        return self.error.format_message()
+
+    def __str__(self) -> str:
+        return str(self.error)
+
+    def show(self, file: IO[Any] | None = None) -> None:
+        self.error.show(file)
+
+
+class _MainGroup(click.Group):
+    """Root group: usage errors of every command, raised while parsing or running, exit 1."""
+
+    def make_context(
+        self,
+        info_name: str | None,
+        args: list[str],
+        parent: click.Context | None = None,
+        **extra: Any,
+    ) -> click.Context:
+        try:
+            return super().make_context(info_name, args, parent, **extra)
+        except click.UsageError as exc:
+            raise _UsageError(exc) from None
+
+    def invoke(self, ctx: click.Context) -> Any:
+        # Subcommand parsing and callbacks run inside the root invocation.
+        try:
+            return super().invoke(ctx)
+        except click.UsageError as exc:
+            raise _UsageError(exc) from None
+
+
+@click.group(cls=_MainGroup, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, prog_name="shadowscan")
 @click.option("-v", "--verbose", count=True, help="-v info, -vv debug")
 @click.option("-q", "--quiet", is_flag=True, help="errors only")
@@ -1168,15 +1215,24 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
     else:
         keys = ("new", "resolved", "unknown", "changed")
         new, resolved, unknown, changed = (comparison[key] for key in keys)
+        # Scan-local IDs (baseline "<", current ">") cannot be matched across reports.
+        local_baseline, local_current = (comparison["not_comparable"][key] for key in ("baseline", "current"))
         console.print(
             f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold],"
-            f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold]"
+            f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold],"
+            f" [bold]{len(local_baseline) + len(local_current)} not comparable[/bold]"
         )
         for reason in comparison["reasons"]:
             console.print(f"Comparison incomplete: {reason}", markup=False)
         # Imported titles and resources are untrusted: Rich's highlighter is
         # quadratic on long tokens (a 50k-character title took about 30 s).
-        for marker, records in (("+", new), ("-", resolved), ("?", unknown)):
+        for marker, records in (
+            ("+", new),
+            ("-", resolved),
+            ("?", unknown),
+            ("<", local_baseline),
+            (">", local_current),
+        ):
             for d in sorted(records, key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
                 console.print(terminal_text(line), markup=False, highlight=False)
