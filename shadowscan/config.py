@@ -57,7 +57,7 @@ import yaml
 from shadowscan.errors import SetupError, yaml_error_position
 from shadowscan.risk import RiskPolicy
 from shadowscan.utils.files import read_policy_text
-from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
@@ -339,6 +339,29 @@ class ConnectorSpec:
     @property
     def id(self) -> str:
         return self.label or self.name
+
+    def __repr__(self) -> str:
+        # Connector settings carry credentials. A debug log of a spec, or of the
+        # ScanConfig holding it, shows the keys and redacted values only.
+        return (
+            f"{type(self).__name__}(name={self.name!r}, config={_redacted_config(self.config)!r},"
+            f" enabled={self.enabled!r}, label={self.label!r})"
+        )
+
+
+# Locations of credential files are withheld from representations too.
+_CREDENTIAL_FILE_KEYS = frozenset({"service_account_file", "credentials_file", "token_file"})
+
+
+def _redacted_config(config: Any) -> Any:
+    """A connector configuration for display: the report redaction rules plus credential-file locations."""
+    if not isinstance(config, dict):
+        return REDACTED
+    try:
+        shown = sanitize(dict(config), redact_short_secrets=True)
+    except Exception:  # noqa: BLE001 - a representation must not fail or fall back to raw values
+        return dict.fromkeys(config, REDACTED)
+    return {key: REDACTED if key in _CREDENTIAL_FILE_KEYS else value for key, value in shown.items()}
 
 
 @dataclass(slots=True)
