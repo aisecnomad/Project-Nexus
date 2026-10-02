@@ -22,23 +22,28 @@ from shadowscan.utils.redaction_rules import _REFERENCE, REDACTED, _sensitive_as
 # no ordinary word contains ('sk-proj-', 'ghp_', 'AKIA', JWT 'eyJ') also stands after a
 # digit; the others keep the usual rule so a word or number that ends in their text
 # ('disk-', 'task-', '2app-') is not read as a token.
+#
+# '\b' is also what keeps this fast: a lookbehind in front of the alternatives costs
+# several times as much at every position of a large text. The tokens after a plain
+# boundary are found by ``_SECRET_TOKEN``; the rest start at the character before them,
+# which the regular expression reads first and the replacement keeps.
+_ESCAPE = r"\\[nrt]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|%[0-9A-Fa-f]{2}"
+# The same boundaries as lookbehinds, for the JWT rule.
 _ESCAPED_BOUNDARY = r"(?<=\\[nrt])|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=%[0-9A-Fa-f]{2})"
-_TOKEN_START = r"(?:(?<![A-Za-z0-9])|" + _ESCAPED_BOUNDARY + ")"
 _SPECIFIC_TOKEN_START = r"(?:(?<![A-Za-z])|" + _ESCAPED_BOUNDARY + ")"
-# Keep this backstop aligned with detectable credential formats regardless of
-# which signature packs the operator enables for discovery.
-_SECRET_TOKEN = re.compile(
-    r"(?:"
-    + _SPECIFIC_TOKEN_START
-    + r"(?:sk-(?:proj|ant|live|or-v1|lf|litellm|svcacct|admin)-[A-Za-z0-9_-]{8,}"
+# Prefixes no ordinary word contains.
+_SPECIFIC_TOKEN = (
+    r"sk-(?:proj|ant|live|or-v1|lf|litellm|svcacct|admin)-[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
     # GitLab personal/runner/trigger/deploy/feed/SCIM/CI/mail/OAuth/agent tokens.
     r"|gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-[A-Za-z0-9_-]{8,}|GR1348941[A-Za-z0-9_-]{20,}"
     r"|xox[abeprs]-[A-Za-z0-9-]{8,}|xoxe\.xox[bp]-[A-Za-z0-9-]{8,}|xapp-[A-Za-z0-9-]{8,}"
     # Google API keys, OAuth access/refresh tokens and OAuth client secrets.
     r"|AIza[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{30,}|GOCSPX-[A-Za-z0-9_-]{20,}"
-    r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,})"
-    r"|" + _TOKEN_START + r"(?:sk-[A-Za-z0-9_-]{8,}"
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,}"
+)
+_GENERIC_TOKEN = (
+    r"sk-[A-Za-z0-9_-]{8,}"
     r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
     r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
     r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
@@ -51,8 +56,15 @@ _SECRET_TOKEN = re.compile(
     r"|PMAK-[a-f0-9]{24}-[a-f0-9]{34}|dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,}"
     r"|sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,}|glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/]{32,}"
     r"|sntry[su]_[A-Za-z0-9+/=_-]{30,}|hv[sbr]\.[A-Za-z0-9_-]{24,}"
-    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}))\b"
+    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}"
 )
+# Keep this backstop aligned with detectable credential formats regardless of
+# which signature packs the operator enables for discovery.
+_SECRET_TOKEN = re.compile(r"\b(?:" + _SPECIFIC_TOKEN + "|" + _GENERIC_TOKEN + r")\b")
+_UNDERSCORE_OR_ESCAPE_TOKEN = re.compile(
+    r"(?P<glue>_|" + _ESCAPE + r")(?:" + _SPECIFIC_TOKEN + "|" + _GENERIC_TOKEN + r")\b"
+)
+_DIGIT_TOKEN = re.compile(r"(?P<glue>[0-9])(?:" + _SPECIFIC_TOKEN + r")\b")
 # Webhook and bot endpoints whose *path* is the credential. The scheme, host
 # and a fixed prefix are kept for context; the remainder of the path is
 # withheld. Query parameters (e.g. Power Automate's ``sig``) are handled by the
@@ -86,10 +98,33 @@ _PEM = re.compile(
     r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)",
     re.DOTALL,
 )
+_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
 # A scheme after an escaped line break or a percent escape ('...header:\nBearer v') is read as well.
-_AUTH = re.compile(r"(?i)(?:\b|" + _ESCAPED_BOUNDARY + r")(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
+_ESCAPED_AUTH = re.compile(
+    r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+"
+)
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
+
+
+def _redact_secret_tokens(text: str) -> str:
+    """Withhold every provider token in ``text`` (see the boundary rules above)."""
+    text = _SECRET_TOKEN.sub(REDACTED, text)
+    text = _UNDERSCORE_OR_ESCAPE_TOKEN.sub(lambda match: match.group("glue") + REDACTED, text)
+    return _DIGIT_TOKEN.sub(lambda match: match.group("glue") + REDACTED, text)
+
+
+def _redact_authorization(text: str) -> str:
+    """Withhold the credential after an authorization scheme, keeping the scheme.
+
+    The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
+    """
+
+    def withheld(match: re.Match[str]) -> str:
+        return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n")
+
+    text = _AUTH.sub(withheld, text)
+    return _ESCAPED_AUTH.sub(lambda match: match.group("glue") + withheld(match), text)
 
 
 def _redact_jwts(text: str) -> str:
