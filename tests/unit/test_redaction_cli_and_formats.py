@@ -215,6 +215,35 @@ def test_inline_header_credentials_are_redacted_in_context(text, kept):
 
 
 @pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        (
+            json.dumps({"message": f"login failed\npassword:{SECRET}"}),
+            '{"message": "login failed\\npassword:',
+        ),
+        (json.dumps({"request": f"GET /v1 HTTP/1.1\r\nX-Api-Key:{SECRET}\r\n"}), "HTTP/1.1\\r\\nX-Api-Key:"),
+        (f'"a\\tpassword:{SECRET}"', '"a\\tpassword:'),
+        (f'{{"headers": "Accept:*/*\\nAuthorization:{SECRET}"}}', "Accept:*/*\\nAuthorization:"),
+        (
+            json.dumps(json.dumps({"message": f"login failed\npassword:{SECRET}"})),
+            "login failed\\\\npassword:",
+        ),
+        (json.dumps({"m": f"x\fpasswd:{SECRET}"}), '{"m": "x\\fpasswd:'),
+        (f'{{"m": "x\\u000apassword:{SECRET}"}}', '{"m": "x\\u000apassword:'),
+        (
+            json.dumps({"request": f"GET / HTTP/1.1\r\nCookie: a=1; sid={SECRET}\r\n"}),
+            "HTTP/1.1\\r\\nCookie: ",
+        ),
+    ],
+)
+def test_inline_headers_after_an_escaped_line_break_are_redacted(text, kept):
+    # The name was read from the escape's letter ('npassword', 'nX-Api-Key'),
+    # which named no header: the value was shown.
+    result = _clean(text)
+    assert kept in result and REDACTED in result
+
+
+@pytest.mark.parametrize(
     ("text", "expected"),
     [
         # A key=value neighbour after ';' ends the value (connection strings, shell lists).

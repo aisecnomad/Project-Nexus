@@ -472,13 +472,15 @@ def _option_value_span(
 
 # Cookie headers hold several 'name=value' pairs separated by ';', any of
 # which can be a session credential and may be quoted (sid="v"), so the whole
-# header value is withheld, to the end of the line. The established
+# header value is withheld, to the end of the line. A header may follow a
+# JSON string escape ('\r\nCookie: ...'). The established
 # assignment rules withhold only the first pair and quote it ('Cookie:
 # "[REDACTED]"; sid=v'), and the mapping rules then read a quoted marker
 # together with what follows it to the next ';', so a value cut at a quote
 # would grow on every pass.
 _COOKIE_HEADER = re.compile(
-    r"(?i)(?<![\w.-])(?P<key>set-cookie2?|cookie2?)(?P<sep>[ \t]*[:=][ \t]*)(?P<value>\S[^\r\n]*)"
+    r"(?i)(?:(?<![\w.-])|(?<=\\[nrtbf])|(?<=\\u[0-9a-f]{4}))(?P<key>set-cookie2?|cookie2?)"
+    r"(?P<sep>[ \t]*[:=][ \t]*)(?P<value>\S[^\r\n]*)"
 )
 # A cookie assigned with '=' that the established passes withheld whole as a
 # quoted marker, which a ',', ')', ']' or '}' then ends: an argument

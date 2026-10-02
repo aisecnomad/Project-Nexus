@@ -456,6 +456,10 @@ _COMPACT_NAMES = frozenset(
     }
 )
 _COMPACT_COLON = re.compile(r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*):(?=[^\s\"'\\])")
+# The letters of a JSON string escape that ends the text before a name
+# ('\npassword:v', '\r\nX-Api-Key:v', '\u000apassword:v'). The key above
+# starts at the escape's letter, since a backslash may precede a name.
+_ESCAPE_LETTERS = re.compile(r"[nrtbf]|u[0-9A-Fa-f]{4}")
 _COMPACT_VALUE = re.compile(r"\[REDACTED\]|[^\s,;\}\]\)\"']+(?:" + _GLUED_VALUE + r")*")
 # Report identifiers written in place of a caller's key (credential_id and the
 # gateway connector's keyed fingerprints).
@@ -474,7 +478,12 @@ def _redact_compact_colons(text: str) -> str:
     while match := _COMPACT_COLON.search(text, position):
         position = match.end()
         key = match.group("key")
-        if _KEY_NORMALISE.sub("", key.lower()) not in _COMPACT_NAMES:
+        name = _KEY_NORMALISE.sub("", key.lower())
+        if name not in _COMPACT_NAMES and match.start() and text[match.start() - 1] == "\\":
+            escape = _ESCAPE_LETTERS.match(key)
+            if escape is not None:
+                name = _KEY_NORMALISE.sub("", key[escape.end() :].lower())
+        if name not in _COMPACT_NAMES:
             continue
         value = _COMPACT_VALUE.match(text, position)
         if value is None:
