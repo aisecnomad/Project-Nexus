@@ -282,7 +282,7 @@ def _swallow(function, *args) -> None:
 def test_job_deadline_exit_leaves_no_clone_process_or_checkout(tmp_path):
     """The orphaned-clone defect: os._exit left git running, token in its environment, checkout on disk."""
     script = """
-import os, sys, time
+import os, pathlib, sys, threading, time
 from shadowscan.utils.deadline import arm_job_deadline
 from shadowscan.utils.git import register_checkout, run_bounded_clone
 
@@ -293,11 +293,18 @@ class Ctx:
 
 pidfile, checkout = sys.argv[1], sys.argv[2]
 register_checkout(checkout)
-arm_job_deadline(0.5)
-try:
-    run_bounded_clone([sys.executable, '-c', sys.argv[3], pidfile], dict(os.environ), Ctx(), 120)
-except Exception:
-    pass
+
+def clone():
+    try:
+        run_bounded_clone([sys.executable, '-c', sys.argv[3], pidfile], dict(os.environ), Ctx(), 120)
+    except Exception:
+        pass
+
+threading.Thread(target=clone, daemon=True).start()
+# Arm the deadline only once the clone is running, so that a slow start cannot beat the watchdog.
+while not (pathlib.Path(pidfile).exists() and pathlib.Path(pidfile).read_text()):
+    time.sleep(0.02)
+arm_job_deadline(0.3)
 time.sleep(60)  # the stand-in for a scan that is still busy when the deadline passes
 """
     pidfile = tmp_path / "pid"
