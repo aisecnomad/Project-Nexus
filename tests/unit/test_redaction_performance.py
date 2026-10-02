@@ -112,6 +112,77 @@ def test_url_text_without_userinfo_is_preserved(text):
     assert sanitize_text(text) == text
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A URL inside another one's match: after a ',' or ';' (connection and
+        # broker lists), in a query value, a path or a fragment.
+        (
+            f"redis://:{SECRET}@cache:6379,redis://:{SECRET}@cache2:6379",
+            f"redis://{REDACTED}@cache:6379,redis://{REDACTED}@cache2:6379",
+        ),
+        (
+            f"DATABASE_URLS=postgres://u:{SECRET}@h1/db;postgres://u:{SECRET}@h2/db",
+            f"DATABASE_URLS=postgres://{REDACTED}@h1/db;postgres://{REDACTED}@h2/db",
+        ),
+        (
+            f"https://a.example/login?next=https://user:{SECRET}@b.example/x&y=1",
+            f"https://a.example/login?next=https://{REDACTED}@b.example/x&y=1",
+        ),
+        (
+            f"https://a.example/r?next=ftp://user:{SECRET}@b.example&x=1",
+            f"https://a.example/r?next=ftp://{REDACTED}@b.example&x=1",
+        ),
+        (
+            f"https://a.example,https://user:{SECRET}@b.example",
+            f"https://a.example,https://{REDACTED}@b.example",
+        ),
+        (
+            f"https://a.example/proxy/https://user:{SECRET}@b.example/x",
+            f"https://a.example/proxy/https://{REDACTED}@b.example/x",
+        ),
+        (
+            f"https://a.example/r#https://user:{SECRET}@b.example",
+            f"https://a.example/r#https://{REDACTED}@b.example",
+        ),
+        (
+            f"https://u:{SECRET}@a.example/?u=https://u2:{SECRET}@b.example",
+            f"https://{REDACTED}@a.example/?u=https://{REDACTED}@b.example",
+        ),
+        # A password with a raw '#' in the inner URL, as in the outer one.
+        (
+            f"https://a.example/?u=postgres://u:Pass#{SECRET}@h/db",
+            f"https://a.example/?u=postgres://{REDACTED}@h/db",
+        ),
+        # The inner URL's credential query fields, as in the outer one.
+        (
+            f"https://a.example/r?next=https://b.example/?auth={SECRET}&x=1,https://c.example/?pat={SECRET}",
+            f"https://a.example/r?next=https://b.example/?auth={REDACTED}&x=1,https://c.example/?pat={REDACTED}",
+        ),
+        # A name the assignment rules read keeps its value withheld.
+        (
+            f"https://a.example/?x=https://password=@{SECRET}",
+            f"https://a.example/?x=https://password={REDACTED}",
+        ),
+        # An inner URL without userinfo is kept.
+        (
+            "https://a.example/login?next=https://b.example/p?x=a@b",
+            "https://a.example/login?next=https://b.example/p?x=a@b",
+        ),
+        (
+            "https://web.archive.org/web/2020/https://example.com/@alice",
+            "https://web.archive.org/web/2020/https://example.com/@alice",
+        ),
+    ],
+)
+def test_a_url_inside_another_is_read_as_a_url(text, expected):
+    # The URL match runs to the first blank or quote, and only its first
+    # authority was read: the inner URL's password was shown.
+    safe = sanitize_text(text)
+    assert safe == expected
+    assert sanitize_text(safe) == safe
+
+
 def _bounded_process(script: str, *args: str) -> None:
     # This generous bound distinguishes linear work (well below a second on
     # ordinary hardware) from the former quadratic retry, which takes minutes.

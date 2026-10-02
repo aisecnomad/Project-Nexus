@@ -8,6 +8,10 @@ name: DCO
 # only inspects commit metadata already present in the fetched history and
 # never checks out or executes the pull request's changed files.
 #
+# A commit message is not a patch: trailers are parsed with --no-divider, so a
+# '---' line in the message (Dependabot opens its YAML metadata with one before
+# its sign-off) does not hide the trailers after it.
+#
 # Trailer values are compared as literal strings (via `git interpret-trailers`
 # and shell string equality), never interpolated into a regular expression: an
 # attacker-controlled author/committer email containing regex metacharacters
@@ -85,7 +89,7 @@ jobs:
                 break
               fi
             done <<TRAILERS
-          $(git show -s --format='%B' "$sha" | git interpret-trailers --parse | awk -F': ' 'tolower($1) == "signed-off-by" { $1=""; sub(/^: /,""); print }')
+          $(git show -s --format='%B' "$sha" | git interpret-trailers --parse --no-divider | awk -F': ' 'tolower($1) == "signed-off-by" { $1=""; sub(/^: /,""); print }')
           TRAILERS
             if [ "$ok" -ne 1 ]; then
               echo "::error::Commit $sha is missing a Signed-off-by trailer matching $author_email"

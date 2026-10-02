@@ -7,10 +7,21 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### October 2 integration of the open pull requests
 
-The open pull requests #107 and #110 to #122 land together. The stack
-#107, #110 to #120 keeps one commit per pull request with that pull request's
-exact tree; #121 and #122 keep their own commits. Changes made while
-integrating them:
+The open pull requests #107 and #110 to #122 landed together through #123,
+which was squash-merged into one commit on `main`. On #123's branch each of
+them is one commit: each commit of the stack (#107, #110 to #120) has exactly
+that pull request's tree, and #121 and #122 also carry their conflict
+resolutions against the stack. The redaction review fixes and this grouping
+followed in a separate pull request.
+
+The review fixes below come from an AI-assisted review of the integrated code.
+Each defect was reproduced before it was fixed and has a regression test.
+Neither the review nor the fixes had a second-person review, and the offline
+evaluation corpora are author-written: their unchanged results say nothing
+about field precision. Migration notes are in `docs/production.md` under
+"Candidate change history".
+
+#### Integration changes
 
 - Worker image: built on Chainguard's Wolfi base (`chainguard/wolfi-base`,
   pinned by index digest in both stages) instead of `python:3.12-slim-trixie`.
@@ -40,56 +51,15 @@ integrating them:
 - `docs/connectors/reference.md` is regenerated from the stack's connectors,
   and `docs/production.md` puts operator guidance first with every dated note,
   including the stack's, under "Candidate change history" (#122).
-- `gateway.logs` access-log attribution (AI-assisted review of the stack):
-  trailer and logfmt tokens are read as logfmt, so a key must start a token.
-  An unquoted client value after the final quote (`args=a&host=api.openai.com
-  host=intranet`) no longer becomes the host, a request line or query logged as
-  one token can no longer set `model` (`GET /v1/x?model=forged`), and a line
-  truncated inside the user agent is malformed instead of taking its host from
-  the user agent. Combined-format fields keep `\"` escapes inside the field.
-  A host token in or before a quoted trailer field, which a client can write
-  when the gateway does not escape quotes, is still not trusted; when it alone
-  would have made a request LLM traffic the scan is now incomplete with a
-  warning, where such requests used to be skipped with exit 0. An inference
-  operation with a static suffix (`/v1/chat/completions.css`, which a
-  suffix-matching router serves as the endpoint) is no longer excluded as a
-  static asset, while static files under inference-like prefixes
-  (`/agents/app.js`, `/v1/images/logo.png`) still are, and `;name=value` path
-  parameters are removed before the static-asset test.
+
+#### Review fixes: code connectors and signatures
+
 - `framework.vercel-ai-sdk`: the `stopWhen:` and `tools: { … tool(` code
   patterns were quadratic on planted input. A 30 KB file with `stopWhen:`
   followed by blanks timed out signature matching, so the file's evidence was
   dropped and every scan of that repository exited 3. Both are linear now with
   the same matches, and `tests/unit/test_regex_linearity.py` times the
   signature's code patterns on such shapes.
-- `lowcode.servicenow`: an empty page no longer ends a table. ACLs remove rows
-  after `sysparm_limit`, so a whole 500-row window can come back empty while
-  later windows hold readable records; collection used to stop there with exit
-  0. It now pages until the windows cover `X-Total-Count`, which also saves the
-  extra empty request per table. A response without a valid `X-Total-Count`
-  ends the table at an empty page with a warning that makes the scan
-  incomplete. `HttpClient.get_json` takes an `on_response` callback that sees
-  the response headers once the body is decoded, as `paginate_link(on_page=)`
-  does. The ServiceNow guide no longer claims that collection advances by the
-  rows returned, which it never did.
-- Integer options are validated like `max_pages`: `max_lambda`,
-  `max_ecs_api_calls`, `max_projects`, `min_events` and `max_teams` must be
-  positive integers, `cloudtrail_days` and `audit_days` non-negative integers.
-  `int()` used to accept booleans and truncate fractions, so
-  `cloudtrail_days: 0.5` silently switched CloudTrail lookups off, and text
-  such as `"abc"` raised a bare `ValueError`; each is now a configuration
-  error. The option descriptions and `docs/connectors/reference.md` name the
-  requirement.
-- `cloud.azure`: subscription ids from the subscription listing and resource
-  ids from Resource Graph were used in ARM request paths unchecked. Requests
-  removes `.`/`..` segments and `?` or `#` cuts off the appended suffix, so a
-  crafted id could turn the app-settings POST into a POST to another ARM
-  action (such as an account's `listKeys`) with the scanner's token, on the same
-  host. A listed subscription id must now be a GUID and a resource id a plain
-  ARM path (no `.`/`..` segments, `?`, `#`, `%`, `\`, whitespace or control
-  characters); anything else is skipped with a warning and the scan is
-  incomplete. Listed subscriptions without a string id used to be dropped
-  silently and are now counted in that warning.
 - `code.filesystem`: the catalog rule no longer discounts deployment and CI
   configuration. A Kubernetes-style resource (`apiVersion` and `kind`, also in
   a multi-document stream), an ECS task definition, a CI pipeline
@@ -162,6 +132,161 @@ integrating them:
   made without git-lfs, with `agent.py` stored in LFS, gave no finding and a
   complete scan. A pointer in place of a file the scanner never reads (an
   image, a model) is not a gap; the live-clone check is unchanged.
+- Python code after an unclosed bracket is no longer masked on Python 3.12
+  and later. Those versions report the tokenizer error at the start of the
+  last line rather than past it, so that line was masked as if it were a
+  literal: a construction on it was lost while the scan said its lexical
+  evidence was retained. Python 3.11 was unaffected.
+
+#### Review fixes: gateway, low-code and cloud connectors
+
+- `gateway.logs` access-log attribution: trailer and logfmt tokens are read
+  as logfmt, so a key must start a token. An unquoted client value after the
+  final quote (`args=a&host=api.openai.com host=intranet`) no longer becomes
+  the host, a request line or query logged as one token can no longer set
+  `model` (`GET /v1/x?model=forged`), and a line
+  truncated inside the user agent is malformed instead of taking its host from
+  the user agent. Combined-format fields keep `\"` escapes inside the field.
+  A host token in or before a quoted trailer field, which a client can write
+  when the gateway does not escape quotes, is still not trusted; when it alone
+  would have made a request LLM traffic the scan is now incomplete with a
+  warning, where such requests used to be skipped with exit 0. An inference
+  operation with a static suffix (`/v1/chat/completions.css`, which a
+  suffix-matching router serves as the endpoint) is no longer excluded as a
+  static asset, while static files under inference-like prefixes
+  (`/agents/app.js`, `/v1/images/logo.png`) still are, and `;name=value` path
+  parameters are removed before the static-asset test.
+- `lowcode.servicenow`: an empty page no longer ends a table. ACLs remove rows
+  after `sysparm_limit`, so a whole 500-row window can come back empty while
+  later windows hold readable records; collection used to stop there with exit
+  0. It now pages until the windows cover `X-Total-Count`, which also saves the
+  extra empty request per table. A response without a valid `X-Total-Count`
+  ends the table at an empty page with a warning that makes the scan
+  incomplete. `HttpClient.get_json` takes an `on_response` callback that sees
+  the response headers once the body is decoded, as `paginate_link(on_page=)`
+  does. The ServiceNow guide no longer claims that collection advances by the
+  rows returned, which it never did.
+- Integer options are validated like `max_pages`: `max_lambda`,
+  `max_ecs_api_calls`, `max_projects`, `min_events` and `max_teams` must be
+  positive integers, `cloudtrail_days` and `audit_days` non-negative integers.
+  `int()` used to accept booleans and truncate fractions, so
+  `cloudtrail_days: 0.5` silently switched CloudTrail lookups off, and text
+  such as `"abc"` raised a bare `ValueError`; each is now a configuration
+  error. The option descriptions and `docs/connectors/reference.md` name the
+  requirement.
+- `cloud.azure`: subscription ids from the subscription listing and resource
+  ids from Resource Graph were used in ARM request paths unchecked. Requests
+  removes `.`/`..` segments and `?` or `#` cuts off the appended suffix, so a
+  crafted id could turn the app-settings POST into a POST to another ARM
+  action (such as an account's `listKeys`) with the scanner's token, on the same
+  host. A listed subscription id must now be a GUID and a resource id a plain
+  ARM path (no `.`/`..` segments, `?`, `#`, `%`, `\`, whitespace or control
+  characters); anything else is skipped with a warning and the scan is
+  incomplete. Listed subscriptions without a string id used to be dropped
+  silently and are now counted in that warning.
+
+#### Review fixes: redaction and source decoding
+
+- Redaction: a quoted value closes at its first quote that no backslash
+  escapes. A JSON string that started with a credential and an escaped value
+  (`{"log": "password: \"S\""}`, a ConfigMap's embedded YAML, Python's
+  `'password: \'S\''`) closed at the escaped quote, only its backslash was
+  withheld, and the credential was shown. Double-quoted option values
+  (`--password "a\"S"`, `-u "user:a\"S"`, `echo "a\"S" | … --password-stdin`,
+  `dotnet user-secrets set`) and `auth=(user, password)` pairs read `\"` the
+  same way. A quote right after an assignment operator, or a line with no
+  unescaped closing quote, keeps the former reading, and assignments are read
+  the former way once more afterwards, so a Windows path ending in `\"` hides
+  no credential after it.
+- Redaction is linear again on comment blocks. Every word that ends a comment
+  line (or precedes a comment) is read as a possible callee, and each skipped
+  the rest of the block again to look for its `(`: about 250 KB of `#` or `//`
+  comment lines took six seconds, and 1 MB took two minutes before it failed
+  the redaction work limit and left the file incomplete. A call after a long
+  block had its arguments lexed again for each word. A skipped comment is now
+  remembered with where its trivia ends, and a `(` that several words reach is
+  lexed and judged once.
+- A Python source whose PEP 263 cookie names a codec that does not read ASCII
+  as ASCII (`utf_16_le`, `utf-16-be` or `utf_32_le` without a byte-order mark,
+  `utf-7`, HZ, EBCDIC code pages such as `cp037`) is a coverage gap
+  (`binary or undecodable content in analyzable file`). The ASCII file was
+  decoded into other characters, CJK text for UTF-16, and its imports and keys
+  went unanalyzed with no gap reported; CPython refuses most such cookies. A
+  codec error raised as a plain `UnicodeError` is reported as the same gap.
+- Redaction: a `;` before an escaped line break or tab (`\n`, `\r`, `\t` in
+  JSON-escaped text) ends an unquoted value. Read as a `;` inside the value,
+  it ran `HOST=db;\n` into the next line and took that line's credential name
+  with it, so `"HOST=db;\n:password => \"S\""` showed `S`.
+- Redaction: the credential after an authorization scheme is never `=` signs
+  alone. In `bearer => S`, `Bearer =~ S` and `bearer == S` the scheme rule took
+  the operator's `=` as the credential, the assignment rules then found no
+  operator, and `S` was shown. A credential glued to an `=` (`Basic =S`) is
+  still withheld.
+- Redaction: a braced ODBC connection string password is withheld whole, with
+  anything a malformed value has after its closing brace up to the `;`. ODBC
+  puts a value that holds `;` in braces and doubles a `}` inside them; the
+  `Pwd=` rule read the value to its first `;` and showed the rest
+  (`Pwd={a;S}`, `Pwd={a}};S}`). A brace that does not close within 256
+  characters on its line, or opens a `{{` template, is read as before.
+- `sanitize` costs each member of a set or frozenset as it costs a list item.
+  The members were counted as leaves, so a set around a tuple nested more
+  than 64 deep passed the structure check and its copy was cut short with a
+  marker, and a set around a tuple of large texts was copied past the
+  expanded-output limit. Both now fail the sanitization limit (exit 3), as
+  the same tuple in a list does.
+- Redaction: a URL inside another URL's text is read as a URL, so its
+  userinfo, credential query fields and webhook path secret are withheld. A
+  URL runs to the first blank or quote, so the second URL of a list
+  (`redis://:a@h1,redis://:S@h2`, `amqp://u:secret@h1;amqp://u:secret@h2`)
+  or one in a query value, path or fragment (`?next=https://u:secret@b`) was
+  part of the first, whose authority alone was read, and its password was
+  shown. Each inner URL is read up to the next one, after every other rule,
+  and a text this changes is read once more, as the next sanitization would
+  read it. A percent-encoded inner URL (`?u=https%3A%2F%2Fu%3AS%40h`) is
+  still not decoded.
+
+#### Review fixes: engine, incremental scans, plugins and CI
+
+- Incremental scans: the fingerprint of an offline `code.github` or
+  `code.gitlab` checkout follows `default_excludes`. With
+  `default_excludes: false`, a change inside `vendor/`, `dist/` or `bin/`
+  reused the cached result, so the scan exited 0 without the new evidence
+  and `shadowscan diff` counted those findings as resolved.
+- Incremental scans: the fingerprint records whether each skipped built-in
+  directory that can hold first-party code (`bin/`, `build/`, `dist/`,
+  `vendor/` and the like) holds a file. Adding `vendor/agent.py` to an empty
+  `vendor/` used to reuse the cached result without the default-exclude
+  warning.
+- `identity.jwt` `tokens` are withheld from `repr()` and `str()` of a
+  `ConnectorSpec` and its `ScanConfig`, like the credential-file locations.
+  Opaque or malformed tokens match no value pattern, so a debug log or
+  traceback that printed the configuration showed them verbatim.
+- Process-mode plugins: a program the plugin starts no longer inherits the
+  worker's result socket or multiprocessing's liveness pipe, and results
+  carry a length prefix. A finished result used to be discarded as a
+  timeout when a plugin ran `os.system` or a `Popen(close_fds=False)` helper.
+  Connector timeouts above about 24.8 days no longer overflow the waits, and
+  a deadline kill that races `Process.close()` no longer ends the scan
+  without a report.
+- Approval inventories: the approve-everything warning covers every pattern
+  that matches all finding resources (`?*`, `*?`, ...), not only patterns
+  made of `*`, and an inventory inside the offline clone directory
+  (`input`) of a `code.github` or `code.gitlab` entry is reported like one
+  inside a `code.filesystem` path.
+- CI: every run outside a pull request has its own concurrency group, so a
+  quick series of merges no longer replaces the pending push run of the
+  middle commit. `make secrets` sets `pipefail`, and
+  `tools/check_secrets.py` exits 2 when it is given no file instead of
+  passing after checking nothing. A weekly run on `main` rebuilds the
+  worker image from current Wolfi packages and rescans it with a fresh
+  database.
+- CI: the DCO check reads a sign-off after a `---` line in the commit
+  message. Dependabot opens its YAML metadata with such a line, so its
+  sign-off was never read and every Dependabot pull request failed the check.
+- The CI lock takes Dependabot's eight pending development-tool updates
+  (coverage 7.16.2, filelock 4.0.6, identify 2.6.20, librt 0.16.0, msgpack
+  1.2.3, nodeenv 1.11.0, platformdirs 4.12.1, virtualenv 21.13.0), regenerated
+  with the documented command and uv 0.12.18.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

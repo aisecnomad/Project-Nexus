@@ -46,9 +46,16 @@ _CLI_SECRET_OPTIONS = frozenset({"auth", "pass", "passphrase", "pat", "pwd"})
 _CLI_HEADER_OPTIONS = frozenset({"H", "header", "headers"})
 _CLI_SPACE = re.compile(r"[ \t]*\\\r?\n[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
 _CLI_LIST_GAP = re.compile(r"[ \t]*,[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
+# The content of a double-quoted value: it closes at its first quote that no
+# backslash escapes, as in a shell or a script ('"ab\"cd"' is one value). Where
+# no such quote ends the line, or the text before it ends with an assignment
+# operator (the quote then opens the next value: 'a\" password == "v"'), the
+# value closes at its first quote, as before. A shell's single quotes escape
+# nothing. The escaped run is possessive, so a value is read once.
+_DOUBLE_QUOTED = r"(?:\\[^\r\n]|[^\"\\\r\n])*+(?<![=:>~])(?<![=:>~][ \t])(?=\")|[^\"\r\n]*"
 # An unterminated quote (a copied fragment) runs the value to its line end.
 _CLI_VALUE = re.compile(
-    r"\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>(){}\[\],\\]+)"
+    r"\"(?P<double>" + _DOUBLE_QUOTED + r")\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>(){}\[\],\\]+)"
     r"|[\"'](?P<open>[^\r\n]+)"
 )
 # One character of an unquoted value (the 'bare' group above), and a run of them.
@@ -91,15 +98,15 @@ _CLI_MYSQL = re.compile(
 # 'echo VALUE | docker login -u svc --password-stdin'.
 _CLI_PIPED_PASSWORD = re.compile(
     r"(?:^|[\s;&(])echo[ \t]+(?:-[neE]+[ \t]+)*"
-    r"(?:\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>()]+))"
+    r"(?:\"(?P<double>" + _DOUBLE_QUOTED + r")\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>()]+))"
     r"[ \t]*\|[^|;&\r\n]*?[ \t]--password-stdin(?![\w-])"
 )
 # 'dotnet user-secrets set NAME VALUE' stores a .NET configuration setting;
 # its name decides as a setting's does (see _setting_level).
 _USER_SECRETS_SET = re.compile(
     r"(?<![\w.-])dotnet[ \t]+user-secrets[ \t]+set[ \t]+"
-    r"(?:\"(?P<dname>[^\"\r\n]*)\"|'(?P<sname>[^'\r\n]*)'|(?P<bname>[^\s\"'`;|&<>]+))[ \t]+"
-    r"(?:\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>]+))"
+    r"(?:\"(?P<dname>" + _DOUBLE_QUOTED + r")\"|'(?P<sname>[^'\r\n]*)'|(?P<bname>[^\s\"'`;|&<>]+))[ \t]+"
+    r"(?:\"(?P<double>" + _DOUBLE_QUOTED + r")\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>]+))"
 )
 
 

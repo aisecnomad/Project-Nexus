@@ -143,6 +143,21 @@ def test_text_shape_gaps_are_redacted(text, expected):
     assert _clean(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps(f'HOST=db;\n:password => "{SECRET}"'),
+        json.dumps(f"HOST=db;\r\nAPI_KEY: {SECRET}"),
+        json.dumps(f'url=https://h/x;\n:secret => "{SECRET}"'),
+    ],
+)
+def test_a_semicolon_before_an_escaped_line_break_ends_an_unquoted_value(text):
+    # '\\n' is the line break of JSON-escaped text. Read as a ';' glued into
+    # the value, it ran 'db' into the next line and took the credential's name.
+    result = _clean(text)
+    assert result.startswith('"HOST=db;') or result.startswith('"url=https://h/x;')
+
+
 @pytest.mark.parametrize("depth", [1, 2, 3])
 @pytest.mark.parametrize("value", [f'ab"cd{SECRET}', f"{SECRET}\\", f'a\\"b{SECRET}', f"x'{SECRET}"])
 def test_escaped_json_values_close_at_their_own_delimiter(value, depth):
@@ -252,6 +267,71 @@ def test_escaped_json_under_another_name_is_read_for_credentials(text):
     # An escaped value closes only at its own delimiter, so a value under a
     # name that is not a credential spans the more deeply escaped JSON in it;
     # that JSON is read on its own.
+    _clean(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps({"log": f'password: "{SECRET}"'}),
+        json.dumps({"msg": f'token: "{SECRET}"'}),
+        json.dumps({"msg": f'api_key: "{SECRET}" rejected'}),
+        json.dumps({"stdout": f'client_secret: "{SECRET}"\n'}),
+        json.dumps({"msg": f'secret: "{SECRET}", user: "bob"'}),
+        json.dumps({"data": {"config.yaml": f'password: "{SECRET}"\nhost: db\n'}}),
+        # Python's repr escapes a quote of its own kind.
+        "{'msg': 'password: \\'" + SECRET + "\\' (\"prod\")'}",
+    ],
+)
+def test_a_string_that_starts_with_an_escaped_credential_value_is_withheld(text):
+    # The string after "log": closed at the escaped quote ('"password: \\"'), so
+    # only that backslash was withheld from the credential and the value was shown.
+    _clean(text)
+
+
+def test_an_escaped_credential_value_is_withheld_from_a_structured_excerpt():
+    # A JSON file's excerpt is sanitized with its parsed structure, which names
+    # no credential here: the text passes alone decide what the excerpt shows.
+    text = json.dumps(
+        {"kind": "ConfigMap", "data": {"config.yaml": f'password: "{SECRET}"\nhost: db\n'}}, indent=2
+    )
+    excerpt = sanitize((json.loads(text), text))[1]
+    assert SECRET not in excerpt and REDACTED in excerpt and '"kind": "ConfigMap"' in excerpt
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '$path = "C:\\temp\\"; $password = "' + SECRET + '"',
+        'path = "C:\\temp\\" ; password = "' + SECRET + '"',
+        'dir = "C:\\x\\" token = "' + SECRET + '"',
+        '[db]\nroot = "C:\\data\\"  # dir\npassword = "' + SECRET + '"',
+    ],
+)
+def test_a_quoted_path_ending_in_a_backslash_does_not_hide_a_later_credential(text):
+    # Windows paths end in a backslash before their closing quote; the
+    # credential assigned after one on the same line is still withheld.
+    _clean(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f'tool --password "ab\\"{SECRET}"',
+        f'tool --api-key "ab\\"{SECRET}"',
+        f'curl -u "user:ab\\"{SECRET}" https://x.test',
+        f'mysql -p"ab\\"{SECRET}"',
+        f'echo "ab\\"{SECRET}" | docker login -u svc --password-stdin',
+        f'dotnet user-secrets set "OpenAI:Key" "ab\\"{SECRET}"',
+        f'requests.get(url, auth=("user", "ab\\"{SECRET}"))',
+        f"requests.get(url, auth=('user', 'ab\\'{SECRET}'))",
+        # A shell's single quotes escape nothing: the value ends at the next quote.
+        f"tool --user 'C:\\' --password '{SECRET}'",
+    ],
+)
+def test_a_quoted_argument_closes_at_its_first_unescaped_quote(text):
+    # In a shell's double quotes and in a Python string '\\"' is a quote inside
+    # the value: closed there, the rest of the credential was shown.
     _clean(text)
 
 
@@ -431,6 +511,21 @@ def test_set_values_count_toward_sanitization_limits():
 
     with pytest.raises(SanitizationLimitError):
         sanitize({"big": frozenset(f"v{i}" for i in range(150_000))})
+
+
+def test_a_container_in_a_set_counts_toward_sanitization_limits():
+    # A set's members were counted as leaves, so a set around a deep or wide
+    # tuple passed the structure check: the copy then cut the deep one short
+    # with a marker instead of failing the nesting limit, and copied the wide
+    # one past the size limit.
+    deep: object = "leaf"
+    for _ in range(100):
+        deep = (deep,)
+    wide = ("x" * 1024 * 1024,) * 65
+    for value in (frozenset({deep}), {"field": {deep}}, {"field": frozenset({wide})}):
+        with pytest.raises(SanitizationLimitError):
+            sanitize(value)
+    assert sanitize({"field": {("a", ("b", "c"))}}) == {"field": [("a", ("b", "c"))]}
 
 
 @pytest.mark.parametrize(

@@ -230,6 +230,18 @@ def test_read_text_python_source_its_codec_cannot_decode_is_a_gap(tmp_path):
     assert errors == [BINARY_CONTENT_ERROR]
 
 
+@pytest.mark.parametrize("cookie", ["utf_16_le", "utf-16-be", "cp037", "cp500", "utf-7", "utf_32_le"])
+def test_read_text_codec_that_does_not_read_ascii_as_ascii_is_a_gap(tmp_path, cookie):
+    # The file is ASCII, as a cookie on its first line requires; decoded with
+    # such a codec it became other characters (CJK text for UTF-16), and its
+    # 'import openai' and key were silently not analyzed.
+    source = f'# coding: {cookie}\nOPENAI_API_KEY = "sk-proj-AbCd1234"\nimport openai\n'.encode()
+    (tmp_path / "a.py").write_bytes(source + b" " * (len(source) % 4))
+    errors: list[str] = []
+    assert read_text(tmp_path / "a.py", 1000, errors) is None
+    assert errors == [BINARY_CONTENT_ERROR]
+
+
 @pytest.mark.parametrize("cookie", ["nonsense", "rot13", "hex", "utf8", "UTF-8"])
 def test_read_text_unusable_or_utf8_cookie_keeps_default_decoding(tmp_path, cookie):
     (tmp_path / "a.py").write_bytes(f"# coding: {cookie}\nimport openai\n".encode())

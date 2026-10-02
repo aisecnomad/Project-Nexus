@@ -34,7 +34,9 @@ that are never silent:
   with the codec its `# coding:` cookie declares. Any other file the scanner
   analyzes by name (source, configuration, documents, `.env`, extensionless
   files) that has a NUL byte in its first 8 KiB, or that its declared codec
-  cannot decode, makes the scan incomplete (exit code 3) with `binary or
+  cannot decode or does not read as ASCII where the bytes are ASCII (UTF-16 or
+  UTF-32 without a byte-order mark, UTF-7, HZ, EBCDIC code pages), makes the
+  scan incomplete (exit code 3) with `binary or
   undecodable content in analyzable file`; it is never silently treated as
   empty. A compiled or packed artifact with no file extension and a known
   header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,

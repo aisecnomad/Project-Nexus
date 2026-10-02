@@ -123,10 +123,14 @@ _ADDED_PEM = re.compile(
     r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----|\Z)",
     re.DOTALL,
 )
-_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
+# The credential after an authorization scheme. It is never '=' signs alone: after
+# 'bearer =>', '=~' or '==' they are an operator's, and read as the credential
+# they hid the operator from the assignment rules, which then showed the value.
+_AUTH_CREDENTIAL = r"(?!=++(?![A-Za-z0-9+/_.-]))[A-Za-z0-9+/_.=-]+"
+_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_CREDENTIAL)
 # A scheme after an escaped line break or a percent escape ('...header:\nBearer v') is read as well.
 _ESCAPED_AUTH = re.compile(
-    r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+"
+    r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_CREDENTIAL
 )
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
@@ -248,6 +252,34 @@ def _sanitize_url(match: re.Match[str]) -> str:
         cursor = separator.end()
     parts.append(_query_value(url[cursor:]))
     return "".join(parts)
+
+
+# The scheme of a URL inside the text of another (see ``_redact_nested_urls``).
+_NESTED_SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]{0,20}://")
+
+
+def _redact_nested_urls(text: str) -> str:
+    """Read each URL inside the text of another URL as a URL (see ``_sanitize_url``).
+
+    A URL runs to the first blank or quote, so one after a ',', a ';' or
+    '?next=' is part of the URL before it ('redis://:pw@a,redis://:pw@b',
+    'https://a/login?next=https://u:secret@b'), and the established pass reads
+    the first authority alone. Each inner URL is read as far as the next one,
+    which keeps the scan linear.
+    """
+
+    def nested(match: re.Match[str]) -> str:
+        url = match.group(0)
+        schemes = list(_NESTED_SCHEME.finditer(url, url.index("://") + 3))
+        if not schemes:
+            return url
+        pieces = [url[: schemes[0].start()]]
+        for scheme, following in zip(schemes, [*schemes[1:], None], strict=True):
+            inner = url[scheme.start() : following.start() if following else len(url)]
+            pieces.append(_URL.sub(_sanitize_url, inner))
+        return "".join(pieces)
+
+    return _URL.sub(nested, text) if "://" in text else text
 
 
 def _query_value(field: str, *, bare: bool = False) -> str:

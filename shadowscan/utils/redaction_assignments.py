@@ -47,6 +47,19 @@ from shadowscan.utils.redaction_rules import (
 # which case the closing delimiter must repeat the opening one exactly. A ';'
 # inside an unquoted value follows _VALUE_SEMICOLON.
 _ESCAPED_QUOTE = re.compile(r"\\{1,8}[\"']")
+# A quoted value reads past the quotes a backslash escapes: '"log": "password:
+# \"v\""' is one string. Closed at the escaped quote, the string ended before
+# its credential, which was then read outside it and shown. Each run is
+# possessive and ends at a quote no backslash escapes, so a line is read once.
+# On a line without such a quote, or where the text before it ends with an
+# assignment operator (that quote opens the next value: 'k="a\" password="v"'),
+# the value closes at its first quote, as the former rule (_FIRST_QUOTE) did.
+_NOT_AFTER_OPERATOR = r"(?<![=:>~])(?<![=:>~][ \t])"
+_ESCAPE_AWARE_QUOTE = (
+    r"\"(?:\\[^\r\n]|[^\"\\\r\n])*+" + _NOT_AFTER_OPERATOR + r"\""
+    r"|'(?:\\[^\r\n]|[^'\\\r\n])*+" + _NOT_AFTER_OPERATOR + "'"
+)
+_FIRST_QUOTE = r"\"[^\"\r\n]*\"|'[^'\r\n]*'"
 # Each level of escaping doubles a backslash and adds one before a quote, so
 # inside a value whose delimiter is k backslashes and a quote, the value's own
 # quote is 2k + 1 of them ('\\\\\\"' for k = 1) and a backslash that ends the
@@ -55,20 +68,30 @@ _ESCAPED_QUOTE = re.compile(r"\\{1,8}[\"']")
 # multiple of 2k + 2: read as the opener's tail, the value's own quote ended
 # it early and the rest of the value was shown.
 _ESCAPED_CLOSER = r"(?:(?P=run)(?P=run)\\\\)*+(?P=escaped)"
-_ASSIGNMENT = re.compile(
-    r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
-    r"(?P<sep>\\{0,8}[\"']\s*:(?!=)\s*|[\"'][ \t]*" + _OPERATOR + r"[ \t]*|\s*" + _OPERATOR + r"\s*"
-    r"|:[ \t]+|:[ \t]*(?=\\{0,8}[\"']))"
-    r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
-    r"|(?P<escaped>(?P<run>\\{1,8})[\"'])(?:[^\\\r\n]++|\\++(?![\"'])|(?!"
-    + _ESCAPED_CLOSER
-    + r")\\++[\"'])*+"
-    + _ESCAPED_CLOSER
-    + r"|\\{1,8}[\"'][^\r\n]*"
-    + r"|[^\s,;\}\]\)\"']+(?:"
-    + _VALUE_SEMICOLON
-    + r"[^\s,;\}\]\)\"']*|(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
-)
+
+
+def _assignment_pattern(quoted: str) -> re.Pattern[str]:
+    """The assignment lexer whose quoted values are read by ``quoted``."""
+    return re.compile(
+        r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
+        r"(?P<sep>\\{0,8}[\"']\s*:(?!=)\s*|[\"'][ \t]*" + _OPERATOR + r"[ \t]*|\s*" + _OPERATOR + r"\s*"
+        r"|:[ \t]+|:[ \t]*(?=\\{0,8}[\"']))"
+        r"(?P<value>\[REDACTED\]|"
+        + quoted
+        + r"|(?P<escaped>(?P<run>\\{1,8})[\"'])(?:[^\\\r\n]++|\\++(?![\"'])|(?!"
+        + _ESCAPED_CLOSER
+        + r")\\++[\"'])*+"
+        + _ESCAPED_CLOSER
+        + r"|\\{1,8}[\"'][^\r\n]*"
+        + r"|[^\s,;\}\]\)\"']+(?:"
+        + _VALUE_SEMICOLON
+        + r"[^\s,;\}\]\)\"']*|(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
+    )
+
+
+_ASSIGNMENT = _assignment_pattern(_ESCAPE_AWARE_QUOTE + "|" + _FIRST_QUOTE)
+# The former reading, run after _ASSIGNMENT on its result (see _redact_plain_assignments).
+_FIRST_QUOTE_ASSIGNMENT = _assignment_pattern(_FIRST_QUOTE)
 
 
 def _unquote(raw: str, escaped: str | None) -> tuple[str, str, str]:
@@ -399,7 +422,15 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
 # ODBC and ADO.NET connection strings spell the password 'Pwd': 'Server=h;Uid=u;Pwd=v;'.
 # 'PWD' also names a shell's working directory and 'pwd' a command, so only a 'Pwd=' that
 # follows a ';' is read, and its value stays when it is empty or only a reference.
-_CONNECTION_PASSWORD = re.compile(r"(?<=;)[ \t]*(?i:pwd)[ \t]*=(?P<value>[^;\"'\r\n]+)")
+# ODBC puts a value that holds ';' in braces and doubles a '}' inside them
+# ('Pwd={a;b}}c}'); the value runs to its closing brace, and on to the next ';'
+# past anything a malformed value has after it ('Pwd={a}b;'). A brace that does
+# not close within 256 characters on its line, or opens a '{{' template, is
+# read up to the ';' as before, which keeps each read bounded.
+_CONNECTION_PASSWORD = re.compile(
+    r"(?<=;)[ \t]*(?i:pwd)[ \t]*="
+    r"(?P<value>[ \t]*+\{(?!\{)(?:[^}\r\n]|\}\}){0,256}+\}[^;\"'\r\n]*+|[^;\"'\r\n]+)"
+)
 
 
 def _redact_connection_passwords(text: str) -> str:
@@ -471,15 +502,25 @@ def _redact_fallback_defaults(text: str, *, extended: bool = False) -> str:
     return _withhold_spans(text, spans)
 
 
-def _redact_plain_assignments(value: str, depth: int = 0) -> str:
+def _redact_plain_assignments(value: str, depth: int = 0, *, former: bool = False) -> str:
     """Withhold values assigned to sensitive names in ``name=value`` and ``name: value`` form.
 
     A quoted value under an ordinary name is searched again, so it cannot
     carry a nested credential ('config = "api_key=opaque-value"'); nesting
     past eight levels is withheld.
+
+    Quoted values are read past the quotes a backslash escapes (see
+    _ESCAPE_AWARE_QUOTE). The result is then read once more with every quoted
+    value closed at its first quote, as the former rule read it. Where a
+    backslash escapes nothing ('path = "C:\\x\\" ; password = "v"'), the longer
+    reading took the next name into its value, and the former one still finds
+    that name's value. A value that is only the backslashes of an escaped quote
+    is kept in that reading (``former``), nested values included: the first
+    reading withheld what follows it.
     """
 
-    def assignment(m: re.Match[str]) -> str:
+    def assignment(m: re.Match[str], second: bool = False) -> str:
+        reread = former or second
         full: str = m.group(0)
         if _FINGERPRINT.fullmatch(full):
             return full
@@ -489,6 +530,8 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
         sep: str = m.group("sep")
         operator = sep.strip(" \t\r\n\"'")
         if _sensitive_assignment_key(key):
+            if reread and not bare.strip("\\"):
+                return full
             if operator in _COMPARISONS:
                 # Only a literal that could be a credential is withheld from a comparison:
                 # a quoted word ('token == "v"', also in backticks), not "(" or "/*", and a
@@ -505,9 +548,14 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
         elif "=" in bare or ":" in bare:
             # Do not let an ordinary assignment swallow a nested credential,
             # e.g. config = "api_key=opaque-value" in a source-code excerpt.
-            clean = _redact_plain_assignments(bare, depth + 1) if depth < 8 else REDACTED
+            clean = _redact_plain_assignments(bare, depth + 1, former=reread) if depth < 8 else REDACTED
         else:
             return full
         return key + sep + opener + clean + closer
 
-    return _ASSIGNMENT.sub(assignment, value)
+    text = _ASSIGNMENT.sub(assignment, value)
+    if depth == 0 and "\\" in text:
+        # Only a backslash makes the two readings differ. Nested values are read
+        # once (by _ASSIGNMENT), so each level costs one pass, not two per level.
+        text = _FIRST_QUOTE_ASSIGNMENT.sub(lambda m: assignment(m, second=True), text)
+    return text

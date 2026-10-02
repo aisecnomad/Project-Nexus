@@ -645,7 +645,30 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
-### October 2 services review migration
+### October 2 integration review: redaction and source decoding
+
+Reports withhold more than earlier candidate builds did: a JSON string that
+starts with a credential and an escaped value (`{"log": "password: \"S\""}`),
+the rest of a double-quoted option or `auth=` password after an escaped quote
+(`--password "a\"S"`), the rest of a braced ODBC password (`Pwd={a;S}`), the
+value after `bearer =>`, `=~` or `==`, the credential on the line after a `;`
+and an escaped line break in JSON-escaped text, and the userinfo, credential
+query fields and webhook path of a URL inside another URL's text
+(`redis://:S@a,redis://:S@b`, `?next=https://u:secret@b`). Reports generated
+by an earlier candidate build can contain those values: regenerate them,
+restrict or delete the old copies, and rotate any credential they show.
+Expect extra `[REDACTED]` markers where such shapes occur; finding IDs built
+from sanitized text can change with them, so compare a fresh baseline.
+
+A Python source whose PEP 263 coding cookie names a codec that does not read
+ASCII as ASCII is now the coverage gap `binary or undecodable content in
+analyzable file` (exit 3). That covers `utf-16-le` or `utf-32` without a
+byte-order mark, `utf-7`, `hz`, EBCDIC code pages such as `cp037`, and also
+`shift_jis_2004`, `shift_jisx0213` and `cp864`, which read `\`, `~` or `%` as
+other characters. Such a file used to be decoded into other characters and
+silently not analyzed. Fix the cookie, or add the file to `exclude`.
+
+### October 2 integration review: gateway, low-code and cloud connectors
 
 Re-run `gateway.logs` over combined-format access logs before comparing
 gateway callers with an earlier baseline. A host token that a client could have
@@ -682,7 +705,7 @@ Graph resource whose id is not a plain ARM path, is skipped with a warning and
 the scan is incomplete. ARM does not return such identifiers; a scan that
 reports one points at a proxy or a response that should be investigated.
 Configured `subscriptions` keep their existing validation.
-### October 2 code connector review fixes
+### October 2 integration review: code connectors
 
 Re-run code scans before updating baselines. Kubernetes manifests, ECS task
 definitions, CI pipelines and other files that assign provider variables to a
