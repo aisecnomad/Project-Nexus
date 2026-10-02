@@ -228,6 +228,11 @@ class Evidence:
         self.sanitize()
 
     def __setattr__(self, name: str, value: Any) -> None:
+        if name == "weight":
+            # Noisy-OR clamps weights, which turns NaN or a huge value into certainty.
+            # Refuse them where they are set: a corrupt cache entry, report or plugin
+            # must fail instead of becoming a strong finding.
+            _validate_number(value, "evidence weight", minimum=0, maximum=1)
         _invalidate_on_change(self, name, value)
 
     def _digest_state(self) -> list[Any]:

@@ -207,3 +207,66 @@ def test_json_report_uses_the_new_label_only():
     finding.recompute_confidence()
     report = ScanResult(findings=[finding]).to_json()
     assert '"likelihood": "strong"' in report and "confirmed" not in report
+
+
+# ------------------------------------------------------------ evidence weights
+BAD_WEIGHTS = [float("nan"), float("inf"), float("-inf"), -0.01, 1.01, 7.5, 10**400, True, False, None, "0.5"]
+BAD_WEIGHT_IDS = [
+    "nan",
+    "inf",
+    "-inf",
+    "below",
+    "above",
+    "far-above",
+    "huge-int",
+    "true",
+    "false",
+    "none",
+    "text",
+]
+
+
+@pytest.mark.parametrize("weight", BAD_WEIGHTS, ids=BAD_WEIGHT_IDS)
+def test_evidence_rejects_weights_that_noisy_or_would_turn_into_certainty(weight):
+    # NaN used to survive min/max clamping as 1.0, so one corrupt weight made a strong finding.
+    with pytest.raises(ValueError, match="evidence weight"):
+        Evidence(signal="s", description="d", weight=weight)
+    evidence = Evidence(signal="s", description="d", weight=0.5)
+    with pytest.raises(ValueError, match="evidence weight"):
+        evidence.weight = weight
+    assert evidence.weight == 0.5
+
+
+@pytest.mark.parametrize("weight", [0, 1, 0.0, 1.0, 0.3, 1e-9, 0.9999999999999999])
+def test_evidence_accepts_every_weight_in_the_closed_unit_interval(weight):
+    evidence = Evidence(signal="s", description="d", weight=weight)
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="c",
+        kind=Kind.AGENT,
+        title="t",
+        resource="r",
+        resource_type="repository",
+        evidence=[evidence],
+    )
+    finding.recompute_confidence()
+    assert 0.0 <= finding.confidence <= 1.0
+    assert finding.confidence == round(float(weight), 3)
+
+
+def test_evidence_weight_error_does_not_echo_the_value():
+    with pytest.raises(ValueError) as failure:
+        Evidence(signal="s", description="d", weight="opaque-secret-value")  # type: ignore[arg-type]
+    assert "opaque-secret-value" not in str(failure.value)
+
+
+@pytest.mark.parametrize("weight", [float("nan"), float("inf"), 1.5, -0.2])
+def test_corrupt_report_or_cache_weight_is_refused_on_import(weight):
+    # Report import and incremental-cache loading both go through Finding.from_dict.
+    payload = _finding().to_dict()
+    payload["evidence"][0]["weight"] = weight
+    with pytest.raises(ValueError, match="evidence weight"):
+        Finding.from_dict(payload)
+    # An unchanged payload still loads, so the check is not a blanket refusal.
+    payload["evidence"][0]["weight"] = 0.4
+    assert Finding.from_dict(payload).evidence[0].weight == 0.4
