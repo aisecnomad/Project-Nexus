@@ -280,6 +280,9 @@ about field precision. Migration notes are in `docs/production.md` under
   passing after checking nothing. A weekly run on `main` rebuilds the
   worker image from current Wolfi packages and rescans it with a fresh
   database.
+- CI: the DCO check reads a sign-off after a `---` line in the commit
+  message. Dependabot opens its YAML metadata with such a line, so its
+  sign-off was never read and every Dependabot pull request failed the check.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

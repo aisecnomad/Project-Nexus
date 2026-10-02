@@ -1302,6 +1302,8 @@ def test_container_evidence_cli_retains_blocked_results_and_fails_the_job(
         ("unsigned", False),
         ("forged", False),
         ("dependabot", True),
+        ("dependabot_metadata", True),
+        ("signed_after_divider", True),
         ("dependabot_unsigned", False),
         ("dependabot_forged", False),
         ("missing_base", False),
@@ -1346,6 +1348,9 @@ def test_dco_executes_against_real_commit_ranges(tmp_path: Path, case: str, pass
     message = "Change" if case == "unsigned" else signed
     if case == "mixed_case":
         message = signed.replace("reviewer@example.test", "ReViewer@Example.Test")
+    if case == "signed_after_divider":
+        # A '---' line is text in a commit message, not a patch divider.
+        message = "Change\n\n---\nNotes\n\nSigned-off-by: DCO Reviewer <reviewer@example.test>"
     if case == "divergent":
         git("checkout", "-qb", "feature")
     if case == "disconnected":
@@ -1358,6 +1363,14 @@ def test_dco_executes_against_real_commit_ranges(tmp_path: Path, case: str, pass
         # bot's sign-off.
         bot_signed = "Bump\n\nSigned-off-by: dependabot[bot] <support@github.com>"
         message = "Bump" if case == "dependabot_unsigned" else bot_signed
+        if case == "dependabot_metadata":
+            # Dependabot's own message: a '---' line opens its YAML metadata
+            # before the sign-off.
+            message = (
+                "build(deps): bump coverage from 7.16.1 to 7.16.2\n\nBumps coverage.\n\n---\n"
+                "updated-dependencies:\n- dependency-name: coverage\n  dependency-version: 7.16.2\n...\n\n"
+                "Signed-off-by: dependabot[bot] <support@github.com>"
+            )
         if case != "dependabot_forged":
             extra = {
                 "GIT_AUTHOR_NAME": "dependabot[bot]",
