@@ -66,9 +66,10 @@ class SourceNotParsed(Exception):
     """The source does not parse, so it has no import bindings.
 
     Python written for a newer grammar than the running interpreter's (``type A =
-    int`` before 3.12), or a notebook's shell and magic lines, cannot be parsed.
-    Callers keep the file's lexical evidence and report that the import binder
-    did not run.
+    int`` before 3.12), or otherwise invalid, cannot be parsed (the filesystem
+    connector rewrites a notebook's magic and shell lines first). Callers keep
+    the file's lexical evidence, framework patterns included, and report that
+    the import binder did not run.
     """
 
 

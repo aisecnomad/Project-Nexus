@@ -476,13 +476,8 @@ def _parses(source: str) -> bool:
     ("name", "content"),
     [
         ("pep695.py", "type Alias = int\n" + _LANGCHAIN_AGENT),  # Python 3.12 syntax
+        ("python2.py", 'print "starting"\n' + _LANGCHAIN_AGENT),
         ("broken.py", "def broken(:\n    pass\n" + _LANGCHAIN_AGENT),
-        (
-            "notebook.ipynb",
-            json.dumps(
-                {"cells": [{"cell_type": "code", "source": ["!pip install langchain\n", _LANGCHAIN_AGENT]}]}
-            ),
-        ),
     ],
 )
 def test_python_that_does_not_parse_warns_that_the_import_binder_was_skipped(
@@ -498,7 +493,44 @@ def test_python_that_does_not_parse_warns_that_the_import_binder_was_skipped(
         "lexical evidence retained"
     ]
     assert not ctx.stats.errors and not ctx.stats.incomplete
-    assert any("framework.langchain" in finding.frameworks for finding in findings)
+    # The construction is kept as lexical evidence, corroborated by the import, as in a
+    # language without a binder; it used to be dropped, leaving only "LLM usage".
+    assert any(
+        finding.kind == Kind.AGENT and "framework.langchain" in finding.frameworks for finding in findings
+    )
+
+
+def _notebook(*cells: str) -> str:
+    return json.dumps({"cells": [{"cell_type": "code", "source": [cell]} for cell in cells]})
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "%pip install langchain langchain-openai\n",
+        "!pip install langchain\n",
+        "%matplotlib inline\n%load_ext autoreload\n",
+        "%%time\nimport json\n",
+        "for package in ['langchain']:\n    !pip install {package}\n",
+    ],
+    ids=["pip-magic", "shell", "line-magics", "cell-magic", "indented-shell"],
+)
+def test_notebook_magics_and_shell_lines_keep_the_import_binder(tmp_path, run_connector, setup):
+    # IPython rewrites these lines before Python sees them. They used to make the
+    # whole notebook unparseable, so its agent construction became "LLM usage".
+    (tmp_path / "agent.ipynb").write_text(_notebook(setup, _LANGCHAIN_AGENT))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_connector):
+    # "% name" continuing an expression is the modulo operator, not a magic.
+    cell = 'greeting = ("Hello %s"\n            % name)\n' + _LANGCHAIN_AGENT
+    (tmp_path / "agent.ipynb").write_text(_notebook(cell))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT for finding in findings)
 
 
 def test_python_that_parses_keeps_import_bound_evidence_without_a_warning(tmp_path, run_connector):

@@ -707,6 +707,12 @@ analyzed from its first 8192 characters; options after them were not read, so
 coverage is incomplete` instead of `source binding call text limit exceeded`.
 Update any alert or triage rule that matches the old text.
 
+Notebooks that install packages with `%pip` or `!pip`, and Python files the
+scanner's interpreter cannot parse, can now report an agent where they reported
+LLM usage: their framework patterns count as lexical evidence when the same
+library is imported or declared. Review such changed classifications before
+updating baselines.
+
 These fixes come from an AI-assisted review and have offline regression tests
 only; they are not independent human review or field precision evidence.
 

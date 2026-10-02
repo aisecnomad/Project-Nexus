@@ -139,6 +139,15 @@ integrating them:
   character in code (`\u0069mport`) hides that code from the matchers, which
   read the source as written: such a file's lexical analysis is reported as
   incomplete.
+- When the Python or JavaScript import binder does not run (the source does
+  not parse, or a binder budget is exhausted), the file's bundled framework
+  patterns are kept as lexical evidence that counts only with an import or
+  dependency of the same library, as for a language without a binder. They
+  used to be dropped although the warning said "lexical evidence retained", so
+  one PEP 695 line on Python 3.11 turned an agent into "LLM usage". A
+  notebook's IPython magic (`%pip`, `%%time`) and shell (`!pip`) lines are
+  read as inert expressions before parsing, as IPython rewrites them, so a
+  notebook that installs its packages keeps the import binder.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

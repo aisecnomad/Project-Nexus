@@ -284,7 +284,13 @@ def test_source_binding_budget_exhaustion_marks_scan_incomplete(
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
     assert any("source binding" in error and "limit exceeded" in error for error in ctx.stats.errors)
-    assert not any(f.kind == Kind.AGENT for f in findings)
+    # The binder did not finish, so the framework patterns stand in for it as
+    # lexical evidence, corroborated by the import as in a language without a
+    # binder: "lexical evidence retained" holds. They used to be dropped too.
+    agents = [f for f in findings if f.kind == Kind.AGENT]
+    assert agents and all(
+        e.signal.startswith(("code:", "import:")) for f in agents for e in f.evidence if e.signature
+    )
 
 
 def _binding_seconds(names: int, loops: int, loop: str) -> float:

@@ -2145,14 +2145,15 @@ class FilesystemConnector(BaseConnector):
             if ignored
             else self.index.match_code(content_text, lang)
         )
-        bound = self._bound_matches(file, content_text, ignored, is_local_module)
+        binder = self._bound_matches(file, content_text, ignored, is_local_module)
+        bound = binder or []
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
         # tool-calling protocol; elsewhere they are build tooling.
         file_uses_llm = any(
             m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
         )
-        self._record_code_matches(file, code_matches, file_uses_llm, bound)
+        self._record_code_matches(file, code_matches, file_uses_llm, bound, binder_ran=binder is not None)
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
@@ -2164,18 +2165,25 @@ class FilesystemConnector(BaseConnector):
         content_text: str,
         ignored: list[tuple[int, int]],
         is_local_module: Callable[[str], bool],
-    ) -> list[Match]:
-        """Return bound evidence, including narrow typed-field registration for Java."""
+    ) -> list[Match] | None:
+        """Return bound evidence, including narrow typed-field registration for Java.
+
+        None means the Python or JavaScript binder did not run (a budget, or a
+        source that does not parse): the file's lexical evidence stands in.
+        """
         lang = file.lang
         if file.ext == ".java":
             return spring_tool_registration_matches(self.index, content_text, ignored)
         if lang not in {"python", "javascript"}:
             return []
         truncated: list[int] = []
+        # IPython rewrites a notebook's magic and shell lines before Python reads
+        # them; blanked, they no longer make every cell of the notebook unparseable.
+        source = _without_ipython_lines(content_text) if file.ext == ".ipynb" else content_text
         try:
             bound = bound_source_matches(
                 self.index,
-                content_text,
+                source,
                 lang,
                 ignored,
                 is_local_module=is_local_module if lang == "python" else None,
@@ -2194,17 +2202,18 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
             else:
                 self.ctx.error(message)
-            return []
+            return None
         except SourceNotParsed as exc:
-            # Newer syntax than the interpreter knows, or a notebook's shell
-            # and magic lines: no import binding, but the lexical evidence
-            # stays. A warning, not a gap in what the file was asked to show.
+            # Newer syntax than the interpreter knows, or invalid source: no
+            # import binding, but the lexical evidence, framework patterns
+            # included, stays. A warning, not a gap in what the file was asked
+            # to show.
             self.ctx.warn(
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
                 incomplete=False,
             )
-            return []
+            return None
         if truncated:
             # An option past the limit (tools, a stop condition) was not read: the
             # call-analysis budget is a coverage gap like the one above, but the
@@ -2221,7 +2230,13 @@ class FilesystemConnector(BaseConnector):
         return bound
 
     def _record_code_matches(
-        self, file: _SourceFile, code_matches: list[Match], file_uses_llm: bool, bound: list[Match]
+        self,
+        file: _SourceFile,
+        code_matches: list[Match],
+        file_uses_llm: bool,
+        bound: list[Match],
+        *,
+        binder_ran: bool = True,
     ) -> None:
         # The binder's evidence for a signal on a line replaces its lexical match.
         bound_signals = {(m.signature_id, id(m.signal), m.line) for m in bound}
@@ -2260,13 +2275,18 @@ class FilesystemConnector(BaseConnector):
                 ):
                     continue  # explicit disabled options do not register tools
                 m.extra["verified_agent"] = False
-            elif _bundled_signature(m.signature) or (m.signature_id, id(m.signal), m.line) in bound_signals:
+            elif (binder_ran and _bundled_signature(m.signature)) or (
+                m.signature_id,
+                id(m.signal),
+                m.line,
+            ) in bound_signals:
                 continue  # import-bound calls establish the library
             else:
                 # The bundled framework patterns are written for the import
                 # binder. A custom pack's pattern is plain lexical evidence,
                 # as in other languages, so a pack without a matching import
-                # still takes effect, corroborated at emit time.
+                # still takes effect, corroborated at emit time. So is every
+                # framework pattern of a file the binder could not read.
                 m.extra["lexical_source"] = file.lang
             self._record_content(file, m, self._file_excerpt(file, m.line))
 
@@ -3717,6 +3737,21 @@ _MCP_FIELD_ALIASES: tuple[tuple[str, ...], ...] = (
     ("type", "transport"),
     ("autoApprove", "alwaysAllow"),
 )
+
+
+# IPython line and cell magics (%pip, %%time) and shell escapes (!pip), each
+# alone on its line, as IPython rewrites them before Python reads the cell.
+# "% name" continuing an expression is the modulo operator and stays.
+_IPYTHON_LINE = re.compile(r"^([ \t]*+)((?:%%?[A-Za-z_]|!)[^\n]*)", re.MULTILINE)
+
+
+def _without_ipython_lines(text: str) -> str:
+    """Replace a notebook's magic and shell lines with an inert expression, keeping every offset.
+
+    IPython turns each into an expression statement, so an indented one can be a
+    block's only statement: it becomes ``0`` padded to its length, not blanks.
+    """
+    return _IPYTHON_LINE.sub(lambda match: match[1] + "0" + " " * (len(match[2]) - 1), text)
 
 
 def _without_xml_comments(text: str) -> str:
