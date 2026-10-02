@@ -326,9 +326,9 @@ def host_of(url: str | None) -> str | None:
     """Return the lowercase host of ``url`` (RFC 3986 authority; scheme optional).
 
     Userinfo before the last ``@`` and the port are removed, and a bracketed
-    IPv6 literal is returned without its brackets. A URL such as
-    ``https://api.openai.com:443@evil.example/`` therefore names ``evil.example``,
-    the host a client connects to, never the userinfo.
+    IPv6 literal is returned without its brackets. An authority such as
+    ``api.openai.com:443@evil.example`` therefore names ``evil.example``, the host
+    a client connects to, never the userinfo.
     """
     if not url:
         return None

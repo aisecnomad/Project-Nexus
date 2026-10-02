@@ -32,9 +32,9 @@ field precision. Behavior changes that affect an existing baseline are listed in
   repeats a key or leaves a quote open is malformed (scan incomplete); other
   lines are kept.
 - Gateway provider attribution follows the RFC 3986 authority: userinfo up to
-  the last `@` is dropped (`https://api.openai.com:443@evil.example/` names
-  `evil.example`), bracketed IPv6 literals lose brackets and port, and an empty
-  host is `None`.
+  the last `@` is dropped (an authority of `api.openai.com:443@evil.example`
+  names `evil.example`), bracketed IPv6 literals lose brackets and port, and an
+  empty host is `None`.
 - Timestamps in microsecond and nanosecond epochs, Go `time.Time.String()`
   output and RFC 2822 dates are now parsed; they used to become empty, so
   events silently lost their time. Gateway records whose timestamp field no
