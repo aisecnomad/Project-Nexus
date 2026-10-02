@@ -64,6 +64,10 @@ class Connector(BaseConnector):
             hang()
         if mode == "crash":
             os._exit(7)
+        if mode == "nondaemon-thread":
+            # For example an SDK helper still waiting when collection returns.
+            import threading
+            threading.Thread(target=threading.Event().wait, daemon=False).start()
         return [{"pid": os.getpid()}]
 
     def analyze(self, records):
@@ -207,6 +211,16 @@ def test_timeout_kills_sigterm_ignoring_plugin_and_preserves_worker_capacity(
     # Unlike an abandoned thread, a terminated plugin permits safe reuse.
     monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "ok")
     assert engine.run().complete
+
+
+def test_lingering_non_daemon_thread_cannot_hold_result_hostage(installed_probe, monkeypatch):
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "nondaemon-thread")
+    start = time.monotonic()
+    result = _engine(connector_timeout_seconds=8).run()
+    assert result.complete, result.stats
+    assert len(result.findings) == 1
+    assert time.monotonic() - start < 8
+    _assert_reaped(installed_probe)
 
 
 def test_terminated_plugin_releases_capacity_for_queued_sibling(installed_probe):

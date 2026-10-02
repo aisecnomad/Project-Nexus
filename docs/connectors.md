@@ -58,7 +58,9 @@ connectors:
 The equivalent CLI override is `--plugin-execution process`. Built-in connectors
 continue to use the existing thread backend. A plugin is imported only inside
 its child process, and its original completion deadline includes import,
-collection, result serialization and transfer. The parent accepts only bounded
+collection, result serialization and transfer. The worker exits with
+`os._exit` as soon as its result is sent: plugin `atexit` handlers do not run,
+and lingering non-daemon threads cannot delay or discard the result. The parent accepts only bounded
 JSON results (16 MiB maximum), validates their model and statistics, and discards
 results on timeout, crash, serialization failure or malformed output. These
 failures mark the scan incomplete (exit 3); they never fall back to threads.

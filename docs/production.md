@@ -367,7 +367,8 @@ Use `options.plugin_execution: process` or `--plugin-execution process` to run
 approved third-party connectors in dedicated spawned workers. Built-in
 connectors keep their existing thread execution; the default for plugins also
 remains `thread`. Plugin import and execution happen in the child. The original
-connector deadline includes worker startup and result transfer; expired results
+connector deadline includes worker startup and result transfer, and the worker
+exits as soon as its result is sent (plugin `atexit` handlers do not run); expired results
 are discarded, and termination escalates from TERM to KILL with bounded cleanup.
 A parent supervision guard allows up to two additional seconds for cleanup.
 Workers also exit by themselves two seconds after the deadline, or as soon as
