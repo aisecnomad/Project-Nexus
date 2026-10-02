@@ -1150,15 +1150,17 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
         )
         for reason in comparison["reasons"]:
             console.print(f"Comparison incomplete: {reason}", markup=False)
+        # Imported titles and resources are untrusted: Rich's highlighter is
+        # quadratic on long tokens (a 50k-character title took about 30 s).
         for marker, records in (("+", new), ("-", resolved), ("?", unknown)):
             for d in sorted(records, key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
-                console.print(terminal_text(line), markup=False)
+                console.print(terminal_text(line), markup=False, highlight=False)
         for change in changed:
             x, y = change["before"], change["after"]
             fields_changed = ", ".join(change["changed_fields"])
             line = f"  ~ {y['title']}: {fields_changed} (risk {x['risk']['score']} → {y['risk']['score']})"
-            console.print(terminal_text(line), markup=False)
+            console.print(terminal_text(line), markup=False, highlight=False)
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -123,6 +124,25 @@ def test_summary_that_does_not_match_findings_is_unknown(tmp_path, side, mutatio
         assert [finding["resource"] for finding in output["unknown"]] == ["agent"]
         text = _invoke(tmp_path, before, after)
         assert text.exit_code == 3 and "0 resolved" in text.output and "1 unknown" in text.output
+
+
+@pytest.mark.parametrize("relation", ["new", "changed"])
+def test_text_output_of_a_long_imported_title_is_not_quadratic(tmp_path, relation):
+    # Rich's highlighter took about 30 s for a 50,000-character title.
+    title = "a" * 50_000
+    finding = _finding("repo/agent")
+    finding["title"] = title
+    changed = copy.deepcopy(finding)
+    changed["risk"] = {"level": "low", "score": 15, "factors": []}
+    before, after = (
+        (_report(), _report(finding)) if relation == "new" else (_report(finding), _report(changed))
+    )
+    started = time.perf_counter()
+    result = _invoke(tmp_path, before, after)
+    elapsed = time.perf_counter() - started
+    assert result.exit_code == 0, result.output
+    assert f"1 {relation}" in result.output and title in "".join(result.output.split())
+    assert elapsed < 1.0, elapsed
 
 
 def test_scope_mismatch_is_nonzero_even_without_missing_findings(tmp_path):
