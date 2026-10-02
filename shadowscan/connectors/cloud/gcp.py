@@ -39,7 +39,7 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials, require_local_adc
-from shadowscan.connectors.common import apply_matches, model_matches
+from shadowscan.connectors.common import apply_matches, failure_summary, max_pages_limit, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
@@ -126,8 +126,9 @@ def _location(name: str) -> str | None:
     return name.split("/locations/")[1].split("/")[0] if "/locations/" in name else None
 
 
-def _failure(exc: Exception) -> str:
-    return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+def _api_host(service: str, location: str) -> str:
+    """Google's documented host for a location: global uses ``<service>``, others ``<location>-<service>``."""
+    return f"{service}.googleapis.com" if location == "global" else f"{location}-{service}.googleapis.com"
 
 
 class GcpConnector(BaseConnector):
@@ -157,8 +158,8 @@ class GcpConnector(BaseConnector):
         "audit_days": "look back N days in Cloud Audit Logs for Vertex callers (default 0 = off)",
         "max_projects": "default 200",
         "max_pages": (
-            "cap on pages per paginated call, at least 1 (default 1000; resource lists stop at 500 pages "
-            "and audit-log queries at 50 pages regardless)"
+            "maximum pages per paginated call, capped at 1000 (default 1000; resource lists stop at 500 "
+            "pages and audit-log queries at 50 pages regardless)"
         ),
         "input": "offline: JSONL dump of records",
     }
@@ -170,6 +171,7 @@ class GcpConnector(BaseConnector):
             # Locations are interpolated into API hostnames.
             locations = string_list(ctx.get("locations"), "locations", pattern=r"[a-z0-9-]+")
             self.locations = locations or DEFAULT_LOCATIONS
+            self._default_locations = not locations
             self.projects = string_list(ctx.get("projects"), "projects", pattern=r"[A-Za-z0-9._:-]+") or []
         except ValueError as exc:
             raise ConnectorError(f"cloud.gcp: {exc}") from None
@@ -177,8 +179,9 @@ class GcpConnector(BaseConnector):
         self.max_projects = int(ctx.get("max_projects", 200))
         if self.max_projects < 1:
             raise ConnectorError("cloud.gcp: max_projects must be positive")
-        self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
+        self.max_pages = max_pages_limit(ctx.get("max_pages", 1000))
         self.http: HttpClient | None = None
+        self._locations_noted = False
 
     def _auth(self) -> None:
         token = self.ctx.get("access_token", env="GOOGLE_OAUTH_ACCESS_TOKEN")
@@ -268,7 +271,7 @@ class GcpConnector(BaseConnector):
                 self.ctx.warn(f"cloud.gcp: empty response for {url.split('?')[0]}")
             return data
         except (HttpError, RequestException, ValueError) as exc:
-            self.ctx.warn(f"cloud.gcp: collection failed for {url.split('?')[0]} ({_failure(exc)})")
+            self.ctx.warn(f"cloud.gcp: collection failed for {url.split('?')[0]} ({failure_summary(exc)})")
             return None
 
     def _next_page_token(self, data: dict[str, Any], seen: set[str], *, warn: str) -> str | None:
@@ -336,12 +339,25 @@ class GcpConnector(BaseConnector):
                 "projects",
                 filter="lifecycleState:ACTIVE",
             )
-            projects = (p["projectId"] for p in listed if p.get("projectId"))
+            projects = self._project_ids(listed)
         for i, project in enumerate(projects):
             if i >= self.max_projects:
                 self.ctx.warn("cloud.gcp: max_projects reached")
                 break
             yield from self._collect_project(project)
+
+    def _project_ids(self, projects: Iterable[dict[str, Any]]) -> Iterator[str]:
+        """Validate discovered scope before it becomes an authenticated API path."""
+        for project in projects:
+            project_id = project.get("projectId")
+            if (
+                not isinstance(project_id, str)
+                or project_id in {".", ".."}
+                or not re.fullmatch(r"[A-Za-z0-9._:-]+", project_id)
+            ):
+                self.ctx.warn("cloud.gcp: invalid discovered project identifier; coverage unknown")
+                continue
+            yield project_id
 
     def _collect_project(self, project: str) -> Iterator[dict[str, Any]]:
         services = self._pages(
@@ -350,36 +366,51 @@ class GcpConnector(BaseConnector):
             filter="state:ENABLED",
             pageSize=200,
         )
-        enabled = [s.get("config", {}).get("name") for s in services]
+        enabled: list[str] = []
+        for service in services:
+            # Response shapes are untrusted: a service record without a config
+            # name is a coverage gap for this project, not a failure of every
+            # project and service that follows it.
+            config = service.get("config") if isinstance(service, dict) else None
+            name = config.get("name") if isinstance(config, dict) else None
+            if isinstance(name, str):
+                enabled.append(name)
+            else:
+                self.ctx.warn(
+                    f"cloud.gcp: malformed service record in {project}; service coverage incomplete"
+                )
         ai_enabled = [s for s in enabled if s in AI_SERVICES]
         yield {"_kind": "project", "project": project, "ai_services": ai_enabled}
+        if _uses(enabled, "aiplatform.googleapis.com") or _uses(enabled, "dialogflow.googleapis.com"):
+            self._note_default_locations()
         if _uses(enabled, "aiplatform.googleapis.com"):
             yield from self._collect_vertex(project)
         if _uses(enabled, "dialogflow.googleapis.com"):
-            for loc in ["global", *self.locations]:
-                url = f"https://dialogflow.googleapis.com/v3/projects/{project}/locations/{loc}/agents"
+            for loc in dict.fromkeys(["global", *self.locations]):
+                host = _api_host("dialogflow", loc)
+                url = f"https://{host}/v3/projects/{project}/locations/{loc}/agents"
                 for agent in self._pages(url, "agents"):
-                    yield {"_kind": "dialogflow-agent", "_project": project, "_location": loc, **agent}
+                    yield {**agent, "_kind": "dialogflow-agent", "_project": project, "_location": loc}
         if _uses(enabled, "discoveryengine.googleapis.com"):
             for loc in ["global", "us", "eu"]:
                 url = (
-                    f"https://discoveryengine.googleapis.com/v1/projects/{project}/locations/{loc}"
+                    f"https://{_api_host('discoveryengine', loc)}/v1/projects/{project}/locations/{loc}"
                     "/collections/default_collection/engines"
                 )
                 for eng in self._pages(url, "engines"):
-                    yield {"_kind": "discovery-engine", "_project": project, "_location": loc, **eng}
+                    yield {**eng, "_kind": "discovery-engine", "_project": project, "_location": loc}
         if _uses(enabled, "run.googleapis.com"):
             yield from self._collect_cloud_run(project)
         if _uses(enabled, "cloudfunctions.googleapis.com"):
             url = f"https://cloudfunctions.googleapis.com/v2/projects/{project}/locations/-/functions"
             for fn in self._pages(url, "functions"):
-                yield {"_kind": "cloud-function", "_project": project, **fn}
+                yield {**fn, "_kind": "cloud-function", "_project": project}
         yield from self._collect_iam_policy(project)
         yield from self._collect_service_accounts(project)
         if _uses(enabled, "apikeys.googleapis.com"):
             url = f"https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys"
             for key in self._pages(url, "keys"):
-                yield {"_kind": "api-key", "_project": project, **key}
+                yield {**key, "_kind": "api-key", "_project": project}
         if _uses(enabled, "secretmanager.googleapis.com"):
             url = f"https://secretmanager.googleapis.com/v1/projects/{project}/secrets"
             for s in self._pages(url, "secrets"):
@@ -393,13 +424,26 @@ class GcpConnector(BaseConnector):
         if self.audit_days > 0 and _uses(enabled, "aiplatform.googleapis.com"):
             yield from self._collect_audit(project)
 
+    def _note_default_locations(self) -> None:
+        """Once per scan, say which locations a default (unset ``locations``) scan covered."""
+        if not self._default_locations or self._locations_noted:
+            return
+        self._locations_noted = True
+        # Informational: the operator chose no scope, so name what was and was not covered.
+        self.ctx.warn(
+            "cloud.gcp: no 'locations' option set; Vertex AI and Dialogflow CX were queried only in "
+            f"the default locations ({', '.join(self.locations)}). Resources in other locations were "
+            "not scanned. Set 'locations' to a list to change the scope",
+            incomplete=False,
+        )
+
     def _collect_vertex(self, project: str) -> Iterator[dict[str, Any]]:
         for loc in self.locations:
             base = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{project}/locations/{loc}"
             for re_ in self._pages(f"{base}/reasoningEngines", "reasoningEngines"):
-                yield {"_kind": "reasoning-engine", "_project": project, "_location": loc, **re_}
+                yield {**re_, "_kind": "reasoning-engine", "_project": project, "_location": loc}
             for ep in self._pages(f"{base}/endpoints", "endpoints"):
-                yield {"_kind": "vertex-endpoint", "_project": project, "_location": loc, **ep}
+                yield {**ep, "_kind": "vertex-endpoint", "_project": project, "_location": loc}
 
     def _collect_cloud_run(self, project: str) -> Iterator[dict[str, Any]]:
         # Cloud Run v2 services.list rejects the '-' wildcard. Enumerate
@@ -430,7 +474,7 @@ class GcpConnector(BaseConnector):
             else:
                 yield {"_kind": "iam-policy", "_project": project, "bindings": policy.get("bindings", [])}
         except (HttpError, RequestException, ValueError) as exc:
-            self.ctx.warn(f"cloud.gcp: IAM policy not readable for {project} ({_failure(exc)})")
+            self.ctx.warn(f"cloud.gcp: IAM policy not readable for {project} ({failure_summary(exc)})")
 
     def _collect_service_accounts(self, project: str) -> Iterator[dict[str, Any]]:
         url = f"https://iam.googleapis.com/v1/projects/{project}/serviceAccounts"
@@ -477,7 +521,7 @@ class GcpConnector(BaseConnector):
             try:
                 data = self.http.post_json("https://logging.googleapis.com/v2/entries:list", json=body)
             except (HttpError, RequestException) as exc:
-                self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({_failure(exc)})")
+                self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({failure_summary(exc)})")
                 return
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("entries", []), list):
                 self.ctx.warn(f"cloud.gcp: invalid audit log response for {project}")

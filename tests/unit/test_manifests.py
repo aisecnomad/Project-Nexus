@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -8,6 +9,7 @@ import pytest
 from shadowscan.connectors.code.manifests import (
     _LineIndex,
     is_manifest_name,
+    manifest_comment_projection,
     parse_manifest,
     parse_requirements,
 )
@@ -70,6 +72,70 @@ def test_package_json_go_cargo_maven_gradle_nuget():
         '<Project><ItemGroup><PackageReference Include="Microsoft.Agents.AI" Version="1.0.0" /></ItemGroup></Project>',
     )
     assert ("nuget", "Microsoft.Agents.AI") in deps
+
+
+@pytest.mark.parametrize(
+    "section, dev",
+    [
+        ("dependencies", False),
+        ("devDependencies", True),
+        ("peerDependencies", False),
+        ("optionalDependencies", False),
+    ],
+)
+@pytest.mark.parametrize(
+    "spec, target",
+    [
+        ("npm:@langchain/langgraph@^1.0", "@langchain/langgraph"),
+        ("npm:@langchain/langgraph", "@langchain/langgraph"),
+        ("npm:langchain@>=0.3 <1", "langchain"),
+        ("npm:langchain", "langchain"),
+        ("npm:lodash@latest", "lodash"),
+        ("NPM:@langchain/langgraph@^1.0", "@langchain/langgraph"),
+        ("npm:@_scope/foo@1", "@_scope/foo"),
+        ("npm:@.scope/foo@1", "@.scope/foo"),
+        ("npm:@scope/-foo@1", "@scope/-foo"),
+        ("npm:foo!@1", "foo!"),
+        ("npm:foo(bar)@1", "foo(bar)"),
+    ],
+)
+def test_npm_alias_dependency_uses_target_identity(section, dev, spec, target):
+    alias = "@langchain/langgraph" if target == "lodash" else "workflow-runtime"
+    _, result = _deps("package.json", json.dumps({section: {alias: spec}}))
+    assert not result.errors
+    assert [(dep.ecosystem, dep.name, dep.spec, dep.dev) for dep in result.deps] == [
+        ("npm", target, spec, dev)
+    ]
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "npm:",
+        "npm:@scope",
+        "npm:@scope/",
+        "npm:../langchain",
+        "npm:langchain/extra",
+        "npm:@scope/.foo",
+        "npm:_foo",
+        "npm:-foo",
+    ],
+)
+def test_malformed_npm_alias_does_not_fall_back_to_alias_name(spec):
+    deps, result = _deps(
+        "package.json", json.dumps({"dependencies": {"@langchain/langgraph": spec, "openai": "^4"}})
+    )
+    assert deps == {("npm", "openai")}
+    assert result.errors == ["dependencies dependency has an invalid npm alias target"]
+
+
+@pytest.mark.parametrize(
+    "spec", ["^1.0", "workspace:*", "file:../runtime", "https://example.test/runtime.tgz"]
+)
+def test_non_alias_npm_dependencies_keep_declared_names(spec):
+    deps, result = _deps("package.json", json.dumps({"dependencies": {"langchain": spec}}))
+    assert deps == {("npm", "langchain")}
+    assert not result.errors
 
 
 def test_dockerfile_compose_and_terraform_artifacts():
@@ -190,6 +256,224 @@ def test_vcs_egg_fragments_and_editable_dependencies():
         ("langgraph", 2),
         ("langchain", 3),
     }
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "Directory.Packages.props",
+        "eng/common.props",
+        "eng/Versions.PROPS",
+        "src/App/Shared.targets",
+    ],
+)
+def test_msbuild_props_and_targets_are_nuget_manifests(rel):
+    name = rel.rsplit("/", 1)[-1]
+    assert is_manifest_name(name)
+    deps, result = _deps(
+        rel,
+        '<Project><ItemGroup><PackageReference Include="Microsoft.SemanticKernel" Version="1.0.0" />'
+        '<PackageVersion Include="ModelContextProtocol" Version="0.2" /></ItemGroup></Project>',
+    )
+    assert deps == {("nuget", "Microsoft.SemanticKernel"), ("nuget", "ModelContextProtocol")}
+    assert not result.errors
+
+
+@pytest.mark.parametrize("name", ["Directory.Build.targets", "common.props"])
+def test_msbuild_entity_declarations_are_rejected_not_expanded(name):
+    bomb = (
+        '<!DOCTYPE lolz [<!ENTITY lol0 "lol"><!ENTITY lol1 "&lol0;&lol0;&lol0;&lol0;&lol0;&lol0;&lol0;">]>'
+        '<Project><ItemGroup><PackageReference Include="&lol1;" /></ItemGroup></Project>'
+    )
+    result = parse_manifest(name, bomb)
+    assert result is not None and result.deps == []
+    assert result.errors == ["NuGet DTD/entity declarations are unsupported"]
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "openai-agents @ https://example.org/distributions/agents-0.1.0.tar.gz",
+        "openai-agents[voice] @ https://example.org/downloads/other.whl#sha256=abc123",
+        "openai-agents @ git+https://github.com/example/other.git@main#subdirectory=python",
+        "openai-agents @ file:///opt/packages/other.whl",
+    ],
+)
+def test_named_requirement_urls_preserve_declared_identity(reference):
+    result = parse_requirements("# installation\n" + reference + "\n")
+    assert not result.errors
+    assert [(dep.ecosystem, dep.name, dep.spec, dep.line) for dep in result.deps] == [
+        ("pypi", "openai-agents", reference, 2)
+    ]
+
+
+def test_gradle_comments_and_example_strings_do_not_declare_dependencies():
+    text = (
+        '// implementation "dev.langchain4j:langchain4j:1.0.0"\n'
+        '/* implementation("dev.langchain4j:langchain4j:1.0.0")\n'
+        '   platform("dev.langchain4j:langchain4j-bom:1.0.0") */\n'
+        "def example = '''implementation \"dev.langchain4j:langchain4j:1.0.0\"\n"
+        "// this is still inside the example'''\n"
+        'def mirror = "https://example.invalid/maven"; '
+        'implementation /* comment */ ("org.springframework.ai:spring-ai-core:1.0.0")\n'
+        'testImplementation("dev.langchain4j:langchain4j:1.0.0") // active dependency\n'
+    )
+    deps, result = _deps("build.gradle", text)
+    assert not result.errors
+    assert deps == {
+        ("maven", "org.springframework.ai:spring-ai-core"),
+        ("maven", "dev.langchain4j:langchain4j"),
+    }
+    assert [(dep.line, dep.dev) for dep in result.deps] == [(6, False), (7, True)]
+
+
+def test_gradle_dollar_slashy_string_preserves_following_dependencies():
+    deps, result = _deps(
+        "build.gradle",
+        "def mirror = $/https://example.invalid/maven/$; "
+        'implementation("dev.langchain4j:langchain4j:1.0.0")\n',
+    )
+    assert not result.errors
+    assert deps == {("maven", "dev.langchain4j:langchain4j")}
+
+
+@pytest.mark.parametrize(
+    "filename, example",
+    [
+        ("build.gradle", "def example = /it's/\n"),
+        ("build.gradle", "def pattern = /https?:\\/\\/example/\n"),
+        ("build.gradle.kts", 'val path = """C:\\"""\n'),
+    ],
+)
+def test_gradle_raw_string_delimiters_do_not_consume_following_declarations(filename, example):
+    deps, result = _deps(
+        filename,
+        example + 'dependencies { implementation("dev.langchain4j:langchain4j:1.0.0") }\n',
+    )
+    assert not result.errors
+    assert deps == {("maven", "dev.langchain4j:langchain4j")}
+    assert result.deps[0].line == 2
+
+
+def test_kotlin_nested_comments_do_not_hide_following_dependencies():
+    deps, result = _deps(
+        "build.gradle.kts",
+        '/* outer /* nested */ implementation("dev.langchain4j:langchain4j:1.0.0") */\n'
+        'implementation("org.springframework.ai:spring-ai-core:1.0.0")\n',
+    )
+    assert not result.errors
+    assert deps == {("maven", "org.springframework.ai:spring-ai-core")}
+    assert result.deps[0].line == 2
+
+
+def test_unterminated_gradle_comment_reports_incomplete_parsing():
+    deps, result = _deps("build.gradle", '/* implementation("dev.langchain4j:langchain4j:1.0.0")\n')
+    assert not deps
+    assert result.errors == ["unterminated Gradle comment or string"]
+
+
+def test_docker_comments_preserve_real_commands_quoted_hashes_and_source_lines():
+    deps, result = _deps(
+        "Dockerfile",
+        "# pip install openai-agents\n"
+        "FROM python:3.12\n"
+        "RUN pip install langgraph # pip install crewai\n"
+        'RUN echo "https://example.invalid/#fragment" && npm install @langchain/langgraph '
+        "# npm install ai\n"
+        "RUN echo \\# && uv pip install mcp\n",
+    )
+    assert not result.errors
+    assert deps == {("pypi", "langgraph"), ("npm", "@langchain/langgraph"), ("pypi", "mcp")}
+    assert {(dep.name, dep.line) for dep in result.deps} == {
+        ("langgraph", 3),
+        ("@langchain/langgraph", 4),
+        ("mcp", 5),
+    }
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        "ENV NOTE literal # OPENAI_API_KEY",
+        "ARG NOTE=literal # OPENAI_API_KEY",
+        'LABEL note="literal" # OPENAI_API_KEY',
+        "COPY files/#fragment /app/",
+        'RUN ["echo", "literal # OPENAI_API_KEY"]',
+        'RUN --mount=type=cache,target=/tmp ["echo", "literal # OPENAI_API_KEY"]',
+        'CMD ["echo", "literal # OPENAI_API_KEY"]',
+        'ENTRYPOINT ["echo", "literal # OPENAI_API_KEY"]',
+    ],
+)
+def test_docker_non_shell_hashes_are_literal_data(instruction):
+    text = instruction + "\n"
+    assert manifest_comment_projection("Dockerfile", text) == text
+
+
+def test_docker_shell_projection_keeps_quoted_hash_and_masks_inline_comment():
+    text = 'RUN echo "# literal" && pip install langgraph # pip install crewai\n'
+    projected = manifest_comment_projection("Dockerfile", text)
+    assert len(projected) == len(text) and projected.count("\n") == text.count("\n")
+    assert 'echo "# literal"' in projected and "pip install langgraph" in projected
+    assert "crewai" not in projected
+
+
+@pytest.mark.parametrize("escape", ["\\", "`"])
+def test_docker_continuations_and_intervening_comments(escape):
+    deps, result = _deps(
+        "Dockerfile",
+        f"# escape={escape}\nFROM python:3.12\nRUN pip install {escape}\n"
+        "    # pip install crewai\n    openai-agents\n",
+    )
+    assert not result.errors
+    assert deps == {("pypi", "openai-agents")}
+    assert result.deps[0].line == 3
+
+
+@pytest.mark.parametrize("escape", ["\\", "`"])
+def test_docker_continuation_is_joined_before_shell_comment_detection(escape, tmp_path, run_connector):
+    prefix = f"# escape={escape}\nFROM python:3.12\n"
+    disabled = prefix + f"RUN echo ready # disabled install {escape}\n    pip install langgraph\n"
+    active = prefix + f"RUN echo ready && {escape}\n    pip install langgraph\n"
+    path = tmp_path / "Dockerfile"
+    for text, expected in ((disabled, False), (active, True)):
+        deps, result = _deps("Dockerfile", text)
+        assert not result.errors
+        assert deps == ({("pypi", "langgraph")} if expected else set())
+        projection = manifest_comment_projection("Dockerfile", text)
+        assert len(projection) == len(text) and projection.count("\n") == text.count("\n")
+        assert ("pip install langgraph" in projection) == expected
+        path.write_text(text)
+        findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+        assert ctx.stats is not None and not ctx.stats.incomplete
+        assert bool(findings) == expected
+
+
+@pytest.mark.parametrize(
+    "filename, declaration, signature",
+    [
+        (
+            "requirements.txt",
+            "openai-agents @ https://example.org/distributions/agents-0.1.0.tar.gz",
+            "framework.openai-agents-sdk",
+        ),
+        ("build.gradle", 'implementation "dev.langchain4j:langchain4j:1.0.0"', "framework.langchain4j"),
+        ("Dockerfile", "RUN pip install openai-agents", "framework.openai-agents-sdk"),
+    ],
+)
+def test_comment_and_active_dependency_discovery_pair(
+    tmp_path, run_connector, filename, declaration, signature
+):
+    path = tmp_path / filename
+    comment = "// " if filename.endswith(".gradle") else "# "
+    path.write_text(comment + declaration + "\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not findings and ctx.stats is not None and not ctx.stats.incomplete
+    path.write_text(declaration + "\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert ctx.stats is not None and not ctx.stats.incomplete
+    assert len(findings) == 1 and findings[0].frameworks == [signature]
 
 
 def test_containerfile_is_parsed_like_a_dockerfile():

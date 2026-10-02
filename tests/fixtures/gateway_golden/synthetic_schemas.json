@@ -2654,7 +2654,7 @@
     }
    ],
    "confidence": 0.992,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -2737,6 +2737,7 @@
       "portkey"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "framework.langchain|user_agent": 1
@@ -2816,7 +2817,7 @@
     }
    ],
    "confidence": 0.883,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -2897,6 +2898,7 @@
       "portkey"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|user_agent": 1
@@ -3023,8 +3025,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.996,
-   "likelihood": "confirmed",
+   "confidence": 0.99,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -3117,6 +3119,7 @@
       "kong"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -3219,7 +3222,7 @@
     }
    ],
    "confidence": 0.892,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -3304,6 +3307,7 @@
       "kong"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -3395,7 +3399,7 @@
     }
    ],
    "confidence": 0.988,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -3477,6 +3481,7 @@
       "cloudflare"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|user_agent": 1
@@ -3616,6 +3621,7 @@
       "cloudflare"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -3755,6 +3761,7 @@
       "cloudflare"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.cloudflare-workers-ai|model": 1
     },
@@ -3863,8 +3870,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.995,
-   "likelihood": "confirmed",
+   "confidence": 0.989,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -3945,6 +3952,7 @@
       "helicone"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -4050,8 +4058,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.962,
-   "likelihood": "confirmed",
+   "confidence": 0.917,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -4131,6 +4139,7 @@
       "helicone"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -4210,7 +4219,7 @@
     }
    ],
    "confidence": 0.949,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -4290,6 +4299,7 @@
       "langfuse"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -4361,7 +4371,7 @@
     }
    ],
    "confidence": 0.967,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -4442,6 +4452,7 @@
       "langfuse"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1
     },
@@ -4564,7 +4575,7 @@
     }
    ],
    "confidence": 0.999,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -4658,6 +4669,7 @@
       "vertex"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.google-vertex-ai|model": 1,
      "provider.google-vertex-ai|domain": 1,
@@ -4822,6 +4834,7 @@
       "vertex"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.google-vertex-ai|domain": 1
     },
@@ -4905,8 +4918,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.937,
-   "likelihood": "confirmed",
+   "confidence": 0.862,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -4994,6 +5007,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
@@ -5084,8 +5098,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.937,
-   "likelihood": "confirmed",
+   "confidence": 0.862,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -5174,6 +5188,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
@@ -5291,8 +5306,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.977,
-   "likelihood": "confirmed",
+   "confidence": 0.917,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -5394,6 +5409,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 2,
      "provider.openai|domain": 2,
@@ -5499,8 +5515,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.95,
-   "likelihood": "confirmed",
+   "confidence": 0.892,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -5595,6 +5611,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -5700,8 +5717,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.962,
-   "likelihood": "confirmed",
+   "confidence": 0.917,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -5791,6 +5808,7 @@
       "openai-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -5885,7 +5903,7 @@
     }
    ],
    "confidence": 0.917,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -5975,6 +5993,7 @@
       "anthropic-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -6069,7 +6088,7 @@
     }
    ],
    "confidence": 0.917,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -6158,6 +6177,7 @@
       "anthropic-usage"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -6287,8 +6307,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.999,
-   "likelihood": "confirmed",
+   "confidence": 0.998,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -6377,6 +6397,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -6490,7 +6511,7 @@
     }
    ],
    "confidence": 0.935,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -6576,6 +6597,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -6720,7 +6742,7 @@
     }
    ],
    "confidence": 1.0,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -6798,6 +6820,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|model": 1,
      "provider.anthropic|domain": 1,
@@ -6941,6 +6964,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "technologies": [
      {
       "id": "provider.ollama",
@@ -7033,8 +7057,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.975,
-   "likelihood": "confirmed",
+   "confidence": 0.946,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -7118,6 +7142,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1,
@@ -7222,7 +7247,7 @@
     }
    ],
    "confidence": 0.977,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -7305,6 +7330,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.anthropic|domain": 1,
      "identity-app.anthropic-claude|domain": 1,
@@ -7432,6 +7458,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "technologies": []
    },
    "identity_discriminator": "caller",
@@ -7496,7 +7523,7 @@
     }
    ],
    "confidence": 0.942,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -7580,6 +7607,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "platform.litellm|user_agent": 1
@@ -7700,8 +7728,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.992,
-   "likelihood": "confirmed",
+   "confidence": 0.983,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -7791,6 +7819,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|domain": 2,
@@ -7889,7 +7918,7 @@
     }
    ],
    "confidence": 0.988,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -7967,6 +7996,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "provider.openai|user_agent": 1
@@ -8129,6 +8159,7 @@
       "bedrock"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.aws-bedrock|model": 1,
      "provider.aws-bedrock|domain": 1
@@ -8214,7 +8245,7 @@
     }
    ],
    "confidence": 0.864,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -8300,6 +8331,7 @@
       "bedrock"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.aws-bedrock|model": 1,
      "provider.aws-bedrock|domain": 1,
@@ -8456,6 +8488,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.google-gemini|model": 1,
      "provider.google-gemini|domain": 1
@@ -8591,6 +8624,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -8725,6 +8759,7 @@
       "generic"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -8808,8 +8843,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.922,
-   "likelihood": "confirmed",
+   "confidence": 0.831,
+   "likelihood": "likely",
    "risk": {
     "score": 0,
     "level": "info",
@@ -8890,6 +8925,7 @@
       "access-log"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
      "identity-app.openai-chatgpt|domain": 1
@@ -9044,6 +9080,7 @@
       "azure-openai"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },
@@ -9122,7 +9159,7 @@
     }
    ],
    "confidence": 0.961,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -9206,6 +9243,7 @@
       "azure-openai"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },

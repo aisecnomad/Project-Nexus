@@ -11,7 +11,7 @@ import sys
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
-from typing import Any, NoReturn, TypeVar
+from typing import IO, Any, NoReturn, TypeVar
 
 import click
 import yaml
@@ -49,7 +49,9 @@ from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
+from shadowscan.utils.git import terminate_active_clones, terminate_clones_on_signal
 from shadowscan.utils.output import (
+    encodable_text,
     prepare_private_directory,
     terminal_report_text,
     terminal_text,
@@ -112,14 +114,17 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
         except (OSError, ValueError):
             raise click.ClickException("could not write report; check output path and permissions") from None
         written = fmt if fmt != "table" else "json"
-        err_console.print(Text(terminal_text(f"wrote {written} report to {output}"), style="green"))
+        note = f"wrote {written} report to {output}"
+        if fmt == "table":
+            note += " (the table format saves JSON to a file; pass --format for another file type)"
+        err_console.print(Text(terminal_text(note), style="green"))
         if fmt == "table":
             try:
                 print_table(result, console=console, verbose=verbose, max_rows=max_rows)
             except (OverflowError, RecursionError, TypeError, ValueError):
                 raise click.ClickException("could not render report; result data is invalid") from None
     else:
-        click.echo(terminal_report_text(text, fmt))
+        click.echo(encodable_text(terminal_report_text(text, fmt)))
 
 
 def _exit_code(result: ScanResult, fail_on: str | None) -> int:
@@ -145,6 +150,8 @@ def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
             except Exception:  # noqa: BLE001 - still try the other stream and exit
                 pass
     finally:
+        # An abandoned worker may still be waiting to stop its own clone.
+        terminate_active_clones()
         os._exit(code)
 
 
@@ -204,7 +211,10 @@ def _run_and_emit_with_deadline(
         log.warning("plugin registry: %s", problem)
     try:
         engine = Engine(cfg, progress=progress if verbose else None)
-        result = engine.run(only=only)
+        # Connectors run on worker threads, which cannot install signal
+        # handlers: a termination signal must stop live clones from here.
+        with terminate_clones_on_signal():
+            result = engine.run(only=only)
     except SetupError as exc:
         # SetupError messages are credential-free by contract (shadowscan.errors).
         raise click.ClickException(str(exc)) from None
@@ -298,7 +308,13 @@ security_options = [
         type=float,
         callback=_connector_timeout_option,
         help="per-connector completion deadline in seconds (default: 120); --connector-timeout is a"
-        " deprecated alias; blocking calls cannot be forcibly stopped",
+        " deprecated alias; thread workers use cooperative cancellation",
+    ),
+    click.option(
+        "--plugin-execution",
+        type=click.Choice(["thread", "process"]),
+        default=None,
+        help="third-party connector execution backend (default: thread); process enables worker termination",
     ),
     click.option(
         "--allow-plugin",
@@ -399,6 +415,7 @@ class ScanOptions:
     allow_credential_mixing: bool | None
     connector_timeout_seconds: float | None
     allow_plugin: tuple[str, ...]
+    plugin_execution: str | None
     allow_signature_override: bool | None
     allow_private_origin: bool | None
     incremental: bool | None
@@ -443,6 +460,8 @@ def scan_options(command: Callable[..., None]) -> Callable[..., None]:
 def _apply_security_options(cfg: ScanConfig, opts: ScanOptions) -> None:
     """Command-line approvals and deadlines override the configuration when given."""
     cfg.plugins = list(dict.fromkeys([*cfg.plugins, *opts.allow_plugin]))
+    if opts.plugin_execution is not None:
+        cfg.plugin_execution = opts.plugin_execution
     if opts.allow_signature_override is not None:
         cfg.allow_signature_override = opts.allow_signature_override
     if opts.allow_private_origin is not None:
@@ -464,7 +483,54 @@ def _run_scan(cfg: ScanConfig, opts: ScanOptions, only: list[str] | None = None)
     _run_and_emit(cfg, opts.fmt, opts.output, verbose, opts.max_rows, only=only)
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+class _UsageError(click.UsageError):
+    """A Click usage error, shown unchanged, that exits 1 instead of 2.
+
+    Exit 2 means a complete scan reached ``--fail-on``. A mistyped option,
+    invalid value or missing file stops the command before it scans anything,
+    like a configuration error, so a CI gate must not read it as a policy result.
+    """
+
+    exit_code = 1
+
+    def __init__(self, error: click.UsageError) -> None:
+        super().__init__(error.message, error.ctx)
+        self.error = error
+
+    def format_message(self) -> str:
+        return self.error.format_message()
+
+    def __str__(self) -> str:
+        return str(self.error)
+
+    def show(self, file: IO[Any] | None = None) -> None:
+        self.error.show(file)
+
+
+class _MainGroup(click.Group):
+    """Root group: usage errors of every command, raised while parsing or running, exit 1."""
+
+    def make_context(
+        self,
+        info_name: str | None,
+        args: list[str],
+        parent: click.Context | None = None,
+        **extra: Any,
+    ) -> click.Context:
+        try:
+            return super().make_context(info_name, args, parent, **extra)
+        except click.UsageError as exc:
+            raise _UsageError(exc) from None
+
+    def invoke(self, ctx: click.Context) -> Any:
+        # Subcommand parsing and callbacks run inside the root invocation.
+        try:
+            return super().invoke(ctx)
+        except click.UsageError as exc:
+            raise _UsageError(exc) from None
+
+
+@click.group(cls=_MainGroup, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, prog_name="shadowscan")
 @click.option("-v", "--verbose", count=True, help="-v info, -vv debug")
 @click.option("-q", "--quiet", is_flag=True, help="errors only")
@@ -560,6 +626,11 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
 @click.option("--gitlab-group", help="scan every project of a GitLab group (GITLAB_TOKEN)")
 @click.option("--mode", type=click.Choice(["clone", "api"]), default=None, help="remote fetch mode")
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
+@click.option(
+    "--no-default-excludes",
+    is_flag=True,
+    help="also scan the directories skipped by default (bin, build, dist, vendor, node_modules, .git, ...)",
+)
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
 @click.option(
     "--strict-coverage",
@@ -579,6 +650,7 @@ def code(
     gitlab_group: str | None,
     mode: str | None,
     exclude: tuple[str, ...],
+    no_default_excludes: bool,
     no_secrets: bool,
     strict_coverage: bool,
     include_tests: bool,
@@ -588,6 +660,8 @@ def code(
     secrets."""
     specs: list[ConnectorSpec] = []
     common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
+    if no_default_excludes:
+        common["default_excludes"] = False
     if strict_coverage:
         common["strict_coverage"] = True
     if include_tests:
@@ -1042,6 +1116,9 @@ def inventory_check(paths: tuple[str, ...]) -> None:
         raise click.ClickException(
             "could not load inventory; check file access and document structure"
         ) from None
+    for link in inv.skipped_links:
+        message = f"warning: inventory {link}: symbolic link skipped (links are not followed)"
+        err_console.print(Text(terminal_text(message), style="yellow"))
     table = Table(title=f"{len(inv)} registered agents", header_style="bold")
     table.add_column("Agent id")
     table.add_column("Name")
@@ -1127,7 +1204,15 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
 @click.argument("baseline", type=click.Path(exists=True, dir_okay=False))
 @click.argument("current", type=click.Path(exists=True, dir_okay=False))
 @click.option("--json", "as_json", is_flag=True)
-def diff(baseline: str, current: str, as_json: bool) -> None:
+@click.option(
+    "--fail-on-new",
+    is_flag=True,
+    help=(
+        "exit 2 if the comparison has new findings or findings whose risk level rose; "
+        "an incomplete comparison still exits 3"
+    ),
+)
+def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
     """Compare reports; missing findings require complete, comparable scans to resolve."""
     try:
         comparison = compare_reports(
@@ -1141,23 +1226,41 @@ def diff(baseline: str, current: str, as_json: bool) -> None:
     else:
         keys = ("new", "resolved", "unknown", "changed")
         new, resolved, unknown, changed = (comparison[key] for key in keys)
+        # Scan-local IDs (baseline "<", current ">") cannot be matched across reports.
+        local_baseline, local_current = (comparison["not_comparable"][key] for key in ("baseline", "current"))
         console.print(
             f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold],"
-            f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold]"
+            f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold],"
+            f" [bold]{len(local_baseline) + len(local_current)} not comparable[/bold]"
         )
         for reason in comparison["reasons"]:
             console.print(f"Comparison incomplete: {reason}", markup=False)
-        for marker, records in (("+", new), ("-", resolved), ("?", unknown)):
+        # Imported titles and resources are untrusted: Rich's highlighter is
+        # quadratic on long tokens (a 50k-character title took about 30 s).
+        for marker, records in (
+            ("+", new),
+            ("-", resolved),
+            ("?", unknown),
+            ("<", local_baseline),
+            (">", local_current),
+        ):
             for d in sorted(records, key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
-                console.print(terminal_text(line), markup=False)
+                console.print(terminal_text(line), markup=False, highlight=False)
         for change in changed:
             x, y = change["before"], change["after"]
             fields_changed = ", ".join(change["changed_fields"])
             line = f"  ~ {y['title']}: {fields_changed} (risk {x['risk']['score']} → {y['risk']['score']})"
-            console.print(terminal_text(line), markup=False)
+            console.print(terminal_text(line), markup=False, highlight=False)
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
+    if fail_on_new and (comparison["new"] or any(_risk_rose(change) for change in comparison["changed"])):
+        raise click.exceptions.Exit(2)
+
+
+def _risk_rose(change: dict[str, Any]) -> bool:
+    """Whether a changed finding moved to a more severe risk level (LEVELS runs most to least severe)."""
+    return LEVELS.index(change["after"]["risk"]["level"]) < LEVELS.index(change["before"]["risk"]["level"])
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -35,7 +35,7 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials
-from shadowscan.connectors.common import apply_matches, config_boolean, model_matches
+from shadowscan.connectors.common import apply_matches, config_boolean, failure_summary, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
@@ -105,10 +105,6 @@ def _subscription(resource_id: str) -> str | None:
     return resource_id.split("/subscriptions/")[-1].split("/")[0]
 
 
-def _failure(exc: Exception) -> str:
-    return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
-
-
 class AzureConnector(BaseConnector):
     name: ClassVar[str] = "cloud.azure"
     _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = True
@@ -130,7 +126,11 @@ class AzureConnector(BaseConnector):
         "foundry_token": (
             "token for https://ai.azure.com/.default to list Foundry agents (auto-minted with azure-identity)"
         ),
-        "include_app_settings": "read App Service settings (names + credential detection) (default true)",
+        "include_app_settings": (
+            "read App Service settings for names and credential detection (default true). The "
+            "config/appsettings/list call returns plaintext values and needs "
+            "Microsoft.Web/sites/config/list/action (Contributor-class); false skips it"
+        ),
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
@@ -201,7 +201,9 @@ class AzureConnector(BaseConnector):
                 params = {"api-version": api, **params}
             return self.http.get_json(path, params=params or None)
         except (HttpError, RequestException, ValueError) as exc:
-            self.ctx.warn(f"cloud.azure: {_failure(exc)} for {path}; coverage unknown", incomplete=True)
+            self.ctx.warn(
+                f"cloud.azure: {failure_summary(exc)} for {path}; coverage unknown", incomplete=True
+            )
             return None
 
     def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[Any] | None:
@@ -222,7 +224,9 @@ class AzureConnector(BaseConnector):
             try:
                 data = self._get(path, api)
             except (HttpError, RequestException, ValueError) as exc:
-                self.ctx.warn(f"cloud.azure: list collection failed ({_failure(exc)}); coverage unknown")
+                self.ctx.warn(
+                    f"cloud.azure: list collection failed ({failure_summary(exc)}); coverage unknown"
+                )
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("value"), list):
                 self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
@@ -282,11 +286,11 @@ class AzureConnector(BaseConnector):
                 role_id = str(get_path(ra, "properties.roleDefinitionId", default="")).rsplit("/", 1)[-1]
                 if role_id in AI_ROLE_IDS:
                     yield {
+                        **(ra.get("properties") or {}),
                         "_kind": "role-assignment",
                         "_subscription": sub,
                         "role_id": role_id,
                         "role": AI_ROLE_IDS[role_id],
-                        **(ra.get("properties") or {}),
                         "id": ra.get("id"),
                     }
 
@@ -309,7 +313,8 @@ class AzureConnector(BaseConnector):
                 )
             except (HttpError, RequestException, ValueError) as exc:
                 self.ctx.warn(
-                    f"cloud.azure: Resource Graph collection failed ({_failure(exc)}); coverage unknown"
+                    f"cloud.azure: Resource Graph collection failed ({failure_summary(exc)}); "
+                    "coverage unknown"
                 )
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
@@ -341,7 +346,7 @@ class AzureConnector(BaseConnector):
         t = str(r.get("type", "")).lower()
         if t == "microsoft.cognitiveservices/accounts":
             for d in self._list(f"{rid}/deployments", "2024-10-01", allow_partial=True) or []:
-                yield {"_kind": "deployment", "_account": rid, "_account_name": r.get("name"), **d}
+                yield {**d, "_kind": "deployment", "_account": rid, "_account_name": r.get("name")}
             diag = self._list(
                 f"{rid}/providers/Microsoft.Insights/diagnosticSettings",
                 "2021-05-01-preview",
@@ -405,7 +410,15 @@ class AzureConnector(BaseConnector):
                     "environment": settings["properties"],
                 }
             except (HttpError, RequestException, ValueError) as exc:
-                self.ctx.warn(f"cloud.azure: appsettings {_failure(exc)} for {rid}", incomplete=True)
+                hint = ""
+                if isinstance(exc, HttpError) and exc.status in (401, 403):
+                    hint = (
+                        " (needs Microsoft.Web/sites/config/list/action; "
+                        "set include_app_settings: false to skip app settings)"
+                    )
+                self.ctx.warn(
+                    f"cloud.azure: appsettings {failure_summary(exc)} for {rid}{hint}", incomplete=True
+                )
 
     def _collect_agents(self, account: dict[str, Any], project: dict[str, Any]) -> Iterator[dict[str, Any]]:
         token = self._foundry()
@@ -442,7 +455,7 @@ class AzureConnector(BaseConnector):
                 data = http.get_json("/assistants", params=dict(params))
             except (HttpError, RequestException, ValueError) as exc:
                 self.ctx.warn(
-                    f"cloud.azure: Foundry agents {_failure(exc)}; coverage unknown",
+                    f"cloud.azure: Foundry agents {failure_summary(exc)}; coverage unknown",
                     incomplete=True,
                 )
                 return

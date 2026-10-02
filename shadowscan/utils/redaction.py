@@ -21,10 +21,13 @@ module that imported the name silently keeps the old object.
 
 from __future__ import annotations
 
+import datetime
+import decimal
 import hashlib
 import re
 import sys
 import types
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -38,6 +41,7 @@ from shadowscan.utils import (
     redaction_statements,
 )
 from shadowscan.utils.redaction_assignments import (
+    _redact_connection_passwords,
     _redact_fallback_defaults,
     _redact_mapping_values,
     _redact_opaque_assignments,
@@ -48,15 +52,28 @@ from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credent
 from shadowscan.utils.redaction_commands import (
     _redact_command_credentials,
     _redact_environment_commands,
+    _redact_extended_options,
     _redact_opaque_options,
     _redact_user_secrets,
 )
-from shadowscan.utils.redaction_formats import _AUTH, _JWT, _PEM, _SECRET_TOKEN, _URL, _sanitize_url
+from shadowscan.utils.redaction_formats import (
+    _PEM,
+    _URL,
+    _redact_authorization,
+    _redact_compact_colons,
+    _redact_cookie_headers,
+    _redact_jwts,
+    _redact_query_text,
+    _redact_secret_tokens,
+    _sanitize_url,
+)
 from shadowscan.utils.redaction_markup import (
+    _redact_flow_records,
     _redact_markup_credentials,
     _redact_markup_settings,
     _redact_name_value_pairs,
     _redact_record_settings,
+    _redact_reversed_records,
 )
 from shadowscan.utils.redaction_rules import (
     _FINGERPRINT,
@@ -70,11 +87,16 @@ from shadowscan.utils.redaction_rules import (
     _credential_name,
     _redact_value,
     _sensitive_assignment_key,
+    _sensitive_flag,
     _sensitive_key,
+    _sensitive_name,
     _setting_level,
     _setting_value_withheld,
 )
 from shadowscan.utils.redaction_statements import _redact_python_assignments
+
+# Values the sanitizer descends into; sets and frozensets are traversed like lists.
+_CONTAINERS = (Mapping, list, tuple, set, frozenset)
 
 # Keys whose mapping or list of name/value records holds environment variables.
 _ENVIRONMENT_KEYS = frozenset({"env", "environment", "environment_variables", "environmentvariables"})
@@ -87,6 +109,43 @@ _CREDENTIAL_DESCRIPTORS = frozenset(
 # Descriptors that are opaque secret material inside a container named for
 # credentials ('credentials.id'), but name an identity elsewhere ('api_key.id').
 _CREDENTIAL_GROUP_IDS = frozenset({"id", "objectid"})
+
+
+# Leaves that keep their type: JSON's scalars and the standard library's, whose text is
+# bounded by their type. Any other leaf (bytes, a set, an exception, a plugin's object)
+# reaches a report through ``json.dumps(default=str)`` or ``repr`` as it is, so it is
+# turned into text first (see ``_plain``).
+_SCALARS = (bool, int, float, datetime.date, datetime.time, datetime.timedelta, decimal.Decimal, uuid.UUID)
+_PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
+
+
+def _member_order(member: Any) -> tuple[str, str]:
+    try:
+        return type(member).__name__, repr(member)
+    except Exception:  # an arbitrary object's own repr may fail
+        return type(member).__name__, ""
+
+
+def _plain(item: Any) -> Any:
+    """``item`` as a value ``sanitize`` can read and copy.
+
+    Text, mappings, lists, tuples and the scalars above are returned as they are. Bytes
+    become text (undecodable bytes are replaced), a set a list in a stable order, and
+    any other object, an exception included, its ``str`` -- which ``sanitize`` then
+    reads like any other text.
+    """
+    if item is None or isinstance(item, _PLAIN_TYPES):
+        return item
+    if isinstance(item, (bytes, bytearray, memoryview)):
+        if len(item) > _MAX_SANITIZATION_CHARS:
+            raise SanitizationLimitError("text sanitization size limit exceeded")
+        return bytes(item).decode("utf-8", errors="replace")
+    if isinstance(item, (set, frozenset)):
+        return sorted(item, key=_member_order)
+    try:
+        return str(item)
+    except Exception:  # an arbitrary object's own __str__ may fail
+        return f"<{type(item).__qualname__}>"
 
 
 def credential_id(value: Any) -> str:
@@ -141,9 +200,18 @@ def _redact_extended(text: str) -> str:
     text = _redact_markup_settings(text)
     text = _redact_record_settings(text)
     text = _redact_user_secrets(text)
+    text = _redact_connection_passwords(text)
     text = _redact_opaque_assignments(text, extended=True)
     text = _redact_fallback_defaults(text, extended=True)
-    return _redact_opaque_options(text)
+    text = _redact_reversed_records(text)
+    text = _redact_query_text(text)
+    text = _redact_extended_options(text)
+    text = _redact_compact_colons(text)
+    text = _redact_opaque_options(text)
+    # A bare marker that these passes leave after a sensitive key's colon
+    # ('api_key : <opaque>') is read by the established mapping pass as the start
+    # of a mapping value; normalize it here so that sanitizing again changes nothing.
+    return _redact_mapping_values(text) if REDACTED in text else text
 
 
 def _sanitize_established(text: str) -> str:
@@ -151,7 +219,9 @@ def _sanitize_established(text: str) -> str:
     text = _checked_text(text)
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
+    text = _redact_cookie_headers(text)
     text = _redact_markup_credentials(text)
+    text = _redact_flow_records(text, quoted_only=True)
     text = _redact_name_value_pairs(text)
     text = _redact_command_credentials(text)
     text = _redact_environment_commands(text)
@@ -161,10 +231,9 @@ def _sanitize_established(text: str) -> str:
     text = _redact_yaml_multiline_values(text)
     text = _redact_mapping_values(text)
     text = _redact_opaque_assignments(text)
-    text = _JWT.sub(REDACTED, text)
-    text = _SECRET_TOKEN.sub(REDACTED, text)
-    # The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
-    text = _AUTH.sub(lambda m: m.group(1) + " " + REDACTED + "\n" * m.group().count("\n"), text)
+    text = _redact_jwts(text)
+    text = _redact_secret_tokens(text)
+    text = _redact_authorization(text)
     # Fallback defaults come after plain assignments, which already withhold
     # 'OPENAI_API_KEY=${OPENAI_API_KEY:-v}' whole. Plain assignment redaction
     # can introduce a bracketed marker after a mapping colon (including
@@ -199,7 +268,7 @@ def _record_has_secret_value(item: Mapping, *, environment: bool = False, extend
     if not isinstance(name, str):
         return False
     if not extended:
-        return _sensitive_assignment_key(name) if environment else _sensitive_key(name)
+        return _sensitive_assignment_key(name) if environment else _sensitive_name(name)
     level = _setting_level(name, record=not environment)
     return _setting_value_withheld(level, item.get("value") or item.get("Value")) if level else False
 
@@ -251,6 +320,7 @@ class _Sanitizer:
             raise SanitizationLimitError("credential replacement work limit exceeded")
 
     def remember(self, child: Any) -> None:
+        child = _plain(child)
         if isinstance(child, str) and child:
             if child != REDACTED and not _FINGERPRINT.fullmatch(child):
                 self.known.add(child)
@@ -261,10 +331,11 @@ class _Sanitizer:
                     self.known.add(escaped)
 
     def discover(self, item: Any, depth: int = 0, *, environment: bool = False) -> None:
+        item = _plain(item)
         identity = (id(item), environment)
-        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.discovered):
+        if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.discovered):
             return
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             self.discovered.add(identity)
         # The extended pass knows only the values the added rules find: the
         # established pass already withheld and removed the others.
@@ -286,14 +357,23 @@ class _Sanitizer:
                             if isinstance(entry, Mapping):
                                 self.remember(entry.get("value") or entry.get("Value"))
                 self.discover(child, depth + 1, environment=child_environment)
+        elif isinstance(item, (set, frozenset)):
+            for child in item:
+                self.discover(child, depth + 1, environment=environment)
         elif isinstance(item, (list, tuple)):
             previous = None
             for child in item:
-                if isinstance(previous, str) and previous.startswith("-"):
-                    if (established and _sensitive_key(previous.lstrip("-"))) or (
+                if isinstance(previous, str) and previous.startswith("-") and "=" not in previous:
+                    if (established and _sensitive_flag(previous.lstrip("-"))) or (
                         self.extended and _opaque_option(previous) and _opaque_literal(child)
                     ):
                         self.remember(child)
+                elif established and isinstance(child, str) and child.startswith("-") and "=" in child:
+                    # --api-key=VALUE: the value is a credential to remove from
+                    # sibling fields, exactly as for a separate argv entry.
+                    flag, _, flag_value = child.partition("=")
+                    if _sensitive_flag(flag.lstrip("-")):
+                        self.remember(flag_value)
                 self.discover(child, depth + 1, environment=environment)
                 previous = child
 
@@ -369,17 +449,18 @@ class _Sanitizer:
             raise SanitizationLimitError("sanitization work limit exceeded")
         if depth > 64:
             return REDACTED
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             if id(item) in self.cleaning:
                 return REDACTED
             self.cleaning.add(id(item))
         try:
             return self.clean_value(item, depth)
         finally:
-            if isinstance(item, (Mapping, list, tuple)):
+            if isinstance(item, _CONTAINERS):
                 self.cleaning.discard(id(item))
 
     def clean_value(self, item: Any, depth: int) -> Any:
+        item = _plain(item)
         if isinstance(item, Mapping):
             return self.clean_mapping(item, depth)
         if isinstance(item, (list, tuple)):
@@ -393,9 +474,20 @@ class _Sanitizer:
                     sequence_out.append(self.clean(child, depth + 1))
                     opaque_next = False
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
-                        redact_next = _sensitive_key(child.lstrip("-"))
+                        redact_next = _sensitive_flag(child.lstrip("-"))
                         opaque_next = self.extended and _opaque_option(child)
             return tuple(sequence_out) if isinstance(item, tuple) else sequence_out
+        if isinstance(item, (set, frozenset)):
+            members = [self.clean(child, depth + 1) for child in item]
+            return frozenset(members) if isinstance(item, frozenset) else set(members)
+        if isinstance(item, (bytes, bytearray)):
+            # Decode tolerantly: json default=str would otherwise print the raw
+            # bytes. Untouched content keeps its exact bytes.
+            decoded = bytes(item).decode("utf-8", errors="replace")
+            cleaned = self.text(decoded)
+            if cleaned == decoded:
+                return item
+            return bytearray(cleaned.encode()) if isinstance(item, bytearray) else cleaned.encode()
         if isinstance(item, str):
             return self.text(item)
         return item
@@ -469,10 +561,11 @@ class _NestedSanitizer(_Sanitizer):
         established or the added rules, or a member of such a container.
         ``credential_group`` marks a container named for credentials.
         """
+        item = _plain(item)
         identity = (id(item), environment, credential, credential_group)
-        if depth > 64 or (isinstance(item, (Mapping, list, tuple)) and identity in self.containers):
+        if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.containers):
             return
-        if isinstance(item, (Mapping, list, tuple)):
+        if isinstance(item, _CONTAINERS):
             self.containers.add(identity)
         if isinstance(item, Mapping):
             named_secret = _record_has_secret_value(item, environment=environment) or (
@@ -502,7 +595,7 @@ class _NestedSanitizer(_Sanitizer):
                     credential=key_sensitive or member,
                     credential_group=child_group,
                 )
-        elif isinstance(item, (list, tuple)):
+        elif isinstance(item, (list, tuple, set, frozenset)):
             for child in item:
                 if credential:
                     self.remember(child)
@@ -617,7 +710,16 @@ def _check_sanitization_structure(value: Any) -> None:
     memo: dict[int, tuple[int, int, int]] = {}
 
     def cost(item: Any) -> tuple[int, int, int]:
+        if isinstance(item, (set, frozenset)):
+            # Read as a list of its members (see ``_plain``).
+            nodes = 1 + len(item)
+            chars = sum(len(member) for member in item if isinstance(member, (str, bytes)))
+            if nodes > _MAX_SANITIZATION_NODES or chars > _MAX_SANITIZATION_CHARS:
+                raise SanitizationLimitError("sanitization expanded output limit exceeded")
+            return nodes, chars, 2
         if not isinstance(item, (Mapping, list, tuple)):
+            if isinstance(item, (bytes, bytearray, memoryview)):
+                return 1, len(item), 1
             return 1, len(item) if isinstance(item, str) else 0, 1
         identity = id(item)
         if identity in active:

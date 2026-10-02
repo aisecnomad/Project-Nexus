@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import csv
+import datetime
 import io
 import json
+import re
 import stat
 
 import jwt
 import pytest
+from rich.console import Console
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector, ConnectorContext
@@ -17,9 +20,12 @@ from shadowscan.connectors.identity.jwt import JwtConnector
 from shadowscan.connectors.saas.generic import GenericSaaSConnector
 from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface
+from shadowscan.reporters import render
 from shadowscan.reporters.csv_ import render_csv
+from shadowscan.reporters.table import print_table
 from shadowscan.signatures.loader import Signature
 from shadowscan.signatures.matcher import SignatureIndex
+from shadowscan.utils import redaction_formats
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize, sanitize_text
 
 SECRET = "opaque-synthetic-credential-value"
@@ -112,6 +118,42 @@ def test_gcp_api_key_string_never_reaches_report_or_record_dump(tmp_path, index)
     assert len(dump_files) == 1
     assert json.loads(dump_files[0].read_text())["keyString"] == REDACTED
     assert secret not in result.to_json() and secret not in dump_files[0].read_text()
+
+
+def test_generic_saas_record_dump_withholds_fields_named_for_a_credential_by_their_words(tmp_path, index):
+    names = [
+        "webhook_secret",
+        "signing_secret",
+        "bot_token",
+        "slack_token",
+        "npm_token",
+        "client_key",
+        "consumer_secret",
+        "openai_key",
+        "authorization_token",
+        "verification_token",
+        "pwd",
+        "passphrase",
+        "db_pass",
+        "security_token",
+        "jwtSecret",
+        "access_secret",
+    ]
+    secrets = {name: f"synthetic-{name}-value-0123456789" for name in names}
+    export = tmp_path / "apps.jsonl"
+    record = {"id": "app-1", "name": "Slack bot", "users": 4, "next_token": "page-2"}
+    export.write_text(json.dumps({**record, **secrets}) + "\n")
+    dumped = tmp_path / "dumped"
+    config = ScanConfig(
+        connectors=[ConnectorSpec("saas.generic", {"input": str(export)})], dump_records=str(dumped)
+    )
+    result = Engine(config, index).run()
+    assert result.complete
+    (dump_file,) = dumped.glob("*.jsonl")
+    row = json.loads(dump_file.read_text())
+    assert {name: row[name] for name in names} == dict.fromkeys(names, REDACTED)
+    assert {key: row[key] for key in record} == record
+    assert not any(secret in dump_file.read_text() for secret in secrets.values())
 
 
 @pytest.mark.parametrize(
@@ -243,7 +285,9 @@ def test_generic_saas_does_not_copy_arbitrary_export_columns():
 )
 def test_csv_formula_values_are_literal_text(formula, expected):
     f = _finding(title=formula, owner=formula, evidence=[Evidence(signal="test", description=formula)])
-    row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[f])))))
+    # A complete scan: an incomplete one leads with a status row.
+    complete = ScanResult(findings=[f], stats=[ScanStats(connector="test", started_at="now")])
+    row = next(csv.DictReader(io.StringIO(render_csv(complete))))
     for column in ("title", "owner", "top_evidence"):
         assert row[column] == expected
     assert row["confidence"] == "0.0"
@@ -363,3 +407,250 @@ def test_long_secret_is_redacted_before_excerpt_truncation():
     excerpt = _excerpt([f"token={credential}"], 1, credential)
     assert credential not in excerpt
     assert credential[:120] not in excerpt
+
+
+LEAF_KEY = "sk" + "-proj-" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6"
+
+
+class _PluginObject:
+    """An arbitrary object a plugin may leave in metadata; only its repr shows the value."""
+
+    def __repr__(self) -> str:
+        return f"PluginObject(token={LEAF_KEY})"
+
+
+def _leaf_finding():
+    return _finding(
+        metadata={
+            "b": LEAF_KEY.encode(),
+            "ba": bytearray(LEAF_KEY.encode()),
+            "s": {LEAF_KEY},
+            "fs": frozenset({LEAF_KEY}),
+            "e": ValueError(LEAF_KEY),
+            "o": _PluginObject(),
+            "nested": [{"deeper": (b"\xff" + LEAF_KEY.encode(),)}],
+        }
+    )
+
+
+def test_unknown_leaf_types_are_stringified_and_sanitized():
+    clean = sanitize({"b": LEAF_KEY.encode(), "s": {LEAF_KEY, "other"}, "e": ValueError(LEAF_KEY), "n": 3})
+    assert LEAF_KEY not in repr(clean)
+    assert clean["n"] == 3
+    assert clean["b"] == REDACTED
+    assert sorted(clean["s"]) == sorted([REDACTED, "other"])
+    assert clean["e"] == REDACTED
+    # Bytes that are not text are decoded with replacement characters, not an error.
+    assert sanitize({"x": b"\xff\xfe ok"}) == {"x": "�� ok"}
+    # Plain JSON-like leaves and the standard library's scalars keep their type.
+    scalars = {"i": 1, "f": 1.5, "t": True, "none": None, "when": datetime.date(2024, 1, 2)}
+    assert sanitize(scalars) == scalars
+
+
+@pytest.mark.parametrize("fmt", ["json", "html", "markdown", "csv", "sarif"])
+def test_unknown_leaf_types_never_reach_a_report(fmt):
+    result = ScanResult(findings=[_leaf_finding()])
+    assert LEAF_KEY not in render(result, fmt)
+    assert LEAF_KEY not in repr(result.findings[0].metadata)
+
+
+def test_unknown_leaf_types_never_reach_the_terminal_table():
+    out = io.StringIO()
+    print_table(ScanResult(findings=[_leaf_finding()]), console=Console(file=out, width=200), verbose=True)
+    assert LEAF_KEY not in out.getvalue()
+
+
+def test_unknown_leaf_types_never_reach_a_record_dump(tmp_path):
+    target = tmp_path / "records.jsonl"
+
+    class Connector(BaseConnector):
+        name = "test.leaf"
+
+        def collect(self):
+            yield {
+                "id": "1",
+                "payload": LEAF_KEY.encode(),
+                "labels": {LEAF_KEY},
+                "error": RuntimeError(LEAF_KEY),
+            }
+
+        def analyze(self, records):
+            for _ in records:
+                self.ctx.examined()
+            yield from ()
+
+    connector = Connector(ConnectorContext(config={"_dump_path": str(target)}, index=_index()))
+    connector.run()
+    assert target.exists() and LEAF_KEY not in target.read_text()
+
+
+KEY_BODY = "\n".join("Zm9vYmFyU3ludGhldGljS2V5TWF0ZXJpYWw" + chr(ord("a") + line) * 6 for line in range(6))
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n{KEY_BODY}\n=ab12\n-----END PGP PRIVATE KEY BLOCK-----",
+        f"-----BEGIN RSA PRIVATE KEY-----\n{KEY_BODY}\n-----END RSA PRIVATE KEY-----",
+        f'---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\nComment: "key"\n{KEY_BODY}\n---- END SSH2 ENCRYPTED PRIVATE KEY ----',
+        f"PuTTY-User-Key-File-2: ssh-rsa\nEncryption: none\nComment: key\nPublic-Lines: 2\n{KEY_BODY}\n"
+        f"Private-Lines: 2\n{KEY_BODY}\nPrivate-MAC: 0123456789abcdef0123456789abcdef01234567",
+        f"PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: aes256-cbc\nComment: key\nPublic-Lines: 2\n{KEY_BODY}\n"
+        f"Key-Derivation: Argon2id\nPrivate-Lines: 2\n{KEY_BODY}\nPrivate-MAC: 0123456789abcdef0123456789abcdef01234567",
+    ],
+)
+def test_every_private_key_block_is_withheld_with_its_line_count(block):
+    source = f"before\n{block}\nafter\n"
+    safe = sanitize_text(source)
+    assert KEY_BODY.splitlines()[0] not in safe and "0123456789abcdef" not in safe
+    assert safe.startswith("before\n" + REDACTED) and safe.endswith("\nafter\n")
+    assert safe.count("\n") == source.count("\n")
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+        "---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----",
+        "PuTTY-User-Key-File-2: ssh-rsa",
+    ],
+)
+def test_an_unterminated_key_block_is_withheld_to_the_end_of_the_text(start):
+    source = f"note\n{start}\n{KEY_BODY}\nnot a marker line\n"
+    safe = sanitize_text(source)
+    assert safe.startswith("note\n" + REDACTED) and KEY_BODY.splitlines()[-1] not in safe
+    assert "not a marker line" not in safe
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQENBGZ\n-----END PGP PUBLIC KEY BLOCK-----",
+        "---- BEGIN SSH2 PUBLIC KEY ----\nAAAAB3NzaC1yc2E\n---- END SSH2 PUBLIC KEY ----",
+        "-----BEGIN CERTIFICATE-----\nMIIBkTCB\n-----END CERTIFICATE-----",
+        "see PuTTY-User-Key-File formats in the PuTTY manual",
+    ],
+)
+def test_public_keys_and_prose_about_key_formats_are_kept(text):
+    assert sanitize_text(text) == text
+
+
+# ---------------------------------------------------------------- token formats
+
+
+def _run(alphabet: str, length: int) -> str:
+    # Ends in a word character: the backstop stops at a word boundary, so a token that ended in
+    # a hyphen would legitimately leave that one character behind.
+    return (alphabet * length)[: length - 1] + "7"
+
+
+_ALNUM, _HEX, _WORD = "aB3xY7", "0123456789abcdef", "aB3_x-Y7"
+
+
+def _token_samples() -> list[tuple[str, str]]:
+    """One synthetic token per alternative of the backstop, assembled so that no sample is a literal.
+
+    The pairs are (the alternative's own source, a string it matches in full). Splitting a prefix
+    keeps a secret scanner from reading a test fixture as a credential.
+    """
+    return [
+        ("sk-(?:proj|ant|live|or-v1|lf|litellm|svcacct|admin)-", "sk" + "-proj-" + _run(_WORD, 20)),
+        ("gh[pousr]_", "gh" + "p_" + _run(_ALNUM, 36)),
+        ("github_pat_", "github" + "_pat_" + _run(_ALNUM + "_", 40)),
+        ("gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-", "gl" + "pat-" + _run(_WORD, 20)),
+        ("GR1348941", "GR" + "1348941" + _run(_WORD, 24)),
+        ("xox[abeprs]-", "xo" + "xb-" + _run(_ALNUM + "-", 24)),
+        ("xoxe\\.xox[bp]-", "xo" + "xe.xoxp-" + _run(_ALNUM + "-", 24)),
+        ("xapp-", "xa" + "pp-" + _run(_ALNUM + "-", 24)),
+        ("AIza", "AI" + "za" + _run(_WORD, 30)),
+        ("ya29\\.", "ya" + "29." + _run(_WORD, 30)),
+        ("1//0", "1/" + "/0" + _run(_WORD, 40)),
+        ("GOCSPX-", "GOC" + "SPX-" + _run(_WORD, 28)),
+        ("(?:AKIA|ASIA)", "AK" + "IA" + _run("ABCDEF0123456789", 16)),
+        ("hf_", "hf" + "_" + _run(_ALNUM, 30)),
+        ("sk-[A-Za-z0-9_-]{8,}", "sk" + "-" + _run(_WORD, 24)),
+        ("gsk_", "gs" + "k_" + _run(_ALNUM, 52)),
+        ("pcsk_", "pc" + "sk_" + _run(_ALNUM + "_", 30)),
+        ("e2b_", "e2" + "b_" + _run(_HEX, 40)),
+        ("tgp_v1_", "tgp" + "_v1_" + _run(_WORD, 40)),
+        ("lsv2_(?:pt|sk)_", "ls" + "v2_pt_" + _run(_HEX, 32) + "_" + _run(_HEX, 10)),
+        ("tvly-(?:dev-|prod-)?", "tv" + "ly-dev-" + _run(_WORD, 28)),
+        ("xai-", "xa" + "i-" + _run(_ALNUM, 70)),
+        ("pplx-", "pp" + "lx-" + _run(_ALNUM, 50)),
+        ("csk-", "cs" + "k-" + _run(_ALNUM, 40)),
+        ("nvapi-", "nv" + "api-" + _run(_WORD, 70)),
+        ("r8_", "r" + "8_" + _run(_ALNUM, 40)),
+        ("fc-", "f" + "c-" + _run(_HEX, 32)),
+        ("app-", "ap" + "p-" + _run(_ALNUM, 24)),
+        ("sk_[a-f0-9]{40,}", "sk" + "_" + _run(_HEX, 44)),
+        ("npm_", "np" + "m_" + _run(_ALNUM, 40)),
+        ("pypi-AgE", "py" + "pi-AgE" + _run(_WORD, 56)),
+        ("do[opr]_v1_", "do" + "p_v1_" + _run(_HEX, 64)),
+        ("(?:sk|rk)_(?:live|test)_", "rk" + "_live_" + _run(_ALNUM, 24)),
+        ("whsec_", "wh" + "sec_" + _run(_ALNUM, 32)),
+        ("SG\\.", "S" + "G." + _run(_WORD, 22) + "." + _run(_WORD, 22)),
+        ("dapi", "da" + "pi" + _run(_HEX, 32)),
+        ("shp(?:at|ca|pa|ss)_", "sh" + "pat_" + _run(_HEX, 32)),
+        ("ATATT3", "ATA" + "TT3" + _run(_WORD, 50)),
+        ("lin_api_", "lin" + "_api_" + _run(_ALNUM, 40)),
+        ("ntn_", "nt" + "n_" + _run(_ALNUM, 46)),
+        ("PMAK-", "PM" + "AK-" + _run(_HEX, 24) + "-" + _run(_HEX, 34)),
+        ("dp\\.(?:pt|st|sa|ct|scim|audit)\\.", "d" + "p.pt." + _run(_ALNUM, 46)),
+        ("sbp_", "sb" + "p_" + _run(_HEX, 40)),
+        ("sb_secret_", "sb" + "_secret_" + _run(_WORD, 30)),
+        ("glsa_", "gl" + "sa_" + _run(_ALNUM, 32) + "_" + _run(_HEX, 8)),
+        ("glc_", "gl" + "c_" + _run(_ALNUM + "+/", 40)),
+        ("sntry[su]_", "sn" + "trys_" + _run(_ALNUM + "+=_-", 40)),
+        ("hv[sbr]\\.", "h" + "vs." + _run(_WORD, 30)),
+        ("fw_", "fw_" + "aB3xY7" * 4),
+        ("[A-Za-z0-9]{14}\\.atlasv1\\.", _run(_ALNUM, 14) + "." + "atl" + "asv1." + _run(_WORD, 70)),
+    ]
+
+
+def _backstop_alternatives() -> list[str]:
+    alternatives: list[str] = []
+    for pattern in (redaction_formats._SPECIFIC_TOKEN, redaction_formats._GENERIC_TOKEN):
+        depth, current, in_class, index = 0, "", False, 0
+        while index < len(pattern):
+            char = pattern[index]
+            if char == "\\":
+                current += pattern[index : index + 2]
+                index += 2
+                continue
+            if in_class:
+                in_class = char != "]"
+            elif char == "[":
+                in_class = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif char == "|" and depth == 0:
+                alternatives.append(current)
+                current = ""
+                index += 1
+                continue
+            current += char
+            index += 1
+        alternatives.append(current)
+    return alternatives
+
+
+def test_the_token_table_covers_every_alternative_of_the_backstop():
+    alternatives = _backstop_alternatives()
+    samples = _token_samples()
+    assert len(samples) == len(alternatives), "a token format was added or removed: update the samples"
+    for (prefix, sample), alternative in zip(samples, alternatives, strict=True):
+        assert alternative.startswith(prefix), (prefix, alternative)
+        assert re.fullmatch(alternative, sample), f"the sample for {prefix} does not match its format"
+
+
+@pytest.mark.parametrize("prefix,sample", _token_samples(), ids=[prefix for prefix, _ in _token_samples()])
+def test_every_provider_token_format_is_withheld(prefix, sample):
+    for text in (f"key = {sample}", f"see {sample} here", f"Authorization failed for {sample}."):
+        redacted = sanitize_text(text)
+        assert sample not in redacted, text
+        assert REDACTED in redacted, text
+    # The token is cut at its own boundary: the surrounding words stay readable.
+    assert sanitize_text(f"see {sample} here") == f"see {REDACTED} here"

@@ -11,9 +11,11 @@ import ipaddress
 import json
 import logging
 import math
+import os
 import random
 import re
 import socket
+import stat
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -45,6 +47,11 @@ _HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 
 _allow_private_origin: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "shadowscan_allow_private_origin", default=False
+)
+_ca_bundle: contextvars.ContextVar[str | None] = contextvars.ContextVar("shadowscan_ca_bundle", default=None)
+# (monotonic deadline, cancellation event) of the connector the current worker runs.
+_request_limits: contextvars.ContextVar[tuple[float | None, threading.Event | None]] = contextvars.ContextVar(
+    "shadowscan_request_limits", default=(None, None)
 )
 _acquisition_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "shadowscan_http_acquisition_deadline", default=None
@@ -140,6 +147,20 @@ def _positive_byte_limit(value: int | None, default: int) -> int:
     return limit
 
 
+def _validated_ca_bundle(path: Any) -> str:
+    """An explicit, operator-supplied PEM bundle: an existing regular file, nothing else."""
+    message = "ca_bundle must be a path to an existing regular file"
+    if not isinstance(path, str) or not path or "\0" in path:
+        raise ValueError(message)
+    try:
+        regular = stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        raise ValueError(message) from None
+    if not regular:
+        raise ValueError(message)
+    return os.path.abspath(path)
+
+
 def _read_deadline(timeout: float) -> float:
     """Derive the whole-body read deadline from the per-read client timeout."""
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
@@ -230,6 +251,8 @@ METADATA_NETS = (
     ipaddress.ip_network("169.254.169.254/32"),
     ipaddress.ip_network("169.254.169.253/32"),
     ipaddress.ip_network("169.254.169.250/32"),
+    # Azure's wire server and metadata endpoint: a public-looking address that is link-local to the VM.
+    ipaddress.ip_network("168.63.129.16/32"),
     ipaddress.ip_network("fd00:ec2::254/128"),
 )
 
@@ -244,6 +267,35 @@ def set_allow_private_origin(enabled: bool) -> contextvars.Token[bool]:
 def reset_allow_private_origin(token: contextvars.Token[bool]) -> None:
     """Restore the policy after a connector finishes, including failed scans."""
     _allow_private_origin.reset(token)
+
+
+def set_ca_bundle(path: str | None) -> contextvars.Token[str | None]:
+    """Trust only this PEM bundle for clients the current worker creates.
+
+    TLS verification stays on; the bundle replaces the default CA store, so it
+    suits scans of private endpoints behind internal PKI. Callers must reset
+    the returned token.
+    """
+    return _ca_bundle.set(None if path is None else _validated_ca_bundle(path))
+
+
+def reset_ca_bundle(token: contextvars.Token[str | None]) -> None:
+    _ca_bundle.reset(token)
+
+
+def set_request_deadline(
+    deadline: float | None, cancelled: threading.Event | None
+) -> contextvars.Token[tuple[float | None, threading.Event | None]]:
+    """Let clients created by the current worker stop retrying once the scan is over.
+
+    ``deadline`` is a ``time.monotonic()`` value and ``cancelled`` the
+    connector's cancellation event. Callers must reset the returned token.
+    """
+    return _request_limits.set((deadline, cancelled))
+
+
+def reset_request_deadline(token: contextvars.Token[tuple[float | None, threading.Event | None]]) -> None:
+    _request_limits.reset(token)
 
 
 def _blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -261,6 +313,8 @@ def _blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         or addr.is_unspecified
         or addr.is_multicast
         or addr.is_reserved
+        # Deprecated site-local fec0::/10 is still routed inside some networks; ipaddress calls it global.
+        or (isinstance(addr, ipaddress.IPv6Address) and addr.is_site_local)
         or any(addr in net for net in METADATA_NETS)
     )
 
@@ -286,6 +340,11 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     are preflight only; HttpClient also enforces the policy at socket connection.
     External transports such as git and cloud SDKs need their own egress controls.
     """
+    # urlsplit drops tabs and line breaks and strips leading blanks before parsing, while git and
+    # libcurl reject them (and HTTP stacks differ on the rest). Anything the validator does not see
+    # exactly as the transport will is refused, never silently cleaned up.
+    if isinstance(url, str) and any(char.isspace() or not char.isprintable() for char in url):
+        raise ValueError("API URL must not contain whitespace or control characters")
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("API URL must use HTTPS without embedded credentials")
@@ -456,6 +515,15 @@ def _retry_delay(resp: requests.Response, attempt: int) -> float:
     reset = resp.headers.get("X-RateLimit-Reset")
     if resp.headers.get("X-RateLimit-Remaining") == "0" and reset and reset.isascii() and reset.isdigit():
         delay = max(delay, float(reset) - time.time() + 1)
+    # Okta spells these X-Rate-Limit-* and sends no Retry-After with its 429.
+    reset = resp.headers.get("X-Rate-Limit-Reset")
+    if (
+        (resp.status_code == 429 or resp.headers.get("X-Rate-Limit-Remaining") == "0")
+        and reset
+        and reset.isascii()
+        and reset.isdigit()
+    ):
+        delay = max(delay, float(reset) - time.time() + 1)
     return max(0.0, min(delay, MAX_RETRY_DELAY))
 
 
@@ -489,6 +557,9 @@ class HttpClient:
         on_warning: Callable[[str], None] | None = None,
         allow_private_origin: bool | None = None,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        ca_bundle: str | None = None,
+        deadline: float | None = None,
+        cancelled: threading.Event | None = None,
     ):
         # Validate before an injected session is modified.
         read_deadline = _read_deadline(timeout)
@@ -504,6 +575,11 @@ class HttpClient:
         # Environment proxies can resolve destinations outside our socket policy.
         # Explicit proxies are refused by the adapter as well.
         self.session.trust_env = False
+        # An explicit bundle replaces the default CA store (verification stays
+        # on); ambient REQUESTS_CA_BUNDLE / SSL_CERT_FILE values stay ignored.
+        bundle = _ca_bundle.get() if ca_bundle is None else _validated_ca_bundle(ca_bundle)
+        if bundle is not None:
+            self.session.verify = bundle
         if isinstance(self.session, requests.Session):
             # requests picks the longest matching adapter prefix. An injected
             # session may already have an origin-specific adapter that would
@@ -528,7 +604,9 @@ class HttpClient:
         self.read_deadline = read_deadline
         self.max_retries = max_retries
         self.max_response_bytes = _positive_byte_limit(max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES)
-        self.requests_made = 0
+        inherited_deadline, inherited_cancelled = _request_limits.get()
+        self.deadline = inherited_deadline if deadline is None else deadline
+        self.cancelled = inherited_cancelled if cancelled is None else cancelled
         self.on_warning = on_warning
 
     def _url(self, path: str) -> str:
@@ -575,8 +653,12 @@ class HttpClient:
             if replaced:
                 raise ValueError("HTTP destination policy adapter was replaced")
             attempt += 1
-            self.requests_made += 1
-            deadline_token = _acquisition_deadline.set(time.monotonic() + self.read_deadline)
+            # Acquisition (connect, TLS, request, status and headers) gets the read
+            # budget, and never more than the connector's remaining time.
+            budget = self.read_deadline
+            if self.deadline is not None:
+                budget = min(budget, self.deadline - time.monotonic())
+            deadline_token = _acquisition_deadline.set(time.monotonic() + budget)
             try:
                 try:
                     resp = self.session.request(method, url, **kwargs)
@@ -609,7 +691,7 @@ class HttpClient:
                     delay,
                     attempt,
                 )
-                time.sleep(delay)
+                self._wait_before_retry(delay)
                 continue
             if resp.status_code >= 400 and raise_for_status:
                 resp.close()
@@ -621,6 +703,21 @@ class HttpClient:
                 resp._content = self.read_response_bytes(resp)
                 resp._content_consumed = True  # type: ignore[attr-defined]
             return resp
+
+    def _scan_over(self, pending: float = 0.0) -> bool:
+        """Whether the connector was cancelled or ``pending`` seconds would pass its deadline."""
+        return (self.cancelled is not None and self.cancelled.is_set()) or (
+            self.deadline is not None and time.monotonic() + pending >= self.deadline
+        )
+
+    def _wait_before_retry(self, delay: float) -> None:
+        """Sleep between attempts, but never past a cancelled scan or its deadline."""
+        if self._scan_over(delay):
+            raise TimeoutError("HTTP retry abandoned: connector deadline exceeded")
+        if self.cancelled is None:
+            time.sleep(delay)
+        elif self.cancelled.wait(delay):
+            raise TimeoutError("HTTP retry abandoned: connector deadline exceeded")
 
     def get(self, path: str, **kwargs: Any) -> requests.Response:
         return self.request("GET", path, **kwargs)
@@ -651,8 +748,15 @@ class HttpClient:
                 maximum = str(limit)
                 if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
                     raise ValueError("HTTP response exceeds the byte limit")
-            deadline = time.monotonic() + self.read_deadline
-            watchdog = _read_watchdog(resp, self.read_deadline, expired)
+            # The whole body must finish within the read deadline, and never past
+            # the connector's own deadline or after its cancellation.
+            budget = self.read_deadline
+            if self.deadline is not None:
+                budget = min(budget, self.deadline - time.monotonic())
+            if budget <= 0 or self._scan_over():
+                raise TimeoutError("HTTP response not read: connector deadline exceeded")
+            deadline = time.monotonic() + budget
+            watchdog = _read_watchdog(resp, budget, expired)
             body = bytearray()
             try:
                 for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
@@ -760,8 +864,14 @@ class HttpClient:
         params: dict[str, Any] | None = None,
         item_key: str | None = None,
         max_pages: int = 1000,
+        on_page: Callable[[requests.Response], None] | None = None,
     ) -> Iterator[Any]:
-        """RFC 5988 Link-header pagination for GitHub and GitLab."""
+        """RFC 5988 Link-header pagination for GitHub and GitLab.
+
+        *on_page* receives each page's response (headers only; the body is
+        consumed) once its items are validated, before they are yielded, so a
+        caller can check header totals such as GitLab's ``X-Total``.
+        """
         origin = self._url(path)
         url: str | None = origin
         pages = 0
@@ -775,6 +885,8 @@ class HttpClient:
             data = self.read_json_response(resp)
             items = self._require_page_items(data, item_key, "Link pagination")
             next_url = self._continuation(resp.links.get("next", {}).get("url"))
+            if on_page is not None:
+                on_page(resp)
             yield from items
             url = next_url
             pages += 1

@@ -273,6 +273,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "identity-app.generic-ai-name|name": 1
@@ -410,6 +411,7 @@
       "litellm"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1
     },

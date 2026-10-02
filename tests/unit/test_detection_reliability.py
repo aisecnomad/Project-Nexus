@@ -581,3 +581,72 @@ def test_danger_score_round_trips_through_report_import():
     original.risk = assess(original, inventory_present=True)
     restored = Finding.from_dict(json.loads(json.dumps(original.to_dict())))
     assert restored.risk.danger_score == original.risk.danger_score > 0
+
+
+# ------------------------------------------------------------ MCP content heuristic
+def test_workflow_export_tagged_mcp_keeps_its_finding(run_connector, tmp_path):
+    # An exported workflow whose text merely contains "mcp" and "servers" used
+    # to be treated as MCP configuration, which skipped the configuration pass
+    # that recognises the workflow, with no diagnostic.
+    write(
+        tmp_path,
+        "workflow.json",
+        json.dumps(
+            {
+                "name": "triage",
+                "tags": ["mcp", "servers"],
+                "nodes": [
+                    {
+                        "parameters": {},
+                        "name": "AI Agent",
+                        "type": "@n8n/n8n-nodes-langchain.agent",
+                        "typeVersion": 1.7,
+                        "position": [0, 0],
+                    }
+                ],
+                "connections": {},
+            }
+        ),
+    )
+    findings, stats = scan(run_connector, tmp_path)
+    assert [f.kind for f in findings] == [Kind.WORKFLOW]
+    assert not stats.errors
+
+
+def test_iac_template_mentioning_mcp_servers_in_a_comment_keeps_its_iam_wildcard(run_connector, tmp_path):
+    write(
+        tmp_path,
+        "agent.tf",
+        """
+        resource "aws_bedrockagent_agent" "ops" {
+          agent_name       = "ops-agent"
+          foundation_model = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+        }
+    """,
+    )
+    write(
+        tmp_path,
+        "policy.yaml",
+        """
+        # mcp: servers: are configured elsewhere
+        Resources:
+          Policy:
+            Type: AWS::IAM::Policy
+            Properties:
+              PolicyDocument:
+                Statement:
+                  - Effect: Allow
+                    Action: "*"
+                    Resource: "*"
+    """,
+    )
+    findings, stats = scan(run_connector, tmp_path)
+    infra = [f for f in findings if f.kind == Kind.INFRA]
+    assert len(infra) == 1 and not stats.errors
+    assert "wildcard-permissions" in infra[0].tags
+
+
+def test_dedicated_mcp_config_without_servers_is_still_mcp_configuration(run_connector, tmp_path):
+    write(tmp_path, ".mcp.json", json.dumps({"mcpServers": {}}))
+    findings, stats = scan(run_connector, tmp_path)
+    assert findings == [] and not stats.errors

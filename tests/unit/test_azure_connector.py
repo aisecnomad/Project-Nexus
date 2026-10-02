@@ -11,7 +11,7 @@ from requests import ConnectionError as RequestsConnectionError
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
-from shadowscan.connectors.cloud.azure import AzureConnector
+from shadowscan.connectors.cloud.azure import AI_ROLE_IDS, AzureConnector
 from shadowscan.models import ScanStats
 from shadowscan.utils.http import HttpError
 from shadowscan.utils.redaction import REDACTED, sanitize
@@ -24,6 +24,53 @@ def context(index, **config):
     ctx = ConnectorContext(config=config, index=index)
     ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
     return ctx
+
+
+def test_azure_live_deployments_keep_collected_account(index, monkeypatch):
+    connector = AzureConnector(context(index))
+    connector.http = Mock()
+    account = {
+        "id": "/subscriptions/s1/providers/Microsoft.CognitiveServices/accounts/a",
+        "name": "a",
+        "type": "Microsoft.CognitiveServices/accounts",
+    }
+    deployment = {
+        "id": f"{account['id']}/deployments/d",
+        "_kind": "resource",
+        "_account": "/other-account",
+        "_account_name": "other-account",
+    }
+    monkeypatch.setattr(
+        connector,
+        "_list",
+        lambda path, *args, **kwargs: [deployment] if path.endswith("/deployments") else [],
+    )
+    records = list(connector._resource_details(account, account["id"]))
+    assert records[0]["_kind"] == "deployment"
+    assert records[0]["_account"] == account["id"] and records[0]["_account_name"] == "a"
+
+
+def test_azure_live_role_assignments_keep_collected_subscription_and_role(index, monkeypatch):
+    connector = AzureConnector(context(index, subscriptions=["s1"]))
+    connector.http = Mock()
+    role_id, role_name = next(iter(AI_ROLE_IDS.items()))
+    assignment = {
+        "id": "/assignment",
+        "properties": {
+            "roleDefinitionId": f"/roleDefinitions/{role_id}",
+            "principalId": "p1",
+            "_kind": "resource",
+            "_subscription": "other-subscription",
+            "role_id": "other-role",
+            "role": "other-role",
+        },
+    }
+    monkeypatch.setattr(connector, "_auth", lambda: None)
+    monkeypatch.setattr(connector, "_resource_graph", lambda subs: [])
+    monkeypatch.setattr(connector, "_list", lambda *args, **kwargs: [assignment])
+    (record,) = connector.collect()
+    assert record["_kind"] == "role-assignment" and record["_subscription"] == "s1"
+    assert record["role_id"] == role_id and record["role"] == role_name
 
 
 def foundry_context(index):

@@ -13,7 +13,10 @@ from bisect import bisect_left
 from collections.abc import Callable, Iterator
 
 from shadowscan.utils.redaction_rules import (
+    _MAX_REDACTION_WORK,
+    _MAX_SANITIZATION_NODES,
     REDACTED,
+    SanitizationLimitError,
     _kept_value,
     _sensitive_assignment_key,
     _setting_level,
@@ -220,7 +223,15 @@ _RECORD_INLINE_VALUE = re.compile(
     r"|(?:[^\s,;}\])\\]|\\(?![nr]))+(?:(?<=\[REDACTED)\](?:[^\s,;}\])\\]|\\(?![nr]))*)*"
 )
 # A quoted value runs to its closing quote, past a '}' inside it ('"p}v"').
-_RECORD_QUOTED_VALUE = re.compile(r"\"[^\"\r\n]*\"|'[^'\r\n]*'")
+_RECORD_QUOTED_VALUE = re.compile(r"\"(?:\\.|[^\"\\\r\n])*\"|'(?:\\.|[^'\\\r\n])*'")
+# An escaped quote never opens a string: every quote of a JSON document copied
+# into a string literal is escaped, and a scan for a closing quote that
+# restarted at each of them read the rest of the text again every time.
+_FLOW_RECORD_TOKEN = re.compile(
+    r"(?<!\\)\"(?:\\.|[^\"\\])*\"|(?<!\\)'(?:\\.|[^'\\])*'"
+    r"|[{}]|name|key|value|Name|Key|Value|NAME|KEY|VALUE"
+)
+_REVERSE_RECORD_PREFIX = re.compile(r"[ \t]*(?:-[ \t]+)?")
 _RECORD_BRACE = re.compile(r"\}")
 _RECORD_COMMENT = re.compile(r"[ \t]#")
 _RECORD_BLOCK_MARKERS = frozenset({"", "|", ">", "|-", ">-", "|+", ">+"})
@@ -327,9 +338,9 @@ def _record_line_value(text: str, start: int, end: int) -> tuple[int, int] | Non
     in the length of a blank run inside one value.
     """
     if start < end and text[start] in "\"'":
-        closing = text.find(text[start], start + 1, end)
-        if closing >= 0 and text.find("\r", start + 1, closing) < 0:
-            return start, closing + 1
+        quoted = _RECORD_QUOTED_VALUE.match(text, start, end)
+        if quoted is not None:
+            return quoted.span()
     stop = end
     while stop > start and text[stop - 1] in " \t":
         stop -= 1
@@ -387,6 +398,12 @@ def _record_value(
     field, stop, column = located
     if column < 0:
         value = _RECORD_QUOTED_VALUE.match(text, field.end()) if quoted else None
+        if quoted and value is None and text.startswith(('"', "'"), field.end()):
+            # A brace or line break inside an unclosed quoted value cannot
+            # delimit its secret. Withhold its bounded remaining text rather
+            # than publishing a suffix after a partial inline replacement.
+            start = field.end() + 1
+            return start, len(text), text[start:]
         value = value or _RECORD_INLINE_VALUE.match(text, field.end(), stop)
         if value is None:
             return None
@@ -469,3 +486,111 @@ def _redact_record_settings(text: str) -> str:
         return text
     pieces.append(text[cursor:])
     return "".join(pieces)
+
+
+def _redact_flow_records(text: str, *, quoted_only: bool = False) -> str:
+    """Read bounded flow records in either field order without evaluating text.
+
+    Braces inside quoted strings do not close a flow record. Each field is
+    indexed once. Records in different containers never share a name/value.
+    The early pass only withholds quoted values in flow containers, so it
+    cannot swallow context beside a malformed, unbraced source assignment.
+    """
+    spans: list[tuple[int, int]] = []
+    stack: list[tuple[int, list[tuple[int, int, str]]]] = []
+    nodes = 0
+    quoted_tail = len(text)
+
+    def finish(record: tuple[int, list[tuple[int, int, str]]]) -> None:
+        level, values = record
+        for start, end, value in values:
+            if quoted_only and not (
+                start > 0 and text[start - 1] in "\"'" and (end == len(text) or text[end] == text[start - 1])
+            ):
+                continue
+            if not _kept_value(value) and _setting_value_withheld(level, _record_scalar(value)):
+                spans.append((start, end))
+
+    for token in _FLOW_RECORD_TOKEN.finditer(text):
+        if token.start() >= quoted_tail:
+            break
+        nodes += 1
+        if nodes > _MAX_REDACTION_WORK:
+            raise SanitizationLimitError("text record work limit exceeded")
+        if token.group() == "{":
+            if len(stack) >= _MAX_SANITIZATION_NODES:
+                raise SanitizationLimitError("text record nesting limit exceeded")
+            stack.append((0, []))
+        elif token.group() == "}":
+            if stack:
+                finish(stack.pop())
+        elif stack:
+            name = _RECORD_NAME.match(text, token.start())
+            if name is not None:
+                level, values = stack[-1]
+                stack[-1] = (max(level, _setting_level(name.group("name"))), values)
+                continue
+            field = _RECORD_VALUE.match(text, token.start())
+            if field is not None:
+                value = _record_value(text, (field, len(text), -1), quoted=True)
+                if value is not None:
+                    stack[-1][1].append(value)
+                    if (
+                        value[1] == len(text)
+                        and text.startswith(('"', "'"), field.end())
+                        and _RECORD_QUOTED_VALUE.match(text, field.end()) is None
+                    ):
+                        # No field or brace inside this unclosed literal is
+                        # structural. Stop once, instead of copying its tail
+                        # again for every apparent value/name inside it.
+                        quoted_tail = field.end()
+    for record in stack:
+        finish(record)
+    return _withhold_markup(text, spans)
+
+
+def _redact_reversed_records(text: str) -> str:
+    """Read preceding YAML value fields without crossing an item boundary.
+
+    Searches stop at a peer list item, a shallower mapping, or sixteen lines.
+    Flow records also receive the final pass on established sanitized text.
+    """
+    text = _redact_flow_records(text)
+    spans: list[tuple[int, int]] = []
+
+    index = _RecordIndex(text)
+    for name in _record_names(text):
+        level = _setting_level(name.group("name"))
+        if not level:
+            continue
+        line_start = text.rfind("\n", 0, name.start()) + 1
+        prefix = _REVERSE_RECORD_PREFIX.match(text, line_start, name.start())
+        if prefix is None or prefix.end() != name.start() or "-" in prefix.group():
+            continue  # list-leading names have no preceding sibling in their item
+        column = name.start() - line_start
+        position = line_start
+        for _ in range(_RECORD_LINES):
+            if not position:
+                break
+            previous = text.rfind("\n", 0, position - 1) + 1
+            end, indent, lead = index._measure(previous)
+            position = previous
+            if not lead or lead == "#":
+                continue
+            prefix = _REVERSE_RECORD_PREFIX.match(text, previous, end)
+            assert prefix is not None
+            effective = prefix.end() - previous
+            if effective < column or (indent < column and lead != "-"):
+                break
+            if effective != column:
+                continue
+            field = _RECORD_VALUE.match(text, prefix.end(), end)
+            if field is not None:
+                value = _record_value(text, (field, end, column), quoted=True)
+                if value is not None and not _kept_value(value[2]):
+                    if _setting_value_withheld(level, _record_scalar(value[2])):
+                        spans.append(value[:2])
+                break
+            if lead == "-" or _RECORD_NAME.match(text, prefix.end(), end) is not None:
+                break
+    return _withhold_markup(text, spans)

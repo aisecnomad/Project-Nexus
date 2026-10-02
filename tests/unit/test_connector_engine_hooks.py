@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 import pytest
 
 import shadowscan.engine as engine_module
+from shadowscan.comparison import IDENTITY_KEY_ENV
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -79,6 +80,7 @@ def test_base_connector_hooks_describe_an_ordinary_connector():
     assert BaseConnector.uses_run_identity_key is False
     assert BaseConnector.inherits_instance_credentials_approval() is False
     assert BaseConnector.cache_roots_separately(["a", "b"], None, labelled=False) is False
+    assert BaseConnector.scanned_local_paths({"path": "/srv/repo", "paths": ["/srv/other"]}) == []
 
 
 def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_code():
@@ -100,6 +102,29 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
         if any("cache_roots_separately" in vars(klass) for klass in cls.__mro__ if klass is not BaseConnector)
     }
     assert splitting == {"code.filesystem"}
+    scanning_local_trees = {
+        name
+        for name, cls in classes.items()
+        if any("scanned_local_paths" in vars(klass) for klass in cls.__mro__ if klass is not BaseConnector)
+    }
+    assert scanning_local_trees == {"code.filesystem"}
+
+
+@pytest.mark.parametrize(
+    "config,expected",
+    [
+        ({"path": "/srv/repo"}, ["/srv/repo"]),
+        ({"paths": ["/srv/a", "/srv/b"], "path": "/ignored"}, ["/srv/a", "/srv/b"]),
+        ({"paths": ["/srv/a", "", 3, None]}, ["/srv/a"]),
+        # An export replay reads no local tree, and malformed values declare none.
+        ({"path": "/srv/repo", "input": "export.json"}, []),
+        ({"paths": "/srv/repo"}, []),
+        ({"path": 7}, []),
+        ({}, []),
+    ],
+)
+def test_filesystem_declares_the_trees_it_scans(config, expected):
+    assert FilesystemConnector.scanned_local_paths(config) == expected
 
 
 def test_filesystem_root_split_hook_validates_labelled_roots_and_ids(tmp_path):
@@ -116,6 +141,7 @@ def test_filesystem_root_split_hook_validates_labelled_roots_and_ids(tmp_path):
 
 
 def test_declared_run_identity_key_is_shared_within_a_run_and_rotated_between_runs(monkeypatch):
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
     connector, contexts = _recording_connector(uses_run_identity_key=True)
     specs = [ConnectorSpec("platform.recorder", label="one"), ConnectorSpec("platform.recorder", label="two")]
     engine = _run(monkeypatch, connector, specs, parallel=2)
@@ -125,12 +151,27 @@ def test_declared_run_identity_key_is_shared_within_a_run_and_rotated_between_ru
     assert engine.run().complete
     second_run = {ctx.gateway_identity_key for ctx in contexts}
     assert len(second_run) == 1 and second_run != first_run
+    assert not any(ctx.gateway_identity_key_stable for ctx in contexts)
+
+
+def test_operator_identity_key_is_shared_by_every_run(monkeypatch):
+    key = bytes(range(32))
+    monkeypatch.setenv(IDENTITY_KEY_ENV, key.hex())
+    connector, contexts = _recording_connector(uses_run_identity_key=True)
+    engine = _run(monkeypatch, connector, [ConnectorSpec("platform.recorder")])
+    assert engine.run().complete
+    assert [(ctx.gateway_identity_key, ctx.gateway_identity_key_stable) for ctx in contexts] == [
+        (key, True)
+    ] * 2
 
 
 def test_undeclared_connector_receives_no_run_identity_key(monkeypatch):
+    monkeypatch.setenv(IDENTITY_KEY_ENV, bytes(range(32)).hex())
     connector, contexts = _recording_connector()
     _run(monkeypatch, connector, [ConnectorSpec("platform.recorder")])
-    assert [ctx.gateway_identity_key for ctx in contexts] == [None]
+    assert [(ctx.gateway_identity_key, ctx.gateway_identity_key_stable) for ctx in contexts] == [
+        (None, False)
+    ]
 
 
 @pytest.mark.parametrize("approved", [False, True])

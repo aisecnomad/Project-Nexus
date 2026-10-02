@@ -13,13 +13,17 @@ import re
 
 from shadowscan.utils.redaction_rules import (
     _CLI_WORD,
+    _COMPARISONS,
     _FINGERPRINT,
+    _OPERATOR,
+    _VALUE_SEMICOLON,
     REDACTED,
     SanitizationLimitError,
     _blanks_before,
     _credential_literal,
     _credential_name,
     _interpolated,
+    _kept_value,
     _name_before,
     _redact_value,
     _sensitive_assignment_key,
@@ -39,15 +43,37 @@ from shadowscan.utils.redaction_rules import (
 # '[REDACTED' again and grew the marker by one ']' on every pass. After such a
 # marker it also stops at a query separator: 'sv=1&sig=[REDACTED]&Authorization:'
 # must leave the next parameter's name to be read with its own value.
+# Quotes may be escaped (JSON inside a string literal, up to eight levels), in
+# which case the closing delimiter must repeat the opening one exactly. A ';'
+# inside an unquoted value follows _VALUE_SEMICOLON.
+_ESCAPED_QUOTE = re.compile(r"\\{1,8}[\"']")
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
-    r"(?P<sep>[\"']\s*:\s*|[\"'][ \t]*=(?!=)[ \t]*|\s*=\s*|:[ \t]+|:[ \t]*(?=[\"']))"
+    r"(?P<sep>\\{0,8}[\"']\s*:(?!=)\s*|[\"'][ \t]*" + _OPERATOR + r"[ \t]*|\s*" + _OPERATOR + r"\s*"
+    r"|:[ \t]+|:[ \t]*(?=\\{0,8}[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
-    r"|[^\s,;\}\]\)\"']+(?:(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
+    r"|(?P<escaped>\\{1,8}[\"'])(?:(?!(?P=escaped))[^\r\n])*(?P=escaped)"
+    r"|\\{1,8}[\"'][^\r\n]*"
+    r"|[^\s,;\}\]\)\"']+(?:" + _VALUE_SEMICOLON + r"[^\s,;\}\]\)\"']*|(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
 )
+
+
+def _unquote(raw: str, escaped: str | None) -> tuple[str, str, str]:
+    """Split a lexed value into its opening quote, content and closing quote."""
+    if escaped:
+        return escaped, raw[len(escaped) : -len(escaped)], escaped
+    if raw[:1] in {'"', "'"}:
+        closed = len(raw) > 1 and raw[-1] == raw[0]
+        return raw[0], raw[1:-1] if closed else raw[1:], raw[0] if closed else ""
+    unclosed = _ESCAPED_QUOTE.match(raw)
+    if unclosed:
+        return unclosed.group(0), raw[unclosed.end() :], ""
+    return "", raw, ""
+
+
 _MAPPING_VALUE = re.compile(
     r"(?<![\w.-])(?:(?P<quote>[\"'])(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
-    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*(?::|=>)[ \t]*"
     r"(?P<value>[\"'`\[\{(])"
 )
 _YAML_MAPPING_LINE = re.compile(
@@ -158,6 +184,17 @@ def _mapping_expression_end(text: str, start: int) -> int:
     return len(text)
 
 
+def _line_quote(text: str, quote: str, start: int) -> int | None:
+    """Position of the next ``quote`` on the line starting at ``start``, or None."""
+    position = text.find(quote, start)
+    if position == -1:
+        return None
+    line_end = min(
+        (end for end in (text.find("\n", start), text.find("\r", start)) if end != -1), default=len(text)
+    )
+    return position if position < line_end else None
+
+
 def _redact_mapping_values(text: str) -> str:
     """Withhold full sensitive mapping expressions before excerpt shortening."""
     pieces: list[str] = []
@@ -167,6 +204,23 @@ def _redact_mapping_values(text: str) -> str:
         if match.start() < cursor or not _sensitive_assignment_key(key):
             continue
         start = match.start("value")
+        if text.startswith(REDACTED, start) and match.start() > 0 and text[match.start() - 1] in "\"'":
+            # An earlier pass left a bare marker inside a quoted string
+            # ('-H "x-api-key:[REDACTED]" https://…'). The string's closing
+            # quote ends the value: what sits between the marker and it is
+            # withheld with the marker, and nothing there leaves the text as
+            # it is. Read as a '[' expression, the quote would start a string
+            # that runs to the end of the text, on every sanitization.
+            after = start + len(REDACTED)
+            close = _line_quote(text, text[match.start() - 1], after)
+            if close is not None:
+                kept = text[after:close].rstrip("\\")
+                if not kept.replace(REDACTED, "").strip():
+                    continue
+                pieces.append(text[cursor:start])
+                pieces.append(REDACTED + text[after + len(kept) : close])
+                cursor = close
+                continue
         end = _mapping_expression_end(text, start)
         raw = text[start:end]
         bare = raw.strip()
@@ -191,7 +245,7 @@ def _redact_mapping_values(text: str) -> str:
 # at the separator, which is rarer than a name, and the name before it is
 # read backwards.
 _OPAQUE_VALUE = re.compile(
-    r"(?P<separator>:=|=(?![=>~])|:(?![:=]))[ \t]*"
+    r"(?P<separator>:=|=(?![=>~])|:(?![:=])|===?|=>|=~|<<?-(?!-))[ \t]*"
     r"(?:(?P<prefix>[rRbBuUfF]{1,2}|@)?(?P<quote>[\"'`])(?P<quoted>[^\"'`\r\n]{8,})(?P=quote)"
     r"|(?P<bare>[A-Za-z0-9+/_.~-]{8,}={0,2})(?![^\s,;)}\]]))"
 )
@@ -202,6 +256,20 @@ _OPAQUE_VALUE = re.compile(
 # long run of one class every possible way before it failed, so
 # 'key: ' + 'a' * 56 + '.' took minutes.
 _WORD_RUN = re.compile(r"[A-Z]+|[a-z]+|[0-9_]+|[^A-Za-z0-9_]")
+_IDENTIFIER_DIGITS = re.compile(r"[0-9]+")
+_IDENTIFIER_LETTERS = re.compile(r"[A-Za-z]+")
+
+
+def _opaque_identifier(value: str) -> bool:
+    """A word-shaped key with repeated short fragments separated by digits.
+
+    Types such as Ed25519PrivateKey and labels such as NextPage2 remain
+    identifiers. Multiple short fragments with interleaved digit runs are
+    stronger evidence of key material when the assigned name names a key.
+    """
+    return len(_IDENTIFIER_DIGITS.findall(value)) >= 3 and all(
+        len(fragment) <= 3 for fragment in _IDENTIFIER_LETTERS.findall(value)
+    )
 
 
 def _wordy(value: str) -> bool:
@@ -239,10 +307,16 @@ _NEXT_LINE_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 def _assigned_name(text: str, separator: int, *, numbered: bool = False) -> str:
     """The name assigned at ``separator``, past a closing quote and a simple type annotation.
 
-    A '?' before the separator is a nullable type ('String? =') or Make's '?='.
-    ``numbered`` is passed on to ``_credential_name``.
+    A '?' before the separator is a nullable type ('String? =') or Make's '?='. The
+    characters of a compound or comparison operator that come before its '=' ('||=',
+    '+=', '.=', '!=', '<=') are not part of the name. ``numbered`` is passed on to
+    ``_credential_name``.
     """
-    end = _blanks_before(text, separator)
+    end = separator
+    for _ in range(2):
+        if end > 0 and text[end - 1] in "|&?+-*/%^.!<>~":
+            end -= 1
+    end = _blanks_before(text, end)
     if end > 0 and text[end - 1] in "\"'":
         end -= 1
     elif end > 0 and text[end - 1] == "?":
@@ -253,6 +327,20 @@ def _assigned_name(text: str, separator: int, *, numbered: bool = False) -> str:
     if name and typed and not _credential_name(name, numbered=numbered):
         return _name_before(text, _blanks_before(text, colon - 1), "_$.-")  # 'openaiKey: string = "..."'
     return name
+
+
+def _marked_by_name(text: str, match: re.Match[str], name: str) -> bool:
+    """Whether the sensitive ``name`` right before the colon at ``match`` marks the value after it.
+
+    'key:v' is a scalar or a URL part, but 'password:<opaque>' is not; the shell's
+    '${NAME:-v}' default and the annotation hop of 'credential:sha256:<hex>' (the name is
+    then not the word before the colon) are read elsewhere.
+    """
+    return (
+        _sensitive_assignment_key(name)
+        and text.endswith(name, 0, match.start())
+        and not text.startswith(("-", "+", "?"), match.end("separator"))
+    )
 
 
 def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
@@ -274,8 +362,9 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
             (
                 match.group("separator") == ":"
                 and not (extended and text.startswith((" ", "\t"), match.end("separator")))
+                and not _marked_by_name(text, match, name)
             )
-            or _wordy(value)
+            or (_wordy(value) and not (extended and _opaque_identifier(value)))
         ):
             continue
         if match.group("quote") and _interpolated(match.group("prefix") or "", match.group("quote"), value):
@@ -291,6 +380,24 @@ def _redact_opaque_assignments(text: str, *, extended: bool = False) -> str:
         value = match.group("value")
         if not _CLI_WORD.fullmatch(value) and _credential_literal(value, positional=True):
             spans.append(match.span("value"))
+    return _withhold_spans(text, spans)
+
+
+# ODBC and ADO.NET connection strings spell the password 'Pwd': 'Server=h;Uid=u;Pwd=v;'.
+# 'PWD' also names a shell's working directory and 'pwd' a command, so only a 'Pwd=' that
+# follows a ';' is read, and its value stays when it is empty or only a reference.
+_CONNECTION_PASSWORD = re.compile(r"(?<=;)[ \t]*(?i:pwd)[ \t]*=(?P<value>[^;\"'\r\n]+)")
+
+
+def _redact_connection_passwords(text: str) -> str:
+    """Withhold the value of a connection string's ``Pwd=`` member."""
+    if ";" not in text:
+        return text
+    spans = [
+        match.span("value")
+        for match in _CONNECTION_PASSWORD.finditer(text)
+        if not _kept_value(match.group("value"))
+    ]
     return _withhold_spans(text, spans)
 
 
@@ -364,11 +471,23 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
         if _FINGERPRINT.fullmatch(full):
             return full
         raw: str = m.group("value")
-        quote = raw[0] if raw.startswith(('"', "'")) else ""
-        bare = raw[1:-1] if quote else raw
+        opener, bare, closer = _unquote(raw, m.group("escaped"))
         key: str = m.group("key")
         sep: str = m.group("sep")
+        operator = sep.strip(" \t\r\n\"'")
         if _sensitive_assignment_key(key):
+            if operator in _COMPARISONS:
+                # Only a literal that could be a credential is withheld from a comparison:
+                # a quoted word ('token == "v"', also in backticks), not "(" or "/*", and a
+                # bare opaque value, not an operand ('token == other', 'token != None').
+                template = len(bare) > 1 and bare[0] == bare[-1] == "`"
+                literal = bare[1:-1] if template else bare
+                if not _credential_literal(literal, positional=bool(opener) or template):
+                    return full
+            if not opener and operator == "=>" and bare.startswith(("{", "[", "(")):
+                # A hash entry's nested mapping is withheld whole by the mapping pass; this
+                # is an arrow function's body ('token => {').
+                return full
             clean: str = _redact_value(bare)
         elif "=" in bare or ":" in bare:
             # Do not let an ordinary assignment swallow a nested credential,
@@ -376,6 +495,6 @@ def _redact_plain_assignments(value: str, depth: int = 0) -> str:
             clean = _redact_plain_assignments(bare, depth + 1) if depth < 8 else REDACTED
         else:
             return full
-        return key + sep + quote + clean + quote
+        return key + sep + opener + clean + closer
 
     return _ASSIGNMENT.sub(assignment, value)

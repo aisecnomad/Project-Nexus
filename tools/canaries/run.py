@@ -22,7 +22,7 @@ from shadowscan import __version__
 from shadowscan.config import ConnectorSpec, ScanConfig, expand_env
 from shadowscan.connectors.cloud.aws import KNOWN_SERVICES
 from shadowscan.engine import Engine
-from shadowscan.models import Kind, ScanResult, now_iso
+from shadowscan.models import Finding, Kind, ScanResult, now_iso
 from shadowscan.signatures import get_index
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
@@ -65,7 +65,7 @@ class _CanaryLoader(BoundedSafeLoader):
         self.flatten_mapping(node)
         keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
         if any(not isinstance(key, str) for key in keys) or len(keys) != len(set(keys)):
-            raise ValueError("canary mapping keys must be unique strings")
+            raise CanaryConfigError("canary mapping keys must be unique strings")
         return super().construct_mapping(node, deep=deep)
 
 
@@ -332,20 +332,35 @@ def evaluate(config: dict[str, Any], result: ScanResult, records: list[dict[str,
             _strings(r.get("regions")) and set(r["regions"]) == set(scope["regions"]) for r in identity
         )
         scope_ok = scope_ok and all(not f.region or f.region in scope["regions"] for f in result.findings)
+    # Each control declares an exact canonical resource. Restrict selector
+    # checks to that resource rather than rescan a whole tenant per control.
+    # Verification runs after the engine's collection deadline, so quadratic
+    # work here would otherwise escape its execution budget.
+    wanted = {control["finding"]["resource"] for control in config["controls"]}
+    records_by_resource: dict[str, list[dict[str, Any]]] = {}
+    identity_fields = _CONTROL_IDENTITIES[config["connector"]["name"]]
+    for record in records:
+        kind = record.get("_kind")
+        identity_key = identity_fields.get(kind) if isinstance(kind, str) else None
+        identifier = _path_value(record, identity_key) if identity_key else None
+        if not isinstance(identifier, str):
+            continue
+        resource = identifier if aws else f"slack:app:{identifier}"
+        if resource in wanted:
+            records_by_resource.setdefault(resource, []).append(record)
+    findings_by_resource: dict[str, list[Finding]] = {}
+    for finding in result.findings:
+        if finding.resource in wanted:
+            findings_by_resource.setdefault(finding.resource, []).append(finding)
     control_reports = []
     for control in config["controls"]:
         expected = control["finding"]
-        identity_key = _CONTROL_IDENTITIES[config["connector"]["name"]][control["record"]["_kind"]]
         observations = [
             record
-            for record in records
+            for record in records_by_resource.get(expected["resource"], [])
             if _match(record, control["record"])
-            and (
-                _path_value(record, identity_key) if aws else f"slack:app:{_path_value(record, identity_key)}"
-            )
-            == expected["resource"]
         ]
-        findings = [f for f in result.findings if f.resource == expected["resource"]]
+        findings = findings_by_resource.get(expected["resource"], [])
         matched = [f for f in findings if f.kind.value == expected.get("kind")]
         passed = bool(observations) and (bool(matched) if expected["present"] else not findings)
         control_reports.append(
@@ -474,10 +489,13 @@ def run(config: dict[str, Any]) -> dict[str, Any]:
                 )
                 budget_report: dict[str, Any] = sanitize(report)
                 return budget_report
-            for line in path.read_text(encoding="utf-8").splitlines():
-                record = json.loads(line)
-                if isinstance(record, dict):
-                    records.append(record)
+            # Keep the existing dump-size limit without another full string
+            # and splitlines list alongside all decoded verification records.
+            with path.open(encoding="utf-8") as stream:
+                for line in stream:
+                    record = json.loads(line)
+                    if isinstance(record, dict):
+                        records.append(record)
         verification = evaluate(config, result, records)
         report.update(verification)
         report["status"] = f"{config['mode'].upper()}_{'PASS' if verification['passed'] else 'FAIL'}"

@@ -13,6 +13,9 @@ import regex
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import _MAX_CONTENTION_RETRIES, MatchTimeoutError, _finditer, _run_regex
 
+# Every test here measures retries against the shipped regex and input budgets.
+pytestmark = pytest.mark.production_budgets
+
 
 def test_other_thread_cpu_between_iterator_creation_and_consumption_is_retried(monkeypatch):
     monkeypatch.setattr("shadowscan.signatures.matcher.REGEX_TIMEOUT_SECONDS", 0.02)

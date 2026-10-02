@@ -7,7 +7,9 @@ permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A newer pull-request push supersedes the older run. Every main push run must
+  # finish: release evidence cites the CI run of one exact main commit.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   dco:
     if: github.event_name == 'pull_request'
@@ -46,21 +48,22 @@ jobs:
       - name: Install the hash-locked runtime, cloud and development toolchain
         run: |
           # The runtime lock lists every published wheel hash, so the cloud SDKs
-          # install from it here too; the per-connector coverage floor below
-          # needs their code paths on this platform as well.
+          # install from it here too and the suite exercises their code paths on
+          # this platform as well.
           python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check native file confinement and plugin worker lifecycle
+        run: pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/container
-      - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
-      - name: Enforce per-connector coverage floor
-        run: |
-          python -m coverage json -o "$RUNNER_TEMP/shadowscan-coverage.json"
-          python -m tools.coverage_gate "$RUNNER_TEMP/shadowscan-coverage.json"
+      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py tools/container
+      # The full suite without coverage tracing; the Linux coverage leg of the
+      # test job enforces both coverage floors. The console entry point is used
+      # on purpose: it must import the checkout-only tools packages.
+      - run: pytest -q
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -68,6 +71,13 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.11", "3.12", "3.13"]
+        # One leg traces line and branch coverage and enforces the aggregate
+        # and per-connector floors. Tracing slows the suite several-fold and
+        # the floors measure the tests, not the interpreter, so the other legs
+        # (and macOS) run the same full suite untraced.
+        include:
+          - python: "3.11"
+            coverage: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,11 +114,17 @@ jobs:
             -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check tracked files for hardcoded credentials
+        run: |
+          set -euo pipefail
+          # The same standard-library script as the pre-commit hook; it skips
+          # the paths that hold synthetic credentials on purpose.
+          git ls-files -z | xargs -0 python tools/check_secrets.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/container
+      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py tools/container
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
@@ -120,8 +136,14 @@ jobs:
             pip-audit --require-hashes --strict --progress-spinner off \
               --disable-pip --no-deps -r "$lock"
           done
-      - run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+      - name: Run the test suite
+        if: ${{ !matrix.coverage }}
+        run: python -m pytest -q
+      - name: Run the test suite with line and branch coverage
+        if: ${{ matrix.coverage }}
+        run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
+        if: ${{ matrix.coverage }}
         run: |
           python -m coverage json -o "$RUNNER_TEMP/shadowscan-coverage.json"
           python -m tools.coverage_gate "$RUNNER_TEMP/shadowscan-coverage.json"
@@ -139,6 +161,8 @@ jobs:
             --output "$RUNNER_TEMP/shadowscan-field-review-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json \
             --output "$RUNNER_TEMP/shadowscan-attribution-evaluation.json"
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json \
+            --output "$RUNNER_TEMP/shadowscan-current-idioms-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"

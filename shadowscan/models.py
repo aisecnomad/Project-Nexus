@@ -168,15 +168,22 @@ class Kind(str, Enum):
 
 
 class Likelihood(str, Enum):
-    CONFIRMED = "confirmed"  # >= 0.85
+    """A heuristic bucket of ``Finding.confidence``. It is not a verification state."""
+
+    STRONG = "strong"  # >= 0.85
     LIKELY = "likely"  # >= 0.6
     POSSIBLE = "possible"  # >= 0.3
     WEAK = "weak"  # < 0.3
 
     @classmethod
+    def _missing_(cls, value: object) -> Likelihood | None:
+        # Reports, diff baselines and cache entries written before the rename carry "confirmed".
+        return cls.STRONG if value == "confirmed" else None
+
+    @classmethod
     def from_confidence(cls, confidence: float) -> Likelihood:
         if confidence >= 0.85:
-            return cls.CONFIRMED
+            return cls.STRONG
         if confidence >= 0.6:
             return cls.LIKELY
         if confidence >= 0.3:
@@ -221,6 +228,11 @@ class Evidence:
         self.sanitize()
 
     def __setattr__(self, name: str, value: Any) -> None:
+        if name == "weight":
+            # Noisy-OR clamps weights, which turns NaN or a huge value into certainty.
+            # Refuse them where they are set: a corrupt cache entry, report or plugin
+            # must fail instead of becoming a strong finding.
+            _validate_number(value, "evidence weight", minimum=0, maximum=1)
         _invalidate_on_change(self, name, value)
 
     def _digest_state(self) -> list[Any]:
@@ -443,16 +455,27 @@ class Finding:
             object.__setattr__(self, "_clean_digest", None)
 
     def recompute_confidence(self) -> None:
-        """Noisy-OR combination of evidence weights.
+        """Noisy-OR combination of evidence weights over correlated groups.
 
-        Independent weak signals reinforce each other but never exceed 1.0.
+        Evidence that shares a ``confidence_group`` attribute is one correlated
+        observation and contributes only its strongest weight. Outside the code
+        surface, evidence without one is grouped by ``signal``, so repeated
+        matches against one record (several scopes of one permission class,
+        several system prompts) cannot inflate the score. Source analysis sets
+        its own groups; the distinct files and patterns of a single-file code
+        finding (a workflow export, IaC) still corroborate each other.
+        Independent groups reinforce each other but never exceed 1.0.
         """
         p_none = 1.0
         groups: dict[str, float] = {}
+        by_signal = self.surface != Surface.CODE
         for number, ev in enumerate(self.evidence):
             w = max(0.0, min(1.0, ev.weight))
             group = ev.attributes.get("confidence_group")
-            key = f"group:{group}" if isinstance(group, str) else f"evidence:{number}"
+            if isinstance(group, str):
+                key = f"group:{group}"
+            else:
+                key = f"signal:{ev.signal}" if by_signal else f"evidence:{number}"
             groups[key] = max(groups.get(key, 0.0), w)
         for w in groups.values():
             p_none *= 1.0 - w
@@ -525,6 +548,11 @@ class Finding:
         for item in evidence:
             if not isinstance(item.get("signal"), str) or not isinstance(item.get("description"), str):
                 raise ValueError("finding evidence must have a string signal and description")
+            for name in ("location", "snippet", "signature"):
+                if item.get(name) is not None and not isinstance(item[name], str):
+                    raise ValueError(f"finding evidence {name} must be a string or null")
+            if not isinstance(item.get("attributes", {}), dict):
+                raise ValueError("finding evidence attributes must be an object")
             _validate_number(item.get("weight", 0.5), "evidence weight", minimum=0, maximum=1)
         d["evidence"] = []
         for item in evidence:
@@ -625,7 +653,7 @@ class ScanResult:
             "inventory_size": self.inventory_size,
             "collection_scope": sanitize(self.collection_scope),
             "summary": self.summary(),
-            "stats": [sanitize(asdict(s)) for s in self.stats],
+            "stats": sanitize([asdict(s) for s in self.stats]),
             "findings": [f.to_dict() for f in self.findings],
         }
 

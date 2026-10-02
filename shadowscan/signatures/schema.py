@@ -12,8 +12,9 @@ a hard error here.
 from __future__ import annotations
 
 import math
-import re
 from typing import Any
+
+import regex
 
 SIGNATURE_STRINGS = {"id", "name", "category", "vendor", "homepage", "description"}
 SIGNATURE_LISTS = {"tags", "capabilities", "risk_notes", "references"}
@@ -168,18 +169,30 @@ def _vocabulary(items: list[str], allowed: frozenset[str], context: str, label: 
             )
 
 
-def matches_empty_string(pattern: str, flags: int = re.MULTILINE) -> bool:
+# The matcher runs signal patterns compiled with MULTILINE | VERSION0, and
+# ``re:`` domain values with IGNORECASE | VERSION0, under this per-search
+# timeout (shadowscan.signatures.matcher.REGEX_TIMEOUT_SECONDS).
+EMPTY_MATCH_TIMEOUT_SECONDS = 0.1
+
+
+def matches_empty_string(pattern: str, flags: int = regex.MULTILINE) -> bool:
     """Return True when a regex can match without consuming any input.
 
     Such a pattern fires on every input (or on every line), so it is always a
-    data error. Patterns that do not compile return False here; the loader
-    reports the compile error itself.
+    data error. The check uses the matcher's engine and flags: syntax only the
+    ``regex`` module accepts, such as ``\\p{L}*``, must not pass because the
+    standard library cannot compile it. A search of the empty string that
+    exceeds the matcher's time budget counts as matching. Patterns that do not
+    compile return False here; the loader reports the compile error itself.
     """
     try:
-        compiled = re.compile(pattern, flags)
-    except re.error:
+        compiled = regex.compile(pattern, flags | regex.VERSION0)
+    except regex.error:
         return False
-    return compiled.search("") is not None
+    try:
+        return compiled.search("", timeout=EMPTY_MATCH_TIMEOUT_SECONDS) is not None
+    except TimeoutError:
+        return True
 
 
 def check_glob(glob: str, context: str) -> None:
@@ -267,7 +280,7 @@ def validate_signal_shape(value: Any, context: str) -> dict[str, Any]:
                     check_glob(glob, f"{context}.{key}[{i}]")
             elif key == "values" and kind == "domain":
                 for i, domain in enumerate(items):
-                    if domain.startswith("re:") and matches_empty_string(domain[3:], re.IGNORECASE):
+                    if domain.startswith("re:") and matches_empty_string(domain[3:], regex.IGNORECASE):
                         raise ValueError(
                             f"{context}.{key}[{i}]: domain regex {domain!r} matches the empty string"
                         )

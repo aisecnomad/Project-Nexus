@@ -24,12 +24,15 @@ tagged release.
 Repository settings may change. Consult the
 [live repository rules](https://github.com/aisecnomad/Project-Nexus/rules) and the
 [verification commands](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#merge-gate-and-review-status)
-before relying on enforcement. `Require CI and CodeQL` has no configured bypass actors,
-but it only blocks anything while it is enabled. Do not weaken it, bypass
-review or checks, or count a green workflow as an independent review. The
-October 2 source changes provide a settings-patch generator and release-time
-readback verifier; applying that patch requires repository administration.
-Do not treat their presence as evidence that the live ruleset is active.
+before relying on enforcement. The review/CI ruleset has no configured bypass
+actors; the separate `Protect main` ruleset may differ. A ruleset only blocks
+anything while it is enabled. The [versioned policy and verification procedure](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/merge-policy.md)
+require the complete CI gate and final-push approval; applying that policy needs
+repository administration access. Do not weaken it, bypass
+review or checks, or count a green workflow as an independent review. The release-evidence
+workflow reads the live ruleset back and verifies it before building a
+candidate; a prepared settings update is not evidence that an administrator
+applied it.
 
 ## Roles
 
