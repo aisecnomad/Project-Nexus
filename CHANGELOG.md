@@ -77,6 +77,16 @@ integrating them:
   such as `"abc"` raised a bare `ValueError`; each is now a configuration
   error. The option descriptions and `docs/connectors/reference.md` name the
   requirement.
+- `cloud.azure`: subscription ids from the subscription listing and resource
+  ids from Resource Graph were used in ARM request paths unchecked. Requests
+  removes `.`/`..` segments and `?` or `#` cuts off the appended suffix, so a
+  crafted id could turn the app-settings POST into a POST to another ARM
+  action (such as an account's `listKeys`) with the scanner's token, on the same
+  host. A listed subscription id must now be a GUID and a resource id a plain
+  ARM path (no `.`/`..` segments, `?`, `#`, `%`, `\`, whitespace or control
+  characters); anything else is skipped with a warning and the scan is
+  incomplete. Listed subscriptions without a string id used to be dropped
+  silently and are now counted in that warning.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

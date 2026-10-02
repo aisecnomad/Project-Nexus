@@ -15,6 +15,7 @@ Offline export: JSONL of dumped records (``_kind`` per record).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar, TypedDict
 from urllib.parse import parse_qs, urlsplit
@@ -90,6 +91,23 @@ _RETRIEVAL_TOOLS = {"file_search", "azure_ai_search", "sharepoint_grounding"}
 # Bot endpoints hosted by Copilot Studio (Power Virtual Agents) rather than Bot Framework code.
 _COPILOT_STUDIO_HINTS = ("copilot", "powerplatform", "pva")
 _BROAD_ROLES = {"Owner", "Contributor"}
+# Identifiers from ARM responses become request paths sent with the ARM token.
+# A subscription id is a GUID. A resource id is "/"-separated nonempty segments
+# without whitespace, control characters, "?", "#", "%" or "\": requests removes
+# "." and ".." segments, and a query or fragment cuts off the suffix the
+# connector appends, so either could redirect a call to another ARM operation.
+_SUBSCRIPTION_ID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
+_ARM_RESOURCE_ID = re.compile(r"(?:/[^/?#%\\\s\x00-\x1f\x7f-\x9f]++)++")
+_MAX_ARM_ID_CHARS = 4096
+
+
+def _arm_resource_id(value: str) -> bool:
+    """Whether a response-derived ARM resource id is safe to use as a request path."""
+    return (
+        len(value) <= _MAX_ARM_ID_CHARS
+        and _ARM_RESOURCE_ID.fullmatch(value) is not None
+        and not {".", ".."}.intersection(value.split("/"))
+    )
 
 
 class _ResourceBase(TypedDict):
@@ -259,11 +277,7 @@ class AzureConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        subs = self.subscriptions or [
-            s["subscriptionId"]
-            for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []
-            if isinstance(s.get("subscriptionId"), str)
-        ]
+        subs = self.subscriptions or self._listed_subscriptions()
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
         for r in self._resource_graph(subs):
@@ -276,6 +290,13 @@ class AzureConnector(BaseConnector):
             rid = r.get("id")
             if not isinstance(rid, str) or not rid.strip():
                 self.ctx.warn("cloud.azure: Resource Graph resource has no valid identifier", incomplete=True)
+                continue
+            if not _arm_resource_id(rid):
+                self.ctx.warn(
+                    "cloud.azure: Resource Graph resource identifier is not a plain ARM path; resource "
+                    "skipped, coverage incomplete",
+                    incomplete=True,
+                )
                 continue
             r["_kind"] = "resource"
             yield r
@@ -293,6 +314,24 @@ class AzureConnector(BaseConnector):
                         "role": AI_ROLE_IDS[role_id],
                         "id": ra.get("id"),
                     }
+
+    def _listed_subscriptions(self) -> list[str]:
+        """The visible subscriptions' ids; a listing without a GUID id is reported, never requested."""
+        subs: list[str] = []
+        invalid = 0
+        for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []:
+            sub = s.get("subscriptionId")
+            if isinstance(sub, str) and _SUBSCRIPTION_ID.fullmatch(sub):
+                subs.append(sub)
+            else:
+                invalid += 1
+        if invalid:
+            self.ctx.warn(
+                f"cloud.azure: {invalid} listed subscriptions have no valid subscription id (a GUID) and "
+                "were not scanned; coverage incomplete",
+                incomplete=True,
+            )
+        return subs
 
     def _resource_graph(self, subs: list[str]) -> list[Any]:
         """Every Resource Graph row for the subscriptions, unchecked: the caller validates each row."""

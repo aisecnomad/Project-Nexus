@@ -676,6 +676,13 @@ error (exit 3) instead of being truncated: `cloudtrail_days: 0.5` used to
 switch the CloudTrail lookup off without a diagnostic and `max_lambda: true`
 became 1. Integral values such as `7.0` or `"7"` are still accepted.
 
+`cloud.azure` no longer sends a request whose path comes from an unchecked
+response identifier. A listed subscription without a GUID id, or a Resource
+Graph resource whose id is not a plain ARM path, is skipped with a warning and
+the scan is incomplete. ARM does not return such identifiers; a scan that
+reports one points at a proxy or a response that should be investigated.
+Configured `subscriptions` keep their existing validation.
+
 ### October 2 production review migration
 
 Review framework attribution in projects using npm dependency aliases before

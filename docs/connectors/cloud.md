@@ -129,6 +129,12 @@ for credentials.
 Resource Graph, ARM and Foundry collections follow pagination. A denied or failed
 diagnostic-settings request is reported as unknown; only a successful empty
 response supports a missing-diagnostics finding.
+Identifiers taken from ARM responses become request paths, so they are checked
+first: a listed subscription without a GUID `subscriptionId` is not scanned, and a
+Resource Graph resource whose `id` is not a plain ARM path (`/`-separated
+segments without `.` or `..` segments, `?`, `#`, `%`, `\`, whitespace or control
+characters) is skipped. Both are reported and make the scan incomplete; the
+other subscriptions and resources are still collected.
 Foundry agent discovery targets the classic Agent Service contract:
 `GET <project-endpoint>/assistants?api-version=v1`. Newer `/agents` API families
 require their own contract and are not implied by this support. Missing, denied

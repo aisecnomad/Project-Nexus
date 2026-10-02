@@ -222,3 +222,88 @@ def test_foundry_rejects_untrusted_metadata_endpoint(index, monkeypatch):
     )
     assert connector.ctx.stats.incomplete
     http.assert_not_called()
+
+
+# Response-derived ARM identifiers become request paths with the ARM bearer token:
+# requests removes "." and ".." segments, and "?" or "#" cuts off the suffix the
+# connector appends, so an unchecked id could turn the app-settings POST into a
+# POST to any ARM action, such as an account's listKeys.
+SUBSCRIPTION = "00000000-0000-0000-0000-000000000001"
+
+
+def test_azure_listed_subscription_ids_must_be_guids(index):
+    ctx = context(index)
+    connector = AzureConnector(ctx)
+    connector._auth = Mock()
+    connector.http = Mock()
+    listed = [
+        {"subscriptionId": "../../providers/Microsoft.Web"},
+        {"subscriptionId": SUBSCRIPTION},
+        {"subscriptionId": 7},
+        {"displayName": "no id"},
+    ]
+    requested = []
+
+    def fake_list(path, api, *, allow_partial=False):
+        requested.append(path)
+        return listed if path == "/subscriptions" else []
+
+    connector._list = fake_list
+    connector._resource_graph = Mock(return_value=[])
+    assert list(connector.collect()) == []
+    connector._resource_graph.assert_called_once_with([SUBSCRIPTION])
+    assert requested == [
+        "/subscriptions",
+        f"/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Authorization/roleAssignments",
+    ]
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "cloud.azure: 3 listed subscriptions have no valid subscription id (a GUID) and were not "
+        "scanned; coverage incomplete"
+    ]
+
+
+@pytest.mark.parametrize(
+    "resource_id",
+    [
+        "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/x/../../../../providers"
+        "/Microsoft.CognitiveServices/accounts/a/listKeys",
+        "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/x?api-version=2023-05-01#",
+        "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/x#",
+        "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/x%2F..%2F",
+        "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/x\\..\\y",
+        "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/a b",
+        "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/x\n",
+        "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/./x",
+        "/subscriptions/s1//resourceGroups/rg/providers/Microsoft.Web/sites/x",
+        "subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/x",
+        "https://evil.example/subscriptions/s1",
+    ],
+)
+def test_azure_resource_ids_cannot_steer_request_paths(index, resource_id):
+    ctx = context(index, subscriptions=["s1"])
+    connector = AzureConnector(ctx)
+    connector._auth = Mock()
+    connector._list = Mock(return_value=[])
+    kept = "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Web/sites/kept"
+
+    def post_json(path, **_kwargs):
+        if path == "/providers/Microsoft.ResourceGraph/resources":
+            rows = [
+                {"id": resource_id, "type": "microsoft.web/sites"},
+                {"id": kept, "type": "microsoft.web/sites"},
+            ]
+            return {"data": rows}
+        return {"properties": {}}
+
+    connector.http = Mock()
+    connector.http.post_json.side_effect = post_json
+    records = list(connector.collect())
+    assert [r["id"] for r in records] == [kept, kept]  # the resource and its app settings
+    posted = [call.args[0] for call in connector.http.post_json.call_args_list]
+    assert posted == ["/providers/Microsoft.ResourceGraph/resources", f"{kept}/config/appsettings/list"]
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "cloud.azure: Resource Graph resource identifier is not a plain ARM path; resource skipped, "
+        "coverage incomplete"
+    ]
