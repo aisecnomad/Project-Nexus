@@ -379,13 +379,15 @@ def run_bounded_clone(
         isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1
     ):
         raise ValueError("max_bytes must be a positive integer")
-    if _INTERRUPTED.is_set():
-        raise CloneInterruptedError("clone not started: the scan was interrupted")
     ctx.check_deadline()
     deadline = time.monotonic() + timeout
     if ctx.deadline is not None:
         deadline = min(deadline, ctx.deadline)
     with terminate_clones_on_signal():
+        # Checked inside the guard: on the main thread a new guarded run starts clean, while a worker
+        # thread of an interrupted scan is refused (it cannot install handlers or reset anything).
+        if _INTERRUPTED.is_set():
+            raise CloneInterruptedError("clone not started: the scan was interrupted")
         if os.name == "posix":
             proc: subprocess.Popen[bytes] = subprocess.Popen(
                 cmd,

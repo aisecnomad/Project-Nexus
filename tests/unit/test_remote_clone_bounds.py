@@ -495,8 +495,21 @@ def test_terminating_active_clones_stops_git_deletes_checkout_and_refuses_new_cl
         assert isinstance(outcome[0], git_module.CloneInterruptedError)
         assert _wait_for(lambda: not _process_running(int(pidfile.read_text())), 5)
         assert not checkout.exists()
-        with pytest.raises(git_module.CloneInterruptedError):
-            run_bounded_clone([sys.executable, "-c", "pass"], os.environ.copy(), ctx, 30)
+        # Another worker of the interrupted scan must not start the clone the exit would then orphan.
+        refused: list[BaseException] = []
+
+        def another_clone() -> None:
+            try:
+                run_bounded_clone([sys.executable, "-c", "pass"], os.environ.copy(), ctx, 30)
+            except BaseException as exc:  # noqa: BLE001 - reported to the asserting thread
+                refused.append(exc)
+
+        late = threading.Thread(target=another_clone)
+        late.start()
+        late.join(10)
+        assert [type(exc) for exc in refused] == [git_module.CloneInterruptedError]
+        # A new guarded run on the main thread starts clean (a library caller that survived Ctrl-C).
+        assert run_bounded_clone([sys.executable, "-c", "pass"], os.environ.copy(), ctx, 30)
     finally:
         git_module._INTERRUPTED.clear()
         git_module.unregister_checkout(str(checkout))
