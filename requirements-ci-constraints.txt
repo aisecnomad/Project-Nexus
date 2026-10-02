@@ -17,7 +17,7 @@ cyclonedx-python-lib==11.12.0
 defusedxml==0.7.1
 distlib==0.4.3
 execnet==2.1.2
-filelock==4.0.3
+filelock==4.0.6
 hypothesis==6.168.3
 identify==2.6.19
 iniconfig==2.3.0
