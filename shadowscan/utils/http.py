@@ -234,7 +234,7 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     # urlsplit drops tabs and line breaks and strips leading blanks before parsing, while git and
     # libcurl reject them (and HTTP stacks differ on the rest). Anything the validator does not see
     # exactly as the transport will is refused, never silently cleaned up.
-    if any(char.isspace() or not char.isprintable() for char in url):
+    if isinstance(url, str) and any(char.isspace() or not char.isprintable() for char in url):
         raise ValueError("API URL must not contain whitespace or control characters")
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:

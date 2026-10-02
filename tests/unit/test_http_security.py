@@ -893,3 +893,9 @@ def test_incomplete_scan_message_for_a_denied_request_has_no_body():
     http, _ = client(response({"message": body}, status=403), on_warning=warnings.append)
     assert http.try_get_json("/items", default=[]) == []
     assert warnings == ["Collection incomplete: HTTP 403 for /v1/items"]
+
+
+@pytest.mark.parametrize("url", [None, b"https://api.example.com/x"])
+def test_non_text_urls_are_rejected_as_not_https(url):
+    with pytest.raises(ValueError, match="HTTPS"):
+        validate_url(url)
