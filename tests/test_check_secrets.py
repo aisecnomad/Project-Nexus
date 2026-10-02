@@ -92,7 +92,7 @@ _PLANTED = [
 
 
 @pytest.mark.parametrize(
-    "family,before,planted,after",
+    "family,before,sample,after",
     [pytest.param(*case[1:], id=case[0]) for case in _PLANTED],
 )
 def test_planted_credential_is_reported_without_its_value(
@@ -101,10 +101,10 @@ def test_planted_credential_is_reported_without_its_value(
     capsys: pytest.CaptureFixture[str],
     family: str,
     before: str,
-    planted: str,
+    sample: str,
     after: str,
 ) -> None:
-    text = f"# config\nvalue = {before}{planted}{after}\n"
+    text = f"# config\nvalue = {before}{sample}{after}\n"
     assert [(line, kind) for line, kind, _ in findings(text)] == [(2, family)]
     monkeypatch.chdir(tmp_path)
     Path("sample.txt").write_text(text, encoding="utf-8")
@@ -114,11 +114,9 @@ def test_planted_credential_is_reported_without_its_value(
     assert output == (
         f"sample.txt:2: possible hardcoded {family}: {match[:4]}... ({len(match)} characters)\n"
     )
-    # At most four characters of a match are printed, never a run of the secret.
+    # At most four characters of a match are printed, never a run of the planted value.
     assert not [
-        planted[index : index + 5]
-        for index in range(len(planted) - 4)
-        if planted[index : index + 5] in output
+        sample[index : index + 5] for index in range(len(sample) - 4) if sample[index : index + 5] in output
     ]
 
 

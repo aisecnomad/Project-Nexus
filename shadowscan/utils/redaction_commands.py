@@ -61,7 +61,8 @@ _CLI_VALUE_LIMIT = 4096
 # value characters once: see _ValueRuns.)
 _CLI_WORD_OPTIONS = 16
 _HEADER_VALUE = re.compile(
-    r"(?P<name>[A-Za-z][A-Za-z0-9-]*):(?:(?:Bearer|Basic|Token|Bot|Digest|SSWS|ApiKey|Api-Key|token)[ \t]+)?"
+    r"(?P<name>[A-Za-z][A-Za-z0-9-]*):[ \t]*"
+    r"(?:(?:Bearer|Basic|Token|Bot|Digest|SSWS|ApiKey|Api-Key|token)[ \t]+)?"
     r"(?P<secret>\S[^\r\n]*)"
 )
 _HEADER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")

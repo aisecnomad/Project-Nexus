@@ -171,6 +171,8 @@ METADATA_NETS = (
     ipaddress.ip_network("169.254.169.254/32"),
     ipaddress.ip_network("169.254.169.253/32"),
     ipaddress.ip_network("169.254.169.250/32"),
+    # Azure's wire server and metadata endpoint: a public-looking address that is link-local to the VM.
+    ipaddress.ip_network("168.63.129.16/32"),
     ipaddress.ip_network("fd00:ec2::254/128"),
 )
 
@@ -202,6 +204,8 @@ def _blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         or addr.is_unspecified
         or addr.is_multicast
         or addr.is_reserved
+        # Deprecated site-local fec0::/10 is still routed inside some networks; ipaddress calls it global.
+        or (isinstance(addr, ipaddress.IPv6Address) and addr.is_site_local)
         or any(addr in net for net in METADATA_NETS)
     )
 
@@ -227,6 +231,11 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     are preflight only; HttpClient also enforces the policy at socket connection.
     External transports such as git and cloud SDKs need their own egress controls.
     """
+    # urlsplit drops tabs and line breaks and strips leading blanks before parsing, while git and
+    # libcurl reject them (and HTTP stacks differ on the rest). Anything the validator does not see
+    # exactly as the transport will is refused, never silently cleaned up.
+    if isinstance(url, str) and any(char.isspace() or not char.isprintable() for char in url):
+        raise ValueError("API URL must not contain whitespace or control characters")
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("API URL must use HTTPS without embedded credentials")
@@ -654,8 +663,14 @@ class HttpClient:
         params: dict[str, Any] | None = None,
         item_key: str | None = None,
         max_pages: int = 1000,
+        on_page: Callable[[requests.Response], None] | None = None,
     ) -> Iterator[Any]:
-        """RFC 5988 Link-header pagination for GitHub and GitLab."""
+        """RFC 5988 Link-header pagination for GitHub and GitLab.
+
+        *on_page* receives each page's response (headers only; the body is
+        consumed) once its items are validated, before they are yielded, so a
+        caller can check header totals such as GitLab's ``X-Total``.
+        """
         origin = self._url(path)
         url: str | None = origin
         pages = 0
@@ -669,6 +684,8 @@ class HttpClient:
             data = self.read_json_response(resp)
             items = self._require_page_items(data, item_key, "Link pagination")
             next_url = self._continuation(resp.links.get("next", {}).get("url"))
+            if on_page is not None:
+                on_page(resp)
             yield from items
             url = next_url
             pages += 1

@@ -128,6 +128,7 @@ exact supported Python matrix and dependency pins.
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
+| Secrets | `make secrets` | No hardcoded credentials in tracked files |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
 | Secrets | `pre-commit run no-hardcoded-secrets --all-files` | No credential-shaped strings outside `tests/` |
@@ -145,6 +146,7 @@ The same gates as individual commands:
 ```bash
 python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
+make secrets
 ruff check shadowscan tests tools
 mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py
 pip-audit --progress-spinner off

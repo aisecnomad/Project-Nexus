@@ -52,6 +52,7 @@ _STRING_FIELDS = (
     "principalId",
     "clientId",
     "appRoleId",
+    "resourceId",
     "homepage",
     "loginUrl",
 )
@@ -74,8 +75,14 @@ class _GraphExport:
         self.grants: dict[str, list[dict[str, Any]]] = {}
         self.role_assignments: dict[str, list[dict[str, Any]]] = {}
         self.applications: list[dict[str, Any]] = []
-        self.role_names: dict[str, str] = {}
-        self.conflicting_role_names: set[str] = set()
+        # App role and scope ids are unique per resource only, so labels are
+        # kept per (resource principal id, role id) and (resource appId, role
+        # id); roleMap labels name no resource. Every label seen is retained.
+        self.resource_role_labels: dict[tuple[str, str], set[str]] = {}
+        self.app_role_labels: dict[tuple[str, str], set[str]] = {}
+        self.role_labels: dict[str, set[str]] = {}
+        self.role_map_labels: dict[str, set[str]] = {}
+        self.reported_role_conflicts: set[tuple[str | None, str]] = set()
         self.conflicting_sps: set[str] = set()
         self.conflicting_snapshots: dict[str, list[dict[str, Any]]] = {}
         self.truncated_snapshots: set[str] = set()
@@ -200,7 +207,7 @@ class EntraConnector(BaseConnector):
                 continue
             self.ctx.examined()
             f = self._sp_finding(
-                sp, graph.grants.get(sp_id, []), graph.role_assignments.get(sp_id, []), graph.role_names
+                sp, graph.grants.get(sp_id, []), graph.role_assignments.get(sp_id, []), graph
             )
             if f:
                 yield f
@@ -218,7 +225,7 @@ class EntraConnector(BaseConnector):
                 yield f
         for app in graph.applications:
             self.ctx.examined()
-            f = self._app_registration_finding(app, sp_by_app_id.get(app.get("appId")), graph.role_names)
+            f = self._app_registration_finding(app, sp_by_app_id.get(app.get("appId")), graph)
             if f:
                 yield f
 
@@ -231,7 +238,7 @@ class EntraConnector(BaseConnector):
                 continue
             if kind == "roleMap":
                 for role_id, value in (rec.get("roles") or {}).items():
-                    self._remember_role_name(graph, role_id, value)
+                    graph.role_map_labels.setdefault(role_id, set()).add(value)
             elif kind == "servicePrincipal":
                 self._add_principal(graph, rec)
             elif kind == "oauth2PermissionGrant":
@@ -263,24 +270,48 @@ class EntraConnector(BaseConnector):
         graph.sps[sp_id] = rec
         for role in (rec.get("appRoles") or []) + (rec.get("oauth2PermissionScopes") or []):
             if role.get("id") and role.get("value"):
-                self._remember_role_name(graph, role["id"], role["value"])
+                self._remember_role_name(graph, rec, role["id"], role["value"])
 
-    def _remember_role_name(self, graph: _GraphExport, role_id: str, value: str) -> None:
-        """Record a permission label; an id with conflicting labels keeps no label at all.
+    @staticmethod
+    def _remember_role_name(graph: _GraphExport, resource: dict[str, Any], role_id: str, value: str) -> None:
+        """Record a permission label that the resource principal ``resource`` defines."""
+        graph.resource_role_labels.setdefault((resource["id"], role_id), set()).add(value)
+        if resource.get("appId"):
+            graph.app_role_labels.setdefault((resource["appId"], role_id), set()).add(value)
+        graph.role_labels.setdefault(role_id, set()).add(value)
 
-        Role definitions can arrive from a roleMap and from several principals.
-        A later definition must not silently relabel an earlier one, so a
-        conflicting id falls back to its unresolved identifier.
+    def _role_label(
+        self,
+        graph: _GraphExport,
+        role_id: str,
+        *,
+        resource: str | None = None,
+        resource_app: str | None = None,
+    ) -> str:
+        """Label ``role_id`` of the resource principal ``resource`` (or appId ``resource_app``).
+
+        App role ids are unique per resource only: another principal's label
+        for the same id never names a known resource's role, so a hostile
+        principal cannot relabel a privileged grant. Labels come from that
+        resource and from roleMap records. A reference without any resource
+        (older exports) may use any principal's label. An unknown pair keeps
+        its unresolved id; conflicting labels also keep the id and are
+        reported, because a later definition must not silently relabel one.
         """
-        if role_id in graph.conflicting_role_names:
-            return
-        previous = graph.role_names.get(role_id)
-        if previous is None:
-            graph.role_names[role_id] = value
-        elif previous != value:
-            graph.role_names.pop(role_id, None)
-            graph.conflicting_role_names.add(role_id)
+        labels = set(graph.role_map_labels.get(role_id, ()))
+        if resource:
+            labels |= graph.resource_role_labels.get((resource, role_id), set())
+        elif resource_app:
+            labels |= graph.app_role_labels.get((resource_app, role_id), set())
+        else:
+            labels |= graph.role_labels.get(role_id, set())
+        if len(labels) == 1:
+            return next(iter(labels))
+        conflict = (resource or resource_app, role_id)
+        if labels and conflict not in graph.reported_role_conflicts:
+            graph.reported_role_conflicts.add(conflict)
             self.ctx.warn("identity.entra: conflicting role labels; permission-name coverage incomplete")
+        return role_id
 
     def _unresolved_finding(self, sp_id: str, graph: _GraphExport) -> Finding | None:
         """Permission evidence for a principal missing from, or conflicting within, the export."""
@@ -288,7 +319,7 @@ class EntraConnector(BaseConnector):
             {"id": sp_id, "displayName": "Unresolved principal"},
             graph.grants.get(sp_id, []),
             graph.role_assignments.get(sp_id, []),
-            graph.role_names,
+            graph,
         )
         f, truncated_evidence = self._merge_conflicting_snapshots(f, sp_id, graph)
         if not f:
@@ -340,7 +371,7 @@ class EntraConnector(BaseConnector):
         truncated_evidence = False
         for snapshot in graph.conflicting_snapshots.get(sp_id, []):
             self.ctx.check_deadline()
-            observed = self._sp_finding(snapshot, [], [], graph.role_names)
+            observed = self._sp_finding(snapshot, [], [], graph)
             if observed is None:
                 continue
             if f is None:
@@ -428,7 +459,7 @@ class EntraConnector(BaseConnector):
             ):
                 return None
         for access in rec.get("requiredResourceAccess") or []:
-            if not self._record_fields_valid(access, arrays=("resourceAccess",)):
+            if not self._record_fields_valid(access, strings=("resourceAppId",), arrays=("resourceAccess",)):
                 return None
             if any(
                 not self._record_fields_valid(permission, strings=("id", "type"))
@@ -442,14 +473,14 @@ class EntraConnector(BaseConnector):
         sp: dict[str, Any],
         grants: list[dict[str, Any]],
         roles: list[dict[str, Any]],
-        role_names: dict[str, str],
+        graph: _GraphExport,
     ) -> Finding | None:
         first_party = sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER
         sp_type = sp.get("servicePrincipalType") or "Application"
         delegated, principals, admin_consented = _grant_consent(grants)
         app_perms = sorted(
             {
-                role_names.get(role_id, role_id)
+                self._role_label(graph, role_id, resource=r.get("resourceId"))
                 for r in roles
                 if isinstance(role_id := r.get("appRoleId"), str) and role_id
             }
@@ -531,7 +562,7 @@ class EntraConnector(BaseConnector):
         return f
 
     def _app_registration_finding(
-        self, app: dict[str, Any], sp: dict[str, Any] | None, role_names: dict[str, str]
+        self, app: dict[str, Any], sp: dict[str, Any] | None, graph: _GraphExport
     ) -> Finding | None:
         name = app.get("displayName") or app.get("appId")
         requested_roles: set[str] = set()
@@ -542,7 +573,9 @@ class EntraConnector(BaseConnector):
                 permission_id = ra.get("id")
                 if not permission_id:
                     continue
-                permission = role_names.get(str(permission_id), str(permission_id))
+                permission = self._role_label(
+                    graph, str(permission_id), resource_app=rra.get("resourceAppId")
+                )
                 if ra.get("type") == "Role":
                     requested_roles.add(permission)
                 elif ra.get("type") == "Scope":

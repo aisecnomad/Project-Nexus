@@ -350,6 +350,17 @@ def test_mcp_registry_preserves_every_remote_for_detection_and_risk(tmp_path, ru
             '<PackageReference Include="Microsoft.Agents.AI" id="ordinary" Version="1" />'
             "</ItemGroup></Project>",
         ),
+        # MSBuild imports are NuGet manifests: an entity bomb in one must not pass.
+        (
+            "Directory.Build.targets",
+            '<!DOCTYPE lolz [<!ENTITY lol0 "lol"><!ENTITY lol1 "&lol0;&lol0;&lol0;&lol0;&lol0;&lol0;">]>'
+            '<Project><ItemGroup><PackageReference Include="&lol1;" /></ItemGroup></Project>',
+        ),
+        (
+            "eng/common.props",
+            '<Project><ItemGroup><PackageReference Include="Microsoft.SemanticKernel" Version="1" />'
+            '<PackageReference Include="ModelContextProtocol" id="ordinary" Version="1" /></ItemGroup></Project>',
+        ),
         (
             "workato.json",
             '{"code":[],"steps":[{"provider":"workato_genai","operation":"generate"}]}',
@@ -385,6 +396,24 @@ def test_repository_scan_marks_structured_integrity_failures_incomplete(tmp_path
     assert any("framework.crewai" in finding.frameworks for finding in findings)
     assert ctx.stats.incomplete
     assert any(name in error for error in ctx.stats.errors)
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["Directory.Build.props", "Directory.Build.targets", "eng/common.props", "src/App/Shared.targets"],
+)
+def test_msbuild_import_package_references_are_reported(tmp_path, run_connector, rel):
+    # Shared PackageReference items live in Directory.Build.* and imported *.props / *.targets.
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        '<Project><ItemGroup><PackageReference Include="Microsoft.SemanticKernel" Version="1.0.0" />'
+        "</ItemGroup></Project>",
+        encoding="utf-8",
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any("framework.semantic-kernel" in finding.frameworks for finding in findings)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
 
 
 # Unrendered Helm/Go templates are not YAML: a placeholder reads as a mapping
