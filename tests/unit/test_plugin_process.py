@@ -351,7 +351,7 @@ def test_worker_enforces_its_own_deadline_without_parent_supervision(installed_p
 
 
 def test_non_json_metadata_round_trips_like_thread_mode(installed_probe, monkeypatch):
-    """Transport serialization matches the JSON report: datetime/set/bytes become str()."""
+    """Transport serialization matches the JSON report for datetime, set and bytes metadata."""
     from shadowscan import connectors as registry
 
     monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "metadata-types")
@@ -369,7 +369,9 @@ def test_non_json_metadata_round_trips_like_thread_mode(installed_probe, monkeyp
         sys.modules.pop(MODULE, None)
         registry._cache.pop(ENTRY, None)
     assert reported["process"] == reported["thread"]
-    assert reported["thread"] == {"seen": "2026-01-01 00:00:00", "scopes": "{'read'}", "raw": "b'ab'"}
+    # The report renders a datetime as text and reads a set as a list and
+    # bytes as text; the transport must not change that rendering.
+    assert reported["thread"] == {"seen": "2026-01-01 00:00:00", "scopes": ["read"], "raw": "ab"}
 
 
 def test_plugin_allowlist_still_required_without_parent_import(installed_probe):
