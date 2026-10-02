@@ -226,11 +226,12 @@ def test_slow_drip_status_and_headers_are_interrupted_before_the_body_reader(tmp
             body = b'{"items": []}'
             try:
                 if len(clients) == 1:
+                    # Either drip takes about 4 s, far beyond the 0.3 s budget.
                     if phase == "status":
-                        drip = b"HTTP/1.1 200 OK\r\n"
+                        drip = b"HTTP/1.1 200 " + b"O" * 80 + b"\r\n"
                     else:
                         self.wfile.write(b"HTTP/1.1 200 OK\r\n")
-                        drip = b"X-Slow: abcdefghijklmnopqrstuvwxyz\r\n"
+                        drip = b"X-Slow: " + b"a" * 90 + b"\r\n"
                     for byte in drip:
                         if stop.is_set():
                             return
@@ -259,9 +260,11 @@ def test_slow_drip_status_and_headers_are_interrupted_before_the_body_reader(tmp
         with pytest.raises(ValueError, match="acquisition deadline"):
             http.get_json(url, verify=str(cert_path), timeout=request_timeout)
         elapsed = time.monotonic() - started
-        # Every byte is inside the socket timeout; the status/header phase
-        # still ends within the aggregate budget, before even the status drip.
-        assert elapsed < 0.6
+        # Every byte is inside the socket timeout, so only the aggregate budget
+        # can end the status/header phase this early. The margin over 0.3 s
+        # absorbs macOS runner scheduling delays; a budget taken from the 1 s
+        # request timeout (2 s) or no budget at all (about 4 s) still fails.
+        assert elapsed < 1.5
         assert not any(t.name == "shadowscan-http-acquisition" for t in threading.enumerate())
         # An expired checkout is discarded. Subsequent successful requests can
         # reuse their fresh TLS connection without a stale watchdog shutting it.
