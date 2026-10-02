@@ -45,6 +45,7 @@ Precision safeguards
 
 from __future__ import annotations
 
+import ast
 import errno
 import fnmatch
 import hashlib
@@ -54,7 +55,7 @@ import stat
 import subprocess
 import time
 import tomllib
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -615,6 +616,10 @@ class _ScanState:
         )
 
 
+# The span of each code cell in a notebook's text; empty for any other file.
+_CellSpans = tuple[tuple[int, int], ...]
+
+
 @dataclass
 class _SourceFile:
     """One file under analysis and the state its analysis passes share."""
@@ -636,6 +641,7 @@ class _SourceFile:
     is_mcp: bool = False
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
+    cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
 
     @property
     def name(self) -> str:
@@ -1760,7 +1766,7 @@ class FilesystemConnector(BaseConnector):
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if loaded is None:
             return
-        text, raw_notebook = loaded
+        text, raw_notebook, cells = loaded
         file = _SourceFile(
             rel=rel,
             path=path,
@@ -1771,6 +1777,7 @@ class FilesystemConnector(BaseConnector):
             file_matches=file_matches,
             raw_notebook=raw_notebook,
             structure=self._structure_for(rel, text),
+            cells=cells,
         )
         self._record_file_matches(file)
         if self.scan_secrets:
@@ -1794,16 +1801,16 @@ class FilesystemConnector(BaseConnector):
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
-    ) -> tuple[str, str | None] | None:
-        """Read a file for analysis: its text and, for a notebook, the raw document.
+    ) -> tuple[str, str | None, _CellSpans] | None:
+        """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
         The file is read relative to the open scan root ``root_fd``: by its on-disk
         name (``path`` below ``base``), while ``rel`` is the report-safe name used in
-        diagnostics. A notebook's text is its code cells. None means nothing is
-        analyzed; the recorded diagnostics say why. ``named`` is False when only a
-        directory-wide signature glob selects the file, so a recognised binary
-        artifact there (an image beside coding-agent rules) is skipped without a
-        coverage gap.
+        diagnostics. A notebook's text is its code cells, and the spans locate each
+        in it. None means nothing is analyzed; the recorded diagnostics say why.
+        ``named`` is False when only a directory-wide signature glob selects the
+        file, so a recognised binary artifact there (an image beside coding-agent
+        rules) is skipped without a coverage gap.
         """
         read_errors: list[str] = []
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
@@ -1821,7 +1828,7 @@ class FilesystemConnector(BaseConnector):
         if text is None:
             return None
         if path.suffix.lower() != ".ipynb":
-            return text, None
+            return text, None, ()
         return self._notebook_source(rel, text)
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
@@ -1837,13 +1844,20 @@ class FilesystemConnector(BaseConnector):
         directory_wide = {(m.signature.id, id(m.signal)) for m in self.index.match_file(probe)}
         return any((m.signature.id, id(m.signal)) not in directory_wide for m in file_matches)
 
-    def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None] | None:
-        """Return a notebook's code cells and, when within max_file_size, its raw document."""
+    def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None, _CellSpans] | None:
+        """Return a notebook's code cells, their spans and, within max_file_size, its raw document."""
         notebook_errors: list[str] = []
         oversized_notebook = len(document) > self.max_file_size
         raw_notebook = None if oversized_notebook else document
-        text = notebook_to_source(document, notebook_errors)
+        sources: list[str] = []
+        text = notebook_to_source(document, notebook_errors, cells=sources)
         self._file_errors(rel, dict.fromkeys(notebook_errors))
+        # The cells are joined by one line break each.
+        spans: list[tuple[int, int]] = []
+        offset = 0
+        for source in sources:
+            spans.append((offset, offset + len(source)))
+            offset += len(source) + 1
         # Unread analyzable content leaves coverage incomplete, as
         # for any oversize file; strict_coverage only raises the
         # diagnostic from a warning to an error.
@@ -1864,7 +1878,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
         if len(text) > self.max_file_size:
             return None
-        return text, raw_notebook
+        return text, raw_notebook, tuple(spans)
 
     def _structure_for(self, rel: str, text: str) -> Any:
         """Parse the credential context of a structured file; None withholds its excerpts.
@@ -2125,8 +2139,13 @@ class FilesystemConnector(BaseConnector):
         lang, ext = file.lang, file.ext
         is_local_module = _local_module_predicate(root, file.path, file.proj_root)
         # Malformed trailing literals are masked through EOF;
-        # preceding valid imports/code remain inspectable.
-        ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
+        # preceding valid imports/code remain inspectable. A notebook's
+        # cells run one at a time, so each is lexed on its own: a literal
+        # left open in one cell masks the rest of that cell only.
+        if file.cells:
+            ignored, ambiguous = _cell_noncode_ranges(content_text, file.cells)
+        else:
+            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
         if ambiguous:
             self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
         imports = (
@@ -2145,15 +2164,14 @@ class FilesystemConnector(BaseConnector):
             if ignored
             else self.index.match_code(content_text, lang)
         )
-        binder = self._bound_matches(file, content_text, ignored, is_local_module)
-        bound = binder or []
+        bound, unbound = self._bound_matches(file, content_text, ignored, is_local_module)
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
         # tool-calling protocol; elsewhere they are build tooling.
         file_uses_llm = any(
             m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
         )
-        self._record_code_matches(file, code_matches, file_uses_llm, bound, binder_ran=binder is not None)
+        self._record_code_matches(file, code_matches, file_uses_llm, bound, unbound=unbound)
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
@@ -2165,22 +2183,28 @@ class FilesystemConnector(BaseConnector):
         content_text: str,
         ignored: list[tuple[int, int]],
         is_local_module: Callable[[str], bool],
-    ) -> list[Match] | None:
+    ) -> tuple[list[Match], list[tuple[int, int]]]:
         """Return bound evidence, including narrow typed-field registration for Java.
 
-        None means the Python or JavaScript binder did not run (a budget, or a
-        source that does not parse): the file's lexical evidence stands in.
+        Also returns the spans of ``content_text`` the Python or JavaScript
+        binder did not read, where the lexical evidence stands in for it: the
+        whole file when the binder did not run (a budget, or a source that does
+        not parse), or a notebook's cells that do not parse.
         """
         lang = file.lang
         if file.ext == ".java":
-            return spring_tool_registration_matches(self.index, content_text, ignored)
+            return spring_tool_registration_matches(self.index, content_text, ignored), []
         if lang not in {"python", "javascript"}:
-            return []
+            return [], []
+        whole = [(0, len(content_text))]
         truncated: list[int] = []
-        # IPython rewrites a notebook's magic and shell lines before Python reads
-        # them; blanked, they no longer make every cell of the notebook unparseable.
-        source = _without_ipython_lines(content_text) if file.ext == ".ipynb" else content_text
+        unparsed: list[int] = []
         try:
+            source = content_text
+            if file.cells:
+                # Jupyter runs the cells one at a time: one that does not parse
+                # fails alone, so the binder reads the others without it.
+                source, unparsed = _notebook_binder_source(content_text, file.cells)
             bound = bound_source_matches(
                 self.index,
                 source,
@@ -2202,7 +2226,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
             else:
                 self.ctx.error(message)
-            return None
+            return [], whole
         except SourceNotParsed as exc:
             # Newer syntax than the interpreter knows, or invalid source: no
             # import binding, but the lexical evidence, framework patterns
@@ -2213,7 +2237,17 @@ class FilesystemConnector(BaseConnector):
                 "lexical evidence retained",
                 incomplete=False,
             )
-            return None
+            return [], whole
+        if unparsed:
+            # As for a source that does not parse, but for these cells alone.
+            numbers = ", ".join(str(number + 1) for number in unparsed[:10])
+            cells = "cell" if len(unparsed) == 1 else "cells"
+            verb = "does" if len(unparsed) == 1 else "do"
+            self.ctx.warn(
+                f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook {cells} {numbers}, "
+                f"which {verb} not parse; lexical evidence retained",
+                incomplete=False,
+            )
         if truncated:
             # An option past the limit (tools, a stop condition) was not read: the
             # call-analysis budget is a coverage gap like the one above, but the
@@ -2227,7 +2261,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
             else:
                 self.ctx.error(message)
-        return bound
+        return bound, [file.cells[number] for number in unparsed]
 
     def _record_code_matches(
         self,
@@ -2236,7 +2270,7 @@ class FilesystemConnector(BaseConnector):
         file_uses_llm: bool,
         bound: list[Match],
         *,
-        binder_ran: bool = True,
+        unbound: Sequence[tuple[int, int]] = (),
     ) -> None:
         # The binder's evidence for a signal on a line replaces its lexical match.
         bound_signals = {(m.signature_id, id(m.signal), m.line) for m in bound}
@@ -2275,18 +2309,16 @@ class FilesystemConnector(BaseConnector):
                 ):
                     continue  # explicit disabled options do not register tools
                 m.extra["verified_agent"] = False
-            elif (binder_ran and _bundled_signature(m.signature)) or (
-                m.signature_id,
-                id(m.signal),
-                m.line,
-            ) in bound_signals:
+            elif (m.signature_id, id(m.signal), m.line) in bound_signals or (
+                _bundled_signature(m.signature) and not _within(m.extra.get("start", -1), unbound)
+            ):
                 continue  # import-bound calls establish the library
             else:
                 # The bundled framework patterns are written for the import
                 # binder. A custom pack's pattern is plain lexical evidence,
                 # as in other languages, so a pack without a matching import
                 # still takes effect, corroborated at emit time. So is every
-                # framework pattern of a file the binder could not read.
+                # framework pattern in source the binder could not read.
                 m.extra["lexical_source"] = file.lang
             self._record_content(file, m, self._file_excerpt(file, m.line))
 
@@ -3752,6 +3784,46 @@ def _without_ipython_lines(text: str) -> str:
     block's only statement: it becomes ``0`` padded to its length, not blanks.
     """
     return _IPYTHON_LINE.sub(lambda match: match[1] + "0" + " " * (len(match[2]) - 1), text)
+
+
+def _within(offset: int, spans: Sequence[tuple[int, int]]) -> bool:
+    return any(start <= offset < end for start, end in spans)
+
+
+def _cell_noncode_ranges(text: str, cells: _CellSpans) -> tuple[list[tuple[int, int]], bool]:
+    """Lex each notebook cell on its own; return the ignored spans in ``text``'s offsets."""
+    spans: list[tuple[int, int]] = []
+    ambiguous = False
+    for start, end in cells:
+        cell_spans, cell_ambiguous = noncode_ranges(text[start:end], "python")
+        spans.extend((start + low, start + high) for low, high in cell_spans)
+        ambiguous = ambiguous or cell_ambiguous
+    return spans, ambiguous
+
+
+def _notebook_binder_source(text: str, cells: _CellSpans) -> tuple[str, list[int]]:
+    """Return a notebook's cells as the import binder reads them, and which cells do not parse.
+
+    Magic and shell lines become inert expressions (``_without_ipython_lines``).
+    A cell that still does not parse is blanked, its line breaks kept, so the
+    other cells are bound together, as Jupyter runs them, and every offset and
+    line stays that of ``text``.
+    """
+    source = _without_ipython_lines(text)
+    unparsed: list[int] = []
+    pieces: list[str] = []
+    previous = 0
+    for number, (start, end) in enumerate(cells):
+        try:
+            ast.parse(source[start:end])
+        except (SyntaxError, ValueError):
+            unparsed.append(number)
+            pieces.extend((source[previous:start], re.sub(r"[^\n]", " ", source[start:end])))
+            previous = end
+        except RecursionError as exc:
+            raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
+    pieces.append(source[previous:])
+    return "".join(pieces), unparsed
 
 
 def _without_xml_comments(text: str) -> str:

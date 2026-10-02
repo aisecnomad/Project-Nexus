@@ -199,14 +199,22 @@ favour of the installed package, so it does not hide that SDK's imports.
 
 A notebook's IPython magic (`%pip`, `%%time`) and shell (`!pip`) lines are read
 as inert expressions, as IPython rewrites them, so they do not keep the import
-binder from the notebook. A Python source the running interpreter cannot parse
-(syntax newer than it, such as a PEP 695 `type` statement on Python 3.11) has no
-import binding: its framework patterns are kept as lexical evidence, which
-counts toward an agent only when the same library is imported or declared as a
-dependency, as in a language without a binder, and the scan records the warning
-`import-bound analysis skipped (source did not parse); lexical evidence
-retained` without becoming incomplete. The same lexical evidence stands in when
-a binder budget is exhausted; that scan is incomplete.
+binder from the notebook. Jupyter runs code cells one at a time, so each cell is
+lexed on its own, and a cell that still does not parse (a `%%bash` cell, an
+unfinished scratch cell) is left out of import binding on its own: the warning
+`import-bound analysis skipped for notebook cell N, which does not parse;
+lexical evidence retained` names it, and the other cells are bound as usual. A
+string left open in one cell no longer masks the cells after it.
+
+A Python source the running interpreter cannot parse (syntax newer than it,
+such as a PEP 695 `type` statement on Python 3.11) has no import binding: its
+framework patterns are kept as lexical evidence, which counts toward an agent
+only when the same library is imported or declared as a dependency, as in a
+language without a binder, and the scan records the warning `import-bound
+analysis skipped (source did not parse); lexical evidence retained` without
+becoming incomplete. The same lexical evidence stands in for a notebook cell
+that does not parse, and when a binder budget is exhausted; that scan is
+incomplete.
 
 Malformed YAML front matter in an agent
 definition, including a YAML value PyYAML cannot construct (an impossible date,

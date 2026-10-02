@@ -148,6 +148,13 @@ integrating them:
   notebook's IPython magic (`%pip`, `%%time`) and shell (`!pip`) lines are
   read as inert expressions before parsing, as IPython rewrites them, so a
   notebook that installs its packages keeps the import binder.
+- Notebook code cells are lexed and parsed one at a time, as Jupyter runs
+  them. A cell that left a triple-quoted string open used to mask every later
+  cell, so a notebook with one unfinished scratch cell gave no finding and a
+  complete scan. A cell that does not parse (a `%%bash` cell, an unclosed
+  bracket) is now left out of import binding alone, with a warning naming it,
+  and its framework patterns count as lexical evidence; the other cells are
+  bound as usual.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

@@ -710,8 +710,10 @@ Update any alert or triage rule that matches the old text.
 Notebooks that install packages with `%pip` or `!pip`, and Python files the
 scanner's interpreter cannot parse, can now report an agent where they reported
 LLM usage: their framework patterns count as lexical evidence when the same
-library is imported or declared. Review such changed classifications before
-updating baselines.
+library is imported or declared. Notebook cells are now read one at a time, so
+a notebook with an unfinished scratch cell, which used to report nothing, can
+report findings, with a warning that names the cell that does not parse.
+Review such changed classifications before updating baselines.
 
 These fixes come from an AI-assisted review and have offline regression tests
 only; they are not independent human review or field precision evidence.

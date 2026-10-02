@@ -189,8 +189,12 @@ def read_text(
         return None
 
 
-def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
-    """Extract code cells from a Jupyter notebook as a python source blob."""
+def notebook_to_source(text: str, errors: list[str] | None = None, *, cells: list[str] | None = None) -> str:
+    """Extract code cells from a Jupyter notebook as a python source blob.
+
+    The cells are joined by line breaks; ``cells``, when given, receives each
+    code cell's source in order, so a caller can treat them one at a time.
+    """
     try:
         nb = strict_json_loads(text)
     except (ValueError, RecursionError):
@@ -221,6 +225,8 @@ def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
                 errors.append("notebook source must be text or an array of strings")
             continue
         out.append(src)
+    if cells is not None:
+        cells.extend(out)
     return "\n".join(out)
 
 

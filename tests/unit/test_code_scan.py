@@ -533,6 +533,38 @@ def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_conne
     assert any(finding.kind == Kind.AGENT for finding in findings)
 
 
+@pytest.mark.parametrize(
+    "broken",
+    [
+        'notes = """scratch cell, left unfinished\n',  # used to mask every later cell: no finding at all
+        "params = dict(\n",
+        '%%bash\necho "it\'s done"\n',
+    ],
+    ids=["unterminated-string", "unclosed-bracket", "shell-cell"],
+)
+def test_one_broken_notebook_cell_does_not_hide_the_others(tmp_path, run_connector, broken):
+    # Jupyter runs each cell on its own: a cell that does not parse fails alone.
+    (tmp_path / "agent.ipynb").write_text(_notebook(broken, _LANGCHAIN_AGENT))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "code.filesystem: agent.ipynb: import-bound analysis skipped for notebook cell 1, which does not "
+        "parse; lexical evidence retained"
+    ]
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_a_broken_notebook_cell_keeps_its_own_construction(tmp_path, run_connector):
+    setup = "from langchain.agents import AgentExecutor\n"
+    broken = "executor = AgentExecutor(agent=a, tools=[])\nresult = (\n"
+    (tmp_path / "agent.ipynb").write_text(_notebook(setup, broken))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert any("notebook cell 2" in warning for warning in ctx.stats.warnings)
+    # The construction in the cell the binder could not read counts as lexical evidence.
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
 def test_python_that_parses_keeps_import_bound_evidence_without_a_warning(tmp_path, run_connector):
     (tmp_path / "agent.py").write_text(_LANGCHAIN_AGENT)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
