@@ -82,7 +82,7 @@ from shadowscan.connectors.code.manifests import (
     manifest_comment_projection,
     parse_manifest,
 )
-from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
+from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
@@ -136,6 +136,7 @@ from shadowscan.utils.git import (
     metadata_git_argv_prefix,
     metadata_git_env,
     read_gitlink_paths,
+    require_local_git_metadata,
     run_bounded_metadata,
 )
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
@@ -582,6 +583,7 @@ class _Project:
     detection_rule_files: list[str] = field(default_factory=list)  # the first, in walk order
     # Data files that declare what a deployment or a job runs with: never catalogs.
     configuration_files: set[str] = field(default_factory=set)
+    mcp_tools_limited: bool = False
 
 
 @dataclass
@@ -746,7 +748,14 @@ class _ProjectEvidence:
             and match.signature_id not in self.library_evidence
         ):
             return False
-        return not (self.mcp_server and match.signature.category == "heuristic")
+        # Tool names are not an exhaustive description of their implementations.
+        # An independently observed execution sink must survive when a harmless
+        # named tool is added, or when a tool's name does not mention commands.
+        return not (
+            self.mcp_server
+            and match.signature.category == "heuristic"
+            and match.signature_id not in {"heuristic.code-execution", "heuristic.llm-command-execution"}
+        )
 
     def weight_scale(self, rel: str) -> float:
         return (ENV_ONLY_WEIGHT_SCALE if self.env_only else 1.0) * (0.5 if self.in_tests(rel) else 1.0)
@@ -2321,6 +2330,22 @@ class FilesystemConnector(BaseConnector):
                     r"tools\s*=\s*(?:None|False)\s*", m.value
                 ):
                     continue  # explicit disabled options do not register tools
+                if m.signature_id == "heuristic.tool-use" and re.match(r"tools\s*[=:]", m.value):
+                    # A declaration outside a request is still only a lexical
+                    # option name. Bound configuration and registered tools
+                    # establish the workload capability from its actual value.
+                    m.extra["source_capabilities"] = []
+                if m.signature_id in {
+                    "protocol.openai-function-calling",
+                    "heuristic.function-call-branch",
+                    "heuristic.named-tool-lookup",
+                    "heuristic.function-call-result",
+                }:
+                    # Field/response names also occur with empty, disabled or
+                    # unknown tool settings. Bound requests and connected
+                    # dispatch own the observed capability; lexical protocol
+                    # syntax remains supporting, potential evidence.
+                    m.extra["source_capabilities"] = []
                 m.extra["verified_agent"] = False
             elif (m.signature_id, id(m.signal), m.line) in bound_signals or (
                 _bundled_signature(m.signature) and not _within(m.extra.get("start", -1), unbound)
@@ -2335,15 +2360,31 @@ class FilesystemConnector(BaseConnector):
                 m.extra["lexical_source"] = file.lang
             self._record_content(file, m, self._file_excerpt(file, m.line))
 
-    @staticmethod
-    def _register_mcp_tools(file: _SourceFile, ignored: list[tuple[int, int]]) -> None:
+    def _register_mcp_tools(self, file: _SourceFile, ignored: list[tuple[int, int]]) -> None:
         """Remember the MCP tool names a source file registers, bounded per project."""
         tools = file.proj.mcp_tools
-        for tool in mcp_tool_names(file.text, ignore_spans=ignored):
+        try:
+            names = mcp_tool_names(
+                file.text,
+                file.lang,
+                ignored=ignored,
+                max_ast_nodes=self.max_ast_nodes,
+                require_mcp_binding=True,
+            )
+        except MCPToolLimitError as exc:
+            self.ctx.error(f"code.filesystem: {file.rel}: {exc}; tool analysis incomplete")
+            names = exc.names
+        for tool in names:
             known = tools.get(tool)
             if known is None:
                 if len(tools) < _MAX_MCP_TOOLS:
                     tools[tool] = file.rel
+                elif not file.proj.mcp_tools_limited:
+                    file.proj.mcp_tools_limited = True
+                    self.ctx.error(
+                        f"code.filesystem: {file.rel}: project MCP tool-name limit exceeded; "
+                        "tool analysis incomplete"
+                    )
             elif _is_test_path(known) and not _is_test_path(file.rel):
                 tools[tool] = file.rel  # prefer where deployed code registers it
 
@@ -2627,12 +2668,17 @@ class FilesystemConnector(BaseConnector):
         if not self.use_git:
             return {}
         marker = root / ".git"
-        # Worktree gitfiles and symlinks can redirect Git outside the requested
-        # checkout. Optional enrichment supports self-contained checkouts only.
-        if marker.is_symlink() or (marker.exists() and not marker.is_dir()):
-            self.ctx.warn("code.filesystem: git metadata must be a local .git directory; enrichment skipped")
+        if not os.path.lexists(marker):
             return {}
-        if not marker.exists():
+        deadline = time.monotonic() + 20
+        if self.ctx.deadline is not None:
+            deadline = min(deadline, self.ctx.deadline)
+        try:
+            require_local_git_metadata(root, timeout=deadline - time.monotonic())
+        except ValueError:
+            self.ctx.warn(
+                "code.filesystem: git metadata must be a confined local .git directory; enrichment skipped"
+            )
             return {}
         target = "." if rel_root == "." else rel_root
         try:
@@ -2652,7 +2698,7 @@ class FilesystemConnector(BaseConnector):
                 ],
                 env=metadata_git_env(),
                 ctx=self.ctx,
-                timeout=20,
+                timeout=deadline - time.monotonic(),
             )
             if out.returncode == 0 and out.stdout.strip():
                 # NUL separators: an author name may itself contain "|".
@@ -2694,8 +2740,8 @@ class FilesystemConnector(BaseConnector):
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         self.ctx.warn(
-            "code.filesystem: offline git enrichment failed; Git 2.45+ and locally available history "
-            "are required"
+            "code.filesystem: bounded offline git enrichment failed; Git 2.45+ and locally available history "
+            "within the metadata output limit are required"
         )
         return {}
 

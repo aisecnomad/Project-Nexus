@@ -462,6 +462,10 @@ Options: `domain` (tenant domain such as `acme.eu.auth0.com`, env
 `AUTH0_DOMAIN`) and the M2M application's `client_id` and `client_secret` (env
 `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`).
 
+Client grants whose parent client is unavailable remain distinct unresolved
+observations and make coverage incomplete. An inventory card cannot approve
+an unresolved identity.
+
 ### `identity.jwt`
 Decodes tokens (never stored) and classifies the holder as `human`, `service`,
 `workload`, `delegated`, `agent` or `delegated-agent` using issuer-specific
@@ -564,6 +568,10 @@ Options: `instance` (env `SNOW_INSTANCE`), `username` and `password` (env
 token instead of basic auth; `max_pages` (per table, at most 1000); `input`
 for an offline JSON export of the table records.
 
+Tools and triggers with unresolved agent/usecase references remain visible
+as unresolved observations, make coverage incomplete and cannot inherit
+registry approval from an unrelated parent.
+
 ### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
@@ -652,8 +660,9 @@ Server-to-Server OAuth app, or `access_token` (env `ZOOM_ACCESS_TOKEN`).
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
 and privileged/data scopes (`keep_all: true` to emit everything). Records
-without an app name are skipped and counted, and an export where no record
-maps to a name makes the scan incomplete instead of looking empty.
+without a usable string app name make coverage incomplete while valid
+neighboring records remain available. A partial export cannot resolve an
+earlier finding merely because that row lost its name.
 `platform` (default `saas`) names the export's source, for example
 `google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
 and resource IDs and sets the provider, so keep it stable between scans.
@@ -743,7 +752,10 @@ service accounts (user-managed keys), API keys restricted to Gemini, Secret
 Manager names, optional Cloud Audit Log callers (`audit_days`). Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
-shows access, not observed agent execution.
+shows potential access, not observed agent execution. Project IAM collection
+requests policy version 3 and preserves each conditional binding. Conditions
+must be evaluated separately before asserting effective access; degraded
+`_withcond_` exports are retained with incomplete diagnostics.
 Cloud Run discovery enumerates project locations and then lists services in each
 concrete region (`run.locations.list` and `run.services.list` permissions).
 Unreachable locations reported by GCP make the scan incomplete. `max_projects`

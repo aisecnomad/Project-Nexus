@@ -255,6 +255,14 @@ All code connectors default to `use_git: false`. Source inspection and
 local metadata, set the connector's `use_git: true` explicitly (a YAML boolean).
 History enrichment requires Git 2.45 or later and a self-contained `.git`
 directory; external gitfiles and symlinks are not accepted for enrichment.
+Metadata preflight also rejects common-directory and alternate-object
+indirections, local `include`/`includeIf` configuration sections, internal links
+and special files. Local `config` and `config.worktree` use confined reads with
+a 1 MiB limit and a conservative UTF-8, single-line configuration grammar.
+Ordinary sections, quoted or deprecated dotted subsections, comments and
+single-line values work; unsupported section syntax, continuations and multiline
+values make coverage incomplete before Git starts. Inputs must remain immutable
+while Git runs; preflight is not a filesystem snapshot or process sandbox.
 Unsupported versions and failed metadata reads, including unavailable history
 objects, make the scan incomplete while preserving code findings.
 
@@ -534,6 +542,27 @@ governance checker. The release workflow obtains its snapshot
 directly from GitHub; an offline receipt cannot authenticate its own API origin,
 establish historical enforcement or prove an actual human approved the final PR.
 
+The [two-ruleset payload helper](https://github.com/aisecnomad/Project-Nexus/tree/main/tools/governance)
+additionally prepares `Protect main` and `Require CI and CodeQL` together,
+removing bypass actors from both. The observed snapshots and proposed PUT
+bodies are in [.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
+Both rulesets remained disabled during this implementation readback. Refresh
+those observations and regenerate the bodies before applying them; the files
+are preparation, not evidence of active enforcement. After administrator PUTs,
+compare each fresh full API response against its exact approved body:
+
+```bash
+python -m tools.governance.rulesets plan --ruleset-id 23892853 \
+  --input /secure/protect-main-before.json --output /secure/protect-main-update.json
+python -m tools.governance.rulesets plan --ruleset-id 23913372 \
+  --input /secure/main-rules-before.json --output /secure/main-rules-update.json
+# Apply each reviewed body to its matching ruleset through an administrator.
+python -m tools.governance.rulesets verify --ruleset-id 23892853 \
+  --input /secure/protect-main-after.json --expected /secure/protect-main-update.json
+python -m tools.governance.rulesets verify --ruleset-id 23913372 \
+  --input /secure/main-rules-after.json --expected /secure/main-rules-update.json
+```
+
 An approving review counts only when it comes from a person with write access,
 other than the author, and covers the final revision of the pull request. A
 successful workflow run or Copilot review does not supply that approval. A
@@ -644,6 +673,30 @@ These notes record behavior changes made while the 0.1.1 candidate was being
 hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 2 integrity and capability corrections
+
+Collect a fresh baseline before enforcing these changes. Empty, disabled or
+unresolved provider tool options no longer establish tool-use; safely bound
+Python literal collections still do. MCP comments and string examples no longer
+establish registrations, supported decorator options do, and independent
+execution-sink evidence remains visible. Review capability and risk-score
+changes rather than carrying forward the previous classification.
+
+Conditional GCP IAM bindings retain their conditions and count as potential
+access. Degraded conditional-role exports, unresolved Auth0 grants and
+ServiceNow tools or triggers, and SaaS rows missing usable names make coverage
+incomplete. Unresolved children cannot approve a parent in the registry. Fix
+the export or association before using a scan to resolve earlier findings.
+
+Malformed UTF-8 and malformed BOM-declared text now produce a fixed coverage
+gap instead of being analyzed with replacement characters. Git metadata
+enrichment rejects common-directory and alternate-object indirections, local
+configuration includes, internal links and special files; use an immutable,
+self-contained checkout with supported single-line configuration if you opt
+in. Supported mixed interpolated credential strings with opaque static
+material are now withheld. Regenerate old reports and review changed finding
+identities; sanitization still does not make a report public data.
 
 ### October 2 integration review: redaction and source decoding
 

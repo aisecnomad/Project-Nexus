@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from shadowscan.connectors.code import provider_tools
 from shadowscan.models import Kind
 from shadowscan.risk import assess
 
@@ -231,3 +232,230 @@ def test_foreign_shadowed_or_unused_pydantic_decorators_do_not_grant_tools(
     )
     assert finding.kind == Kind.AGENT
     assert "tool-use" not in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    ("module", "constructor", "method"),
+    [("openai", "OpenAI", "chat.completions.create"), ("anthropic", "Anthropic", "messages.create")],
+)
+@pytest.mark.parametrize("value", ["[]", "()", "{}", "None", "False", "[{}]", "unknown", "load_tools()"])
+def test_provider_empty_or_unknown_tools_are_unscored(
+    tmp_path, run_connector, module, constructor, method, value
+):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        f"from {module} import {constructor}\nclient = {constructor}()\n"
+        f'client.{method}(model="example", tools={value})\n',
+    )
+    assert finding.kind == Kind.FRAMEWORK_USAGE
+    assert f"provider.{module}" in finding.model_providers
+    assert "tool-use" not in finding.capabilities
+    assert not any(factor.id == "capability:tool-use" for factor in assess(finding).factors)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "tools=[], tool_choice='auto'",
+        "tools=[{'function_declarations': []}]",
+        "tools=[{'function_declarations': unknown}]",
+        "tools=[{'name': 'lookup'}], tool_choice='none'",
+        "tools=[{'name': 'lookup'}], tool_choice={'type': 'none'}",
+        "tools=[{'name': 'lookup'}], tool_choice=unknown",
+        "tools=[{'name': 'lookup'}], tool_choice={'type': unknown, 'name': 'lookup'}",
+        "functions=[{'name': 'lookup'}], function_call='none'",
+        "tools=[{'name': 'lookup'}], **options",
+        "toolConfig={}",
+        "toolConfig={'tools': []}",
+        "toolConfig={'tools': [{'name': 'lookup'}], 'toolChoice': {'type': 'none'}}",
+        "tools=[{'name': 'lookup'}], toolConfig=unknown",
+    ],
+)
+def test_disabled_or_ambiguous_provider_selection_is_unscored(tmp_path, run_connector, options):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        f'client.chat.completions.create(model="example", {options})\n',
+    )
+    assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" not in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "tools=[{'type': 'function', 'function': {'name': 'lookup'}}]",
+        "tools=[{'name': 'lookup', 'input_schema': {'type': 'object'}}], tool_choice={'type': 'auto'}",
+        "tools=[{'name': 'lookup'}], tool_choice='required'",
+        "tools=[{'name': 'lookup'}], tool_choice={'type': 'function', 'function': {'name': 'lookup'}}",
+        "functions=[{'name': 'lookup'}], function_call={'name': 'lookup'}",
+        "function_declarations=[{'name': 'lookup'}]",
+        "tools=[{'function_declarations': [{'name': 'lookup'}]}]",
+        "toolConfig={'tools': [{'toolSpec': {'name': 'lookup'}}]}",
+    ],
+)
+def test_nonempty_enabled_provider_tools_keep_capability(tmp_path, run_connector, options):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        "from openai import OpenAI\nclient = OpenAI()\n"
+        f'client.chat.completions.create(model="example", {options})\n',
+    )
+    assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "tools: []",
+        "tools: null",
+        "tools: undefined",
+        "tools: false",
+        "tools: [{}]",
+        "tools: [{functionDeclarations: []}]",
+        "tools: [{functionDeclarations: unknown}]",
+        "tools: unknown",
+        "tools: loadTools()",
+        "tools: [{name: 'lookup'}], tool_choice: 'none'",
+        "tools: [{name: 'lookup'}], tool_choice: {type: 'none'}",
+        "tools: [{name: 'lookup'}], tool_choice: unknown",
+        "tools: [{name: 'lookup'}], tool_choice: {type: unknown, name: 'lookup'}",
+        "functions: [{name: 'lookup'}], function_call: 'none'",
+        "tools: [{name: 'lookup'}], ...options",
+        "tools: [{name: 'lookup'}], tools: []",
+        "toolConfig: {}",
+        "toolConfig: {tools: []}",
+        "toolConfig: {tools: [{toolSpec: {name: 'lookup'}}], toolChoice: {type: 'none'}}",
+        "tools: [{name: 'lookup'}], toolConfig: unknown",
+    ],
+)
+def test_empty_disabled_or_ambiguous_javascript_provider_tools_are_unscored(tmp_path, run_connector, options):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        f"import OpenAI from 'openai';\nOpenAI.chat.completions.create({{model: 'example', {options}}});\n",
+        ".ts",
+    )
+    assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" not in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        "tools: [{type: 'function', function: {name: 'lookup'}}]",
+        "tools: [{name: 'lookup'}], tool_choice: 'required'",
+        "tools: [{name: 'lookup'}], tool_choice: {type: 'auto'}",
+        "tools: [{name: 'lookup'}], tool_choice: {type: 'function', function: {name: 'lookup'}}",
+        "functions: [{name: 'lookup'}], function_call: {name: 'lookup'}",
+        "function_declarations: [{name: 'lookup'}]",
+        "tools: [{functionDeclarations: [{name: 'lookup'}]}]",
+        "toolConfig: {tools: [{toolSpec: {name: 'lookup'}}]}",
+    ],
+)
+def test_nonempty_enabled_javascript_provider_tools_keep_capability(tmp_path, run_connector, options):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        f"import OpenAI from 'openai';\nOpenAI.chat.completions.create({{model: 'example', {options}}});\n",
+        ".ts",
+    )
+    assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    ("module", "constructor", "method"),
+    [("openai", "OpenAI", "chat.completions.create"), ("anthropic", "Anthropic", "messages.create")],
+)
+@pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("declaration", ["tools =", "tools: list[dict] ="])
+def test_provider_single_same_scope_literal_schema_preserves_tools(
+    tmp_path, run_connector, module, constructor, method, local, declaration
+):
+    schema = (
+        "[{'type': 'function', 'function': {'name': 'lookup'}}]"
+        if module == "openai"
+        else "[{'name': 'lookup', 'input_schema': {'type': 'object'}}]"
+    )
+    body = f"{declaration} {schema}\nclient.{method}(model='example', tools=tools)\n"
+    if local:
+        body = "def run():\n" + "".join(f"    {line}\n" for line in body.splitlines())
+    finding = _scan(
+        tmp_path, run_connector, f"from {module} import {constructor}\nclient = {constructor}()\n" + body
+    )
+    assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "tools = []\nCALL\n",
+        "tools = unknown\nCALL\n",
+        "tools = load_tools()\nCALL\n",
+        "tools = SCHEMA\ntools = []\nCALL\n",
+        "tools = SCHEMA\ntools.clear()\nCALL\n",
+        "tools = SCHEMA\ntools[0] = {}\nCALL\n",
+        "tools = SCHEMA\ndel tools[0]\nCALL\n",
+        "tools = SCHEMA\nalias = tools\nalias.clear()\nCALL\n",
+        "tools = SCHEMA\nmutate(tools)\nCALL\n",
+        "CALL\ntools = SCHEMA\n",
+        "tools = SCHEMA\ndef run(tools):\n    CALL\n",
+        "tools = SCHEMA\ndef run():\n    CALL\n",
+        "tools = SCHEMA\ndef mutate():\n    tools.clear()\nmutate()\nCALL\n",
+        "if condition:\n    tools = SCHEMA\nCALL\n",
+        "tools = SCHEMA\nfrom foreign import tools\nCALL\n",
+        "tools = SCHEMA\nfrom foreign import *\nfrom openai import OpenAI\nclient = OpenAI()\nCALL\n",
+    ],
+)
+def test_provider_unsafe_schema_variable_stays_unscored(tmp_path, run_connector, body):
+    source = "from openai import OpenAI\nclient = OpenAI()\n" + body.replace(
+        "SCHEMA", "[{'type': 'function', 'function': {'name': 'lookup'}}]"
+    ).replace("CALL", "client.chat.completions.create(model='example', tools=tools)")
+    finding = _scan(tmp_path, run_connector, source)
+    assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" not in finding.capabilities
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    ["const tools = [];", "const tools = unknown;", "const tools = loadTools();"],
+)
+def test_dynamic_javascript_schema_declarations_remain_supporting(tmp_path, run_connector, declaration):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        "import OpenAI from 'openai';\n"
+        f"{declaration}\nOpenAI.chat.completions.create({{model: 'example', tools: tools}});\n",
+        ".ts",
+    )
+    assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" not in finding.capabilities
+
+
+@pytest.mark.parametrize("config", [False, True])
+def test_repeated_large_empty_schema_stays_within_analysis_budget(
+    tmp_path, run_connector, monkeypatch, config
+):
+    # The whole input fits the AST budget. Reusing one large declaration must
+    # not spend its structural budget again for each of the 128 requests.
+    schema = "[" + ",".join("{}" for _ in range(9_000)) + "]"
+    if config:
+        fields = ",".join(f"'unused{number}': None" for number in range(4_000))
+        schema = "{" + fields + ", 'tools': " + schema + "}"
+    option = "toolConfig" if config else "tools"
+    source = (
+        "from openai import OpenAI\nclient = OpenAI()\ncatalog = "
+        + schema
+        + "\n"
+        + f"client.chat.completions.create(model='example', {option}=catalog)\n" * 128
+    )
+    remaining = 300
+    timeout = provider_tools.pattern_timeout
+
+    def bounded_analysis():
+        nonlocal remaining
+        remaining -= 1
+        assert remaining >= 0, "shared schema analysis exceeded the per-input structural budget"
+        return timeout()
+
+    monkeypatch.setattr(provider_tools, "pattern_timeout", bounded_analysis)
+    finding = _scan(tmp_path, run_connector, source)
+    assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" not in finding.capabilities

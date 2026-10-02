@@ -19,6 +19,8 @@ from configparser import Error as ConfigError
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from shadowscan.utils.files import open_confined_directory, open_confined_file
+
 _OBJECT_ID_RX = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 MAX_METADATA_OUTPUT_BYTES = 16 * 1024
 
@@ -40,6 +42,12 @@ _MAX_GITLINK_OUTPUT_BYTES = 8 * 1024 * 1024
 # With runs this short the parser stays linear in the size of the file.
 _MAX_GITMODULES_BLANK_RUN = 32
 _GITMODULES_BLANK_RUN = re.compile(rf"[^\S\n]{{{_MAX_GITMODULES_BLANK_RUN + 1},}}")
+_MAX_GIT_METADATA_DEPTH = 64
+_MAX_GIT_CONFIG_BYTES = 1024 * 1024
+_GIT_CONFIG_FILES = frozenset({"config", "config.worktree"})
+_GIT_METADATA_INDIRECTIONS = frozenset(
+    {"commondir", "objects/info/alternates", "objects/info/http-alternates"}
+)
 
 
 def _submodule_path(value: str) -> str:
@@ -472,6 +480,7 @@ def run_bounded_metadata(
     *,
     timeout: float = 20.0,
     max_bytes: int = MAX_METADATA_OUTPUT_BYTES,
+    strict_utf8: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Read metadata subprocess output within one combined byte/time budget.
 
@@ -480,6 +489,8 @@ def run_bounded_metadata(
     stdout, and discard stderr after charging it to the same budget. Nonblocking
     pipes avoid reader threads that could outlive cancellation. Every failed read
     kills and reaps the process group before its descriptors are closed.
+    Immutable IDs and tree paths select strict_utf8 so invalid bytes cannot
+    silently become a different identifier; human author text remains lenient.
     """
     if os.name != "posix":
         raise ValueError("bounded Git metadata access is unavailable on this platform")
@@ -542,7 +553,10 @@ def run_bounded_metadata(
         if status != 0:
             _stop_clone(proc)
         return subprocess.CompletedProcess(
-            cmd, status, stdout=stdout.decode("utf-8", errors="replace"), stderr=""
+            cmd,
+            status,
+            stdout=stdout.decode("utf-8", errors="strict" if strict_utf8 else "replace"),
+            stderr="",
         )
     except BaseException:
         _stop_clone(proc)
@@ -722,6 +736,153 @@ def metadata_git_argv_prefix() -> list[str]:
     return [*git_argv_prefix(), "--no-lazy-fetch", "--no-pager", "--literal-pathspecs"]
 
 
+def _git_config_section(line: str) -> str:
+    """Read a conservative single-line Git section without interpreting includes."""
+    match = re.match(r"\[([A-Za-z0-9][A-Za-z0-9.-]*)", line)
+    if match is None:
+        raise ValueError("unsupported git metadata configuration syntax")
+    section = match[1].split(".", 1)[0].lower()
+    if section in {"include", "includeif"}:
+        raise ValueError("git metadata configuration includes are unsupported")
+    position = match.end()
+    while position < len(line) and line[position] in " \t":
+        position += 1
+    if position < len(line) and line[position] == '"':
+        position += 1
+        while position < len(line) and line[position] != '"':
+            if line[position] == "\\":
+                position += 1
+                if position >= len(line) or line[position] not in '\\"':
+                    raise ValueError("unsupported git metadata configuration syntax")
+            position += 1
+        if position >= len(line):
+            raise ValueError("unsupported git metadata configuration syntax")
+        position += 1
+        while position < len(line) and line[position] in " \t":
+            position += 1
+    if position >= len(line) or line[position] != "]":
+        raise ValueError("unsupported git metadata configuration syntax")
+    tail = line[position + 1 :].lstrip(" \t")
+    if tail and tail[0] not in "#;":
+        raise ValueError("unsupported git metadata configuration syntax")
+    return section
+
+
+def _require_git_config_without_includes(path: PurePosixPath, *, dir_fd: int, deadline: float) -> None:
+    """Inspect only a bounded, confined config using a conservative physical-line grammar.
+
+    Git's include/includeIf directives can read arbitrary paths even with all
+    transports disabled. Do not ask Git to parse this file: parsing would
+    already follow the directive. Unsupported encodings, continuations and
+    multiline values fail closed rather than claiming to implement Git's full
+    configuration language. Ordinary sections, quoted subsections, comments,
+    boolean keys and single-line key/value settings are accepted.
+    """
+    with open_confined_file(path, label="git configuration", dir_fd=dir_fd) as (fh, info):
+        if info.st_size > _MAX_GIT_CONFIG_BYTES:
+            raise ValueError("git metadata configuration size limit exceeded")
+        raw = fh.read(_MAX_GIT_CONFIG_BYTES + 1)
+    if len(raw) > _MAX_GIT_CONFIG_BYTES:
+        raise ValueError("git metadata configuration size limit exceeded")
+    if time.monotonic() >= deadline:
+        raise ValueError("git metadata inspection deadline exceeded")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeError:
+        raise ValueError("unsupported git metadata configuration encoding") from None
+    if any(ord(char) < 32 and char not in "\t\r\n" for char in text):
+        raise ValueError("unsupported git metadata configuration syntax")
+    for physical in text.split("\n"):
+        if time.monotonic() >= deadline:
+            raise ValueError("git metadata inspection deadline exceeded")
+        line = physical.strip(" \t\r")
+        if not line or line[0] in "#;":
+            continue
+        # Refuse physical-line joins, including ones that would construct a
+        # section name. Rejecting them avoids a second, subtly different Git
+        # lexer at the trust boundary.
+        if line.endswith("\\"):
+            raise ValueError("unsupported git metadata configuration syntax")
+        if line[0] == "[":
+            _git_config_section(line)
+            continue
+        # Values cannot add an include without a section header. Check only
+        # their quote/escape boundaries so a later header is never hidden in
+        # a multiline value; leave ordinary key/value semantics to Git.
+        quoted = escaped = False
+        for char in line:
+            if escaped:
+                if char not in 'ntb\\"':
+                    raise ValueError("unsupported git metadata configuration syntax")
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = not quoted
+            elif char in "#;" and not quoted:
+                break
+        if quoted or escaped:
+            raise ValueError("unsupported git metadata configuration syntax")
+    if time.monotonic() >= deadline:
+        raise ValueError("git metadata inspection deadline exceeded")
+
+
+def require_local_git_metadata(path: Path, *, timeout: float = 10.0) -> None:
+    """Refuse metadata layouts that can redirect Git beyond this checkout.
+
+    A directory named .git alone is insufficient: common directories, alternate
+    object stores, local config includes and internal filesystem links still
+    redirect metadata reads. Local configuration must use the conservative
+    bounded single-line syntax accepted above.
+    Inspect only bounded, regular metadata through confined directory opens.
+    Inputs must remain immutable while Git runs; this preflight is not a
+    filesystem snapshot or a sandbox for the Git subprocess.
+    """
+    if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("git metadata inspection deadline exceeded")
+    deadline = time.monotonic() + timeout
+    marker = path / ".git"
+    pending = [PurePosixPath(".")]
+    examined = 0
+    try:
+        while pending:
+            if time.monotonic() >= deadline:
+                raise ValueError("git metadata inspection deadline exceeded")
+            relative = pending.pop()
+            anchor = open_confined_directory(marker / relative)
+            try:
+                directory = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=anchor)
+            finally:
+                os.close(anchor)
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        examined += 1
+                        if examined > _MAX_CLONE_ENTRIES or time.monotonic() >= deadline:
+                            raise ValueError("git metadata inspection limit exceeded")
+                        child = relative / entry.name
+                        # Git's conventional paths can resolve to differently
+                        # cased names on case-insensitive filesystems.
+                        metadata_name = child.as_posix().lower()
+                        if metadata_name in _GIT_METADATA_INDIRECTIONS:
+                            raise ValueError("git metadata indirections are unsupported")
+                        info = entry.stat(follow_symlinks=False)
+                        if stat.S_ISDIR(info.st_mode):
+                            if len(child.parts) > _MAX_GIT_METADATA_DEPTH:
+                                raise ValueError("git metadata nesting limit exceeded")
+                            pending.append(child)
+                        elif not stat.S_ISREG(info.st_mode):
+                            raise ValueError("git metadata links and special files are unsupported")
+                        elif metadata_name in _GIT_CONFIG_FILES:
+                            _require_git_config_without_includes(
+                                PurePosixPath(entry.name), dir_fd=directory, deadline=deadline
+                            )
+            finally:
+                os.close(directory)
+    except OSError:
+        raise ValueError("git metadata must be a confined local directory") from None
+
+
 def read_gitlink_paths(path: Path, *, timeout: float = 10.0) -> list[str] | None:
     """Inventory committed gitlinks only where the caller already permits Git.
 
@@ -733,50 +894,32 @@ def read_gitlink_paths(path: Path, *, timeout: float = 10.0) -> list[str] | None
     HEAD also anchors incremental cache identity; staged-only modules require
     .gitmodules declarations, just as they do in metadata-free local scans.
     """
-    if not math.isfinite(timeout) or timeout <= 0:
-        return None
-    marker = path / ".git"
-    if marker.is_symlink() or not marker.is_dir():
+    if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
         return None
     duration = min(timeout, 10.0)
+    deadline = time.monotonic() + duration
+    try:
+        require_local_git_metadata(path, timeout=duration)
+    except ValueError:
+        return None
     env = metadata_git_env()
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    from shadowscan.connectors.base import ConnectorContext
+
     try:
-        proc = subprocess.Popen(
+        result = run_bounded_metadata(
             [*metadata_git_argv_prefix(), "-C", str(path), "ls-tree", "-r", "-z", "--full-tree", "HEAD"],
             env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            start_new_session=os.name == "posix",
+            ctx=ConnectorContext(),
+            timeout=deadline - time.monotonic(),
+            max_bytes=_MAX_GITLINK_OUTPUT_BYTES,
+            strict_utf8=True,
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
         return None
-    expired = threading.Event()
-
-    def abort() -> None:
-        expired.set()
-        _stop_clone(proc)
-
-    timer = threading.Timer(duration, abort)
-    timer.daemon = True
-    timer.start()
-    try:
-        assert proc.stdout is not None
-        output = proc.stdout.read(_MAX_GITLINK_OUTPUT_BYTES + 1)
-        if len(output) > _MAX_GITLINK_OUTPUT_BYTES or expired.is_set():
-            return None
-        if proc.wait(timeout=duration) != 0 or expired.is_set():
-            return None
-    except (OSError, subprocess.SubprocessError):
+    if result.returncode != 0:
         return None
-    finally:
-        timer.cancel()
-        if proc.poll() is None:
-            _stop_clone(proc)
-        timer.join()
-        if proc.stdout is not None:
-            proc.stdout.close()
+    output = result.stdout.encode("utf-8")
     if output and not output.endswith(b"\0"):
         return None
     paths: set[str] = set()
@@ -807,30 +950,37 @@ def read_git_snapshot(path: str | os.PathLike[str], *, timeout: float = 10.0) ->
     stable source identity to remote-clone scans; failure is reported by the
     caller as incomplete provenance while preserving scan findings.
     """
-    if timeout <= 0:
+    if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
         return None
     root = os.fspath(path)
     if not root or "\x00" in root:
         return None
 
+    deadline = time.monotonic() + min(timeout, 10.0)
+    try:
+        require_local_git_metadata(Path(root), timeout=min(timeout, 10.0))
+    except ValueError:
+        return None
     env = metadata_git_env()
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
-    deadline = time.monotonic() + min(timeout, 10.0)
+    from shadowscan.connectors.base import ConnectorContext
+
+    ctx = ConnectorContext()
     values: list[str] = []
     for revision in ("HEAD^{commit}", "HEAD^{tree}"):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None
         try:
-            result = subprocess.run(
-                [*git_argv_prefix(), "-C", root, "rev-parse", "--verify", revision],
+            result = run_bounded_metadata(
+                [*metadata_git_argv_prefix(), "-C", root, "rev-parse", "--verify", revision],
                 env=env,
-                capture_output=True,
-                text=True,
+                ctx=ctx,
                 timeout=remaining,
-                check=False,
+                max_bytes=256,
+                strict_utf8=True,
             )
-        except (OSError, subprocess.SubprocessError, ValueError):
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
             return None
         if result.returncode != 0:
             return None

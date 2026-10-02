@@ -6,6 +6,7 @@ import pytest
 
 from shadowscan.connectors.code import javascript_dispatch
 from shadowscan.connectors.code.source_ranges import noncode_ranges
+from shadowscan.models import Kind
 
 SOURCE = """import OpenAI from "openai";
 const client = new OpenAI();
@@ -28,6 +29,29 @@ def _recognize(source: str, constructor_lines: set[int] | None = None) -> list[i
 
 def test_bound_single_dispatch_is_recognized():
     assert _recognize(SOURCE) == [3]
+
+
+@pytest.mark.parametrize("choice", ['"auto"', '"required"'])
+def test_enabled_literal_selection_preserves_dispatch(tmp_path, run_connector, choice):
+    source = SOURCE.replace("tools: TOOLS", f"tools: TOOLS, tool_choice: {choice}")
+    assert _recognize(source) == [3]
+    (tmp_path / "app.js").write_text(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT and "tool-use" in finding.capabilities for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "choice", ['"none"', '"unsupported"', '""', "selection", "null", "undefined", "false", "true", "0"]
+)
+def test_disabled_or_unknown_selection_cannot_establish_dispatch(tmp_path, run_connector, choice):
+    source = SOURCE.replace("tools: TOOLS", f"tools: TOOLS, tool_choice: {choice}")
+    assert _recognize(source) == []
+    (tmp_path / "app.js").write_text(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)
+    assert not any(finding.kind == Kind.AGENT or "tool-use" in finding.capabilities for finding in findings)
 
 
 @pytest.mark.parametrize(

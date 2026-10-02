@@ -99,6 +99,46 @@ def test_scan_ignores_noise_dirs_and_binary(tmp_path: Path, run_connector):
     assert findings == [] and not ctx.stats.errors
 
 
+def test_nul_in_javascript_source_cannot_produce_complete_empty_scan(tmp_path: Path, run_connector):
+    source = (
+        "import { Agent } from '@mastra/core/agent';\n"
+        "const agent = new Agent({name:'research', instructions:'research', model:'openai/gpt-4o'});\n"
+    )
+    path = tmp_path / "agent.mjs"
+    path.write_text(source, encoding="utf-8")
+    before, before_ctx = run_connector("code.filesystem", path=str(tmp_path))
+    path.write_bytes(("//\x00 ordinary comment\n" + source).encode())
+    after, after_ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert any(f.kind == Kind.AGENT for f in before)
+    assert after == []
+    assert not before_ctx.stats.incomplete and after_ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("encoding", ["utf-8-sig", "utf-16", "utf-32"])
+def test_bom_declared_source_encoding_preserves_agent_evidence(tmp_path: Path, run_connector, encoding):
+    path = tmp_path / "agent.py"
+    path.write_bytes("from crewai import Agent\nagent = Agent(role='researcher')\n".encode(encoding))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert any(f.kind == Kind.AGENT and "framework.crewai" in f.frameworks for f in findings)
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("body", [b"\xff invalid source", b"\xff\xfe\x00"])
+def test_undecodable_supported_source_is_incomplete(tmp_path: Path, run_connector, body):
+    (tmp_path / "agent.py").write_bytes(body)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and ctx.stats.incomplete
+    assert "binary or undecodable content in analyzable file" in " ".join(ctx.stats.errors)
+
+
+def test_nul_in_mcp_configuration_is_rejected_instead_of_silently_ignored(tmp_path: Path, run_connector):
+    path = tmp_path / ".mcp.json"
+    path.write_bytes(b'{"mcpServers":{"notes":{"command":"notes-server"}}}\x00')
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not any(f.kind == Kind.MCP_SERVER for f in findings)
+    assert ctx.stats.incomplete and (ctx.stats.errors or ctx.stats.warnings)
+
+
 def test_scan_detects_frameworks_from_source_only(tmp_path: Path, run_connector):
     (tmp_path / "bot.py").write_text(
         "from strands import Agent\nfrom strands_tools import shell\nagent = Agent(model='us.anthropic.claude-3-7-sonnet', tools=[shell])\nagent('deploy')\n"

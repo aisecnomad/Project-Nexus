@@ -161,6 +161,40 @@ class Auth0Connector(BaseConnector):
                 continue
             if f:
                 yield f
+        client_ids = {client["client_id"] for client in clients}
+        for client_id in sorted(grants.keys() - client_ids):
+            self.ctx.examined()
+            self.ctx.warn("identity.auth0: client grant references an unresolved client; coverage incomplete")
+            try:
+                f = self._client_finding(
+                    {"client_id": client_id, "name": "Unresolved client"}, grants[client_id]
+                )
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                KeyError,
+                RecursionError,
+                MatchTimeoutError,
+            ):
+                self.ctx.warn("identity.auth0: unresolved client grants could not be fully analyzed")
+                continue
+            if f is None:
+                continue
+            f.title = "Auth0 grants for unresolved client"
+            f.resource = f"auth0:unresolved-client:{client_id}"
+            f.resource_type = "unresolved-client"
+            f.identity_discriminator = "unresolved-client"
+            f.metadata.update({"identity_unresolved": True, "is_first_party": None})
+            f.add_tag("unresolved-identity")
+            for evidence in f.evidence:
+                if evidence.signal == "auth0:client":
+                    evidence.description = (
+                        f"Client {client_id} referenced by {len(grants[client_id])} grant(s) is missing "
+                        "from the inventory; its application type and first-party status are unknown"
+                    )
+            f.id = f.compute_id()
+            yield f
 
     def _client_finding(self, c: dict[str, Any], grants: list[dict[str, Any]]) -> Finding | None:
         name = c.get("name") or c.get("client_id")

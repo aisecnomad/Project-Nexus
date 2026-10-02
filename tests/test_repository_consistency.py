@@ -559,6 +559,31 @@ def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
         assert "mkdocs-material==" not in _read(workflow), f"{workflow.name} pins mkdocs outside the lock"
 
 
+@pytest.mark.parametrize(
+    "left,right",
+    tuple(
+        itertools.combinations(
+            (
+                "requirements.lock",
+                "requirements-build.lock",
+                "requirements-ci.lock",
+                "requirements-docs.lock",
+            ),
+            2,
+        )
+    ),
+)
+def test_combined_toolchain_locks_agree_on_shared_versions(left: str, right: str) -> None:
+    # make install and CI combine these locks. Independently valid locks can
+    # otherwise make the documented hash-locked install impossible to resolve.
+    locks = []
+    for filename in (left, right):
+        pins = re.findall(r"^([A-Za-z0-9_.-]+)==([^\s;\\]+)", _read(ROOT / filename), re.MULTILINE)
+        locks.append({re.sub(r"[-_.]+", "-", name).lower(): version for name, version in pins})
+    for package in sorted(locks[0].keys() & locks[1].keys()):
+        assert locks[0][package] == locks[1][package], f"{package}: {left} and {right} have conflicting pins"
+
+
 def test_ci_toolchain_is_exactly_pinned_and_hash_locked_everywhere() -> None:
     lock = _read(ROOT / "requirements-ci.lock")
     locked = {

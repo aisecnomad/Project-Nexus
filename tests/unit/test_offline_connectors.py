@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
+import json
 
+import pytest
+from click.testing import CliRunner
+
+from shadowscan.cli import main
 from shadowscan.models import Kind, Surface
+from shadowscan.registry import Inventory, InventoryEntry
 
 
 def _titles(findings):
@@ -60,6 +65,105 @@ def test_servicenow(run_connector, fixtures):
     )
     assert any(f.resource_type == "oauth-application-registry" for f in findings)
     assert "Nightly cleanup" not in " ".join(_titles(findings))
+
+
+@pytest.mark.parametrize(
+    "connector,fixture,expected_resources",
+    [
+        (
+            "identity.auth0",
+            "identity/auth0_orphan_grants.json",
+            {"auth0:client:known-client", "auth0:unresolved-client:missing-client"},
+        ),
+        (
+            "lowcode.servicenow",
+            "lowcode/servicenow_orphan_children.json",
+            {
+                "servicenow:sn_aia_agent:known-agent",
+                "servicenow:unresolved:sn_aia_agent:missing-agent",
+                "servicenow:unresolved:sn_aia_usecase:missing-usecase",
+            },
+        ),
+    ],
+)
+def test_orphan_child_exports_fail_cli_closed_and_retain_evidence(
+    run_connector, fixtures, connector, fixture, expected_resources
+):
+    source = fixtures / fixture
+    result = CliRunner().invoke(main, ["run", connector, "--input", str(source), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.stdout)
+    assert not report["summary"]["complete"] and report["stats"][0]["warnings"]
+    assert {finding["resource"] for finding in report["findings"]} == expected_resources
+    findings, ctx = run_connector(connector, input=str(source))
+    assert ctx.stats.incomplete
+    unresolved = [finding for finding in findings if finding.metadata.get("identity_unresolved")]
+    inventory = Inventory()
+    inventory.entries = [InventoryEntry(agent_id="broad", name="Broad approval", resources=["*"])]
+    assert unresolved and all(inventory.match(finding) is None for finding in unresolved)
+    if connector == "identity.auth0":
+        assert unresolved[0].permissions == ["write:tickets"]
+        assert unresolved[0].metadata["is_first_party"] is None
+    else:
+        assert all(finding.kind == Kind.AGENT_CONFIG for finding in unresolved)
+        assert any("code-exec" in finding.capabilities for finding in unresolved)
+        assert any("autonomous" in finding.capabilities for finding in unresolved)
+
+
+@pytest.mark.parametrize("name", [None, "", "   ", 123, ["Claude"]])
+def test_generic_missing_or_invalid_name_fails_cli_closed_and_retains_valid_apps(tmp_path, name):
+    source = tmp_path / "apps.json"
+    source.write_text(
+        json.dumps(
+            [
+                {"id": "unidentified", "name": name, "scopes": ["Mail.ReadWrite"]},
+                {"id": "valid", "name": "Claude", "scopes": ["Mail.ReadWrite"]},
+            ]
+        )
+    )
+    result = CliRunner().invoke(main, ["run", "saas.generic", "--input", str(source), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.stdout)
+    assert not report["summary"]["complete"]
+    assert [finding["resource"] for finding in report["findings"]] == ["saas:app:valid"]
+    assert report["stats"][0]["objects_examined"] == 2
+    assert any("app name" in warning for warning in report["stats"][0]["warnings"])
+
+
+@pytest.mark.parametrize("missing", ["sys_id", "name"])
+@pytest.mark.parametrize(
+    "parent_table,child_table,parent_field",
+    [("sn_aia_agent", "sn_aia_tool", "agent"), ("sn_aia_usecase", "sn_aia_trigger", "usecase")],
+)
+def test_servicenow_absent_parent_fields_cannot_match_literal_none_reference(
+    run_connector, tmp_path, missing, parent_table, child_table, parent_field
+):
+    parent = {"_table": parent_table, "sys_id": "known-parent", "name": "Known parent"}
+    parent.pop(missing)
+    child = {
+        "_table": child_table,
+        "sys_id": "child-1",
+        "name": "Configured child",
+        "type": "script",
+        "trigger_type": "scheduled",
+        parent_field: "None",
+    }
+    source = tmp_path / "servicenow.json"
+    source.write_text(json.dumps([parent, child]))
+
+    findings, ctx = run_connector("lowcode.servicenow", input=str(source))
+
+    assert ctx.stats.incomplete and len(findings) == 2
+    ordinary = next(finding for finding in findings if not finding.metadata.get("identity_unresolved"))
+    unresolved = next(finding for finding in findings if finding.metadata.get("identity_unresolved"))
+    assert unresolved.metadata["parent_reference"] == "None"
+    assert unresolved.metadata["child_count"] == 1
+    if child_table == "sn_aia_tool":
+        assert ordinary.metadata["tools"] == [] and "code-exec" not in ordinary.capabilities
+        assert "code-exec" in unresolved.capabilities
+    else:
+        assert ordinary.metadata["triggers"] == [] and "autonomous" not in ordinary.capabilities
+        assert "autonomous" in unresolved.capabilities
 
 
 @pytest.mark.parametrize(

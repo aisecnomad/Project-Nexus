@@ -116,6 +116,12 @@ coverage, even when a response includes an empty collection field.
   stdout and stderr share a 16 KiB limit, identity fields are capped, and
   cancellation or deadlines terminate the metadata process group. Unsupported
   Git behavior, malformed metadata or exceeded limits makes coverage incomplete.
+  Metadata preflight rejects common-directory and alternate-object indirections,
+  local `include`/`includeIf` configuration sections, internal links and special
+  files. Local `config` and `config.worktree` are read through confined
+  descriptors within a 1 MiB limit; unsupported section syntax, encodings,
+  continuations and multiline values fail closed. Inputs must remain immutable while Git runs;
+  preflight is not a filesystem snapshot or process sandbox.
   Clone calls have a separate HTTPS-only policy: credentials stay scoped to the
   approved origin and redirects are disabled. Hooks and inherited Git overrides
   are suppressed, and clones verify the objects they receive. A termination signal
@@ -231,7 +237,8 @@ coverage, even when a response includes an empty collection field.
   so treat reports as confidential. These forms can remain: an unprefixed
   literal passed to an ordinary function or nested in another call inside a
   credential constructor (`AzureKeyCredential(str("..."))`); a value assembled
-  by actual interpolation or another computed expression. A few LLM SDK
+  by a computed expression. Recognized credential calls with mixed interpolation
+  withhold opaque static material; pure variable references remain visible. A few LLM SDK
   calls take a key positionally under a name that names no credential; the
   literal at the key's position in these is withheld: Semantic Kernel's .NET
   Azure OpenAI and OpenAI connectors
@@ -247,16 +254,14 @@ coverage, even when a response includes an empty collection field.
   function, as are a key at a position no listed overload uses and a listed
   call through an aliased import (`gogpt.DefaultConfig("...")`).
   These forms can also remain: a word-like or short value under
-  a name that is not itself sensitive (an unquoted value made only of
-  capitalized words, digits and underscores reads as an identifier, so
-  `KEY1=Gh4Hj9Kl8Zx2Qw` and `openaiKey: Zx9Kq2Lm8Np4` stay); a lowercase word
+  a name that is not itself sensitive and that lacks recognized opaque
+  structure; a lowercase word
   after a space-separated option or as a fallback default; an option this
   list does not name, including command-specific one-letter options other
   than the recognized forms above; a positional
   argument of any other command; the part of an unquoted option value after a
-  bracket, brace or comma; a literal fallback of a name that is not a
-  credential's, even inside a credential constructor
-  (`new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "...")`);
+  bracket, brace or comma; a literal fallback outside recognized credential
+  contexts;
   URL userinfo that cannot be delimited: a password holding raw whitespace,
   quotes or angle brackets, one holding both a raw `@` and a raw `/`, `?` or
   `#`, a token without a colon that holds one of those
@@ -272,12 +277,8 @@ coverage, even when a response includes an empty collection field.
   sensitive name (`password:hunter2`) or under a bare `pwd` (the shell's
   working directory has that name); a field of a structured record whose
   name does not end in a credential word as above (`OpenAIKey`, `key1`, a
-  bare `auth` or `pass`) and holds a value that looks like no credential; a name/value
-  record in text whose value field comes before its name
-  (`{"value": "...", "name": "Password"}`, `- value: ...` above
-  `name: DB_PASSWORD`); the part of a quoted record value after a `}` inside
-  it under a name sensitive as a whole (`{"name": "Password", "value":
-  "p}..."}`); a record outside the bounded sibling/flow rules above; a
+  bare `auth` or `pass`) and holds a value that looks like no credential; a
+  record outside the bounded sibling/flow rules above; a
   value split across concatenated strings; and sensitive
   business data.
 * Generated inventory resource bindings escape literal glob characters. Manual

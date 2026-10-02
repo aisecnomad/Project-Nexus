@@ -1,0 +1,15 @@
+[
+  {
+    "_kind": "client_grant",
+    "client_id": "missing-client",
+    "audience": "https://internal.example/api",
+    "scope": ["write:tickets"]
+  },
+  {
+    "_kind": "client",
+    "client_id": "known-client",
+    "name": "Known service",
+    "app_type": "non_interactive",
+    "grant_types": ["client_credentials"]
+  }
+]

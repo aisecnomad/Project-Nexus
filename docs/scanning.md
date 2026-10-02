@@ -69,15 +69,15 @@ that are never silent:
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
   still run a script with a NUL in a comment, so it is a gap, not an empty file;
-  this includes UTF-16 without a byte-order mark. Invalid UTF-8 without a NUL
-  byte is decoded with replacement characters and analyzed. Names the scanner
+  this includes UTF-16 without a byte-order mark. Invalid UTF-8 and malformed
+  BOM-declared content also make coverage incomplete, with a fixed diagnostic
+  that does not expose the rejected bytes. Names the scanner
   never reads (images, archives, `.bin`, compiled artifacts) stay silent, and so
   does a recognised binary artifact (an executable, archive, image, PDF or
   SQLite database, by its header) that has no file extension, that only a
-  directory-wide signature glob such as `.cursor/rules/**` selected, or that is
-  a `.ts` MPEG transport-stream video segment. Unrecognised binary content stays
-  a gap in those places too. An operator can exclude a known binary with an
-  `exclude` file glob.
+  directory-wide signature glob such as `.cursor/rules/**` selected.
+  Unrecognised binary content stays a gap in those places too. An operator can
+  exclude a known binary with an `exclude` file glob.
 * **Entries that are not regular files** (a directory, FIFO, socket or device)
   named like a file the scanner analyzes, such as `.mcp.json` or
   `requirements.txt`, make the scan incomplete, as a symbolic link of the same

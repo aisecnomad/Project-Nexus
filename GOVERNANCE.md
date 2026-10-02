@@ -33,7 +33,11 @@ repository administration access. Do not weaken it, bypass
 review or checks, or count a green workflow as an independent review. The release-evidence
 workflow reads the live ruleset back and verifies it before building a
 candidate; a prepared settings update is not evidence that an administrator
-applied it.
+applied it. Proposed updates for both existing rulesets, including removal of
+`Protect main` bypass actors, are prepared under
+[.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
+Both remained disabled at the implementation readback; merge does not activate
+those files.
 
 ## Roles
 

@@ -134,6 +134,107 @@ def _by_kind(findings: list[Any]) -> dict[str, list[Any]]:
     return grouped
 
 
+def test_gcp_iam_collection_requests_conditions_and_preserves_policy_version(index):
+    connector = GcpConnector(context(index))
+    condition = {"title": "Expiry", "expression": "request.time < timestamp('2030-01-01T00:00:00Z')"}
+    binding = {"role": "roles/aiplatform.user", "members": ["user:dev@acme.example"], "condition": condition}
+    transport = FakeGoogle({}, posts={":getIamPolicy": {"version": 3, "bindings": [binding]}})
+    connector.http = transport  # type: ignore[assignment]
+
+    records = list(connector._collect_iam_policy(PROJECT))
+    (finding,) = connector.analyze(records)
+
+    assert transport.bodies == [
+        (
+            f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:getIamPolicy",
+            {"options": {"requestedPolicyVersion": 3}},
+        )
+    ]
+    assert records[0]["version"] == finding.metadata["policy_version"] == 3
+    assert finding.metadata["iam_bindings"] == [{"role": "roles/aiplatform.user", "condition": condition}]
+    assert finding.metadata["condition_coverage"] == "observed"
+    assert not connector.ctx.stats.incomplete
+
+
+def test_gcp_conditional_and_unconditional_bindings_survive_offline_analysis(run_connector, fixtures):
+    findings, ctx = run_connector("cloud.gcp", input=str(fixtures / "cloud" / "gcp_conditional_iam.json"))
+    (finding,) = findings
+    bindings = finding.metadata["iam_bindings"]
+    assert len(bindings) == 2 and "condition" in bindings[0] and "condition" not in bindings[1]
+    assert finding.permissions == ["roles/aiplatform.user"]
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("canonical_role", ["roles/aiplatform.user", "roles/owner", "roles/editor"])
+def test_gcp_version_one_conditional_role_retains_potential_evidence_and_fails_closed(index, canonical_role):
+    connector = GcpConnector(context(index))
+    role = f"{canonical_role}_withcond_58e135cabb940ad9346c"
+    (finding,) = connector.analyze(
+        [
+            {
+                "_kind": "iam-policy",
+                "_project": PROJECT,
+                "version": 1,
+                "bindings": [{"role": role, "members": ["user:dev@acme.example"]}],
+            }
+        ]
+    )
+    assert connector.ctx.stats.incomplete
+    assert any("conditional IAM binding" in warning for warning in connector.ctx.stats.warnings)
+    assert finding.permissions == [role]
+    assert finding.metadata["condition_coverage"] == "unknown"
+    assert finding.metadata["iam_bindings"] == [{"role": role, "condition_coverage": "unknown"}]
+    if canonical_role == "roles/aiplatform.user":
+        assert "provider.google-vertex-ai" in finding.model_providers
+    else:
+        assert finding.metadata["broad_roles"] == [canonical_role]
+        assert "broad-project-access" in finding.tags
+
+
+@pytest.mark.parametrize("invalid", [None, "invalid", {"title": "Missing expression"}, {"expression": " "}])
+def test_gcp_invalid_iam_condition_retains_role_and_marks_unknown(index, invalid):
+    connector = GcpConnector(context(index))
+    (finding,) = connector.analyze(
+        [
+            {
+                "_kind": "iam-policy",
+                "_project": PROJECT,
+                "version": 3,
+                "bindings": [
+                    {
+                        "role": "roles/aiplatform.user",
+                        "members": ["user:dev@acme.example"],
+                        "condition": invalid,
+                    }
+                ],
+            }
+        ]
+    )
+    assert connector.ctx.stats.incomplete
+    assert finding.permissions == ["roles/aiplatform.user"]
+    assert finding.metadata["condition_coverage"] == "unknown"
+
+
+def test_gcp_malformed_binding_retains_neighboring_valid_permission(index):
+    connector = GcpConnector(context(index))
+    findings = list(
+        connector.analyze(
+            [
+                {
+                    "_kind": "iam-policy",
+                    "_project": PROJECT,
+                    "bindings": [
+                        None,
+                        {"role": "roles/aiplatform.user", "members": ["user:dev@acme.example", None]},
+                    ],
+                }
+            ]
+        )
+    )
+    assert len(findings) == 1 and connector.ctx.stats.incomplete
+    assert findings[0].metadata["member"] == "user:dev@acme.example"
+
+
 # ------------------------------------------------------------------ offline
 def test_gcp_offline_export_covers_every_handler_kind(run_connector, fixtures):
     findings, ctx = run_connector("cloud.gcp", input=str(fixtures / "cloud" / "gcp_extended_records.jsonl"))

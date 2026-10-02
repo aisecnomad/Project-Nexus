@@ -105,8 +105,9 @@ def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited
 
 @pytest.mark.parametrize("output", ["main\n", "../outside\n", "a" * 39 + "\n"])
 def test_read_git_snapshot_rejects_non_object_ids(monkeypatch, tmp_path, output):
+    (tmp_path / ".git").mkdir()
     monkeypatch.setattr(
-        "shadowscan.utils.git.subprocess.run",
+        "shadowscan.utils.git.run_bounded_metadata",
         lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=output),
     )
     assert read_git_snapshot(tmp_path) is None

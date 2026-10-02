@@ -117,7 +117,8 @@ class GenericSaaSConnector(BaseConnector):
                 self.ctx.warn("saas.generic: skipped a record with ambiguous field aliases")
                 continue
             analysed += 1
-            if not self._get(rec, "name"):
+            name = self._get(rec, "name")
+            if not isinstance(name, str) or not name.strip():
                 # Blank spreadsheet rows carry no app and need no diagnostic;
                 # every other unnamed record is a coverage gap.
                 if any(str(value).strip() for value in rec.values() if value is not None):
@@ -152,7 +153,10 @@ class GenericSaaSConnector(BaseConnector):
 
     def _finding(self, rec: dict[str, Any]) -> Finding | None:
         name = self._get(rec, "name")
-        if not name:
+        if not isinstance(name, str) or not name.strip():
+            # A missing display field may hide an AI signature. It is not
+            # evidence that the exported app is outside the scan's scope.
+            self.ctx.warn("saas.generic: app record has no valid name; coverage incomplete")
             return None
         raw_scopes = self._get(rec, "scopes")
         # JSON exports may carry non-string list members; coerce rather than crash.

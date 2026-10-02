@@ -33,6 +33,12 @@ from shadowscan.connectors.code.genkit_semantics import genkit_call_capabilities
 from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
+from shadowscan.connectors.code.provider_tools import (
+    ProviderLiteralCache,
+    has_provider_tools,
+    provider_tools_disabled,
+    python_provider_tool_literals,
+)
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.connectors.code.source_capabilities import CallCapabilities, configured_capabilities
 from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools, has_vercel_tool_loop
@@ -163,7 +169,9 @@ _TOOL_REQUEST_METHODS = re.compile(
     r"(?:^|\.)(?:create|stream|parse|converse|converse_stream|generate_content|generateContent|"
     r"send_message|chat)$"
 )
-_TOOL_ARGUMENTS = re.compile(r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations)\s*[=:]")
+_TOOL_ARGUMENTS = re.compile(
+    r"(?<![\w$])(?:tools|toolConfig|functions|function_declarations|functionDeclarations)\s*[=:]"
+)
 # Import-bound request calls whose response shape the loop recognizer understands.
 _LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
     # Plain, raw-response (``.parse()`` returns the message) and streaming
@@ -1285,6 +1293,8 @@ class _LoopRequests:
             self.javascript_constructors.add(call.line)
         if not parsed or call.node is None:
             return
+        if provider_tools_disabled(call.node):
+            return
         loop_request = _LOOP_REQUESTS.get(call.binding.module)
         if (
             loop_request is not None
@@ -1339,11 +1349,36 @@ def bound_source_matches(
 
     found = _import_evidence(index, language, imports, module_matches)
     requests = _LoopRequests()
+    tool_literal_cache = ProviderLiteralCache()
+    tool_literals = (
+        python_provider_tool_literals(
+            tree,
+            {
+                id(call.node)
+                for call in calls
+                if call.node is not None
+                and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
+                and _TOOL_ARGUMENTS.search(call.structural_arguments)
+                and any(match.signature.category == "provider" for match in module_matches(call.binding))
+            },
+        )
+        if tree is not None
+        else {}
+    )
     graph_lines = _langgraph_agent_lines(tree, calls)
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
         requests.record(language, call, signatures, tree is not None)
-        found.extend(_call_evidence(language, call, signatures, graph_lines))
+        found.extend(
+            _call_evidence(
+                language,
+                call,
+                signatures,
+                graph_lines,
+                tool_literals.get(id(call.node), {}),
+                tool_literal_cache,
+            )
+        )
     found.extend(_protocol_evidence(index, tree, text, ignored, requests))
     return found
 
@@ -1410,6 +1445,8 @@ def _call_evidence(
     call: _Call,
     signatures: dict[str, Signature],
     graph_lines: set[int],
+    tool_literals: Mapping[str, ast.AST],
+    tool_literal_cache: ProviderLiteralCache,
 ) -> list[Match]:
     """Return the evidence of one bound call for each signature its module resolves to.
 
@@ -1497,6 +1534,13 @@ def _call_evidence(
         ):
             # Schema-only requests stay tool-enabled LLM usage: the loop
             # evidence below decides whether selected tools are executed.
+            enabled = has_provider_tools(
+                node=call.node,
+                arguments=call.arguments,
+                masked=call.structural_arguments,
+                python_literals=tool_literals,
+                python_cache=tool_literal_cache,
+            )
             found.append(
                 Match(
                     signature,
@@ -1504,12 +1548,20 @@ def _call_evidence(
                         type="code",
                         weight=0.7,
                         capabilities=["tool-use"],
-                        description="import-bound request offering tools",
+                        description=(
+                            "import-bound request offering tools"
+                            if enabled
+                            else "import-bound request with unverified tool configuration"
+                        ),
                     ),
                     sanitize_text(f"{call.binding.module}:{symbol}(tools="),
                     0.7,
                     line=call.line,
-                    extra={"verified_agent": False},
+                    extra={
+                        "verified_agent": False,
+                        "source_capabilities": ["tool-use"] if enabled else [],
+                        "configured_call_span": (call.start, call.end),
+                    },
                 )
             )
         for keyword, capability in _KEYWORD_CAPABILITIES.get(signature.id, ()):

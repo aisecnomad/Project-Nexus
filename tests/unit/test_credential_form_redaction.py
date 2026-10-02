@@ -99,6 +99,24 @@ FORMS: list[tuple[str, str, str]] = [
     (f'AzureKeyCredential openai = new("{HEX}");', HEX, "AzureKeyCredential openai = new("),
     (f'private static readonly ApiKeyCredential? Openai = new("{BASE62}");', BASE62, "Openai = new("),
     (f'AzureKeyCredential @openai = new("{HEX}");', HEX, "AzureKeyCredential @openai = new("),
+    # Whitespace and comments are ordinary source trivia, not an opt-out.
+    (f'AzureKeyCredential ("{HEX}")', HEX, "AzureKeyCredential ("),
+    (f'AzureKeyCredential/*key*/("{HEX}")', HEX, "AzureKeyCredential/*key*/("),
+    (f'AzureKeyCredential // key\n ("{HEX}")', HEX, "AzureKeyCredential // key\n ("),
+    (f'AzureKeyCredential\n\t("{HEX}")', HEX, "AzureKeyCredential\n\t("),
+    (f'AzureKeyCredential(("{HEX}"))', HEX, "AzureKeyCredential(("),
+    (f'AzureKeyCredential(/* key */ (("{HEX}")))', HEX, "AzureKeyCredential(/* key */ (("),
+    (f'new AzureKeyCredential($"{HEX}")', HEX, "new AzureKeyCredential("),
+    (f'AzureKeyCredential(f"{HEX}{{suffix}}")', HEX, "AzureKeyCredential("),
+    (f'AzureKeyCredential(f"{HEX}{{suffix}}tail")', HEX, "AzureKeyCredential("),
+    (f'AzureKeyCredential($"{{prefix}}{HEX}")', HEX, "AzureKeyCredential("),
+    (f'AzureKeyCredential($"{{read("label")}}{HEX}")', HEX, "AzureKeyCredential("),
+    (f"AzureKeyCredential(`{HEX}${{suffix}}`)", HEX, "AzureKeyCredential("),
+    (f"AzureKeyCredential('''\n{HEX}\n''')", HEX, "AzureKeyCredential("),
+    # Placeholder words in a replacement-field name cannot declassify an
+    # independently recognized opaque key in static multiline material.
+    (f"AzureKeyCredential(f'''{HEX}{{your_suffix}}''')", HEX, "AzureKeyCredential("),
+    (f'AzureKeyCredential($@"{{your_prefix}}{HEX}")', HEX, "AzureKeyCredential("),
     # Command lines in shell scripts, CI YAML, Makefiles and argv lists.
     (f'curl -u "svc:{HEX}" https://contoso.openai.azure.com/openai/deployments', HEX, '"svc:'),
     (f"curl --api-key={HEX} https://api.openai.com/v1/models", HEX, "https://api.openai.com/v1/models"),
@@ -269,9 +287,11 @@ FORMS: list[tuple[str, str, str]] = [
         BASE62,
         "{name: OPENAI_API_KEY",
     ),
-    # A quoted value under a setting name runs to its closing quote, past a
-    # '}' inside it (a name the established rules read is cut there: see the
-    # documented gaps below).
+    # Field order and braces inside a quoted scalar do not change sensitivity.
+    (f'{{"value": "{HEX}", "name": "Password"}}', HEX, '"name": "Password"'),
+    (f"- value: {HEX}\n  name: DB_PASSWORD\n", HEX, "name: DB_PASSWORD"),
+    (f'{{"name": "Password", "value": "p}}{HEX}"}}', HEX, '"name": "Password"'),
+    (f'- {{name: DB_PASSWORD, value: "p}}{HEX}"}}', HEX, "name: DB_PASSWORD"),
     (f'{{"name": "OpenAI:Secret", "value": "p}}{HEX}"}}', HEX, '{"name": "OpenAI:Secret", "value": "'),
     (f'- {{name: AzureOpenAI__Key, value: "p}}{HEX}"}}', HEX, "- {name: AzureOpenAI__Key, value: "),
     # Names that name a password whatever the value: a passphrase, a login's pass/pwd, Rails'
@@ -619,6 +639,16 @@ def test_words_that_merely_contain_a_token_prefix_are_preserved(source):
         "echo ${GITHUB_TOKEN:-none} ${OPENAI_API_KEY:-your-api-key}",
         'cred = AzureKeyCredential(f"{key}")',
         'var cred = new AzureKeyCredential($"{prefix}{suffix}");',
+        'cred = AzureKeyCredential (os.environ["AZURE_OPENAI_API_KEY"])',
+        'cred = AzureKeyCredential/* key */(("<your-api-key>"))',
+        'cred = AzureKeyCredential (f"{opaqueLookingReference9c2E4f6}")',
+        'var cred = new AzureKeyCredential($"{opaqueLookingReference9c2E4f6}");',
+        '{"value": "public", "name": "MODEL"}',
+        '{"value": "public"}, {"name": "Password"}',
+        '{"value": "public", "name": "MODEL"}, {"name": "Password"}',
+        "- value: public\n  name: MODEL\n- name: PASSWORD\n",
+        "- value: ${OPENAI_API_KEY}\n  name: OPENAI_API_KEY\n",
+        '{"value": "${OPENAI_API_KEY}", "name": "OPENAI_API_KEY"}',
         'const label = format(item) ?? "untitled-9"',
         f'Uri endpoint = new("{AZURE}");',
         f'List<string> names = new("{HEX}");',

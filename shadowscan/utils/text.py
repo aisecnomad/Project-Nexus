@@ -131,7 +131,7 @@ def _decode_text(raw: bytes, name: str, analyzable_name: bool) -> str | None:
     """Decode file content for analysis; None for a recognised binary artifact (``_skips_binary``)."""
     for bom, codec in _BOM_CODECS:
         if raw.startswith(bom):
-            decoded = raw.decode(codec, errors="replace")
+            decoded = raw.decode(codec)
             # A mark does not make the rest text: a NUL in the decoded prefix
             # is still binary content under an analyzable name.
             if "\x00" in decoded[:_BINARY_SNIFF]:
@@ -145,7 +145,7 @@ def _decode_text(raw: bytes, name: str, analyzable_name: bool) -> str | None:
         declared = _python_source_text(raw)
         if declared is not None:
             return declared
-    return raw.decode("utf-8", errors="replace")
+    return raw.decode("utf-8")
 
 
 def read_text(
@@ -191,6 +191,8 @@ def read_text(
             # Do not embed raw file contents or exception messages in reports.
             if isinstance(exc, NotRegularFileError):
                 errors.append("not a regular file")
+            elif isinstance(exc, UnicodeError):
+                errors.append(BINARY_CONTENT_ERROR)
             elif isinstance(exc, ValueError):
                 errors.append(str(exc))
             else:
