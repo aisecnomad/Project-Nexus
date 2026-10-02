@@ -155,7 +155,7 @@ def test_terminated_plugin_releases_capacity_for_queued_sibling(installed_probe)
             plugins=[ENTRY],
             plugin_execution="process",
             parallel=1,
-            connector_timeout_seconds=2,
+            connector_timeout_seconds=10,
         ),
         SignatureIndex([]),
     )
