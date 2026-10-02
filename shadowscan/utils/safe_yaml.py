@@ -72,9 +72,11 @@ class BoundedSafeLoader(yaml.SafeLoader):
     MAX_DEPTH = 64
     MAX_EXPANDED_NODES = 100_000
     MAX_EXPANDED_CHARS = 64 * 1024 * 1024
-    # Longest integer or float scalar converted. A real number is far shorter than this
-    # (Python itself refuses decimal integers beyond 4300 digits).
-    MAX_NUMBER_CHARS = 1_000
+    # Longest integer or float scalar converted. A real number is far shorter than this.
+    # Python itself refuses a decimal integer beyond 4300 digits, which is reported as an
+    # invalid scalar; this bound is above that and covers the sexagesimal form, whose
+    # conversion is quadratic (10,000 characters cost about 15 ms).
+    MAX_NUMBER_CHARS = 10_000
 
     def __init__(self, stream: Any) -> None:
         if hasattr(stream, "read"):

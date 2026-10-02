@@ -107,23 +107,23 @@ def test_sexagesimal_integer_cannot_cost_quadratic_time():
     assert time.perf_counter() - started < 2.0
     # An explicit tag takes the same path, and the message never repeats the value.
     with pytest.raises(YAMLResourceLimitError) as excinfo:
-        bounded_safe_load("v: !!int " + "7" * 2_000)
+        bounded_safe_load("v: !!int " + "7" * 20_000)
     assert "777" not in str(excinfo.value)
 
 
 def test_number_length_limit_leaves_real_numbers_alone():
     data = bounded_safe_load(
-        "clock: 1:30:45\nhex: 0x" + "f" * 60 + "\nbig: " + "9" * 1_000 + "\nfloat: 1.5e+3\nlist: [1, 2.5]"
+        "clock: 1:30:45\nhex: 0x" + "f" * 60 + "\nbig: " + "9" * 4_000 + "\nfloat: 1.5e+3\nlist: [1, 2.5]"
     )
     assert data["clock"] == 5445
     assert data["hex"] == int("f" * 60, 16)
-    assert data["big"] == int("9" * 1_000)
+    assert data["big"] == int("9" * 4_000)
     assert data["float"] == 1500.0 and data["list"] == [1, 2.5]
     # Only numbers: a long string, quoted or not, is not subject to the limit.
-    assert len(bounded_safe_load("s: " + "a" * 5_000)["s"]) == 5_000
-    assert len(bounded_safe_load("s: '" + "1" * 5_000 + "'")["s"]) == 5_000
+    assert len(bounded_safe_load("s: " + "a" * 20_000)["s"]) == 20_000
+    assert len(bounded_safe_load("s: '" + "1" * 20_000 + "'")["s"]) == 20_000
     with pytest.raises(YAMLResourceLimitError, match="number length limit"):
-        bounded_safe_load("big: " + "9" * 1_001)
+        bounded_safe_load("big: " + "9" * 10_001)
 
 
 def test_node_count_is_bounded_during_composition():
