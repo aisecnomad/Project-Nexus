@@ -199,12 +199,15 @@ def open_confined_file(
 ) -> Iterator[tuple[BinaryIO, os.stat_result]]:
     """Open a regular file for reading without following a link in any path component.
 
-    Every directory component of the absolute path is opened relative to its
-    parent with ``O_NOFOLLOW`` and ``O_DIRECTORY``, so a component swapped for
-    a symlink after an earlier check cannot redirect the open. Directories are
-    opened only for traversal (:func:`_traversal_flags`), so like an ordinary
-    open by path this needs search, not read, permission on them. The final
-    component is opened with ``O_NONBLOCK`` so a FIFO put in its place cannot
+    On platforms with ``O_NOFOLLOW_ANY`` but no ``O_PATH`` (macOS), one
+    kernel open rejects symlinks in every component. This avoids opening
+    ancestors for reading and walking APFS firmlink roots with ``dir_fd``.
+    ``O_NOFOLLOW`` must not be combined with ``O_NOFOLLOW_ANY`` on XNU.
+    Otherwise each directory component is opened relative to its parent
+    with ``O_NOFOLLOW`` and ``O_DIRECTORY``, using ``O_PATH`` for traversal
+    where available (:func:`_traversal_flags`). Both paths reject a component
+    swapped for a symlink before it is opened, without a check/open race.
+    The final component is opened with ``O_NONBLOCK`` so a FIFO in its place cannot
     block before the descriptor is inspected, and the descriptor is rejected
     with :class:`NotRegularFileError` unless ``fstat`` reports a regular file.
     ``..`` components are not collapsed: callers normalise the path the way
@@ -212,7 +215,7 @@ def open_confined_file(
 
     With ``dir_fd``, ``path`` is relative to that open directory (see
     :func:`open_confined_directory`), which stays open and owned by the
-    caller. Only the components below it are opened, the same way, and a
+    caller. Only the components below it are opened, and a
     path that is absolute, empty or contains ``..`` is refused with
     ``ValueError`` because it could leave that directory.
 
@@ -232,25 +235,31 @@ def open_confined_file(
     unchanged and may name the path, so diagnostics must not echo it.
     """
     _require_confined_open()
-    traversal = _traversal_flags()
     if dir_fd is None:
-        absolute = Path(path).absolute()
-        components, name = absolute.parts[1:-1], absolute.name
-        directory, owned = os.open(absolute.anchor, traversal), True
+        target: PurePath = Path(path).absolute()
+        components, name = target.parts[1:-1], target.name
     else:
-        parts = PurePath(path).parts
-        if not parts or PurePath(path).is_absolute() or ".." in parts:
+        target = PurePath(path)
+        parts = target.parts
+        if not parts or target.is_absolute() or ".." in parts:
             raise ValueError(f"{label} path must stay below its directory")
         components, name = parts[:-1], parts[-1]
-        directory, owned = dir_fd, False
+    directory, owned = dir_fd, False
     fd: int | None = None
     try:
-        for component in components:
-            child = os.open(component, traversal, dir_fd=directory)
-            if owned:
-                os.close(directory)
-            directory, owned = child, True
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        nofollow_any = getattr(os, "O_NOFOLLOW_ANY", 0)
+        if nofollow_any and not hasattr(os, "O_PATH"):
+            fd = os.open(target, os.O_RDONLY | nofollow_any | os.O_NONBLOCK, dir_fd=dir_fd)
+        else:
+            traversal = _traversal_flags()
+            if directory is None:
+                directory, owned = os.open(target.anchor, traversal), True
+            for component in components:
+                child = os.open(component, traversal, dir_fd=directory)
+                if owned:
+                    os.close(directory)
+                directory, owned = child, True
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
             raise NotRegularFileError(f"{label} is not a regular file")
@@ -259,7 +268,7 @@ def open_confined_file(
     finally:
         if fd is not None:
             os.close(fd)
-        if owned:
+        if owned and directory is not None:
             os.close(directory)
     with stream:
         yield stream, before
