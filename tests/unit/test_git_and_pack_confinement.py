@@ -220,7 +220,8 @@ def test_skipped_inventory_symlinks_are_reported(tmp_path, index, glob):
     assert [w for s in result.stats if s.connector == "engine.inventory" for w in s.warnings] == [warning]
     assert result.complete
     checked = CliRunner().invoke(main, ["inventory", "check", path])
-    assert checked.exit_code == 0 and warning in " ".join(checked.output.split())
+    # The console wraps long lines, on macOS inside the long temporary path, so compare without whitespace.
+    assert checked.exit_code == 0 and "".join(warning.split()) in "".join(checked.output.split())
 
 
 def test_recursive_inventory_glob_names_the_links_it_does_not_enter(tmp_path):

@@ -415,11 +415,12 @@ def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
     """Local source trees scanned in this run, as configured and as resolved."""
     roots = []
     for spec in specs:
-        if spec.name != "code.filesystem" or spec.config.get("input"):
+        try:
+            # Built-in connectors only: this lookup never imports a plugin outside a job's deadline.
+            declared = _hooks(get_connector_class(spec.name)).scanned_local_paths(spec.config)
+        except Exception:  # noqa: BLE001 - an unknown or unapproved connector declares no tree
             continue
-        raw = spec.config.get("paths") or [spec.config.get("path")]
-        if isinstance(raw, list):
-            roots += [(path, Path(os.path.realpath(path))) for path in raw if isinstance(path, str) and path]
+        roots += [(path, Path(os.path.realpath(path))) for path in declared]
     return roots
 
 

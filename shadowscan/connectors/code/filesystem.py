@@ -903,6 +903,14 @@ class FilesystemConnector(BaseConnector):
             validate_root_ids(roots, root_ids)
         return True
 
+    @classmethod
+    def scanned_local_paths(cls, config: dict[str, Any]) -> list[str]:
+        # Engine hook: the configured paths are the scan subject, unless an export is replayed.
+        if config.get("input"):
+            return []
+        raw = config.get("paths") or [config.get("path")]
+        return [path for path in raw if isinstance(path, str) and path] if isinstance(raw, list) else []
+
     name: ClassVar[str] = "code.filesystem"
     surface: ClassVar[Surface] = Surface.CODE
     provider: ClassVar[str | None] = "filesystem"
