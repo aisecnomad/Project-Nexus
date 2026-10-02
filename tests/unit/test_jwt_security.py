@@ -162,6 +162,34 @@ def test_analyze_token_records_unverified_for_bad_alg(index):
     assert finding.resource.startswith("jwt:")
 
 
+def test_output_says_when_the_signature_was_not_checked(index, rsa_private, tmp_path):
+    # Without jwks_url there was no "verified" key and no jwt:signature
+    # evidence, so an unsigned or tampered token read like a checked one.
+    claims = {"iss": "https://sts.windows.net/tenant/", "sub": "agent-runner", "azp": "openai-agent"}
+    genuine, _, _ = signed(rsa_private, claims=claims)
+    header, _, signature = genuine.split(".")
+    forged = {**claims, "sub": "someone-else", "scp": "Mail.ReadWrite"}
+    tampered = ".".join(
+        [header, base64.urlsafe_b64encode(json.dumps(forged).encode()).rstrip(b"=").decode(), signature]
+    )
+    tokens = [genuine, tampered]
+    export = tmp_path / "tokens.json"
+    export.write_text(json.dumps([{"token": token} for token in tokens]))
+    connector = JwtConnector(ConnectorContext(index=index, config={"input": str(export)}))
+    findings = connector.run()
+    assert len(findings) == 2
+    for finding in findings:
+        assert finding.metadata["verified"] is False
+        assert finding.metadata["verification_scope"] == "none"
+        assert finding.metadata["issuer_verified"] is False
+        (signature,) = [e for e in finding.evidence if e.signal == "jwt:signature"]
+        assert signature.description.startswith("signature not checked")
+        assert len(finding.resource) == len("jwt:") + 16  # digest length unchanged
+    report = json.dumps([finding.to_dict() for finding in findings])
+    assert not any(token.rstrip(".") in report for token in tokens)
+    assert not any(token.split(".")[1] in report for token in tokens)
+
+
 @pytest.mark.parametrize(
     "expected_issuer,scope", [(None, "signature-only"), (ISSUER, "signature-and-issuer")]
 )

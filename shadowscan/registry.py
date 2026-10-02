@@ -41,7 +41,13 @@ import yaml
 
 from shadowscan.errors import SetupError, SetupPathError
 from shadowscan.models import Finding, Surface
-from shadowscan.utils.files import policy_files, policy_glob, read_policy_text, require_no_symlinks
+from shadowscan.utils.files import (
+    SKIPPED_LINK,
+    policy_files,
+    policy_glob,
+    read_policy_text,
+    require_no_symlinks,
+)
 from shadowscan.utils.identity import (
     has_aws_account_scope,
     has_google_workspace_account_scope,
@@ -190,6 +196,8 @@ class Inventory:
     def __init__(self, entries: list[InventoryEntry] | None = None):
         self.entries: list[InventoryEntry] = entries or []
         self.sources: list[str] = []
+        # Symbolic links a directory or glob passed over; links are never followed.
+        self.skipped_links: list[str] = []
         # Bound the cache even when callers repeatedly replace inventory entries.
         self._name_patterns: OrderedDict[str, re.Pattern[str]] = OrderedDict()
 
@@ -204,12 +212,23 @@ class Inventory:
             path = Path(p).expanduser()
             files: list[Path]
             if path.is_dir():
-                files = list(policy_files(path, {".yaml", ".yml", ".json", ".csv"}, reject_links=True))
+                skipped: list[tuple[str, str]] = []
+                files = list(policy_files(path, {".yaml", ".yml", ".json", ".csv"}, skipped))
+                inv.skipped_links += [str(path / name) for name, reason in skipped if reason == SKIPPED_LINK]
             elif path.exists() or path.is_symlink():
                 require_no_symlinks(path)
                 files = [path]
             elif any(ch in str(path) for ch in "*?["):
-                files = sorted(policy_glob(path))
+                links: list[str] = []
+                files = sorted(policy_glob(path, links))
+                inv.skipped_links += links
+                if not files:
+                    # Like a missing literal path: a typo must not load an empty inventory.
+                    raise SetupPathError(
+                        sanitize_text(
+                            f"inventory glob matched no files (symbolic links are not followed): {p}"
+                        )
+                    )
             else:
                 # A missing path is reported by name only: the message must stay
                 # safe for the CLI to print verbatim (see shadowscan.errors).
@@ -534,7 +553,7 @@ def _string_list(value: dict, name: str, path: Path, location: str) -> list[str]
         raise _invalid(
             path, f"{location}.{name}", "expected a list of nonempty strings (quote numeric identifiers)"
         )
-    if name == "resources" and any(_CITE.search(item) for item in items):
+    if name == "resources" and any(_has_cite_marker(item) for item in items):
         # Citation markers in a resource pattern can silently turn a specific
         # approval into a glob if stripped. Require the author to correct it.
         raise _invalid(path, f"{location}.{name}", "citation marker in resource pattern")
@@ -546,6 +565,26 @@ def _string_list(value: dict, name: str, path: Path, location: str) -> list[str]
 
 
 _CITE = re.compile(r"\[cite(?:_start)?(?::[^\]]*)?\]")
+
+
+def _has_cite_marker(text: str) -> bool:
+    """Whether ``text`` holds a citation marker (``_CITE`` anywhere), in a single pass.
+
+    ``_CITE.search`` rescans to the end of a long item from every ``[cite:`` that has no ``]``, which
+    is quadratic in the length of a hostile approval pattern. Once no ``]`` follows a ``[cite:``, no
+    later marker can close either, so the search ends there.
+    """
+    start = text.find("[cite")
+    while start >= 0:
+        after = start + len("[cite")
+        if text.startswith("_start", after):
+            after += len("_start")
+        if text.startswith("]", after):
+            return True
+        if text.startswith(":", after):
+            return text.find("]", after + 1) >= 0
+        start = text.find("[cite", start + 1)
+    return False
 
 
 def _strip_cite_markers(text: str) -> str:

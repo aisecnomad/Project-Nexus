@@ -186,7 +186,7 @@ def test_token_without_jwks_is_explicitly_marked_unverified(index: SignatureInde
     assert finding.metadata["signature_verified"] is False
     assert "signature-unverified" in finding.tags
     evidence = next(e for e in finding.evidence if e.signal == "jwt:signature")
-    assert "NOT verified" in evidence.description and "no JWKS" in evidence.description
+    assert "not checked" in evidence.description and "no jwks_url" in evidence.description
     assert evidence.weight == 0.0
     # Only the explicit marker is new: the privileged-claim evidence is not boosted or hidden.
     assert PRIVILEGED in finding.tags

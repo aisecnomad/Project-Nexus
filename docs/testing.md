@@ -124,6 +124,7 @@ make format-check    # ruff format --check
 make typecheck       # mypy on the scanner and tools
 make signatures      # signature schema and regex validation
 make audit           # pip-audit on the environment and every hash lock, as CI
+make secrets         # fail on hardcoded credentials in tracked files, as CI
 make evaluate        # every bundled detection corpus
 make policy          # workflow, issue-form and repository consistency checks
 make check           # all of the above, in order
@@ -138,6 +139,22 @@ Markdown links and heading anchors, and that the Makefile, hooks and locks
 match CI. Run it whenever you touch `.github/`, a top-level document or a docs
 page; `make docs` builds the site with `mkdocs build --strict` and catches the
 rest.
+
+`make secrets` runs `tools/check_secrets.py` over every tracked file. It reports
+credential-shaped strings (provider tokens and keys, private-key headers, passwords
+in URLs) and prints at most four characters of a match. Examples in documentation
+need an obvious placeholder (`example`, `redacted`, a run of `0` or `x`); tests and
+the labelled detection corpora are excluded.
+
+`tests/unit/test_regex_linearity.py` guards against denial of service by regular
+expression. CPython's `re` cannot be interrupted, so a quadratic pattern defeats the
+connector and job deadlines. The test builds hostile inputs from the words of every
+module-level `re` pattern, times the method the code calls on it at two sizes and
+fails when the time grows faster than the input; the redaction passes are timed
+end to end through `sanitize_text` instead. The test takes about 15 seconds. When
+it fails, make the pattern linear (possessive quantifiers from the `regex` module,
+run under `pattern_timeout()`), bound its input, or add it to `ALLOWED` with the
+reason the sweep's input cannot reach it.
 
 ## What CI runs
 

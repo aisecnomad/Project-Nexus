@@ -25,6 +25,7 @@ from shadowscan.connectors.common import (
 from shadowscan.models import Evidence, Finding, Kind, Likelihood, Surface
 from shadowscan.risk import CAPABILITY_WEIGHTS, assess
 from shadowscan.signatures import Match, Signal, Signature
+from shadowscan.signatures.loader import builtin_signature_dir
 from tools.evaluation.evaluate import DEFAULT_CORPUS, evaluate
 
 # Random-looking synthetic values; they are not credentials for any service.
@@ -163,7 +164,7 @@ def test_env_sample_placeholder_is_example_credential_not_secret(tmp_path: Path,
         assert e.location.startswith(".env.sample:")
     assert project.metadata["placeholder_samples"] == {"count": 2, "files": [".env.sample"]}
     # The env names still say "likely LLM usage"; the sample keys add nothing that alarms.
-    assert project.likelihood != Likelihood.CONFIRMED
+    assert project.likelihood != Likelihood.STRONG
     assert "hardcoded-credential" not in project.tags
     assert assess(project, index).score < 50
 
@@ -250,7 +251,7 @@ def test_secret_alone_does_not_establish_llm_usage(tmp_path: Path, run_connector
 
 
 # -------------------------------------------------- environment-name saturation
-def test_env_names_only_stay_below_confirmed(tmp_path: Path, run_connector):
+def test_env_names_only_stay_below_strong(tmp_path: Path, run_connector):
     (tmp_path / ".env.example").write_text("".join(f"{name}=\n" for name in PROVIDER_ENV_NAMES[:3]))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert not ctx.stats.errors
@@ -278,7 +279,7 @@ def test_env_names_only_stay_below_confirmed(tmp_path: Path, run_connector):
         and "env-names-only" not in project.tags
         and "confidence_cap" not in project.metadata
     )
-    assert project.likelihood == Likelihood.CONFIRMED
+    assert project.likelihood == Likelihood.STRONG
 
 
 def test_evidence_per_signature_is_capped_before_confidence_is_computed():
@@ -304,6 +305,238 @@ def test_cap_confidence_rescales_evidence_and_survives_recomputation():
     untouched = _finding(evidence=[Evidence(signal="env:a", description="x", weight=0.3)])
     cap_confidence(untouched, 0.8)
     assert untouched.evidence[0].weight == 0.3 and untouched.confidence == 0.3
+
+
+# ------------------------------------------------- catalog-like data files
+BLOCKLIST_DOMAINS = [
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.mistral.ai",
+    "api.cohere.ai",
+    "api.groq.com",
+    "api.together.xyz",
+    "openrouter.ai",
+    "app.crewai.com",
+    "api.deepseek.com",
+]
+# vendor, host, API key variable: eight different products in one policy file
+VENDOR_POLICY = [
+    ("OpenAI", "api.openai.com", "OPENAI_API_KEY"),
+    ("Anthropic", "api.anthropic.com", "ANTHROPIC_API_KEY"),
+    ("Mistral AI", "api.mistral.ai", "MISTRAL_API_KEY"),
+    ("Cohere", "api.cohere.ai", "COHERE_API_KEY"),
+    ("Groq", "api.groq.com", "GROQ_API_KEY"),
+    ("Together AI", "api.together.xyz", "TOGETHER_API_KEY"),
+    ("DeepSeek", "api.deepseek.com", "DEEPSEEK_API_KEY"),
+    ("Perplexity", "api.perplexity.ai", "PERPLEXITY_API_KEY"),
+]
+BLOCKLIST_YAML = "# AI provider egress blocklist for the corporate proxy\nblocked_domains:\n" + "".join(
+    f"  - {domain}\n" for domain in BLOCKLIST_DOMAINS
+)
+LITELLM_CONFIG = "model_list:\n" + "".join(
+    f"  - model_name: {alias}\n    litellm_params:\n      model: {model}\n      api_key: os.environ/{key}\n"
+    for alias, model, key in [
+        ("gpt-4o", "openai/gpt-4o", "OPENAI_API_KEY"),
+        ("claude", "anthropic/claude-3-5-sonnet-20241022", "ANTHROPIC_API_KEY"),
+        ("gemini", "gemini/gemini-1.5-pro", "GEMINI_API_KEY"),
+        ("mistral", "mistral/mistral-large-latest", "MISTRAL_API_KEY"),
+        ("groq", "groq/llama3-70b-8192", "GROQ_API_KEY"),
+    ]
+)
+
+
+def _write_tree(root: Path, files: dict[str, str]) -> None:
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+
+def _vendor_policy(fmt: str) -> str:
+    if fmt == "yaml":
+        return "vendors:\n" + "".join(
+            f"  - name: {name}\n    status: review\n    host: {host}\n    key_env: {env}\n"
+            for name, host, env in VENDOR_POLICY
+        )
+    return json.dumps(
+        {"vendors": [{"name": n, "status": "review", "host": h, "key_env": e} for n, h, e in VENDOR_POLICY]}
+    )
+
+
+def test_domain_blocklist_does_not_establish_llm_usage(tmp_path: Path, run_connector):
+    # A proxy blocklist names ten AI products and runs none of them: it used to
+    # report "LLM usage: CrewAI" with confidence 1.0 and a high risk score.
+    _write_tree(
+        tmp_path,
+        {
+            "network/ai-domain-blocklist.yaml": BLOCKLIST_YAML,
+            "README.md": "# Proxy config\n\nBlocklist for AI provider domains.\n",
+            "policy/ai-usage-policy.md": "# AI usage policy\n\nUse of unapproved AI tools is prohibited.\n",
+        },
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert findings == []
+
+
+@pytest.mark.parametrize("fmt", ["yaml", "json"])
+def test_vendor_policy_naming_eight_products_is_not_usage(tmp_path: Path, run_connector, fmt):
+    _write_tree(tmp_path, {f"governance/ai-vendors.{fmt}": _vendor_policy(fmt)})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and findings == []
+
+
+@pytest.mark.parametrize(
+    "name,text",
+    [
+        ("blocklist.json", json.dumps({"blocked": BLOCKLIST_DOMAINS[:6]}, indent=2)),
+        ("blocklist.toml", "blocked = [\n" + "".join(f'  "{d}",\n' for d in BLOCKLIST_DOMAINS[:6]) + "]\n"),
+        ("blocklist.csv", "host\n" + "".join(f"{d}\n" for d in BLOCKLIST_DOMAINS[:6])),
+        ("egress.conf", "".join(f"deny {d}\n" for d in BLOCKLIST_DOMAINS[:6])),
+        ("hosts.xml", "<hosts>" + "".join(f"<host>{d}</host>" for d in BLOCKLIST_DOMAINS[:6]) + "</hosts>"),
+    ],
+    ids=["json", "toml", "csv", "conf", "xml"],
+)
+def test_domain_lists_in_any_data_format_are_catalogs(tmp_path: Path, run_connector, name, text):
+    (tmp_path / name).write_text(text)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and findings == []
+
+
+def test_signature_data_directory_is_a_catalog_not_framework_usage(run_connector):
+    # Scanning the scanner's own signature packs used to report LangGraph, CrewAI,
+    # Google ADK and Agno at confidence 1.0 from domain and variable names that
+    # appear only as data.
+    findings, ctx = run_connector("code.filesystem", path=str(builtin_signature_dir()))
+    assert not ctx.stats.errors
+    assert not [f for f in findings if f.kind == Kind.FRAMEWORK_USAGE and f.confidence >= 0.85]
+    assert findings == []
+
+
+def test_catalog_does_not_make_a_coding_agent_configuration(tmp_path: Path, run_connector):
+    hosts = ["api.githubcopilot.com", "api2.cursor.sh", "server.codeium.com", "sourcegraph.com"]
+    (tmp_path / "egress-allowlist.yaml").write_text("allow:\n" + "".join(f"  - {h}\n" for h in hosts))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and findings == []
+
+
+def test_catalog_mentions_count_only_with_library_evidence(tmp_path: Path, run_connector):
+    _write_tree(
+        tmp_path,
+        {"requirements.txt": "openai>=1.0\n", "network/ai-domain-blocklist.yaml": BLOCKLIST_YAML},
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None
+    # The dependency establishes OpenAI; the other nine names in the list are mentions.
+    assert project.model_providers == ["provider.openai"] and project.frameworks == []
+    assert {e.signature for e in project.evidence} == {"provider.openai"}
+    assert project.metadata["catalog_mentions"] == {
+        "files": ["network/ai-domain-blocklist.yaml"],
+        "min_signatures": 4,
+    }
+
+
+def test_three_products_in_a_data_file_are_not_yet_a_catalog(tmp_path: Path, run_connector):
+    (tmp_path / "egress.yaml").write_text("allow:\n" + "".join(f"  - {d}\n" for d in BLOCKLIST_DOMAINS[:3]))
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path))
+    project = _project(findings)
+    assert project is not None and project.confidence >= 0.85
+    assert len(project.model_providers) == 3 and "catalog_mentions" not in project.metadata
+    (tmp_path / "egress.yaml").write_text("allow:\n" + "".join(f"  - {d}\n" for d in BLOCKLIST_DOMAINS[:4]))
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == []
+
+
+# What the catalog rule must leave alone: the same observations in the places
+# that configure or run a technology.
+def test_single_provider_base_url_config_is_still_usage(tmp_path: Path, run_connector):
+    (tmp_path / "config.yaml").write_text("llm:\n  base_url: https://api.openai.com/v1\n  model: gpt-4o\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None and project.model_providers == ["provider.openai"]
+    assert project.confidence >= 0.85 and "catalog_mentions" not in project.metadata
+
+
+def test_multi_provider_litellm_config_is_still_usage(tmp_path: Path, run_connector):
+    (tmp_path / "litellm_config.yaml").write_text(LITELLM_CONFIG)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None and "platform.litellm" in project.frameworks
+    assert {"provider.openai", "provider.anthropic", "provider.google-gemini"} <= set(project.model_providers)
+    assert len(project.model_providers) == 5 and project.confidence >= 0.85
+
+
+def test_env_example_and_compose_declarations_are_still_usage(tmp_path: Path, run_connector):
+    (tmp_path / ".env.example").write_text("OPENAI_API_KEY=\n")
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path))
+    project = _project(findings)
+    assert project is not None and "env-names-only" in project.tags
+    assert project.model_providers == ["provider.openai"]
+    # Compose files and dotenv files declare the environment a process runs
+    # with; however many providers they name, they are not catalogs.
+    (tmp_path / ".env.example").unlink()
+    compose = "services:\n  app:\n    image: myapp:latest\n    environment:\n" + "".join(
+        f"      - {name}=${{{name}}}\n" for name in PROVIDER_ENV_NAMES[:5]
+    )
+    (tmp_path / "docker-compose.yml").write_text(compose)
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path))
+    project = _project(findings)
+    assert project is not None and "env-names-only" in project.tags and len(project.model_providers) == 5
+    assert project.confidence <= 0.8 and "catalog_mentions" not in project.metadata
+
+
+def test_go_provider_table_is_still_usage(tmp_path: Path, run_connector):
+    # Source code that lists several providers is multi-provider code, not a catalog.
+    table = "".join(
+        f'\t"{name}": "https://{host}/v1",\n'
+        for name, host in [
+            ("openai", "api.openai.com"),
+            ("anthropic", "api.anthropic.com"),
+            ("mistral", "api.mistral.ai"),
+            ("groq", "api.groq.com"),
+            ("together", "api.together.xyz"),
+        ]
+    )
+    _write_tree(
+        tmp_path,
+        {
+            "go.mod": "module example.com/router\n\ngo 1.22\n",
+            "providers.go": f"package router\n\nvar endpoints = map[string]string{{\n{table}}}\n",
+        },
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None and len(project.model_providers) == 5 and project.confidence >= 0.85
+
+
+def test_terraform_resources_are_still_infrastructure_findings(tmp_path: Path, run_connector):
+    (tmp_path / "main.tf").write_text(
+        'resource "aws_bedrockagent_agent" "support" {\n  agent_name = "support"\n'
+        '  foundation_model = "anthropic.claude-3-sonnet-20240229-v1:0"\n}\n'
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    infra = [f for f in findings if f.kind == Kind.INFRA]
+    assert len(infra) == 1 and "cloud.aws-bedrock-agents" in infra[0].frameworks
+
+
+def test_helm_values_next_to_sdk_dependencies_are_still_usage(tmp_path: Path, run_connector):
+    values = "env:\n" + "".join(f'  {name}: ""\n' for name in PROVIDER_ENV_NAMES[:4])
+    _write_tree(tmp_path, {"chart/values.yaml": values, "requirements.txt": "openai>=1.0\nanthropic\n"})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None and project.confidence >= 0.85
+    assert {"provider.openai", "provider.anthropic", "provider.google-gemini", "provider.mistral"} == set(
+        project.model_providers
+    )
+    assert "catalog_mentions" not in project.metadata
 
 
 # ------------------------------------------------------ heuristics alone
@@ -340,7 +573,7 @@ def test_heuristics_next_to_env_names_only_do_not_make_an_agent(tmp_path: Path, 
     assert project is not None and project.kind == Kind.FRAMEWORK_USAGE
     assert "env-names-only" in project.tags
     assert project.metadata["confidence_cap"] == {"reason": "env-names-only", "maximum": 0.8}
-    assert project.confidence <= 0.8 and project.likelihood != Likelihood.CONFIRMED
+    assert project.confidence <= 0.8 and project.likelihood != Likelihood.STRONG
     assert not {"autonomous", "code-exec"} & set(project.capabilities)
     assert project.metadata["agent_indicators"] == 0
     # The finding is built from the name references alone: no heuristic evidence, no deploy.py.

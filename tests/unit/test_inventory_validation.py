@@ -317,3 +317,32 @@ def test_scalar_wildcard_cannot_reduce_unrelated_agent_risk_or_pass_security_gat
     repaired = Engine(config, index=index).run()
     assert repaired.findings[0].risk.score == original_risk
     assert _exit_code(repaired, config.fail_on) == 2
+
+
+@pytest.mark.parametrize(
+    ("suffix", "text"),
+    [
+        # Spreadsheet "CSV UTF-8" export.
+        (".csv", "agent_id,name,owner,resources\nhr-helper,HR Helper,erin,power-platform:bot:bot-1\n"),
+        # Editor "UTF-8 with BOM" JSON.
+        (
+            ".json",
+            '{"agents": [{"id": "hr-helper", "owner": "erin", "resources": ["power-platform:bot:bot-1"]}]}',
+        ),
+        (
+            ".yaml",
+            "agents:\n  - id: hr-helper\n    owner: erin\n    resources: ['power-platform:bot:bot-1']\n",
+        ),
+    ],
+)
+def test_inventory_with_utf8_byte_order_mark_loads(tmp_path, suffix, text):
+    path = tmp_path / f"inventory{suffix}"
+    path.write_bytes(b"\xef\xbb\xbf" + text.encode())
+    [entry] = Inventory.load([path]).entries
+    assert (entry.agent_id, entry.owner, entry.resources) == (
+        "hr-helper",
+        "erin",
+        ["power-platform:bot:bot-1"],
+    )
+    checked = CliRunner().invoke(main, ["inventory", "check", str(path)])
+    assert checked.exit_code == 0 and "hr-helper" in checked.output

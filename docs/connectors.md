@@ -176,8 +176,8 @@ is capped at 0.6 confidence. These are static candidate classifications, not pro
 that code ran or that a deployment is autonomous.
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
-A2A, M365 and CrewAI manifests yield incomplete coverage instead of confirmed
-agents. JSON/YAML descriptions are not executed or treated as source; low-code
+A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
+agent findings. JSON/YAML descriptions are not executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history
@@ -202,7 +202,7 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
 `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
@@ -210,7 +210,13 @@ checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
-`metadata` is a mapping merged into every finding's metadata.
+`metadata` is a mapping merged into every finding's metadata. The walk skips a
+built-in list of directory names (`bin`, `build`, `dist`, `vendor`,
+`node_modules`, virtualenvs, caches, ...); a skipped non-empty `bin`, `build`,
+`dist`, `out`, `target`, `obj`, `coverage`, `vendor`, `third_party`,
+`thirdparty` or `external` directory is reported as a warning, and
+`default_excludes: false` (`--no-default-excludes`) scans them. The full list
+and the quiet/disclosed split are in [connectors/code.md](connectors/code.md).
 `oversize_skip_globs` replaces the default list of case-insensitive file-name
 globs. The defaults cover lockfiles, minified bundles, source maps, images,
 fonts, archives and compiled artifacts, and a glob with `/` matches the relative
@@ -231,8 +237,10 @@ elsewhere). See the [code connector guide](connectors/code.md) for details.
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
-matching LLM providers. Token: fine-grained PAT or GitHub App token with
-`contents:read`, `metadata:read`; `secrets:read` for secret names. Offline
+matching LLM providers. Token: a fine-grained PAT or GitHub App token with
+read-only **Contents** and **Metadata** (the clone or API snapshot) and the four
+repository permissions listed below (CI credential names); a classic PAT needs the
+`repo` scope. Offline
 input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.
@@ -243,6 +251,12 @@ also makes coverage incomplete; the connector will not scan a different repo
 as a substitute for the requested one. An org or user listing entry whose
 `full_name` is not a plain `owner/name` is an error that makes the scan
 incomplete; that repository is never requested or cloned.
+The listing is read to the end, in `full_name` order, before the first
+repository is cloned or scanned. A push during the scan therefore cannot move a
+repository that was not listed yet out of the listing, which an
+activity-ordered, lazily paged listing allowed. If the listing fails part-way
+(or exceeds `max_repos`) the repositories already listed are still scanned and
+the scan is incomplete.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
@@ -250,9 +264,30 @@ before cloning and samples the local checkout, including `.git`, while Git runs.
 The clone is stopped when observed size exceeds the cap or cannot be measured,
 and checked again after Git exits. `clone_timeout_seconds` (default 120) bounds
 each clone.
+A clone populates no submodule (see the
+[coverage policy](scanning.md#coverage-policy)) and runs no Git LFS smudge
+filter: a repository with LFS pointer files (small text files that open with
+`version https://git-lfs.github.com/spec/v1`) holds the pointers, not the large
+files, so such a repository makes the scan incomplete (an error under
+`strict_coverage`), as does a clone that could not be checked for them. API mode
+reports LFS pointer files the same way.
 An oversized repository or missing/malformed size estimate falls back to sampled
 API mode without launching Git and marks coverage incomplete. A failed clone or
 Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
+A clone also makes Git verify every object it receives (`transfer.fsckObjects`,
+`fetch.fsckObjects`), so a repository with malformed objects fails to clone and
+is scanned through the incomplete API fallback. A clone URL or API link that
+contains whitespace or control characters is refused outright rather than
+cleaned up, and an API tree path with a `.git` component (any case) aborts that
+repository's API snapshot.
+Cloning requires Git 2.32 or newer: the protections that keep a clone on its
+origin and out of local configuration are passed through `GIT_CONFIG_COUNT` and
+`GIT_CONFIG_GLOBAL`, which older versions ignore without an error. With an older
+or unidentifiable Git (`git --version` is read once per process) the connector
+uses sampled API mode and the scan is incomplete. The submodule inventory of a
+clone uses the hardened metadata path, which needs Git 2.45; with Git 2.32 to
+2.44 a clone is scanned but reports
+`could not inventory gitlinks safely; submodule coverage unknown`.
 The provider's size is an estimate, and polling can overshoot between samples.
 Neither check limits network transfer or guarantees a hard disk ceiling. Run
 remote scans with a host/container wall-clock limit and a writable disk quota.
@@ -262,7 +297,41 @@ Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
 `mode`, `include_archived`, `include_forks`, `max_repos`, `clone_depth`,
 `topics`. The filesystem scanner options `exclude`, `max_file_size`,
 `max_files`, `scan_timeout`, `scan_secrets` and `use_git` are forwarded to
-every repository scan.
+every repository scan. `repos` and `topics` must be lists of non-empty strings,
+and `max_repos` and `clone_depth` whole numbers; anything else (including a bare
+string such as `--set topics=llm`, which would be read as single characters)
+stops the connector with an error that names the option, and the scan exits 3.
+With `--set`, write `a,b` or a JSON list such as `'["a"]'`.
+
+**Token permissions for CI credential names.** For every repository it reaches,
+the connector also lists the *names* (never the values) of four credential
+collections. Each needs its own read-only repository permission:
+
+| Endpoint (under `/repos/{owner}/{repo}/`) | Fine-grained / App permission (read) |
+|---|---|
+| `actions/secrets` | Secrets |
+| `actions/variables` | Variables |
+| `codespaces/secrets` | Codespaces secrets |
+| `dependabot/secrets` | Dependabot secrets |
+
+A token with only Contents and Metadata is denied all four, and each denial adds
+the warning `code.github: repository metadata HTTP 403; coverage unknown` (the
+status of the response: 403 for a missing permission, 404 where the feature is
+not available on the repository). Four identical warnings per repository, an
+incomplete scan and exit 3 are therefore the expected outcome of a token that
+lacks those permissions; the code findings themselves are unaffected. The
+warning does not say which endpoint was denied. There is no option to skip these
+endpoints: grant the four permissions, or accept an incomplete scan.
+
+**Use a dedicated token variable.** `token` defaults to the environment variable
+`GITHUB_TOKEN` (then `GH_TOKEN`), and so does `saas.github-apps`, which needs an
+organisation-admin token. `code.github` clones and parses untrusted repository
+content with its token in the process, so give each connector its own variable
+(for example `token: ${GITHUB_CODE_TOKEN}` here and `token: ${GITHUB_APPS_TOKEN}`
+for `saas.github-apps`) and never export the admin token as `GITHUB_TOKEN` where
+code scans run. The rule that code scans and live credentialed connectors need
+separate scans (`allow_credential_mixing`) keeps the two out of one scan; it does
+not narrow what a shared token can do.
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -284,13 +353,19 @@ configured project names and export before treating an empty result as clean.
 A group listing entry whose project `id` is not a positive integer is an
 error that makes the scan incomplete; that project is skipped before any
 request is made for it, and the other projects are still scanned.
+As for `code.github`, the group listing (ordered by project `id`) is read to the
+end before the first project is cloned. It is also compared with the totals
+GitLab reports (`X-Total`, `X-Total-Pages`; GitLab omits them for very large
+groups): entries that do not add up make coverage incomplete.
 Polling cannot provide a hard disk or network-transfer limit; enforce a writable
 disk quota on the worker.
 
 Options: `group` (env `GITLAB_GROUP`) or `projects`; `token` (env
 `GITLAB_TOKEN`); `api_url` (env `GITLAB_API_URL`), `mode`, `include_archived`,
 `max_projects`. The same filesystem scanner options as `code.github` are
-forwarded to every project scan.
+forwarded to every project scan. `projects` must be a list of non-empty strings
+(numeric project ids may be written unquoted) and `max_projects` a whole number;
+other values stop the connector with an error that names the option (exit 3).
 
 ## Identity
 
@@ -308,8 +383,8 @@ Live collection also needs `org_url` (`https://<org>.okta.com`, env
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
-app-only `appRoleAssignments` (role ids resolved to names such as
-`Mail.ReadWrite`), tenant app registrations, managed identities. First-party
+app-only `appRoleAssignments` (role ids resolved to the names their resource
+defines, such as `Mail.ReadWrite`), tenant app registrations, managed identities. First-party
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
@@ -416,6 +491,11 @@ Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
 label), which names the gateway on findings: it becomes the provider and the
 account of callers without a tenant/account scope.
 
+Static assets and health probes are recognised from the request path alone,
+never its query string, and their count is reported as a scan note. In
+`key=value` text lines, quoted values honour `\"` and `\\` escapes; a line that
+repeats a key or leaves a quote open is malformed and makes the scan incomplete.
+
 ## Low-code
 
 ### `lowcode.power-platform`
@@ -485,8 +565,11 @@ not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
 Findings use the immutable workspace ID as `account`; the display name is stored
 in `metadata.workspace_name`. An offline export without a team record requires
-an explicit `team_id`. Conflicting envelopes or record-level workspace IDs make
-the scan incomplete and prevent attribution. Update inventory account bindings
+an explicit `team_id`. Conflicting or malformed workspace envelopes make the
+scan incomplete and prevent attribution. A record that names another or an
+invalid workspace ID (for example a Slack Connect bot) is skipped and counted,
+and the scan is incomplete; the workspace's other records are still reported.
+Update inventory account bindings
 and collect a fresh comparison baseline when upgrading from name-based IDs.
 
 ### `saas.microsoft-teams`
@@ -506,6 +589,11 @@ coding agents), Copilot billing/seat settings, fine-grained PATs approved for
 the org. An installation is reported when its slug or its words match an AI
 signature or an AI-like name; `include_unrecognized_apps: true` also reports
 other write-capable apps, tagged `unrecognized-app` at possible confidence.
+`token` (env `GITHUB_TOKEN`) must be an organisation-admin token. Name a variable
+of its own for it (for example `token: ${GITHUB_APPS_TOKEN}`) rather than relying
+on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
+untrusted repositories; the rule that code scans and live connectors run
+separately does not narrow a shared token's scope.
 
 ### `saas.atlassian` · `saas.notion` · `saas.zoom`
 UPM user-installed apps (Jira/Confluence) and Notion bot users. Zoom's
@@ -535,7 +623,9 @@ Server-to-Server OAuth app, or `access_token` (env `ZOOM_ACCESS_TOKEN`).
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
-and privileged/data scopes (`keep_all: true` to emit everything).
+and privileged/data scopes (`keep_all: true` to emit everything). Records
+without an app name are skipped and counted, and an export where no record
+maps to a name makes the scan incomplete instead of looking empty.
 `platform` (default `saas`) names the export's source, for example
 `google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
 and resource IDs and sets the provider, so keep it stable between scans.

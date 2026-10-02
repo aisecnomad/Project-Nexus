@@ -8,15 +8,45 @@ input must keep scoring exactly as before the hardening.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+import logging
+import random
+import re
+from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
-from shadowscan.config import ConnectorSpec, ScanConfig
+import shadowscan.risk as risk_module
+from shadowscan.cli import main
+from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.engine import Engine
-from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel, ScanStats, Surface, now_iso
-from shadowscan.risk import CAPABILITY_WEIGHTS, KIND_BASE, PROVIDER_WEIGHTS, TAG_WEIGHTS, RiskPolicy, assess
+from shadowscan.models import (
+    Evidence,
+    Finding,
+    Kind,
+    Risk,
+    RiskFactor,
+    RiskLevel,
+    ScanStats,
+    Surface,
+    now_iso,
+)
+from shadowscan.risk import (
+    CAPABILITY_WEIGHTS,
+    GOVERNANCE_WEIGHTS,
+    KIND_BASE,
+    PROVIDER_WEIGHTS,
+    TAG_WEIGHTS,
+    RiskPolicy,
+    _confidence_scale,
+    assess,
+    provider_ids,
+)
+from shadowscan.signatures.schema import CAPABILITIES
 
 GARBAGE = ["many", "", None, [3], {"n": 3}, True, float("nan"), float("inf"), "3.5", object()]
 
@@ -190,6 +220,90 @@ def test_confidence_scaling_of_a_positive_subtotal_is_unchanged():
 
 def test_full_confidence_adds_no_scaling_factor():
     assert "confidence-scaling" not in _ids(assess(_finding(confidence=1.0)))
+
+
+def _documented_score(total: int, confidence: float) -> int:
+    """docs/concepts/risk.md: min(100, max(0, round(raw * (0.6 + 0.4 * confidence)))), halves to even."""
+    scale = Decimal("0.6") + Decimal("0.4") * Decimal(repr(confidence))
+    return max(0, min(100, int((Decimal(total) * scale).quantize(Decimal(1), rounding=ROUND_HALF_EVEN))))
+
+
+def _assess_raw(total: int, confidence: float) -> Risk:
+    """Assess a finding whose factors add up to exactly ``total`` before scaling."""
+    kind = min(total, 100)
+    extra = total - kind
+    policy = RiskPolicy.from_options({"kinds": {"agent": kind}, "capabilities": {"code-exec": extra}})
+    finding = _finding(confidence=confidence, owner="team", capabilities=["code-exec"] if extra else [])
+    return assess(finding, policy=policy)
+
+
+@pytest.mark.parametrize(
+    "total, confidence, score, level",
+    [
+        (75, 0.15, 50, RiskLevel.HIGH),  # 75 * 0.66 = 49.5: half to even is 50 (floats said 49, medium)
+        (45, 0.25, 32, RiskLevel.MEDIUM),  # 45 * 0.7 = 31.5
+        (85, 0.25, 60, RiskLevel.HIGH),  # 85 * 0.7 = 59.5
+        (125, 0.17, 84, RiskLevel.CRITICAL),  # 125 * 0.668 = 83.5
+        (125, 0.21, 86, RiskLevel.CRITICAL),  # 125 * 0.684 = 85.5
+    ],
+)
+def test_score_rounds_half_to_even_where_binary_floats_drifted(total, confidence, score, level):
+    risk = _assess_raw(total, confidence)
+    assert (risk.score, risk.level) == (score, level) == (_documented_score(total, confidence), level)
+    assert sum(factor.weight for factor in risk.factors) == risk.score
+    scaling = next(factor for factor in risk.factors if factor.id == "confidence-scaling")
+    assert scaling.weight == score - total  # none of these is clamped, so no bounds factor either
+    assert "bounds" not in _ids(risk)
+
+
+def test_the_scaling_factor_names_the_exact_multiplier():
+    risk = _assess_raw(75, 0.15)
+    scaling = next(factor for factor in risk.factors if factor.id == "confidence-scaling")
+    assert scaling.weight == -25
+    assert "multiplied by 0.66 because confidence is 0.15" in scaling.description
+
+
+def test_scale_equals_the_decimal_formula_over_the_whole_grid():
+    # Every raw total from 0 to 130 (above 100 the score is clamped) at every confidence from
+    # 0.000 to 1.000 in steps of 0.001. The float formula disagreed at five of these points.
+    for total in range(131):
+        for thousandths in range(1001):
+            confidence = thousandths / 1000
+            exact = max(0, min(100, round(total * _confidence_scale(confidence))))
+            assert exact == _documented_score(total, confidence), (total, confidence)
+
+
+def test_assess_follows_the_decimal_formula_and_its_factors_sum_to_the_score():
+    rng = random.Random(20260315)
+    for _ in range(400):
+        total, confidence = rng.randint(0, 130), rng.randint(0, 1000) / 1000
+        risk = _assess_raw(total, confidence)
+        assert risk.score == _documented_score(total, confidence), (total, confidence)
+        assert sum(factor.weight for factor in risk.factors) == risk.score, (total, confidence)
+
+
+def test_danger_score_uses_the_same_exact_scaling():
+    # Governance (shadow, 25) is excluded from the danger subtotal: 75 * 0.66 = 49.5 -> 50.
+    policy = RiskPolicy.from_options({"kinds": {"agent": 75}, "governance": {"no-owner": 0}})
+    finding = _finding(confidence=0.15, owner="team")
+    finding.shadow = True
+    risk = assess(finding, inventory_present=True, policy=policy)
+    assert risk.danger_score == 50 and risk.score == _documented_score(100, 0.15) == 66
+
+
+class _OddRepr(float):
+    def __repr__(self) -> str:
+        return "OddRepr(0.5)"
+
+
+@pytest.mark.parametrize(
+    "confidence", [1e-05, 5e-324, 0.1 + 0.2, 1 - 1e-16, _OddRepr(0.5), float("nan"), float("inf"), -3.0, 7.5]
+)
+def test_unusual_confidences_scale_without_error_and_keep_the_factors_exact(confidence):
+    risk = _assess_raw(75, confidence)
+    clamped = 1.0 if confidence != confidence else max(0.0, min(1.0, float(confidence)))
+    assert risk.score == _documented_score(75, clamped)
+    assert sum(factor.weight for factor in risk.factors) == risk.score
 
 
 def test_danger_basis_omits_zero_weight_governance_factors():
@@ -591,3 +705,228 @@ def test_engine_completes_when_report_derived_findings_carry_garbage_metadata(mo
     assert result.findings == sorted(
         result.findings, key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title)
     )
+
+
+# ------------------------------------------------------------------ risk_weights typos
+
+
+@pytest.mark.parametrize("key", ["code-execution", "codeexec", "tool_use", "multi-agents", "network"])
+def test_unknown_capability_key_is_rejected_by_key_not_value(key):
+    # A capability typo used to exit 0 and change nothing.
+    with pytest.raises(ValueError) as failure:
+        RiskPolicy.from_options({"capabilities": {key: 99}})
+    message = str(failure.value)
+    assert f"risk_weights.capabilities.{key} is not a capability" in message
+    assert "99" not in message and "code-exec" in message  # the value is not echoed; the choices are listed
+    with pytest.raises(ConfigValidationError, match=f"options.risk_weights.capabilities.{key}"):
+        ScanConfig(risk_weights={"capabilities": {key: 99}})
+
+
+def test_capability_typo_suggests_the_closest_name():
+    with pytest.raises(ValueError, match=r"did you mean code-exec\?"):
+        RiskPolicy.from_options({"capabilities": {"code-execution": 99}})
+
+
+def test_every_capability_in_the_vocabulary_is_accepted_and_applies():
+    assert set(CAPABILITIES) == set(CAPABILITY_WEIGHTS)
+    policy = RiskPolicy.from_options({"capabilities": dict.fromkeys(CAPABILITIES, 7)})
+    assert {weight for weight, _ in policy.capabilities.values()} == {7}
+    risk = assess(_finding(capabilities=["code-exec"], owner="team"), policy=policy)
+    assert next(f for f in risk.factors if f.id == "capability:code-exec").weight == 7
+
+
+def test_provider_ids_are_checked_against_the_loaded_signatures(index):
+    known = provider_ids(index)
+    assert set(PROVIDER_WEIGHTS) <= known  # every built-in provider weight names a real signature
+    policy = RiskPolicy.from_options({"providers": {"provider.deepseek": 20}}, known_providers=known)
+    assert policy.providers["provider.deepseek"][0] == 20
+    with pytest.raises(ValueError) as failure:
+        RiskPolicy.from_options({"providers": {"provider.opneai": 88}}, known_providers=known)
+    message = str(failure.value)
+    assert "risk_weights.providers.provider.opneai is not a model provider signature id" in message
+    assert "did you mean provider.openai?" in message and "88" not in message
+    # Without the loaded signatures there is nothing to check against: the key is only validated for shape.
+    assert (
+        RiskPolicy.from_options({"providers": {"provider.opneai": 88}}).providers["provider.opneai"][0] == 88
+    )
+
+
+def test_engine_rejects_an_unknown_provider_id_before_any_connector_runs(index, monkeypatch):
+    constructed = []
+
+    def forbidden(name):
+        constructed.append(name)
+        raise AssertionError("no connector may be constructed")
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", forbidden)
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem")], risk_weights={"providers": {"provider.opneai": 5}}
+    )
+    with pytest.raises(ConfigValidationError, match=r"options\.risk_weights\.providers\.provider\.opneai"):
+        Engine(cfg, index)
+    # A configuration changed after construction is caught before the run, like the other options.
+    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem")])
+    engine = Engine(cfg, index)
+    cfg.risk_weights = {"providers": {"provider.opneai": 5}}
+    with pytest.raises(ConfigValidationError, match=r"risk_weights\.providers\.provider\.opneai"):
+        engine.run()
+    assert constructed == []
+
+
+def test_engine_accepts_the_readme_risk_policy_and_custom_provider_signatures(tmp_path, index):
+    readme = {
+        "capabilities": {"code-exec": 25},
+        "tags": {"meeting-bot": 20},
+        "providers": {"provider.deepseek": 20},
+        "kinds": {"agent": 20},
+        "governance": {"shadow": 15, "no-owner": 5, "registered": -10},
+    }
+    Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem")], risk_weights=readme), index)
+    # A provider defined by the organisation's own signature pack is a valid id once that pack is loaded.
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "acme.yaml").write_text(
+        "- id: custom.acme-llm\n  name: Acme LLM\n  category: provider\n  signals:\n"
+        "    - type: domain\n      values: [api.acme-llm.example]\n      weight: 0.9\n"
+    )
+    weights = {"providers": {"custom.acme-llm": 12}}
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem")], signature_dirs=[str(pack)], risk_weights=weights
+    )
+    assert "custom.acme-llm" in provider_ids(Engine(cfg).index)
+    with pytest.raises(ConfigValidationError, match="custom.acme-llm"):
+        Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem")], risk_weights=weights), index)
+
+
+def test_cli_scan_fails_on_a_capability_typo_without_echoing_the_value(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("openai\n")
+    cfg = tmp_path / "scan.yaml"
+    cfg.write_text(
+        f"connectors:\n  - name: code.filesystem\n    path: {repo}\n"
+        "options:\n  risk_weights:\n    capabilities: {code-execution: 97}\n"
+    )
+    res = CliRunner().invoke(main, ["scan", "-c", str(cfg), "--format", "json"])
+    assert res.exit_code != 0 and "risk_weights.capabilities.code-execution" in res.output
+    assert "97" not in res.output
+    cfg.write_text(cfg.read_text().replace("code-execution", "code-exec"))
+    res = CliRunner().invoke(main, ["scan", "-c", str(cfg), "--format", "json"])
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)["findings"]
+
+
+def test_unknown_tag_key_warns_once_and_is_still_accepted(caplog, monkeypatch):
+    # Tags are open-ended (signature packs, plugins and identity types add their own), so a
+    # tag that is not one of the built-in weighted tags can be valid: warn, never reject.
+    monkeypatch.setattr(risk_module, "_WARNED_TAGS", set())
+    with caplog.at_level(logging.WARNING, logger="shadowscan.risk"):
+        policy = RiskPolicy.from_options({"tags": {"plaintext-credentail": 31, "plaintext-credential": 30}})
+        RiskPolicy.from_options({"tags": {"plaintext-credentail": 31}})
+        ScanConfig(risk_weights={"tags": {"plaintext-credentail": 31}})
+    messages = [record.getMessage() for record in caplog.records if record.name == "shadowscan.risk"]
+    assert len(messages) == 1
+    assert "risk_weights.tags.plaintext-credentail is not a built-in tag" in messages[0]
+    assert "did you mean plaintext-credential?" in messages[0] and "31" not in messages[0]
+    assert policy.tags["plaintext-credentail"][0] == 31 and policy.tags["plaintext-credential"][0] == 30
+    # The typo scores nothing for a finding that carries the real tag; the real one still scores.
+    risk = assess(_finding(tags=["plaintext-credential"], owner="team"), policy=policy)
+    assert next(f for f in risk.factors if f.id == "tag:plaintext-credential").weight == 30
+
+
+def test_builtin_tag_keys_do_not_warn(caplog, monkeypatch):
+    monkeypatch.setattr(risk_module, "_WARNED_TAGS", set())
+    with caplog.at_level(logging.WARNING, logger="shadowscan.risk"):
+        RiskPolicy.from_options({"tags": dict.fromkeys(TAG_WEIGHTS, 1)})
+    assert not [record for record in caplog.records if record.name == "shadowscan.risk"]
+
+
+# ------------------------------------------------- default weights, levels, evidence groups
+
+# The default weights are policy: a change moves every score, so it has to be deliberate. When this
+# fails, update docs/concepts/risk.md, the changelog and the migration notes, then this digest.
+_DEFAULT_WEIGHTS_DIGEST = "f54bf45ac9389723d138fc0beb8fdc248870850b84acc6192d02ea71ca550930"
+
+
+def test_default_risk_weights_change_only_deliberately():
+    tables = {
+        "kinds": {kind.value: weight for kind, weight in KIND_BASE.items()},
+        "capabilities": CAPABILITY_WEIGHTS,
+        "tags": TAG_WEIGHTS,
+        "providers": PROVIDER_WEIGHTS,
+        "governance": GOVERNANCE_WEIGHTS,
+    }
+    digest = hashlib.sha256(json.dumps(tables, sort_keys=True).encode()).hexdigest()
+    assert digest == _DEFAULT_WEIGHTS_DIGEST, f"the default risk weights changed (new digest {digest})"
+
+
+def test_documented_default_weights_match_the_code():
+    doc = Path(__file__).resolve().parents[2] / "docs" / "concepts" / "risk.md"
+    rows = re.findall(
+        r"^\| (`[^|]+`) \| [^|]* \| ([\u2212+-]?\d+) \|$", doc.read_text(encoding="utf-8"), re.M
+    )
+    checked = 0
+    for names, cell in rows:
+        weight = int(cell.replace("\u2212", "-"))
+        for name in (part.strip().strip("`") for part in names.split(" / ")):
+            if name in GOVERNANCE_WEIGHTS:
+                assert GOVERNANCE_WEIGHTS[name] == weight, name
+            elif name.startswith("tag:"):
+                assert TAG_WEIGHTS[name[4:]][0] == weight, name
+            elif name.startswith("capability:"):
+                assert CAPABILITY_WEIGHTS[name[11:]][0] == weight, name
+            else:
+                continue
+            checked += 1
+    assert checked >= 10, "the documented weight table was not found"
+
+
+@pytest.mark.parametrize(
+    "score,level",
+    [
+        (100, "critical"),
+        (75, "critical"),
+        (74, "high"),
+        (50, "high"),
+        (49, "medium"),
+        (25, "medium"),
+        (24, "low"),
+        (1, "low"),
+        (0, "info"),
+        (-3, "info"),
+    ],
+)
+def test_risk_level_boundaries_match_the_documented_ranges(score, level):
+    assert RiskLevel.from_score(score) is RiskLevel(level)
+
+
+def _confidence(*weights: float, groups: tuple[str | None, ...] | None = None) -> float:
+    groups = groups or (None,) * len(weights)
+    finding = _finding(
+        evidence=[
+            Evidence(
+                signal=f"test:{number}",
+                description=f"observation {number}",
+                weight=weight,
+                attributes={"confidence_group": group} if group else {},
+            )
+            for number, (weight, group) in enumerate(zip(weights, groups, strict=True))
+        ]
+    )
+    finding.recompute_confidence()
+    return finding.confidence
+
+
+def test_independent_evidence_combines_by_noisy_or():
+    assert _confidence(0.4, 0.5) == 0.7  # 1 - 0.6 * 0.5
+    assert _confidence(0.4, 0.5, 0.5) == 0.85
+
+
+def test_evidence_in_one_confidence_group_counts_once_at_its_strongest():
+    # Repeated observations of one thing (the same idiom in several files) are correlated:
+    # adding them up would turn a pile of weak signals into certainty.
+    assert _confidence(0.4, 0.5, groups=("g", "g")) == 0.5
+    assert _confidence(0.2, 0.2, 0.2, 0.2, groups=("g", "g", "g", "g")) == 0.2
+    # Different groups, and grouped plus ungrouped evidence, are independent of each other.
+    assert _confidence(0.4, 0.5, groups=("one", "two")) == 0.7
+    assert _confidence(0.4, 0.5, 0.4, groups=("g", "g", None)) == 0.7

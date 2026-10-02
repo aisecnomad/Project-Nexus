@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import traceback
 from unittest.mock import Mock
 
@@ -11,7 +13,14 @@ from requests.adapters import HTTPAdapter
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.github import GitHubConnector, repository_target
 from shadowscan.connectors.code.gitlab import GitLabConnector
-from shadowscan.utils.http import HttpClient, HttpError, _DestinationPolicyAdapter
+from shadowscan.utils.http import (
+    HttpClient,
+    HttpError,
+    _blocked_host,
+    _blocked_ip,
+    _DestinationPolicyAdapter,
+    validate_url,
+)
 
 
 def response(data=None, status=200, headers=None):
@@ -564,3 +573,329 @@ def test_http_client_rejects_control_characters_in_headers_without_echoing_them(
     with pytest.raises(ValueError) as failure:
         HttpClient("https://example.com", headers={"Authorization": "SSWS 00SuperSecret\n"})
     assert "SuperSecret" not in str(failure.value)
+
+
+def test_link_pagination_reports_each_validated_page_to_the_callback():
+    link = '<https://api.example.com/v1/items?page=2>; rel="next"'
+    http, _ = client(
+        response([{"id": 1}], headers={"Link": link, "X-Total": "2"}),
+        response([{"id": 2}], headers={"X-Total": "2"}),
+    )
+    totals = []
+    items = list(http.paginate_link("/items", on_page=lambda page: totals.append(page.headers["X-Total"])))
+    assert [item["id"] for item in items] == [1, 2]
+    assert totals == ["2", "2"]
+
+
+def test_link_pagination_callback_never_sees_an_invalid_page():
+    http, _ = client(response({"error": "denied"}))
+    seen = []
+    with pytest.raises(RuntimeError, match="collection failed"):
+        list(http.paginate_link("/items", on_page=seen.append))
+    assert seen == []
+
+
+# ----------------------------------------------------------------- destination policy
+@pytest.mark.parametrize(
+    "address,blocked",
+    [
+        # Azure's wire server looks public but is the VM's own metadata endpoint; only that one address.
+        ("168.63.129.16", True),
+        ("168.63.129.15", False),
+        ("168.63.129.17", False),
+        # Deprecated site-local space: ipaddress calls it global, but it is routed inside some networks.
+        ("fec0::1", True),
+        ("fec0:0:0:1::1", True),
+        ("feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", True),
+        # Forms that carry a blocked IPv4 address stay blocked.
+        ("::ffff:169.254.169.254", True),
+        ("::ffff:a9fe:a9fe", True),
+        ("::ffff:168.63.129.16", True),
+        ("::ffff:127.0.0.1", True),
+        ("2002:a9fe:a9fe::1", True),
+        ("2002:a83f:8110::1", True),
+        ("2002:7f00:1::", True),
+        ("64:ff9b::a9fe:a9fe", True),
+        ("64:ff9b::a83f:8110", True),
+        ("64:ff9b::7f00:1", True),
+        ("fd00:ec2::254", True),
+        ("100.64.0.1", True),
+        # Ordinary public addresses remain reachable.
+        ("8.8.8.8", False),
+        ("2606:4700:4700::1111", False),
+    ],
+)
+def test_destination_policy_address_table(address, blocked):
+    assert _blocked_ip(ipaddress.ip_address(address)) is blocked
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["168.63.129.16", "[fec0::1]", "[::ffff:168.63.129.16]", "[2002:a83f:8110::1]", "[64:ff9b::a9fe:a9fe]"],
+)
+def test_newly_listed_destinations_rejected_before_request(host):
+    http, session = client()
+    http.base_url = ""
+    with pytest.raises(ValueError, match="Refusing"):
+        http.get(f"https://{host}/credentials")
+    session.request.assert_not_called()
+
+
+class _Unflagged(ipaddress.IPv6Address):
+    """An address whose own flags say ordinary global unicast: only the IPv4 address inside can block it."""
+
+    is_global = True
+    is_loopback = is_link_local = is_private = is_unspecified = False
+    is_multicast = is_reserved = is_site_local = False
+
+
+def _teredo(server: str, client_ip: str) -> str:
+    value = (0x20010000 << 96) | (int(ipaddress.IPv4Address(server)) << 64)
+    return str(ipaddress.IPv6Address(value | (int(ipaddress.IPv4Address(client_ip)) ^ 0xFFFFFFFF)))
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "::ffff:169.254.169.254",  # IPv4-mapped
+        "::ffff:168.63.129.16",
+        "2002:a9fe:a9fe::1",  # 6to4
+        "2002:a83f:8110::1",
+        _teredo("169.254.169.254", "8.8.8.8"),  # Teredo server
+        _teredo("8.8.8.8", "169.254.169.254"),  # Teredo client
+        _teredo("168.63.129.16", "8.8.8.8"),
+    ],
+)
+def test_ipv4_inside_an_ipv6_wrapper_blocks_it(address):
+    assert _blocked_ip(_Unflagged(address)) is True
+
+
+@pytest.mark.parametrize("address", ["::ffff:8.8.8.8", "2002:0808:0808::1", _teredo("8.8.8.8", "1.1.1.1")])
+def test_a_public_ipv4_inside_a_wrapper_does_not_block_it(address):
+    assert _blocked_ip(_Unflagged(address)) is False
+
+
+@pytest.mark.parametrize(
+    "host", ["api.corp.internal", "printer.local", "API.CORP.INTERNAL.", "deep.sub.host.local", "a.internal"]
+)
+def test_internal_and_local_names_need_the_private_origin_opt_in(host, monkeypatch):
+    assert _blocked_host(host)
+    http, session = client()
+    http.base_url = ""
+    with pytest.raises(ValueError, match="Refusing"):
+        http.get(f"https://{host}/x")
+    session.request.assert_not_called()
+    # Never resolve a .local name in a test: mDNS lookups can stall.
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(side_effect=socket.gaierror))
+    assert validate_url(f"https://{host}/x", allow_private=True) == f"https://{host}/x"
+    private = HttpClient("", session=Mock(headers={}), allow_private_origin=True)
+    assert private._url(f"https://{host}/x") == f"https://{host}/x"
+
+
+@pytest.mark.parametrize(
+    "host", ["internal.example.com", "local.example.com", "notlocal", "myinternal", "locale.example"]
+)
+def test_names_that_merely_contain_internal_or_local_are_not_blocked(host, monkeypatch):
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(side_effect=socket.gaierror))
+    assert not _blocked_host(host)
+    assert validate_url(f"https://{host}/x") == f"https://{host}/x"
+
+
+# ----------------------------------------------------------------- URL validation
+@pytest.mark.parametrize(
+    "url",
+    [
+        " https://api.example.com/x",
+        "https://api.example.com/x ",
+        "https://api.example.com/x\n",
+        "\thttps://api.example.com/x",
+        "https://api.example.com/\tx",
+        "https://api.example.com/x\r\n",
+        "https://api.exa\nmple.com/x",
+        "https://api.example.com/a b",
+        "https://api.example.com/x\x00",
+        "https://api.example.com/x\x7f",
+        "https://api.example.com/​x",
+        "https://api.example.com/ x",
+        "https://api.example.com/x ",
+        "\x1bhttps://api.example.com/x",
+    ],
+    ids=lambda url: repr(url),
+)
+def test_urls_with_whitespace_or_control_characters_are_refused_not_cleaned(url):
+    """urlsplit drops tabs and line breaks and strips leading blanks; git and libcurl do not."""
+    with pytest.raises(ValueError, match="whitespace or control characters"):
+        validate_url(url)
+    with pytest.raises(ValueError, match="whitespace or control characters"):
+        validate_url(url, "https://api.example.com", allow_private=True)
+
+
+def test_a_valid_url_is_returned_exactly_as_validated():
+    url = "https://api.example.com/v1/items?per_page=100&q=a%20b#frag"
+    assert validate_url(url, "https://api.example.com") == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://api.example.com/items",
+        "HTTP://API.EXAMPLE.COM/items",
+        "ftp://api.example.com/x",
+        "file:///etc/passwd",
+        "//api.example.com/x",
+        "api.example.com/x",
+        "https:///x",
+        "https://:443/x",
+        "https://user:synthetic-pw@api.example.com/x",
+        "https://user@api.example.com/x",
+    ],
+)
+def test_only_https_urls_without_credentials_are_accepted(url):
+    with pytest.raises(ValueError, match="HTTPS without embedded credentials"):
+        validate_url(url)
+    with pytest.raises(ValueError, match="HTTPS without embedded credentials"):
+        validate_url(url, allow_private=True)  # the private-address opt-in never allows plain HTTP
+
+
+def test_plain_http_base_url_is_refused_before_any_request():
+    session = Mock(headers={})
+    plain = HttpClient("http://api.example.com/v1", session=session)
+    with pytest.raises(ValueError, match="HTTPS"):
+        plain.get_json("/items")
+    session.request.assert_not_called()
+
+
+def test_clone_url_with_whitespace_is_refused_before_git_runs(tmp_path, index, monkeypatch):
+    run = Mock()
+    monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
+    connector = GitHubConnector(ConnectorContext(index=index))
+    for url in (" https://github.com/org/repo.git", "https://github.com/org/repo.git\n"):
+        with pytest.raises(ValueError, match="whitespace or control"):
+            connector._clone({"full_name": "org/repo", "clone_url": url}, str(tmp_path))
+    run.assert_not_called()
+
+
+# ----------------------------------------------------------------- repository tree paths
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".git/config",
+        ".GIT/hooks/post-checkout",
+        "sub/.git/config",
+        "a/.Git",
+        ".git",
+        ".git ",
+        ".git.",
+        "x/.GIT./y",
+        ".git  . .",
+    ],
+)
+def test_repository_paths_never_name_a_git_directory(tmp_path, path):
+    with pytest.raises(RuntimeError, match="Refusing unsafe repository tree path"):
+        repository_target(str(tmp_path), path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/ci.yml",
+        ".gitignore",
+        ".gitattributes",
+        "docs/.gitkeep",
+        "git/config",
+        "my.git/x",
+        "a/b.git",
+        "a/.git.md",
+        "gitignore",
+    ],
+)
+def test_repository_paths_that_only_resemble_git_metadata_are_allowed(tmp_path, path):
+    assert repository_target(str(tmp_path), path) == (tmp_path / path).resolve()
+
+
+def test_github_api_snapshot_rejects_a_git_directory_before_any_download(tmp_path, index):
+    connector = GitHubConnector(ConnectorContext(index=index))
+    connector.http = Mock()
+    connector.http.try_get_json.return_value = {
+        "tree": [{"path": ".git/hooks/post-checkout.py", "type": "blob", "size": 10, "sha": "a" * 40}]
+    }
+    with pytest.raises(RuntimeError, match="Refusing unsafe repository tree path"):
+        connector._fetch_via_api({"full_name": "org/repo"}, str(tmp_path))
+    assert connector.http.try_get_json.call_count == 1  # the tree request only; no blob was requested
+    assert not (tmp_path / "repo" / ".git").exists()
+
+
+# ----------------------------------------------------------------- pagination limits
+def _next(url):
+    return {"@odata.nextLink": url}
+
+
+def test_odata_pagination_that_never_ends_is_an_error_at_its_limit():
+    http, session = client(
+        response({"value": [{"id": 1}], **_next("https://api.example.com/v1/items?page=2")}),
+        response({"value": [{"id": 2}], **_next("https://api.example.com/v1/items?page=3")}),
+        response({"value": [{"id": 3}]}),
+    )
+    seen = []
+    with pytest.raises(RuntimeError, match="Pagination limit reached; collection incomplete"):
+        for item in http.paginate_odata("/items", max_pages=2):
+            seen.append(item["id"])
+    assert seen == [1, 2] and session.request.call_count == 2
+
+
+def test_odata_pagination_that_ends_within_its_limit_is_complete():
+    http, _ = client(
+        response({"value": [{"id": 1}], **_next("https://api.example.com/v1/items?page=2")}),
+        response({"value": [{"id": 2}]}),
+    )
+    assert [item["id"] for item in http.paginate_odata("/items", max_pages=2)] == [1, 2]
+
+
+def test_token_pagination_that_never_ends_is_an_error_at_its_limit():
+    http, session = client(
+        *(response({"items": [{"id": n}], "nextPageToken": f"token-{n}"}) for n in range(1, 5))
+    )
+    seen = []
+    with pytest.raises(RuntimeError, match="Pagination limit reached; collection incomplete"):
+        for item in http.paginate_token("/items", max_pages=3):
+            seen.append(item["id"])
+    assert seen == [1, 2, 3] and session.request.call_count == 3
+
+
+def test_token_pagination_that_ends_within_its_limit_is_complete():
+    http, _ = client(
+        response({"items": [{"id": 1}], "nextPageToken": "token-1"}),
+        response({"items": [{"id": 2}]}),
+    )
+    assert [item["id"] for item in http.paginate_token("/items", max_pages=2)] == [1, 2]
+
+
+# ----------------------------------------------------------------- errors never carry the body
+def test_http_error_carries_no_response_body_anywhere():
+    body = "synthetic-response-body-9f3c1a"
+    http, _ = client(response({"message": body}, status=403))
+    with pytest.raises(HttpError) as caught:
+        http.get_json("/items")
+    error = caught.value
+    assert error.body == ""
+    for text in (str(error), repr(error), repr(error.args), error.url):
+        assert body not in text
+    # A caller that hands a body to the constructor does not get it retained or printed either.
+    direct = HttpError(500, "https://api.example.com/v1/items", body)
+    assert direct.body == ""
+    for text in (str(direct), repr(direct), repr(direct.args)):
+        assert body not in text
+
+
+def test_incomplete_scan_message_for_a_denied_request_has_no_body():
+    body = "synthetic-response-body-9f3c1a"
+    warnings = []
+    http, _ = client(response({"message": body}, status=403), on_warning=warnings.append)
+    assert http.try_get_json("/items", default=[]) == []
+    assert warnings == ["Collection incomplete: HTTP 403 for /v1/items"]
+
+
+@pytest.mark.parametrize("url", [None, b"https://api.example.com/x"])
+def test_non_text_urls_are_rejected_as_not_https(url):
+    with pytest.raises(ValueError, match="HTTPS"):
+        validate_url(url)

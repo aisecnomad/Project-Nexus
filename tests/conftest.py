@@ -16,7 +16,7 @@ import pytest
 import shadowscan.engine as engine_module
 import shadowscan.signatures.matcher as matcher
 from shadowscan.connectors import ConnectorContext, get_connector_class
-from shadowscan.signatures import SignatureIndex, get_index
+from shadowscan.signatures import SignatureIndex, get_index, schema
 from shadowscan.signatures.loader import signature_source_digest
 from shadowscan.utils import http
 
@@ -222,6 +222,8 @@ def generous_signature_budgets(request: pytest.FixtureRequest, monkeypatch: pyte
     if request.node.get_closest_marker("production_budgets") is not None:
         return
     monkeypatch.setattr(matcher, "REGEX_TIMEOUT_SECONDS", TEST_REGEX_TIMEOUT_SECONDS)
+    # The schema's empty-match check uses the matcher's timeout; keep them equal.
+    monkeypatch.setattr(schema, "EMPTY_MATCH_TIMEOUT_SECONDS", TEST_REGEX_TIMEOUT_SECONDS)
     monkeypatch.setattr(matcher, "DEFAULT_SCAN_BUDGET_SECONDS", TEST_SCAN_BUDGET_SECONDS)
     for function, _, generous in _BUDGET_DEFAULTS:
         monkeypatch.setattr(function, "__defaults__", (generous,))

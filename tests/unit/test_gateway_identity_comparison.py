@@ -9,6 +9,7 @@ them new, resolved or unknown merely because their IDs changed.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,12 @@ def _report(*findings: dict) -> dict:
         },
     ).to_dict()
     report["findings"] = list(findings)
+    # Keep the summary describing the injected records, as a real report's does.
+    report["summary"].update(
+        total=len(findings),
+        by_surface=dict(Counter(finding["surface"] for finding in findings)),
+        by_kind=dict(Counter(finding["kind"] for finding in findings)),
+    )
     return report
 
 

@@ -110,18 +110,20 @@ class GenericSaaSConnector(BaseConnector):
         return False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
-        unnamed = 0
+        analysed = unnamed = 0
         for rec in records:
             self.ctx.examined()
             if self._has_ambiguous_aliases(rec):
                 self.ctx.warn("saas.generic: skipped a record with ambiguous field aliases")
                 continue
+            analysed += 1
             if not self._get(rec, "name"):
-                # A wrong-schema object or an unmapped name column would
-                # otherwise pass as a complete, empty inventory. Blank
-                # spreadsheet rows carry no app and need no diagnostic.
+                # Blank spreadsheet rows carry no app and need no diagnostic;
+                # every other unnamed record is a coverage gap.
                 if any(str(value).strip() for value in rec.values() if value is not None):
                     unnamed += 1
+                else:
+                    analysed -= 1
                 continue
             try:
                 f = self._finding(rec)
@@ -138,11 +140,15 @@ class GenericSaaSConnector(BaseConnector):
                 continue
             if f:
                 yield f
-        if unnamed:
+        # An export whose columns map to no app name must not look like an
+        # inventory without AI apps. Name the accepted columns, never values.
+        if unnamed and unnamed == analysed:
             self.ctx.warn(
-                f"saas.generic: skipped {unnamed} record(s) without a resolvable app name; "
-                "map the export's name column with `fields: {name: ...}`"
+                "saas.generic: no record has an app name; expected a column named one of "
+                f"{', '.join(str(alias) for alias in self.fields['name'])} (or map one with fields.name)"
             )
+        elif unnamed:
+            self.ctx.warn(f"saas.generic: skipped {unnamed} of {analysed} records without an app name")
 
     def _finding(self, rec: dict[str, Any]) -> Finding | None:
         name = self._get(rec, "name")

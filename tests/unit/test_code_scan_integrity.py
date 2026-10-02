@@ -11,7 +11,6 @@ import pytest
 
 from shadowscan.connectors.code.filesystem import _parse_mcp_servers
 from shadowscan.models import Kind
-from shadowscan.utils.files import policy_files
 from shadowscan.utils.text import host_of, read_text
 
 BINARY_GAP = "binary or undecodable content in analyzable file"
@@ -35,7 +34,8 @@ def test_js_with_nul_in_comment_marks_scan_incomplete(tmp_path, run_connector, s
         "code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=strict
     )
     assert ctx.stats.incomplete
-    channel = ctx.stats.errors if strict else ctx.stats.warnings
+    # Binary content under an analyzable name is always a coverage error.
+    channel = ctx.stats.errors
     assert len(_gaps(channel)) == 1 and "index.js" in _gaps(channel)[0]
     assert not findings
 
@@ -79,7 +79,7 @@ def test_utf16_without_bom_is_a_coverage_gap(tmp_path, run_connector):
     (tmp_path / "requirements.txt").write_bytes("langchain==0.3.0\nopenai\n".encode("utf-16-le"))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
-    assert _gaps(ctx.stats.warnings) and not findings
+    assert _gaps(ctx.stats.errors) and not findings
 
 
 def test_read_text_decodes_boms_and_strips_utf8_bom(tmp_path):
@@ -124,7 +124,7 @@ def test_binary_magic_does_not_hide_an_analyzable_name(tmp_path, run_connector):
     # An ELF-looking prefix on a script name the scanner analyzes is still a gap.
     (tmp_path / "run.sh").write_bytes(ELF_HEAD + b"\nOPENAI=1\n")
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert ctx.stats.incomplete and _gaps(ctx.stats.warnings)
+    assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
 
 
 # ------------------------------------------------------------------ UTF-8 BOM
@@ -160,23 +160,6 @@ def test_mcp_parser_does_not_see_the_bom_after_read_text(tmp_path):
 
 
 # --------------------------------------------------------------- deep nesting
-
-
-def test_recursion_error_in_walk_keeps_findings_and_marks_incomplete(tmp_path, run_connector, monkeypatch):
-    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    real_walk = os.walk
-
-    def deep_walk(top, *args, **kwargs):
-        # os.walk is recursive before Python 3.12 and fails at ~1000 levels.
-        yield from real_walk(top, *args, **kwargs)
-        raise RecursionError("maximum recursion depth exceeded")
-
-    monkeypatch.setattr(os, "walk", deep_walk)
-    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert any("framework.crewai" in f.frameworks for f in findings)
-    assert ctx.stats.incomplete
-    assert any("directory nesting too deep" in e for e in ctx.stats.errors)
-    assert not any("RecursionError" in e for e in ctx.stats.errors)
 
 
 # ------------------------------------------------- non-regular config entries
@@ -229,64 +212,6 @@ def test_ordinary_directories_with_source_like_names_stay_quiet(tmp_path, run_co
 
 
 # ------------------------------------------------ default exclude disclosure
-
-
-def _default_exclude_notices(ctx) -> list[str]:
-    return [w for w in ctx.stats.warnings if "default directory excludes" in w]
-
-
-def test_default_excluded_directories_are_disclosed_without_incompleteness(tmp_path, run_connector):
-    for name in ("build", "external", "bin"):
-        (tmp_path / name / "sub").mkdir(parents=True)
-        (tmp_path / name / "agent.py").write_text("from crewai import Agent\n")
-    (tmp_path / "pkg" / "build").mkdir(parents=True)
-    (tmp_path / "node_modules" / "x").mkdir(parents=True)
-    (tmp_path / ".git").mkdir()
-    (tmp_path / "__pycache__").mkdir()
-    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert findings == []
-    assert not ctx.stats.incomplete and not ctx.stats.errors
-    (notice,) = _default_exclude_notices(ctx)
-    assert "build (2)" in notice and "external (1)" in notice and "bin (1)" in notice
-    # Version-control metadata, dependency trees and tool caches are not first-party gaps.
-    assert "node_modules" not in notice and ".git" not in notice and "__pycache__" not in notice
-
-
-def test_default_exclude_notice_is_bounded_and_one_per_root(tmp_path, run_connector):
-    other = tmp_path.parent / (tmp_path.name + "-other")
-    other.mkdir()
-    for root in (tmp_path, other):
-        (root / "vendor").mkdir()
-        (root / "dist").mkdir()
-    findings, ctx = run_connector("code.filesystem", paths=[str(tmp_path), str(other)], use_git=False)
-    assert len(_default_exclude_notices(ctx)) == 2
-    assert all(len(n) < 600 for n in _default_exclude_notices(ctx))
-
-
-def test_user_listed_exclude_is_not_reported_as_a_silent_default(tmp_path, run_connector):
-    (tmp_path / "build").mkdir()
-    (tmp_path / "dist").mkdir()
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, exclude=["build"])
-    (notice,) = _default_exclude_notices(ctx)
-    assert "dist" in notice and "build" not in notice
-
-
-def test_no_notice_without_default_excluded_directories(tmp_path, run_connector):
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "a.py").write_text("x = 1\n")
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert not _default_exclude_notices(ctx)
-
-
-def test_many_default_excluded_names_stay_bounded(tmp_path, run_connector):
-    from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES
-
-    for name in DEFAULT_EXCLUDES:
-        (tmp_path / name).mkdir()
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    (notice,) = _default_exclude_notices(ctx)
-    assert len(notice) < 700
-    assert not ctx.stats.incomplete
 
 
 # --------------------------------------------------------- Cursor .mdc front matter
@@ -370,36 +295,3 @@ def test_host_of_returns_none_without_a_host(url):
 
 
 # ------------------------------------------------------------- inventory links
-
-
-def test_policy_files_rejects_symlinked_cards_when_asked(tmp_path):
-    inv = tmp_path / "inv"
-    inv.mkdir()
-    outside = tmp_path / "outside.yaml"
-    outside.write_text("id: hostile\n")
-    (inv / "link.yaml").symlink_to(outside)
-    (inv / "ok.yaml").write_text("id: ok\n")
-    # Default: skipped, as signature packs rely on.
-    assert [p.name for p in policy_files(inv, {".yaml"})] == ["ok.yaml"]
-    with pytest.raises(ValueError, match="symbolic link"):
-        list(policy_files(inv, {".yaml"}, reject_links=True))
-
-
-def test_policy_files_rejects_symlinked_directories_when_asked(tmp_path):
-    inv = tmp_path / "inv"
-    inv.mkdir()
-    real = tmp_path / "real"
-    real.mkdir()
-    (real / "hidden.yaml").write_text("id: hidden\n")
-    (inv / "sub").symlink_to(real, target_is_directory=True)
-    assert list(policy_files(inv, {".yaml"})) == []
-    with pytest.raises(ValueError, match="symbolic link"):
-        list(policy_files(inv, {".yaml"}, reject_links=True))
-
-
-def test_policy_files_ignores_unrelated_symlinks_when_rejecting(tmp_path):
-    inv = tmp_path / "inv"
-    inv.mkdir()
-    (inv / "notes.txt").symlink_to(tmp_path / "missing")
-    (inv / "ok.yaml").write_text("id: ok\n")
-    assert [p.name for p in policy_files(inv, {".yaml"}, reject_links=True)] == ["ok.yaml"]

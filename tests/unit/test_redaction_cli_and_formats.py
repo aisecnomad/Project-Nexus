@@ -210,8 +210,9 @@ def test_token_backstop_covers_common_formats(token):
 def test_token_backstop_after_cjk_and_ascii_boundaries():
     assert sanitize_text("密钥sk-proj-abcdefghijklmnopqrst1234") == f"密钥{REDACTED}"
     assert sanitize_text("令牌ghp_abcdefghijklmnop1234!") == f"令牌{REDACTED}!"
-    # Identifiers that merely contain a prefix are not credentials.
-    for text in ("task_sk-proj-abcdefghijklmnop", "my_fw_a1B2c3D4e5F6g7H8i9J0k1L2", "npm_short", "ya29.x"):
+    # A value too short for its format is not a credential; behind an underscore a
+    # token is still one (`cfg_sk-proj-…`), so no such identifier is listed here.
+    for text in ("npm_short", "ya29.x"):
         assert sanitize_text(text) == text
 
 
@@ -238,15 +239,17 @@ def test_set_and_bytes_values_are_sanitized():
     result = sanitize(original)
     assert token not in json.dumps(result, default=str)
     assert token not in repr(result)
-    assert result["ok"] == {"alpha"} and result["count"] == b"12"
-    assert isinstance(result["plain"], set) and isinstance(result["frozen"], frozenset)
-    assert isinstance(result["raw"], bytes) and isinstance(result["buffer"], bytearray)
+    # A set is read as a list in a stable order and bytes as text, so a report
+    # never prints either raw (see ``_plain``).
+    assert result["ok"] == ["alpha"] and result["count"] == "12"
+    assert isinstance(result["plain"], list) and isinstance(result["frozen"], list)
+    assert isinstance(result["raw"], str) and isinstance(result["buffer"], str)
 
 
 def test_bytes_with_invalid_utf8_are_sanitized_without_error():
     token = "ghp_" + "a1B2c3D4e5F6g7H8i9J0"
     result = sanitize({"blob": b"\xff\xfe" + token.encode() + b"\x80"})
-    assert token.encode() not in result["blob"]
+    assert isinstance(result["blob"], str) and token not in result["blob"]
 
 
 def test_set_values_count_toward_sanitization_limits():

@@ -98,7 +98,9 @@ coverage, even when a response includes an empty collection field.
   Git behavior, malformed metadata or exceeded limits makes coverage incomplete.
   Clone calls have a separate HTTPS-only policy: credentials stay scoped to the
   approved origin and redirects are disabled. Hooks and inherited Git overrides
-  are suppressed. Unsafe branch values are dropped with incomplete diagnostics.
+  are suppressed, and clones verify the objects they receive. A termination signal
+  or the job deadline stops in-flight clones and removes their checkouts. Unsafe
+  branch values are dropped with incomplete diagnostics.
   Remote repository data cannot select an internal offline filesystem path.
   Keep Git patched and use disposable workers for untrusted inputs.
 * Reports and generated inventory stubs are written atomically with mode 0600.
@@ -112,14 +114,27 @@ coverage, even when a response includes an empty collection field.
 * Report evidence is redacted before it is shortened. Redaction withholds
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
   `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
-  JWTs, PEM private keys, URL userinfo and credential query or webhook path
-  segments. It also withholds values that their context names as credentials:
-  assignments, including annotated, multiline and R (`<-`) expressions;
+  JWTs, private key blocks (PEM, PGP, SSH2 and PuTTY, an unterminated one to the
+  end of the text), URL userinfo and credential query or webhook path
+  segments. A token or JWT is withheld behind a JSON-escaped line break or tab
+  (`\n`, `\t`), a percent escape (`%3D`) or an underscore, and the prefixes no
+  ordinary word contains (`sk-proj-`, `ghp_`, `AKIA`, `eyJ` and similar) also
+  behind a digit; a word that merely ends in a prefix's text (`risk-`, `disk-`)
+  stays. URL userinfo is withheld whole when the password holds a raw `/`, `?`
+  or `#` (`postgres://u:example#pw@host`). It also withholds values that their
+  context names as credentials:
+  assignments, including annotated, multiline and R (`<-`) expressions and
+  every operator that joins a name to a value, with the operator kept (`=>`,
+  `:=`, `||=`, `+=`, `.=`, `?=`); a quoted word or an opaque value compared with a
+  sensitive name (`if token == "..."`, `!=`, `===`, `=~`);
+  names such as `passphrase`, `db_pass`, `smtp_pwd`, `SECRET_KEY_BASE`, `creds` and
+  npm's `_auth`, and an ODBC connection string's `Pwd=`;
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
   `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
   C `#define`; command-line options such as `--api-key`, `--token`,
-  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"`, `-p` after
+  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"` (and any header whose name ends in a
+  credential word, such as `X-Token: value` or `X-Functions-Key: value`), `-p` after
   `docker login` and other registry or cloud logins (`az`, `az acr`, `oc`,
   `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into
   `--password-stdin`; literal defaults of credentials read from the
@@ -152,9 +167,22 @@ coverage, even when a response includes an empty collection field.
   pass to the sanitizer read their name as a setting too, in either field
   order (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under
   `OpenAIKey`); an environment-style name there (`PAGE_TOKEN`) withholds only
-  an opaque value. The rules added for settings, options, numbered names and
-  YAML values run after the earlier rules, on their output, so they only
-  withhold more. Credential constructor calls also accept whitespace and
+  an opaque value. The fields of structured records (including every record
+  of `--dump-records`) are withheld by name and by the words of the name: the
+  last word, ignoring digits, is `secret`, `token`, `password`, `passwd`,
+  `pwd`, `passphrase`, `pass`, `credential(s)`, `cookie` or `bearer`
+  (`webhook_secret`, `bot_token`, `jwtSecret`, `db_pass`), or is `key` after
+  `api`, `access`, `secret`, `private`, `signing`, `client`, `license`,
+  `encryption`, `master`, `auth`, a provider such as `openai` or similar
+  (`client_key`, `openai_key`). Cursors (`next_token`, `page_token`,
+  `skipToken`), tokenizer tokens (`eos_token`), switches (`requires_auth`,
+  `has_secret`), the bare `key` of tags and S3 objects, `sort_key`,
+  `partition_key` and `cache_key` stay. A value that is not JSON-like (bytes,
+  a set, an exception, a plugin's object) is converted to text before it is
+  redacted, so `default=str` never prints it raw. The rules added for settings, options,
+  numbered names and YAML values run after the earlier rules, on their
+  output, so they only withhold more.
+  Credential constructor calls also accept whitespace and
   comments before the parenthesis, redundant parentheses, static C# `$`
   strings, verbatim multiline C# strings with doubled quotes, and multiline
   triple-quoted literals. Recognized unterminated quoted flow-record values
@@ -199,10 +227,28 @@ coverage, even when a response includes an empty collection field.
   than the recognized forms above; a positional
   argument of any other command; the part of an unquoted option value after a
   bracket, brace or comma; a literal fallback of a name that is not a
-  credential's outside a credential constructor, or read through an
-  unrecognized environment API inside one; a value named only by a comment
-  (`x = "..."  # openai key`); a record outside the bounded sibling/flow
-  rules above; a value assembled across separate expressions; and sensitive
+  credential's, even inside a credential constructor
+  (`new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "...")`);
+  URL userinfo that cannot be delimited: a password holding raw whitespace,
+  quotes or angle brackets, one holding both a raw `@` and a raw `/`, `?` or
+  `#`, a token without a colon that holds one of those
+  (`https://tok?en@host`), or a numeric password followed by one
+  (`https://user:00000000?x@host`, which reads as a port); a token glued to a
+  letter (`apisk-proj-...`) or, for a shorter prefix, a digit; a value named
+  only by a comment (`x = "..."  # openai key`); a bare value that is not an
+  opaque key compared with a sensitive name (`token == hunter2`), a literal written before the
+  operator (`"..." == token`) or compared with a subscript
+  (`headers["token"] == "..."`); a readable value glued to the colon of a
+  sensitive name (`password:hunter2`) or under a bare `pwd` (the shell's
+  working directory has that name); a field of a structured record whose
+  name does not end in a credential word as above (`OpenAIKey`, `key1`, a
+  bare `auth` or `pass`) and holds a value that looks like no credential; a name/value
+  record in text whose value field comes before its name
+  (`{"value": "...", "name": "Password"}`, `- value: ...` above
+  `name: DB_PASSWORD`); the part of a quoted record value after a `}` inside
+  it under a name sensitive as a whole (`{"name": "Password", "value":
+  "p}..."}`); a record outside the bounded sibling/flow rules above; a
+  value split across concatenated strings; and sensitive
   business data.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
