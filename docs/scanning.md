@@ -111,7 +111,8 @@ Without `root_ids`, the canonical local path determines a distinct root suffix.
 Using a scalar `path` with its own connector `label` preserves the older ID.
 
 The default state location is `$XDG_STATE_HOME/shadowscan`, or
-`~/.local/state/shadowscan`. `--state-dir` overrides it; YAML relative paths are
+`~/.local/state/shadowscan` when `XDG_STATE_HOME` is unset, empty or relative
+(as the XDG specification requires). `--state-dir` overrides it; YAML relative paths are
 resolved against the configuration file. Keep the directory outside every scan
 input. State uses a private 0700 directory and atomic 0600 JSON files containing
 sanitized, unscored findings, not source content or raw credentials. Protect the

@@ -407,6 +407,16 @@ class _CacheEntry:
     inode: int
 
 
+def _state_home() -> Path:
+    """``$XDG_STATE_HOME``, which the XDG specification says to ignore when empty or relative.
+
+    Honouring an empty or relative value would put private scan state under
+    the current directory, typically the repository being scanned.
+    """
+    value = os.environ.get("XDG_STATE_HOME", "")
+    return Path(value) if os.path.isabs(value) else Path.home() / ".local" / "state"
+
+
 def _valid_slot(value: str) -> bool:
     return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
@@ -415,7 +425,7 @@ class IncrementalCache:
     def __init__(self, config: ScanConfig, index: SignatureIndex):
         self.config = config
         self.index = index
-        default = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / "shadowscan"
+        default = _state_home() / "shadowscan"
         self.directory = Path(config.state_dir).expanduser() if config.state_dir else default
         self.directory = self.directory.absolute()
         self.enabled = config.incremental and not config.dump_records

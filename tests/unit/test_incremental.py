@@ -915,3 +915,26 @@ def test_git_replacement_cannot_reuse_stale_owner(tmp_path, index):
     changed = Engine(cfg, index).run()
     assert changed.complete and not changed.stats[0].cached
     assert changed.findings[0].owner == "bob@example.com"
+
+
+@pytest.mark.parametrize("value", [None, "", "relative/state", "."])
+def test_default_state_directory_ignores_empty_or_relative_xdg_state_home(
+    tmp_path, monkeypatch, index, value
+):
+    from shadowscan.incremental import IncrementalCache
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    if value is None:
+        monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    else:
+        monkeypatch.setenv("XDG_STATE_HOME", value)
+    cache = IncrementalCache(ScanConfig(), index)
+    assert cache.directory == tmp_path / "home" / ".local" / "state" / "shadowscan"
+
+
+def test_absolute_xdg_state_home_is_used(tmp_path, monkeypatch, index):
+    from shadowscan.incremental import IncrementalCache
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    assert IncrementalCache(ScanConfig(), index).directory == tmp_path / "state" / "shadowscan"
