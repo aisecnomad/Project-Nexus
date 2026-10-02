@@ -649,3 +649,26 @@ cli.main(['code', '.'])
             child.communicate(timeout=5)
         if clone_pid and _process_running(clone_pid):
             os.killpg(clone_pid, signal.SIGKILL)
+
+
+def test_github_token_without_credential_name_permissions_gets_four_identical_warnings(index):
+    """Documented in connectors.md: Contents + Metadata alone are denied all four endpoints."""
+    ctx = ConnectorContext(index=index)
+    ctx.stats = ScanStats(connector="code.github", started_at="2026-01-01T00:00:00Z")
+    connector = GitHubConnector(ctx)
+    requested = []
+
+    def denied(path, **kwargs):
+        requested.append(path)
+        raise HttpError(403, f"https://api.github.com{path}")
+
+    connector.http.paginate_link = Mock(side_effect=denied)
+    assert list(connector._repo_level_findings({"full_name": "org/repo"})) == []
+    assert requested == [
+        "/repos/org/repo/actions/secrets",
+        "/repos/org/repo/actions/variables",
+        "/repos/org/repo/codespaces/secrets",
+        "/repos/org/repo/dependabot/secrets",
+    ]
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == ["code.github: repository metadata HTTP 403; coverage unknown"] * 4

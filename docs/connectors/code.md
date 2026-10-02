@@ -105,8 +105,12 @@ makes the scan incomplete.
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
-matching LLM providers. Token: fine-grained PAT or GitHub App token with
-`contents:read`, `metadata:read`; `secrets:read` for secret names. Offline
+matching LLM providers. Token: a fine-grained PAT or GitHub App token with
+read-only Contents and Metadata, plus Secrets, Variables, Codespaces secrets and
+Dependabot secrets (each repository is asked for the names in all four; a denied
+one adds `repository metadata HTTP 403; coverage unknown` and makes the scan
+incomplete; see the [connector reference](../connectors.md#codegithub)). Use a
+variable of its own for the token rather than a shared `GITHUB_TOKEN`. Offline
 input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.

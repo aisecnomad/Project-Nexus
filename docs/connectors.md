@@ -164,8 +164,10 @@ elsewhere). See the [code connector guide](connectors/code.md) for details.
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
-matching LLM providers. Token: fine-grained PAT or GitHub App token with
-`contents:read`, `metadata:read`; `secrets:read` for secret names. Offline
+matching LLM providers. Token: a fine-grained PAT or GitHub App token with
+read-only **Contents** and **Metadata** (the clone or API snapshot) and the four
+repository permissions listed below (CI credential names); a classic PAT needs the
+`repo` scope. Offline
 input: a directory of clones. Code findings retain the scanned Git tree/commit
 identity in `metadata.source_snapshot`; API blob bytes are checked against their
 enumerated Git object IDs.
@@ -221,6 +223,36 @@ and `max_repos` and `clone_depth` whole numbers; anything else (including a bare
 string such as `--set topics=llm`, which would be read as single characters)
 stops the connector with an error that names the option, and the scan exits 3.
 With `--set`, write `a,b` or a JSON list such as `'["a"]'`.
+
+**Token permissions for CI credential names.** For every repository it reaches,
+the connector also lists the *names* (never the values) of four credential
+collections. Each needs its own read-only repository permission:
+
+| Endpoint (under `/repos/{owner}/{repo}/`) | Fine-grained / App permission (read) |
+|---|---|
+| `actions/secrets` | Secrets |
+| `actions/variables` | Variables |
+| `codespaces/secrets` | Codespaces secrets |
+| `dependabot/secrets` | Dependabot secrets |
+
+A token with only Contents and Metadata is denied all four, and each denial adds
+the warning `code.github: repository metadata HTTP 403; coverage unknown` (the
+status of the response: 403 for a missing permission, 404 where the feature is
+not available on the repository). Four identical warnings per repository, an
+incomplete scan and exit 3 are therefore the expected outcome of a token that
+lacks those permissions; the code findings themselves are unaffected. The
+warning does not say which endpoint was denied. There is no option to skip these
+endpoints: grant the four permissions, or accept an incomplete scan.
+
+**Use a dedicated token variable.** `token` defaults to the environment variable
+`GITHUB_TOKEN` (then `GH_TOKEN`), and so does `saas.github-apps`, which needs an
+organisation-admin token. `code.github` clones and parses untrusted repository
+content with its token in the process, so give each connector its own variable
+(for example `token: ${GITHUB_CODE_TOKEN}` here and `token: ${GITHUB_APPS_TOKEN}`
+for `saas.github-apps`) and never export the admin token as `GITHUB_TOKEN` where
+code scans run. The rule that code scans and live credentialed connectors need
+separate scans (`allow_credential_mixing`) keeps the two out of one scan; it does
+not narrow what a shared token can do.
 
 ### `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -466,6 +498,11 @@ coding agents), Copilot billing/seat settings, fine-grained PATs approved for
 the org. An installation is reported when its slug or its words match an AI
 signature or an AI-like name; `include_unrecognized_apps: true` also reports
 other write-capable apps, tagged `unrecognized-app` at possible confidence.
+`token` (env `GITHUB_TOKEN`) must be an organisation-admin token. Name a variable
+of its own for it (for example `token: ${GITHUB_APPS_TOKEN}`) rather than relying
+on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
+untrusted repositories; the rule that code scans and live connectors run
+separately does not narrow a shared token's scope.
 
 ### `saas.atlassian` · `saas.notion` · `saas.zoom`
 UPM user-installed apps (Jira/Confluence) and Notion bot users. Zoom's
