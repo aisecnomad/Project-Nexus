@@ -162,6 +162,26 @@ def test_spawned_plugin_result_and_export_without_parent_import(installed_probe,
     assert engine.run().complete
 
 
+def test_worker_exports_only_into_the_prepared_private_directory(installed_probe, tmp_path, monkeypatch):
+    """The child must not re-derive the export directory from raw configuration."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    # A literal "~" survives `--dump-records=~/exports` and embedding callers.
+    # In this working directory "./~" is a symlink the parent never validated.
+    work = tmp_path / "work"
+    (work / "elsewhere" / "exports").mkdir(parents=True)
+    (work / "~").symlink_to(work / "elsewhere", target_is_directory=True)
+    monkeypatch.chdir(work)
+    result = _engine(dump_records="~/exports").run()
+    assert result.complete, result.stats
+    directory = home / "exports"
+    manifest = json.loads((directory / "manifest.json").read_text())
+    [entry] = manifest["exports"]
+    assert entry["exported"] and (directory / entry["filename"]).is_file()
+    assert list((work / "elsewhere" / "exports").iterdir()) == []
+
+
 @pytest.mark.parametrize("mode", ["hang", "import-hang"])
 def test_timeout_kills_sigterm_ignoring_plugin_and_preserves_worker_capacity(
     installed_probe, monkeypatch, mode, tmp_path
@@ -293,7 +313,7 @@ def test_worker_enforces_its_own_deadline_without_parent_supervision(installed_p
     # Leave time for spawn start-up and plugin import before the deadline.
     deadline = time.monotonic() + 4
     process = multiprocessing.get_context("spawn").Process(
-        target=_worker, args=(child, config, [], 1, deadline, b"k" * 32), daemon=True
+        target=_worker, args=(child, config, [], 1, deadline, b"k" * 32, None), daemon=True
     )
     try:
         process.start()
