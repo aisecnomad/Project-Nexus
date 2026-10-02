@@ -124,7 +124,12 @@ the scan incomplete. Deciding this takes time linear in the module and at most
 that needs more, which ordinary code does not, is treated like one that imports
 a signature's library. Any other Python module over `max_ast_nodes` (default
 50000) keeps its lexical evidence without import-bound analysis: a warning in
-test code, an error elsewhere. Malformed YAML front matter in an agent
+test code, an error elsewhere. A Python source the running interpreter cannot
+parse (syntax newer than it, such as a PEP 695 `type` statement on Python 3.11,
+or a notebook's `!pip` and `%magic` lines) has no import binding either: it keeps
+its lexical evidence, so an agent can show as framework usage, and the scan
+records the warning `import-bound analysis skipped (source did not parse);
+lexical evidence retained` without becoming incomplete. Malformed YAML front matter in an agent
 definition, including a YAML value PyYAML cannot construct (an impossible date,
 an integer over 4,300 digits), is reported as `invalid agent definition YAML`;
 the definition is still listed by its file name.

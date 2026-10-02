@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -457,3 +458,51 @@ def test_default_excludes_is_a_listed_boolean_option_of_every_code_connector(nam
 def test_remote_checkout_scans_receive_the_default_excludes_option(cls, config):
     connector = cls(ConnectorContext(config={**config, "default_excludes": False}))
     assert connector._filesystem_options()["default_excludes"] is False
+
+
+# ------------------------------------------------- Python that does not parse
+_LANGCHAIN_AGENT = "from langchain.agents import AgentExecutor\nexecutor = AgentExecutor(agent=a, tools=[])\n"
+
+
+def _parses(source: str) -> bool:
+    try:
+        ast.parse(source)
+    except SyntaxError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("pep695.py", "type Alias = int\n" + _LANGCHAIN_AGENT),  # Python 3.12 syntax
+        ("broken.py", "def broken(:\n    pass\n" + _LANGCHAIN_AGENT),
+        (
+            "notebook.ipynb",
+            json.dumps(
+                {"cells": [{"cell_type": "code", "source": ["!pip install langchain\n", _LANGCHAIN_AGENT]}]}
+            ),
+        ),
+    ],
+)
+def test_python_that_does_not_parse_warns_that_the_import_binder_was_skipped(
+    tmp_path, run_connector, name, content
+):
+    if name.endswith(".py") and _parses(content):
+        pytest.skip("the running Python can parse this snippet")
+    (tmp_path / name).write_text(content)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    # Not a gap in what was asked of the scan (the lexical evidence stays), but never silent.
+    assert ctx.stats.warnings == [
+        f"code.filesystem: {name}: import-bound analysis skipped (source did not parse); "
+        "lexical evidence retained"
+    ]
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert any("framework.langchain" in finding.frameworks for finding in findings)
+
+
+def test_python_that_parses_keeps_import_bound_evidence_without_a_warning(tmp_path, run_connector):
+    (tmp_path / "agent.py").write_text(_LANGCHAIN_AGENT)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT for finding in findings)

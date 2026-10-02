@@ -81,7 +81,11 @@ from shadowscan.connectors.code.semantic_config import (
     structured_code_matches,
 )
 from shadowscan.connectors.code.source_ranges import noncode_ranges
-from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded, bound_source_matches
+from shadowscan.connectors.code.source_semantics import (
+    SourceBudgetExceeded,
+    SourceNotParsed,
+    bound_source_matches,
+)
 from shadowscan.connectors.common import (
     apply_matches,
     cap_confidence,
@@ -1837,6 +1841,16 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
             else:
                 self.ctx.error(message)
+            return []
+        except SourceNotParsed as exc:
+            # Newer syntax than the interpreter knows, or a notebook's shell
+            # and magic lines: no import binding, but the lexical evidence
+            # stays. A warning, not a gap in what the file was asked to show.
+            self.ctx.warn(
+                f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
+                "lexical evidence retained",
+                incomplete=False,
+            )
             return []
 
     def _record_code_matches(self, file: _SourceFile, code_matches: list[Match], file_uses_llm: bool) -> None:
