@@ -45,11 +45,9 @@ incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
-and privileged/data scopes (`keep_all: true` to emit everything). A record
-whose app name cannot be resolved from the known name columns or `fields.name`
-is skipped with one summary warning that marks the scan incomplete, so a
-renamed name column or a wrong-schema object is never read as an empty
-inventory (fully blank rows are ignored).
+and privileged/data scopes (`keep_all: true` to emit everything). Records
+without an app name are skipped and counted (fully blank rows are ignored), and an export where no record
+maps to a name makes the scan incomplete instead of looking empty.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

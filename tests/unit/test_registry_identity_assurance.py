@@ -274,6 +274,26 @@ def test_citation_inside_resource_pattern_is_rejected_in_every_format(tmp_path, 
         Inventory.load([path])
 
 
+def test_citation_marker_detection_agrees_with_the_pattern_it_replaced():
+    import random
+    import time
+
+    from shadowscan.registry import _CITE, _has_cite_marker
+
+    pieces = ["[", "]", "cite", "_start", ":", " ", "x", "[cite", "[cite_start", "[cite:", "]", "_star"]
+    rng = random.Random(7)
+    for _ in range(4000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 9)))
+        assert _has_cite_marker(text) == (_CITE.search(text) is not None), text
+    for text in ("[cite]", "[cite_start]", "[cite: 1, 2]", "a[cite_start: x]b", "[cite:", "[cite_star]", ""):
+        assert _has_cite_marker(text) == (_CITE.search(text) is not None), text
+    # A hostile approval pattern: every "[cite:" rescanned to the end before.
+    started = time.perf_counter()
+    assert _has_cite_marker("[cite:" * 200_000) is False
+    assert _has_cite_marker("[cite:" * 200_000 + "]") is True
+    assert time.perf_counter() - started < 2.0
+
+
 def test_citation_filter_ignores_standalone_export_markers_only(tmp_path):
     quoted = 'id: approved\nresources: ["agent-[cite_start]*"]\n'
     assert _strip_cite_markers(quoted) == quoted

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import codecs
+import io
 import math
 import re
+import tokenize
 from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Any
@@ -30,33 +33,32 @@ _BOM_CODECS: tuple[tuple[bytes, str], ...] = (
 # whose first line looks like a header, so a name the scanner analyzes by its
 # extension (``.sh``, ``.js``) stays a coverage gap.
 _BINARY_MAGIC: tuple[bytes, ...] = (
-    b"\x7fELF",
-    b"\xca\xfe\xba\xbe",
-    b"\xfe\xed\xfa\xce",
+    b"\x7fELF",  # ELF
+    b"\xca\xfe\xba\xbe",  # Mach-O universal
+    b"\xfe\xed\xfa\xce",  # Mach-O
     b"\xfe\xed\xfa\xcf",
     b"\xce\xfa\xed\xfe",
     b"\xcf\xfa\xed\xfe",
-    b"\x00asm",
-    b"\x1f\x8b",
-    b"PK\x03\x04",
-    b"BZh",
-    b"\xfd7zXZ\x00",
-    b"\x28\xb5\x2f\xfd",
-    b"7z\xbc\xaf\x27\x1c",
+    b"\x00asm",  # WebAssembly
+    b"\x1f\x8b",  # gzip
+    b"PK\x03\x04",  # zip, jar, wheel
+    b"BZh",  # bzip2
+    b"\xfd7zXZ\x00",  # xz
+    b"\x28\xb5\x2f\xfd",  # zstd
+    b"7z\xbc\xaf\x27\x1c",  # 7z
     b"\x89PNG\r\n\x1a\n",
-    b"\xff\xd8\xff",
+    b"\xff\xd8\xff",  # JPEG
     b"GIF87a",
     b"GIF89a",
     b"%PDF-",
 )
-# Epoch seconds, milliseconds, microseconds or nanoseconds, optionally
-# fractional (nginx $msec, Kong, OpenTelemetry *UnixNano fields).
+# Text codec that a PEP 263 coding cookie must not select: its decoder is not
+# linear in its input (``punycode`` re-copies its output for every code point,
+# about 30 s for a 1 MB file with the GIL held), so a hostile cookie would stall
+# the scan. Such a file is reported as undecodable instead.
+_SLOW_SOURCE_CODECS = frozenset({"punycode"})
+# Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
-# (lower bound, upper bound, units per second). Since 2001-09-09 an epoch
-# value has 13 digits in milliseconds, 16 in microseconds and 19 in
-# nanoseconds, so magnitude identifies the unit. Smaller values are seconds;
-# larger ones are not a timestamp in any of these units and stay invalid.
-_EPOCH_UNITS = ((1e12, 1e15, 1e3), (1e15, 1e18, 1e6), (1e18, 1e19, 1e9))
 # A compact calendar day (yyyymmdd); checked before the epoch form claims it.
 _CALENDAR_DAY_RX = re.compile(r"(?:19|20)\d{6}")
 
@@ -71,6 +73,53 @@ def redact(value: str, keep: int = 4) -> str:
     if not value:
         return value
     return credential_id(value)
+
+
+def _python_source_text(raw: bytes) -> str | None:
+    """Decode a Python source with the PEP 263 codec it declares; None when it declares none.
+
+    A cookie naming UTF-8, an unknown codec or a codec that is not a text
+    encoding leaves the caller's default decoding in place (the interpreter
+    cannot run such a file either). A text codec that cannot decode the bytes,
+    or that is too slow to run on untrusted input, is a coverage gap.
+    """
+    try:
+        declared, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        codec = codecs.lookup(declared).name
+    except (SyntaxError, LookupError):
+        return None
+    if codec == "utf-8":
+        return None
+    if codec in _SLOW_SOURCE_CODECS:
+        raise ValueError(BINARY_CONTENT_ERROR)
+    try:
+        return raw.decode(declared)
+    except LookupError:
+        return None
+    except UnicodeDecodeError:
+        # Name the gap, not the position or byte the decoder rejected.
+        raise ValueError(BINARY_CONTENT_ERROR) from None
+
+
+def _decode_text(raw: bytes, name: str) -> str | None:
+    """Decode file content for analysis; None for a compiled or packed artifact to skip quietly."""
+    for bom, codec in _BOM_CODECS:
+        if raw.startswith(bom):
+            decoded = raw.decode(codec, errors="replace")
+            # A mark does not make the rest text: a NUL in the decoded prefix
+            # is still binary content under an analyzable name.
+            if "\x00" in decoded[:_BINARY_SNIFF]:
+                raise ValueError(BINARY_CONTENT_ERROR)
+            return decoded
+    if b"\x00" in raw[:_BINARY_SNIFF]:
+        if "." not in name and raw.startswith(_BINARY_MAGIC):
+            return None
+        raise ValueError(BINARY_CONTENT_ERROR)
+    if name.lower().endswith(".py"):
+        declared = _python_source_text(raw)
+        if declared is not None:
+            return declared
+    return raw.decode("utf-8", errors="replace")
 
 
 def read_text(
@@ -90,7 +139,8 @@ def read_text(
     of redirecting it outside the tree. Validate the opened descriptor, not a
     separate stat result: the file may change between directory traversal and
     reading. Text with a byte-order mark (UTF-8, UTF-16, UTF-32) is decoded and
-    the mark removed. Callers pass only names they would analyze, so any other
+    the mark removed, and a Python source is decoded with the codec its PEP 263
+    cookie declares. Callers pass only names they would analyze, so any other
     content with a NUL byte in its first 8 KiB is reported as
     ``BINARY_CONTENT_ERROR`` rather than ignored, except a compiled or packed
     artifact without any file extension. Limits and I/O failures are reported
@@ -105,19 +155,7 @@ def read_text(
             raw = fh.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise ValueError("file exceeds max_file_size")
-        for bom, codec in _BOM_CODECS:
-            if raw.startswith(bom):
-                decoded = raw.decode(codec, errors="replace")
-                # A mark does not make the rest text: a NUL in the decoded
-                # prefix is still binary content under an analyzable name.
-                if "\x00" in decoded[:_BINARY_SNIFF]:
-                    raise ValueError(BINARY_CONTENT_ERROR)
-                return decoded
-        if b"\x00" in raw[:_BINARY_SNIFF]:
-            if "." not in path.name and raw.startswith(_BINARY_MAGIC):
-                return None
-            raise ValueError(BINARY_CONTENT_ERROR)
-        return raw.decode("utf-8", errors="replace")
+        return _decode_text(raw, path.name)
     except (OSError, ValueError) as exc:
         if errors is not None:
             # Do not embed raw file contents or exception messages in reports.
@@ -166,7 +204,11 @@ def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
 
 
 def parse_timestamp(value: Any) -> datetime | None:
-    """Best-effort timestamp parsing (ISO 8601, epoch seconds to nanoseconds)."""
+    """Best-effort timestamp parsing.
+
+    ISO 8601, epoch seconds / millis / micros / nanos, Go ``time.Time.String()``
+    output and RFC 2822 dates. Anything else is ``None``.
+    """
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -180,10 +222,14 @@ def parse_timestamp(value: Any) -> datetime | None:
             return None
         if not math.isfinite(v):
             return None
-        for lower, upper, per_second in _EPOCH_UNITS:
-            if lower <= v < upper:
-                v /= per_second
-                break
+        # Seconds, then milli-, micro- and nanoseconds; each unit's range ends
+        # before the next begins for dates before the year 33658.
+        if v > 1e18:
+            v /= 1e9
+        elif v > 1e15:
+            v /= 1e6
+        elif v > 1e12:
+            v /= 1000.0
         try:
             return datetime.fromtimestamp(v, tz=UTC)
         except (OverflowError, OSError, ValueError):
@@ -210,7 +256,33 @@ def parse_timestamp(value: Any) -> datetime | None:
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
         except ValueError:
             continue
-    return None
+    return _go_or_rfc2822_time(s)
+
+
+# Go's time.Time.String(): "2006-01-02 15:04:05.999999999 -0700 MST", with an
+# optional monotonic clock reading ("m=+0.000000001"). Every part is bounded.
+_GO_TIME_RX = re.compile(
+    r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))? ([+-]\d{4})"
+    r"(?: [A-Za-z0-9+:-]{1,16})?(?: m=[+-]\d{1,20}(?:\.\d{1,9})?)?"
+)
+
+
+def _go_or_rfc2822_time(s: str) -> datetime | None:
+    """Parse Go ``time.Time.String()`` output or an RFC 2822 date (mail, HTTP, syslog exporters)."""
+    from email.utils import parsedate_to_datetime
+
+    go = _GO_TIME_RX.fullmatch(s)
+    if go:
+        fraction = (go.group(2) or "")[:6].ljust(6, "0")
+        try:
+            return datetime.strptime(f"{go.group(1)}.{fraction} {go.group(3)}", "%Y-%m-%d %H:%M:%S.%f %z")
+        except ValueError:
+            return None
+    try:
+        dt = parsedate_to_datetime(s)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def to_iso(dt: datetime | None) -> str | None:
@@ -262,16 +334,16 @@ def truncate(s: str | None, n: int = 200) -> str | None:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*+://", re.IGNORECASE)
 
 
 def host_of(url: str | None) -> str | None:
     """Return the lowercase host of ``url`` (RFC 3986 authority; scheme optional).
 
     Userinfo before the last ``@`` and the port are removed, and a bracketed
-    IPv6 literal is returned without its brackets. A URL such as
-    ``https://api.openai.com@evil.example/`` therefore names ``evil.example``,
-    the host a client connects to, never the userinfo.
+    IPv6 literal is returned without its brackets. An authority such as
+    ``api.openai.com:443@evil.example`` therefore names ``evil.example``, the host
+    a client connects to, never the userinfo.
     """
     if not url:
         return None

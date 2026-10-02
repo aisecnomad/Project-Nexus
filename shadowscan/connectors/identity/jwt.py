@@ -298,13 +298,7 @@ class JwtConnector(BaseConnector, _NoDump):
         if verified is not True:
             f.add_tag("signature-unverified")
         if verified is None:
-            f.add_evidence(
-                Evidence(
-                    signal="jwt:signature",
-                    description="signature NOT verified (no JWKS configured); claims are unauthenticated",
-                    weight=0.0,
-                )
-            )
+            _unchecked_signature_evidence(f)
         else:
             self._signature_evidence(f, verified)
         f.add_tag(f"identity:{identity_type}")
@@ -430,6 +424,25 @@ class JwtConnector(BaseConnector, _NoDump):
         f.metadata["verification_scope"] = "signature-and-issuer" if expected_issuer else "signature-only"
         f.metadata["issuer_verified"] = bool(verified and expected_issuer)
         f.metadata["authorization_validated"] = False
+
+
+def _unchecked_signature_evidence(f: Finding) -> None:
+    """Without a ``jwks_url`` the claims are unauthenticated; say so in the output.
+
+    An unsigned or tampered token decodes like a genuine one, so a reader must
+    not mistake the absence of a signature result for a verified token.
+    """
+    f.add_evidence(
+        Evidence(
+            signal="jwt:signature",
+            description="signature not checked (no jwks_url configured); claims are unverified",
+            weight=0.0,
+        )
+    )
+    f.metadata["verified"] = False
+    f.metadata["verification_scope"] = "none"
+    f.metadata["issuer_verified"] = False
+    f.metadata["authorization_validated"] = False
 
 
 _IDENTITY_WEIGHT = {

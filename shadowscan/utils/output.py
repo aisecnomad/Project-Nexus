@@ -16,7 +16,10 @@ def terminal_text(value: object) -> str:
     Rich's Text/markup=False prevents markup interpretation but still passes
     through ANSI escape sequences. Render control and bidi-formatting characters
     visibly so repository names, evidence and diagnostics cannot alter terminal
-    state or conceal/reorder a report. Call before adding intentional newlines.
+    state or conceal/reorder a report. The same goes for the characters that
+    show nothing at all: zero-width characters and the byte-order mark, Unicode tag
+    characters (U+E0000 to U+E007F, which can carry a hidden message) and the lone
+    surrogates that no encoder accepts. Call before adding intentional newlines.
     """
     out = []
     for char in str(value):
@@ -24,14 +27,32 @@ def terminal_text(value: object) -> str:
         if (
             code < 32
             or 0x7F <= code <= 0x9F
-            or 0x202A <= code <= 0x202E
-            or 0x2066 <= code <= 0x2069
-            or code in (0x061C, 0x200E, 0x200F, 0x2028, 0x2029)
+            or 0x200B <= code <= 0x200F
+            or 0x2028 <= code <= 0x202E
+            or 0x2060 <= code <= 0x2069
+            or code in (0x061C, 0xFEFF)
+            or 0xD800 <= code <= 0xDFFF
         ):
             out.append(f"\\u{code:04x}")
+        elif 0xE0000 <= code <= 0xE007F:
+            out.append(f"\\U{code:08x}")
         else:
             out.append(char)
     return "".join(out)
+
+
+def encodable_text(text: str) -> str:
+    """``text`` as a stream can encode it: a lone surrogate becomes a visible ``\\udXXX`` escape.
+
+    A name read from an export can hold a lone surrogate ('x\\ud800y' decoded from JSON),
+    which no UTF-8 encoder accepts: writing it failed the report or printed a traceback.
+    Nothing is dropped, and text that is already encodable is returned as it is.
+    """
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text.encode("utf-8", errors="backslashreplace").decode("utf-8")
+    return text
 
 
 def terminal_report_text(value: str, report_format: str) -> str:
@@ -133,13 +154,13 @@ def write_private_text(path: str | Path, text: str) -> None:
         if stat.S_ISFIFO(mode):
             _require_private_pipe(info)
         if stat.S_ISFIFO(mode) or stat.S_ISCHR(mode):
-            _write_in_place(target, text.encode("utf-8"))
+            _write_in_place(target, text.encode("utf-8", errors="backslashreplace"))
             return
         if not stat.S_ISREG(mode):
             raise ValueError("refusing a non-regular output file")
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as stream:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())

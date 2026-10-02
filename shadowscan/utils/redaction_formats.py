@@ -14,6 +14,7 @@ from urllib.parse import unquote
 
 from shadowscan.utils.redaction_rules import (
     _KEY_NORMALISE,
+    _REFERENCE,
     _VALUE_SEMICOLON,
     REDACTED,
     _kept_value,
@@ -21,12 +22,26 @@ from shadowscan.utils.redaction_rules import (
     _sensitive_assignment_key,
 )
 
-# Keep this backstop aligned with detectable credential formats regardless of
-# which signature packs the operator enables for discovery.
-# Boundaries are ASCII-only: ``\b`` treats CJK and other letters as word
-# characters, so a key written directly after non-Latin text would be missed.
-_SECRET_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9_])(?:sk-(?:proj-|ant-|live-|or-v1-|lf-|litellm-|svcacct-|admin-)?[A-Za-z0-9_-]{8,}"
+# A token inside a longer identifier ('risk-assessment-2024') is not one, so a
+# prefix needs a boundary before it. '\b' is too strict: 'n', 'D' and '_' are word
+# characters, so it hid a token behind an escaped line break ('...key:\nsk-proj-...'
+# in a trace or fixture), behind a percent escape ('?next=%2Fv1%3Fapi_key%3Dsk-proj-...')
+# and behind an underscore ('cfg_sk-proj-...'). Those count as boundaries. A prefix that
+# no ordinary word contains ('sk-proj-', 'ghp_', 'AKIA', JWT 'eyJ') also stands after a
+# digit; the others keep the usual rule so a word or number that ends in their text
+# ('disk-', 'task-', '2app-') is not read as a token.
+#
+# '\b' is also what keeps this fast: a lookbehind in front of the alternatives costs
+# several times as much at every position of a large text. The tokens after a plain
+# boundary are found by ``_SECRET_TOKEN``; the rest start at the character before them,
+# which the regular expression reads first and the replacement keeps.
+_ESCAPE = r"\\[nrt]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|%[0-9A-Fa-f]{2}"
+# The same boundaries as lookbehinds, for the JWT rule.
+_ESCAPED_BOUNDARY = r"(?<=\\[nrt])|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=%[0-9A-Fa-f]{2})"
+_SPECIFIC_TOKEN_START = r"(?:(?<![A-Za-z])|" + _ESCAPED_BOUNDARY + ")"
+# Prefixes no ordinary word contains.
+_SPECIFIC_TOKEN = (
+    r"sk-(?:proj|ant|live|or-v1|lf|litellm|svcacct|admin)-[A-Za-z0-9_-]{8,}"
     r"|gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}"
     # GitLab personal/runner/trigger/deploy/feed/SCIM/CI/mail/OAuth/agent tokens.
     r"|gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-[A-Za-z0-9_-]{8,}|GR1348941[A-Za-z0-9_-]{20,}"
@@ -34,6 +49,9 @@ _SECRET_TOKEN = re.compile(
     # Google API keys, OAuth access/refresh tokens and OAuth client secrets.
     r"|AIza[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{30,}|GOCSPX-[A-Za-z0-9_-]{20,}"
     r"|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]{8,}"
+)
+_GENERIC_TOKEN = (
+    r"sk-[A-Za-z0-9_-]{8,}"
     r"|gsk_[A-Za-z0-9]{40,}|pcsk_[A-Za-z0-9_]{20,}|e2b_[a-f0-9]{40}|tgp_v1_[A-Za-z0-9_-]{30,}"
     r"|lsv2_(?:pt|sk)_[a-f0-9]{32}_[a-f0-9]{10}|tvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}"
     r"|xai-[A-Za-z0-9]{60,}|pplx-[A-Za-z0-9]{40,}|csk-[A-Za-z0-9]{30,}|nvapi-[A-Za-z0-9_-]{60,}"
@@ -47,8 +65,16 @@ _SECRET_TOKEN = re.compile(
     r"|sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,}|glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/]{32,}"
     r"|sntry[su]_[A-Za-z0-9+/=_-]{30,}|hv[sbr]\.[A-Za-z0-9_-]{24,}"
     r"|fw_(?=[A-Za-z]*\d)[A-Za-z0-9]{24,}"
-    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,})(?<!-)(?![A-Za-z0-9_])"
+    r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}"
 )
+# Keep this backstop aligned with detectable credential formats regardless of
+# which signature packs the operator enables for discovery.
+# ASCII boundaries: a token written directly after CJK or other non-Latin text is one.
+_SECRET_TOKEN = re.compile(r"\b(?:" + _SPECIFIC_TOKEN + "|" + _GENERIC_TOKEN + r")\b", re.ASCII)
+_UNDERSCORE_OR_ESCAPE_TOKEN = re.compile(
+    r"(?P<glue>_|" + _ESCAPE + r")(?:" + _SPECIFIC_TOKEN + "|" + _GENERIC_TOKEN + r")\b"
+)
+_DIGIT_TOKEN = re.compile(r"(?P<glue>[0-9])(?:" + _SPECIFIC_TOKEN + r")\b")
 # Webhook and bot endpoints whose *path* is the credential. The scheme, host
 # and a fixed prefix are kept for context; the remainder of the path is
 # withheld. Query parameters (e.g. Power Automate's ``sig``) are handled by the
@@ -68,24 +94,62 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
     (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
-# A token starts only at the beginning of a dot-separated segment or after a
-# '-' inside one, never inside a run, and every quantifier is possessive. The
-# prefix group walks a segment's '-' separated chunks once, so each character
-# is read a bounded number of times: a long run of 'eyJ-eyJ-...' is linear,
-# not quadratic. ASCII-only boundaries keep a token after CJK text matchable.
+# A JWT starts at an 'eyJ' that follows the boundary rule above and runs to the end of
+# its third dotted segment. Each attempt starts at a run of base64url characters and
+# reads the characters before the first such 'eyJ' as 'lead', which is kept: an attempt
+# from every 'eyJ' would read a run of 'eyJ-eyJ-eyJ-...' without dots once per 'eyJ',
+# which takes quadratic time, and every run is read once here. Use ``_redact_jwts``.
+_JWT_HEADER = r"(?=eyJ)" + _SPECIFIC_TOKEN_START + "eyJ"
 _JWT = re.compile(
-    r"(?<![A-Za-z0-9_-])(?P<prefix>(?:(?!eyJ)[A-Za-z0-9_]*+-)*+)"
-    r"eyJ[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+"
+    r"(?<![A-Za-z0-9_-])(?P<lead>(?:(?!" + _JWT_HEADER + r")[A-Za-z0-9_-])*+)"
+    r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+)"
 )
+# Private key blocks, to the end of the text when unterminated: PEM ('BEGIN PRIVATE KEY',
+# 'BEGIN OPENSSH PRIVATE KEY', PGP's '... PRIVATE KEY BLOCK'), RFC 4716's
+# '---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----' and a PuTTY key file, whose private part
+# ends at its 'Private-MAC:' line.
 _PEM = re.compile(
     r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----.*?"
-    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----|\Z)",
+    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----|\Z)"
+    r"|---- BEGIN SSH2 (?:ENCRYPTED )?PRIVATE KEY ----.*?(?:---- END SSH2 (?:ENCRYPTED )?PRIVATE KEY ----|\Z)"
+    r"|PuTTY-User-Key-File-[0-9]+:.*?(?:Private-MAC:[^\r\n]*|\Z)",
     re.DOTALL,
 )
-_AUTH = re.compile(r"(?i)\b(Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
+_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
+# A scheme after an escaped line break or a percent escape ('...header:\nBearer v') is read as well.
+_ESCAPED_AUTH = re.compile(
+    r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+"
+)
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 _QUERY_TEXT = re.compile(r"\?[^\s<>\"']+")
+
+
+def _redact_secret_tokens(text: str) -> str:
+    """Withhold every provider token in ``text`` (see the boundary rules above)."""
+    text = _SECRET_TOKEN.sub(REDACTED, text)
+    text = _UNDERSCORE_OR_ESCAPE_TOKEN.sub(lambda match: match.group("glue") + REDACTED, text)
+    return _DIGIT_TOKEN.sub(lambda match: match.group("glue") + REDACTED, text)
+
+
+def _redact_authorization(text: str) -> str:
+    """Withhold the credential after an authorization scheme, keeping the scheme.
+
+    The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
+    """
+
+    def withheld(match: re.Match[str]) -> str:
+        return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n")
+
+    text = _AUTH.sub(withheld, text)
+    return _ESCAPED_AUTH.sub(lambda match: match.group("glue") + withheld(match), text)
+
+
+def _redact_jwts(text: str) -> str:
+    """Withhold every JSON Web Token in ``text``, keeping what precedes its 'eyJ'."""
+    if "eyJ" not in text:
+        return text
+    return _JWT.sub(lambda match: match.group("lead") + REDACTED, text)
 
 
 def _url_host(authority: str) -> str:
@@ -113,12 +177,47 @@ def _redact_path_secret(host: str, path: str) -> str:
     return path
 
 
+# 'host', 'host:8080', '[::1]:8080': an authority that cannot hold a password.
+_HOST_PORT = re.compile(r"(?:\[[^\]\s]*\]|[^\s:@\[\]]+)(?::[0-9]*)?")
+_TEMPLATE_PORT = re.compile(r"\{[^{}\s]*\}")
+
+
+def _reads_as_userinfo(authority: str) -> bool:
+    """Whether the text before the first '/', '?' or '#' is 'user:password' cut short by one of them.
+
+    'host', 'host:8080' and '[::1]:8080' are authorities that end there. So are
+    a templated port ('${HOST}:${PORT}'), an empty authority ('file:///') and an
+    authority without a colon (a token alone cannot be told from a host).
+    """
+    if not authority or _HOST_PORT.fullmatch(authority):
+        return False
+    _, colon, secret = authority.partition(":")
+    return bool(colon and secret) and not (_REFERENCE.fullmatch(secret) or _TEMPLATE_PORT.fullmatch(secret))
+
+
+def _authority_end(rest: str) -> int:
+    """Where the authority of the URL text after '://' ends.
+
+    That is the first '/', '?' or '#', since an '@' in a path or query value must not be
+    mistaken for a hostname separator. A password may hold those characters raw
+    ('postgres://u:example#pw@h', 'https://svc:example7?x@gw.example/v1'): when what comes
+    first reads as 'user:password', the userinfo runs to the last '@' that is followed
+    by a host and optional port, as far as the URL text goes. Every step is a single scan.
+    """
+    end = min((pos for c in "/?#" if (pos := rest.find(c)) >= 0), default=len(rest))
+    if "@" in rest[:end] or not _reads_as_userinfo(rest[:end]):
+        return end
+    at = rest.rfind("@")
+    if at < end:
+        return end
+    host_end = min((pos for c in "/?#" if (pos := rest.find(c, at)) >= 0), default=len(rest))
+    return host_end if _HOST_PORT.fullmatch(rest, at + 1, host_end) else end
+
+
 def _sanitize_url(match: re.Match[str]) -> str:
     url = match.group(0)
     scheme, rest = url.split("://", 1)
-    # Userinfo ends at the authority boundary, not at the first slash alone.
-    # An @ in a query value must not be mistaken for a hostname separator.
-    authority_end = min((pos for c in "/?#" if (pos := rest.find(c)) >= 0), default=len(rest))
+    authority_end = _authority_end(rest)
     authority, tail = rest[:authority_end], rest[authority_end:]
     if "@" in authority:
         authority = REDACTED + "@" + authority.rsplit("@", 1)[1]

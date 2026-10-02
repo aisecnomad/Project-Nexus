@@ -273,6 +273,17 @@ class BaseConnector(ABC):
         """
         return False
 
+    @classmethod
+    def scanned_local_paths(cls, config: dict[str, Any]) -> list[str]:
+        """Local files or directories this connector scans as the subject of the run, as configured.
+
+        The engine compares them with the approval inventories of the scan: an inventory inside a
+        scanned tree can be edited by the content under review (a pull request approving its own
+        findings), so it warns. Empty for a connector that reads no local tree, including a
+        filesystem connector that replays an ``input`` export.
+        """
+        return []
+
     def __init__(self, ctx: ConnectorContext) -> None:
         self.ctx = ctx
         self.index = ctx.index
