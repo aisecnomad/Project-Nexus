@@ -27,6 +27,12 @@ coverage, even when a response includes an empty collection field.
 
 ## Implemented controls and limits
 
+* Source and manifest inputs are decoded from UTF-8, from UTF-16 or UTF-32
+  with a byte-order mark, and for Python from the declared PEP 263 codec. An
+  analyzed file with binary or undecodable content leaves coverage incomplete;
+  ordinary binary assets are not text evidence. IAM wildcard and
+  agent-definition front-matter matching shares the bounded matcher budget;
+  keep an external worker/job deadline for hard isolation.
 * Shared `HttpClient` requests require HTTPS without embedded credentials.
   Redirects and pagination stay on the configured origin. By default, private,
   loopback, link-local, metadata and other non-global addresses are rejected.

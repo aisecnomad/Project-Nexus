@@ -484,6 +484,14 @@ field precision. Behavior changes that affect an existing baseline are listed in
   does not alter repository settings, publish a release or establish live
   tenant acceptance or independent human review.
 
+### October 2 review remediation
+
+- Gradle and Dockerfile dependency extraction, and the content matching of
+  those manifests, ignore comments while keeping quoted strings and active
+  declarations; a credential inside a comment is still reported. Named Python
+  URL requirements keep their declared package identity. The paired regression
+  cases are authored test evidence, not a fresh field-accuracy measurement.
+
 ### October 1 scan integrity remediation
 
 An AI-assisted audit of the unreleased candidate (not independent human review)

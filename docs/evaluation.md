@@ -180,7 +180,9 @@ regression suite, not a field precision estimate.
 `review_corpus.json` is a separate authored regression set for the September 25
 findings: local-module collisions, ordinary provider calls, tool-schema-only
 requests, and supported agent construction/loops. It also contains positive and
-negative npm alias attribution cases added during the October 1 code review.
+negative npm alias attribution cases added during the October 1 code review,
+and October 2 cases for named Python URL dependencies and paired active and
+commented Gradle and Dockerfile declarations, with exact finding assertions.
 It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its
 annotation ledger remain frozen; adding regression cases does not refresh their

@@ -300,6 +300,10 @@ is higher. A 900 KB JSON index gets 8 seconds by default and a pathological
 file still fails fast. An exhausted budget marks the file's analysis incomplete
 and the scan incomplete.
 
+IAM wildcard and agent-definition front-matter parsing use this same bounded
+matching mechanism. The matching budget does not replace an external process
+or job timeout for the complete worker.
+
 ## Connector deadlines and parallelism
 
 `options.connector_timeout_seconds` (or `--connector-timeout-seconds`) sets a

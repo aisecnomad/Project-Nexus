@@ -75,6 +75,20 @@ human approval, a representative field accuracy measurement or live tenant
 acceptance. Verify the current required-check configuration under
 [release verification](#release-verification) before merging or deploying.
 
+## October 2 review remediation
+
+Collect a fresh baseline after upgrading: dependency examples confined to Gradle
+or Dockerfile comments no longer establish framework usage, while active
+declarations and credentials inside comments are still reported. Do not read the
+disappearance of a comment-only finding as a remediation.
+
+The new regression cases are authored from observed defects. They do not replace
+the [fresh human-reviewed holdout](evaluation.md#build-a-genuinely-held-out-field-set),
+independent review of the final candidate, or [live tenant canaries](canaries.md).
+Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+on real evidence for the intended population and tenant scopes. Record unmet
+requirements as unmet; do not substitute offline replays or AI-generated labels.
+
 ## October 1 scan integrity remediation
 
 Rollout effects of the remediation listed in the changelog. Re-run any baseline

@@ -73,6 +73,7 @@ from shadowscan.connectors.code.manifests import (
     Artifact,
     Dep,
     is_manifest_name,
+    manifest_comment_projection,
     parse_manifest,
 )
 from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities, mcp_tool_names
@@ -2095,7 +2096,9 @@ class FilesystemConnector(BaseConnector):
         # XML comments are examples/disabled declarations. Preserve
         # offsets for match line numbers and the original redacted
         # excerpts; the manifest parser handles active XML itself.
-        content_text = _without_xml_comments(file.text) if file.ext in _XML_EXTENSIONS else file.text
+        content_text = manifest_comment_projection(file.rel, file.text)
+        if file.ext in _XML_EXTENSIONS:
+            content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
             self._scan_source(scan.root, file, content_text)
         elif not is_nonexecutable:
@@ -2614,7 +2617,12 @@ class FilesystemConnector(BaseConnector):
                     errors: list[str] = []
                     directory = open_confined_directory(root)
                     try:
-                        content = read_text(PurePosixPath(cand), self.max_file_size, errors, dir_fd=directory)
+                        content = read_text(
+                            PurePosixPath(cand),
+                            self.max_file_size,
+                            errors,
+                            dir_fd=directory,
+                        )
                     finally:
                         os.close(directory)
                     for issue in errors:
