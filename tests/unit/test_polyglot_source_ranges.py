@@ -322,8 +322,8 @@ def test_line_comment_ends_at_the_language_line_terminator(
 def test_line_comment_is_not_ended_by_a_character_the_language_does_not_break_on(
     language: str, dialect: str, prefix: str, leader: str
 ):
-    # LINE SEPARATOR is white space in every one of these but C#, and the Go, Rust and Ruby compilers
-    # also read a bare CR as white space, so the comment (and the dead text after it) runs on to LF.
+    # Only C# ends a comment at NEL, LINE SEPARATOR or PARAGRAPH SEPARATOR, and the Go, Rust and Ruby
+    # compilers read a bare CR as white space, so the comment (and the dead text after it) runs on to LF.
     separators = ["\x85", LS, PS] if language != "dotnet" else []
     separators += ["\r"] if language in {"go", "rust", "ruby"} else []
     for separator in separators:
