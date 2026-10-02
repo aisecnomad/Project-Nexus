@@ -1054,3 +1054,21 @@ def test_offline_checkout_fingerprint_follows_the_default_excludes_option(tmp_pa
     changed = Engine(cfg, index).run()
     assert changed.complete and not changed.stats[0].cached
     assert any("framework.langgraph" in f.frameworks for f in changed.findings)
+
+
+def test_default_excluded_directory_that_gains_a_file_is_disclosed_despite_the_cache(tmp_path, index):
+    # The scan warns about a skipped vendor/ that holds files; whether it does
+    # is part of the fingerprint, so the warning cannot be lost to a stale entry.
+    cfg = config(tmp_path)
+    vendored = tmp_path / "repo" / "vendor"
+    vendored.mkdir()
+    first = Engine(cfg, index).run()
+    assert not any("default-excluded" in w for w in first.stats[0].warnings)
+    assert Engine(cfg, index).run().stats[0].cached
+    (vendored / "agent.py").write_text("import crewai\n")
+    changed = Engine(cfg, index).run()
+    assert not changed.stats[0].cached
+    assert any("default-excluded directories not scanned: vendor" in w for w in changed.stats[0].warnings)
+    replayed = Engine(cfg, index).run()
+    assert replayed.stats[0].cached
+    assert replayed.stats[0].warnings == changed.stats[0].warnings

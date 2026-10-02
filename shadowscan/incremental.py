@@ -27,7 +27,12 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
-from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES, VCS_METADATA_EXCLUDES
+from shadowscan.connectors.code.filesystem import (
+    DEFAULT_EXCLUDES,
+    DISCLOSED_DEFAULT_EXCLUDES,
+    VCS_METADATA_EXCLUDES,
+    _holds_file,
+)
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
@@ -315,6 +320,11 @@ def _tree_digest(
             path = basepath / name
             built_in = DEFAULT_EXCLUDES if skip_default_excludes else VCS_METADATA_EXCLUDES
             if code and (name in built_in or name in excluded_dir_names):
+                if name in built_in and name in DISCLOSED_DEFAULT_EXCLUDES:
+                    # The scan warns about a skipped directory of this name that
+                    # holds a file; a cached result must not drop that warning.
+                    skipped = path.relative_to(root).as_posix()
+                    digest.update(_json(["skipped-directory", skipped, _holds_file(path)]))
                 continue
             if path.is_symlink():
                 # Ancillary readers such as CODEOWNERS can inspect descendants
