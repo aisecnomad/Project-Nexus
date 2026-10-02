@@ -42,7 +42,8 @@ Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
 GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
 steps (→ code-exec), models. A Zapier export record needs an `id`, `title`,
 `name` or `Zap` field; any other object is reported as an unsupported record
-and makes the scan incomplete.
+and makes the scan incomplete. A CSV row whose cells are all blank is skipped
+without a diagnostic.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

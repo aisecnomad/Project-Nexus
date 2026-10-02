@@ -115,8 +115,10 @@ coverage, even when a response includes an empty collection field.
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
   `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
   JWTs, private key blocks (PEM, PGP, SSH2 and PuTTY, an unterminated one to the
-  end of the text), URL userinfo and credential query or webhook path
-  segments. A token or JWT is withheld behind a JSON-escaped line break or tab
+  end of the text), URL userinfo, credential query keys (including `auth`,
+  `pwd` and `pat`) and webhook path segments, every cookie in a `Cookie`
+  header, and compact `name:value` headers and passwords (`x-api-key:value`).
+  A token or JWT is withheld behind a JSON-escaped line break or tab
   (`\n`, `\t`), a percent escape (`%3D`) or an underscore, and the prefixes no
   ordinary word contains (`sk-proj-`, `ghp_`, `AKIA`, `eyJ` and similar) also
   behind a digit; a word that merely ends in a prefix's text (`risk-`, `disk-`)
@@ -133,7 +135,8 @@ coverage, even when a response includes an empty collection field.
   calls; name/value records such as Kubernetes `env` lists; XML elements and
   `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
   C `#define`; command-line options such as `--api-key`, `--token`,
-  `--password`, `curl -u user:secret`, `-H "X-Api-Key:value"` (and any header whose name ends in a
+  `--password`, `--passphrase`, `--pat`, `--auth`, `curl -u user:secret`,
+  `-H "X-Api-Key:value"` (and any header whose name ends in a
   credential word, such as `X-Token: value` or `X-Functions-Key: value`), `-p` after
   `docker login` and other registry or cloud logins (`az`, `az acr`, `oc`,
   `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into

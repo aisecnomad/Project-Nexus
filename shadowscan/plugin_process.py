@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import multiprocessing.connection
 import os
 import re
 import socket
+import sys
+import threading
 import time
 from dataclasses import asdict, replace
 from multiprocessing.process import BaseProcess
@@ -30,6 +33,9 @@ if TYPE_CHECKING:
 
 MAX_RESULT_BYTES = 16 * 1024 * 1024
 _CLEANUP_SECONDS = 0.5
+# A worker stops itself this long after its deadline, matching the parent's
+# supervision guard, in case nothing in the scanner is left to terminate it.
+_WORKER_GRACE_SECONDS = 2.0
 
 
 def _remaining(deadline: float) -> float:
@@ -40,12 +46,40 @@ def _remaining(deadline: float) -> float:
 
 
 def _encode_result(value: dict[str, Any]) -> bytes:
+    # Match ScanResult.to_json: values JSON cannot represent (datetime, set,
+    # bytes) become str() as in a thread-mode report, then the parent's
+    # Finding.from_dict sanitizes them. NaN and infinity still fail closed.
     output = bytearray()
-    for chunk in json.JSONEncoder(allow_nan=False, separators=(",", ":")).iterencode(value):
+    encoder = json.JSONEncoder(allow_nan=False, separators=(",", ":"), default=str)
+    for chunk in encoder.iterencode(value):
         output.extend(chunk.encode("utf-8"))
         if len(output) > MAX_RESULT_BYTES:
             raise ValueError("plugin result exceeds transport limit")
     return bytes(output)
+
+
+def _exit_with_scanner(deadline: float) -> None:
+    """Stop this worker when the scanner process exits or the deadline grace ends.
+
+    The scanner can exit without running its cleanup (the job-deadline
+    watchdog's ``os._exit``, SIGTERM or SIGKILL). A plugin that ignores its
+    deadline would then keep running, with its credentials, as an orphan.
+    The parent sentinel becomes readable as soon as the scanner process is gone.
+    """
+    parent = multiprocessing.parent_process()
+    sentinels = [parent.sentinel] if parent is not None else []
+
+    def watch() -> None:
+        try:
+            timeout = max(0.0, deadline + _WORKER_GRACE_SECONDS - time.monotonic())
+            if sentinels:
+                multiprocessing.connection.wait(sentinels, timeout)
+            else:
+                time.sleep(timeout)
+        finally:
+            os._exit(1)
+
+    threading.Thread(target=watch, name="shadowscan-plugin-watchdog", daemon=True).start()
 
 
 def _worker(
@@ -55,8 +89,10 @@ def _worker(
     number: int,
     deadline: float,
     identity_key: bytes,
+    dump_directory: Path | None,
 ) -> None:
     """Import and execute the approved plugin only inside its spawned process."""
+    _exit_with_scanner(deadline)
     # A plugin's print/log calls may contain credentials. Diagnostics must come
     # through the scanner's sanitized result, not inherited stdout or stderr.
     with open(os.devnull, "w") as sink:
@@ -72,7 +108,9 @@ def _worker(
         runner = _ConnectorRunner(
             engine,
             IncrementalCache(config, index),
-            Path(config.dump_records) if config.dump_records else None,
+            # The parent's prepare_private_directory result: expanded, symlink
+            # free, owned and 0700. Never re-derive it from the raw option.
+            dump_directory,
             exports,
         )
         runner._run_identity_key = identity_key
@@ -86,15 +124,27 @@ def _worker(
                 "exports": exports.entries([(number, spec)], set()),
             }
         )
+        status = 0
     except BaseException:  # noqa: BLE001 - a plugin may raise SystemExit; never echo its exception
         payload = b'{"error":"plugin worker failed or its result exceeded the transport limit"}'
+        status = 1
     try:
-        channel.settimeout(_remaining(deadline))
-        channel.sendall(payload)
-    except (OSError, TimeoutError):
-        pass
+        try:
+            channel.settimeout(_remaining(deadline))
+            channel.sendall(payload)
+        finally:
+            channel.close()
+    except BaseException:  # noqa: BLE001 - an unsent result is a failed worker
+        status = 1
     finally:
-        channel.close()
+        # Exit now: a plugin's lingering non-daemon threads or atexit handlers
+        # must not delay, and so discard, a result that was already sent.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:  # noqa: BLE001 - output goes to /dev/null
+                pass
+        os._exit(status)
 
 
 def _receive(channel: socket.socket, deadline: float) -> bytes:
@@ -193,7 +243,14 @@ def _run_plugin_process(
     assert state.deadline is not None
     deadline = state.deadline
     # Do not transmit sibling configurations or load inventory in this child.
-    config = replace(runner._config, connectors=[spec], inventory=[], plugin_execution="thread")
+    dump_directory = runner._dump_directory
+    config = replace(
+        runner._config,
+        connectors=[spec],
+        inventory=[],
+        plugin_execution="thread",
+        dump_records=str(dump_directory) if dump_directory else None,
+    )
     parent, child = socket.socketpair()
     try:
         process = multiprocessing.get_context("spawn").Process(
@@ -205,6 +262,7 @@ def _run_plugin_process(
                 number,
                 deadline,
                 runner._run_identity_key,
+                dump_directory,
             ),
             daemon=True,
             name="shadowscan-plugin",
@@ -228,6 +286,8 @@ def _run_plugin_process(
     warnings: list[str] = []
     try:
         _remaining(deadline)
+        if state.cancelled.is_set():
+            raise TimeoutError
         process.start()
         if state.cancelled.is_set():
             raise TimeoutError

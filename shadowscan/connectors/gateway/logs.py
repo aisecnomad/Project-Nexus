@@ -1507,7 +1507,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             r"|runs|audio|images|files|batches|realtime)"
             r"|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent"
             r"|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b"
-            r"|/api/(?:chat|generate|tags)\b",
+            r"|/api/(?:chat|generate|tags)\b"
+            # Cloudflare Workers AI inference on the general api.cloudflare.com REST API.
+            r"|/accounts/[^/\s?#]+/ai/(?:run|v1)/",
             text,
         ):
             return True

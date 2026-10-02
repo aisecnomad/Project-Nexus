@@ -47,14 +47,27 @@ from shadowscan.utils.redaction_rules import (
 # which case the closing delimiter must repeat the opening one exactly. A ';'
 # inside an unquoted value follows _VALUE_SEMICOLON.
 _ESCAPED_QUOTE = re.compile(r"\\{1,8}[\"']")
+# Each level of escaping doubles a backslash and adds one before a quote, so
+# inside a value whose delimiter is k backslashes and a quote, the value's own
+# quote is 2k + 1 of them ('\\\\\\"' for k = 1) and a backslash that ends the
+# value adds 2k + 2 before the closing delimiter. A run of backslashes and
+# that quote closes the value only when the run, read whole, is k plus a
+# multiple of 2k + 2: read as the opener's tail, the value's own quote ended
+# it early and the rest of the value was shown.
+_ESCAPED_CLOSER = r"(?:(?P=run)(?P=run)\\\\)*+(?P=escaped)"
 _ASSIGNMENT = re.compile(
     r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*)"
     r"(?P<sep>\\{0,8}[\"']\s*:(?!=)\s*|[\"'][ \t]*" + _OPERATOR + r"[ \t]*|\s*" + _OPERATOR + r"\s*"
     r"|:[ \t]+|:[ \t]*(?=\\{0,8}[\"']))"
     r"(?P<value>\[REDACTED\]|\"[^\"\r\n]*\"|'[^'\r\n]*'"
-    r"|(?P<escaped>\\{1,8}[\"'])(?:(?!(?P=escaped))[^\r\n])*(?P=escaped)"
-    r"|\\{1,8}[\"'][^\r\n]*"
-    r"|[^\s,;\}\]\)\"']+(?:" + _VALUE_SEMICOLON + r"[^\s,;\}\]\)\"']*|(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
+    r"|(?P<escaped>(?P<run>\\{1,8})[\"'])(?:[^\\\r\n]++|\\++(?![\"'])|(?!"
+    + _ESCAPED_CLOSER
+    + r")\\++[\"'])*+"
+    + _ESCAPED_CLOSER
+    + r"|\\{1,8}[\"'][^\r\n]*"
+    + r"|[^\s,;\}\]\)\"']+(?:"
+    + _VALUE_SEMICOLON
+    + r"[^\s,;\}\]\)\"']*|(?<=\[REDACTED)\][^\s,;\}\]\)\"'&]*)*)"
 )
 
 

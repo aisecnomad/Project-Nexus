@@ -33,7 +33,12 @@ To gate on drift between two reports, `shadowscan diff baseline.json current.jso
 --fail-on-new` exits 2 when the current report has new findings or findings
 whose risk level rose, and 3 when the comparison is incomplete (differing scope
 or an incomplete scan). Without the flag, `diff` exits 0 unless the comparison
-is incomplete.
+is incomplete. Only local `code.filesystem` scans and offline exports from
+built-in connectors attest a comparable scope, `gateway.logs` only when both
+scans were keyed with the same identity key. A comparison involving a live API
+connector or a third-party connector always exits 3, even for identical
+reports, so `--fail-on-new` can gate only local repository and offline export
+scans.
 
 ## Container-based scanning
 
