@@ -803,11 +803,24 @@ class HttpClient:
         except (ValueError, RecursionError):
             raise ValueError("Invalid JSON response") from None
 
-    def get_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
+    def get_json(
+        self,
+        path: str,
+        *,
+        max_bytes: int | None = None,
+        on_response: Callable[[requests.Response], None] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """GET and decode JSON. *on_response* receives the response (headers only; the
+        body is consumed) once the body is decoded, so a caller can read headers such
+        as a total count; it never sees a rejected response."""
         limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
         kwargs["stream"] = True
         resp = self.get(path, **kwargs)
-        return self.read_json_response(resp, max_bytes=limit)
+        data = self.read_json_response(resp, max_bytes=limit)
+        if on_response is not None:
+            on_response(resp)
+        return data
 
     def post_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
         limit = _positive_byte_limit(max_bytes, self.max_response_bytes)

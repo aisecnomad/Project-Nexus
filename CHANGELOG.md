@@ -59,6 +59,16 @@ integrating them:
   dropped and every scan of that repository exited 3. Both are linear now with
   the same matches, and `tests/unit/test_regex_linearity.py` times the
   signature's code patterns on such shapes.
+- `lowcode.servicenow`: an empty page no longer ends a table. ACLs remove rows
+  after `sysparm_limit`, so a whole 500-row window can come back empty while
+  later windows hold readable records; collection used to stop there with exit
+  0. It now pages until the windows cover `X-Total-Count`, which also saves the
+  extra empty request per table. A response without a valid `X-Total-Count`
+  ends the table at an empty page with a warning that makes the scan
+  incomplete. `HttpClient.get_json` takes an `on_response` callback that sees
+  the response headers once the body is decoded, as `paginate_link(on_page=)`
+  does. The ServiceNow guide no longer claims that collection advances by the
+  rows returned, which it never did.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

@@ -658,6 +658,14 @@ logs, to attribute such requests. Fields that were taken from inside a value or
 quoted text of a text log (a `?model=` query, an `&host=` argument) no longer
 are, and a line truncated inside a quoted field is malformed (incomplete).
 
+`lowcode.servicenow` now pages each table until its 500-row windows cover the
+response's `X-Total-Count`, so a window that ACLs emptied no longer ends the
+table early with a complete scan. A table whose responses carry no valid
+`X-Total-Count` (a proxy that strips the header, `sysparm_no_count`) cannot
+prove where it ends: the scan is incomplete with a warning naming the table.
+Pass the header through to the scanner; `max_pages` still needs to exceed the
+table's `X-Total-Count`/500.
+
 ### October 2 production review migration
 
 Review framework attribution in projects using npm dependency aliases before

@@ -595,6 +595,27 @@ def test_link_pagination_callback_never_sees_an_invalid_page():
     assert seen == []
 
 
+def test_get_json_reports_the_response_headers_once_the_body_is_decoded():
+    http, session = client(response({"result": []}, headers={"X-Total-Count": "7"}))
+    totals = []
+    page = http.get_json(
+        "/table", params={"q": "x"}, on_response=lambda resp: totals.append(resp.headers["X-Total-Count"])
+    )
+    assert page == {"result": []} and totals == ["7"]
+    assert "on_response" not in session.request.call_args.kwargs
+
+
+@pytest.mark.parametrize("failed", [response({"result": []}, status=403), response(None)])
+def test_get_json_callback_never_sees_a_rejected_response(failed):
+    if failed.status_code == 200:
+        failed._content = b'{"result": [], "result": [1]}'  # an ambiguous body is rejected
+    http, _ = client(failed)
+    seen = []
+    with pytest.raises((HttpError, ValueError)):
+        http.get_json("/table", on_response=seen.append)
+    assert seen == []
+
+
 # ----------------------------------------------------------------- destination policy
 @pytest.mark.parametrize(
     "address,blocked",

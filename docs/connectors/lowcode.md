@@ -32,9 +32,14 @@ aggregated). Auth: `access_token` or client-credentials connected app.
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
 `sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer. Live
-collection advances by the rows actually returned and stops only on an empty
-page, so a server-side page cap below the requested 500 rows does not hide the
-rest of a table; `max_pages` still bounds it and reaching it is incomplete.
+collection reads each table in windows of 500 rows (`sysparm_offset` 0, 500,
+1000, ...). ACLs remove rows after `sysparm_limit` is applied, so a window can
+come back short or even empty before the end of the table: collection stops
+only when the windows cover the table's `X-Total-Count`, the number of rows the
+query matches before that filtering. A response without a valid `X-Total-Count`
+cannot prove where the table ends: an empty page then ends the table with a
+warning and the scan is incomplete. `max_pages` bounds each table, and reaching
+it is incomplete.
 
 ### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
