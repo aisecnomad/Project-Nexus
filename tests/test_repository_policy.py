@@ -1067,12 +1067,7 @@ def test_container_build_removes_setuid_and_setgid_bits_and_checks_none_remain()
     runtime = dockerfile.split("\nFROM ", 2)[2]
     strip = runtime.index("&& find / -xdev -type f -perm /6000 -exec chmod a-s {} +")
     check = runtime.index('&& test -z "$(find / -xdev -type f -perm /6000 -print -quit)"')
-    assert (
-        runtime.index("apk add --no-cache python-3.12")
-        < strip
-        < check
-        < runtime.index("USER 65532:65532")
-    )
+    assert runtime.index("apk add --no-cache python-3.12") < strip < check < runtime.index("USER 65532:65532")
 
 
 def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:
