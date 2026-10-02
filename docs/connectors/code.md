@@ -95,6 +95,12 @@ below it is scanned and the scan is incomplete. Findings describe
 one consistent state of the tree only when the checkout does not change during
 the scan.
 
+A file or directory name that is not valid UTF-8 appears in findings and
+diagnostics with each undecodable byte written as a `\xNN` escape (for example
+`agent-\xff.py`), so every report format can carry it; the file is still read
+under its real name. Two names that differ only in such bytes, or a name that
+contains the literal text `\xff`, are indistinguishable in a report.
+
 Configuration files are parsed as JSONC where their format allows comments.
 A syntax error in a file that is not coding-agent settings only skips its
 structured checks, with a warning; `.claude`, `.codex` and `.gemini` settings

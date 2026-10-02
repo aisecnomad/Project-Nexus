@@ -504,6 +504,7 @@ class _ScanState:
     label: str  # resource prefix of every finding
     # Descriptor of the directory files are read relative to, open during the walk.
     root_fd: int = -1
+    base: Path | None = None  # that directory (the scan root, or a single-file root's parent)
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
     # relpath, parsed servers
@@ -762,6 +763,11 @@ def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     return target if target == resolved_root or resolved_root in target.parents else None
 
 
+def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
+    """The project directory of ``path`` under its on-disk name; ``proj_root`` is the report-safe form."""
+    return root.joinpath(*path.relative_to(root).parts[: len(PurePosixPath(proj_root).parts)])
+
+
 def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[[str], bool]:
     """Return a cached check whether an import in ``path`` names a module of the scanned tree."""
     local_modules: dict[str, bool] = {}
@@ -777,7 +783,7 @@ def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[
                 module,
                 scan_root=root,
                 source_path=path,
-                project_root=root if proj_root == "." else root / proj_root,
+                project_root=root if proj_root == "." else _on_disk_project(root, path, proj_root),
             )
         return local_modules[name]
 
@@ -1228,14 +1234,15 @@ class FilesystemConnector(BaseConnector):
 
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
-            rel_dir = "." if rel_dir == "." else rel_dir
+            rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             dirnames[:] = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames)
             proj = _nearest_root(rel_dir, roots)
             if rel_dir != "." and _marks_project(Path(dirpath), filenames):
                 roots.append(rel_dir)
                 proj = rel_dir
             for fn in sorted(filenames):
-                rel = fn if rel_dir == "." else f"{rel_dir}/{fn}"
+                shown = _report_name(fn)
+                rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
                 if self._excluded_file(rel):
                     continue
                 p = Path(dirpath) / fn
@@ -1273,7 +1280,8 @@ class FilesystemConnector(BaseConnector):
         """Return the subdirectories of ``dirpath`` the walk descends into, in name order."""
         kept = []
         for name in sorted(dirnames):
-            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
+            shown = _report_name(name)
+            rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
             if self._excluded(rel, name):
                 if self._disclosed_default_exclusion(rel, name) and _holds_file(path):
@@ -1399,6 +1407,7 @@ class FilesystemConnector(BaseConnector):
         """
         # A single-file root is read relative to its (equally checked) parent.
         base = scan.root.parent if scan.root.is_file() else scan.root
+        scan.base = base
         try:
             scan.root_fd = open_confined_directory(base)
         except (OSError, ValueError) as exc:
@@ -1461,7 +1470,7 @@ class FilesystemConnector(BaseConnector):
         file_matches = self.index.match_file(rel)
         if not (_analyzed_by_name(path.name) or file_matches):
             return
-        loaded = self._read_source(rel, path, scan.root_fd)
+        loaded = self._read_source(rel, path, scan.root_fd, scan.base)
         if loaded is None:
             return
         text, raw_notebook = loaded
@@ -1492,15 +1501,19 @@ class FilesystemConnector(BaseConnector):
         # 4. special files
         self._record_special_files(scan, file)
 
-    def _read_source(self, rel: str, path: Path, root_fd: int) -> tuple[str, str | None] | None:
+    def _read_source(
+        self, rel: str, path: Path, root_fd: int, base: Path | None = None
+    ) -> tuple[str, str | None] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document.
 
-        ``rel`` is read relative to the open scan root ``root_fd``. A notebook's
-        text is its code cells. None means nothing is analyzed; the recorded
-        diagnostics say why.
+        The file is read relative to the open scan root ``root_fd``: by its on-disk
+        name (``path`` below ``base``), while ``rel`` is the report-safe name used in
+        diagnostics. A notebook's text is its code cells. None means nothing is
+        analyzed; the recorded diagnostics say why.
         """
         read_errors: list[str] = []
-        text = read_text(PurePosixPath(rel), self._size_limit(path.name), read_errors, dir_fd=root_fd)
+        on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
+        text = read_text(on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd)
         for issue in read_errors:
             if issue == BINARY_CONTENT_ERROR and not _analyzed_by_name(path.name):
                 # Read only because a file-name signature matched (an image under
@@ -3011,6 +3024,26 @@ def _project_root(root: Path, rel: str) -> str:
         if _marks_project(root / directory, names):
             return directory
     return "."
+
+
+def _report_name(name: str) -> str:
+    """A report-safe form of a path or path component read from disk.
+
+    ``os.walk`` returns the bytes of a name that is not UTF-8 as lone surrogates,
+    which no reporter can encode: each becomes a ``\\xNN`` escape. Valid names are
+    returned unchanged; I/O keeps using the ``Path`` that holds the on-disk name.
+    """
+    if name.isascii():
+        return name
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        try:
+            raw = name.encode("utf-8", errors="surrogateescape")
+        except UnicodeEncodeError:
+            raw = name.encode("utf-8", errors="backslashreplace")
+        return raw.decode("utf-8", errors="backslashreplace")
+    return name
 
 
 def _nearest_root(rel_dir: str, roots: list[str]) -> str:

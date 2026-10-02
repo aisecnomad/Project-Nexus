@@ -852,6 +852,70 @@ def test_pattern_timeout_is_an_explicit_coverage_gap(
     assert any("framework.crewai" in f.frameworks for f in findings)
 
 
+# ------------------------------------------- names that are not valid UTF-8
+def _write_bytes_named(base: Path, name: bytes, content: bytes | None) -> None:
+    """Create a file (or, with no content, a directory) whose name is raw bytes."""
+    target = os.fsencode(base) + b"/" + name
+    try:
+        if content is None:
+            os.mkdir(target)
+        else:
+            with open(target, "wb") as handle:
+                handle.write(content)
+    except OSError:
+        pytest.skip("the filesystem cannot create a name that is not valid UTF-8")
+
+
+def _non_utf8_tree(root: Path) -> None:
+    _write_bytes_named(root, b"agent-\xff\xfe.py", b"from crewai import Agent\n")
+    _write_bytes_named(root, b"d\xe9", None)
+    _write_bytes_named(
+        root, b"d\xe9/.mcp.json", b'{"mcpServers": {"tool": {"command": "npx", "args": ["-y", "tool"]}}}'
+    )
+    _write_bytes_named(root, b"proj\xe9", None)
+    _write_bytes_named(root, b"proj\xe9/pyproject.toml", b'[project]\nname = "proj"\n')
+    _write_bytes_named(root, b"proj\xe9/app.py", b"import openai\nclient = openai.OpenAI()\n")
+
+
+def _strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _strings(key)
+            yield from _strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item)
+
+
+def test_non_utf8_names_are_escaped_in_findings_and_the_files_are_still_scanned(tmp_path, index):
+    _non_utf8_tree(tmp_path)
+    findings, ctx = _run(index, tmp_path)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert any("framework.crewai" in f.frameworks for f in findings)
+    assert any(f.kind == Kind.MCP_SERVER for f in findings)
+    assert any("provider.openai" in f.model_providers for f in findings)
+    # The bytes that are not UTF-8 are shown as \xNN escapes: no lone surrogate reaches a reporter.
+    strings = [text for f in findings for text in _strings(f.to_dict())] + ctx.stats.warnings
+    for text in strings:
+        text.encode("utf-8")
+    assert any("agent-\\xff\\xfe.py:1" in text for text in strings)
+    assert any(text == "d\\xe9/.mcp.json" for text in strings)
+    assert any("proj\\xe9/app.py:1" in text for text in strings)
+
+
+@pytest.mark.parametrize("fmt", ["table", "csv", "html", "json", "markdown", "sarif"])
+def test_every_reporter_renders_a_repository_with_non_utf8_names(tmp_path, fmt):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _non_utf8_tree(repo)
+    output = tmp_path / f"report.{fmt}"
+    result = CliRunner().invoke(main, ["code", str(repo), "--format", fmt, "-o", str(output)])
+    assert result.exit_code == 0, result.output
+    assert output.read_text(encoding="utf-8")
+
+
 # ------------------------------------------------------- list-typed options
 @pytest.mark.parametrize(
     "value",
