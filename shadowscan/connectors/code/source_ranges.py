@@ -57,6 +57,7 @@ _JS_LINE_TERMINATORS = "\n\r\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}"
 _JS_LINE_BREAK = re.compile(f"[{_JS_LINE_TERMINATORS}]")
 # What can open a string, a template or a comment when the body of a regular expression is read as code.
 _REGEX_BODY_OPENER = re.compile("[\"'`/]")
+_NON_SPACE = re.compile(r"\S")
 
 
 def _js_line_end(text: str, pos: int) -> int:
@@ -601,7 +602,10 @@ class _JavaScriptLexer:
         exposed rather than hidden, so JSX text such as `{a}/{b}` in a `.js` file is not flagged.
         """
         text = self.text
-        slash = _skip_trivia(text, i + 1)
+        following = _NON_SPACE.search(text, i + 1)
+        if following is None or following.group() != "/":
+            return  # the usual case; only a slash can start a comment or a regular expression
+        slash = _skip_trivia(text, following.start())
         if 0 <= slash < self.size and text[slash] == "/":
             end = _javascript_regex_end(text, slash, self.budget)
             if end is not None and _REGEX_BODY_OPENER.search(
@@ -861,14 +865,16 @@ class _JavaScriptLexer:
                 i += 1
             elif text[i] == ".":
                 control_pending[-1] = False
-                if text.startswith("...", i):
+                can_start_regex[-1] = False
+                i += 1
+                if i < size and (text[i].isalpha() or text[i] in "_$"):
+                    member_at = i  # the usual `a.b`
+                elif text.startswith("..", i):
                     # Spread: an expression, possibly a regular expression, follows.
                     can_start_regex[-1] = True
-                    i += 3
+                    i += 2
                 else:
-                    can_start_regex[-1] = False
-                    member_at = _property_name_start(text, i + 1)
-                    i += 1
+                    member_at = _property_name_start(text, i)
             else:
                 if not text[i].isspace():
                     control_pending[-1] = False
