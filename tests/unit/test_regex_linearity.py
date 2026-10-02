@@ -355,6 +355,8 @@ REDACTION_SHAPES: dict[str, Any] = {
     "bare authorities": lambda n: "https://" + "u:" * (n // 2),
     "webhook hosts": lambda n: "a." * (n // 2) + "webhook.office.comx",
     "authorization schemes": lambda n: "Bearer a " * (n // 9),
+    "scheme operators": lambda n: "Bearer => " * (n // 10),
+    "scheme equals signs": lambda n: "Bearer " + "=" * n + ">",
     "key blocks": lambda n: "-----BEGIN PRIVATE KEY-----\n" * (n // 28),
     "unterminated key block": lambda n: "-----BEGIN PRIVATE KEY-----" + "A" * n,
 }

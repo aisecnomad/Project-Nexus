@@ -192,6 +192,11 @@ integrating them:
   JSON-escaped text) ends an unquoted value. Read as a `;` inside the value,
   it ran `HOST=db;\n` into the next line and took that line's credential name
   with it, so `"HOST=db;\n:password => \"S\""` showed `S`.
+- Redaction: the credential after an authorization scheme is never `=` signs
+  alone. In `bearer => S`, `Bearer =~ S` and `bearer == S` the scheme rule took
+  the operator's `=` as the credential, the assignment rules then found no
+  operator, and `S` was shown. A credential glued to an `=` (`Basic =S`) is
+  still withheld.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

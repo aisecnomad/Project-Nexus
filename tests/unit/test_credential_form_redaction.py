@@ -430,6 +430,27 @@ def test_authorization_schemes_are_withheld_after_escaped_line_breaks(scheme, gl
     assert sanitize_text(safe) == safe
 
 
+@pytest.mark.parametrize("name", ["bearer", "Bearer", "BEARER", ":bearer"])
+@pytest.mark.parametrize("operator", ["=>", "=~", "=="])
+def test_a_scheme_named_value_after_an_operator_is_withheld(name, operator):
+    # The scheme rule read the operator's '=' as the credential ('bearer
+    # [REDACTED]> S'), and the assignment rules then found no operator.
+    source = f"{name} {operator} {HEX}"
+    safe = sanitize_text(source)
+    assert HEX not in safe and REDACTED in safe and operator in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize("scheme", ["Bearer", "Basic", "SSWS"])
+def test_an_operator_after_a_scheme_name_is_not_read_as_its_credential(scheme):
+    # Only a credential follows the scheme; '=' never starts one.
+    assert sanitize_text(f"if scheme == {scheme} == x") == f"if scheme == {scheme} == x"
+    assert sanitize_text(f"{scheme} {HEX}") == f"{scheme} {REDACTED}"
+    # A credential glued to an '=' is still one.
+    assert HEX not in sanitize_text(f"{scheme} ={HEX}")
+    assert HEX not in sanitize_text(f"{scheme} =={HEX}")
+
+
 @pytest.mark.parametrize(
     "source",
     [

@@ -123,10 +123,14 @@ _ADDED_PEM = re.compile(
     r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----|\Z)",
     re.DOTALL,
 )
-_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
+# The credential after an authorization scheme. It is never '=' signs alone: after
+# 'bearer =>', '=~' or '==' they are an operator's, and read as the credential
+# they hid the operator from the assignment rules, which then showed the value.
+_AUTH_CREDENTIAL = r"(?!=++(?![A-Za-z0-9+/_.-]))[A-Za-z0-9+/_.=-]+"
+_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_CREDENTIAL)
 # A scheme after an escaped line break or a percent escape ('...header:\nBearer v') is read as well.
 _ESCAPED_AUTH = re.compile(
-    r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+"
+    r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_CREDENTIAL
 )
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
