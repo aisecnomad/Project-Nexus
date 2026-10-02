@@ -17,7 +17,7 @@ from typing import Any
 
 from shadowscan import __version__
 from shadowscan.comparison import build_collection_scope
-from shadowscan.config import ConnectorSpec, ScanConfig, validate_min_confidence
+from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import merge_duplicate_metadata
@@ -25,7 +25,7 @@ from shadowscan.correlation import correlate_runtime
 from shadowscan.incremental import IncrementalCache
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, now_iso
 from shadowscan.registry import Inventory
-from shadowscan.risk import RiskPolicy, assess
+from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
 from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin
@@ -599,6 +599,7 @@ class Engine:
         self._index_supplied = index is not None
         self._signature_digest: str | None = None
         self.index = index if index is not None else self._load_index()
+        self._validate_risk_policy()
         self.progress = progress or (lambda cid, msg: None)
         # Connector ids whose worker threads outlived ``connector_timeout_seconds`` in
         # the last run. Their threads may still be blocked inside an SDK call;
@@ -650,6 +651,15 @@ class Engine:
         if self._signature_digest is None or self._pack_digest() != self._signature_digest:
             self.index = self._load_index()
 
+    def _validate_risk_policy(self) -> None:
+        """Reject a risk_weights provider id that no loaded provider signature has."""
+        try:
+            RiskPolicy.from_options(
+                self.config.risk_weights, self.config.risk_basis, known_providers=provider_ids(self.index)
+            )
+        except ValueError as exc:
+            raise ConfigValidationError(f"options.{exc}") from None
+
     def _refresh_inventory(self) -> None:
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
@@ -673,6 +683,7 @@ class Engine:
         # connector sees the configuration.
         self.config.validate_connector_specs()
         self._refresh_index()
+        self._validate_risk_policy()
         self._refresh_inventory()
 
     # -------------------------------------------------------------- selection

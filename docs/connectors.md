@@ -109,8 +109,8 @@ is capped at 0.6 confidence. These are static candidate classifications, not pro
 that code ran or that a deployment is autonomous.
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
-A2A, M365 and CrewAI manifests yield incomplete coverage instead of confirmed
-agents. JSON/YAML descriptions are not executed or treated as source; low-code
+A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
+agent findings. JSON/YAML descriptions are not executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history

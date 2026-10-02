@@ -34,9 +34,32 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+A list of products is not use of them. A data or prose file (YAML, JSON, TOML, INI,
+XML, CSV, text, Markdown) that names four or more different products through
+domains or environment-variable names, and holds no import, dependency, code,
+file-name, image, IaC, model or credential evidence, is a *catalog*: a proxy
+blocklist, an egress allowlist, a vendor policy, a copy of the signature packs.
+Its mentions establish a technology only when the same signature also has an
+import, a dependency or specific code evidence elsewhere in the project, like an
+ambiguous pattern. A project with nothing else yields no finding for them, and
+a coding-agent product named only in a catalog yields no `agent-config` finding.
+When a project has no evidence except mention-only data files, and one of them
+is a catalog, all of them count as one catalog, because nothing in the project
+uses what they name. A project finding that remains lists the discounted files
+under `metadata.catalog_mentions` (`files`, at most 20, and `min_signatures`).
+Source code that lists providers is multi-provider code, and files that declare
+what a project builds or runs with (dotenv files, Compose files, Helm
+`values.yaml`, CI workflows, dependency manifests, IaC) are never catalogs; a
+data file naming one to three products is configuration. The threshold of four is
+a judgement from the bundled corpora and fixtures: their multi-provider
+configurations name at most four products and are dotenv files, while blocklists
+and vendor policies name six to ten and the signature packs seven to
+thirty-six per file. A real routing table kept in a plain data file that names
+four or more providers, with no other evidence, is therefore not reported.
+
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
-A2A, M365 and CrewAI manifests yield incomplete coverage instead of confirmed
-agents. JSON/YAML descriptions are not executed or treated as source; low-code
+A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
+agent findings. JSON/YAML descriptions are not executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history

@@ -350,7 +350,7 @@
     }
    ],
    "confidence": 0.989,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -541,7 +541,7 @@
     }
    ],
    "confidence": 0.995,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -766,7 +766,7 @@
     }
    ],
    "confidence": 0.999,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -964,7 +964,7 @@
     }
    ],
    "confidence": 0.984,
-   "likelihood": "confirmed",
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",

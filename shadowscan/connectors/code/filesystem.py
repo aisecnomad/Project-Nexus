@@ -30,7 +30,12 @@ Precision safeguards
   environment-variable or display-name reference, the heuristics are dropped
   and the finding is built from the name references alone: evidence weights
   are halved, the finding is tagged ``env-names-only`` and confidence is
-  capped below the ``confirmed`` band.
+  capped below the ``strong`` band.
+* A data or prose file that only lists products (a blocklist, a vendor
+  policy, a copy of the signature packs: four or more products by domain or
+  variable name, no import, dependency, code or other structural evidence) is
+  a catalog. Its mentions count only for a signature with library evidence
+  elsewhere in the project (``shadowscan.connectors.code.catalogs``).
 """
 
 from __future__ import annotations
@@ -54,6 +59,7 @@ import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.code.catalogs import catalog_metadata, project_catalog_files
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.manifests import (
     MANIFEST_PATTERN_SECONDS,
@@ -584,7 +590,7 @@ class _ProjectEvidence:
         # Environment-variable and display-name references are weak
         # anchors, so they are judged before heuristics join: an agent
         # loop or subprocess.run next to a .env.example must not promote
-        # the project to a confirmed agent with autonomous or code-exec
+        # the project to a strong agent with autonomous or code-exec
         # capabilities. Such a finding is built from the name references
         # alone. A live credential is not a name: it keeps full weights
         # and lets the heuristics count. Every anchor is non-heuristic,
@@ -2373,13 +2379,16 @@ class FilesystemConnector(BaseConnector):
             for m, rel, _ in observations
         ):
             yield self._project_finding(label, root, proj, observations)
+        catalogs = project_catalog_files(proj) if proj.coding_agent_files else frozenset()
         for sig_id, files in proj.coding_agent_files.items():
             # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
             # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.
             # Config files, instruction docs, dependencies and code such as a
-            # workflow step or a YOLO-mode flag still establish the agent.
+            # workflow step or a YOLO-mode flag still establish the agent. A
+            # catalog (an allowlist of vendor hosts) establishes none.
             if not any(
-                m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name)
+                (m.signal.type not in _MENTION_SIGNALS or _is_coding_agent_doc(PurePosixPath(rel).name))
+                and rel not in catalogs
                 for m, rel, _ in proj.coding_agent_matches.get(sig_id, [])
             ):
                 continue
@@ -2387,7 +2396,7 @@ class FilesystemConnector(BaseConnector):
 
     @staticmethod
     def _project_observations(proj: _Project) -> list[_Observation]:
-        """Return a project's technology evidence without policy or uncorroborated ambiguous matches."""
+        """Return a project's technology evidence without policy, catalog or ambiguous-only matches."""
         observations = [
             (m, rel, snip) for (m, rel, snip) in proj.matches if m.signature.category not in {"policy"}
         ]
@@ -2400,7 +2409,16 @@ class FilesystemConnector(BaseConnector):
             for m, _, _ in observations
             if m.signal.type in _LIBRARY_SIGNALS and not m.signal.ambiguous
         }
-        return [t for t in observations if not t[0].signal.ambiguous or t[0].signature_id in independent]
+        # A catalog (a blocklist, a vendor policy, a copy of the signature
+        # packs) names many products and uses none, so its mentions are held
+        # to the same rule (see shadowscan.connectors.code.catalogs).
+        catalogs = project_catalog_files(proj)
+        return [
+            t
+            for t in observations
+            if (not t[0].signal.ambiguous or t[0].signature_id in independent)
+            and (t[1] not in catalogs or t[0].signature_id in independent)
+        ]
 
     def _project_finding(
         self,
@@ -2421,6 +2439,9 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("env-names-only")
         self._attach_example_credentials(f, proj)
         self._attach_project_metadata(f, root, proj, evidence)
+        catalogs = project_catalog_files(proj)
+        if catalogs:
+            f.metadata["catalog_mentions"] = catalog_metadata(catalogs)
         if evidence.test_only:
             f.add_tag("test-code-only")
         finalize(f, self.index)
@@ -2452,7 +2473,7 @@ class FilesystemConnector(BaseConnector):
             f.metadata["potential_capabilities"] = sorted(potential)
         # Repeated observations of one technology are correlated evidence.
         # Generic idioms share a single supporting group; loops in several
-        # worker files must never accumulate into a confirmed AI agent.
+        # worker files must never accumulate into a strong AI agent.
         for item in f.evidence:
             category = item.attributes.get("category")
             item.attributes["confidence_group"] = (

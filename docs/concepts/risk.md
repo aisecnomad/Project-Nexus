@@ -14,28 +14,48 @@ It is a **noisy-OR** of evidence weights (`Finding.recompute_confidence`):
 confidence = round(1 − ∏(1 − wᵢ), 3)
 ```
 
-Each weight `wᵢ` is clamped to 0–1. Evidence that shares a
-`confidence_group` attribute is correlated (for example, repeated matches of
-one framework in a project), so each group contributes only its strongest
-weight. A project that merely imports `openai` is not the same as a Bedrock
-Agent with a confirmed runtime status.
+Each weight `wᵢ` is a finite number from 0 to 1: `Evidence` refuses any other
+value when it is built or changed, so a corrupt report, cache entry or plugin
+fails instead of turning NaN or a huge weight into certainty. Evidence that
+shares a `confidence_group` attribute is correlated (for example, repeated
+matches of one framework in a project), so each group contributes only its
+strongest weight. A project that merely imports `openai` is not the same as a
+Bedrock Agent with a confirmed runtime status.
 
 Confidence is a heuristic evidence score, not a calibrated probability of
 agent execution: the weights are authored in signature packs and connectors,
-not fitted to observed outcomes. The `likelihood` label is derived from it:
+not fitted to observed outcomes. The `likelihood` label is only a bucket of that
+score, not a verification state (`strong` is not "confirmed"):
 
 | Likelihood | Confidence |
 |------------|------------|
-| `confirmed` | ≥ 0.85 |
+| `strong` | ≥ 0.85 |
 | `likely` | ≥ 0.6 |
 | `possible` | ≥ 0.3 |
 | `weak` | < 0.3 |
+
+The top bucket was called `confirmed` before the label was renamed. Reports,
+`diff` baselines and incremental-cache entries that carry `confirmed` are still
+read, as `strong`; all output uses `strong`. The label is not part of a finding's
+identity.
 
 Static findings retain framework features supported only by imports or
 dependencies under `metadata.potential_capabilities`. Those features are not
 scored as observed capabilities. Stronger source evidence, such as an agent
 factory or an enabled executable tool definition, can support a capability;
 source evidence still does not prove that the code ran in production.
+
+A name is a mention, not use. Environment-variable names alone cap a project at
+confidence 0.8 (tag `env-names-only`, `metadata.confidence_cap`). A data file
+that lists four or more products by domain or variable name, such as a proxy
+blocklist, a vendor policy or a copy of the signature packs, is a *catalog*:
+its mentions count only for a product that also has an import, a dependency or
+specific code evidence elsewhere in the project, and a project with nothing
+else yields no finding. Discounted files are listed in
+`metadata.catalog_mentions`. Source code, dotenv, Compose, Helm and CI files
+are never catalogs, and a file naming one to three products is configuration;
+see [Code connectors](../connectors/code.md) for the exact rule and the
+threshold.
 
 ## Risk
 
@@ -71,7 +91,17 @@ a zero weight add no factor. Some factors depend on finding metadata:
 `mcp-stdio` (5), `mcp-auto-approve` (10), `mcp-plain-http` (10), `sub-agents`
 (3 per definition, at most 10), `volume` (5 from 1,000 gateway events, 10 from
 10,000) and `blast-radius` (5 from 10 users or installations, 10 from 100).
-`options.risk_weights` overrides weights; see the README's risk policy.
+`options.risk_weights` overrides weights; see the README's risk policy. Its
+keys are checked, so a typo cannot silently change nothing: unknown groups,
+`kinds` and `governance` keys are rejected, `capabilities` keys must be one of
+the capability names (`code-exec`, `autonomous`, `saas-actions`, `data-access`,
+`browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`, `rag`),
+and `providers` keys must be the id of a provider signature in the loaded
+signature packs (for example `provider.deepseek`, or an id from your own pack).
+The error names the key and never echoes the value. `tags` is open-ended
+(signature packs, plugins and identity types add their own tags), so an
+unfamiliar tag key is accepted and logged once as a warning, with a suggestion
+when it resembles a built-in tag.
 
 ### Confidence scaling
 
@@ -83,11 +113,14 @@ scale = 0.6 + 0.4 × confidence        (confidence clamped to 0–1)
 score = min(100, max(0, round(raw × scale)))
 ```
 
-`round` is Python's rounding (halves to even). A finding with confidence 1.0
-keeps its full score; lower confidence reduces it by at most 40%, so a
-low-confidence finding produces a lower effective risk but severe factors
-still register. Below confidence 1.0 the change is listed as a
-`confidence-scaling` factor, which is never positive, and a clamp at 0 or 100
+`round` rounds halves to even, and the arithmetic is exact: the confidence is
+read as the decimal number it is written as (0.15, not the nearest binary
+float), so a raw 75 at confidence 0.15 is 49.5 and scores 50, not 49.
+
+A finding with confidence 1.0 keeps its full score; lower confidence reduces
+it by at most 40%, so a low-confidence finding produces a lower effective risk
+but severe factors still register. Below confidence 1.0 the change is listed as
+a `confidence-scaling` factor, which is never positive, and a clamp at 0 or 100
 as a `bounds` factor, so the listed factors always add up to `score`.
 
 `risk.danger_score` applies the same scale and bounds to the factors other than

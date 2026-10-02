@@ -408,7 +408,7 @@ options. Extra statements, nested scopes, mutations and dynamic options cannot
 establish this proof. Unsupported shapes, including files longer than such a
 program can be, still produce ordinary SDK evidence and leave coverage complete.
 
-Several rules keep weak observations from producing confirmed or high-risk
+Several rules keep weak observations from producing strong or high-risk
 findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
 sequences after the provider prefix) is never a `secret` finding; it is listed
@@ -425,7 +425,12 @@ observation for a project other than those heuristics is an environment-variable
 or display-name reference, the heuristics are dropped and the finding is built
 from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
-names appear. MCP servers
+names appear. A data or prose file that only lists four or more products by
+domain or variable name (a proxy blocklist, a vendor policy, a copy of the
+signature packs) is a catalog: its mentions count only for a product with an
+import, dependency or code pattern elsewhere in the project, and the discounted
+files are listed in `metadata.catalog_mentions` (see
+[Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers
 `browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
 keeps the informational `always-on` tag but only marks a caller as agentic,
