@@ -116,6 +116,16 @@ requested name is incomplete, and that response is not scanned.
 An org or user listing entry whose `full_name` is not a plain `owner/name`
 (letters, digits, `.`, `_` and `-`, never a `.` or `..` segment) is an error
 that makes the scan incomplete; that repository is never requested or cloned.
+The listing is read to the end, in `full_name` order, before the first repository
+is cloned or scanned, so a push during the scan cannot move an unlisted
+repository out of it. A listing that fails part-way, or exceeds `max_repos`,
+still has the repositories already listed scanned and makes the scan incomplete.
+A clone populates no submodule and runs no Git LFS smudge filter: a repository
+whose tree holds a submodule (a gitlink entry), or whose files include LFS
+pointer files, is reported as `submodules in <repo> are not cloned` or
+`Git LFS pointer files in <repo> are not resolved` and makes the scan
+incomplete, as does a clone that could not be inspected for either. API mode
+reports submodules and LFS pointer files the same way.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository
@@ -143,6 +153,10 @@ input with no clone directories, make the scan incomplete.
 A group listing entry whose project `id` is not a positive integer is an error
 that makes the scan incomplete; that project is skipped before any request is
 made for it, and the other projects in the listing are still scanned.
+The group listing is ordered by project `id`, read to the end before the first
+project is cloned, and compared with the `X-Total` / `X-Total-Pages` totals GitLab
+reports (it omits them for very large groups); a mismatch makes the scan
+incomplete. Submodules and LFS pointer files are reported as for GitHub.
 GitLab clones use the same observed `clone_max_bytes` and timeout behavior as
 GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
 it does not replace a filesystem/container disk quota.

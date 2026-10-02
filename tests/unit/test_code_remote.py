@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import shutil
+import subprocess
 from pathlib import Path
 from threading import Event, Lock
 from time import monotonic
@@ -26,6 +28,8 @@ from shadowscan.connectors.code.remote import (
     select_api_paths,
 )
 from shadowscan.models import Kind, ScanStats
+from shadowscan.utils import git as git_module
+from shadowscan.utils.git import checkout_has_gitlinks, checkout_has_lfs_pointers, safe_git_env
 from shadowscan.utils.http import HttpError
 
 COMMIT = "a" * 40
@@ -878,3 +882,178 @@ def test_github_listing_reports_no_totals_and_requests_a_stable_order(index):
     assert connector.ctx.stats.warnings == []
     query = responses.calls[0].request.url.split("?", 1)[1]
     assert "sort=full_name" in query and "direction=asc" in query
+
+
+# ---------------------------------------------------- what a clone leaves out of the scan
+LFS_POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:" + "0" * 64 + "\nsize 123456789\n"
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+
+
+def _run_git(*args):
+    subprocess.run(["git", *args], check=True, capture_output=True, env=safe_git_env())
+
+
+def _source_repository(tmp_path, name="origin", *, submodule=False, lfs_pointer=False):
+    """A one-commit repository; the submodule is a gitlink entry, as `git submodule add` records it."""
+    work = tmp_path / name
+    work.mkdir()
+    _run_git("init", "-q", "-b", "main", str(work))
+    (work / "app.py").write_text("print('hello')\n")
+    (work / "assets").mkdir()
+    if lfs_pointer:
+        (work / "assets" / "model.bin").write_text(LFS_POINTER)
+    _run_git("-C", str(work), "add", "-A")
+    if submodule:
+        _run_git("-C", str(work), "update-index", "--add", "--cacheinfo", f"160000,{'a' * 40},vendor/agents")
+    _run_git(
+        *("-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.test"),
+        *("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"),
+    )
+    return work
+
+
+def _clone_of(source):
+    """Stand-in for the bounded clone: a real shallow clone of a local repository."""
+
+    def clone(cmd, env, ctx, timeout, *, destination, max_bytes):
+        subprocess.run(
+            ["git", "clone", "-q", "--depth", "1", f"file://{source}", destination],
+            check=True,
+            capture_output=True,
+            env=safe_git_env({"GIT_ALLOW_PROTOCOL": "file"}),
+        )
+        return True
+
+    return clone
+
+
+def _clone_fetch(index, monkeypatch, tmp_path, cls, source):
+    connector = _connector(index, cls)
+    monkeypatch.setattr(remote, "run_bounded_clone", _clone_of(source))
+    record = (
+        {"full_name": "acme/app", "size": 1, "clone_url": "https://github.com/acme/app.git"}
+        if cls is GitHubConnector
+        else {
+            "id": 7,
+            "path_with_namespace": "acme/app",
+            "statistics": {"repository_size": 1},
+            "http_url_to_repo": "https://gitlab.com/acme/app.git",
+        }
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    fetch = connector._fetch_repo if cls is GitHubConnector else connector._fetch
+    assert fetch(record, str(work)) == str(work / "repo")
+    return connector.ctx.stats
+
+
+@needs_git
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_clone_with_a_submodule_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
+    stats = _clone_fetch(index, monkeypatch, tmp_path, cls, _source_repository(tmp_path, submodule=True))
+    assert stats.incomplete
+    assert stats.warnings == [f"{cls.name}: submodules in acme/app are not cloned; source coverage partial"]
+
+
+@needs_git
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_clone_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
+    stats = _clone_fetch(index, monkeypatch, tmp_path, cls, _source_repository(tmp_path, lfs_pointer=True))
+    assert stats.incomplete
+    assert stats.warnings == [
+        f"{cls.name}: Git LFS pointer files in acme/app are not resolved; source coverage partial"
+    ]
+
+
+@needs_git
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_ordinary_clone_stays_complete(tmp_path, index, monkeypatch, cls):
+    stats = _clone_fetch(index, monkeypatch, tmp_path, cls, _source_repository(tmp_path))
+    assert stats.warnings == [] and not stats.incomplete
+
+
+@needs_git
+@pytest.mark.parametrize("which", ["checkout_has_gitlinks", "checkout_has_lfs_pointers"])
+def test_clone_that_cannot_be_inspected_is_incomplete_coverage(tmp_path, index, monkeypatch, which):
+    monkeypatch.setattr(remote, which, lambda *args, **kwargs: None)
+    stats = _clone_fetch(index, monkeypatch, tmp_path, GitHubConnector, _source_repository(tmp_path))
+    assert stats.incomplete
+    assert stats.warnings == [
+        "code.github: could not inspect acme/app for submodules and Git LFS pointers; source coverage unknown"
+    ]
+
+
+@needs_git
+def test_gitlinks_are_found_in_a_real_clone_and_only_there(tmp_path):
+    with_link = tmp_path / "with-link"
+    _run_git("clone", "-q", f"file://{_source_repository(tmp_path, 'a', submodule=True)}", str(with_link))
+    without = tmp_path / "without"
+    _run_git("clone", "-q", f"file://{_source_repository(tmp_path, 'b')}", str(without))
+    assert checkout_has_gitlinks(with_link) is True  # nested path: vendor/agents
+    assert checkout_has_gitlinks(without) is False
+
+
+@needs_git
+def test_gitlink_inspection_reports_what_it_could_not_read(tmp_path, monkeypatch):
+    assert checkout_has_gitlinks(tmp_path) is None  # not a repository
+    assert checkout_has_gitlinks(tmp_path / "missing") is None
+    assert checkout_has_gitlinks(tmp_path, timeout=0) is None
+    assert checkout_has_gitlinks("bad\x00path") is None
+    source = _source_repository(tmp_path)
+    monkeypatch.setattr(git_module, "_MAX_TREE_LISTING_BYTES", 8)
+    assert checkout_has_gitlinks(source) is None  # a listing past the size bound is not a "no"
+    monkeypatch.undo()
+    assert checkout_has_gitlinks(source) is False
+
+
+def test_lfs_pointer_scan_looks_only_at_small_regular_files_and_follows_no_link(tmp_path):
+    root = tmp_path / "checkout"
+    (root / ".git").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / ".git" / "pointer").write_text(LFS_POINTER)  # repository metadata is not content
+    (root / "big.txt").write_text(LFS_POINTER + "x" * 2048)  # too large to be a pointer
+    (root / "notes.txt").write_text("a version line of its own, https://git-lfs.github.com/spec/v1\n")
+    outside = tmp_path / "outside.bin"
+    outside.write_text(LFS_POINTER)
+    (root / "src" / "link.bin").symlink_to(outside)
+    assert checkout_has_lfs_pointers(root) is False
+    (root / "src" / "deep").mkdir()
+    (root / "src" / "deep" / "weights.bin").write_text(LFS_POINTER)
+    assert checkout_has_lfs_pointers(root) is True
+
+
+def test_lfs_pointer_scan_is_bounded_and_honours_the_deadline(tmp_path, monkeypatch):
+    for number in range(5):
+        (tmp_path / f"f{number}.txt").write_text("x\n")
+    monkeypatch.setattr(git_module, "_MAX_CLONE_ENTRIES", 3)
+    assert checkout_has_lfs_pointers(tmp_path) is None  # beyond the bound is "unknown", not "none"
+    assert checkout_has_lfs_pointers(tmp_path / "missing") is None
+    monkeypatch.undo()
+
+    def expired() -> None:
+        raise ConnectorError("scan deadline exceeded")
+
+    for number in range(1000):
+        (tmp_path / f"g{number}.txt").write_text("x\n")
+    with pytest.raises(ConnectorError, match="deadline"):
+        checkout_has_lfs_pointers(tmp_path, check_deadline=expired)
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_api_snapshot_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
+    connector = _connector(index, cls)
+    pointer = LFS_POINTER.encode()
+    source = b"print('hello')\n"
+    monkeypatch.setattr(
+        connector,
+        "_download_blob",
+        lambda repo, blob_id: pointer if blob_id == _sha(pointer) else source,
+    )
+    field = connector.blob_id_field
+    blobs = {"model.bin": {field: _sha(pointer)}, "app.py": {field: _sha(source)}}
+    dest, written = connector._write_api_snapshot({}, blobs, list(blobs), str(tmp_path), " in acme/app")
+    assert written == 2 and Path(dest, "app.py").exists()
+    assert connector.ctx.stats.incomplete
+    assert connector.ctx.stats.warnings == [
+        f"{cls.name}: Git LFS pointer files in acme/app are not resolved; source coverage partial"
+    ]

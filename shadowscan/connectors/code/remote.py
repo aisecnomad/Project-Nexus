@@ -31,8 +31,12 @@ from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.models import Finding
 from shadowscan.utils.git import (
+    LFS_POINTER_MAX_BYTES,
+    LFS_POINTER_PREFIX,
     CloneSizeError,
     CloneTimeoutError,
+    checkout_has_gitlinks,
+    checkout_has_lfs_pointers,
     clone_environment,
     exceeds_clone_size,
     git_argv_prefix,
@@ -460,6 +464,7 @@ class RemoteRepositoryConnector(BaseConnector):
             else:
                 if self._clone(repo, dest):
                     self._set_clone_snapshot(repo, dest)
+                    self._report_clone_gaps(full, dest)
                     return dest
                 self.ctx.warn(
                     f"{self.name}: clone failed for {full}; using sampled API mode",
@@ -477,6 +482,34 @@ class RemoteRepositoryConnector(BaseConnector):
             )
         self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)
+
+    def _report_clone_gaps(self, full: Any, dest: str) -> None:
+        """Say what a clone cannot give the scan, as API mode already does for submodules.
+
+        The clone populates no submodule and runs no LFS smudge filter, so a gitlink is an empty
+        directory and an LFS file is a pointer text. Neither is scanned; unsaid, the scan would look complete.
+        """
+        if not os.path.isdir(dest):
+            return  # nothing was checked out; the scan of the missing path reports that itself
+        remaining = max(0.001, self.ctx.deadline - time.monotonic()) if self.ctx.deadline else 30.0
+        submodules = checkout_has_gitlinks(dest, timeout=min(30.0, remaining))
+        pointers = checkout_has_lfs_pointers(dest, check_deadline=self.ctx.check_deadline)
+        if submodules is None or pointers is None:
+            self.ctx.warn(
+                f"{self.name}: could not inspect {full} for submodules and Git LFS pointers; "
+                "source coverage unknown",
+                incomplete=True,
+            )
+        if submodules:
+            self.ctx.warn(
+                f"{self.name}: submodules in {full} are not cloned; source coverage partial",
+                incomplete=True,
+            )
+        if pointers:
+            self.ctx.warn(
+                f"{self.name}: Git LFS pointer files in {full} are not resolved; source coverage partial",
+                incomplete=True,
+            )
 
     def _set_clone_snapshot(self, repo: dict[str, Any], local: str) -> None:
         remaining = max(0.001, self.ctx.deadline - time.monotonic()) if self.ctx.deadline else 10.0
@@ -572,6 +605,7 @@ class RemoteRepositoryConnector(BaseConnector):
         dest = os.path.join(tmp, "repo")
         os.makedirs(dest, exist_ok=True)
         written = 0
+        lfs_pointers = False
         for p in selected:
             try:
                 target = repository_target(dest, p)
@@ -602,4 +636,11 @@ class RemoteRepositoryConnector(BaseConnector):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
             written += 1
+            if len(content) <= LFS_POINTER_MAX_BYTES and content.startswith(LFS_POINTER_PREFIX):
+                lfs_pointers = True
+        if lfs_pointers:
+            self.ctx.warn(
+                f"{self.name}: Git LFS pointer files{where} are not resolved; source coverage partial",
+                incomplete=True,
+            )
         return dest, written

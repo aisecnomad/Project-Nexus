@@ -12,7 +12,7 @@ import stat
 import subprocess
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
 
 _OBJECT_ID_RX = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
@@ -514,3 +514,121 @@ def read_git_snapshot(path: str | os.PathLike[str], *, timeout: float = 10.0) ->
             return None
         values.append(value)
     return {"commit_sha": values[0], "tree_sha": values[1]}
+
+
+# --------------------------------------------------- what a clone leaves out of the scan
+_GITLINK_MODE = b"160000 "
+_MAX_TREE_LISTING_BYTES = 64 * 1024 * 1024
+# Git LFS stores a pointer file of under 1 KiB that opens with this line. The clone has no
+# smudge filter, so the large object it points to is never fetched and cannot be scanned.
+LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+LFS_POINTER_MAX_BYTES = 1024
+
+
+def checkout_has_gitlinks(path: str | os.PathLike[str], *, timeout: float = 30.0) -> bool | None:
+    """Whether the checked-out commit's tree holds a submodule (a mode 160000 entry); None when unknown.
+
+    A clone does not populate submodules, so their content is never scanned. The tree is read from the
+    object database with the offline metadata policy (no credentials, hooks or lazy fetch), streamed, and
+    bounded in time and size; the first submodule ends the read.
+    """
+    root = os.fspath(path)
+    if timeout <= 0 or not root or "\x00" in root:
+        return None
+    env = metadata_git_env()
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    try:
+        proc = subprocess.Popen(
+            [*git_argv_prefix(), "-C", root, "ls-tree", "-r", "-z", "--full-tree", "HEAD"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, ValueError):
+        return None
+    verdict = {"found": False, "overflow": False}
+
+    def read() -> None:
+        assert proc.stdout is not None
+        total = 0
+        carry = b""
+        while chunk := os.read(proc.stdout.fileno(), 65536):
+            total += len(chunk)
+            if total > _MAX_TREE_LISTING_BYTES:
+                verdict["overflow"] = True
+                return
+            *records, carry = (carry + chunk).split(b"\0")
+            if any(record.startswith(_GITLINK_MODE) for record in records):
+                verdict["found"] = True
+                return
+        verdict["found"] = carry.startswith(_GITLINK_MODE)
+
+    reader = threading.Thread(target=read, name="shadowscan-gitlink-scan", daemon=True)
+    try:
+        reader.start()
+        reader.join(timeout)
+        if reader.is_alive() or verdict["overflow"]:
+            return None
+        if verdict["found"]:
+            return True
+        return False if proc.wait(timeout=5) == 0 else None
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        return None
+    finally:
+        with contextlib.suppress(OSError):
+            proc.kill()
+        reader.join(5)
+        if proc.stdout is not None:
+            proc.stdout.close()
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+
+
+def checkout_has_lfs_pointers(
+    path: str | os.PathLike[str], *, check_deadline: Callable[[], None] | None = None
+) -> bool | None:
+    """Whether a regular file in the checkout is a Git LFS pointer; None when that cannot be told.
+
+    Only small regular files are opened, and only for their first bytes. Links are never followed and
+    the repository metadata directory is not entered. The walk is bounded by the same entry limit as the
+    size measurement, so a checkout that was accepted can be walked.
+    """
+    root = os.fspath(path)
+    if not root or "\x00" in root:
+        return None
+    entries = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as scan:
+                for entry in scan:
+                    entries += 1
+                    if entries > _MAX_CLONE_ENTRIES:
+                        return None
+                    if check_deadline is not None and entries % 1000 == 0:
+                        check_deadline()
+                    info = entry.stat(follow_symlinks=False)
+                    if stat.S_ISDIR(info.st_mode):
+                        if directory != root or entry.name != ".git":
+                            pending.append(entry.path)
+                    elif (
+                        stat.S_ISREG(info.st_mode)
+                        and len(LFS_POINTER_PREFIX) <= info.st_size <= LFS_POINTER_MAX_BYTES
+                        and _opens_with_lfs_pointer(entry.path)
+                    ):
+                        return True
+        except OSError:
+            return None
+    return False
+
+
+def _opens_with_lfs_pointer(path: str) -> bool:
+    # O_NOFOLLOW and O_NONBLOCK: never traverse a link or wait on a special file.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    try:
+        return os.read(fd, len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
+    finally:
+        os.close(fd)

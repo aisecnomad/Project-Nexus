@@ -189,6 +189,10 @@ before cloning and samples the local checkout, including `.git`, while Git runs.
 The clone is stopped when observed size exceeds the cap or cannot be measured,
 and checked again after Git exits. `clone_timeout_seconds` (default 120) bounds
 each clone.
+A clone populates no submodule and runs no Git LFS smudge filter, so a
+repository whose tree holds a submodule (a gitlink entry) or whose files include
+LFS pointer files makes the scan incomplete, as API mode already did for
+submodules; a clone that could not be inspected for either does too.
 An oversized repository or missing/malformed size estimate falls back to sampled
 API mode without launching Git and marks coverage incomplete. A failed clone or
 Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
