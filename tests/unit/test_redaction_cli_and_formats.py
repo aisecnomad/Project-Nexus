@@ -143,6 +143,21 @@ def test_text_shape_gaps_are_redacted(text, expected):
     assert _clean(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps(f'HOST=db;\n:password => "{SECRET}"'),
+        json.dumps(f"HOST=db;\r\nAPI_KEY: {SECRET}"),
+        json.dumps(f'url=https://h/x;\n:secret => "{SECRET}"'),
+    ],
+)
+def test_a_semicolon_before_an_escaped_line_break_ends_an_unquoted_value(text):
+    # '\\n' is the line break of JSON-escaped text. Read as a ';' glued into
+    # the value, it ran 'db' into the next line and took the credential's name.
+    result = _clean(text)
+    assert result.startswith('"HOST=db;') or result.startswith('"url=https://h/x;')
+
+
 @pytest.mark.parametrize("depth", [1, 2, 3])
 @pytest.mark.parametrize("value", [f'ab"cd{SECRET}', f"{SECRET}\\", f'a\\"b{SECRET}', f"x'{SECRET}"])
 def test_escaped_json_values_close_at_their_own_delimiter(value, depth):

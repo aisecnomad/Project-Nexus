@@ -188,6 +188,10 @@ integrating them:
   decoded into other characters, CJK text for UTF-16, and its imports and keys
   went unanalyzed with no gap reported; CPython refuses most such cookies. A
   codec error raised as a plain `UnicodeError` is reported as the same gap.
+- Redaction: a `;` before an escaped line break or tab (`\n`, `\r`, `\t` in
+  JSON-escaped text) ends an unquoted value. Read as a `;` inside the value,
+  it ran `HOST=db;\n` into the next line and took that line's credential name
+  with it, so `"HOST=db;\n:password => \"S\""` showed `S`.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

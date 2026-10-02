@@ -207,10 +207,11 @@ def _sensitive_assignment_key(key: str) -> bool:
 # '--auth') but are too broad as record field names. '--key' is not listed:
 # its value is a credential only when it is opaque (see _opaque_option).
 _CREDENTIAL_FLAG_NAMES = frozenset({"pat", "pass", "passphrase", "pwd", "auth"})
-# A ';' ends an unquoted value only before whitespace, the end of the text or
-# another ``name=`` pair (connection strings, shell lists); a password may
-# contain one.
-_VALUE_SEMICOLON = r";(?!\s|\Z|[A-Za-z_][A-Za-z0-9_.-]*\s*=)"
+# A ';' ends an unquoted value only before whitespace, the end of the text, an
+# escaped line break or tab ('\n' in JSON-escaped text, where the next line's
+# name follows) or another ``name=`` pair (connection strings, shell lists); a
+# password may contain one.
+_VALUE_SEMICOLON = r";(?!\s|\Z|\\[nrt]|[A-Za-z_][A-Za-z0-9_.-]*\s*=)"
 
 
 def _sensitive_flag(name: str) -> bool:
