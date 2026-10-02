@@ -47,6 +47,11 @@ _CONTROL_HEADS = frozenset({"catch", "for", "if", "switch", "while", "with"})
 # without a parse, a `/` after one of them cannot be classified.
 _AMBIGUOUS_REGEX_WORDS = frozenset({"await", "yield"})
 _MAX_REGEX_LENGTH = 8192
+# Real regular expression literals can be long: generated Unicode tables such as emoji-regex's run to
+# tens of kilobytes on one line. The scan is linear, never leaves its line and is not repeated once it
+# fails (the rest of the line is skipped), so this bound only decides when a literal that has not
+# closed is too long to trust.
+_MAX_REGEX_LITERAL_LENGTH = 262_144
 # ECMAScript line terminators: LF, CR, LINE SEPARATOR and PARAGRAPH SEPARATOR (CRLF counts once).
 _JS_LINE_TERMINATORS = "\n\r\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}"
 _JS_LINE_BREAK = re.compile(f"[{_JS_LINE_TERMINATORS}]")
@@ -100,7 +105,7 @@ def _javascript_regex_end(text: str, start: int) -> int | None:
     """
     pos = start + 1
     in_class = False
-    limit = min(len(text), start + _MAX_REGEX_LENGTH)
+    limit = min(len(text), start + _MAX_REGEX_LITERAL_LENGTH)
     while pos < limit and text[pos] not in _JS_LINE_TERMINATORS:
         char = text[pos]
         if char == "\\":

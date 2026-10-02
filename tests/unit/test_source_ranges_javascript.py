@@ -435,6 +435,52 @@ def test_look_ahead_budget_is_proportional_to_the_input() -> None:
         small.spend(small.remaining + 1)
 
 
+# --- Long regular expression literals --------------------------------------------------------------
+# Generated Unicode tables (the emoji-regex package is the common one) are single regular expression
+# literals of 10-60 KB. They are not suspicious, and treating them as ambiguous made a scan of any
+# project that depends on them incomplete.
+
+
+def _emoji_table(blocks: int) -> str:
+    return "(?:" + "|".join(f"\\uD83C[\\uDF{n % 256:02X}-\\uDF{n % 256:02X}]" for n in range(blocks)) + ")"
+
+
+def test_long_generated_regex_literal_is_masked_and_complete() -> None:
+    table = _emoji_table(1_500)
+    assert len(table) > 30_000
+    source = f"module.exports = () => /{table}/g;\nconst client = require('openai');\n"
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".js")
+    assert not ambiguous
+    assert [source[start:end] for start, end in ignored] == [f"/{table}/g", "'openai'"]
+
+
+def test_long_regex_literal_does_not_hide_the_line_after_it(tmp_path: Path, run_connector) -> None:
+    (tmp_path / "emoji.js").write_text(
+        f"module.exports = () => /{_emoji_table(1_500)}/g;\n" + EVASION_PAYLOAD,
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)
+
+
+def test_regex_literal_beyond_the_bound_is_still_ambiguous_and_masks_only_its_line() -> None:
+    limit = source_ranges._MAX_REGEX_LITERAL_LENGTH
+    source = "const r = /" + "a" * limit + "/g;\nconst client = require('openai');\n"
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".js")
+    assert ambiguous
+    assert not any(start <= source.index("require(") < end for start, end in ignored)
+
+
+def test_unterminated_long_regex_scan_is_linear_and_stays_on_its_line() -> None:
+    # No closing slash anywhere: one failed scan per line, and the rest of that line is skipped.
+    source = ("x = /" + "a" * 1_000 + "\n") * 2_000 + "x = /" + "a" * 600_000
+    started = time.perf_counter()
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".js")
+    assert time.perf_counter() - started < 5
+    assert ambiguous
+    assert len(ignored) == 2_001
+
+
 def test_look_ahead_honours_the_per_file_time_budget(index) -> None:
     # The same checkpoints that spend the allowance poll the input's execution deadline.
     with pytest.raises(MatchTimeoutError), index.scan_budget(seconds=0.01):
