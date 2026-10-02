@@ -162,6 +162,17 @@ integrating them:
   made without git-lfs, with `agent.py` stored in LFS, gave no finding and a
   complete scan. A pointer in place of a file the scanner never reads (an
   image, a model) is not a gap; the live-clone check is unchanged.
+- Redaction: a quoted value closes at its first quote that no backslash
+  escapes. A JSON string that started with a credential and an escaped value
+  (`{"log": "password: \"S\""}`, a ConfigMap's embedded YAML, Python's
+  `'password: \'S\''`) closed at the escaped quote, only its backslash was
+  withheld, and the credential was shown. Double-quoted option values
+  (`--password "a\"S"`, `-u "user:a\"S"`, `echo "a\"S" | … --password-stdin`,
+  `dotnet user-secrets set`) and `auth=(user, password)` pairs read `\"` the
+  same way. A quote right after an assignment operator, or a line with no
+  unescaped closing quote, keeps the former reading, and assignments are read
+  the former way once more afterwards, so a Windows path ending in `\"` hides
+  no credential after it.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

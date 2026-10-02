@@ -946,7 +946,10 @@ finish incomplete because the earlier result hid a gap.
   and `--auth` option values, whole PGP private key blocks (earlier reports
   could show a block's body when its first line followed a name such as
   `private_key:`), every cookie in a `Cookie` header, compact `x-api-key:S` and
-  `password:S` values, unquoted values containing `;`, escaped-quote JSON values, the
+  `password:S` values, unquoted values containing `;`, escaped-quote JSON values
+  (also a string that starts with one, `{"log": "password: \"S\""}`), the rest
+  of a double-quoted option or `auth=` password after an escaped quote
+  (`--password "a\"S"`), the
   URL query keys `auth`, `pwd` and `pat`, Fireworks `fw_` keys and provider
   tokens next to non-Latin text. Reports generated before this revision can
   contain those values: regenerate them, restrict or delete the old copies, and

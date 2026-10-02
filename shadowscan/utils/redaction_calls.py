@@ -770,11 +770,16 @@ def _csharp_replacement(value: str) -> bool:
 
 
 # requests/httpx/Elasticsearch basic authentication tuples: auth=("user", "v").
+# The password closes at its first quote of its own kind that no backslash
+# escapes ('"ab\"cd"' is one string), unless the text before that quote ends
+# with an assignment operator, where the quote opens the next value; otherwise
+# it closes at its first quote, as before.
 _AUTH_PAIR_HINT = re.compile(r"(?i)auth[\"']?[ \t]*[:=][ \t]*[\(\[]")
 _AUTH_PAIR = re.compile(
     r"(?i)(?<![\w.-])[\"']?[a-z_]*auth[\"']?[ \t]*[:=][ \t]*[\(\[][ \t]*"
     r"(?:[rbu]?\"[^\"\r\n]*\"|[rbu]?'[^'\r\n]*'|[A-Za-z_][\w.]*)[ \t]*,[ \t]*"
-    r"[rbu]?(?P<quote>[\"'])(?P<password>[^\"'\r\n]*)(?P=quote)"
+    r"[rbu]?(?P<quote>[\"'])(?P<password>(?:\\[^\r\n]|(?!(?P=quote))[^\\\r\n])*+"
+    r"(?<![=:>~])(?<![=:>~][ \t])(?=(?P=quote))|[^\"'\r\n]*)(?P=quote)"
 )
 
 

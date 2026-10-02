@@ -213,7 +213,10 @@ coverage, even when a response includes an empty collection field.
   their environment variable name is ordinary. Textual flow records support
   either name/value field order, braces and escaped quotes inside quoted
   values; preceding YAML sibling values are read within sixteen lines without
-  crossing a list-item or mapping boundary. Explicit signature and credential
+  crossing a list-item or mapping boundary. A quoted assignment value, a
+  double-quoted option value and an `auth=` password close at their first
+  quote that no backslash escapes, so `{"log": "password: \"S\""}` and
+  `--password "a\"S"` withhold all of `S`. Explicit signature and credential
   query fields are withheld in scheme-less URLs and copied query strings too.
   Command-specific `llm -k` and credential options glued after another option
   value are recognized; unrelated `-k` flags stay visible. Under key-like
