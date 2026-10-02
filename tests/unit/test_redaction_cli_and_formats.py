@@ -214,6 +214,37 @@ def test_cookie_arguments_and_compact_values_are_stable_under_resanitization(tex
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        f"get(u, cookie=c1, timeout=5) Cookie: a=1; sid={SECRET}",
+        f"get(u, cookie=c1) cookie=x; sid={SECRET}",
+        f"x; Request(url=u, cookie=sid=abc; sessionid={SECRET})",
+    ],
+)
+def test_cookie_header_after_a_cookie_argument_on_the_same_line_is_withheld(text):
+    # Skipping an argument the established passes withheld also skipped the
+    # rest of its line, and a Cookie header there kept its other cookies.
+    _clean(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        json.dumps({"msg": json.dumps({"body": json.dumps({"password": SECRET})})}),
+        json.dumps(json.dumps({"body": json.dumps({"api_key": SECRET, "model": "x"})})),
+        json.dumps({"body": json.dumps({"api_key": SECRET, "model": "x"})}),
+        # Three escaping levels (seven backslashes), within the eight the rules read.
+        json.dumps({"a": json.dumps({"b": json.dumps({"c": json.dumps({"token": SECRET})})})}),
+    ],
+)
+def test_escaped_json_under_another_name_is_read_for_credentials(text):
+    # An escaped value closes only at its own delimiter, so a value under a
+    # name that is not a credential spans the more deeply escaped JSON in it;
+    # that JSON is read on its own.
+    _clean(text)
+
+
+@pytest.mark.parametrize(
     ("text", "kept"),
     [
         (f'curl -H "api-key:{SECRET}" https://x.test', 'curl -H "api-key:'),
@@ -424,6 +455,9 @@ def test_bare_bearer_keeps_scheme_and_surrounding_words():
         "--token ",
         "--api-key=",
         "Cookie: a=1; ",
+        "cookie=a, ",
+        "cookie=a, Cookie: b ",
+        '\\"k\\": \\"',
         'password:\\"',
         "api-key:",
         "PASSWORD=a;",

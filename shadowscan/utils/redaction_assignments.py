@@ -425,20 +425,27 @@ _ADDED_ASSIGNMENT = re.compile(
 )
 
 
-def _redact_added_assignments(text: str) -> str:
+def _redact_added_assignments(text: str, depth: int = 0) -> str:
     """Withhold sensitive values the established assignment rules leave (see ``_ADDED_ASSIGNMENT``).
 
     Runs after every established pass, on their output. A value with a glued
     ';' is withheld as one quoted marker, as the statement rules withhold a
-    value that is not a simple word.
+    value that is not a simple word. An escaped value under any other name
+    is read again on its own: it can hold more deeply escaped JSON with a
+    credential in it. A value never holds its own closing run, so each level
+    nests a different run of backslashes, and there are at most eight.
     """
 
     def assignment(m: re.Match[str]) -> str:
         full: str = m.group(0)
-        if not _sensitive_assignment_key(m.group("key")):
-            return full
         sep: str = m.group("sep")
         raw: str = m.group("value")
+        if not _sensitive_assignment_key(m.group("key")):
+            escaped = m.group("escaped")
+            if escaped is None or depth >= 8:
+                return full
+            inner = raw[len(escaped) : len(raw) - len(escaped)]
+            return m.group("key") + sep + escaped + _redact_added_assignments(inner, depth + 1) + escaped
         glued = m.group("glued")
         if glued is not None:
             if "=" in sep and raw.startswith('"'):

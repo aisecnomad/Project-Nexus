@@ -487,11 +487,14 @@ def _option_value_span(
 # assignment rules withhold only the first pair and quote it ('Cookie:
 # "[REDACTED]"; sid=v'), and the mapping rules then read a quoted marker
 # together with what follows it to the next ';', so a value cut at a quote
-# would grow on every pass.
+# would grow on every pass. The pattern stops before the value:
+# _redact_cookie_headers finds the end of the line only when it withholds the
+# value, so a line of many cookie arguments is read once.
 _COOKIE_HEADER = re.compile(
     r"(?i)(?:(?<![\w.-])|(?<=\\[nrtbf])|(?<=\\u[0-9a-f]{4}))(?P<key>set-cookie2?|cookie2?)"
-    r"(?P<sep>[ \t]*[:=][ \t]*)(?P<value>\S[^\r\n]*)"
+    r"(?P<sep>[ \t]*[:=][ \t]*)(?=\S)"
 )
+_LINE_END = re.compile(r"[\r\n]")
 # A cookie assigned with '=' that the established passes withheld whole as a
 # quoted marker, which a ',', ')', ']' or '}' then ends: an argument
 # ('get(url, cookie=session_cookie, timeout=5)') or a field. What follows it
@@ -507,21 +510,32 @@ def _redact_cookie_headers(text: str) -> str:
     rules quote it after a colon ('Cookie: "[REDACTED]"'), and after '=' the
     statement rules, which run again once this pass changed the text, quote
     it where it is an argument ('cookie="[REDACTED]"'). After '=', an
-    argument the established passes already withheld ends the value (see
-    ``_COOKIE_ARGUMENT``).
+    argument the established passes already withheld ends the argument (see
+    ``_COOKIE_ARGUMENT``), and the rest of its line is read for another
+    header ('get(u, cookie=c, timeout=5) Cookie: ...').
     """
-
-    def header(match: re.Match[str]) -> str:
-        raw = match.group("value")
+    out: list[str] = []
+    pos = 0
+    while (match := _COOKIE_HEADER.search(text, pos)) is not None:
+        start = match.end()
+        if "=" in match.group("sep"):
+            argument = _COOKIE_ARGUMENT.match(text, start)
+            if argument is not None:
+                out.append(text[pos : argument.end()])
+                pos = argument.end()
+                continue
+        line_end = _LINE_END.search(text, start)
+        end = len(text) if line_end is None else line_end.start()
+        raw = text[start:end]
         bare = raw.rstrip(" \t")
+        out.append(text[pos:start])
         if _ALPHANUMERIC.search(bare.replace(REDACTED, "")) is None:
-            return match.group(0)  # already withheld: only markers and punctuation are left
-        if "=" in match.group("sep") and _COOKIE_ARGUMENT.match(bare):
-            return match.group(0)
-        withheld: str = _redact_value(bare)
-        return match.group("key") + match.group("sep") + withheld + raw[len(bare) :]
-
-    return _COOKIE_HEADER.sub(header, text)
+            out.append(raw)  # already withheld: only markers and punctuation are left
+        else:
+            out.append(_redact_value(bare) + raw[len(bare) :])
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
 
 
 # Dockerfile's legacy 'ENV NAME value', csh/Windows 'setenv NAME value' and
