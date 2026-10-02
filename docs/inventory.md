@@ -110,8 +110,9 @@ When an inventory file or directory (resolved with `realpath`), or a file it
 loads, lies inside a local path that the same run scans with `code.filesystem`
 (including `shadowscan code PATH`), the scan records the warning
 `inventory <name> is inside scanned path <path>; scanned content could alter approvals`.
-It also warns once per run for each entry whose resources include a pattern made
-only of `*`, which approves every finding its scope constraints allow. These
+It also warns once per run for each entry whose resources include a pattern that
+matches every resource, such as `*`, `**`, `?*` or `*?`, which approves every
+finding its scope constraints allow. These
 warnings do not make a scan incomplete or change the exit code: a local
 `shadowscan code . --inventory agent-card.yaml` is legitimate. They appear under
 the `engine.inventory` entry of the report's `stats` (the table output always

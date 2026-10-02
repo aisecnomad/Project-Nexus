@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import logging
 import os
@@ -518,6 +519,25 @@ def _sanitize_diagnostics(st: ScanStats) -> None:
 
 
 _MAX_INVENTORY_WARNINGS = 20
+# Finding resources of very different shapes. An approval pattern that matches
+# all of them (`*`, `**`, `?*`, `*?`, ...) approves every finding in its scope.
+_RESOURCE_PROBES = (
+    "a",
+    "Z9",
+    "github:acme/agent",
+    "arn:aws:iam::123456789012:role/agent",
+    "]",
+    "[",
+    "-",
+    " ",
+    "/",
+    "\u00e9",
+    "x" * 512,
+)
+
+
+def _approves_every_resource(pattern: str) -> bool:
+    return all(fnmatch.fnmatchcase(probe, pattern) for probe in _RESOURCE_PROBES)
 
 
 def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
@@ -558,12 +578,14 @@ def _inventory_warnings(
                     "scanned content could alter approvals"
                 )
     for entry in inventory.entries:
-        if any(not pattern.strip("*") for pattern in entry.resources):
+        everything = next((pattern for pattern in entry.resources if _approves_every_resource(pattern)), None)
+        if everything is not None:
+            shown = "*" if not everything.strip("*") else everything[:60]
             source = f" in {entry.source}" if entry.source else ""
             scoped = entry.surfaces or entry.providers or entry.accounts or entry.regions
             warnings.append(
-                f"inventory entry {entry.agent_id}{source} has resource pattern '*', which approves every"
-                f" finding{' its scope constraints allow' if scoped else ''}"
+                f"inventory entry {entry.agent_id}{source} has resource pattern {shown!r},"
+                f" which approves every finding{' its scope constraints allow' if scoped else ''}"
             )
     warnings += [
         f"inventory {link}: symbolic link skipped (links are not followed)"

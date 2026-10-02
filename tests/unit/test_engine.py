@@ -583,6 +583,20 @@ def test_wildcard_inventory_resource_is_reported_once_per_entry(tmp_path, index)
     assert result.findings and result.complete
 
 
+@pytest.mark.parametrize("pattern,approves_everything", [("?*", True), ("*?", True), ("github:*", False)])
+def test_any_pattern_that_matches_every_resource_is_reported(tmp_path, index, pattern, approves_everything):
+    repo = _repo(tmp_path)
+    card = tmp_path / "agents.yaml"
+    card.write_text(f"agents:\n  - {{agent_id: broad, owner: x, resources: ['{pattern}']}}\n")
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"path": str(repo)})], inventory=[str(card)]
+    )
+    expected = (
+        f"inventory entry broad in {card} has resource pattern '{pattern}', which approves every finding"
+    )
+    assert _inventory_warnings(Engine(config, index).run()) == ([expected] if approves_everything else [])
+
+
 def test_cli_shows_in_tree_inventory_warning_without_changing_the_gate(tmp_path):
     from click.testing import CliRunner
 
