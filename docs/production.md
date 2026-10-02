@@ -104,12 +104,16 @@ different resolver version only as an intentional toolchain change. Use
 `--upgrade` only for an intentional dependency refresh. Preserve each lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
-The Dockerfile installs the runtime and build locks under `--require-hashes`
-into a virtual environment, builds the package with `--no-build-isolation`, and
-runs as UID/GID 65532. Both stages pin the same multi-arch
-`chainguard/wolfi-base:latest` image index by its literal digest; Python 3.12
-and Git are Wolfi packages, and pip stays in the build stage. The image build
-checks that Git is 2.45 or newer for history enrichment.
+The Dockerfile installs both locks under `--require-hashes`: the runtime lock
+into the virtual environment the runtime stage copies, and the build lock into
+a separate build environment. That environment builds the package wheel with
+`--no-build-isolation` and is not copied. The image runs as UID/GID 65532. Both
+stages pin the same multi-arch `chainguard/wolfi-base:latest` image index by
+its literal digest; Python 3.12 and Git are Wolfi packages, and pip stays in
+the build stage. Both stages also pin Wolfi's `python-3.12` to one package
+revision for now; see
+[October 2 integration of #134](#october-2-integration-of-134-and-hygiene-review).
+The image build checks that Git is 2.45 or newer for history enrichment.
 Review that exact digest and any Dependabot refresh before deployment:
 
 ```bash
@@ -711,6 +715,15 @@ it produced; numbers and numeric text are accepted as before.
 The worker image's `/opt/venv` no longer contains `setuptools`, `wheel` or
 `packaging`, which only the build needs. An image that extends the worker and
 imports them must install them from its own hash-locked requirements.
+
+Both worker image stages pin Wolfi's `python-3.12` and `python-3.12-base` to
+`3.12.15-r0`. Revision `3.12.15-r1`, published on 2026-10-02, has no SHA-224,
+which pip uses for its cache keys, so every pip install in the build fails on
+it. While the pin holds, a rebuild keeps that interpreter revision and does not
+receive later Wolfi Python fixes. The container gate still scans it and fails
+on HIGH or CRITICAL findings, and the build fails if the revision is no longer
+available. Drop the pin once a newer revision passes
+`python3.12 -c "import hashlib; hashlib.sha224"`.
 
 ### October 2 integrity and capability corrections
 
