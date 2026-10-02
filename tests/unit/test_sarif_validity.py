@@ -1,4 +1,7 @@
-"""SARIF output must stay valid for the 2.1.0 schema and for GitHub code scanning."""
+"""SARIF output must stay valid for the 2.1.0 schema and for GitHub code scanning.
+
+Discovery hits must not be published as CVSS security-severity.
+"""
 
 from __future__ import annotations
 
@@ -17,8 +20,8 @@ from shadowscan.reporters.sarif import _physical_locations, render_sarif
 
 ROOT = Path(__file__).parents[2]
 SCHEMA = ROOT / "tests" / "fixtures" / "sarif" / "sarif-schema-2.1.0.json"
-RULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")  # GitHub code scanning requirement for rule names
-UTC_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")  # SARIF section 3.9
+RULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+UTC_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 LEVELS = {"none", "note", "warning", "error"}
 STARTED = "2026-01-01T00:00:00+00:00"
 
@@ -53,7 +56,6 @@ def _render(*findings: Finding, stats: list[ScanStats] | None = None, **result_f
 
 
 def _nulls(node: Any, path: str = "$") -> list[str]:
-    """Paths of every key whose value is null."""
     found: list[str] = []
     if isinstance(node, dict):
         for key, value in node.items():
@@ -67,17 +69,24 @@ def _nulls(node: Any, path: str = "$") -> list[str]:
 
 
 def _assert_spec_rules(document: dict[str, Any]) -> None:
-    """Constraints from the SARIF spec and GitHub that the JSON schema does not express."""
     assert document["$schema"] == "https://json.schemastore.org/sarif-2.1.0.json"
     assert document["version"] == "2.1.0"
     assert _nulls(document) == []
     for run in document["runs"]:
         for rule in run["tool"]["driver"]["rules"]:
             assert RULE_NAME.match(rule["name"]), rule["name"]
-            assert rule["defaultConfiguration"]["level"] in LEVELS
-            assert 0.0 <= float(rule["properties"]["security-severity"]) <= 10.0
+            assert rule["defaultConfiguration"]["level"] in {"note", "warning"}
+            assert "security-severity" not in rule["properties"]
+            assert rule["properties"]["shadowscan/score-basis"] == "heuristic-not-cvss"
+            assert rule["properties"]["shadowscan/heuristic-risk"] in {
+                "info",
+                "low",
+                "medium",
+                "high",
+                "critical",
+            }
         for res in run["results"]:
-            assert res["level"] in LEVELS
+            assert res["level"] in {"note", "warning"}
             assert res["partialFingerprints"] and all(
                 isinstance(v, str) for v in res["partialFingerprints"].values()
             )
@@ -85,7 +94,6 @@ def _assert_spec_rules(document: dict[str, Any]) -> None:
             for location in res["locations"]:
                 physical = location.get("physicalLocation", {})
                 if "region" in physical:
-                    # Section 3.30: a region is a text region or a binary region, never a bare snippet.
                     assert {"startLine", "charOffset", "byteOffset"} & set(physical["region"]), physical[
                         "region"
                     ]
@@ -113,9 +121,6 @@ def _validate(document: dict[str, Any]) -> None:
     ]
     assert not errors, "\n".join(errors)
     _assert_spec_rules(document)
-
-
-# ----------------------------------------------------------------- regions
 
 
 def test_snippet_without_line_yields_no_region():
@@ -161,7 +166,6 @@ def test_region_edge_cases():
     )
     plain, zero, bare, long = _physical_locations(finding)
     assert plain["physicalLocation"]["region"] == {"startLine": 7}
-    # Line 0 is not a valid startLine (minimum 1): treat it like a missing line.
     assert "region" not in zero["physicalLocation"] and zero["properties"] == {
         "snippet": "go: example.com/mcp v1"
     }
@@ -177,9 +181,6 @@ def test_metadata_path_fallback_has_no_region():
     assert _physical_locations(finding) == [
         {"physicalLocation": {"artifactLocation": {"uri": "services/agent", "uriBaseId": "%SRCROOT%"}}}
     ]
-
-
-# ----------------------------------------------------------- other fields
 
 
 @pytest.mark.parametrize(
@@ -264,9 +265,6 @@ def test_non_code_findings_carry_logical_locations():
     ]
 
 
-# ------------------------------------------------------- schema validation
-
-
 def test_schema_rejects_an_invalid_document():
     jsonschema = pytest.importorskip("jsonschema")
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
@@ -305,7 +303,6 @@ def test_sample_scan_sarif_is_schema_valid(fixtures):
         for loc in res["locations"]
         if "physicalLocation" in loc
     ]
-    # Manifest evidence carries a snippet without a line: the sample scan must exercise that path.
     assert any(
         "region" not in loc and props.get("snippet") for loc, props in zip(physical, properties, strict=True)
     )
@@ -403,6 +400,7 @@ def test_sarif_rule_severity_is_the_most_severe_result(order):
         _located_finding(f"/repo/{i}.py:1", level=level, title=f"Agent {i}") for i, level in enumerate(order)
     ]
     (rule,) = _sarif(*findings)["runs"][0]["tool"]["driver"]["rules"]
-    assert (
-        rule["properties"]["security-severity"] == "9.5" and rule["defaultConfiguration"]["level"] == "error"
-    )
+    assert "security-severity" not in rule["properties"]
+    assert rule["properties"]["shadowscan/heuristic-risk"] == "critical"
+    assert rule["properties"]["shadowscan/score-basis"] == "heuristic-not-cvss"
+    assert rule["defaultConfiguration"]["level"] == "warning"
