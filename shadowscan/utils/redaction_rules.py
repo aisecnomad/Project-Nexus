@@ -80,6 +80,18 @@ _ASSIGNMENT_CREDENTIAL_NAME = re.compile(
 )
 
 
+# Operators that join a name and a value, as regular expression fragments. An
+# operator is read whole, never as its '=': '=>' (the hash rocket of PHP, Ruby and
+# Perl), '==' and '=~' contain an '=' that assigns nothing, and a name followed by
+# one of them still has a literal to withhold ('if token == "v":'), with the
+# operator kept. The compound forms assign ('||=', '+=', '.=', ':=', '?='), as R's
+# '<-' does. Longer operators come first; use them inside an atomic group.
+_COMPARISON_OPERATORS = r"===|!==|==|!=|=~|!~"
+_ASSIGNMENT_OPERATORS = r"\|\|=|&&=|\?\?=|\*\*=|//=|<<=|>>=|<<-|[-+*/%^.|&?:]=|<-|=(?![=>~])"
+_OPERATOR = r"(?>" + _COMPARISON_OPERATORS + r"|=>|" + _ASSIGNMENT_OPERATORS + r")"
+_COMPARISONS = frozenset({"===", "!==", "==", "!=", "=~", "!~"})
+
+
 class SanitizationLimitError(ValueError):
     """Evidence cannot be safely sanitized within the work/output budget."""
 

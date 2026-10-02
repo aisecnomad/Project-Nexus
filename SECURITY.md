@@ -109,7 +109,10 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   stays. URL userinfo is withheld whole when the password holds a raw `/`, `?`
   or `#` (`postgres://u:Pass#word@host`). It also withholds values that their
   context names as credentials:
-  assignments, including annotated, multiline and R (`<-`) expressions;
+  assignments, including annotated, multiline and R (`<-`) expressions and
+  every operator that joins a name to a value, with the operator kept (`=>`,
+  `:=`, `||=`, `+=`, `.=`, `?=`); a quoted word or an opaque value compared with a
+  sensitive name (`if token == "..."`, `!=`, `===`, `=~`);
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
   `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
@@ -176,7 +179,11 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   (`https://tok?en@host`), or a numeric password followed by one
   (`https://user:12345?x@host`, which reads as a port); a token glued to a
   letter (`apisk-proj-...`) or, for a shorter prefix, a digit; a value named
-  only by a comment (`x = "..."  # openai key`); a name/value
+  only by a comment (`x = "..."  # openai key`); a readable bare word compared
+  with a sensitive name (`token == hunter2`), a literal written before the
+  operator (`"..." == token`) or compared with a subscript
+  (`headers["token"] == "..."`); a readable value glued to the colon of a
+  sensitive name (`password:hunter2`); a name/value
   record in text whose value field comes before its name
   (`{"value": "...", "name": "Password"}`, `- value: ...` above
   `name: DB_PASSWORD`); the part of a quoted record value after a `}` inside

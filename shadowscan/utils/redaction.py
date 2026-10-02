@@ -150,7 +150,11 @@ def _redact_extended(text: str) -> str:
     text = _redact_user_secrets(text)
     text = _redact_opaque_assignments(text, extended=True)
     text = _redact_fallback_defaults(text, extended=True)
-    return _redact_opaque_options(text)
+    text = _redact_opaque_options(text)
+    # A bare marker that these passes leave after a sensitive key's colon
+    # ('api_key : <opaque>') is read by the established mapping pass as the start
+    # of a mapping value; normalize it here so that sanitizing again changes nothing.
+    return _redact_mapping_values(text)
 
 
 def _sanitize_established(text: str) -> str:
