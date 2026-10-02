@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -139,7 +139,7 @@ class SlackConnector(BaseConnector):
         try:
             data = http.get_json(path, params=params)
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            reason = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            reason = failure_summary(exc)
             self.ctx.warn(f"saas.slack: {path}: {reason}; coverage unknown", incomplete=True)
             return None
         if not isinstance(data, dict) or data.get("ok") is not True:

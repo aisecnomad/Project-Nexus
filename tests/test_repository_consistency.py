@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import itertools
+import json
 import re
 import tomllib
 from collections.abc import Iterator
@@ -26,7 +27,7 @@ from urllib.parse import unquote
 import pytest
 import yaml
 
-from shadowscan.connectors import ConnectorContext, builtin_connector_names
+from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.common import MAX_PAGES
 from shadowscan.models import ScanStats
@@ -35,7 +36,8 @@ from shadowscan.utils import http
 
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
-WORKFLOWS = sorted((GITHUB / "workflows").glob("*.yml"))
+# GitHub runs both YAML spellings; test_repository_policy.py checks the glob.
+WORKFLOWS = sorted(path for path in (GITHUB / "workflows").glob("*.y*ml") if path.is_file())
 FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if path.name != "config.yml")
 ADVISORY_URL = "https://github.com/aisecnomad/Project-Nexus/security/advisories/new"
 
@@ -370,6 +372,28 @@ def test_makefile_evaluates_the_same_corpora_as_ci() -> None:
         assert (ROOT / corpus).is_file(), f"CI references a missing corpus {corpus}"
 
 
+def _lock_audit_loop(text: str) -> str:
+    """The `for lock in ...; do pip-audit ...; done` loop, without shell and make syntax."""
+    flat = " ".join(text.replace("\\\n", " ").replace("$$", "$").replace(";", " ").split())
+    match = re.search(r"for lock in .*? done", flat)
+    assert match is not None, "no lock audit loop found"
+    return match.group()
+
+
+def test_make_audit_checks_the_environment_and_every_lock_like_ci() -> None:
+    """`make check` must not pass while CI's audit of the hash locks fails."""
+    makefile = _read(ROOT / "Makefile")
+    recipe = makefile.split("\naudit:", 1)[1].split("\n.PHONY", 1)[0]
+    ci_script = "\n".join(_ci_run_lines())
+    for command in ("pip-audit --skip-editable --progress-spinner off",):
+        assert command in recipe and command in ci_script
+    assert _lock_audit_loop(recipe) == _lock_audit_loop(ci_script)
+    locks = re.search(r"for lock in (.*?) do", _lock_audit_loop(recipe))
+    assert locks is not None
+    assert set(locks.group(1).split()) == {path.name for path in ROOT.glob("requirements*.lock")}
+    assert "set -e; for lock in" in recipe, "the first failing lock must fail make audit"
+
+
 def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
     config_text = _read(ROOT / ".pre-commit-config.yaml")
     revisions = {
@@ -487,6 +511,29 @@ def test_example_action_pins_match_the_repository_workflows() -> None:
             assert shas <= repository[name], (
                 f"examples pin {name} to {sorted(shas)} but workflows use {sorted(repository[name])}"
             )
+
+
+def test_secret_check_runs_on_the_same_files_in_the_hook_and_ci() -> None:
+    """The script owns its exclusions, so the hook and CI cannot drift apart."""
+    hooks = {
+        hook["id"]: hook
+        for repo in _load_yaml(ROOT / ".pre-commit-config.yaml")["repos"]
+        for hook in repo.get("hooks", [])
+    }
+    hook = hooks["no-hardcoded-secrets"]
+    assert hook["entry"] == "python tools/check_secrets.py"
+    assert hook.get("types") == ["text"], "the hook must scan every text file"
+    assert not {"exclude", "files", "types_or"} & hook.keys(), "exclusions belong in the script"
+    steps = [
+        step
+        for job in _load_yaml(GITHUB / "workflows" / "ci.yml")["jobs"].values()
+        for step in job.get("steps") or []
+        if "tools/check_secrets.py" in str(step.get("run", ""))
+    ]
+    assert len(steps) == 1, "CI must run the secret check exactly once per test job"
+    lines = [line.strip() for line in steps[0]["run"].splitlines()]
+    assert lines[0] == "set -euo pipefail", "a failed `git ls-files` must fail the step"
+    assert "git ls-files -z | xargs -0 python tools/check_secrets.py" in lines
 
 
 def test_pre_commit_hooks_select_files_with_types_or() -> None:
@@ -612,6 +659,44 @@ def test_documented_connector_counts_match_the_registry() -> None:
         )
 
 
+# Connector configuration keys that may stay undocumented, each with a reason.
+# Keep this empty unless a key is deliberately internal.
+_UNDOCUMENTED_CONNECTOR_KEYS: dict[str, str] = {}
+
+
+def test_every_connector_configuration_key_is_documented() -> None:
+    """Every key `shadowscan connectors --json` lists is named in docs/connectors*.md."""
+    docs = "\n".join(
+        _read(path)
+        for path in [ROOT / "docs" / "connectors.md", *sorted((ROOT / "docs" / "connectors").glob("*.md"))]
+    )
+    listed = set()
+    missing = []
+    for name in builtin_connector_names():
+        connector = get_connector_class(name)
+        for key in {**connector.config_keys, **connector.shared_config_keys}:
+            listed.add(f"{name}.{key}")
+            # Backticked as `key`, `key: value` or `key=value`.
+            if f"{name}.{key}" not in _UNDOCUMENTED_CONNECTOR_KEYS and not re.search(
+                rf"`{re.escape(key)}[`:= ]", docs
+            ):
+                missing.append(f"{name}.{key}")
+    assert not missing, f"document these connector configuration keys in docs/connectors*.md: {missing}"
+    assert _UNDOCUMENTED_CONNECTOR_KEYS.keys() <= listed, "stale undocumented-key exemptions"
+
+
+def test_documented_realistic_corpus_file_range_matches_the_corpus() -> None:
+    cases = json.loads(_read(ROOT / "tools" / "evaluation" / "realistic_corpus.json"))["cases"]
+    counts = [len(case["files"]) for case in cases]
+    match = re.search(
+        r"snapshots \((\d+) to (\d+) files each\)", " ".join(_read(ROOT / "docs" / "evaluation.md").split())
+    )
+    assert match is not None, "docs/evaluation.md should state the realistic corpus file range"
+    assert (int(match.group(1)), int(match.group(2))) == (min(counts), max(counts)), (
+        f"docs/evaluation.md claims {match.group(0)!r}; the corpus has {min(counts)} to {max(counts)} files per case"
+    )
+
+
 def _gcp_pagination(index) -> dict[str, int]:
     """The page limits the GCP connector applies, measured by paging until it stops.
 
@@ -721,3 +806,18 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
+
+
+_FIXTURE_CLAIM = re.compile(r"(\d+) of (\d+) connectors ship fixtures")
+
+
+def test_documented_fixture_connector_count_matches_the_demo_configuration() -> None:
+    demo = yaml.safe_load((ROOT / "examples" / "shadowscan.offline.yaml").read_text(encoding="utf-8"))
+    configured = {entry["name"] for entry in demo["connectors"]}
+    assert configured <= set(builtin_connector_names())
+    actual = (len(configured), len(builtin_connector_names()))
+    claims = [(path, match) for path in _current_docs() for match in _FIXTURE_CLAIM.finditer(_read(path))]
+    assert claims, "the README should state how many connectors the offline demo covers"
+    for path, match in claims:
+        claimed = (int(match.group(1)), int(match.group(2)))
+        assert claimed == actual, f"{_relative(path)} claims {claimed}, the demo configures {actual}"

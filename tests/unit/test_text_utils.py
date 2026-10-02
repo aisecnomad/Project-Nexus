@@ -56,3 +56,12 @@ def test_sanitize_record_alias_is_replaced_by_sanitize():
     token = "sk-proj-exampletokenvalue"
     assert not hasattr(text, "sanitize_record")
     assert sanitize({"token": token})["token"] != token
+
+
+def test_compact_calendar_days_are_dates_not_epoch_seconds():
+    # A gateway log's ``date: 20240101`` field was read as epoch seconds (1970).
+    assert parse_timestamp("20240101") == datetime(2024, 1, 1, tzinfo=UTC)
+    assert parse_timestamp("20240101") != parse_timestamp(20240101.0)
+    assert parse_timestamp("20241399") is None  # an impossible day is no timestamp
+    assert parse_timestamp("1704067200") == datetime(2024, 1, 1, tzinfo=UTC)
+    assert parse_timestamp("12345678") == datetime.fromtimestamp(12345678, tz=UTC)

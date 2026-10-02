@@ -23,7 +23,13 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import apply_matches, finalize, max_pages_limit, name_matches
+from shadowscan.connectors.common import (
+    apply_matches,
+    failure_summary,
+    finalize,
+    max_pages_limit,
+    name_matches,
+)
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -139,7 +145,7 @@ class SalesforceConnector(BaseConnector):
                 try:
                     data = self.http.get_json(path, params={"q": soql} if page == 0 else None)
                 except (HttpError, RequestException, ValueError, RuntimeError) as exc:
-                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    status = failure_summary(exc)
                     self.ctx.warn(f"lowcode.salesforce: {kind} collection incomplete ({status})")
                     break
                 if not isinstance(data, dict) or not isinstance(data.get("records"), list):

@@ -86,7 +86,7 @@ def test_polyglot_examples_do_not_create_agents(
         ),
         (
             "Agent.java",
-            "import dev.langchain4j.service.AiServices;\nclass App { void run() { AiServices.builder(Foo.class); } }\n",
+            "import dev.langchain4j.agentic.AgenticServices;\nclass App { void run() { AgenticServices.agentBuilder(Foo.class); } }\n",
             "framework.langchain4j",
         ),
         (

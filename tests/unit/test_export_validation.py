@@ -155,7 +155,9 @@ def test_unreadable_and_invalid_utf8_files_fail(tmp_path, index, monkeypatch):
     original = os.open
 
     def denied(name, *args, **kwargs):
-        if name == path.name:
+        # Linux opens the final name relative to its parent descriptor;
+        # macOS can open the whole path with O_NOFOLLOW_ANY instead.
+        if os.fspath(name) in {path.name, str(path.absolute())}:
             raise PermissionError("denied")
         return original(name, *args, **kwargs)
 

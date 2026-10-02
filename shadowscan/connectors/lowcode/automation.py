@@ -20,6 +20,7 @@ import json
 import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from requests import RequestException
 
@@ -27,6 +28,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import (
     apply_matches,
     blob_matches,
+    failure_summary,
     finalize,
     max_pages_limit,
     model_matches,
@@ -299,7 +301,7 @@ class MakeConnector(_AutomationBase):
             try:
                 data = http.get_json(path, params={**params, "pg[limit]": 100, "pg[offset]": page * 100})
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                status = failure_summary(exc)
                 self.ctx.warn(f"lowcode.make: collection incomplete for {path} ({status})")
                 return
             items = data.get(items_key) if isinstance(data, dict) else None
@@ -335,7 +337,7 @@ class MakeConnector(_AutomationBase):
             blueprint_errors: dict[str, int] = {}
             for s in self._offset_pages(http, "/scenarios", "scenarios", teamId=team):
                 try:
-                    bp = http.get_json(f"/scenarios/{s['id']}/blueprint")
+                    bp = http.get_json(f"/scenarios/{quote(str(s['id']), safe='')}/blueprint")
                     response = bp.get("response") if isinstance(bp, dict) else None
                     blueprint = (response.get("blueprint") if isinstance(response, dict) else None) or bp
                     if not isinstance(blueprint, dict):
@@ -343,7 +345,7 @@ class MakeConnector(_AutomationBase):
                     else:
                         s["blueprint"] = blueprint
                 except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    status = failure_summary(exc)
                     blueprint_errors[status] = blueprint_errors.get(status, 0) + 1
                 yield {**s, "_kind": "scenario", "_team": team}
             if blueprint_errors:
@@ -357,7 +359,7 @@ class MakeConnector(_AutomationBase):
             try:
                 data = http.get_json("/ai-agents/v1/agents", params={"teamId": team})
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                status = failure_summary(exc)
                 self.ctx.warn(
                     f"lowcode.make: AI agents unreadable for team {team} ({status}); "
                     "agent inventory incomplete"

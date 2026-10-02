@@ -356,6 +356,10 @@ class RemoteRepositoryConnector(BaseConnector):
         fs.ctx.stats = self.ctx.stats
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
+        if isinstance(snapshot, dict) and snapshot.get("capture_method") == "git-clone":
+            # Cloning already authorizes Git. Inspect gitlinks even without a
+            # .gitmodules declaration; never fetch their remote contents.
+            fs.check_gitlink_coverage(Path(local))
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
             f.provider = self.provider

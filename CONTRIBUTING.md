@@ -241,7 +241,7 @@ independent human approval.
 Before merging, the maintainer checks:
 
 - The PR targets `main`, is up to date, conflicts are resolved, and current CI
-  and CodeQL checks pass, including the strict required checks `test (3.11)`,
+  and CodeQL checks pass, including the aggregate `CI gate` and strict checks `test (3.11)`,
   `test (3.12)` and `analyze`. CI also runs signature validation, lint, typing,
   dependency audit, coverage, detection evaluation, and package and smoke checks.
 - The change respects the trust model, documents compatibility changes, and

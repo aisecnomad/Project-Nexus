@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize, max_pages_limit
+from shadowscan.connectors.common import failure_summary, finalize, max_pages_limit
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -85,7 +85,7 @@ class Auth0Connector(BaseConnector):
             try:
                 batch = self.http.get_json(path, params={**params, "per_page": 100, "page": page})
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                status = failure_summary(exc)
                 self.ctx.warn(f"identity.auth0: collection incomplete for {path} ({status})")
                 return
             if not isinstance(batch, list):

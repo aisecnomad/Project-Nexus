@@ -35,6 +35,17 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+Ordinary Spring `ChatClient` and LangChain4j `AiServices` construction, and
+standalone Java tool declarations, remain framework usage. Recognized explicit
+agent factories and supported concrete tool registration can establish agents.
+For Spring typed-field registrations, the registered class must have matching
+`@Tool` methods in the same project; unrelated or test-only tool declarations
+do not establish production capabilities.
+For supported import-bound constructors, empty or disabled tool/delegation
+options do not establish those workload capabilities; unresolved dynamic
+configuration remains potential evidence. Review capability assertions as well
+as binary presence when validating a detection change.
+
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of confirmed
 agents. JSON/YAML descriptions are not executed or treated as source; low-code
@@ -45,6 +56,12 @@ enrichment is disabled by default; `use_git: true` explicitly enables it for
 reviewed local metadata. The metadata command must support `--no-lazy-fetch`;
 unsupported Git versions or failed history reads mark the scan incomplete.
 Metadata reads cannot initiate a transport, fetch missing objects or use hooks.
+
+Submodule declarations are inspected without running Git. Missing, empty or
+unsafe declared module directories make coverage incomplete. Clone collection
+and local `use_git: true` also inventory committed gitlinks using the hardened
+metadata path. No submodule is initialized or fetched; see the detailed
+[coverage policy](../scanning.md#coverage-policy) for scope and limitations.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique

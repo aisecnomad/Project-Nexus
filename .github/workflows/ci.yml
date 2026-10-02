@@ -7,10 +7,9 @@ permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  # A new push to a pull request supersedes its running checks. A main run is
-  # never cancelled: release evidence needs a successful push run for the exact
-  # main commit, so a newer main push waits for the running one to finish.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # A newer pull-request push supersedes the older run. Every main push run must
+  # finish: release evidence cites the CI run of one exact main commit.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   dco:
     if: github.event_name == 'pull_request'
@@ -54,14 +53,17 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check native file confinement and plugin worker lifecycle
+        run: pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
       - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
       # The full suite without coverage tracing; the Linux coverage leg of the
-      # test job enforces both coverage floors.
-      - run: python -m pytest -q
+      # test job enforces both coverage floors. The console entry point is used
+      # on purpose: it must import the checkout-only tools packages.
+      - run: pytest -q
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -112,28 +114,17 @@ jobs:
             -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
+      - name: Check tracked files for hardcoded credentials
+        run: |
+          set -euo pipefail
+          # The same standard-library script as the pre-commit hook; it skips
+          # the paths that hold synthetic credentials on purpose.
+          git ls-files -z | xargs -0 python tools/check_secrets.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
       - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
-      - name: Check tracked files for hardcoded secrets
-        run: |
-          # Run the no-hardcoded-secrets pre-commit hook over every tracked file
-          # it selects. A config with only the local hooks keeps pre-commit from
-          # fetching the remote hook repositories; the hook's own file filters
-          # (Python and YAML outside tests/ and signature data) still apply.
-          python - "$RUNNER_TEMP/pre-commit-local.yaml" <<'PY'
-          import sys
-          from pathlib import Path
-
-          import yaml
-
-          config = yaml.safe_load(Path('.pre-commit-config.yaml').read_text(encoding='utf-8'))
-          config['repos'] = [repo for repo in config['repos'] if repo['repo'] == 'local']
-          Path(sys.argv[1]).write_text(yaml.safe_dump(config, sort_keys=False), encoding='utf-8')
-          PY
-          pre-commit run --config "$RUNNER_TEMP/pre-commit-local.yaml" --all-files no-hardcoded-secrets
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off

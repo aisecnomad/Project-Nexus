@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/aisecnomad/Project-Nexus/badge)](https://securityscorecards.dev/viewer/?uri=github.com/aisecnomad/Project-Nexus)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aisecnomad/Project-Nexus/badge)](https://scorecard.dev/viewer/?uri=github.com/aisecnomad/Project-Nexus)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](https://www.python.org/downloads/)
 [![Coverage ≥80%](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](CONTRIBUTING.md#quality-gates)
@@ -13,27 +13,28 @@
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
-registry of
+agent registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
 Counts and severity labels need an analyst review before they drive enforcement.
 
-Example findings (totals vary as signatures evolve):
+Example output, abridged to the first columns (totals vary as signatures evolve;
+`--max-rows 5` shows the five highest-risk rows of the bundled offline demo):
 
 ```
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 99 findings  •  95 shadow (inventory: 3 registered agents)                  │
-│ critical 11  high 53  medium 35  •  code 11 identity 19 cloud 27 …          │
+│ critical 11  high 53  medium 35  •  cloud 27 identity 19 saas 17 …          │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
- CRITICAL 95  SHADOW  code      mcp-server   MCP configuration: .mcp.json (inline GitHub PAT, Zapier remote MCP, docker/postgres)
- CRITICAL 90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
- HIGH     73  SHADOW  lowcode   agent        Copilot Studio agent: HR Helper
- MEDIUM   33  ops-provisioning-04  cloud  agent  Bedrock Agent: ops-provisioning-04   ← registered via its card's resource binding; owner from the AWS resource tag
+ CRITICAL  95  SHADOW  code      mcp-server   MCP configuration: .mcp.json
+ CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
+ CRITICAL  90  SHADOW  identity  oauth-grant  Entra service principal: Otter.ai
+ CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
 ```
 
-## Why
+## The Why
 
 Agents are no longer only Python scripts.
 They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
@@ -42,7 +43,7 @@ developer's editor, service principals with `Mail.ReadWrite` acting on behalf of
 Each surface has its own discovery API and its own vocabulary.
 ShadowScan normalizes these observations into one finding model with evidence,
 so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
-registered in the registry supplied for this scan?*
+registered in the agent registry supplied for this scan?*
 
 | Observation | What it establishes | Next check |
 |---|---|---|
@@ -98,7 +99,7 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 
 ## Frameworks & products recognised
 
-215 signatures / 1001 signals, YAML-defined with explicit opt-in overrides:
+215 signatures / 1004 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -251,7 +252,7 @@ connectors:
 required extras; `shadowscan connectors --json` also includes each connector's
 offline export formats. Every entry also accepts `enabled` (default true) and
 `label` (a distinct id when a connector runs more than once). See
-[docs/connectors.md](docs/connectors.md) for entry keys, credentials and
+[docs/connectors.md](docs/connectors.md) for entry keys, credentials, and
 least-privilege scopes per connector. Run repository scans in
 a separate job/configuration from live tenant collection. Mixing these credential
 boundaries requires an explicit `allow_credential_mixing` exception; keep the
@@ -281,7 +282,8 @@ agent unless `--include-tests` is set.
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, **1** when the command produced no scan result (an invalid option,
 value, path or configuration, or a setup or output error), and **0** for a
-completed scan that passes. Gate CI on any non-zero exit. SARIF records incomplete
+completed scan that passes. `shadowscan diff` exits **3** when the two reports
+are not comparable. Gate CI on any non-zero exit. SARIF records incomplete
 scans as unsuccessful, while preserving findings from successfully assessed inputs.
 Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
 and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)

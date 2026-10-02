@@ -424,3 +424,14 @@ def test_make_invalid_page_is_incomplete_not_fatal(index, monkeypatch):
     assert connector.run() == []
     assert not connector.ctx.stats.errors
     assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings
+
+
+@pytest.mark.parametrize("max_pages", [0, -3, "many", 2.5, True])
+def test_automation_page_limits_must_be_positive_integers(index, max_pages):
+    # ``max(1, int(value))`` used to coerce or clamp an invalid limit silently.
+    connector = _live(
+        index, N8nConnector, [], api_url="https://n8n.example/api/v1", api_key="key", max_pages=max_pages
+    )
+    assert connector.run() == []
+    assert connector.ctx.stats.skipped and connector.ctx.stats.incomplete
+    assert "max_pages must be a positive integer" in (connector.ctx.stats.skip_reason or "")

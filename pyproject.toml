@@ -82,6 +82,7 @@ ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 testpaths = ["tests"]
 # Unknown markers fail collection: a misspelt opt-out marker such as
 # production_budgets would otherwise be ignored without a warning.
+pythonpath = ["."]
 addopts = "-q --strict-markers"
 
 [tool.ruff.format]

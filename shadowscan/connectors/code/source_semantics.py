@@ -22,7 +22,8 @@ import re
 import threading
 import weakref
 from bisect import bisect_right
-from collections.abc import Callable
+from collections import ChainMap
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 
 import regex
@@ -31,6 +32,7 @@ from shadowscan.connectors.code.javascript_dispatch import javascript_responses_
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
+from shadowscan.connectors.code.source_capabilities import CallCapabilities, configured_capabilities
 from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools, has_vercel_tool_loop
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
@@ -59,6 +61,7 @@ class SourceBudgetExceeded(MatchTimeoutError):
 class _Binding:
     module: str
     symbol: str
+    constructed: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,9 @@ class _Call:
     structural_arguments: str = ""
     node: ast.Call | None = None
     tool_factories: tuple[str, ...] = ()
+    start: int = 0
+    end: int = 0
+    decorator: bool = False
 
 
 # These APIs construct agents even when their arguments have a different order
@@ -185,10 +191,11 @@ class _PythonBindings(ast.NodeVisitor):
         self.offsets = [0]
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))
-        self.scopes: list[dict[str, _Binding | None]] = [{}]
+        self.scopes: list[MutableMapping[str, _Binding | None]] = [{}]
         self.scope_kinds = ["module"]
         self.calls: list[_Call] = []
         self.imports: list[tuple[_Binding, int]] = []
+        self.decorator_calls: set[int] = set()
 
     def _offset(self, line: int, column: int) -> int:
         # AST columns are UTF-8 bytes, not Unicode code points.
@@ -208,9 +215,12 @@ class _PythonBindings(ast.NodeVisitor):
         elif isinstance(node, ast.Attribute):
             base = self._resolve(node.value)
             if base:
-                return _Binding(base.module, ".".join(filter(None, (base.symbol, node.attr))))
+                return _Binding(
+                    base.module, ".".join(filter(None, (base.symbol, node.attr))), base.constructed
+                )
         elif isinstance(node, ast.Call):
-            return self._resolve(node.func)
+            binding = self._resolve(node.func)
+            return _Binding(binding.module, binding.symbol, True) if binding else None
         elif isinstance(node, ast.Subscript):
             # Generic constructors retain their imported runtime identity:
             # Agent[Dependencies, Result](...) and aliased equivalents.
@@ -267,6 +277,9 @@ class _PythonBindings(ast.NodeVisitor):
                     node.lineno,
                     keywords,
                     node=node,
+                    start=self._offset(node.lineno, node.col_offset),
+                    end=end,
+                    decorator=id(node) in self.decorator_calls,
                 )
             )
         self.generic_visit(node)
@@ -294,13 +307,41 @@ class _PythonBindings(ast.NodeVisitor):
         for target in node.targets:
             self._store(target)
 
+    def _decorator(self, node: ast.expr) -> None:
+        if isinstance(node, ast.Call):
+            self.decorator_calls.add(id(node))
+            self.visit(node)
+            self.decorator_calls.remove(id(node))
+            return
+        binding = self._resolve(node)
+        if (
+            binding
+            and binding.constructed
+            and (binding.module == "pydantic_ai" or binding.module.startswith("pydantic_ai."))
+            and _symbol_tail(binding.symbol) in {"Agent.tool", "Agent.tool_plain"}
+            and (self.relevant is None or self.relevant(binding))
+        ):
+            if len(self.calls) >= MAX_BOUND_CALLS:
+                raise SourceBudgetExceeded("source binding call limit exceeded")
+            self.calls.append(
+                _Call(
+                    binding,
+                    "()",
+                    node.lineno,
+                    start=self._offset(node.lineno, node.col_offset),
+                    end=self._offset(node.end_lineno or node.lineno, node.end_col_offset or 0),
+                    decorator=True,
+                )
+            )
+        self.visit(node)
+
     def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
         for default in [*node.args.defaults, *node.args.kw_defaults]:
             if default:
                 self.visit(default)
         if not isinstance(node, ast.Lambda):
             for decorator in node.decorator_list:
-                self.visit(decorator)
+                self._decorator(decorator)
             self.scopes[-1][node.name] = None
         locals_: dict[str, _Binding | None] = {
             arg.arg: None for arg in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
@@ -429,18 +470,27 @@ class _PythonBindings(ast.NodeVisitor):
                 self.visit(statement)
             return
         # Neither branch is assumed to execute. Only bindings identical after
-        # both branches survive into subsequent code.
-        before = self.scopes[-1].copy()
-        outcomes = []
+        # both branches survive into subsequent code. Each branch writes to an
+        # overlay of the enclosing bindings, so the merge costs the branches'
+        # own assignments rather than a copy of the whole scope per ``if``,
+        # which made a file of many top-level names and ifs quadratic.
+        before = self.scopes[-1]
+        outcomes: list[Mapping[str, _Binding | None]] = []
         for branch in (node.body, node.orelse):
-            self.scopes[-1] = before.copy()
+            overlay: dict[str, _Binding | None] = {}
+            chain = ChainMap(overlay, before)
+            self.scopes[-1] = chain
             for statement in branch:
                 self.visit(statement)
-            outcomes.append(self.scopes[-1])
-        self.scopes[-1] = {
-            name: outcomes[0].get(name) if outcomes[0].get(name) == outcomes[1].get(name) else None
-            for name in set(outcomes[0]) | set(outcomes[1])
-        }
+            # A star import replaces the branch's scope with a plain mapping
+            # of every name; that mapping is then the branch's whole outcome.
+            scope = self.scopes[-1]
+            outcomes.append(overlay if scope is chain else scope)
+        self.scopes[-1] = before
+        for name in set(outcomes[0]) | set(outcomes[1]):
+            first = outcomes[0].get(name, before.get(name))
+            second = outcomes[1].get(name, before.get(name))
+            before[name] = first if first == second else None
 
 
 _LiteralGroups = tuple[tuple[str, ...], ...]
@@ -811,6 +861,8 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
                 text.count("\n", 0, match.start()) + 1,
                 masked[opening:end],
                 tool_factories=tool_factories,
+                start=match.start(),
+                end=end,
             )
         )
     return calls
@@ -1036,6 +1088,51 @@ def _call_evidence(
                 # Tool results go back to the model until the stop condition:
                 # an agent loop even when the tools are imported definitions.
                 verified, construction = True, "import-bound multi-step tool loop"
+        configured = configured_capabilities(
+            signature.id,
+            symbol,
+            node=call.node,
+            arguments=call.arguments,
+            masked=call.structural_arguments,
+            verified_graph=signature.id == "framework.langgraph" and symbol == "StateGraph" and verified,
+        )
+
+        capabilities = CallCapabilities(signature.id, verified, configured, (call.start, call.end))
+
+        if (
+            language == "python"
+            and signature.id == "framework.pydantic-ai"
+            and call.binding.constructed
+            and symbol in {"Agent.tool", "Agent.tool_plain"}
+            and (
+                call.decorator
+                or (
+                    call.node is not None
+                    and bool(call.node.args)
+                    and isinstance(call.node.args[0], (ast.Name, ast.Attribute, ast.Lambda))
+                )
+            )
+        ):
+            # Both @agent.tool_plain and @agent.tool_plain(...) register the
+            # decorated function. Merely obtaining agent.tool_plain() outside
+            # a decorator does not register one. A class or foreign receiver
+            # cannot acquire SDK provenance from its method's spelling.
+            found.append(
+                Match(
+                    signature,
+                    Signal(
+                        type="code",
+                        weight=0.8,
+                        capabilities=["tool-use"],
+                        description="import-bound Pydantic agent tool registration",
+                    ),
+                    sanitize_text(f"{call.binding.module}:{symbol}("),
+                    0.8,
+                    line=call.line,
+                    extra=capabilities.metadata(False, ["tool-use"]),
+                )
+            )
+
         if (
             signature.category == "provider"
             and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
@@ -1072,7 +1169,7 @@ def _call_evidence(
                         sanitize_text(f"{symbol}({keyword}="),
                         0.6,
                         line=call.line,
-                        extra={"verified_agent": False},
+                        extra=capabilities.metadata(False, [capability], option=True),
                     )
                 )
         for signal in signature.signals:
@@ -1092,7 +1189,7 @@ def _call_evidence(
                         sanitize_text(canonical[: len(symbol) + 1]),
                         signal.weight,
                         line=call.line,
-                        extra={"verified_agent": indicator},
+                        extra=capabilities.metadata(indicator, signal.capabilities),
                     )
                 )
                 break
@@ -1109,7 +1206,7 @@ def _call_evidence(
                     sanitize_text(f"{call.binding.module}:{symbol}("),
                     0.9,
                     line=call.line,
-                    extra={"verified_agent": True},
+                    extra=capabilities.metadata(True, []),
                 )
             )
     return found

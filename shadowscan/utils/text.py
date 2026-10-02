@@ -21,6 +21,8 @@ _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
 # nanoseconds, so magnitude identifies the unit. Smaller values are seconds;
 # larger ones are not a timestamp in any of these units and stay invalid.
 _EPOCH_UNITS = ((1e12, 1e15, 1e3), (1e15, 1e18, 1e6), (1e18, 1e19, 1e9))
+# A compact calendar day (yyyymmdd); checked before the epoch form claims it.
+_CALENDAR_DAY_RX = re.compile(r"(?:19|20)\d{6}")
 
 
 def redact(value: str, keep: int = 4) -> str:
@@ -141,6 +143,14 @@ def parse_timestamp(value: Any) -> datetime | None:
         # No supported timestamp representation is this long; hostile claims
         # (thousands of digits) must not reach int()/float() conversion.
         return None
+    if _CALENDAR_DAY_RX.fullmatch(s):
+        # Eight digits starting 19xx/20xx are a calendar day (yyyymmdd, as in
+        # a log's ``date`` field); as epoch seconds they would all fall in
+        # 1970-1973. An impossible day is no timestamp at all.
+        try:
+            return datetime.strptime(s, "%Y%m%d").replace(tzinfo=UTC)
+        except ValueError:
+            return None
     if _EPOCH_RX.fullmatch(s):
         return parse_timestamp(float(s))
     s = s.replace("Z", "+00:00")
