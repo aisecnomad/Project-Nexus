@@ -81,6 +81,7 @@ class GitLabConnector(RemoteRepositoryConnector):
         ),
         "clone_timeout_seconds": "per-repository git clone deadline (default 120)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
+        "default_excludes": "see code.filesystem (default true)",
         "strict_coverage": "see code.filesystem (default false)",
         "include_tests": "see code.filesystem (default false)",
         "use_git": (
@@ -261,6 +262,7 @@ class GitLabConnector(RemoteRepositoryConnector):
             if k
             in {
                 "exclude",
+                "default_excludes",
                 "max_file_size",
                 "max_files",
                 "scan_timeout",

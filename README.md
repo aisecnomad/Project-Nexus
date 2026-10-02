@@ -95,7 +95,7 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 
 ## Frameworks & products recognised
 
-215 signatures / 1001 signals, YAML-defined with explicit opt-in overrides:
+215 signatures / 1004 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -250,8 +250,12 @@ declared `oversize_skip_globs` remain warnings. An in-root link stays complete
 when its own name is never read (a lockfile or an image) or when it is a source
 file whose target is analyzed in the same project with the same test
 classification; directory links are incomplete because their alias paths are
-not scanned. Evidence found only in test or fixture code cannot establish an
-agent unless `--include-tests` is set.
+not scanned. A file the scanner analyzes by name but cannot read as text (a NUL
+byte outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) is a gap
+too. A non-empty `bin/`, `build/`, `dist/`, `vendor/` or similar directory that
+the walk skips by default is listed in a warning; `--no-default-excludes` scans
+those directories. Evidence found only in test or fixture code cannot establish
+an agent unless `--include-tests` is set.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
@@ -288,7 +292,7 @@ See [deployment and migration](docs/production.md) for the rollout checks.
   "account": "123456789012", "region": "us-east-1", "owner": null,
   "frameworks": ["cloud.aws-bedrock-agents"], "model_providers": ["provider.openai"],
   "capabilities": ["tool-use"], "tags": ["plaintext-credential", "secret-in-env"],
-  "confidence": 1.0, "likelihood": "confirmed",
+  "confidence": 1.0, "likelihood": "strong",
   "shadow": true, "registry_match": null,
   "risk": {"score": 90, "level": "critical", "factors": [
       {"id": "shadow", "description": "not present in the sanctioned agent inventory", "weight": 25},
@@ -327,7 +331,7 @@ links, @-mentions or e-mail links; code spans keep identifiers verbatim.
 ```yaml
 options:
   risk_basis: danger          # combined (default) | danger: level from capabilities, not registration
-  risk_weights:               # integers -100..100; unknown groups, kinds or governance keys are rejected
+  risk_weights:               # integers -100..100; unknown groups, kinds, capabilities, provider ids or governance keys are rejected (tags may be custom)
     capabilities: {code-exec: 25}
     tags: {meeting-bot: 20}
     providers: {provider.deepseek: 20}

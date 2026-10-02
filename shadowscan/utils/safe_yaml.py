@@ -32,6 +32,12 @@ class YAMLConstructionError(yaml.constructor.ConstructorError):
     """
 
 
+# Tags whose scalars SafeConstructor converts arithmetically. A YAML 1.1 sexagesimal
+# integer (``1:1:1:...``) is built by repeated big-integer multiplication, which is
+# quadratic in its length: 80 KB takes about 0.5 s and 1 MB about a minute, and the
+# input limit alone would allow hours.
+_NUMBER_TAGS: frozenset[str] = frozenset({"tag:yaml.org,2002:int", "tag:yaml.org,2002:float"})
+
 # The exact builtin types SafeConstructor leaks for a malformed scalar.
 # Subclasses are deliberate diagnostics of a loader subclass (for example the
 # configuration loader's ConfigValidationError, a ValueError) and pass through.
@@ -66,6 +72,11 @@ class BoundedSafeLoader(yaml.SafeLoader):
     MAX_DEPTH = 64
     MAX_EXPANDED_NODES = 100_000
     MAX_EXPANDED_CHARS = 64 * 1024 * 1024
+    # Longest integer or float scalar converted. A real number is far shorter than this.
+    # Python itself refuses a decimal integer beyond 4300 digits, which is reported as an
+    # invalid scalar; this bound is above that and covers the sexagesimal form, whose
+    # conversion is quadratic (10,000 characters cost about 15 ms).
+    MAX_NUMBER_CHARS = 10_000
 
     def __init__(self, stream: Any) -> None:
         if hasattr(stream, "read"):
@@ -162,6 +173,12 @@ class BoundedSafeLoader(yaml.SafeLoader):
         self._flattened.add(node)
 
     def construct_object(self, node: Node, deep: bool = False) -> Any:
+        if (
+            node.tag in _NUMBER_TAGS
+            and isinstance(node, ScalarNode)
+            and len(node.value) > self.MAX_NUMBER_CHARS
+        ):
+            raise YAMLResourceLimitError("YAML number length limit exceeded")
         # The innermost node that fails supplies the reported position.
         try:
             return super().construct_object(node, deep=deep)

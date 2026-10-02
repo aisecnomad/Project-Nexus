@@ -486,7 +486,7 @@ def _string_list(value: dict, name: str, path: Path, location: str) -> list[str]
         raise _invalid(
             path, f"{location}.{name}", "expected a list of nonempty strings (quote numeric identifiers)"
         )
-    if name == "resources" and any(_CITE.search(item) for item in items):
+    if name == "resources" and any(_has_cite_marker(item) for item in items):
         # Citation markers in a resource pattern can silently turn a specific
         # approval into a glob if stripped. Require the author to correct it.
         raise _invalid(path, f"{location}.{name}", "citation marker in resource pattern")
@@ -498,6 +498,26 @@ def _string_list(value: dict, name: str, path: Path, location: str) -> list[str]
 
 
 _CITE = re.compile(r"\[cite(?:_start)?(?::[^\]]*)?\]")
+
+
+def _has_cite_marker(text: str) -> bool:
+    """Whether ``text`` holds a citation marker (``_CITE`` anywhere), in a single pass.
+
+    ``_CITE.search`` rescans to the end of a long item from every ``[cite:`` that has no ``]``, which
+    is quadratic in the length of a hostile approval pattern. Once no ``]`` follows a ``[cite:``, no
+    later marker can close either, so the search ends there.
+    """
+    start = text.find("[cite")
+    while start >= 0:
+        after = start + len("[cite")
+        if text.startswith("_start", after):
+            after += len("_start")
+        if text.startswith("]", after):
+            return True
+        if text.startswith(":", after):
+            return text.find("]", after + 1) >= 0
+        start = text.find("[cite", start + 1)
+    return False
 
 
 def _strip_cite_markers(text: str) -> str:

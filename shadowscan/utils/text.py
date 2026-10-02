@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import codecs
+import io
 import math
 import re
+import tokenize
 from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Any
@@ -13,6 +16,47 @@ from shadowscan.utils.redaction import credential_id
 from shadowscan.utils.safe_json import strict_json_loads
 
 _BINARY_SNIFF = 8192
+# Reported by ``read_text`` for a NUL-bearing file that is not text in any
+# encoding it decodes. Callers pass only names they would analyze, so this is
+# a coverage gap, never a reason to treat the scan as complete.
+BINARY_CONTENT_ERROR = "binary or undecodable content in analyzable file"
+# Byte-order marks, longest first (the UTF-32LE mark begins with the UTF-16LE one).
+_BOM_CODECS: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xfe\x00\x00", "utf-32"),
+    (b"\x00\x00\xfe\xff", "utf-32"),
+    (b"\xff\xfe", "utf-16"),
+    (b"\xfe\xff", "utf-16"),
+    (b"\xef\xbb\xbf", "utf-8-sig"),
+)
+# Headers of compiled and packed artifacts. Only a name without any extension
+# is skipped quietly on this evidence: an interpreter can still run a script
+# whose first line looks like a header, so a name the scanner analyzes by its
+# extension (``.sh``, ``.js``) stays a coverage gap.
+_BINARY_MAGIC: tuple[bytes, ...] = (
+    b"\x7fELF",  # ELF
+    b"\xca\xfe\xba\xbe",  # Mach-O universal
+    b"\xfe\xed\xfa\xce",  # Mach-O
+    b"\xfe\xed\xfa\xcf",
+    b"\xce\xfa\xed\xfe",
+    b"\xcf\xfa\xed\xfe",
+    b"\x00asm",  # WebAssembly
+    b"\x1f\x8b",  # gzip
+    b"PK\x03\x04",  # zip, jar, wheel
+    b"BZh",  # bzip2
+    b"\xfd7zXZ\x00",  # xz
+    b"\x28\xb5\x2f\xfd",  # zstd
+    b"7z\xbc\xaf\x27\x1c",  # 7z
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",  # JPEG
+    b"GIF87a",
+    b"GIF89a",
+    b"%PDF-",
+)
+# Text codec that a PEP 263 coding cookie must not select: its decoder is not
+# linear in its input (``punycode`` re-copies its output for every code point,
+# about 30 s for a 1 MB file with the GIL held), so a hostile cookie would stall
+# the scan. Such a file is reported as undecodable instead.
+_SLOW_SOURCE_CODECS = frozenset({"punycode"})
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
 
@@ -27,6 +71,48 @@ def redact(value: str, keep: int = 4) -> str:
     if not value:
         return value
     return credential_id(value)
+
+
+def _python_source_text(raw: bytes) -> str | None:
+    """Decode a Python source with the PEP 263 codec it declares; None when it declares none.
+
+    A cookie naming UTF-8, an unknown codec or a codec that is not a text
+    encoding leaves the caller's default decoding in place (the interpreter
+    cannot run such a file either). A text codec that cannot decode the bytes,
+    or that is too slow to run on untrusted input, is a coverage gap.
+    """
+    try:
+        declared, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        codec = codecs.lookup(declared).name
+    except (SyntaxError, LookupError):
+        return None
+    if codec == "utf-8":
+        return None
+    if codec in _SLOW_SOURCE_CODECS:
+        raise ValueError(BINARY_CONTENT_ERROR)
+    try:
+        return raw.decode(declared)
+    except LookupError:
+        return None
+    except UnicodeDecodeError:
+        # Name the gap, not the position or byte the decoder rejected.
+        raise ValueError(BINARY_CONTENT_ERROR) from None
+
+
+def _decode_text(raw: bytes, name: str) -> str | None:
+    """Decode file content for analysis; None for a compiled or packed artifact to skip quietly."""
+    for bom, codec in _BOM_CODECS:
+        if raw.startswith(bom):
+            return raw.decode(codec, errors="replace")
+    if b"\x00" in raw[:_BINARY_SNIFF]:
+        if "." not in name and raw.startswith(_BINARY_MAGIC):
+            return None
+        raise ValueError(BINARY_CONTENT_ERROR)
+    if name.lower().endswith(".py"):
+        declared = _python_source_text(raw)
+        if declared is not None:
+            return declared
+    return raw.decode("utf-8", errors="replace")
 
 
 def read_text(
@@ -45,8 +131,13 @@ def read_text(
     for a link between directory traversal and reading fails the read instead
     of redirecting it outside the tree. Validate the opened descriptor, not a
     separate stat result: the file may change between directory traversal and
-    reading. Binary inputs are ignored; limits and I/O failures are reported to
-    callers that track completeness.
+    reading. Text with a byte-order mark (UTF-8, UTF-16, UTF-32) is decoded and
+    the mark removed, and a Python source is decoded with the codec its PEP 263
+    cookie declares. Callers pass only names they would analyze, so any other
+    content with a NUL byte in its first 8 KiB is reported as
+    ``BINARY_CONTENT_ERROR`` rather than ignored, except a compiled or packed
+    artifact without any file extension. Limits and I/O failures are reported
+    to callers that track completeness.
     """
     try:
         if max_bytes < 1:
@@ -57,9 +148,7 @@ def read_text(
             raw = fh.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise ValueError("file exceeds max_file_size")
-        if b"\x00" in raw[:_BINARY_SNIFF]:
-            return None
-        return raw.decode("utf-8", errors="replace")
+        return _decode_text(raw, path.name)
     except (OSError, ValueError) as exc:
         if errors is not None:
             # Do not embed raw file contents or exception messages in reports.
@@ -237,9 +326,9 @@ def host_of(url: str | None) -> str | None:
     """Return the lowercase host of ``url`` (RFC 3986 authority; scheme optional).
 
     Userinfo before the last ``@`` and the port are removed, and a bracketed
-    IPv6 literal is returned without its brackets. A URL such as
-    ``https://api.openai.com:443@evil.example/`` therefore names ``evil.example``,
-    the host a client connects to, never the userinfo.
+    IPv6 literal is returned without its brackets. An authority such as
+    ``api.openai.com:443@evil.example`` therefore names ``evil.example``, the host
+    a client connects to, never the userinfo.
     """
     if not url:
         return None

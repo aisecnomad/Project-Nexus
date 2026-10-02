@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
+from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.html import _JS
 
@@ -53,6 +54,32 @@ def test_all_formats_render(fixtures, index):
     assert f"script-src 'sha256-{script_hash}'" in html
     assert "default-src 'none'" in html and "name='referrer' content='no-referrer'" in html
     assert set(FORMATS) == {"table", "csv", "html", "json", "markdown", "sarif"}
+
+
+def test_reports_name_the_top_confidence_bucket_strong():
+    findings = []
+    for resource, weight in [("repo/high", 0.92), ("repo/mid", 0.5)]:
+        finding = Finding(
+            surface=Surface.CODE,
+            connector="code.filesystem",
+            kind=Kind.FRAMEWORK_USAGE,
+            title=resource,
+            resource=resource,
+            resource_type="project",
+            evidence=[Evidence(signal="dependency:pypi:openai", description="openai", weight=weight)],
+        )
+        finding.recompute_confidence()
+        findings.append(finding)
+    result = ScanResult(findings=findings, stats=[ScanStats(connector="code.filesystem", started_at="t")])
+
+    data = json.loads(render(result, "json"))
+    assert [item["likelihood"] for item in data["findings"]] == ["strong", "possible"]
+    rows = list(csv.DictReader(io.StringIO(render(result, "csv"))))
+    assert [row["likelihood"] for row in rows] == ["strong", "possible"]
+    markdown = render(result, "markdown")
+    assert "**Confidence:** 0.92 (strong)" in markdown and "(possible)" in markdown
+    for fmt in sorted(set(FORMATS) - {"table"}):  # the table is drawn by the CLI and shows no label
+        assert "confirmed" not in render(result, fmt).lower(), fmt
 
 
 def test_markdown_report_defangs_untrusted_bare_urls(fixtures, index):
@@ -148,14 +175,22 @@ def test_cli_scan_config_diff_and_stubs(tmp_path: Path, fixtures):
     )
     a = tmp_path / "a.json"
     b = tmp_path / "b.json"
-    # Keep the CLI output in the assertion message: an incomplete scan (exit 3)
-    # names its connector diagnostics there, which a bare exit code hides.
+
+    def failure_details(output: str, report: Path) -> str:
+        # With -o, the CLI prints only a fixed summary. Actual diagnostics live
+        # in the reporter-sanitized stats; never print findings or raw inputs.
+        try:
+            stats = json.loads(report.read_text())["stats"]
+        except (OSError, ValueError, KeyError):
+            stats = "no readable JSON report stats"
+        return f"{output}\nSanitized connector stats: {json.dumps(stats, indent=2)}"
+
     res = runner.invoke(
         main, ["scan", "-c", str(cfg), "--only", "cloud.aws", "--format", "json", "-o", str(a)]
     )
-    assert res.exit_code == 0, res.output
+    assert res.exit_code == 0, failure_details(res.output, a)
     res = runner.invoke(main, ["scan", "-c", str(cfg), "--format", "json", "-o", str(b)])
-    assert res.exit_code == 0, res.output
+    assert res.exit_code == 0, failure_details(res.output, b)
     res = runner.invoke(main, ["diff", str(a), str(b)])
     assert res.exit_code == 3 and "new" in res.output and "Slack" in res.output
     assert "scope differs" in res.output

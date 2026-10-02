@@ -126,6 +126,7 @@ exact supported Python matrix and dependency pins.
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% per connector |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
+| Secrets | `make secrets` | No hardcoded credentials in tracked files |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
 
@@ -139,6 +140,7 @@ The same gates as individual commands:
 ```bash
 python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
+make secrets
 ruff check shadowscan tests tools
 mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
 pip-audit --progress-spinner off
@@ -235,7 +237,7 @@ independent human approval.
 Before merging, the maintainer checks:
 
 - The PR targets `main`, is up to date, conflicts are resolved, and current CI
-  and CodeQL checks pass, including the strict required checks `test (3.11)`,
+  and CodeQL checks pass, including the aggregate `CI gate` and strict checks `test (3.11)`,
   `test (3.12)` and `analyze`. CI also runs signature validation, lint, typing,
   dependency audit, coverage, detection evaluation, and package and smoke checks.
 - The change respects the trust model, documents compatibility changes, and

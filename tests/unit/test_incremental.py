@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -13,7 +14,7 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.engine import Engine
-from shadowscan.incremental import IncrementalCache, Snapshot
+from shadowscan.incremental import IncrementalCache, Snapshot, _json
 from shadowscan.models import Finding, Kind, ScanStats, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
@@ -276,6 +277,24 @@ def test_unusable_cache_falls_back_to_scan(tmp_path, index, monkeypatch, damage)
     result = Engine(cfg, index).run()
     assert result.findings and result.complete and not result.stats[0].cached
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("weight", [7.5, -1, True, "0.9"])
+def test_cache_entry_with_an_invalid_evidence_weight_is_a_miss(tmp_path, index, monkeypatch, weight):
+    # The payload digest is recomputed, so only the weight makes the entry unusable. A corrupt
+    # weight must send the connector back to a full scan, not load as a confident finding.
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    Engine(cfg, index).run()
+    entry = next((tmp_path / "state").glob("*.json"))
+    data = json.loads(entry.read_text())
+    data["payload"]["findings"][0]["evidence"][0]["weight"] = weight
+    data["payload_sha256"] = hashlib.sha256(_json(data["payload"])).hexdigest()
+    entry.write_text(json.dumps(data))
+    result = Engine(cfg, index).run()
+    assert result.findings and result.complete and not result.stats[0].cached
+    assert len(calls) == 2
+    assert all(0 <= item.weight <= 1 for finding in result.findings for item in finding.evidence)
 
 
 def test_concurrent_cache_writers_publish_only_complete_matching_entries(tmp_path, index):
@@ -579,6 +598,32 @@ def test_literal_excluded_directory_reuses_cache_but_direct_codeowners_remains_t
     assert updated.findings[0].owner == "@second-team"
 
 
+def test_default_excludes_option_decides_whether_built_in_directories_are_fingerprinted(tmp_path, index):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["default_excludes"] = False
+    (tmp_path / "skipped").mkdir()
+    skipped = config(tmp_path / "skipped")
+    agent = tmp_path / "repo" / "bin" / "agent.py"
+    agent.parent.mkdir()
+    agent.write_text("import crewai\n")
+    ignored = tmp_path / "skipped" / "repo" / "bin" / "agent.py"
+    ignored.parent.mkdir()
+    ignored.write_text("import crewai\n")
+
+    # Scanned directory: a change inside it must miss the cache and be reported.
+    assert Engine(cfg, index).run().stats[0].cached is False
+    assert Engine(cfg, index).run().stats[0].cached
+    agent.write_text("import langgraph\n")
+    updated = Engine(cfg, index).run()
+    assert not updated.stats[0].cached
+    assert any("framework.langgraph" in f.frameworks for f in updated.findings)
+
+    # Skipped (default) directory: it is outside the scan, so a change there reuses the cache.
+    assert Engine(skipped, index).run().stats[0].cached is False
+    ignored.write_text("import langgraph\n")
+    assert Engine(skipped, index).run().stats[0].cached
+
+
 @pytest.mark.parametrize("limit", ["_MAX_HASH_BYTES", "_MAX_HASH_ENTRIES", "_MAX_HASH_SECONDS"])
 def test_fingerprint_work_limits_fall_back_to_full_scan(tmp_path, index, monkeypatch, limit):
     cfg = config(tmp_path)
@@ -676,6 +721,23 @@ def test_startup_maintenance_deadline_disables_cache_and_runs_full_scan(tmp_path
     assert result.complete and result.findings
     assert not result.stats[0].cached
     assert not list((tmp_path / "state").glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [{"incomplete": True}, {"errors": ["connector failed"]}, {"skipped": True}],
+    ids=["incomplete", "errors", "skipped"],
+)
+def test_a_result_that_is_not_a_clean_complete_scan_is_never_cached(tmp_path, index, flags):
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index)
+    snapshot = Snapshot("a" * 64, "b" * 64)
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z", **flags))
+    assert not (cache.directory / f"{snapshot.slot}.json").exists()
+    assert cache.load(cfg.connectors[0], snapshot) is None
+    # The same snapshot is stored when the scan was clean, so the refusal above is the flags' doing.
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z"))
+    assert (cache.directory / f"{snapshot.slot}.json").exists()
 
 
 def test_cache_load_propagates_connector_cancellation(tmp_path, index):

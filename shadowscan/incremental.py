@@ -27,7 +27,7 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
-from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES
+from shadowscan.connectors.code.filesystem import DEFAULT_EXCLUDES, VCS_METADATA_EXCLUDES
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
@@ -261,6 +261,7 @@ def _tree_digest(
     max_file_bytes: int,
     excluded_dir_names: frozenset[str] = frozenset(),
     unread_above: int | None = None,
+    skip_default_excludes: bool = True,
 ) -> str:
     """Digest a tree's content and metadata.
 
@@ -269,6 +270,10 @@ def _tree_digest(
     ``unread_above`` (the scanner's own ``max_file_size``) is never opened by
     the scanner, so only its metadata is tracked instead of aborting the
     fingerprint, which kept every tree with one oversize file out of the cache.
+    The scanner's built-in directory exclusions are skipped unless
+    ``skip_default_excludes`` is false (its ``default_excludes`` option): then
+    only version-control metadata is, and changes inside the other built-in
+    directories, which are scanned, must miss the cache.
     """
     digest = hashlib.sha256()
     if root.is_file():
@@ -308,7 +313,8 @@ def _tree_digest(
         kept: list[Path] = []
         for name in sorted(directories):
             path = basepath / name
-            if code and (name in DEFAULT_EXCLUDES or name in excluded_dir_names):
+            built_in = DEFAULT_EXCLUDES if skip_default_excludes else VCS_METADATA_EXCLUDES
+            if code and (name in built_in or name in excluded_dir_names):
                 continue
             if path.is_symlink():
                 # Ancillary readers such as CODEOWNERS can inspect descendants
@@ -708,6 +714,7 @@ class IncrementalCache:
                         max_file_bytes=max_bytes,
                         excluded_dir_names=excluded_dir_names,
                         unread_above=unread_above,
+                        skip_default_excludes=spec.config.get("default_excludes", True) is True,
                     )
                 inputs.append([str(root), digest])
             fingerprint = hashlib.sha256(

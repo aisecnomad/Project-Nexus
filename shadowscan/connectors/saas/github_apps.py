@@ -25,7 +25,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 
 # An installation reported only because it can write (include_unrecognized_apps)
-# is a candidate for review, never a confirmed or likely AI agent.
+# is a candidate for review, never a strong or likely AI agent.
 UNRECOGNISED_APP_MAX_CONFIDENCE = 0.3
 _SLUG_SEPARATORS = re.compile(r"[-_]+")
 

@@ -10,6 +10,39 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 1 discovery review migration
+
+Review finding kinds, capabilities and risk scores before replacing an existing
+baseline. Ordinary Java chat-client construction and standalone tool declarations
+are framework evidence; they do not by themselves establish an agent. Explicit
+agent factories and supported concrete tool-registration patterns remain evidence
+of construction or configuration, never proof of runtime execution.
+
+Supported import-bound constructors in OpenAI Agents SDK, CrewAI, Pydantic AI,
+LangGraph and LangChain no longer inherit a framework's advertised features as
+configured workload capabilities. Empty tool/handoff collections and disabled
+delegation do not contribute those capabilities or their risk factors. Unknown
+features can remain potential capabilities in metadata; review the supporting
+source before relying on a capability label for enforcement.
+
+Submodule declarations whose source is missing or empty make source coverage
+incomplete (exit 3). Clone collection also checks the immutable Git tree for
+submodule entries. The scanner does not initialize submodules or contact their
+URLs. Supply the intended source in a separately reviewed checkout or explicitly
+exclude it from the declared scan scope; do not interpret an incomplete result
+as an absence of agents. See [coverage policy](scanning.md#coverage-policy) for
+the collection modes and limitations.
+
+The new kind and capability examples are authored regressions. Keep the frozen
+AI-labeled corpus unchanged and obtain fresh human-reviewed field evidence using
+the [holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+Include ordinary Java chat applications, explicit empty/disabled capabilities,
+positive tool/delegation controls and incomplete source checkouts in the sampling
+plan. Predeclare kind, product and capability labels before revealing scanner
+results. AWS/Slack live acceptance still requires the authorized complete and
+permission-denied [tenant canaries](canaries.md); other deployment scopes require
+their own connector-specific evidence.
+
 ## September 27 migration and acceptance
 
 The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
@@ -48,8 +81,11 @@ engine construction, so an approval file changed between construction and
 execution cannot supply a stale match.
 
 When HTML or CSV is sent to stdout, terminal control and bidirectional-formatting
-characters are rendered visibly; artifacts explicitly written with `-o` retain
-their serialized data. Reporter boundaries sanitize copied diagnostics without
+characters, zero-width characters, the byte-order mark and Unicode tag characters
+are rendered visibly; artifacts explicitly written with `-o` retain their
+serialized data, except that a lone surrogate (which no encoder accepts, and which
+a name read from an export can hold) is written as the escape text `\ud800` in
+every format. Reporter boundaries sanitize copied diagnostics without
 mutating in-memory scan state, ignore malformed related-finding metadata, preserve
 valid SARIF source paths and reject non-finite JSON. Serialization failures stop
 before stdout or an existing output file is changed; table output preflights
@@ -475,11 +511,17 @@ to another instruction document under the same condition, are skipped because
 nothing at the alias path is lost (see [scan semantics](scanning.md) for the
 exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links
-leaving the root and oversized files the scanner would
-inspect make the scan incomplete (exit 3) by default, with a warning naming
-the omission. `strict_coverage: true` (`--strict-coverage`) records those
+leaving the root, oversized files the scanner would
+inspect and files it analyzes by name but cannot read as text (a NUL byte
+outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) make the scan
+incomplete (exit 3) by default, with a warning naming the omission.
+`strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions
-in both modes. Raise `max_file_size` or add `exclude` patterns for known data files. Evidence found
+in both modes. Raise `max_file_size` or add `exclude` patterns for known data files.
+A non-empty `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
+`third_party`, `thirdparty` or `external` directory that the walk skips by default
+is listed in one warning per scan root (the scan stays complete); set
+`default_excludes: false` (`--no-default-excludes`) to scan them. Evidence found
 only in test or fixture paths has half weight and cannot promote a project to an
 agent unless `include_tests: true` (`--include-tests`) is set, and a project
 finding whose evidence is already reported by an MCP configuration, agent
@@ -742,6 +784,160 @@ a candidate before enforcing policy on the new output:
   cookiecutter `{{...}}` template paths are not parsed as MCP configuration and
   no longer make a scan incomplete.
 
+## October 2 review changes
+
+These fixes came from an AI-assisted review of the October 1 candidate; neither
+the review nor the fixes had a second-person review. Several of them turn a
+result that used to look complete into an incomplete one, so run a candidate
+scan next to the pinned baseline and read the differences before you enforce
+policy on the new output.
+
+New incomplete (exit 3) and configuration-error outcomes:
+
+- **Unreadable analyzable files.** A file that `code.filesystem` analyzes by
+  name and that still contains a NUL byte in its first 8 KiB (a binary `.plist`
+  or `.xml`, a UTF-16 file without a byte-order mark, a stray NUL in source or
+  Markdown) is a coverage gap named `binary or undecodable content in
+  analyzable file`. Fix the file or add it to `exclude`. UTF-8, UTF-16 and
+  UTF-32 files with a byte-order mark, and Python sources with a PEP 263 coding
+  cookie, are now decoded and analyzed, so dependency lists, `.env` files and
+  sources that used to read as empty can add findings.
+- **List options.** A bare string for `exclude` or `paths` (`exclude:
+  "vendor/*"`, `--set exclude=vendor/*`) is a configuration error. It used to be
+  split into characters, which excluded the whole tree and reported a complete,
+  empty scan. Use a list, or repeat `shadowscan code --exclude`.
+- **Signature packs and inventories.** A custom signature pack directory that
+  contributes no `.yaml`/`.yml` pack (empty, other file types, only symbolic
+  links) and an inventory glob that matches no file now fail at setup (exit 1).
+- **Connectors and plugins.** A connector or plugin that calls `sys.exit()` is
+  a failed connector and the scan is incomplete; it no longer ends the process
+  with the plugin's status and no report.
+- **Exports.** Gateway logfmt lines that repeat a key or leave a quote open,
+  gateway records whose timestamp no supported format parses, `saas.generic` and
+  `lowcode.zapier` rows with no name (blank rows, footers; map the column with
+  `fields.name`, or call it `title`/`name` for Zapier), Slack Connect bots from
+  partner workspaces, OCI policy statements over 8192 characters, and
+  Power Platform records that cannot be analysed are skipped with a warning and
+  make the scan incomplete. The remaining records are still reported.
+- **ServiceNow paging.** A short page no longer proves that a table ended.
+  Collection stops at an empty page, so a small `max_pages` makes any non-empty
+  table incomplete. Keep the default (1000) or size it above rows/500 + 1.
+- **Report comparison.** `diff` treats a report whose `summary` counts do not
+  match its `findings` array as incomparable (missing findings are unknown,
+  exit 3) instead of counting them as resolved.
+
+Changed results to review before you compare against a baseline:
+
+- **Disabled MCP servers.** A server entry that declares `disabled: true` or
+  `enabled: false` is reported, tagged `declared-disabled`, with `disabled: true`
+  in `metadata.servers`; `server_count` still counts only the others. The flag
+  is client-specific and comes from the repository, so honoring it let a
+  repository hide a server. `diff` shows a configuration whose only entries are
+  disabled as a new finding.
+- **Newly visible evidence.** NuGet `PackageReference` items in
+  `Directory.Build.props`, `*.targets` and shared `*.props` files, and imports
+  of an SDK whose name a repository shares with an empty or data-only
+  directory, now produce dependency and provider evidence.
+- **Gateway logs.** Only the request path decides whether a request is a static
+  asset or health probe, and a probe name must be the last segment: `/healthz/ready`
+  and `?_=.js` requests are classified by the normal LLM route and host rules.
+  Provider attribution follows the URL authority (`https://api.openai.com@evil.example/`
+  names `evil.example`). Microsecond, nanosecond, Go and RFC 2822 timestamps
+  are now parsed, which changes first/last-seen and activity analysis.
+- **Entra.** Permission names in findings may change from a raw GUID to the
+  label of the resource that defines the role. The "conflicting role labels"
+  warning appears only when a conflicting label is needed for a grant, so
+  exports in which different resources reuse a role id are no longer incomplete.
+- **JWT.** Without `jwks_url`, every token finding carries
+  `metadata.verified: false`; confidence and risk are unchanged.
+
+New warnings (the scan stays complete):
+
+- Default-excluded directories: one warning per scan root names the non-empty
+  `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
+  `third_party`, `thirdparty` and `external` directories the walk skipped.
+  Set `default_excludes: false` (`shadowscan code --no-default-excludes`) to
+  scan them. That option also stops skipping dependency trees and virtualenvs
+  (`node_modules`, `.venv`, `site-packages`), so pair it with `exclude:
+  [node_modules, .venv]`. Version-control metadata (`.git`, `.hg`, `.svn`) is
+  always excluded. Pipelines that fail on any warning must pass the option or
+  tolerate the warning.
+- Inventory placement: a scan warns, under the new `engine.inventory` entry of
+  `stats`, when an inventory or a file it loads is inside a path scanned in the
+  same run, and for each `*`-only resource pattern. Keep the inventory outside
+  the checkout that a pull request can change. Report consumers that list
+  `stats[].connector` will see the new entry name.
+- Python that does not parse (syntax newer than the runtime, a notebook with
+  shell or magic lines) keeps its lexical evidence and adds a warning.
+- Gateway scans note how many static-asset and probe requests were not counted.
+  Tooling that fails on any warning should key on `incomplete` or the exit code.
+
+Label, precision and risk-policy changes to review:
+
+- **`likelihood` value.** `findings[].likelihood` and the CSV `likelihood` column
+  report `strong` where earlier output said `confirmed`. Dashboards, `jq` filters,
+  SIEM rules and ticket automation that count or filter on `confirmed` must accept
+  `strong`; accept both while old reports are in circulation. `diff` reads
+  baselines written before the rename (the label is not compared and `confirmed`
+  parses as `strong`), so no baseline needs regenerating. Use `confidence`, a
+  number, for thresholds: `strong` does not mean verified.
+- **List-only repositories.** Findings disappear for repositories that only list
+  vendors (blocklists, allowlists, vendor policies, vendored signature or
+  inventory data). A bare data file that names four or more providers and is the
+  only evidence is no longer reported; keep its name a manifest name or add a
+  signature with a `file` signal if you rely on it.
+- **Plugin authors.** Evidence weights must be finite numbers in [0, 1]. A
+  violation fails the connector and the scan is incomplete.
+- **`risk_weights`.** A typo in a `capabilities` or `providers` key now fails the
+  scan setup (exit 1) instead of being ignored. Provider ids are checked when the
+  engine is built, after custom signature packs load. Check existing
+  configurations for keys that never matched anything, and dry-run a change.
+- **Scores.** Findings at five points of the score grid (raw 45 at confidence
+  0.25, 75 at 0.15, 85 at 0.25, 125 at 0.17 and 125 at 0.21) score one higher.
+  `diff` against an older baseline reports the changed `risk.score` and factor
+  weight for those findings only, and a level change for the one that crosses from
+  medium to high.
+
+Redaction and lexing changes to review:
+
+- **Redaction policy.** Credential operators, token boundaries, URL userinfo,
+  record-field names, unknown value types and private-key blocks are redacted
+  more completely (see the changelog). Reports can hold a little more
+  `[REDACTED]` than before: comparisons with a sensitive name, `creds` and
+  `db_pass`, record fields named for a credential word, and arrow functions whose
+  parameter is named for a credential, which keep the arrow but lose the body.
+  No finding, detection or exit code changes. The policy digest changes with the
+  rules, so verified-clean digests cached on findings are recomputed, and
+  `scanner_source_sha256` changes, so artifacts from an older build are not
+  comparable (as for any release).
+- **Earlier dumps.** `--dump-records` files written by an earlier version keep
+  their older, less redacted content. Regenerate them with this version before
+  you share them; a dump written now holds `[REDACTED]` for the newly covered
+  field names, and offline re-analysis of it sees the marker.
+- **Lexer.** Code that was hidden is now scanned when it followed a
+  keyword-named property (`o.of / 1; ...`), a comment ended by a bare CR,
+  U+2028 or U+2029, a JSX attribute string ending in a backslash, or a PHP
+  comment closed by `?>`; expect new findings in such files. New incomplete
+  (exit 3) cases are a `/` directly after `await` or `yield`, a regular
+  expression after `}` that holds a quote, backtick or slash, and a JSX file
+  that exhausts its look-ahead allowance (`file analysis incomplete
+  (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`;
+  hostile or machine-generated input, not configurable). Projects that vendor
+  `emoji-regex` or similar generated tables stop reporting
+  `incomplete source lexical analysis` for them.
+
+Operational notes:
+
+- With a Kubernetes ConfigMap mount, pass the resolved file path as the
+  scan configuration; links are deliberately not followed.
+- `XDG_STATE_HOME` is ignored when it is empty or relative.
+- Remove an `actions/cache` step that restores `--incremental` state. The
+  fingerprint includes file identity, so a fresh checkout never reused it.
+- Maintainers: `main` push CI runs are no longer cancelled by the next push,
+  so expect more concurrent CI minutes on busy days. A new connector family
+  directory or nested connector package must be listed in `CONNECTOR_FAMILIES`
+  in `tools/coverage_gate.py`, or the coverage gate fails.
+
 ## Finding identity and comparison migration
 
 Finding IDs now separate stable source identity from inferred classification.
@@ -870,11 +1066,22 @@ list without removing the existing checks or approval rule. Its enforcement
 state has changed more than once during 2026-09: the 2026-09-24 review recorded
 it disabled; on 2026-09-25 (13:10 UTC) a merge attempted without an approving
 review was refused with "Repository rule violations found", so it was enforced
-at that moment; and on 2026-09-27 (10:40 UTC) both rulesets were read back with
-`enforcement: disabled`, so nothing was enforced on `main` at that time. Treat
+at that moment; on 2026-09-27 (10:40 UTC), and again on 2026-10-01 during the
+discovery review, both rulesets were read back with `enforcement: disabled`.
+The October 1 branch response also reported `protected: false`. Treat
 no observation as permanent; only the live commands below describe the current
 state. Keep the CodeQL job's displayed name `analyze` consistent with the
 required check.
+
+An administrator must activate both existing rulesets in
+[repository rules](https://github.com/aisecnomad/Project-Nexus/rules), add
+`CI gate` to `Require CI and CodeQL`, and retain its current required checks,
+strict up-to-date policy, one non-author approving review, stale-review
+dismissal, signature requirements and empty bypass list. Save the change and
+read back the effective rules on `main`; editing this guide or merging its PR
+does not change repository settings. Do not claim that protection was restored
+until that readback confirms it. If the API connection lacks administration
+access, use an authorized administrator session rather than weakening the rules.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-09-25 (including

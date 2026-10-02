@@ -35,7 +35,6 @@ from shadowscan.utils.git import (
     LFS_POINTER_PREFIX,
     CloneSizeError,
     CloneTimeoutError,
-    checkout_has_gitlinks,
     checkout_has_lfs_pointers,
     clone_environment,
     clone_git_supported,
@@ -463,6 +462,10 @@ class RemoteRepositoryConnector(BaseConnector):
         fs.ctx.stats = self.ctx.stats
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
+        if isinstance(snapshot, dict) and snapshot.get("capture_method") == "git-clone":
+            # Cloning already authorizes Git. Inspect gitlinks even without a
+            # .gitmodules declaration; never fetch their remote contents.
+            fs.check_gitlink_coverage(Path(local))
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
             f.provider = self.provider
@@ -533,32 +536,33 @@ class RemoteRepositoryConnector(BaseConnector):
         self.ctx.check_deadline()
         return self._fetch_via_api(repo, tmp)
 
-    def _report_clone_gaps(self, full: Any, dest: str) -> None:
-        """Say what a clone cannot give the scan, as API mode already does for submodules.
+    def _coverage_gap(self, message: str) -> None:
+        """Record content the scan could not read: a warning, or an error under ``strict_coverage``.
 
-        The clone populates no submodule and runs no LFS smudge filter, so a gitlink is an empty
-        directory and an LFS file is a pointer text. Neither is scanned; unsaid, the scan would look complete.
+        Both make the scan incomplete; the option decides only the channel, as in code.filesystem.
+        """
+        if self._filesystem_options().get("strict_coverage") is True:
+            self.ctx.error(message)
+        else:
+            self.ctx.warn(message, incomplete=True)
+
+    def _report_clone_gaps(self, full: Any, dest: str) -> None:
+        """Say that a clone holds Git LFS pointer files instead of the large files they stand for.
+
+        The clone runs no LFS smudge filter, so such a file is a short pointer text that the scan would
+        read as if it were the content, and the scan would look complete. Submodules are reported by the
+        filesystem scan of the checkout (``check_gitlink_coverage``).
         """
         if not os.path.isdir(dest):
             return  # nothing was checked out; the scan of the missing path reports that itself
-        remaining = max(0.001, self.ctx.deadline - time.monotonic()) if self.ctx.deadline else 30.0
-        submodules = checkout_has_gitlinks(dest, timeout=min(30.0, remaining))
         pointers = checkout_has_lfs_pointers(dest, check_deadline=self.ctx.check_deadline)
-        if submodules is None or pointers is None:
-            self.ctx.warn(
-                f"{self.name}: could not inspect {full} for submodules and Git LFS pointers; "
-                "source coverage unknown",
-                incomplete=True,
+        if pointers is None:
+            self._coverage_gap(
+                f"{self.name}: could not inspect {full} for Git LFS pointer files; source coverage unknown"
             )
-        if submodules:
-            self.ctx.warn(
-                f"{self.name}: submodules in {full} are not cloned; source coverage partial",
-                incomplete=True,
-            )
-        if pointers:
-            self.ctx.warn(
-                f"{self.name}: Git LFS pointer files in {full} are not resolved; source coverage partial",
-                incomplete=True,
+        elif pointers:
+            self._coverage_gap(
+                f"{self.name}: Git LFS pointer files in {full} are not resolved; source coverage partial"
             )
 
     def _set_clone_snapshot(self, repo: dict[str, Any], local: str) -> None:
@@ -689,8 +693,7 @@ class RemoteRepositoryConnector(BaseConnector):
             if len(content) <= LFS_POINTER_MAX_BYTES and content.startswith(LFS_POINTER_PREFIX):
                 lfs_pointers = True
         if lfs_pointers:
-            self.ctx.warn(
-                f"{self.name}: Git LFS pointer files{where} are not resolved; source coverage partial",
-                incomplete=True,
+            self._coverage_gap(
+                f"{self.name}: Git LFS pointer files{where} are not resolved; source coverage partial"
             )
         return dest, written

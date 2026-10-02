@@ -3,7 +3,7 @@
 ## Coverage policy
 
 A code scan is *complete* when every file it was asked to assess was assessed.
-Two situations are deliberately outside a repository's own content:
+The following coverage rules define how omitted source is handled:
 
 * **Symbolic links** are never followed. A link is skipped silently when its
   own name is one the scanner never reads (a lockfile, generated bundle or
@@ -28,6 +28,42 @@ Two situations are deliberately outside a repository's own content:
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
+* **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
+  byte-order mark is decoded and the mark removed. A Python source is decoded
+  with the codec its `# coding:` cookie declares. Any other file the scanner
+  analyzes by name (source, configuration, documents, `.env`, extensionless
+  files) that has a NUL byte in its first 8 KiB, or that its declared codec
+  cannot decode, makes the scan incomplete (exit code 3) with `binary or
+  undecodable content in analyzable file`; it is never silently treated as
+  empty. A compiled or packed artifact with no file extension and a known
+  header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
+  GIF, PDF) is skipped quietly, as are names the scanner never analyzes
+  (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
+  of binary data that carries an analyzed extension.
+* **Default-excluded directories.** The walk skips a built-in list of directory
+  names (see `default_excludes` in the [code connector](connectors/code.md)).
+  Tool metadata, caches, virtualenvs and dependency trees are skipped without
+  comment. A skipped `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`,
+  `vendor`, `third_party`, `thirdparty` or `external` directory that holds a
+  file is a warning (the scan stays complete) naming each such directory name
+  with its count, because projects also keep their own code there.
+  `default_excludes: false` (`--no-default-excludes`) scans them.
+* **Submodules** are never initialized or fetched. Bounded `.gitmodules`
+  declarations identify missing, empty or unsafe source directories as coverage
+  gaps, including declarations inside materialized nested directories. Ordinary
+  files in materialized submodule directories are scanned by the same confined
+  walker. GitHub/GitLab clone collection additionally inventories gitlinks in
+  the committed `HEAD` tree; local scans do so only with `use_git: true` and a
+  local `.git` directory. Malformed declarations or a failed authorized Git
+  inventory make coverage incomplete. Explicitly excluded submodule paths are
+  outside the declared scan scope. A nonempty directory establishes only that
+  source is available to scan, not that it matches an authentic remote commit.
+
+Default local scans do not execute Git: an undeclared gitlink without a
+`.gitmodules` file is therefore not discoverable in that mode. The opt-in Git
+inventory reads committed `HEAD`, not staged-only index entries; an undeclared,
+staged-only gitlink is likewise outside that check. Use a reviewed committed
+checkout and declared submodule paths when completeness matters.
 
 By default, incomplete coverage is recorded as a warning and exits 3.
 `strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an
@@ -46,6 +82,15 @@ evidence there. Deciding that is linear in the module and matches at most
 A large module that does import such a library, or has more imports than that,
 still reports
 `import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
+
+The JavaScript and TypeScript lexer that masks comments, strings and JSX text
+has a look-ahead allowance of its own: a fixed floor plus four characters of
+look-ahead per character of the file. Real components use under one percent of
+it. A JSX file that exhausts it, such as tens of thousands of repeated `<A>(`,
+ends in well under a second with
+`file analysis incomplete (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`
+instead of stalling the scan until the connector deadline. Other files are
+unaffected and the scan exits 3.
 
 ## Test and fixture code
 
@@ -378,7 +423,7 @@ options. Extra statements, nested scopes, mutations and dynamic options cannot
 establish this proof. Unsupported shapes, including files longer than such a
 program can be, still produce ordinary SDK evidence and leave coverage complete.
 
-Several rules keep weak observations from producing confirmed or high-risk
+Several rules keep weak observations from producing strong or high-risk
 findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
 sequences after the provider prefix) is never a `secret` finding; it is listed
@@ -395,7 +440,12 @@ observation for a project other than those heuristics is an environment-variable
 or display-name reference, the heuristics are dropped and the finding is built
 from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
-names appear. MCP servers
+names appear. A data or prose file that only lists four or more products by
+domain or variable name (a proxy blocklist, a vendor policy, a copy of the
+signature packs) is a catalog: its mentions count only for a product with an
+import, dependency or code pattern elsewhere in the project, and the discounted
+files are listed in `metadata.catalog_mentions` (see
+[Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers
 `browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
 keeps the informational `always-on` tag but only marks a caller as agentic,

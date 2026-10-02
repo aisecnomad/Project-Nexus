@@ -30,7 +30,7 @@ from shadowscan.connectors.code.remote import (
 )
 from shadowscan.models import Kind, ScanStats
 from shadowscan.utils import git as git_module
-from shadowscan.utils.git import checkout_has_gitlinks, checkout_has_lfs_pointers, safe_git_env
+from shadowscan.utils.git import checkout_has_lfs_pointers, safe_git_env
 from shadowscan.utils.http import HttpError
 
 COMMIT = "a" * 40
@@ -885,7 +885,9 @@ def test_github_listing_reports_no_totals_and_requests_a_stable_order(index):
     assert "sort=full_name" in query and "direction=asc" in query
 
 
-# ---------------------------------------------------- what a clone leaves out of the scan
+# ---------------------------------------------------- Git LFS pointer files in a clone
+# Submodules (gitlinks) of a clone are reported by the filesystem scan of the checkout; see
+# tests/unit/test_gitlink_coverage.py. A clone also holds LFS pointer files, not the large files.
 LFS_POINTER = "version https://git-lfs.github.com/spec/v1\noid sha256:" + "0" * 64 + "\nsize 123456789\n"
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 
@@ -894,9 +896,9 @@ def _run_git(*args):
     subprocess.run(["git", *args], check=True, capture_output=True, env=safe_git_env())
 
 
-def _source_repository(tmp_path, name="origin", *, submodule=False, lfs_pointer=False):
-    """A one-commit repository; the submodule is a gitlink entry, as `git submodule add` records it."""
-    work = tmp_path / name
+def _source_repository(tmp_path, *, lfs_pointer=False):
+    """A one-commit repository, optionally holding a Git LFS pointer file as `git lfs track` leaves it."""
+    work = tmp_path / "origin"
     work.mkdir()
     _run_git("init", "-q", "-b", "main", str(work))
     (work / "app.py").write_text("print('hello')\n")
@@ -904,8 +906,6 @@ def _source_repository(tmp_path, name="origin", *, submodule=False, lfs_pointer=
     if lfs_pointer:
         (work / "assets" / "model.bin").write_text(LFS_POINTER)
     _run_git("-C", str(work), "add", "-A")
-    if submodule:
-        _run_git("-C", str(work), "update-index", "--add", "--cacheinfo", f"160000,{'a' * 40},vendor/agents")
     _run_git(
         *("-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.test"),
         *("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"),
@@ -928,8 +928,8 @@ def _clone_of(source):
     return clone
 
 
-def _clone_fetch(index, monkeypatch, tmp_path, cls, source):
-    connector = _connector(index, cls)
+def _clone_fetch(index, monkeypatch, tmp_path, cls, source, **config):
+    connector = _connector(index, cls, **config)
     monkeypatch.setattr(remote, "run_bounded_clone", _clone_of(source))
     record = (
         {"full_name": "acme/app", "size": 1, "clone_url": "https://github.com/acme/app.git"}
@@ -950,18 +950,27 @@ def _clone_fetch(index, monkeypatch, tmp_path, cls, source):
 
 @needs_git
 @pytest.mark.parametrize("cls", PROVIDERS)
-def test_clone_with_a_submodule_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
-    stats = _clone_fetch(index, monkeypatch, tmp_path, cls, _source_repository(tmp_path, submodule=True))
-    assert stats.incomplete
-    assert stats.warnings == [f"{cls.name}: submodules in acme/app are not cloned; source coverage partial"]
+def test_clone_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
+    stats = _clone_fetch(index, monkeypatch, tmp_path, cls, _source_repository(tmp_path, lfs_pointer=True))
+    assert stats.incomplete and not stats.errors
+    assert stats.warnings == [
+        f"{cls.name}: Git LFS pointer files in acme/app are not resolved; source coverage partial"
+    ]
 
 
 @needs_git
 @pytest.mark.parametrize("cls", PROVIDERS)
-def test_clone_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
-    stats = _clone_fetch(index, monkeypatch, tmp_path, cls, _source_repository(tmp_path, lfs_pointer=True))
-    assert stats.incomplete
-    assert stats.warnings == [
+def test_strict_coverage_makes_an_lfs_pointer_an_error(tmp_path, index, monkeypatch, cls):
+    stats = _clone_fetch(
+        index,
+        monkeypatch,
+        tmp_path,
+        cls,
+        _source_repository(tmp_path, lfs_pointer=True),
+        strict_coverage=True,
+    )
+    assert stats.incomplete and not stats.warnings
+    assert stats.errors == [
         f"{cls.name}: Git LFS pointer files in acme/app are not resolved; source coverage partial"
     ]
 
@@ -974,37 +983,13 @@ def test_ordinary_clone_stays_complete(tmp_path, index, monkeypatch, cls):
 
 
 @needs_git
-@pytest.mark.parametrize("which", ["checkout_has_gitlinks", "checkout_has_lfs_pointers"])
-def test_clone_that_cannot_be_inspected_is_incomplete_coverage(tmp_path, index, monkeypatch, which):
-    monkeypatch.setattr(remote, which, lambda *args, **kwargs: None)
+def test_clone_that_cannot_be_inspected_for_lfs_pointers_is_incomplete_coverage(tmp_path, index, monkeypatch):
+    monkeypatch.setattr(remote, "checkout_has_lfs_pointers", lambda *args, **kwargs: None)
     stats = _clone_fetch(index, monkeypatch, tmp_path, GitHubConnector, _source_repository(tmp_path))
     assert stats.incomplete
     assert stats.warnings == [
-        "code.github: could not inspect acme/app for submodules and Git LFS pointers; source coverage unknown"
+        "code.github: could not inspect acme/app for Git LFS pointer files; source coverage unknown"
     ]
-
-
-@needs_git
-def test_gitlinks_are_found_in_a_real_clone_and_only_there(tmp_path):
-    with_link = tmp_path / "with-link"
-    _run_git("clone", "-q", f"file://{_source_repository(tmp_path, 'a', submodule=True)}", str(with_link))
-    without = tmp_path / "without"
-    _run_git("clone", "-q", f"file://{_source_repository(tmp_path, 'b')}", str(without))
-    assert checkout_has_gitlinks(with_link) is True  # nested path: vendor/agents
-    assert checkout_has_gitlinks(without) is False
-
-
-@needs_git
-def test_gitlink_inspection_reports_what_it_could_not_read(tmp_path, monkeypatch):
-    assert checkout_has_gitlinks(tmp_path) is None  # not a repository
-    assert checkout_has_gitlinks(tmp_path / "missing") is None
-    assert checkout_has_gitlinks(tmp_path, timeout=0) is None
-    assert checkout_has_gitlinks("bad\x00path") is None
-    source = _source_repository(tmp_path)
-    monkeypatch.setattr(git_module, "_MAX_TREE_LISTING_BYTES", 8)
-    assert checkout_has_gitlinks(source) is None  # a listing past the size bound is not a "no"
-    monkeypatch.undo()
-    assert checkout_has_gitlinks(source) is False
 
 
 def test_lfs_pointer_scan_looks_only_at_small_regular_files_and_follows_no_link(tmp_path):
@@ -1040,9 +1025,8 @@ def test_lfs_pointer_scan_is_bounded_and_honours_the_deadline(tmp_path, monkeypa
         checkout_has_lfs_pointers(tmp_path, check_deadline=expired)
 
 
-@pytest.mark.parametrize("cls", PROVIDERS)
-def test_api_snapshot_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
-    connector = _connector(index, cls)
+def _api_snapshot_with_a_pointer(tmp_path, index, monkeypatch, cls, **config):
+    connector = _connector(index, cls, **config)
     pointer = LFS_POINTER.encode()
     source = b"print('hello')\n"
     monkeypatch.setattr(
@@ -1054,10 +1038,23 @@ def test_api_snapshot_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index
     blobs = {"model.bin": {field: _sha(pointer)}, "app.py": {field: _sha(source)}}
     dest, written = connector._write_api_snapshot({}, blobs, list(blobs), str(tmp_path), " in acme/app")
     assert written == 2 and Path(dest, "app.py").exists()
-    assert connector.ctx.stats.incomplete
-    assert connector.ctx.stats.warnings == [
+    return connector.ctx.stats
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_api_snapshot_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
+    stats = _api_snapshot_with_a_pointer(tmp_path, index, monkeypatch, cls)
+    assert stats.incomplete and not stats.errors
+    assert stats.warnings == [
         f"{cls.name}: Git LFS pointer files in acme/app are not resolved; source coverage partial"
     ]
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_strict_coverage_makes_an_api_lfs_pointer_an_error(tmp_path, index, monkeypatch, cls):
+    stats = _api_snapshot_with_a_pointer(tmp_path, index, monkeypatch, cls, strict_coverage=True)
+    assert stats.incomplete and not stats.warnings
+    assert len(stats.errors) == 1 and "Git LFS pointer files" in stats.errors[0]
 
 
 # ---------------------------------------------------- option validation

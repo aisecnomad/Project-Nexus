@@ -51,6 +51,7 @@ from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
 from shadowscan.utils.git import terminate_active_clones, terminate_clones_on_signal
 from shadowscan.utils.output import (
+    encodable_text,
     prepare_private_directory,
     terminal_report_text,
     terminal_text,
@@ -120,7 +121,7 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
             except (OverflowError, RecursionError, TypeError, ValueError):
                 raise click.ClickException("could not render report; result data is invalid") from None
     else:
-        click.echo(terminal_report_text(text, fmt))
+        click.echo(encodable_text(terminal_report_text(text, fmt)))
 
 
 def _exit_code(result: ScanResult, fail_on: str | None) -> int:
@@ -566,6 +567,11 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
 @click.option("--gitlab-group", help="scan every project of a GitLab group (GITLAB_TOKEN)")
 @click.option("--mode", type=click.Choice(["clone", "api"]), default=None, help="remote fetch mode")
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
+@click.option(
+    "--no-default-excludes",
+    is_flag=True,
+    help="also scan the directories skipped by default (bin, build, dist, vendor, node_modules, .git, ...)",
+)
 @click.option("--no-secrets", is_flag=True, help="skip credential detection")
 @click.option(
     "--strict-coverage",
@@ -585,6 +591,7 @@ def code(
     gitlab_group: str | None,
     mode: str | None,
     exclude: tuple[str, ...],
+    no_default_excludes: bool,
     no_secrets: bool,
     strict_coverage: bool,
     include_tests: bool,
@@ -594,6 +601,8 @@ def code(
     secrets."""
     specs: list[ConnectorSpec] = []
     common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
+    if no_default_excludes:
+        common["default_excludes"] = False
     if strict_coverage:
         common["strict_coverage"] = True
     if include_tests:

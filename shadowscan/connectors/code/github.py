@@ -96,6 +96,7 @@ class GitHubConnector(RemoteRepositoryConnector):
         "include_forks": "scan forks (default false)",
         "max_repos": "cap on repositories (default 500)",
         "scan_timeout": "matching budget in seconds per file (default 2)",
+        "default_excludes": "see code.filesystem (default true)",
         "strict_coverage": "see code.filesystem (default false)",
         "include_tests": "see code.filesystem (default false)",
         "use_git": (
@@ -229,6 +230,7 @@ class GitHubConnector(RemoteRepositoryConnector):
             if k
             in {
                 "exclude",
+                "default_excludes",
                 "max_file_size",
                 "max_files",
                 "scan_timeout",

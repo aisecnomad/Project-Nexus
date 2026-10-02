@@ -41,6 +41,11 @@ are not imported while parsing, so their keys are not checked at that point.
 
 ## Validation maturity and evidence status
 
+For the October 1 code-collection and capability corrections, review the
+[migration notes](production.md#october-1-discovery-review-migration) and
+[source coverage policy](scanning.md#coverage-policy). Added regression tests
+do not raise a connector's live-acceptance or field-evaluation status.
+
 Connector availability is not production acceptance. This snapshot describes evidence published in this repository, not private tenant work or guarantees for a particular deployment. It was prepared on 2026-09-27 from [`main` at `3761a09`](https://github.com/aisecnomad/Project-Nexus/commit/3761a09d15ba0d10e24ad96d210b5405fa9c4497). Refresh it when new evidence is accepted.
 
 | Scope | Evidence published in this repository | Status supported by that evidence |
@@ -109,8 +114,8 @@ is capped at 0.6 confidence. These are static candidate classifications, not pro
 that code ran or that a deployment is autonomous.
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
-A2A, M365 and CrewAI manifests yield incomplete coverage instead of confirmed
-agents. JSON/YAML descriptions are not executed or treated as source; low-code
+A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
+agent findings. JSON/YAML descriptions are not executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history
@@ -135,7 +140,7 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
 `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
@@ -143,7 +148,13 @@ checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
-`metadata` is a mapping merged into every finding's metadata.
+`metadata` is a mapping merged into every finding's metadata. The walk skips a
+built-in list of directory names (`bin`, `build`, `dist`, `vendor`,
+`node_modules`, virtualenvs, caches, ...); a skipped non-empty `bin`, `build`,
+`dist`, `out`, `target`, `obj`, `coverage`, `vendor`, `third_party`,
+`thirdparty` or `external` directory is reported as a warning, and
+`default_excludes: false` (`--no-default-excludes`) scans them. The full list
+and the quiet/disclosed split are in [connectors/code.md](connectors/code.md).
 `oversize_skip_globs` replaces the default list of case-insensitive file-name
 globs. The defaults cover lockfiles, minified bundles, source maps, images,
 fonts, archives and compiled artifacts, and a glob with `/` matches the relative
@@ -191,10 +202,13 @@ before cloning and samples the local checkout, including `.git`, while Git runs.
 The clone is stopped when observed size exceeds the cap or cannot be measured,
 and checked again after Git exits. `clone_timeout_seconds` (default 120) bounds
 each clone.
-A clone populates no submodule and runs no Git LFS smudge filter, so a
-repository whose tree holds a submodule (a gitlink entry) or whose files include
-LFS pointer files makes the scan incomplete, as API mode already did for
-submodules; a clone that could not be inspected for either does too.
+A clone populates no submodule (see the
+[coverage policy](scanning.md#coverage-policy)) and runs no Git LFS smudge
+filter: a repository with LFS pointer files (small text files that open with
+`version https://git-lfs.github.com/spec/v1`) holds the pointers, not the large
+files, so such a repository makes the scan incomplete (an error under
+`strict_coverage`), as does a clone that could not be checked for them. API mode
+reports LFS pointer files the same way.
 An oversized repository or missing/malformed size estimate falls back to sampled
 API mode without launching Git and marks coverage incomplete. A failed clone or
 Git being unavailable for explicit `mode: clone` also marks the scan incomplete.
@@ -208,7 +222,10 @@ Cloning requires Git 2.32 or newer: the protections that keep a clone on its
 origin and out of local configuration are passed through `GIT_CONFIG_COUNT` and
 `GIT_CONFIG_GLOBAL`, which older versions ignore without an error. With an older
 or unidentifiable Git (`git --version` is read once per process) the connector
-uses sampled API mode and the scan is incomplete.
+uses sampled API mode and the scan is incomplete. The submodule inventory of a
+clone uses the hardened metadata path, which needs Git 2.45; with Git 2.32 to
+2.44 a clone is scanned but reports
+`could not inventory gitlinks safely; submodule coverage unknown`.
 The provider's size is an estimate, and polling can overshoot between samples.
 Neither check limits network transfer or guarantees a hard disk ceiling. Run
 remote scans with a host/container wall-clock limit and a writable disk quota.
