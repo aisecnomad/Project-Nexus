@@ -378,14 +378,19 @@ def _python_ranges_from(
                 return False, None
             spans.append((start, end))
             return False, first_line + position[0]
+        if isinstance(exc, tokenize.TokenError) and "multi-line statement" in message:
+            # An unclosed bracket: every token through EOF has been read, and its
+            # literals masked, so nothing is left to mask. Python 3.11 reports
+            # this error past the last line; 3.12+ reports the start of the last
+            # line, which would mask code the tokenizer already read.
+            return False, None
         start = offset(position)
         if start < len(text):  # an error reported at EOF itself masks nothing
             spans.append((start, len(text)))
-        # An unterminated multi-line literal/statement is masked through EOF:
-        # nothing after that opening can be executable Python. Any other
-        # tokenizer error (Python 3.12+ raises for mid-file lexical errors that
-        # 3.11 tolerated) masks the remainder ambiguously and must mark the
-        # file incomplete.
+        # An unterminated multi-line literal is masked through EOF: nothing after
+        # its opening can be executable Python. Any other tokenizer error
+        # (Python 3.12+ raises for mid-file lexical errors that 3.11 tolerated)
+        # masks the remainder ambiguously and must mark the file incomplete.
         return not (isinstance(exc, tokenize.TokenError) and "EOF" in message), None
     if fstring_starts:
         start = fstring_starts[0]

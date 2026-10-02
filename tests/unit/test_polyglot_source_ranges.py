@@ -517,3 +517,24 @@ def test_long_run_of_hashes_in_swift_costs_little_more_than_ordinary_text():
     noncode_ranges("#" * size, "swift", ".swift")
     hashes = time.perf_counter() - started
     assert hashes < max(ordinary, 0.01) * 8
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def broken(:\n    pass\nfrom langchain.agents import AgentExecutor\nAgentExecutor(agent=a)\n",
+        "x = [1,\nAgentExecutor()",
+    ],
+)
+def test_python_code_after_an_unclosed_bracket_stays_code(source: str):
+    # Every token through EOF is read before the tokenizer reports the unclosed
+    # bracket. Python 3.11 reports that error past the last line, 3.12+ at the
+    # start of it, which used to mask that line as if it were a literal.
+    assert noncode_ranges(source, "python") == ([], False)
+
+
+def test_python_literals_inside_an_unclosed_bracket_are_still_masked():
+    source = "x = (\n  # note AgentExecutor()\n  'AgentExecutor()'\nAgentExecutor()\n"
+    spans, ambiguous = noncode_ranges(source, "python")
+    assert [source[start:end] for start, end in spans] == ["# note AgentExecutor()", "'AgentExecutor()'"]
+    assert not ambiguous
