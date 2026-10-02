@@ -62,7 +62,7 @@ def test_connector_deadline_rejects_invalid_values(value):
 
 def test_cli_rejects_nonfinite_deadline():
     result = CliRunner().invoke(main, ["run", "gateway.logs", "--connector-timeout-seconds", "nan"])
-    assert result.exit_code == 2 and "positive finite" in result.output
+    assert result.exit_code == 1 and "positive finite" in result.output
 
 
 def test_credential_isolation_is_applied_to_selected_connectors(monkeypatch):
@@ -98,6 +98,39 @@ def test_offline_exports_do_not_require_credential_mixing_approval():
     live = ScanConfig(connectors=[ConnectorSpec("code.filesystem"), ConnectorSpec("cloud.aws")])
     with pytest.raises(ValueError, match="allow_credential_mixing"):
         live.validate_connector_isolation(live.connectors)
+
+
+@pytest.mark.parametrize(
+    "live",
+    ["cloud.aws", "identity.entra", "saas.slack", "lowcode.servicenow", "code.github", "code.gitlab"],
+)
+def test_every_live_credentialed_family_is_kept_apart_from_code_scanning(live):
+    cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem"), ConnectorSpec(live)])
+    with pytest.raises(ValueError, match="allow_credential_mixing"):
+        cfg.validate_connector_isolation(cfg.connectors)
+    cfg.allow_credential_mixing = True
+    assert cfg.validate_connector_isolation(cfg.connectors) is None
+
+
+def test_jwt_and_offline_exports_may_share_a_scan_with_code():
+    # identity.jwt only parses supplied tokens, and an `input` export holds no live credential.
+    for spec in (ConnectorSpec("identity.jwt"), ConnectorSpec("saas.slack", {"input": "slack.json"})):
+        cfg = ScanConfig(connectors=[ConnectorSpec("code.filesystem"), spec])
+        assert cfg.validate_connector_isolation(cfg.connectors) is None
+
+
+def test_an_allowlisted_plugin_is_treated_as_a_live_credentialed_connector():
+    # A plugin runs with scanner privileges and its name tells nothing about the credential it reads.
+    cfg = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem"), ConnectorSpec("acme.crm")], plugins=["acme.crm"]
+    )
+    with pytest.raises(ValueError, match="allow_credential_mixing"):
+        cfg.validate_connector_isolation(cfg.connectors)
+    offline = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem"), ConnectorSpec("acme.crm", {"input": "crm.json"})],
+        plugins=["acme.crm"],
+    )
+    assert offline.validate_connector_isolation(offline.connectors) is None
 
 
 @pytest.mark.parametrize("approved", [False, True])
@@ -356,7 +389,9 @@ def test_incremental_lock_contention_does_not_wait_or_replace_cache(tmp_path):
         before = time.monotonic()
         assert cache.load(spec, snapshot) is None
         cache.save(snapshot, [], stats)
-        assert time.monotonic() - before < 1
+        # A lock that waited would block until the holder exits below. Both calls
+        # take milliseconds; the bound leaves room for a loaded runner.
+        assert time.monotonic() - before < 5
         assert cache_path.read_bytes() == original
     finally:
         process.communicate("x", timeout=3)

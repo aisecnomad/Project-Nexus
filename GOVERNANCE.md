@@ -21,16 +21,12 @@ tagged release.
 Repository settings may change. Consult the
 [live repository rules](https://github.com/aisecnomad/Project-Nexus/rules) and the
 [verification commands](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#merge-gate-and-review-status)
-before relying on enforcement. The ruleset has no configured bypass actors,
-but it only blocks anything while it is enabled. Do not weaken it, bypass
+before relying on enforcement. The review/CI ruleset has no configured bypass
+actors; the separate `Protect main` ruleset may differ. A ruleset only blocks
+anything while it is enabled. The [versioned policy and verification procedure](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/merge-policy.md)
+require the complete CI gate and final-push approval; applying that policy needs
+repository administration access. Do not weaken it, bypass
 review or checks, or count a green workflow as an independent review.
-
-The [merge-protection procedure](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/merge-protection.md) includes
-a reviewed desired ruleset and a read-only verifier for downloaded settings.
-The desired policy adds the aggregate `CI gate` while retaining CodeQL and the
-existing required checks. Neither a checked-in definition nor a passing local
-verification proves live enforcement; an authorized administrator must apply
-the reviewed change and retain fresh effective-rule readbacks.
 
 ## Roles
 

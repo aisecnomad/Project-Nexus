@@ -26,6 +26,7 @@ LIST_FIELDS = (
     "providers",
     "accounts",
     "regions",
+    "discriminators",
     "tags",
 )
 
@@ -69,9 +70,7 @@ def test_approval_patterns_require_nonempty_string_items(tmp_path, bad_value, su
         Inventory.load([path])
 
 
-@pytest.mark.parametrize(
-    "field", ["names", "aliases", "frameworks", "surfaces", "providers", "accounts", "regions", "tags"]
-)
+@pytest.mark.parametrize("field", [name for name in LIST_FIELDS if name != "resources"])
 def test_all_list_items_are_validated(tmp_path, field):
     path = _write_inventory(tmp_path, {"id": "approved", "resources": [APPROVED], field: ["cloud", 111]})
     with pytest.raises(InventoryValidationError, match=field):
@@ -172,9 +171,10 @@ def test_csv_header_rows_and_list_items_are_validated(tmp_path, content):
 def test_csv_pipe_lists_remain_supported_for_every_list_field(tmp_path):
     path = tmp_path / "inventory.csv"
     path.write_text(
-        "agent_id,name,owner,resources,names,aliases,frameworks,surfaces,providers,accounts,regions,tags\n"
+        "agent_id,name,owner,resources,names,aliases,frameworks,surfaces,providers,accounts,regions,"
+        "discriminators,tags\n"
         "approved, Approved Agent , Platform ,good|other,first|second,a|b,framework.one|framework.two,"
-        "cloud|code,aws|gcp,111|222,us-east-1|eu-west-1,tag.one|tag.two\n"
+        "cloud|code,aws|gcp,111|222,us-east-1|eu-west-1,project|mcp-config,tag.one|tag.two\n"
     )
     entry = Inventory.load([path]).entries[0]
     assert entry.agent_id == "approved" and entry.owner == "Platform"
@@ -185,7 +185,39 @@ def test_csv_pipe_lists_remain_supported_for_every_list_field(tmp_path):
     assert entry.providers == ["aws", "gcp"]
     assert entry.accounts == ["111", "222"]
     assert entry.regions == ["us-east-1", "eu-west-1"]
+    assert entry.discriminators == ["project", "mcp-config"]
     assert entry.tags == ["tag.one", "tag.two"]
+
+
+@pytest.mark.parametrize("separator", ["\n", "\r", "\r\n", "\u0085", "\u2028", "\u2029"])
+def test_csv_quoted_resource_preserves_identity_across_line_separators(tmp_path, separator):
+    resource = f"repo:approved{separator}-other"
+    path = tmp_path / "inventory.csv"
+    path.write_bytes(f'agent_id,resources\r\nagent,"{resource}"\r\n'.encode())
+
+    inventory = Inventory.load([path])
+    assert inventory.entries[0].resources == [resource]
+    assert inventory.match(_finding("repo:approved-other")) is None
+    assert inventory.match(_finding(resource)) is inventory.entries[0]
+
+
+def test_csv_multiline_fields_preserve_following_rows_and_scope(tmp_path):
+    path = tmp_path / "inventory.csv"
+    path.write_bytes(
+        b"agent_id,name,resources,accounts\r\n"
+        b'first,"First\r\nAgent",repo:first,"tenant\r\nother"\r\n'
+        b"second,Second Agent,repo:second,other\r\n"
+    )
+    inventory = Inventory.load([path])
+    first, second = inventory.entries
+    assert first.name == "First\r\nAgent"
+    assert first.accounts == ["tenant\r\nother"]
+    assert second.resources == ["repo:second"]
+    finding = _finding("repo:first")
+    finding.account = "tenantother"
+    assert inventory.match(finding) is None
+    finding.account = "tenant\r\nother"
+    assert inventory.match(finding) is first
 
 
 def test_explicit_empty_inventories_and_name_only_entries_remain_supported(tmp_path):
@@ -285,3 +317,32 @@ def test_scalar_wildcard_cannot_reduce_unrelated_agent_risk_or_pass_security_gat
     repaired = Engine(config, index=index).run()
     assert repaired.findings[0].risk.score == original_risk
     assert _exit_code(repaired, config.fail_on) == 2
+
+
+@pytest.mark.parametrize(
+    ("suffix", "text"),
+    [
+        # Spreadsheet "CSV UTF-8" export.
+        (".csv", "agent_id,name,owner,resources\nhr-helper,HR Helper,erin,power-platform:bot:bot-1\n"),
+        # Editor "UTF-8 with BOM" JSON.
+        (
+            ".json",
+            '{"agents": [{"id": "hr-helper", "owner": "erin", "resources": ["power-platform:bot:bot-1"]}]}',
+        ),
+        (
+            ".yaml",
+            "agents:\n  - id: hr-helper\n    owner: erin\n    resources: ['power-platform:bot:bot-1']\n",
+        ),
+    ],
+)
+def test_inventory_with_utf8_byte_order_mark_loads(tmp_path, suffix, text):
+    path = tmp_path / f"inventory{suffix}"
+    path.write_bytes(b"\xef\xbb\xbf" + text.encode())
+    [entry] = Inventory.load([path]).entries
+    assert (entry.agent_id, entry.owner, entry.resources) == (
+        "hr-helper",
+        "erin",
+        ["power-platform:bot:bot-1"],
+    )
+    checked = CliRunner().invoke(main, ["inventory", "check", str(path)])
+    assert checked.exit_code == 0 and "hr-helper" in checked.output

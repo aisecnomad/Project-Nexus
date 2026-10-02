@@ -19,13 +19,13 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import cap_confidence, config_boolean, finalize
+from shadowscan.connectors.common import cap_confidence, config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 
 # An installation reported only because it can write (include_unrecognized_apps)
-# is a candidate for review, never a confirmed or likely AI agent.
+# is a candidate for review, never a strong or likely AI agent.
 UNRECOGNISED_APP_MAX_CONFIDENCE = 0.3
 _SLUG_SEPARATORS = re.compile(r"[-_]+")
 
@@ -40,7 +40,10 @@ class GitHubAppsConnector(BaseConnector):
     )
     config_keys: ClassVar[dict[str, str]] = {
         "org": "organisation login (env GITHUB_ORG)",
-        "token": "org admin token (env GITHUB_TOKEN)",
+        "token": (
+            "org admin token (env GITHUB_TOKEN, which code.github also reads by default: "
+            "give each connector a variable of its own)"
+        ),
         "api_url": "default https://api.github.com",
         "input": "offline: installations JSON",
         "include_unrecognized_apps": (
@@ -97,7 +100,7 @@ class GitHubAppsConnector(BaseConnector):
     def _collection_warning(self, source: str, exc: Exception) -> None:
         # Sources need different grants. Keep findings from available sources,
         # report incomplete coverage, and never echo a provider's response body.
-        reason = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+        reason = failure_summary(exc)
         self.ctx.warn(f"saas.github-apps: {source} unavailable ({reason}); coverage incomplete")
 
     @staticmethod

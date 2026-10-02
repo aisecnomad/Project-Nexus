@@ -45,14 +45,18 @@ def _client(*responses: requests.Response) -> tuple[HttpClient, _ScriptedSession
     return HttpClient("https://api.github.com", session=session), session
 
 
-def test_primary_rate_limit_403_waits_for_reset_then_succeeds(sleep):
-    reset = str(int(time.time()) + 30)
+def test_primary_rate_limit_403_waits_for_reset_then_succeeds(sleep, monkeypatch):
+    # A fixed clock: on a slow runner, real time passing between building the
+    # header and computing the delay would shorten the wait being asserted.
+    now = 1_790_000_000.0
+    monkeypatch.setattr("shadowscan.utils.http.time.time", lambda: now)
+    reset = str(int(now) + 30)
     http, session = _client(
         _response(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}), _response(200)
     )
     assert http.get_json("/orgs/acme/repos") == {"ok": True} and session.calls == 2
     (delay,), _ = sleep.call_args
-    assert 29 <= delay <= MAX_RETRY_DELAY
+    assert 30 <= delay <= MAX_RETRY_DELAY
 
 
 def test_secondary_rate_limit_403_honors_retry_after(sleep):

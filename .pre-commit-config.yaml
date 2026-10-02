@@ -59,8 +59,8 @@ repos:
         name: Check for hardcoded secret patterns
         entry: python tools/check_secrets.py
         language: system
-        # `types` is an AND filter; `types_or` selects Python or YAML files.
-        types_or: [python, yaml]
-        # Tests and fixtures hold synthetic credential-shaped strings on purpose
-        # (the scanner's own detection and redaction tests need real shapes).
-        exclude: ^(tests/|shadowscan/signatures/data/)
+        # Every text file. Tests, fixtures, signature packs and evaluation
+        # corpora hold synthetic credential-shaped strings on purpose; the
+        # script skips them itself (EXCLUDED), so CI's run over `git ls-files`
+        # applies the same list.
+        types: [text]

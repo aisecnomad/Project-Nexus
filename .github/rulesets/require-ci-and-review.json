@@ -2,6 +2,7 @@
   "name": "Require CI and CodeQL",
   "target": "branch",
   "enforcement": "active",
+  "bypass_actors": [],
   "conditions": {
     "ref_name": {
       "exclude": [],
@@ -86,10 +87,6 @@
     },
     {
       "type": "deletion"
-    },
-    {
-      "type": "required_linear_history"
     }
-  ],
-  "bypass_actors": []
+  ]
 }

@@ -48,9 +48,9 @@ def _fake_clock(monkeypatch, *, step: float) -> list[float]:
     monkeypatch.setattr(filesystem_module.time, "monotonic", lambda: clock[0])
     original = filesystem_module.read_text
 
-    def read_text(path, max_bytes, errors=None, *, dir_fd=None, require_text=False):
+    def read_text(path, max_bytes, errors=None, *, dir_fd=None):
         clock[0] += step
-        return original(path, max_bytes, errors, dir_fd=dir_fd, require_text=require_text)
+        return original(path, max_bytes, errors, dir_fd=dir_fd)
 
     monkeypatch.setattr(filesystem_module, "read_text", read_text)
     return clock
@@ -123,9 +123,9 @@ def test_cancellation_mid_walk_is_not_reported_per_file(tmp_path, index, monkeyp
     cancelled = threading.Event()
     original = filesystem_module.read_text
 
-    def read_text(path, max_bytes, errors=None, *, dir_fd=None, require_text=False):
+    def read_text(path, max_bytes, errors=None, *, dir_fd=None):
         cancelled.set()
-        return original(path, max_bytes, errors, dir_fd=dir_fd, require_text=require_text)
+        return original(path, max_bytes, errors, dir_fd=dir_fd)
 
     monkeypatch.setattr(filesystem_module, "read_text", read_text)
     ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, cancelled=cancelled)

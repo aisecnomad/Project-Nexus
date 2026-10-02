@@ -42,8 +42,8 @@ gcp = ["google-auth>=2.58.0"]
 azure = ["azure-identity>=1.25.3"]
 oci = ["oci>=2.187.0"]
 cloud = ["boto3>=1.43.99", "google-auth>=2.58.0", "azure-identity>=1.25.3", "oci>=2.187.0"]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.16.8", "mypy>=1.10", "types-PyYAML", "types-requests", "responses>=0.25", "pip-audit>=2.9", "jsonschema>=4.18", "pre-commit>=4.6.2", "setuptools>=84.0.0", "wheel>=0.48.0"]
-docs = ["mkdocs-material>=9.7.7"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "pytest-xdist>=3.5", "hypothesis>=6.100", "ruff>=0.16.8", "mypy>=1.10", "types-PyYAML", "types-requests", "responses>=0.25", "pip-audit>=2.9", "jsonschema>=4.18", "pre-commit>=4.6.2", "setuptools>=84.0.0", "wheel>=0.48.0"]
+docs = ["mkdocs-material>=9.7.7", "mkdocstrings[python]>=1.0.6"]
 all = ["project-nexus-shadowscan[cloud,dev,docs]"]
 
 [project.scripts]
@@ -80,7 +80,10 @@ ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# Unknown markers fail collection: a misspelt opt-out marker such as
+# production_budgets would otherwise be ignored without a warning.
+pythonpath = ["."]
+addopts = "-q --strict-markers"
 
 [tool.ruff.format]
 quote-style = "double"
@@ -113,6 +116,9 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["shadowscan"]
 omit = ["shadowscan/signatures/data/*"]
+# Both floors (fail_under below and tools/coverage_gate.py) count branches as
+# well as statements: a line that ran says nothing about its untaken branch.
+branch = true
 
 [tool.coverage.report]
 show_missing = true

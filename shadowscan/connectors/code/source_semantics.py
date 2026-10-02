@@ -22,7 +22,8 @@ import re
 import threading
 import weakref
 from bisect import bisect_right
-from collections.abc import Callable
+from collections import ChainMap
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 
 import regex
@@ -32,7 +33,7 @@ from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.connectors.code.source_capabilities import CallCapabilities, configured_capabilities
-from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools
+from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools, has_vercel_tool_loop
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
@@ -56,6 +57,16 @@ class SourceBudgetExceeded(MatchTimeoutError):
     """
 
 
+class SourceNotParsed(Exception):
+    """The source does not parse, so it has no import bindings.
+
+    Python written for a newer grammar than the running interpreter's (``type A =
+    int`` before 3.12), or a notebook's shell and magic lines, cannot be parsed.
+    Callers keep the file's lexical evidence and report that the import binder
+    did not run.
+    """
+
+
 @dataclass(frozen=True)
 class _Binding:
     module: str
@@ -74,6 +85,13 @@ class _Call:
     start: int = 0
     end: int = 0
     decorator: bool = False
+
+
+@dataclass
+class _LoopTransfers:
+    scope_depth: int
+    scope: dict[str, _Binding | None] | None = None
+    has_break: bool = False
 
 
 # These APIs construct agents even when their arguments have a different order
@@ -109,7 +127,7 @@ _FACTORIES = {
     "framework.openai-swarm": r"(?:Agent|Swarm)",
     "framework.claude-agent-sdk": r"(?:ClaudeSDKClient|query)",
     "framework.pydantic-ai": r"Agent",
-    "framework.vercel-ai-sdk": r"(?:ToolLoopAgent|Experimental_Agent)",
+    "framework.vercel-ai-sdk": r"(?:ToolLoopAgent|Experimental_Agent|Agent)",
     "framework.mastra": r"(?:Agent|Mastra)",
     "framework.haystack": r"(?:Agent|ToolInvoker)",
     "framework.dspy": r"(?:ReAct|ProgramOfThought)",
@@ -190,11 +208,96 @@ class _PythonBindings(ast.NodeVisitor):
         self.offsets = [0]
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))
-        self.scopes: list[dict[str, _Binding | None]] = [{}]
+        self.scopes: list[MutableMapping[str, _Binding | None]] = [{}]
         self.scope_kinds = ["module"]
         self.calls: list[_Call] = []
         self.imports: list[tuple[_Binding, int]] = []
+        self._loop_transfers: list[_LoopTransfers] = []
         self.decorator_calls: set[int] = set()
+
+    def _visit_block(self, statements: Sequence[ast.AST]) -> bool:
+        """Visit a syntactic suite until an explicit, unconditional transfer.
+
+        This only proves local reachability: return/raise/break/continue and
+        constant or fully terminating if branches. Calls, exception handlers,
+        context-manager suppression and interprocedural/global mutation timing
+        are not assumed to establish that a surrounding suite terminates.
+        """
+        return any(self.visit(statement) is True for statement in statements)
+
+    def generic_visit(self, node: ast.AST) -> None:
+        # Generic constructs (notably try suites) keep their existing bounded
+        # lexical traversal, but a return cannot make later statements in the
+        # same suite into reachable construction evidence.
+        for _, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                if value and all(isinstance(item, ast.stmt) for item in value):
+                    self._visit_block(value)
+                else:
+                    for item in value:
+                        if isinstance(item, ast.AST):
+                            self.visit(item)
+            elif isinstance(value, ast.AST):
+                self.visit(value)
+
+    @staticmethod
+    def _join_scopes(*outcomes: Mapping[str, _Binding | None]) -> dict[str, _Binding | None]:
+        """Keep a binding only when every possible lexical outcome agrees."""
+        return {
+            name: outcomes[0].get(name)
+            if all(outcome.get(name) == outcomes[0].get(name) for outcome in outcomes[1:])
+            else None
+            for name in set().union(*outcomes)
+        }
+
+    def visit_Return(self, node: ast.Return) -> bool:
+        if node.value is not None:
+            self.visit(node.value)
+        return True
+
+    def visit_Raise(self, node: ast.Raise) -> bool:
+        if node.exc is not None:
+            self.visit(node.exc)
+        if node.cause is not None:
+            self.visit(node.cause)
+        return True
+
+    def visit_Break(self, node: ast.Break) -> bool:
+        self._record_loop_transfer(is_break=True)
+        return True
+
+    def visit_Continue(self, node: ast.Continue) -> bool:
+        self._record_loop_transfer(is_break=False)
+        return True
+
+    def _record_loop_transfer(self, *, is_break: bool) -> None:
+        if self._loop_transfers and self._loop_transfers[-1].scope_depth == len(self.scopes):
+            # A conditional break/continue may leave its branch before later
+            # statements restore a binding. Keep that earlier mutation as a
+            # possible loop outcome rather than letting visit_If discard it.
+            # Merge in place: retain at most one transfer scope per loop,
+            # rather than a full symbol table for every hostile break site.
+            transfers = self._loop_transfers[-1]
+            transfers.scope = (
+                self._join_scopes(transfers.scope, self.scopes[-1])
+                if transfers.scope is not None
+                else dict(self.scopes[-1])
+            )
+            transfers.has_break |= is_break
+
+    def _visit_loop_body(
+        self, statements: list[ast.stmt]
+    ) -> tuple[list[Mapping[str, _Binding | None]], bool]:
+        transfers = _LoopTransfers(len(self.scopes))
+        self._loop_transfers.append(transfers)
+        try:
+            self._visit_block(statements)
+        finally:
+            self._loop_transfers.pop()
+        outcomes: list[Mapping[str, _Binding | None]] = [self.scopes[-1]]
+        if transfers.scope is not None:
+            outcomes.append(transfers.scope)
+        return outcomes, transfers.has_break
 
     def _offset(self, line: int, column: int) -> int:
         # AST columns are UTF-8 bytes, not Unicode code points.
@@ -378,8 +481,7 @@ class _PythonBindings(ast.NodeVisitor):
             pending.extend(ast.iter_child_nodes(item))
         self.scopes.append(locals_)
         self.scope_kinds.append("function")
-        for statement in body:
-            self.visit(statement)
+        self._visit_block(body)
         self.scopes.pop()
         self.scope_kinds.pop()
 
@@ -393,26 +495,66 @@ class _PythonBindings(ast.NodeVisitor):
         self.scopes[-1][node.name] = None
         self.scopes.append({})
         self.scope_kinds.append("class")
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
         self.scopes.pop()
         self.scope_kinds.pop()
 
-    def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+    def visit_For(self, node: ast.For | ast.AsyncFor) -> bool:
         self.visit(node.iter)
+        # Empty literal collections cannot enter a synchronous for body.
+        # Async iteration and calls (including range()) are not evaluated.
+        if not isinstance(node, ast.AsyncFor) and (
+            isinstance(node.iter, (ast.List, ast.Tuple, ast.Set))
+            and not node.iter.elts
+            or isinstance(node.iter, ast.Dict)
+            and not node.iter.keys
+            or isinstance(node.iter, ast.Constant)
+            and isinstance(node.iter.value, (str, bytes))
+            and not node.iter.value
+        ):
+            return self._visit_block(node.orelse)
+        before = dict(self.scopes[-1])
         self._store(node.target)
-        for statement in [*node.body, *node.orelse]:
-            self.visit(statement)
+        outcomes, has_break = self._visit_loop_body(node.body)
+        # The iterable may be empty, and further iterations may overwrite an
+        # imported namespace. A single lexical iteration never proves the
+        # binding left behind by an unknown runtime iteration count.
+        self.scopes[-1] = self._join_scopes(before, *outcomes)
+        return self._loop_else(node.orelse, has_break=has_break)
 
     visit_AsyncFor = visit_For
+
+    def visit_While(self, node: ast.While) -> bool:
+        self.visit(node.test)
+        if isinstance(node.test, ast.Constant) and not node.test.value:
+            # The else suite runs on the zero-iteration path. Neither calls nor
+            # assignments in the body can alter the incoming bindings.
+            return self._visit_block(node.orelse)
+        before = dict(self.scopes[-1])
+        outcomes, has_break = self._visit_loop_body(node.body)
+        self.scopes[-1] = self._join_scopes(before, *outcomes)
+        if isinstance(node.test, ast.Constant) and node.test.value:
+            # A constant-true condition cannot reach else. Without an outer
+            # loop break, it cannot reach the following statement either.
+            return not has_break
+        return self._loop_else(node.orelse, has_break=has_break)
+
+    def _loop_else(self, otherwise: list[ast.stmt], *, has_break: bool) -> bool:
+        before_else = dict(self.scopes[-1])
+        # This runs after the loop's transfer frame is popped. A break in a
+        # nested loop's else belongs to the enclosing loop, unlike its body.
+        stopped = self._visit_block(otherwise)
+        if has_break:
+            # A break bypasses else, so its mutations cannot become certain.
+            self.scopes[-1] = self._join_scopes(before_else, self.scopes[-1])
+        return stopped and not has_break
 
     def visit_With(self, node: ast.With | ast.AsyncWith) -> None:
         for item in node.items:
             self.visit(item.context_expr)
             if item.optional_vars:
                 self._store(item.optional_vars, self._resolve(item.context_expr))
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
 
     visit_AsyncWith = visit_With
 
@@ -446,8 +588,7 @@ class _PythonBindings(ast.NodeVisitor):
             self.visit(node.type)
         if node.name:
             self.scopes[-1][node.name] = None
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
 
     def visit_Match(self, node: ast.Match) -> None:
         self.visit(node.subject)
@@ -459,28 +600,40 @@ class _PythonBindings(ast.NodeVisitor):
                     self.scopes[-1][pattern.rest] = None
             if case.guard:
                 self.visit(case.guard)
-            for statement in case.body:
-                self.visit(statement)
+            self._visit_block(case.body)
 
-    def visit_If(self, node: ast.If) -> None:
+    def visit_If(self, node: ast.If) -> bool:
         self.visit(node.test)
         if isinstance(node.test, ast.Constant):
-            for statement in node.body if node.test.value else node.orelse:
-                self.visit(statement)
-            return
+            return self._visit_block(node.body if node.test.value else node.orelse)
         # Neither branch is assumed to execute. Only bindings identical after
-        # both branches survive into subsequent code.
-        before = self.scopes[-1].copy()
-        outcomes = []
+        # both branches survive into subsequent code. Each branch writes to an
+        # overlay of the enclosing bindings, so the merge costs the branches'
+        # own assignments rather than a copy of the whole scope per ``if``,
+        # which made a file of many top-level names and ifs quadratic. A branch
+        # that ends in an unconditional transfer (return, raise, break,
+        # continue) contributes no bindings to the code after the ``if``.
+        before = self.scopes[-1]
+        outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
         for branch in (node.body, node.orelse):
-            self.scopes[-1] = before.copy()
-            for statement in branch:
-                self.visit(statement)
-            outcomes.append(self.scopes[-1])
-        self.scopes[-1] = {
-            name: outcomes[0].get(name) if outcomes[0].get(name) == outcomes[1].get(name) else None
-            for name in set(outcomes[0]) | set(outcomes[1])
-        }
+            overlay: dict[str, _Binding | None] = {}
+            chain = ChainMap(overlay, before)
+            self.scopes[-1] = chain
+            stopped = self._visit_block(branch)
+            # A star import replaces the branch's scope with a plain mapping
+            # of every name; that mapping is then the branch's whole outcome.
+            scope = self.scopes[-1]
+            outcome = overlay if scope is chain else scope
+            outcomes.append(outcome)
+            if not stopped:
+                continuing.append(outcome)
+        self.scopes[-1] = before
+        joined = continuing or outcomes
+        for name in set().union(*joined):
+            values = [outcome.get(name, before.get(name)) for outcome in joined]
+            before[name] = values[0] if all(value == values[0] for value in values[1:]) else None
+        return not continuing
 
 
 _LiteralGroups = tuple[tuple[str, ...], ...]
@@ -960,8 +1113,9 @@ def bound_source_matches(
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
-    Invalid Python cannot establish bound constructions. The caller already
-    retains lexical import/supporting evidence and reports lexical ambiguity.
+    Invalid Python cannot establish bound constructions: ``SourceNotParsed`` is
+    raised so the caller can say so. It already retains lexical import and
+    supporting evidence and reports lexical ambiguity.
     """
     module_matches = _ModuleMatches(index, language, is_local_module)
     tree = None
@@ -977,8 +1131,8 @@ def bound_source_matches(
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)
     except RecursionError as exc:
         raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
-    except (SyntaxError, ValueError):
-        return []
+    except (SyntaxError, ValueError) as exc:
+        raise SourceNotParsed("source did not parse") from exc
 
     found = _import_evidence(index, language, imports, module_matches)
     requests = _LoopRequests()
@@ -1065,6 +1219,7 @@ def _call_evidence(
     for signature in signatures.values():
         factory = _FACTORIES.get(signature.id)
         verified = bool(factory and re.fullmatch(factory, symbol))
+        construction = "import-bound agent construction"
         if signature.id == "framework.langgraph" and symbol == "StateGraph":
             verified = call.line in graph_lines
         if signature.id == "framework.vercel-ai-sdk" and symbol in {"generateText", "streamText"}:
@@ -1073,6 +1228,10 @@ def _call_evidence(
             verified = has_executable_vercel_tools(
                 call.arguments, call.structural_arguments, call.tool_factories
             )
+            if not verified and has_vercel_tool_loop(call.arguments, call.structural_arguments):
+                # Tool results go back to the model until the stop condition:
+                # an agent loop even when the tools are imported definitions.
+                verified, construction = True, "import-bound multi-step tool loop"
         configured = configured_capabilities(
             signature.id,
             symbol,
@@ -1186,7 +1345,7 @@ def _call_evidence(
                         type="code",
                         weight=0.9,
                         agent_indicator=True,
-                        description="import-bound agent construction",
+                        description=construction,
                     ),
                     sanitize_text(f"{call.binding.module}:{symbol}("),
                     0.9,

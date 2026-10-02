@@ -19,11 +19,21 @@ canary support a threshold. An incomplete scan exits 3 in either mode.
 | Code | CI interpretation |
 |------|-------------------|
 | `0` | Pass — scan completed, no findings above threshold |
+| `1` | Fail — no usable result: invalid option, value or path, invalid configuration or inventory, setup failure, or a report that could not be written |
 | `2` | Fail — scan completed, findings reached `--fail-on` level |
 | `3` | Fail — incomplete scan, some connectors failed |
 
-For `--fail-on` gating, fail on exit codes 2 and 3. An incomplete scan may omit
-findings above the threshold and cannot establish that the policy passed.
+Fail the gate on every non-zero exit code, as a shell step does by default.
+Do not check for 2 and 3 alone: exit 1 means there is no scan result, not that
+the policy passed. An incomplete scan may omit findings above the threshold and
+cannot establish that the policy passed either. Use the code only to choose the
+follow-up: 2 needs finding triage, 1 and 3 need the scan fixed and rerun.
+
+To gate on drift between two reports, `shadowscan diff baseline.json current.json
+--fail-on-new` exits 2 when the current report has new findings or findings
+whose risk level rose, and 3 when the comparison is incomplete (differing scope
+or an incomplete scan). Without the flag, `diff` exits 0 unless the comparison
+is incomplete.
 
 ## Container-based scanning
 
@@ -51,19 +61,18 @@ This is the built worker image digest, distinct from the approved base digest:
 ## Incremental scanning
 
 Use `--incremental` with a private state directory outside the scanned checkout.
-If you cache state between trusted main-branch runs, scope the cache to the
-reviewed scanner revision and restore that exact path:
+A cached result is reused only when every input file keeps its identity as
+well as its content: device, inode, mode, size, and modification and change
+times are part of the input fingerprint. A fresh checkout recreates every
+file, so state restored into a new CI job (for example with `actions/cache`)
+is never reused. Restoring it only costs time. Incremental scanning pays off
+where the same working tree persists between scans, such as a workstation or
+a self-hosted runner that keeps its workspace. There, too, keep the state
+directory private (mode 0700) and outside every scanned path:
 
-```yaml
-- uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
-  if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-  with:
-    path: ${{ runner.temp }}/shadowscan-cache
-    key: shadowscan-${{ runner.os }}-${{ vars.SHADOWSCAN_REVISION }}-${{ hashFiles('shadowscan.yaml', '**/*.py', '**/*.js', '**/*.ts') }}
-    restore-keys: shadowscan-${{ runner.os }}-${{ vars.SHADOWSCAN_REVISION }}-
-
-- run: |
-    install -d -m 700 "$RUNNER_TEMP/shadowscan-cache"
-    shadowscan scan -c shadowscan.yaml --incremental \
-      --state-dir "$RUNNER_TEMP/shadowscan-cache" --fail-on high
+```sh
+install -d -m 700 "$HOME/.local/state/shadowscan"
+shadowscan scan -c shadowscan.yaml --incremental --fail-on high
 ```
+
+The repository's own `audit.yml` workflow also runs `pip-audit` against every hash lock weekly and on demand, independent of commits.

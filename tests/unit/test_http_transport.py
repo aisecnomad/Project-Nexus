@@ -50,6 +50,7 @@ def _certificate(tmp_path):
 def _serve_tls(handler, cert_path, key_path):
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(cert_path, key_path)
     server.socket = tls.wrap_socket(server.socket, server_side=True)
     thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
@@ -104,8 +105,9 @@ def test_https_adapter_connects_vetted_address_and_checks_original_hostname(tmp_
 
 
 # A valid JSON document the server sends one byte every DRIP_INTERVAL seconds:
-# always inside the client's per-read timeout, but taking about four seconds.
-DRIP_BODY = b'{"items": []}'.rjust(80)
+# always inside the client's per-read timeout, but taking about twelve seconds,
+# far beyond the one-second deadline even when a loaded runner delays the client.
+DRIP_BODY = b'{"items": []}'.rjust(240)
 DRIP_INTERVAL = 0.05
 READ_TIMEOUT = 0.5  # the whole-body deadline is twice this
 
@@ -163,7 +165,7 @@ def test_slow_drip_body_fails_at_the_read_deadline_instead_of_holding_the_worker
         thread.join(timeout=2)
     assert http.read_deadline == 2 * READ_TIMEOUT
     # The deadline interrupts a read blocked inside one 64 KiB chunk rather than
-    # waiting for the server to finish its body (about four seconds).
+    # waiting for the server to finish its body (about twelve seconds).
     assert elapsed < len(DRIP_BODY) * DRIP_INTERVAL * 0.75
     # No transport detail is chained onto the fail-closed diagnostic.
     assert caught.value.__cause__ is None and caught.value.__context__ is None

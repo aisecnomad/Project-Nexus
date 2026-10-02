@@ -136,9 +136,10 @@ signatures:
         names: [weave]
         weight: 0.5
       - type: dependency
+        # A generic npm name; weave.init( / @weave.op carry the real signal.
         ecosystem: npm
         names: [weave]
-        weight: 0.5
+        weight: 0.2
       - type: code
         patterns: ['\bweave\.init\s*\(', '@weave\.op\b']
         weight: 0.6

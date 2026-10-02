@@ -11,6 +11,9 @@ from shadowscan.connectors.code.manifests import parse_manifest
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import MatchTimeoutError, _run_regex
 
+# These tests compare the manifest budget with the shipped matcher budgets.
+pytestmark = pytest.mark.production_budgets
+
 
 def test_yaml_manifest_collection_has_its_own_bounded_pattern_budget(monkeypatch):
     """A covered YAML pass may exceed the signature matcher's 100 ms CPU cap."""
