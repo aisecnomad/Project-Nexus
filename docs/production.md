@@ -10,6 +10,37 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 2 production review migration
+
+Review framework attribution in projects using npm dependency aliases before
+replacing enforcement baselines: the registry target now supplies dependency
+identity. This identifies a declared dependency, not runtime execution or
+cross-file resolution of imports through the alias. Malformed alias targets
+make source coverage incomplete (exit 3).
+
+CSV inventory approvals preserve embedded line separators in quoted resource
+and scope fields. Review previously generated reports if an inventory used such
+fields: a value that previously lost its separator is now a different identity
+and no longer confers the same approval. Ordinary single-line inventories are
+unaffected.
+
+Malformed evidence in imported reports is rejected before correlation or risk
+processing; malformed incremental cache entries are ignored and fully rescanned.
+Notion and Atlassian provider error envelopes and malformed Google Workspace user
+suspension flags now produce incomplete collection rather than a complete empty
+result. Valid neighboring Google Workspace users remain eligible for collection.
+Resolve the reported input or provider failure before accepting the scan.
+
+The connector coverage gate now rejects a report that does not name every
+module under `shadowscan/connectors/` in the checkout, and malformed counts
+(exit 2). Generate its JSON from a full coverage run; a selected-test report is
+not evidence for all connectors. The 75% per-module floor over statements and
+branches is unchanged. Wheel validation uses private temporary storage and
+cleans it up after success or failure.
+
+These changes have offline regression coverage. They do not replace independent
+human review, a fresh labeled holdout or authorized tenant acceptance checks.
+
 ## October 1 scan integrity remediation
 
 Rollout effects of the remediation listed in the changelog. Re-run any baseline

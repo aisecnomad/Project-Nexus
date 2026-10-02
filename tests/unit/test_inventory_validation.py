@@ -189,6 +189,37 @@ def test_csv_pipe_lists_remain_supported_for_every_list_field(tmp_path):
     assert entry.tags == ["tag.one", "tag.two"]
 
 
+@pytest.mark.parametrize("separator", ["\n", "\r", "\r\n", "\u0085", "\u2028", "\u2029"])
+def test_csv_quoted_resource_preserves_identity_across_line_separators(tmp_path, separator):
+    resource = f"repo:approved{separator}-other"
+    path = tmp_path / "inventory.csv"
+    path.write_bytes(f'agent_id,resources\r\nagent,"{resource}"\r\n'.encode())
+
+    inventory = Inventory.load([path])
+    assert inventory.entries[0].resources == [resource]
+    assert inventory.match(_finding("repo:approved-other")) is None
+    assert inventory.match(_finding(resource)) is inventory.entries[0]
+
+
+def test_csv_multiline_fields_preserve_following_rows_and_scope(tmp_path):
+    path = tmp_path / "inventory.csv"
+    path.write_bytes(
+        b"agent_id,name,resources,accounts\r\n"
+        b'first,"First\r\nAgent",repo:first,"tenant\r\nother"\r\n'
+        b"second,Second Agent,repo:second,other\r\n"
+    )
+    inventory = Inventory.load([path])
+    first, second = inventory.entries
+    assert first.name == "First\r\nAgent"
+    assert first.accounts == ["tenant\r\nother"]
+    assert second.resources == ["repo:second"]
+    finding = _finding("repo:first")
+    finding.account = "tenantother"
+    assert inventory.match(finding) is None
+    finding.account = "tenant\r\nother"
+    assert inventory.match(finding) is first
+
+
 def test_explicit_empty_inventories_and_name_only_entries_remain_supported(tmp_path):
     for payload in ([], {"agents": []}):
         assert len(Inventory.load([_write_inventory(tmp_path, payload)])) == 0

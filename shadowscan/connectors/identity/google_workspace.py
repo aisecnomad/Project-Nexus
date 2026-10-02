@@ -170,7 +170,12 @@ class GoogleWorkspaceConnector(BaseConnector):
                     continue
                 self._check_record_customer(user)
                 email = user.get("primaryEmail")
-                if user.get("suspended"):
+                if "suspended" in user and not isinstance(user["suspended"], bool):
+                    self.ctx.warn(
+                        "identity.google-workspace: invalid user suspension status; coverage incomplete"
+                    )
+                    continue
+                if user.get("suspended") is True:
                     continue
                 if not isinstance(email, str) or not email:
                     self.ctx.warn("identity.google-workspace: user record missing primaryEmail")

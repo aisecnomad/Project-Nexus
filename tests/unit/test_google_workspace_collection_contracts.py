@@ -22,6 +22,27 @@ def directory(monkeypatch):
     monkeypatch.setattr(GoogleWorkspaceConnector, "_auth", auth)
 
 
+@pytest.mark.parametrize("suspended", ["false", "true", None, 0, 1, [], {}])
+@responses.activate
+def test_google_malformed_suspension_keeps_other_users_incomplete(
+    directory, fixtures, run_connector, suspended
+):
+    body = json.loads((fixtures / "identity" / "google_workspace_malformed_users.json").read_text())
+    body["users"][0]["suspended"] = suspended
+    responses.get(f"{BASE}/admin/directory/v1/users", json=body)
+    responses.get(
+        f"{BASE}/admin/directory/v1/users/active@example.test/tokens",
+        json={"items": [{"clientId": "client-1", "displayText": "Fireflies.ai", "scopes": []}]},
+    )
+
+    findings, ctx = run_connector("identity.google-workspace")
+
+    assert len(findings) == 1 and findings[0].metadata["user_count"] == 1
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert any("suspension" in warning for warning in ctx.stats.warnings)
+    assert len(responses.calls) == 3  # customer, users, active user's tokens only
+
+
 @pytest.mark.parametrize(
     "body,complete",
     [

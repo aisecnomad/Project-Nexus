@@ -174,6 +174,12 @@ A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
+`package.json` npm aliases (`"runtime": "npm:@langchain/langgraph@^1"`) are
+attributed to the target package, not the local alias name. Malformed alias
+targets mark coverage incomplete while valid neighboring dependencies remain
+available. Dependency presence establishes usage evidence only; aliased import
+names are not resolved across manifests into source construction evidence.
+
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
@@ -434,7 +440,9 @@ approved or merged with observations from another unresolved connector instance.
 Google Workspace inventory bindings must include the matching customer in
 `discovery.accounts`. Regenerate older cards whose account list is empty.
 `max_users` caps the users enumerated (default 10000); reaching it makes the
-scan incomplete.
+scan incomplete. Live user suspension flags, when present, must be boolean. A
+malformed flag makes coverage incomplete while valid neighboring users remain
+eligible for collection.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
@@ -613,6 +621,9 @@ or used the app; for that question, obtain a separate tenant activity or
 installation export. Notion rejects a missing/repeated pagination cursor and
 caps live pages (`max_pages`, at most 1000); either condition makes the scan
 incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
+Notion and Atlassian provider error envelopes make collection incomplete even
+when they include empty record arrays; the same rule applies to offline exports.
+Valid observations from other pages and products remain available.
 
 Notion options: `token` (env `NOTION_TOKEN`), an internal integration secret
 whose integration has the *read user information* capability for

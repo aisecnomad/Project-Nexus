@@ -32,6 +32,12 @@ class NotionConnector(BaseConnector):
         "input": "offline: /v1/users JSON",
     }
 
+    @staticmethod
+    def _is_error_record(data: dict[str, Any]) -> bool:
+        # Notion's native error discriminator does not require an `error` key.
+        # Apply the same check to live pages and offline collection envelopes.
+        return BaseConnector._is_error_record(data) or data.get("object") == "error"
+
     def collect(self) -> Iterable[dict[str, Any]]:
         token = self.ctx.get("token", env="NOTION_TOKEN")
         if not token:
@@ -51,6 +57,8 @@ class NotionConnector(BaseConnector):
             if not isinstance(data, dict) or not isinstance(data.get("results"), list):
                 self.ctx.warn("saas.notion: invalid users page; collection incomplete")
                 return
+            if self._is_error_record(data):
+                self.ctx.warn("saas.notion: users page reported a provider error; collection incomplete")
             yield from data["results"]
             if not isinstance(data.get("has_more"), bool):
                 self.ctx.warn("saas.notion: invalid has_more in users page; collection incomplete")

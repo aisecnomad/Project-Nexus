@@ -5,9 +5,37 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from shadowscan.connectors.code.manifests import parse_pom
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.models import Kind
+
+
+@pytest.mark.parametrize("case, expected", [("positive", True), ("negative", False)])
+def test_npm_alias_identity_controls_framework_attribution(tmp_path, fixtures, run_connector, case, expected):
+    manifest = fixtures / "code" / f"npm_alias_{case}" / "package.json"
+    (tmp_path / "package.json").write_text(manifest.read_text())
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    if expected:
+        assert len(findings) == 1
+        assert findings[0].kind == Kind.FRAMEWORK_USAGE
+        assert "framework.langgraph" in findings[0].frameworks
+        assert any(e.signal == "dependency:framework.langgraph" for e in findings[0].evidence)
+    else:
+        assert findings == []
+
+
+def test_invalid_npm_alias_marks_coverage_incomplete(tmp_path, run_connector):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"@langchain/langgraph": "npm:@scope/", "openai": "^4"}})
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert ctx.stats.incomplete
+    assert any("invalid npm alias target" in error for error in ctx.stats.errors)
+    assert any("provider.openai" in finding.model_providers for finding in findings)
+    assert all("framework.langgraph" not in finding.frameworks for finding in findings)
 
 
 def test_generic_server_filename_does_not_confirm_mcp(tmp_path: Path, run_connector, index):

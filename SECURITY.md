@@ -19,6 +19,12 @@ permits replacement. Directory walks do not follow signature/inventory symlinks.
 
 Use dedicated read-only audit credentials and narrowly scoped inventory approvals.
 
+CSV inventory approval identities preserve embedded line separators in quoted
+fields. Imported finding evidence is type-checked before postprocessing, and
+malformed cache entries are discarded in favor of a fresh scan. Provider error
+envelopes and malformed collection flags must not establish complete empty
+coverage, even when a response includes an empty collection field.
+
 ## Implemented controls and limits
 
 * Shared `HttpClient` requests require HTTPS without embedded credentials.

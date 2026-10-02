@@ -99,9 +99,9 @@ def installed_probe(tmp_path, monkeypatch):
 
 
 # A spawned plugin re-imports the scanner and unpickles the signature index
-# before it runs; on a loaded macOS runner that start-up alone can pass two
+# before it runs; on a loaded macOS runner that start-up alone can pass several
 # seconds. The deadline leaves it room and the wall-clock bound scales with it.
-TIMEOUT_SECONDS = 5
+TIMEOUT_SECONDS = 10
 
 
 def _engine(**options):

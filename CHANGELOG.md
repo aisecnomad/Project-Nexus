@@ -417,6 +417,25 @@ field precision. Behavior changes that affect an existing baseline are listed in
 
 
 
+### October 2 production review corrections
+
+- npm dependency aliases are attributed to their declared registry target,
+  preserving development-dependency status. Invalid alias targets mark source
+  coverage incomplete while valid neighboring dependencies remain visible.
+- CSV inventory parsing preserves embedded line separators in quoted fields,
+  so resource and account approvals retain their declared identity.
+- Imported evidence validates nullable text fields and object attributes before
+  postprocessing. Malformed incremental entries trigger a fresh scan instead
+  of reaching correlation or confidence calculations.
+- Notion and Atlassian collection reject provider error envelopes even when
+  empty collection fields are present. Google Workspace rejects malformed user
+  suspension flags with incomplete coverage and retains valid neighboring users.
+- Wheel validation uses a unique private temporary environment and working
+  directory, with cleanup on successful and failed validation.
+- The connector coverage gate requires the report to name every module under
+  `shadowscan/connectors/` in the checkout and rejects malformed counts. Its
+  scope (every connector module, statements and branches) and 75% minimum are
+  unchanged.
 
 ### Code structure and developer experience
 

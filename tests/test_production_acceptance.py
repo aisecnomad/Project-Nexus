@@ -574,7 +574,10 @@ def test_holdout_cannot_reuse_september_review_regression_file(evidence):
     root, manifest, report = evidence
     corpus = json.loads((root / "corpus.json").read_text())
     known = json.loads((gate.DEFAULT_CORPUS.with_name("review_corpus.json")).read_text())
-    contents = known["cases"][0]["files"]["agents.py"]
+    # The September review case, named rather than positioned: later reviews add cases ahead of it.
+    contents = next(case for case in known["cases"] if case["id"] == "local-agent-module")["files"][
+        "agents.py"
+    ]
     selected = corpus["cases"][0]
     path = selected["source"]["path"]
     selected["files"][path] = contents

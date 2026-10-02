@@ -57,8 +57,11 @@ make coverage-gate  # 75% floor for every connector module; run after make test
 `make coverage-gate` exports the coverage data recorded by the preceding
 `make test`. Both floors count branches as well as statements, and the
 per-connector floor covers every module under `shadowscan/connectors/`,
-including the shared `base`, `common` and `offline` modules. It needs the cloud
-SDKs installed, so run it after `make install` rather than `make install-dev`.
+including the shared `base`, `common` and `offline` modules. The gate also
+requires the report to name every one of those modules as the checkout has
+them, so a selected-test run or another checkout's report is rejected rather
+than read as coverage. It needs the cloud SDKs installed, so run it after
+`make install` rather than `make install-dev`.
 
 `tests/conftest.py` keeps the suite independent of the host:
 
