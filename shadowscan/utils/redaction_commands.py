@@ -394,6 +394,8 @@ def _redact_options(text: str, *, extended: bool) -> str:
     """
     spans: list[tuple[int, int]] = []
     cursor = 0
+    # Whether an option inside the value that ends at the cursor is skipped.
+    skip_inside = True
     logins = "login" in text or "sshpass" in text
     mysql = "mysql" in text or "mariadb" in text
     runs = _ValueRuns(text)
@@ -424,13 +426,21 @@ def _redact_options(text: str, *, extended: bool) -> str:
         quote = text[start - 1] if start and text[start - 1] in "\"'" else ""
         if quote and start > 1 and _CLI_BOUNDARY.match(text, start - 2):
             quote = ""
-        if start - len(quote) < cursor:
+        # An option inside a value withheld before it is part of that value,
+        # but in the last pass its own value after that one is still read:
+        # main read the 'opaque' options in a pass of their own, after every
+        # other option's value was withheld, so a value only the last pass
+        # withholds ('--auth x=--pwd v', '-H "api-key:x --pass v' with a quote
+        # that never closes) must not hide them. Inside an 'opaque' value
+        # they are skipped, as main's pass skipped them.
+        if start - len(quote) < cursor and skip_inside:
             continue
         span = _option_value_span(text, match, mode, quote, runs, extended)
-        if span is None:
+        if span is None or span[0] < cursor:
             continue
         spans.append(span)
         cursor = span[1]
+        skip_inside = not extended or mode == "opaque"
     return _withhold_spans(text, spans)
 
 
