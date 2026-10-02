@@ -95,6 +95,13 @@ below it is scanned and the scan is incomplete. Findings describe
 one consistent state of the tree only when the checkout does not change during
 the scan.
 
+The directory walk keeps its own stack, so how deep a tree nests is not limited
+by Python's recursion limit (on Python 3.11 the standard walk fails at about a
+thousand levels and would discard every finding). A Python file more than 128
+directories deep cannot have its imports checked against local packages, and is
+reported as `file analysis incomplete (ImportProvenanceError)` for that file
+alone.
+
 A file or directory name that is not valid UTF-8 appears in findings and
 diagnostics with each undecodable byte written as a `\xNN` escape (for example
 `agent-\xff.py`), so every report format can carry it; the file is still read

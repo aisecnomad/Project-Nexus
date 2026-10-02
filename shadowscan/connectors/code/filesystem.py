@@ -1232,7 +1232,7 @@ class FilesystemConnector(BaseConnector):
         def walk_error(exc: OSError) -> None:
             self.ctx.error(f"code.filesystem: could not enumerate a directory under {root}")
 
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=walk_error):
+        for dirpath, dirnames, filenames in _walk_directories(root, walk_error):
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             dirnames[:] = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames)
@@ -3024,6 +3024,41 @@ def _project_root(root: Path, rel: str) -> str:
         if _marks_project(root / directory, names):
             return directory
     return "."
+
+
+def _walk_directories(
+    top: Path, onerror: Callable[[OSError], None]
+) -> Iterator[tuple[str, list[str], list[str]]]:
+    """Walk ``top`` top-down like ``os.walk(top, followlinks=False, onerror=onerror)``, without recursion.
+
+    ``os.walk`` recurses before Python 3.12, so a tree about a thousand directories
+    deep ends in a RecursionError that discards every finding. This keeps its
+    contract: a directory is yielded before its children, a link to a directory is
+    listed in ``dirnames`` but never entered, the caller may prune or reorder
+    ``dirnames`` in place, and a directory that cannot be listed is passed to
+    ``onerror`` and skipped.
+    """
+    stack = [os.fspath(top)]
+    while stack:
+        current = stack.pop()
+        dirs: list[str] = []
+        files: list[str] = []
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        is_dir = entry.is_dir()
+                    except OSError:
+                        is_dir = False
+                    (dirs if is_dir else files).append(entry.name)
+        except OSError as error:
+            onerror(error)
+            continue
+        yield current, dirs, files
+        for name in reversed(dirs):
+            child = os.path.join(current, name)
+            if not os.path.islink(child):
+                stack.append(child)
 
 
 def _report_name(name: str) -> str:

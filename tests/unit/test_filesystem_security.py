@@ -852,6 +852,130 @@ def test_pattern_timeout_is_an_explicit_coverage_gap(
     assert any("framework.crewai" in f.frameworks for f in findings)
 
 
+# ------------------------------------------------------ very deep directory trees
+DEEP_LEVELS = 1_200  # os.walk recursed once per level before Python 3.12: ~1000 ended in a RecursionError
+
+
+def _make_deep_tree(base: Path, leaf: str, content: bytes) -> list[str]:
+    """Create ``DEEP_LEVELS`` nested directories below ``base`` with ``leaf`` at the bottom.
+
+    ``os.makedirs`` and ``shutil.rmtree`` recurse per level, so the chain is built
+    with directory descriptors and removed from the bottom with plain ``rmdir``.
+    Returns the paths to remove, deepest first.
+    """
+    full_length = len(str(base)) + 2 * DEEP_LEVELS + len(leaf) + 2
+    try:
+        limit = os.pathconf(base, "PC_PATH_MAX")
+    except (OSError, ValueError):
+        limit = 1024
+    if full_length >= limit:
+        pytest.skip("the platform's path length limit is below the depth under test")
+    fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for _ in range(DEEP_LEVELS):
+            os.mkdir("d", dir_fd=fd)
+            child = os.open("d", os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        leaf_fd = os.open(leaf, os.O_WRONLY | os.O_CREAT, 0o644, dir_fd=fd)
+        try:
+            os.write(leaf_fd, content)
+        finally:
+            os.close(leaf_fd)
+    finally:
+        os.close(fd)
+    return [os.path.join(base, *["d"] * level) for level in range(DEEP_LEVELS, 0, -1)]
+
+
+def _remove_deep_tree(base: Path, leaf: str, directories: list[str]) -> None:
+    os.unlink(os.path.join(base, *["d"] * DEEP_LEVELS, leaf))
+    for directory in directories:
+        os.rmdir(directory)
+
+
+def test_very_deep_tree_does_not_discard_the_scan(tmp_path, index):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    (tmp_path / "sibling").mkdir()
+    (tmp_path / "sibling" / "other.py").write_text("import openai\nclient = openai.OpenAI()\n")
+    leaf = "requirements.txt"
+    directories = _make_deep_tree(tmp_path, leaf, b"langgraph==0.2\n")
+    try:
+        findings, ctx = _run(index, tmp_path)
+    finally:
+        _remove_deep_tree(tmp_path, leaf, directories)
+    frameworks = {fw for f in findings for fw in f.frameworks}
+    # Nothing is lost to a RecursionError: shallow and deepest files are all analysed.
+    assert {"framework.crewai", "framework.langgraph"} <= frameworks
+    assert any("provider.openai" in f.model_providers for f in findings)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+
+
+def test_python_file_too_deep_for_import_provenance_is_a_file_level_gap(tmp_path, index):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    leaf = "deep_agent.py"
+    directories = _make_deep_tree(tmp_path, leaf, b"import openai\nclient = openai.OpenAI()\n")
+    try:
+        findings, ctx = _run(index, tmp_path)
+    finally:
+        _remove_deep_tree(tmp_path, leaf, directories)
+    assert any("framework.crewai" in f.frameworks for f in findings)
+    assert ctx.stats.incomplete
+    assert not any("RecursionError" in error for error in ctx.stats.errors)
+    assert [
+        e for e in ctx.stats.errors if e.endswith(f"{leaf}: file analysis incomplete (ImportProvenanceError)")
+    ]
+
+
+def _prune(dirnames: list[str]) -> None:
+    dirnames[:] = sorted(name for name in dirnames if name != "skipped")
+
+
+def _walk_ordinary_tree(root: Path) -> None:
+    for rel in ("a/b/c/f.py", "a/b/g.txt", "a/h.txt", "z/y/x/w.txt", "skipped/s.txt", "top.txt"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x\n")
+    (root / "empty").mkdir()
+    (root / "a" / "file-link").symlink_to(root / "top.txt")
+    (root / "a" / "dir-link").symlink_to(root / "z", target_is_directory=True)
+    (root / "a" / "broken-link").symlink_to(root / "missing")
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
+def test_directory_walk_matches_os_walk_for_ordinary_trees(tmp_path):
+    _walk_ordinary_tree(tmp_path)
+    expected, actual = [], []
+    for dirpath, dirnames, filenames in os.walk(tmp_path, followlinks=False):
+        _prune(dirnames)
+        expected.append((dirpath, list(dirnames), sorted(filenames)))
+    for dirpath, dirnames, filenames in filesystem_module._walk_directories(tmp_path, pytest.fail):
+        _prune(dirnames)
+        actual.append((dirpath, list(dirnames), sorted(filenames)))
+    assert actual == expected
+    visited = {path for path, _, _ in actual}
+    assert str(tmp_path / "a" / "dir-link") not in visited  # a link to a directory is listed, never entered
+    assert str(tmp_path / "skipped") not in visited  # pruning in place stops the descent
+    assert any("dir-link" in dirnames for _, dirnames, _ in actual)
+
+
+def test_directory_walk_reports_a_directory_it_cannot_list_and_continues(tmp_path, monkeypatch):
+    for rel in ("a/one.txt", "locked/two.txt", "locked/inner/three.txt", "z/four.txt"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("x\n")
+    real_scandir = os.scandir
+
+    def scandir(path):
+        if str(path).endswith("locked"):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    errors: list[OSError] = []
+    visited = [path for path, _, _ in filesystem_module._walk_directories(tmp_path, errors.append)]
+    assert [error.filename for error in errors] == [str(tmp_path / "locked")]
+    assert str(tmp_path / "a") in visited and str(tmp_path / "z") in visited
+    assert not any("locked" in path for path in visited)
+
+
 # ------------------------------------------- names that are not valid UTF-8
 def _write_bytes_named(base: Path, name: bytes, content: bytes | None) -> None:
     """Create a file (or, with no content, a directory) whose name is raw bytes."""
