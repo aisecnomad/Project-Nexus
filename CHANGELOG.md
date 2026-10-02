@@ -173,6 +173,14 @@ integrating them:
   unescaped closing quote, keeps the former reading, and assignments are read
   the former way once more afterwards, so a Windows path ending in `\"` hides
   no credential after it.
+- Redaction is linear again on comment blocks. Every word that ends a comment
+  line (or precedes a comment) is read as a possible callee, and each skipped
+  the rest of the block again to look for its `(`: about 250 KB of `#` or `//`
+  comment lines took six seconds, and 1 MB took two minutes before it failed
+  the redaction work limit and left the file incomplete. A call after a long
+  block had its arguments lexed again for each word. A skipped comment is now
+  remembered with where its trivia ends, and a `(` that several words reach is
+  lexed and judged once.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

@@ -149,3 +149,66 @@ def test_dense_comment_callee_candidates_scale_linearly():
 
     small = best_time(1000)
     assert best_time(4000) < max(small, 0.02) * 10
+
+
+def _call_lexer_work(source: str, monkeypatch: pytest.MonkeyPatch) -> int:
+    """The call lexer's work units (ticks) for ``source``: a count, not a clock."""
+    ticks = 0
+    tick = redaction._CallLexer.tick
+
+    def counted(self: redaction._CallLexer) -> None:
+        nonlocal ticks
+        ticks += 1
+        tick(self)
+
+    monkeypatch.setattr(redaction._CallLexer, "tick", counted)
+    redaction._redact_credential_calls(source)
+    return ticks
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "# a comment line that ends with a word",
+        "// a comment line that ends with a word",
+        "/* a comment that ends with a word */",
+        "-- a word",
+    ],
+)
+def test_consecutive_comment_lines_are_skipped_once(line, monkeypatch):
+    # A word before a line break or comment is a callee candidate, and each one
+    # skipped the trivia after it to look for '('. In a block of comment lines
+    # every line's last word did so again: n lines cost n * n / 2 skips, and a
+    # 1 MB block reached the work limit after about two minutes.
+    def work(lines):
+        return _call_lexer_work('x = "a"\n' + (line + "\n") * lines + "main()\n", monkeypatch)
+
+    small, large = work(1000), work(8000)
+    assert large <= small * 12, (small, large)
+
+
+def test_the_arguments_after_a_comment_block_are_lexed_once(monkeypatch):
+    # Every word of the block reached the same '(' as a callee and lexed and
+    # judged its argument list again: 8000 lines before a long call took 48 s.
+    arguments = "(" + ",".join(["a"] * 2000) + ")"
+
+    def work(call):
+        return _call_lexer_work('x = "a"\n' + "# comment word\n" * 4000 + call + "\n", monkeypatch)
+
+    assert work(arguments) - work("()") <= 4 * len(arguments)
+
+
+@pytest.mark.parametrize("trivia", ["# note\n", "// note\n", "/* note */\n", "\n", " \\\n"])
+def test_a_callee_many_comment_lines_before_its_parenthesis_is_still_read(trivia):
+    source = "AzureKeyCredential\n" + trivia * 200 + f'("{SYNTHETIC}")\nnext_call("ordinary")'
+    safe = sanitize_text(source)
+    assert SYNTHETIC not in safe and REDACTED in safe
+    assert safe.endswith('\nnext_call("ordinary")') and safe.count("\n") == source.count("\n")
+    assert sanitize_text(safe) == safe
+
+
+def test_a_credential_callee_named_inside_a_comment_still_reads_the_call_after_it():
+    # Every candidate whose trivia reaches the same '(' is still read as its callee.
+    source = f'x = build  # wraps AzureKeyCredential\n# more\n("{SYNTHETIC}")'
+    safe = sanitize_text(source)
+    assert SYNTHETIC not in safe and REDACTED in safe

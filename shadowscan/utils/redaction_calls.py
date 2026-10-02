@@ -70,6 +70,8 @@ class _CallLexer:
         self._strings: dict[int, int] = {}
         self._newlines: list[int] | None = None
         self._block_ends: list[int] | None = None
+        # Comment and continuation starts mapped to where the trivia after them ends.
+        self._trivia_ends: dict[int, int] = {}
 
     def tick(self) -> None:
         self.work += 1
@@ -89,6 +91,42 @@ class _CallLexer:
             self._block_ends = [match.start() for match in re.finditer(r"\*/", self.text)]
         index = bisect_left(self._block_ends, position + 2)
         return self._block_ends[index] + 2 if index < len(self._block_ends) else len(self.text)
+
+    def trivia_end(self, start: int) -> int:
+        """Where the trivia from ``start`` to the end of the text ends: ``argument_start(start, len(text))``.
+
+        Each comment and line continuation a skip passes is remembered with where
+        that skip ended, and a later skip that reaches it stops there. A word that
+        ends a line or precedes a comment is a callee candidate, so in a block of
+        comment lines each line's last word skipped every following line again:
+        quadratic in the block, which reached the work limit at about 1 MB.
+        """
+        text = self.text
+        position = start
+        passed: list[int] = []
+        while position < len(text):
+            known = self._trivia_ends.get(position)
+            if known is not None:
+                position = known
+                break
+            self.tick()
+            if text[position].isspace():
+                position += 1
+                continue
+            if text.startswith(("\\\n", "\\\r\n"), position):
+                passed.append(position)
+                position += 3 if text.startswith("\\\r\n", position) else 2
+            elif text.startswith("/*", position):
+                passed.append(position)
+                position = self.block_end(position)
+            elif text[position] == "#" or text.startswith("//", position):
+                passed.append(position)
+                position = self.line_end(position)
+            else:
+                break
+        for item in passed:
+            self._trivia_ends[item] = position
+        return position
 
     def argument_start(self, start: int, end: int) -> int:
         """Skip argument trivia using indexed comment ends and the shared budget."""
@@ -336,20 +374,29 @@ def _redact_credential_calls(text: str) -> str:
         _CALL_CHAIN_TRIVIA.finditer(text),
         key=lambda call: call.start(),
     )
+    # Every word of a comment block before a '(' reaches that '(' as a callee.
+    # Its arguments are lexed and judged once; each callee adds what its own
+    # name withholds, once per kind of name.
+    lexed: dict[int, tuple[list[tuple[int, int]], str]] = {}
+    judged: dict[int, tuple[bool, list[tuple[int, int]]]] = {}
+    read_literals: set[tuple[int, int, tuple[int, ...]]] = set()
     for call in calls:
         if call.start() < skip_until:
             continue
         argument_start = call.end()
         if not call.group().endswith("("):
-            opening = lexer.argument_start(argument_start, len(text))
+            opening = lexer.trivia_end(argument_start)
             if opening >= len(text) or text[opening] != "(":
                 continue
             argument_start = opening + 1
-        spans, state, skipped_comment = lexer.arguments(argument_start, comments=True)
-        if state != "closed" and skipped_comment:
-            retry = lexer.arguments(argument_start, comments=False)
-            if retry[1] == "closed":
-                spans, state, _ = retry
+        if argument_start not in lexed:
+            spans, state, skipped_comment = lexer.arguments(argument_start, comments=True)
+            if state != "closed" and skipped_comment:
+                retry = lexer.arguments(argument_start, comments=False)
+                if retry[1] == "closed":
+                    spans, state, _ = retry
+            lexed[argument_start] = spans, state
+        spans, state = lexed[argument_start]
         callee = _qualified_callee(text, call)
         level = _credential_callee(callee)
         # A lone spaced "Login ('log|n')" occurs in prose. Treat its literal
@@ -362,8 +409,12 @@ def _redact_credential_calls(text: str) -> str:
                 raise SanitizationLimitError(f"credential call {state} limit exceeded")
             # Literal credentials do not skip nested calls: a call inside
             # another argument can still pair a credential key with a value.
-            literals.extend(_credential_literals(lexer, spans, state == "closed", level, known))
-        sensitive, call_values = _credential_call_values(text, spans, state == "closed")
+            if (argument_start, level, known) not in read_literals:
+                read_literals.add((argument_start, level, known))
+                literals.extend(_credential_literals(lexer, spans, state == "closed", level, known))
+        if argument_start not in judged:
+            judged[argument_start] = _credential_call_values(text, spans, state == "closed")
+        sensitive, call_values = judged[argument_start]
         if not sensitive:
             continue
         if state in {"nesting", "length"}:

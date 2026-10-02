@@ -326,6 +326,8 @@ REDACTION_SHAPES: dict[str, Any] = {
     "path segments": lambda n: "a/" * (n // 2),
     "words": lambda n: "a_" * (n // 2),
     "lines": lambda n: "a\n" * (n // 2),
+    "comment lines": lambda n: '"\n' + "# comment word\n" * (n // 15),
+    "slash comment lines": lambda n: '"\n' + "// comment word\n" * (n // 16),
     "assignments": lambda n: "k=v " * (n // 4),
     "spaced assignment": lambda n: "a=" + " " * n + "b",
     "calls": lambda n: "f(a=" * (n // 4),
