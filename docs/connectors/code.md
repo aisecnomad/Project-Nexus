@@ -49,6 +49,12 @@ Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_si
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
+`paths`, `exclude` and `oversize_skip_globs` must be lists of non-empty strings.
+A bare string, such as the YAML scalar `exclude: "vendor/*"`, is a configuration
+error (the message names the option, not the value) rather than being read
+one character at a time; on the command line repeat `--exclude`, or give
+`--set 'exclude=["vendor/*"]'`.
+
 The walk skips a built-in list of directory names at any depth. `exclude` only
 adds to it; `default_excludes: false` (`--no-default-excludes`) turns the list
 off. Most names are tool metadata, caches, virtualenvs, dependency trees and IDE

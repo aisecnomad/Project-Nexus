@@ -812,6 +812,22 @@ def deadline_margin(remaining: float) -> float:
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
 
 
+def _validated_names(value: Any, key: str) -> list[str]:
+    """A list-typed option: a list of non-empty strings, or unset.
+
+    A bare string must not pass: iterated per character, ``exclude: "vendor/*"``
+    would become the patterns ``/`` and ``*`` and exclude the whole tree. The
+    message names the option, never its value.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ConnectorError(f"code.filesystem: {key} must be a list of non-empty strings")
+    return list(value)
+
+
 def _validated_globs(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple)) or not all(isinstance(g, str) and g.strip() for g in value):
         raise ConnectorError("code.filesystem: oversize_skip_globs must be a list of file name globs")
@@ -887,7 +903,7 @@ class FilesystemConnector(BaseConnector):
     config_keys: ClassVar[dict[str, str]] = {
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
-        "exclude": "extra directory names / glob patterns to skip",
+        "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
         "default_excludes": (
             "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
             "state, and build-output or vendored names such as bin, build, dist, vendor) at any depth "
@@ -971,7 +987,7 @@ class FilesystemConnector(BaseConnector):
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
-        extra = ctx.get("exclude", []) or []
+        extra = _validated_names(ctx.get("exclude"), "exclude")
         self.default_excludes = config_boolean(ctx.get("default_excludes", True), "default_excludes")
         self._explicit_exclude_names = frozenset(e for e in extra if "*" not in e and "/" not in e)
         self.exclude_names = (
@@ -984,6 +1000,8 @@ class FilesystemConnector(BaseConnector):
         # Every labeled `paths` root has its own identity, even if the list
         # shrinks to one. The engine marks a child split for incremental reuse.
         paths = ctx.get("paths")
+        # Iterated per character, a bare string would name roots such as "/".
+        _validated_names(paths, "paths")
         self._shared_label_roots = isinstance(paths, list) or ctx.get("_shared_label_roots") is True
         if self.label and isinstance(paths, list):
             validate_distinct_paths(paths)

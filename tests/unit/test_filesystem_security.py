@@ -14,7 +14,7 @@ import regex
 from click.testing import CliRunner
 
 from shadowscan.cli import main
-from shadowscan.connectors.base import ConnectorContext
+from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code import filesystem as filesystem_module
 from shadowscan.connectors.code import manifests
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt, _parse_mcp_servers
@@ -850,3 +850,80 @@ def test_pattern_timeout_is_an_explicit_coverage_gap(
         f"code.filesystem: {path}: file analysis incomplete ({reason})"
     ]
     assert any("framework.crewai" in f.frameworks for f in findings)
+
+
+# ------------------------------------------------------- list-typed options
+@pytest.mark.parametrize(
+    "value",
+    ["vendor/*", "vendor", "", 5, True, {"vendor": 1}, ["vendor", 3], [None], ["  "], [""], [["vendor"]]],
+    ids=repr,
+)
+def test_exclude_must_be_a_list_of_non_empty_strings(tmp_path, run_connector, value):
+    # A bare string used to be iterated per character: "vendor/*" became the
+    # patterns "/" and "*", which exclude everything from a scan reported complete.
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    with pytest.raises(ConnectorError) as raised:
+        run_connector("code.filesystem", path=str(tmp_path), exclude=value)
+    assert str(raised.value) == "code.filesystem: exclude must be a list of non-empty strings"
+
+
+@pytest.mark.parametrize("value", ["*.png", 5, ["*.png", 1], [""], [None]], ids=repr)
+def test_oversize_skip_globs_must_be_a_list_of_non_empty_strings(tmp_path, run_connector, value):
+    with pytest.raises(ConnectorError) as raised:
+        run_connector("code.filesystem", path=str(tmp_path), oversize_skip_globs=value)
+    assert str(raised.value) == "code.filesystem: oversize_skip_globs must be a list of file name globs"
+
+
+@pytest.mark.parametrize("value", ["/tmp", 5, ["ok", 3], [None], [""]], ids=repr)
+def test_paths_must_be_a_list_of_non_empty_strings(tmp_path, run_connector, value):
+    # A bare string was iterated per character, so "/tmp" scanned the root "/".
+    with pytest.raises(ConnectorError) as raised:
+        run_connector("code.filesystem", paths=value)
+    assert str(raised.value) == "code.filesystem: paths must be a list of non-empty strings"
+
+
+@pytest.mark.parametrize("value", [None, [], ["vendor"], ("vendor",), ["vendor", "*.min.js", "src/legacy/*"]])
+def test_exclude_still_accepts_lists_of_names_and_globs(tmp_path, run_connector, value):
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "agent.py").write_text("from crewai import Agent\n")
+    (tmp_path / "app.py").write_text("from langgraph.graph import StateGraph\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), exclude=value, use_git=False)
+    assert any("framework.langgraph" in f.frameworks for f in findings)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+
+
+def test_cli_exclude_options_reach_the_connector_as_a_list(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "legacy").mkdir(parents=True)
+    (repo / "legacy" / "agent.py").write_text("from crewai import Agent\n")
+    (repo / "app.py").write_text("from langgraph.graph import StateGraph\n")
+    output = tmp_path / "report.json"
+    argv = [
+        "code",
+        str(repo),
+        "--exclude",
+        "legacy",
+        "--exclude",
+        "*.tmp",
+        "--format",
+        "json",
+        "-o",
+        str(output),
+    ]
+    assert CliRunner().invoke(main, argv).exit_code == 0
+    assert set(json.loads(output.read_text())["summary"]["frameworks"]) == {"framework.langgraph"}
+
+
+def test_bare_string_exclude_set_on_the_command_line_fails_closed_without_echoing_it(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "agent.py").write_text("from crewai import Agent\n")
+    output = tmp_path / "report.json"
+    argv = ["run", "code.filesystem", "--set", f"path={repo}", "--set", "exclude=vendor/*"]
+    result = CliRunner().invoke(main, [*argv, "--format", "json", "-o", str(output)])
+    assert result.exit_code == 3, result.output
+    report = json.loads(output.read_text())
+    assert report["summary"]["complete"] is False
+    errors = [error for stats in report["stats"] for error in stats["errors"]]
+    assert errors and all("exclude must be a list of non-empty strings" in error for error in errors)
+    assert "vendor/*" not in json.dumps(report)
