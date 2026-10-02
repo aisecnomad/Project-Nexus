@@ -37,6 +37,18 @@ finish incomplete because the earlier result hid a gap.
 - **CSV consumers.** An incomplete CSV report has a first data row with
   `id=SCAN-INCOMPLETE`, `kind=scan-status` and the unfinished connectors in the
   `connector` column. Skip or alert on it; exit code 3 remains the primary signal.
+- **Redaction.** Reports withhold more than before: `--passphrase`, `--pat`
+  and `--auth` option values, whole PGP private key blocks (earlier reports
+  could show a block's body when its first line followed a name such as
+  `private_key:`), every cookie in a `Cookie` header, compact `x-api-key:S` and
+  `password:S` values, unquoted values containing `;`, escaped-quote JSON values, the
+  URL query keys `auth`, `pwd` and `pat`, Fireworks `fw_` keys and provider
+  tokens next to non-Latin text. Reports generated before this revision can
+  contain those values: regenerate them, restrict or delete the old copies, and
+  rotate any key, PGP private key or session cookie they show. Expect extra
+  `[REDACTED]` markers (`ffmpeg -pass 1`, the text after `;` in `NAME=S;rest`,
+  the scheme after `Authorization:`). Finding IDs built from sanitized
+  resource fields can change where those fields held such values.
 - **Credential digest (open item).** Code and cloud findings (credentials in
   source files, and in cloud environment variables and app settings) still
   carry `credential:sha256:<digest>`, an unsalted SHA-256 of the raw credential
