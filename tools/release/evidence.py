@@ -17,6 +17,7 @@ from typing import Any
 
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.safe_json import strict_json_loads
+from tools.release.rules import verify_receipt
 
 _SHA = re.compile(r"[0-9a-f]{40}")
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -131,6 +132,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
     required = {
         "ci-verification.json",
         "codeql-verification.json",
+        "merge-rule-verification.json",
         "runtime-sbom.cdx.json",
         "requirements.lock",
         "requirements-build.lock",
@@ -163,6 +165,10 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
             current_sha=commit,
             run_id=str(saved.get("id", "")),
         )
+    merge_rules = verify_receipt(
+        _load_json(directory / "merge-rule-verification.json", "saved merge-rule evidence"),
+        repository=repository,
+    )
     sbom = _load_json(directory / "runtime-sbom.cdx.json", "runtime SBOM")
     if not isinstance(sbom, dict) or sbom.get("bomFormat") != "CycloneDX" or not sbom.get("components"):
         raise ValueError("runtime SBOM must contain CycloneDX components")
@@ -171,6 +177,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         "source": {"repository": repository, "commit": commit},
         "workflow_run": f"https://github.com/{repository}/actions/runs/{workflow_run}",
         **verified_runs,
+        "merge_rules": merge_rules,
         "build_environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -180,8 +187,9 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
             "sbom": "dependencies in requirements.lock (core and cloud extras); not a container/OS SBOM",
             "artifact": "wheel candidate; publication requires a separate maintainer action",
             "assurance": (
-                "CI, CodeQL and artifact identity only; "
-                "not a claim of live tenant validation or reproducible builds"
+                "CI, CodeQL, supplied current merge-rule settings and artifact identity only; "
+                "not a claim of historical rules enforcement, independent human review, "
+                "live tenant validation or reproducible builds"
             ),
         },
         "files": [

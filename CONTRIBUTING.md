@@ -124,7 +124,7 @@ exact supported Python matrix and dependency pins.
 | Gate | Command | Requirement |
 |------|---------|-------------|
 | Lint | `ruff check shadowscan tests tools` | No errors |
-| Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py` | No errors |
+| Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py tools/container` | No errors |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
@@ -148,7 +148,7 @@ python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 make secrets
 ruff check shadowscan tests tools
-mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py
+mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py tools/container
 pip-audit --progress-spinner off
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate

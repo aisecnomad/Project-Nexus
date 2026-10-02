@@ -610,6 +610,225 @@
           }
         ]
       }
+    },
+    {
+      "id": "js-genkit-empty-initialization",
+      "family": "agent",
+      "description": "Empty Genkit initialization establishes framework usage, not an agent or configured tool dispatch",
+      "files": {
+        "app.ts": "import { genkit } from \"genkit\";\nconst ai = genkit({plugins: []});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.genkit"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.genkit",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.genkit"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "js-genkit-standalone-tool",
+      "family": "agent",
+      "description": "A Genkit tool declaration without a model request is not an AI agent",
+      "files": {
+        "app.ts": "import { genkit } from \"genkit\";\nconst ai = genkit({plugins: []});\nconst lookup = ai.defineTool({name: \"lookup\"}, async (input) => input);\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.genkit"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.genkit",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.genkit"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "js-genkit-automatic-tool-loop",
+      "family": "agent",
+      "description": "A stable Genkit instance passes its registered callback to the automatic generate tool loop",
+      "files": {
+        "app.ts": "import { genkit } from \"genkit\";\nconst ai = genkit({plugins: []});\nconst lookup = ai.defineTool({name: \"lookup\"}, async (input) => input);\nawait ai.generate({tools: [lookup]});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.genkit"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.genkit",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.genkit"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "js-genkit-explicit-agent-empty-tools",
+      "family": "agent",
+      "description": "An explicit Genkit agent definition remains an agent while empty tools convey no tool capability",
+      "files": {
+        "app.ts": "import { genkit } from \"genkit\";\nconst ai = genkit({plugins: []});\nconst assistant = ai.defineAgent({name: \"assistant\", system: \"Help\", tools: []});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.genkit"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.genkit",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.genkit"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "js-genkit-return-tool-requests",
+      "family": "agent",
+      "description": "Returning Genkit tool requests to application code does not establish SDK automatic tool execution",
+      "files": {
+        "app.ts": "import { genkit } from \"genkit\";\nconst ai = genkit({plugins: []});\nconst lookup = ai.defineTool({name: \"lookup\"}, async (input) => input);\nawait ai.generate({tools: [lookup], returnToolRequests: true});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.genkit"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.genkit",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.genkit"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "js-genkit-local-tool-variable",
+      "family": "agent",
+      "description": "A tool registration inside an uncalled function cannot establish an automatic module-level Genkit tool loop",
+      "files": {
+        "app.ts": "import { genkit } from \"genkit\";\nconst ai = genkit({plugins: []});\nfunction neverCalled() {\n  const lookup = ai.defineTool({name: \"lookup\"}, async (input) => input);\n}\nawait ai.generate({tools: [lookup]});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.genkit"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.genkit",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.genkit"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "js-genkit-local-tool-name",
+      "family": "agent",
+      "description": "A tool registration inside an uncalled function cannot establish an automatic module-level Genkit tool loop",
+      "files": {
+        "app.ts": "import { genkit } from \"genkit\";\nconst ai = genkit({plugins: []});\nfunction neverCalled() {\n  const lookup = ai.defineTool({name: \"lookup\"}, async (input) => input);\n}\nawait ai.generate({tools: [\"lookup\"]});\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.genkit"
+      },
+      "present": false,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.genkit",
+            "capabilities": []
+          }
+        ],
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.genkit"
+            ],
+            "provider_signatures": []
+          }
+        ]
+      }
     }
   ]
 }

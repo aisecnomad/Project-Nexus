@@ -36,8 +36,16 @@ LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nex
 # security update instead of reproducing the build. The base image digest fixes
 # the package set the build starts from; apt-get update still reads the live
 # archive, so the image is not byte-for-byte reproducible from this file alone.
+# Upgrade installed base packages too: installing git does not update existing
+# OpenSSL or PCRE2 libraries. The 2026-10-02 image scan found security fixes in
+# trixie-security (OpenSSL 3.5.7-1~deb13u3 and PCRE2 10.46-1~deb13u3):
+#   https://security-tracker.debian.org/tracker/DSA-6531-1
+#   https://security-tracker.debian.org/tracker/CVE-2026-103111
+# Other upstream findings can remain without a stable Debian fix. The CI image
+# scan still blocks every detected HIGH/CRITICAL finding, including unfixed ones.
 # hadolint ignore=DL3008
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 65532 nonroot \

@@ -89,6 +89,89 @@ Run the existing [scope-specific acceptance verifier](https://github.com/aisecno
 on real evidence for the intended population and tenant scopes. Record unmet
 requirements as unmet; do not substitute offline replays or AI-generated labels.
 
+## October 2 detection and assurance migration
+
+Name/value credential redaction now reuses line bounds and first-content
+positions. Long lines containing repeated record names previously caused
+quadratic prefix scans and copies; those queries now perform linear character
+work. Credential withholding and record/list boundaries are unchanged. Existing
+matching budgets still fail closed, and timing regressions remain checks of the
+implementation rather than tenant throughput guarantees.
+
+JavaScript/TypeScript calls exceeding the bounded semantic-analysis budget now
+make the scan incomplete (exit 3). This includes long constructor arguments;
+an unchanged framework-usage finding is no longer evidence that agent analysis
+completed. Review the diagnostic and source, then provide an analyzable input
+or explicitly narrow the intended scope before using the result as a gate.
+Neighboring findings remain available for investigation.
+
+Binary-looking `.ts` files also make source coverage incomplete. Packet bytes
+cannot distinguish a video segment from TypeScript containing a padded comment.
+Review the affected paths and explicitly exclude verified media directories
+with the connector's `exclude` policy when they are outside the intended source
+scope. Recognized binary assets selected only by a directory-wide configuration
+glob keep their existing treatment.
+
+Failed incremental cache-decision hooks now mark connector coverage incomplete;
+built-in validation diagnostics remain available, while plugin hook failures
+expose only exception types.
+
+Zapier ignores wholly blank text rows only when a recognized identity column
+is present. Unknown JSON keys or CSV headers make coverage incomplete; existing
+padding rows under valid Zapier headers remain accepted.
+
+Generic Genkit initialization and standalone flow/tool declarations are
+framework evidence. Supported explicit agent definitions and concrete model
+calls using registered tools establish stronger configured behavior. Review
+changed kinds, capabilities and risk scores, then collect a fresh comparison
+baseline. Tool registration must resolve to a direct module-level initializer
+or a standalone call with an explicit statement boundary; dynamic bindings and
+uncertain boundaries remain supporting framework evidence. The added examples
+are authored regressions; obtain fresh
+human-reviewed evidence using the
+[holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+
+The shared HTTPS client now bounds response acquisition, including status and
+headers, separately from body delivery. Cancellation closes the active socket
+before that connection can be reused. System DNS resolution cannot be forcibly
+interrupted in a Python worker thread; a result arriving after the acquisition
+budget is rejected before connection. External SDK calls retain their own
+transports. Keep a process/job supervisor for a hard end-to-end execution limit.
+
+The aggregate `CI gate` also requires container security checks for the exact
+built image. CI retains the image identity, OS/Python SBOM and vulnerability
+result; HIGH/CRITICAL vulnerabilities, scanner errors and unavailable database
+updates fail the gate. These results depend on the database at scan time.
+Record the deployed image digest and rescan that exact image before deployment;
+an earlier source commit or Docker tag does not identify its bytes. Apt still
+uses live Debian mirrors, so independently rebuilding the source does not
+produce a guaranteed identical image.
+
+The first October 2 container scan found HIGH-severity Debian advisories,
+including advisories without a recorded stable-package fix. The worker build
+now upgrades base packages from the enabled Debian archives before installing
+Git and certificates. This applies available fixes; it does not establish that
+the resulting image is vulnerability-free. Retain the rebuilt image's actual
+scan, and keep the candidate blocked while HIGH/CRITICAL findings remain.
+Do not remove unfixed findings from the gate to turn it green.
+
+The release-evidence workflow now verifies active merge protections before
+building a candidate. Use the settings preparation and readback commands in
+[merge gate and review status](#merge-gate-and-review-status) to restore the
+existing ruleset without dropping checks, approvals or bypass restrictions.
+Neither merging this source change nor a prepared JSON patch changes GitHub
+settings. The release check fails if the API identity cannot expose bypass
+actors; it does not infer an empty list from an omitted field. Do not grant
+write credentials to the build job to suppress that failure.
+
+Complete AWS/Slack and separately credentialed permission-denied
+[tenant canaries](canaries.md) in the authorized deployment scope. For other
+connectors, retain connector-specific live evidence. Bind those receipts and a
+fresh human-reviewed holdout to this exact source/signature revision with the
+[acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+Independent human review of the final revision remains required before release.
+Offline replay and the new CI checks cannot supply these attestations.
+
 ## October 1 scan integrity remediation
 
 Rollout effects of the remediation listed in the changelog. Re-run any baseline
@@ -292,8 +375,8 @@ Google Workspace domain-wide delegation pins the signed assertion audience and
 token exchange to `https://oauth2.googleapis.com/token`; a service-account
 document's `token_uri` cannot redirect the credential exchange.
 
-The `CI gate` job combines documentation, Linux Python 3.11–3.13 (including the
-container checks in Python 3.13), macOS Python 3.11 and 3.13, and DCO for pull
+The `CI gate` job combines documentation, Linux Python 3.11–3.13, a dedicated
+container security job, macOS Python 3.11 and 3.13, and DCO for pull
 requests. Core/development, runtime, build and documentation dependency sets are
 hash-locked, and CI audits all four. Add `CI gate` to the live required checks
 while retaining existing checks and independent approval. Verify the platform
@@ -654,15 +737,23 @@ turn Git or the scanner into a process sandbox.
 ## Resource limits and incomplete scans
 
 Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
-content by default. Each response body must also arrive within twice the
-client timeout (60 seconds by default). The 30-second client timeout bounds
-each connection attempt and each socket read, so without the deadline a server
-that sends a byte just inside every timeout could hold a worker until the
-connector deadline abandoned it. A body still being read at the deadline is
+content by default. Each network attempt has a response-acquisition budget of
+twice the client timeout (60 seconds by default), covering connection, request
+transmission, status line and headers. TCP candidates and TLS handshakes share
+the remaining acquisition time. The active socket is interrupted on expiry;
+the watchdog is cancelled and joined before the response can leave its checked-out
+connection. System DNS is synchronous and cannot be forcibly cancelled: late
+resolution is rejected before connection, but needs a process/job supervisor
+for a hard time limit.
+
+Each response body has a separate budget of twice the client timeout.
+The 30-second client timeout also bounds individual socket reads, so without
+these budgets a server sending a byte just inside every timeout could hold a
+worker until the connector deadline abandoned it. A body still being read at the deadline is
 aborted (`HTTP response exceeds the read deadline`) and the connector's
 collection is incomplete (exit 3); a partial body is never analyzed. The
-deadline follows the client's timeout, not a `timeout` passed with one
-request, and applies to each response separately:
+budgets follow the client's timeout, not a `timeout` passed with one
+request. Retries and redirects each get a fresh acquisition budget:
 `connector_timeout_seconds` still bounds a connector's whole collection.
 Pagination rejects missing or malformed collection arrays and records an
 incomplete scan when a response exceeds its limit. Review unusually large
@@ -1472,6 +1563,41 @@ gh api repos/aisecnomad/Project-Nexus/branches/main/protection
 gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,reviews
 ```
 
+The offline rules helper can prepare a reviewed PUT body from a fresh full
+ruleset response. Use an administrator identity able to see `bypass_actors`;
+GitHub can omit that field for identities without ruleset write access. Read
+the default branch first and confirm it is `main`:
+
+```bash
+gh api repos/aisecnomad/Project-Nexus --jq .default_branch
+gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 > /secure/main-rules-before.json
+python -m tools.release.rules prepare --input /secure/main-rules-before.json \
+  --output /secure/main-rules-update.json --repository aisecnomad/Project-Nexus \
+  --default-branch main
+# Review the generated body before this administrator operation.
+gh api --method PUT repos/aisecnomad/Project-Nexus/rulesets/23913372 \
+  --input /secure/main-rules-update.json
+gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 > /secure/main-rules-after.json
+python -m tools.release.rules verify --input /secure/main-rules-after.json \
+  --output /secure/merge-rule-verification.json --repository aisecnomad/Project-Nexus \
+  --default-branch main
+```
+
+Preparation activates the same ruleset and tightens it to the versioned minimum
+policy: all four required checks are bound to the GitHub Actions app, final-push
+approval and review-thread resolution are required, deletion is blocked and
+CodeQL errors remain blocking. It retains additional checks and stronger rules,
+pins an unbound required check and refuses a conflicting nonempty app binding.
+It also refuses missing independent approval or stale-review dismissal,
+ambiguous branch scopes, nonempty or unavailable bypass lists and malformed
+settings. Generate the body from current settings rather than from an older
+snapshot, so that later administrator changes are not overwritten, and compare
+it with the [versioned merge policy](operations/merge-policy.md). The verifier
+checks a supplied settings snapshot against the same minimum policy as the
+governance checker. The release workflow obtains its snapshot
+directly from GitHub; an offline receipt cannot authenticate its own API origin,
+establish historical enforcement or prove an actual human approved the final PR.
+
 An approving review counts only when it comes from a person with write access,
 other than the author, and covers the final revision of the pull request. A
 successful workflow run or Copilot review does not supply that approval. A
@@ -1488,13 +1614,16 @@ for each module under `shadowscan/connectors/`, both counting statements and
 branches, so a well-tested engine cannot conceal an untested provider; the
 other jobs run the same tests untraced. Coverage proves execution of code paths in tests; it does not prove
 provider compatibility or complete tenant inventory. The aggregate `CI gate`
-requires every Linux and macOS matrix job and documentation to succeed; it also
+requires every Linux and macOS matrix job, documentation and container security to succeed; it also
 requires DCO on pull requests. It fails if a required prerequisite fails, is
 cancelled or is unexpectedly skipped. Verify that the live ruleset requires
-`CI gate` before treating the full matrix as an enforced merge gate. The Linux
-Python 3.13 job also
-builds the Docker image and checks its non-root UID, signature assets and
-network-isolated scan with a read-only root filesystem and resource limits.
+`CI gate` before treating the full matrix as an enforced merge gate. The dedicated
+container job builds one Docker image and checks its non-root UID, signature assets
+and network-isolated scan with a read-only root filesystem and resource limits.
+It inventories that exact local image with a CycloneDX SBOM and blocks HIGH or
+CRITICAL OS and Python vulnerabilities, including unfixed findings. It records
+the image ID, source revision, pinned scanner and fresh vulnerability database
+identities; scanner errors also block the gate.
 Focused regressions cover the review findings, private-address enforcement,
 public-key verification, plugin policy, artifact permissions and replay integrity.
 Dependabot checks Python, GitHub Actions and Docker base-image dependencies weekly.

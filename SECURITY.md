@@ -41,6 +41,12 @@ coverage, even when a response includes an empty collection field.
   API requires `options.allow_private_origin: true` or `--allow-private-origin`.
   This exception does not relax origin or TLS checks. HTTP proxies, including
   environment proxy settings, are unsupported by this transport.
+* The shared HTTPS adapter bounds response acquisition, including status/header
+  delivery, separately from body reads. Cancellation interrupts the active socket
+  before it can be pooled for another request. System DNS resolution cannot be
+  forcibly cancelled in a Python thread; a late result is rejected before
+  connection. A process/job supervisor remains necessary for a hard execution
+  limit, including external SDK transports.
 * Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
   of decoded bytes, and each body must arrive within twice the client timeout
   (60 seconds by default). Oversized, slow and malformed collection responses

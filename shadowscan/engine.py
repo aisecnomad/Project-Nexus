@@ -267,10 +267,16 @@ class _ConnectorRunner:
             labelled = bool(spec.label or spec.config.get("label"))
             if not _hooks(resolved).cache_roots_separately(roots, root_ids, labelled=labelled):
                 return False, resolved
-        except ConnectorError:
-            # Run once so constructor validation reports an incomplete
-            # scan, rather than partially scanning the valid children.
-            return False, resolved
+        except ConnectorError as exc:
+            # A failed hook must stop collection even if construction would
+            # succeed. Built-in validation text is sanitized by _run_one;
+            # arbitrary plugin hook messages may contain credentials.
+            failure = (
+                exc
+                if spec.name in builtin_connector_names()
+                else _hook_failure(spec.name, "cache_roots_separately()", exc)
+            )
+            return False, failure
         except BaseException as exc:  # noqa: BLE001 - a failing plugin hook is a connector failure
             return False, _hook_failure(spec.name, "cache_roots_separately()", exc)
         try:

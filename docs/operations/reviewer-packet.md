@@ -93,6 +93,19 @@ For the October 1 discovery corrections, include these paired checks:
   binary agent-presence metrics. These are regression checks; commission fresh
   blinded human labels before claiming field accuracy.
 
+For the October 2 review corrections, also check:
+
+- A long JavaScript constructor versus its short equivalent: exceeding the
+  semantic budget must mark analysis incomplete and retain neighboring evidence.
+- Empty Genkit initialization versus a concrete agent definition or supported
+  registered-tool model call; check configured capabilities separately.
+- Slow HTTPS status/header delivery versus a healthy response and connection
+  reuse; cancellation must not close a socket already serving another request.
+- Container evidence for the exact built image, including database freshness,
+  OS/Python inventory and vulnerability failures. A smoke test alone is insufficient.
+- Disabled, bypassed or incomplete merge rules versus verified active settings.
+  A prepared settings patch is not evidence that the administrator applied it.
+
 Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be
 effective on `main`; their presence in workflow files alone is insufficient.

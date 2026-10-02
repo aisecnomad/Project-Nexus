@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.governance_check import check_ruleset, main
+from tools.governance_check import GITHUB_ACTIONS_APP_ID, check_ruleset, main
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -54,6 +54,26 @@ def test_partial_or_spoofable_ci_checks_fail(policy, change):
     else:
         checks["strict_required_status_checks_policy"] = False
     assert check_ruleset(policy)
+
+
+@pytest.mark.parametrize("integration_id", [None, True, float(GITHUB_ACTIONS_APP_ID), 42, "15368"])
+def test_required_app_bindings_are_exact_integers(policy, integration_id):
+    checks = parameters(policy, "required_status_checks")["required_status_checks"]
+    checks[0]["integration_id"] = integration_id
+    assert "required_check_missing_or_unbound" in check_ruleset(policy)
+
+
+@pytest.mark.parametrize("include", [["~ALL"], ["refs/heads/*"], ["refs/heads/main", "refs/heads/*"]])
+def test_branch_scope_must_be_unambiguous(policy, include):
+    policy["conditions"]["ref_name"]["include"] = include
+    assert "main_scope_not_explicit" in check_ruleset(policy)
+
+
+@pytest.mark.parametrize("name", ["deletion", "non_fast_forward", "required_signatures"])
+def test_parameterless_protections_reject_malformed_fields(policy, name):
+    row = next(rule for rule in policy["rules"] if rule["type"] == name)
+    row["parameters"] = {"unexpected": False}
+    assert "invalid_rule_parameters" in check_ruleset(policy)
 
 
 @pytest.mark.parametrize(

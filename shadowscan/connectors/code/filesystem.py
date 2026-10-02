@@ -2201,6 +2201,11 @@ class FilesystemConnector(BaseConnector):
         configured_spans = {
             m.extra["configured_call_span"] for m in bound if "configured_call_span" in m.extra
         }
+        genkit_spans = {
+            m.extra["configured_call_span"]
+            for m in bound
+            if m.signature_id == "framework.genkit" and "configured_call_span" in m.extra
+        }
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
@@ -2210,6 +2215,10 @@ class FilesystemConnector(BaseConnector):
                 # corroborating library evidence at emit time.
                 m.extra["lexical_source"] = file.lang
             elif m.signature.category != "framework":
+                if m.signature_id == "heuristic.tool-use" and any(
+                    start <= m.extra.get("start", -1) < end for start, end in genkit_spans
+                ):
+                    continue  # Genkit declarations/options alone do not establish model tool dispatch
                 if (
                     m.signature_id in {"heuristic.tool-use", "heuristic.memory"}
                     and re.match(r"(?:tools|checkpointer)\s*[=:]", m.value)

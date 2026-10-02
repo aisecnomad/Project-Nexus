@@ -546,15 +546,14 @@ class ZapierConnector(_AutomationBase):
 
     @staticmethod
     def _blank_row(rec: dict[str, Any]) -> bool:
-        """A CSV row whose every cell is empty or whitespace.
+        """A padding row with a recognized Zapier identity column and blank text cells.
 
-        Only text cells count: a JSON object with null or non-text values
-        still goes to the record check, so a wrong-schema object stays a
-        diagnostic.
+        Unknown columns cannot establish an empty Zapier export. Objects with
+        null or non-text values also go to the record check and its diagnostics.
         """
         return (
             isinstance(rec, dict)
-            and bool(rec)
+            and any(field in rec for field in _ZAP_IDENTITY_FIELDS)
             and all(isinstance(value, str) and not value.strip() for value in rec.values())
         )
 

@@ -12,7 +12,7 @@ import pytest
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.gateway.logs import GatewayLogConnector, parse_text_line
-from shadowscan.connectors.lowcode import servicenow
+from shadowscan.connectors.lowcode import automation, servicenow
 from shadowscan.models import ScanStats
 
 # ------------------------------------------------- access-log host spoofing
@@ -299,6 +299,42 @@ def test_blank_zapier_csv_rows_are_skipped_without_a_diagnostic(run_connector, t
     findings, ctx = run_connector("lowcode.zapier", input=str(source))
     assert len(findings) == 1
     assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+@pytest.mark.parametrize(
+    "name,content",
+    [
+        ("zaps.json", json.dumps([{"foo": ""}])),
+        ("zaps.json", json.dumps([{"foo": " \t", "Steps": ""}])),
+        ("zaps.csv", "Wrong,Steps,Status\n,,\n"),
+        ("zaps.csv", "Wrong,Steps,Status\n, ,\t\n"),
+    ],
+)
+def test_blank_zapier_wrong_schema_records_are_incomplete(run_connector, tmp_path, name, content):
+    source = tmp_path / name
+    source.write_text(content)
+    findings, ctx = run_connector("lowcode.zapier", input=str(source))
+    assert findings == [] and ctx.stats.incomplete
+    assert len(ctx.stats.warnings) == 1 and "zap name or id" in ctx.stats.warnings[0]
+
+
+@pytest.mark.parametrize(
+    "name,content",
+    [("zaps.json", json.dumps([{"title": "", "steps": " "}])), ("zaps.csv", "Zap,Steps,Status\n,,\n")],
+)
+def test_blank_zapier_known_schema_records_stay_quiet(run_connector, tmp_path, name, content):
+    source = tmp_path / name
+    source.write_text(content)
+    findings, ctx = run_connector("lowcode.zapier", input=str(source))
+    assert findings == []
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+def test_blank_zapier_wrong_schema_live_record_is_incomplete(index, monkeypatch):
+    connector = automation.ZapierConnector(ConnectorContext(index=index))
+    monkeypatch.setattr(connector, "collect", lambda: iter([{"foo": ""}]))
+    assert connector.run() == [] and connector.ctx.stats.incomplete
+    assert "zap name or id" in connector.ctx.stats.warnings[0]
 
 
 @pytest.mark.parametrize(

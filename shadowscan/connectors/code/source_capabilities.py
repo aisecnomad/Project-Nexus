@@ -26,6 +26,7 @@ CONFIGURED_FRAMEWORKS = frozenset(
         "framework.pydantic-ai",
         "framework.langgraph",
         "framework.langchain",
+        "framework.genkit",
     }
 )
 

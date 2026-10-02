@@ -172,11 +172,35 @@ def test_recognised_binary_read_for_its_directory_stays_quiet(tmp_path, run_conn
     assert not ctx.stats.warnings and not ctx.stats.errors
 
 
-def test_mpeg_ts_video_segment_named_ts_stays_quiet(tmp_path, run_connector):
+def test_mpeg_ts_video_segment_named_ts_requires_explicit_scope_exclusion(tmp_path, run_connector):
     (tmp_path / "public" / "hls").mkdir(parents=True)
     (tmp_path / "public" / "hls" / "segment0.ts").write_bytes(TS_SEGMENT)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    # The .ts extension also names TypeScript. A packet-looking prefix cannot
+    # establish the file's intended meaning or silently remove source coverage.
+    assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, exclude=["public/hls/**"])
     assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+@pytest.mark.parametrize("source_suffix", [".ts", ".TS"])
+def test_transport_stream_like_source_comment_cannot_hide_agent_construction(
+    tmp_path, run_connector, source_suffix
+):
+    # This is valid UTF-8 JavaScript: NUL bytes and periodic G sync bytes are
+    # inside a block comment. Binary-density/packet-prefix heuristics used to
+    # skip the file before the actual agent construction was examined.
+    prefix = bytearray(b"\x00" * 8192)
+    for offset in range(0, len(prefix), 188):
+        prefix[offset] = 0x47
+    prefix[1:3] = b"/*"
+    (tmp_path / f"worker{source_suffix}").write_bytes(
+        prefix
+        + b'*/;\nimport { Agent } from "@openai/agents";\n'
+        + b'const worker = new Agent({name: "worker"});\nvar G;\n'
+    )
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
 
 
 @pytest.mark.parametrize(
@@ -264,7 +288,10 @@ def test_fifo_named_like_an_analyzable_file_is_a_coverage_gap(tmp_path, run_conn
 
 @pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="needs unix sockets")
 def test_socket_named_like_a_config_file_is_a_coverage_gap(tmp_path, run_connector):
-    sock = socket.socket(socket.AF_UNIX)
+    try:
+        sock = socket.socket(socket.AF_UNIX)
+    except OSError:
+        pytest.skip("unix sockets unavailable")
     try:
         try:
             sock.bind(str(tmp_path / ".mcp.json"))

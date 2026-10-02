@@ -267,9 +267,9 @@ class BaseConnector(ABC):
         """Whether an incremental multi-root ``paths`` scan may run and be cached per root.
 
         The engine then runs one job per root, so an unchanged repository is
-        reused while its sibling is rescanned. Raise ConnectorError for roots
-        that cannot be split: the engine runs the connector once instead, so
-        its own validation reports the scan as incomplete.
+        reused while its sibling is rescanned. Return False to collect all
+        roots together. Raise ConnectorError for invalid roots: the engine
+        marks the connector incomplete before construction or collection.
         """
         return False
 

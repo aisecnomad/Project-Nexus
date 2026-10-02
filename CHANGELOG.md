@@ -492,6 +492,48 @@ field precision. Behavior changes that affect an existing baseline are listed in
   URL requirements keep their declared package identity. The paired regression
   cases are authored test evidence, not a fresh field-accuracy measurement.
 
+### October 2 review corrections
+
+- Name/value credential redaction caches line bounds and the first content
+  position instead of repeatedly scanning or copying growing record prefixes.
+  This removes quadratic work on long lines of repeated record names while
+  preserving credential withholding and list boundaries. Deterministic
+  character-work regressions complement the existing timing checks.
+
+- JavaScript and TypeScript source calls that exceed the bounded semantic
+  analysis budget now make coverage incomplete instead of silently losing
+  agent-construction evidence. Valid neighboring findings are retained.
+- Binary-looking `.ts` source is no longer silently classified as MPEG video
+  from packet bytes. Source comments can mimic that prefix while hiding agent
+  construction. Such files make coverage incomplete; trusted operators may
+  explicitly exclude known media paths from the intended scan scope.
+- Failed incremental cache-decision hooks now make connector coverage incomplete,
+  retaining built-in validation diagnostics and exposing only exception types
+  for plugin hook failures.
+- Zapier blank-row tolerance requires a recognized identity column; all-blank
+  records with unknown JSON keys or CSV headers make coverage incomplete.
+- Generic Genkit initialization and flow/tool declarations no longer establish
+  an agent or configured tool-use capability. Supported concrete agent
+  definitions and model calls with registered tools retain detection.
+- The shared HTTPS transport bounds response acquisition as well as body
+  delivery, interrupting slow status/header delivery without releasing an
+  actively cancelled connection back into the pool. System DNS and external
+  SDK calls still require a process/job supervisor for a hard execution limit.
+- CI checks the exact built worker image for HIGH/CRITICAL OS and Python
+  vulnerabilities and retains a container SBOM, scan result and image identity.
+  Vulnerability database acquisition and scanner errors fail the gate.
+- The worker build upgrades base Debian packages from the enabled archives
+  before installing Git and certificates, applying available security fixes.
+  Unfixed HIGH/CRITICAL advisories continue to block the container gate.
+- Release candidate evidence now checks active merge rules, independent-review
+  requirements, strict `CI gate`/CodeQL checks and bypass visibility. An offline
+  settings-patch command preserves additional protections while adding the
+  aggregate check, binding required checks to GitHub Actions and requiring
+  final-push approval, resolved review threads and deletion protection.
+  Repository administration remains a separate action.
+- These changes add authored regression evidence. They do not establish live
+  tenant acceptance, fresh field accuracy or independent human approval.
+
 ### October 1 scan integrity remediation
 
 An AI-assisted audit of the unreleased candidate (not independent human review)
@@ -513,8 +555,8 @@ has a regression test.
   inventory directory stops setup instead of being skipped. A recognised binary
   artifact (executable, archive, image, PDF or SQLite database, by its header)
   stays a quiet skip when it has no file extension, when only a directory-wide
-  signature glob such as `.cursor/rules/**` selected it, or when it is a `.ts`
-  MPEG transport-stream video segment; unrecognised binary content is a gap.
+  signature glob such as `.cursor/rules/**` selected it. An analyzable source
+  extension, including `.ts`, and unrecognised binary content remain a gap.
 - **Disclosure without failure.** Code scans list default-excluded directory
   names (`build`, `vendor`, `external`, ...) once per root, and default-scope AWS
   and GCP scans name the regions or locations that were not scanned. Both are

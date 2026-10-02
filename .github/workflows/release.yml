@@ -76,6 +76,19 @@ jobs:
             --input "$RUNNER_TEMP/codeql-run.json" --output "$CANDIDATE_DIR/codeql-verification.json" \
             --repository "$GITHUB_REPOSITORY" --expected-sha "$EXPECTED_COMMIT" \
             --current-sha "$GITHUB_SHA" --run-id "$CODEQL_RUN_ID"
+      - name: Verify current enforced merge-rule settings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Missing bypass_actors cannot prove no bypass. Keep this identity
+          # read-only; never add an administrator credential to the build job.
+          default_branch="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch')"
+          gh api "repos/$GITHUB_REPOSITORY/rulesets/23913372" > "$RUNNER_TEMP/merge-rules.json"
+          python -m tools.release.rules verify \
+            --input "$RUNNER_TEMP/merge-rules.json" \
+            --output "$CANDIDATE_DIR/merge-rule-verification.json" \
+            --repository "$GITHUB_REPOSITORY" --default-branch "$default_branch" --ruleset-id 23913372
       - name: Install pinned build tools and locked runtime
         run: |
           python -m pip install --require-hashes --only-binary=:all: \

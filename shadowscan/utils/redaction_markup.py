@@ -234,6 +234,7 @@ _FLOW_RECORD_TOKEN = re.compile(
 _REVERSE_RECORD_PREFIX = re.compile(r"[ \t]*(?:-[ \t]+)?")
 _RECORD_BRACE = re.compile(r"\}")
 _RECORD_COMMENT = re.compile(r"[ \t]#")
+_RECORD_CONTENT_START = re.compile(r"[^ \t-]")
 _RECORD_BLOCK_MARKERS = frozenset({"", "|", ">", "|-", ">-", "|+", ">+"})
 _RECORD_LINES = 16
 
@@ -250,21 +251,38 @@ class _RecordIndex:
     def __init__(self, text: str) -> None:
         self.text = text
         self.line = (-1, -1)
+        self.first_content = 0
+        self._fields_line = (-1, -1)
         self.braces: list[int] = []
         self.fields: list[re.Match[str]] = []
         self.field_starts: list[int] = []
         self.measured: dict[int, tuple[int, int, str]] = {}
         self.siblings: dict[int, re.Match[str] | None] = {}
 
+    def line_start(self, position: int) -> int:
+        """Start of a name's line, sharing its bounds and first content with later names.
+
+        Callers visit record names in order. A long line's newline search and
+        leading whitespace/hyphen test are therefore done once, rather than
+        scanning or copying its growing prefix for every name on that line.
+        """
+        start, end = self.line
+        if not start <= position <= end:
+            start = self.text.rfind("\n", 0, position) + 1
+            end = self.text.find("\n", position)
+            end = len(self.text) if end < 0 else end
+            self.line = (start, end)
+            content = _RECORD_CONTENT_START.search(self.text, start, end)
+            self.first_content = content.start() if content is not None else end
+        return start
+
     def value_field(self, match: re.Match[str]) -> tuple[re.Match[str], int, int] | None:
         """The value field paired with a record name: (field, search end, sibling column or -1)."""
         text = self.text
-        line_start, line_end = self.line
-        if not line_start <= match.start() <= line_end:
-            line_start = text.rfind("\n", 0, match.start()) + 1
-            line_end = text.find("\n", match.end())
-            line_end = len(text) if line_end < 0 else line_end
-            self.line = (line_start, line_end)
+        line_start = self.line_start(match.start())
+        line_end = self.line[1]
+        if self._fields_line != self.line:
+            self._fields_line = self.line
             self.braces = [brace.start() for brace in _RECORD_BRACE.finditer(text, line_start, line_end)]
             # Value fields cannot overlap, so the first one after a name is
             # what searching from that name would find.
@@ -277,7 +295,7 @@ class _RecordIndex:
             return self.fields[inline], stop, -1
         column = match.start() - line_start
         position = line_end + 1
-        if text[line_start : match.start()].strip(" \t-"):
+        if self.first_content < match.start():
             return self._embedded_sibling(line_start, position)
         for _ in range(_RECORD_LINES):
             if position >= len(text):
@@ -563,7 +581,7 @@ def _redact_reversed_records(text: str) -> str:
         level = _setting_level(name.group("name"))
         if not level:
             continue
-        line_start = text.rfind("\n", 0, name.start()) + 1
+        line_start = index.line_start(name.start())
         prefix = _REVERSE_RECORD_PREFIX.match(text, line_start, name.start())
         if prefix is None or prefix.end() != name.start() or "-" in prefix.group():
             continue  # list-leading names have no preceding sibling in their item
