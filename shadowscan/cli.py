@@ -1042,6 +1042,9 @@ def inventory_check(paths: tuple[str, ...]) -> None:
         raise click.ClickException(
             "could not load inventory; check file access and document structure"
         ) from None
+    for link in inv.skipped_links:
+        message = f"warning: inventory {link}: symbolic link skipped (links are not followed)"
+        err_console.print(Text(terminal_text(message), style="yellow"))
     table = Table(title=f"{len(inv)} registered agents", header_style="bold")
     table.add_column("Agent id")
     table.add_column("Name")

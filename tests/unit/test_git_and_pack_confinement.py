@@ -124,3 +124,115 @@ def test_inventory_directory_skips_symlinked_files(tmp_path):
     (inv / "ok.yaml").write_text("id: approved\nresources: ['github:acme/ok']\n")
     loaded = Inventory.load([inv])
     assert [e.agent_id for e in loaded.entries] == ["approved"]
+
+
+PACK = (
+    "id: extra.ok\nname: Ok\ncategory: framework\n"
+    "signals:\n  - type: dependency\n    ecosystem: pypi\n    names: [okpkg]\n"
+    "# private-pack-content\n"
+)
+
+
+def _pack_layout(tmp_path, layout):
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "pack.yaml").write_text(PACK)
+    if layout == "unsupported-names":
+        (pack / "pack.yamll").write_text(PACK)
+        (pack / "pack.json").write_text(PACK)
+    elif layout == "symlinked-file":
+        (pack / "link.yaml").symlink_to(outside / "pack.yaml")
+    elif layout == "symlinked-directory":
+        (pack / "linked").symlink_to(outside, target_is_directory=True)
+    return pack
+
+
+SKIPPED = {
+    "empty": [],
+    "unsupported-names": ["pack.json (unsupported file type)", "pack.yamll (unsupported file type)"],
+    "symlinked-file": ["link.yaml (symbolic link)"],
+    "symlinked-directory": ["linked (symbolic link)"],
+}
+
+
+@pytest.mark.parametrize(("layout", "listed"), SKIPPED.items(), ids=list(SKIPPED))
+def test_custom_pack_directory_without_packs_fails_closed(tmp_path, capsys, layout, listed):
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+    from shadowscan.signatures.loader import SignaturePackError
+    from shadowscan.signatures.validate import main as validate
+
+    pack = _pack_layout(tmp_path, layout)
+    for include_builtin in (True, False):
+        with pytest.raises(SignaturePackError, match="contains no .yaml or .yml signature packs") as caught:
+            load_signatures(extra_dirs=[pack], include_builtin=include_builtin)
+        message = str(caught.value)
+        assert str(pack) in message and "private-pack-content" not in message
+        assert all(name in message for name in listed)
+    assert validate([str(pack)]) == 1
+    assert "contains no .yaml or .yml signature packs" in capsys.readouterr().err
+    for args in (
+        ["signatures", "list", "-s", str(pack)],
+        ["code", str(tmp_path / "outside"), "-s", str(pack)],
+    ):
+        result = CliRunner().invoke(main, args)
+        assert result.exit_code == 1 and "contains no .yaml or .yml signature packs" in result.output
+
+
+def test_skipped_pack_symlinks_are_named_in_a_warning(tmp_path, caplog):
+    pack = _pack_layout(tmp_path, "symlinked-file")
+    (pack / "ok.yaml").write_text(PACK)
+    with caplog.at_level("WARNING", logger="shadowscan.signatures"):
+        loaded = load_signatures(extra_dirs=[pack], include_builtin=False)
+    assert [s.id for s in loaded] == ["extra.ok"]
+    assert [record.getMessage() for record in caplog.records] == [
+        f"signature directory {pack}: skipped symbolic link link.yaml"
+    ]
+
+
+@pytest.mark.parametrize("glob", [False, True])
+def test_skipped_inventory_symlinks_are_reported(tmp_path, index, glob):
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+    from shadowscan.config import ConnectorSpec, ScanConfig
+    from shadowscan.engine import Engine
+
+    inv = tmp_path / "inv"
+    inv.mkdir()
+    (tmp_path / "outside.yaml").write_text("id: hostile\nresources: ['github:acme/hostile']\n")
+    (inv / "link.yaml").symlink_to(tmp_path / "outside.yaml")
+    (inv / "ok.yaml").write_text("id: approved\nresources: ['github:acme/ok']\n")
+    path = str(inv / "*.yaml") if glob else str(inv)
+    loaded = Inventory.load([path])
+    assert [e.agent_id for e in loaded.entries] == ["approved"]
+    assert loaded.skipped_links == [str(inv / "link.yaml")]
+    warning = f"inventory {inv / 'link.yaml'}: symbolic link skipped (links are not followed)"
+    source = tmp_path / "src"
+    source.mkdir()
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"path": str(source)})], inventory=[path]
+    )
+    result = Engine(config, index).run()
+    assert [w for s in result.stats if s.connector == "engine.inventory" for w in s.warnings] == [warning]
+    assert result.complete
+    checked = CliRunner().invoke(main, ["inventory", "check", path])
+    assert checked.exit_code == 0 and warning in " ".join(checked.output.split())
+
+
+@pytest.mark.parametrize("pattern", ["inv/**", "invv/*.yaml", "inv/*.yml"])
+def test_inventory_glob_matching_nothing_is_an_error_like_a_missing_path(tmp_path, pattern):
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+    from shadowscan.errors import SetupPathError
+
+    (tmp_path / "inv").mkdir()
+    (tmp_path / "inv" / "agents.yaml").write_text("id: approved\nresources: ['github:acme/ok']\n")
+    with pytest.raises(SetupPathError, match="inventory glob matched no files"):
+        Inventory.load([tmp_path / pattern])
+    result = CliRunner().invoke(main, ["code", str(tmp_path / "inv"), "--inventory", str(tmp_path / pattern)])
+    assert result.exit_code == 1 and "inventory glob matched no files" in result.output

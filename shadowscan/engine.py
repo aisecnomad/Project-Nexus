@@ -455,6 +455,10 @@ def _inventory_warnings(
                 f"inventory entry {entry.agent_id}{source} has resource pattern '*', which approves every"
                 f" finding{' its scope constraints allow' if scoped else ''}"
             )
+    warnings += [
+        f"inventory {link}: symbolic link skipped (links are not followed)"
+        for link in inventory.skipped_links
+    ]
     warnings = list(dict.fromkeys(warnings))
     if len(warnings) > _MAX_INVENTORY_WARNINGS:
         omitted = len(warnings) - _MAX_INVENTORY_WARNINGS

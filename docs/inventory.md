@@ -58,7 +58,10 @@ hr-helper,HR Helper,erin@acme.com,power-platform:bot:bot-1|okta:app:0oa9x,HR bot
 ```
 
 Pass any mix with `--inventory` (repeatable) or `inventory:` in the config;
-directories are searched recursively.
+directories are searched recursively. Symbolic links are never followed: a
+directory or glob that skips one records a warning naming it (`engine.inventory`
+in scan reports, stderr for `inventory check`). A glob that matches no files is
+an error, like a missing path, rather than an empty inventory.
 
 YAML and JSON list fields (`resources`, `names`, `surfaces`, `providers`,
 `accounts`, `regions`, `frameworks`, `tags`) must be arrays of nonempty strings. Quote
