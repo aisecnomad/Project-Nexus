@@ -268,6 +268,16 @@ def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> N
     assert upload["with"]["if-no-files-found"] == "error"
 
 
+def test_container_updates_installed_base_packages_before_dependency_install() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    update = dockerfile.index("RUN apt-get update")
+    upgrade = dockerfile.index("&& apt-get upgrade -y --no-install-recommends")
+    install = dockerfile.index("&& apt-get install -y --no-install-recommends git ca-certificates")
+    assert update < upgrade < install
+    assert "security-tracker.debian.org/tracker/DSA-6531-1" in dockerfile
+    assert "security-tracker.debian.org/tracker/CVE-2026-103111" in dockerfile
+
+
 def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:
     image_id = "sha256:" + "a" * 64
     now = datetime(2026, 10, 2, 5, tzinfo=UTC)

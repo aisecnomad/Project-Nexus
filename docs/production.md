@@ -43,6 +43,14 @@ an earlier source commit or Docker tag does not identify its bytes. Apt still
 uses live Debian mirrors, so independently rebuilding the source does not
 produce a guaranteed identical image.
 
+The first October 2 container scan found HIGH-severity Debian advisories,
+including advisories without a recorded stable-package fix. The worker build
+now upgrades base packages from the enabled Debian archives before installing
+Git and certificates. This applies available fixes; it does not establish that
+the resulting image is vulnerability-free. Retain the rebuilt image's actual
+scan, and keep the candidate blocked while HIGH/CRITICAL findings remain.
+Do not remove unfixed findings from the gate to turn it green.
+
 The release-evidence workflow now verifies active merge protections before
 building a candidate. Use the settings preparation and readback commands in
 [merge gate and review status](#merge-gate-and-review-status) to restore the

@@ -17,6 +17,9 @@
 - CI checks the exact built worker image for HIGH/CRITICAL OS and Python
   vulnerabilities and retains a container SBOM, scan result and image identity.
   Vulnerability database acquisition and scanner errors fail the gate.
+- The worker build upgrades base Debian packages from the enabled archives
+  before installing Git and certificates, applying available security fixes.
+  Unfixed HIGH/CRITICAL advisories continue to block the container gate.
 - Release candidate evidence now checks active merge rules, independent-review
   requirements, strict `CI gate`/CodeQL checks and bypass visibility. An offline
   settings-patch command preserves existing protections while adding the
