@@ -163,8 +163,9 @@ def _redact_extended(text: str) -> str:
     and 'api-key:value' with no space; and last the added formats (PGP
     private keys, tokens next to non-Latin text, Fireworks AI keys). A marker
     these passes leave after a mapping colon is then quoted, as the
-    established passes end, so repeated sanitization does not change the
-    result.
+    established passes end, and where a cookie header or a 'name:value' was
+    withheld, the statement rules read the text once more, so repeated
+    sanitization does not change the result.
     """
     text = _redact_markup_settings(text)
     text = _redact_record_settings(text)
@@ -177,13 +178,25 @@ def _redact_extended(text: str) -> str:
     # every pass that reads a name. A cookie header comes first: the rest of
     # its line holds the other cookies, past any ';' the others stop at.
     text = _URL.sub(_sanitize_url_fields, text)
-    text = _redact_cookie_headers(text)
-    text = _redact_python_assignments(text, glued=True)
+    headers = _redact_cookie_headers(text)
+    reshaped = headers != text
+    text = _redact_python_assignments(headers, glued=True)
     text = _redact_added_assignments(text)
-    text = _redact_compact_colons(text)
+    compact = _redact_compact_colons(text)
+    reshaped = reshaped or compact != text
     # Formats need no context, but a token glued to a name hides it, so the
     # formats added since come last of all.
-    return _redact_mapping_values(_redact_added_formats(text))
+    result = _redact_mapping_values(_redact_added_formats(compact))
+    if not reshaped:
+        return result
+    # A cookie header withheld to the end of its line, or a withheld
+    # 'name:value', changes the statement around it for the statement rules:
+    # 'get(url, cookie=a; b=v' loses the ';' that ended the argument, and
+    # 'api_key:a=1; sid=v' becomes 'api_key:"[REDACTED]"; sid=v', an
+    # annotation they read on past the ';'; a bare marker left in an
+    # argument ('get(url, cookie=[REDACTED]') is one they quote. What they
+    # would change there on the next sanitization is changed now.
+    return _redact_mapping_values(_redact_python_assignments(result))
 
 
 def _sanitize_established(text: str) -> str:

@@ -480,13 +480,23 @@ def _option_value_span(
 _COOKIE_HEADER = re.compile(
     r"(?i)(?<![\w.-])(?P<key>set-cookie2?|cookie2?)(?P<sep>[ \t]*[:=][ \t]*)(?P<value>\S[^\r\n]*)"
 )
+# A cookie assigned with '=' that the established passes withheld whole as a
+# quoted marker, which a ',', ')', ']' or '}' then ends: an argument
+# ('get(url, cookie=session_cookie, timeout=5)') or a field. What follows it
+# is the next argument, not another cookie. (A ';' after it is: 'f(cookie=a;
+# sid=v)' leaves 'f(cookie="[REDACTED]"; sid=v)'.)
+_COOKIE_ARGUMENT = re.compile(r"(?P<quote>[\"'])\[REDACTED\](?P=quote)[ \t]*[,)\]}]")
 
 
 def _redact_cookie_headers(text: str) -> str:
     """Withhold the value of a Cookie or Set-Cookie header (see ``_COOKIE_HEADER``).
 
-    Runs after every established pass. The marker is left bare; the mapping
-    rules quote it after a colon ('Cookie: "[REDACTED]"').
+    Runs after every established pass. The marker is left bare: the mapping
+    rules quote it after a colon ('Cookie: "[REDACTED]"'), and after '=' the
+    statement rules, which run again once this pass changed the text, quote
+    it where it is an argument ('cookie="[REDACTED]"'). After '=', an
+    argument the established passes already withheld ends the value (see
+    ``_COOKIE_ARGUMENT``).
     """
 
     def header(match: re.Match[str]) -> str:
@@ -494,6 +504,8 @@ def _redact_cookie_headers(text: str) -> str:
         bare = raw.rstrip(" \t")
         if _ALPHANUMERIC.search(bare.replace(REDACTED, "")) is None:
             return match.group(0)  # already withheld: only markers and punctuation are left
+        if "=" in match.group("sep") and _COOKIE_ARGUMENT.match(bare):
+            return match.group(0)
         withheld: str = _redact_value(bare)
         return match.group("key") + match.group("sep") + withheld + raw[len(bare) :]
 

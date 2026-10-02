@@ -165,6 +165,42 @@ def test_pgp_private_key_body_is_withheld_after_a_credential_name(prefix, expect
 
 
 @pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # A cookie argument the statement rules withheld ends at the ',' or ')' after it.
+        (
+            "resp = session.get(url, cookie=session_cookie, timeout=5)",
+            f'resp = session.get(url, cookie="{REDACTED}", timeout=5)',
+        ),
+        (f"f(cookie={SECRET}, timeout=5)", f'f(cookie="{REDACTED}", timeout=5)'),
+        (
+            f"HttpRequest(method=GET, cookie=sid={SECRET}, timeout=5)",
+            f'HttpRequest(method=GET, cookie="{REDACTED}", timeout=5)',
+        ),
+        (f'x(cookie={{"a": "{SECRET}"}}, t=1)', f'x(cookie="{REDACTED}", t=1)'),
+        # Past a ';' come the other cookies: withheld to the end of the line,
+        # quoted where the statement rules read an argument.
+        (
+            f"Request(url=https://x.test/a, cookie=sid=abc; csrftoken={SECRET})",
+            f'Request(url=https://x.test/a, cookie="{REDACTED}"',
+        ),
+        (f"COOKIE=a=1; sid={SECRET}", f"COOKIE={REDACTED}"),
+        (f"cookie = sid=abc; csrftoken={SECRET}", f"cookie = {REDACTED}"),
+        (f"get(url, cookie=a; b={SECRET}\n& x", f'get(url, cookie="{REDACTED}"\n'),
+        # A withheld 'name:value' before a ';' reads as an annotation, as the statement rules read it.
+        (f"api_key:a=1; sid={SECRET}", f'api_key:"{REDACTED}"; sid= "{REDACTED}"'),
+        (f"api_key:a={SECRET}; sid=X", f'api_key:"{REDACTED}"; sid= "{REDACTED}"'),
+        (f'{{"log": "xapikey:a=1; sid={SECRET} end"}}', f'{{"log": "xapikey:"{REDACTED}"; sid= "{REDACTED}"'),
+    ],
+)
+def test_cookie_arguments_and_compact_values_are_stable_under_resanitization(text, expected):
+    # The cookie pass read a cookie argument's ', timeout=5)' as more cookies
+    # and left a bare marker after '=' that the next sanitization quoted; a
+    # withheld 'api_key:a=1' became an annotation whose ';' the next one read past.
+    assert _clean(text) == expected
+
+
+@pytest.mark.parametrize(
     ("text", "kept"),
     [
         (f'curl -H "api-key:{SECRET}" https://x.test', 'curl -H "api-key:'),
