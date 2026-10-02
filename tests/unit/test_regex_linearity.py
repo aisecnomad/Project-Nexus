@@ -285,6 +285,38 @@ def test_the_possessive_form_of_a_flagged_pattern_is_linear():
     assert time.perf_counter() - started < 1.0
 
 
+# Signature patterns are compiled by the signature loader, not at module level, so the
+# sweep above does not reach them. The matcher runs them on scanned files under a 100 ms
+# timeout: a superlinear one turns a few kilobytes of planted text into a timed-out,
+# incomplete file (exit 3) whose other evidence is lost.
+SIGNATURE_SHAPES: dict[str, Any] = {
+    "blanks after an option": lambda n: "stopWhen:" + " " * n + "x",
+    "lines after an option": lambda n: "stopWhen:" + "\n" * n + "x",
+    "repeated option objects": lambda n: "tools:{" * (n // 7),
+    "words in an option object": lambda n: "tools: {" + " tool" * (n // 5),
+    "blanks after a word in an option object": lambda n: "tools: { tool" + " " * n + "x",
+}
+
+
+@pytest.mark.parametrize("signature_id", ["framework.vercel-ai-sdk"])
+def test_signature_code_patterns_are_linear_on_planted_call_options(index, signature_id):
+    signature = index.get(signature_id)
+    assert signature is not None
+    compiled = [rx for signal in signature.signals if signal.type == "code" for rx in signal.bounded_compiled]
+    assert compiled, f"{signature_id} has no code patterns"
+    slow: list[str] = []
+    for rx in compiled:
+
+        def scan(text: str, rx: Any = rx) -> None:
+            list(rx.finditer(text, timeout=10.0))  # the matcher collects every match with finditer
+
+        for shape, build in SIGNATURE_SHAPES.items():
+            small, large = _timed(scan, build(SMALL), 3), _timed(scan, build(LARGE), 3)
+            if large >= MIN_SECONDS and large / max(small, 1e-9) >= MIN_GROWTH:
+                slow.append(f"/{rx.pattern}/ on {shape}: {small:.3f} s at {SMALL}, {large:.3f} s at {LARGE}")
+    assert not slow, "superlinear signature patterns:\n  " + "\n  ".join(slow)
+
+
 REDACTION_SHAPES: dict[str, Any] = {
     "letters": lambda n: "a" * n + "x",
     "blanks": lambda n: " " * n + "x",

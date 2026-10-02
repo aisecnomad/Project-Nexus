@@ -231,7 +231,13 @@ and tests, which call and test the products they detect.
   execution budget across the file's matching operations (2 seconds by default).
   Exceeding either limit raises an error and makes the scan incomplete; timeout
   is never treated as a clean non-match. A costly custom pattern should be
-  rewritten rather than relying on a larger budget.
+  rewritten rather than relying on a larger budget. Scanned files are untrusted,
+  so a pattern must stay linear on a planted file: do not put two unbounded
+  quantifiers over the same characters side by side (`:\s*\[?\s*` lets a run of
+  blanks be split every way; write `:\s*(?:\[\s*)?`), and do not let a gap such
+  as `\{[^}]*` run past the next place a match can start, or every repetition of
+  the prefix rescans the rest of the file.
+  `tests/unit/test_regex_linearity.py` times signature patterns on such shapes.
 * `domain` values: exact host, `*.suffix`, or `re:` regex (regexes may include a port, e.g. `re:.*:11434$`).
   Domain signals match the host only, never a path. A host that also serves non-AI traffic (Cloudflare's
   general `api.cloudflare.com`, the `huggingface.co` site) is corroboration only (weight 0.15 or less) in

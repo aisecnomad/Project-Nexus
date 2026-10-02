@@ -608,8 +608,10 @@ signatures:
       - type: code
         # In JavaScript the import binder decides these call options (stopWhen,
         # maxSteps and tools of a bound generateText/streamText call); isStepCount
-        # is the AI SDK 7 name of stepCountIs.
-        patterns: ['\b(?:ToolLoopAgent|Experimental_Agent)\s*\(', '\bmaxSteps\s*:\s*\d+', '\bstopWhen\s*:\s*\[?\s*(?:stepCountIs|isStepCount|hasToolCall)\s*\(', '\btools\s*:\s*\{[^}]*\btool\s*\(']
+        # is the AI SDK 7 name of stepCountIs. Scanned files are untrusted, so the
+        # patterns stay linear: blanks after "stopWhen:" are read once, and a tools
+        # object stops at the next "tools: {", where the next match attempt starts.
+        patterns: ['\b(?:ToolLoopAgent|Experimental_Agent)\s*\(', '\bmaxSteps\s*:\s*\d+', '\bstopWhen\s*:\s*(?:\[\s*)?(?:stepCountIs|isStepCount|hasToolCall)\s*\(', '\btools\s*:\s*\{(?:[^}t]|(?<=\w)t|t(?!ool\s*\(|ools\s*:\s*\{))*+\btool\s*\(']
         weight: 0.8
         agent_indicator: true
         capabilities: [tool-use]

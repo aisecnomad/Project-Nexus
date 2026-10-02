@@ -53,6 +53,12 @@ integrating them:
   warning, where such requests used to be skipped with exit 0. Known inference
   paths are no longer excluded as static assets (`/v1/chat/completions.css`),
   and `;name=value` path parameters are removed before the static-asset test.
+- `framework.vercel-ai-sdk`: the `stopWhen:` and `tools: { … tool(` code
+  patterns were quadratic on planted input. A 30 KB file with `stopWhen:`
+  followed by blanks timed out signature matching, so the file's evidence was
+  dropped and every scan of that repository exited 3. Both are linear now with
+  the same matches, and `tests/unit/test_regex_linearity.py` times the
+  signature's code patterns on such shapes.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 
