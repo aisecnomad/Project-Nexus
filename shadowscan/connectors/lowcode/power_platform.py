@@ -658,7 +658,7 @@ class PowerPlatformConnector(BaseConnector):
                 knowledge.append(str(c.get("name")))
             if ctype in (0, "0", 9, "9") or "kind: adaptivedialog" in low:
                 topics += 1
-            for m in blob_matches(self.index, blob[:100_000]):
+            for m in blob_matches(self.index, self._definition_blob(blob, "bot component")):
                 if m.signature_id not in {"platform.copilot-studio"}:
                     apply_matches(f, [m], weight_scale=0.6)
         return gen_ai, actions, knowledge, topics

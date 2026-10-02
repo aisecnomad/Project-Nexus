@@ -1,5 +1,13 @@
 # Connectors
 
+Definition analysis is bounded and its limits affect scan completeness. AWS
+Step Functions and n8n/Make/Zapier/Workato workflow matching accept up to
+1,048,576 characters per definition; exceeding that budget marks coverage
+incomplete. Other generic cloud blob matching rejects values above 400,000
+characters instead of silently analyzing a prefix. Power Platform bot-component
+matching uses its existing 300,000-character definition budget and reports
+exceeded coverage. Valid independent records continue to produce findings.
+
 Most connectors have a **live** mode (API credentials) and an **offline** mode
 (`input:` pointing at an export). `gateway.logs` reads supplied logs and
 `identity.jwt` reads supplied tokens. Live runs can persist sanitized records with

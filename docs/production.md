@@ -546,8 +546,11 @@ The [two-ruleset payload helper](https://github.com/aisecnomad/Project-Nexus/tre
 additionally prepares `Protect main` and `Require CI and CodeQL` together,
 removing bypass actors from both. The observed snapshots and proposed PUT
 bodies are in [.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
-Both rulesets remained disabled during this implementation readback. Refresh
-those observations and regenerate the bodies before applying them; the files
+The earlier checked-in snapshots recorded disabled rulesets. The October 2
+follow-up readback found both active and `main` protected, with `CI gate`,
+check app bindings, final-push approval and thread resolution still missing
+from the review/CI policy. `Protect main` still included bypass actors. Refresh
+the observations and regenerate the bodies before applying them; the files
 are preparation, not evidence of active enforcement. After administrator PUTs,
 compare each fresh full API response against its exact approved body:
 
@@ -673,6 +676,36 @@ These notes record behavior changes made while the 0.1.1 candidate was being
 hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 2 review follow-up
+
+Re-scan source before sharing previously generated reports: supported credential
+passphrase forms are now withheld from evidence across report formats. Redaction
+remains defense in depth; keep report storage private and review its contents.
+
+Workflow analysis no longer silently drops AI evidence beyond the previous AWS
+and automation prefix limits. Definitions exceeding the supported analysis
+budget make coverage incomplete while retaining available observations. Treat
+exit 3 as a failed coverage gate and rerun with a supported, complete export;
+an empty partial result cannot establish the absence of AI integrations.
+
+Generic code-execution and autonomy idioms without supported agent/tool context
+remain potential capabilities. Finding scores can decrease when the only support
+was unrelated build or worker code. Review changed capabilities and establish a
+fresh baseline before adopting risk thresholds. Corroboration of generic idioms
+is still at file scope when actual AI calls exist; it does not prove model-output
+data flow to every execution sink. Review that connection before enforcement.
+Existing MCP registration and
+limit regressions continue to distinguish executable registrations from examples
+and propagate incomplete analysis.
+
+Ruleset preparation now rejects a conflicting existing check app binding. Generate
+the proposed policy from current settings using the
+[administrator procedure](operations/merge-policy.md), preserve stronger controls,
+and verify fresh readback after applying it. The current integration supports
+repository changes and ruleset reads, but cannot apply administration writes.
+Neither authored regressions nor this settings preparation establishes independent
+human review, measured field accuracy or live tenant acceptance.
 
 ### October 2 integrity and capability corrections
 

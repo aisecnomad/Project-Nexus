@@ -12,6 +12,7 @@ from requests import ConnectionError as RequestsConnectionError
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.cloud.azure import AI_ROLE_IDS, AzureConnector
+from shadowscan.connectors.cloud.common import MAX_BLOB_CHARS
 from shadowscan.models import ScanStats
 from shadowscan.utils.http import HttpError
 from shadowscan.utils.redaction import REDACTED, sanitize
@@ -24,6 +25,28 @@ def context(index, **config):
     ctx = ConnectorContext(config=config, index=index)
     ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
     return ctx
+
+
+@pytest.mark.parametrize("padding", [401_000, 1_100_000])
+def test_azure_oversized_logicapp_definition_is_incomplete_and_preserves_neighbours(index, padding):
+    connector = AzureConnector(context(index))
+    oversized = {
+        "_kind": "logicapp-definition",
+        "id": "/subscriptions/sub/providers/Microsoft.Logic/workflows/oversized",
+        "name": "oversized",
+        "definition": {"description": "x" * padding, "url": "https://api.openai.com/v1/responses"},
+    }
+    observed = {
+        **oversized,
+        "id": "/subscriptions/sub/providers/Microsoft.Logic/workflows/observed",
+        "name": "observed",
+        "definition": {"url": "https://api.openai.com/v1/responses"},
+    }
+    assert padding > MAX_BLOB_CHARS
+    findings = list(connector.analyze([oversized, observed]))
+    assert [finding.resource for finding in findings] == [observed["id"]]
+    assert connector.ctx.stats.incomplete
+    assert connector.ctx.stats.warnings
 
 
 def test_azure_live_deployments_keep_collected_account(index, monkeypatch):

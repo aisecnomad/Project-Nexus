@@ -2187,12 +2187,19 @@ class FilesystemConnector(BaseConnector):
             else self.index.match_code(content_text, lang)
         )
         bound, unbound = self._bound_matches(file, content_text, ignored, is_local_module)
-        # Execution sinks describe a model-driven capability only
-        # when this same file invokes a model, framework or
-        # tool-calling protocol; elsewhere they are build tooling.
+        # Imports and lexical framework lookalikes cannot connect ordinary
+        # worker/build code to an agent. In bound languages, require actual
+        # source-call evidence; rejected lexical matches (such as maxSteps in
+        # a non-AI options object) must not restore that connection.
         file_uses_llm = any(
-            m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
+            m.signal.type == "code" and m.signature.category in _LLM_CATEGORIES for m in bound
         )
+        if lang not in {"python", "javascript"}:
+            imported_signatures = {m.signature_id for m in imports}
+            file_uses_llm = file_uses_llm or any(
+                m.signature.category in _LLM_CATEGORIES and m.signature_id in imported_signatures
+                for m in code_matches
+            )
         self._record_code_matches(file, code_matches, file_uses_llm, bound, unbound=unbound)
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
@@ -2307,6 +2314,13 @@ class FilesystemConnector(BaseConnector):
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
+            if m.signature.category == "heuristic" and not file_uses_llm:
+                # A project's dependency or an agent in another file cannot
+                # turn ordinary build scripts, worker limits or schedulers
+                # into observed model-driven capabilities. Keep the idiom
+                # as potential evidence; bound AI source calls in this file
+                # provide the minimum context for a scored capability.
+                m.extra["source_capabilities"] = []
             if file.lang not in {"python", "javascript"}:
                 # Other languages have lexical filtering but
                 # no import binder. Their code signatures need

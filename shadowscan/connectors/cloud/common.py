@@ -35,6 +35,7 @@ LLM_SCOPE_SIGNATURES = frozenset(
 # Malformed export or provider fields raise these while a record is analysed;
 # the record is reported as invalid and the rest of the scan continues.
 RECORD_ERRORS = (ValueError, TypeError, KeyError, AttributeError)
+MAX_BLOB_CHARS = 400_000
 
 K = TypeVar("K", bound=Hashable)
 
@@ -237,9 +238,19 @@ def scan_blob(
     location: str | None = None,
     weight_scale: float = 0.8,
 ) -> int:
-    """Serialise an object and run text signatures over it."""
-    text = obj if isinstance(obj, str) else json.dumps(obj, default=str)
-    matches = blob_matches(index, text[:400_000])
+    """Match a complete bounded value; caller record guards report oversized inputs."""
+    chunks: list[str] = []
+    size = 0
+    encoded = (obj,) if isinstance(obj, str) else json.JSONEncoder(default=str).iterencode(obj)
+    for chunk in encoded:
+        size += len(chunk)
+        if size > MAX_BLOB_CHARS:
+            # Reject before matching a prefix that could conceal later AI
+            # actions. Connector record guards mark this observation incomplete
+            # and continue with the next independent record.
+            raise ValueError("cloud definition exceeds the signature analysis character limit")
+        chunks.append(chunk)
+    matches = blob_matches(index, "".join(chunks))
     return apply_matches(finding, matches, location=location, weight_scale=weight_scale)
 
 

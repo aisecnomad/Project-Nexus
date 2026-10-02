@@ -4,6 +4,12 @@ Low-code connectors discover AI agents, bots, and automation workflows on
 citizen-developer platforms like Power Platform, Salesforce, ServiceNow,
 and workflow automation tools.
 
+n8n, Make, Zapier and Workato signature analysis accepts definitions up to
+1,048,576 characters. Larger definitions retain bounded observations and mark
+the scan incomplete; they cannot produce a complete empty result. Power
+Platform bot components share its 300,000-character definition budget and also
+report incomplete coverage when the limit is exceeded.
+
 !!! info "Live and offline"
     All low-code connectors support both live API collection and offline
     export analysis.

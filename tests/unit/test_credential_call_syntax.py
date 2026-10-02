@@ -96,8 +96,21 @@ def test_constructor_context_withholds_environment_literal_fallback(expression, 
         'AzureKeyCredential(Environment.GetEnvironmentVariable("K"))',
         "94 | Cosmetic | Spelling error on Login ('log|n')",
         'get_password ("admin")',
+        'get_password("correct horse battery staple")',
+        'ordinaryCall("correct horse battery staple")',
         'requireAuth /*synthetic comment*/ ("admin")',
         'HTTPBasicAuth (("user"), ("${PASSWORD}"))',
+        'HTTPBasicAuth("user", f"{password}")',
+        'HTTPBasicAuth("user", "${PASSWORD}")',
+        'HTTPBasicAuth("user", "<your password>")',
+        'HTTPBasicAuth("user", "[REDACTED]")',
+        'customAuth("user", "violet://lantern")',
+        'customAuth("user", "VIOLET_LANTERN")',
+        'get_password("VIOLET_LANTERN")',
+        'Credentials.create("user", "violet lantern")',
+        'Credentials.of("user", "violet://lantern")',
+        'other.basic("user", "violet lantern")',
+        'Credentials.basic("user", "${PASSWORD}")',
         f'AzureKeyCredential(str("{SYNTHETIC}"))',
     ],
 )
@@ -110,6 +123,43 @@ def test_authentication_pair_keeps_user_and_withholds_wrapped_password():
     safe = sanitize_text(source)
     assert '"user"' in safe
     assert "hunter2hunter" not in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "callee",
+    ["HTTPBasicAuth", "aiohttp.BasicAuth", "smtp.login", "Credentials.basic", "okhttp3.Credentials.basic"],
+)
+@pytest.mark.parametrize(
+    "password",
+    [
+        "correct horse battery staple",
+        "violet\tlantern meadow",
+        "violet://lantern",
+        "VIOLET_LANTERN",
+        "/violet/lantern.txt",
+        "!?;#@",
+        "sample",
+        " \t ",
+    ],
+)
+def test_authentication_constructor_withholds_literal_passphrases(callee, password):
+    source = f'{callee}("service-user", "{password}")\nnext_call("ordinary")'
+    safe = sanitize_text(source)
+    assert password not in safe
+    assert REDACTED in safe
+    assert '"service-user"' in safe
+    assert safe.endswith('\nnext_call("ordinary")')
+    assert source.count("\n") == safe.count("\n")
+    assert sanitize_text(safe) == safe
+
+
+def test_known_password_position_withholds_static_material_beside_interpolation():
+    source = 'HTTPBasicAuth("service-user", f"violet://lantern{suffix}")'
+    safe = sanitize_text(source)
+    assert "violet://lantern" not in safe
+    assert REDACTED in safe
+    assert '"service-user"' in safe
     assert sanitize_text(safe) == safe
 
 

@@ -41,6 +41,22 @@ from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, truncate
 
+MAX_DEFINITION_CHARS = 1024 * 1024
+
+
+def _definition_text(value: Any) -> str:
+    """Serialize at most the analysis budget plus one overflow marker character."""
+    chunks: list[str] = []
+    remaining = MAX_DEFINITION_CHARS + 1
+    for chunk in json.JSONEncoder(default=str).iterencode(value):
+        chunks.append(chunk[:remaining])
+        remaining -= len(chunk)
+        if remaining <= 0:
+            break
+    # _workflow_finding reports incomplete coverage if the extra character is
+    # present. Never silently discard it before that completeness check.
+    return "".join(chunks)
+
 
 class _AutomationBase(BaseConnector):
     surface: ClassVar[Surface] = Surface.LOWCODE
@@ -84,6 +100,12 @@ class _AutomationBase(BaseConnector):
         hints: list[Match] | None = None,
     ) -> Finding | None:
         """One finding per AI-enabled definition; ``hints`` (model or step names) count at half weight."""
+        if len(blob) > MAX_DEFINITION_CHARS:
+            self.ctx.warn(
+                f"{self.name}: workflow definition exceeds {MAX_DEFINITION_CHARS} characters; "
+                "only its start was matched against signatures"
+            )
+            blob = blob[:MAX_DEFINITION_CHARS]
         matches = blob_matches(self.index, blob)
         if not matches and not ai_steps:
             return None
@@ -237,10 +259,9 @@ class N8nConnector(_AutomationBase):
         f = self._workflow_finding(
             wid=str(workflow_id),
             name=w.get("name") or "Unnamed workflow",
-            blob=json.dumps(
+            blob=_definition_text(
                 {"nodes": [{"type": n.get("type"), "parameters": n.get("parameters")} for n in nodes]},
-                default=str,
-            )[:300_000],
+            ),
             owner=get_path(w, "homeProject.name", "shared.0.project.name", "owner", "createdBy"),
             account=self.ctx.get("api_url", env="N8N_API_URL"),
             active=w.get("active"),
@@ -420,7 +441,7 @@ class MakeConnector(_AutomationBase):
         return self._workflow_finding(
             wid=str(rec.get("id") or rec.get("agentId") or rec.get("name")),
             name=str(rec.get("name")),
-            blob=json.dumps(rec, default=str)[:100_000],
+            blob=_definition_text(rec),
             owner=str(rec.get("createdBy") or rec.get("ownerId") or "") or None,
             account=str(rec.get("_team") or rec.get("teamId") or "") or None,
             active=rec.get("active", True),
@@ -456,7 +477,7 @@ class MakeConnector(_AutomationBase):
         return self._workflow_finding(
             wid=str(rec.get("id") or rec.get("name")),
             name=str(rec.get("name") or bp.get("name") if isinstance(bp, dict) else rec.get("name")),
-            blob=json.dumps(bp, default=str)[:300_000],
+            blob=_definition_text(bp),
             owner=str(
                 rec.get("createdByUser", {}).get("name")
                 if isinstance(rec.get("createdByUser"), dict)
@@ -571,7 +592,7 @@ class ZapierConnector(_AutomationBase):
                 if isinstance(steps, list)
                 else []
             )
-        blob = json.dumps(rec, default=str)[:100_000]
+        blob = _definition_text(rec)
         ai_steps = [
             s
             for s in steps_list
@@ -680,7 +701,11 @@ class WorkatoConnector(_AutomationBase):
                 p,
             )
         ]
-        blob = (code if isinstance(code, str) else json.dumps(code)) + " " + json.dumps(config, default=str)
+        blob = (
+            (code[: MAX_DEFINITION_CHARS + 1] if isinstance(code, str) else _definition_text(code))
+            + " "
+            + _definition_text(config)
+        )
         parsed: Any = {}
         if isinstance(code, str) and code.startswith("{"):
             try:
@@ -692,7 +717,7 @@ class WorkatoConnector(_AutomationBase):
         return self._workflow_finding(
             wid=str(r.get("id") or r.get("name")),
             name=str(r.get("name")),
-            blob=blob[:300_000],
+            blob=blob,
             owner=str(r.get("author_name") or r.get("user_id") or "") or None,
             account=str(r.get("folder_id") or "") or None,
             active=r.get("running"),

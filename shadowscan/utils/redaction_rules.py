@@ -316,6 +316,18 @@ def _credential_literal(value: str, *, positional: bool) -> bool:
     return positional or _opaque(value)
 
 
+def _password_literal(value: str) -> bool:
+    """A literal in a known password position, independent of its character shape.
+
+    Only empty values, existing markers/fingerprints and explicit references
+    are retained. Words, URLs, paths and punctuation can all be passwords.
+    """
+    stripped = value.strip()
+    if not value or stripped == REDACTED or _FINGERPRINT.fullmatch(stripped):
+        return False
+    return _REFERENCE.search(value) is None or bool(_REFERENCE.sub("", value).strip())
+
+
 def _interpolated(prefix: str, quote: str, value: str) -> bool:
     """Whether a literal with ``prefix`` and ``quote`` assembles its text from expressions.
 

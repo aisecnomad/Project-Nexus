@@ -5,6 +5,21 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 2 review follow-up
+
+- Credential arguments retain redaction for supported passphrase forms in
+  source evidence and reports. Regenerate earlier reports before sharing them.
+- AWS and low-code definition analysis now retains accepted evidence beyond
+  the former silent prefix limits and marks exceeded analysis budgets incomplete.
+  Valid neighboring observations remain available.
+- Generic source idioms require supported agent/tool context before contributing
+  observed capabilities; unrelated build code remains potential evidence.
+- Ruleset preparation preserves existing check authority and rejects conflicting
+  app bindings. The administrator procedure generates its update from a fresh
+  readback rather than overwriting live settings with a static example.
+- These are regression-tested implementation changes. Independent human review,
+  representative holdout labels and live tenant acceptance remain prerequisites.
+
 ### October 2 integrity and capability corrections
 
 - Selected source and configuration files use strict supported text decoding,

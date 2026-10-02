@@ -58,7 +58,7 @@ from shadowscan.connectors.cloud.credentials import (
     configure_aws_session,
     reject_instance_profile_sources,
 )
-from shadowscan.connectors.common import apply_matches, model_matches
+from shadowscan.connectors.common import apply_matches, blob_matches, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.identity import has_aws_account_scope
 from shadowscan.utils.safe_json import strict_json_loads
@@ -103,6 +103,9 @@ CLOUDTRAIL_EVENTS = [
     "ChatSync",
 ]
 MAX_LIST_PAGES = 1000
+# Step Functions accepts definitions up to 1 MiB. Offline records may exceed
+# that provider limit; retain a bounded prefix and disclose the lost coverage.
+MAX_STATE_MACHINE_DEFINITION_CHARS = 1024 * 1024
 # Representative AI operations, not a complete IAM action catalogue. These
 # establish potential access from NotAction; they never establish effective
 # authorization or exhaustively evaluate a policy.
@@ -793,7 +796,7 @@ class AwsConnector(BaseConnector):
             "name": sm.get("name"),
             "stateMachineArn": sm["stateMachineArn"],
             "roleArn": d.get("roleArn"),
-            "definition": definition[:200_000],
+            "definition": definition,
             "creationDate": str(sm.get("creationDate")),
         }
 
@@ -1665,9 +1668,17 @@ class AwsConnector(BaseConnector):
             first_seen=rec.get("creationDate"),
         )
         definition = rec.get("definition") or ""
+        if len(definition) > MAX_STATE_MACHINE_DEFINITION_CHARS:
+            self.ctx.warn(
+                "cloud.aws: Step Functions definition exceeds "
+                f"{MAX_STATE_MACHINE_DEFINITION_CHARS} characters; only its start was analysed"
+            )
+            definition = definition[:MAX_STATE_MACHINE_DEFINITION_CHARS]
         if "bedrock" not in definition.lower() and "sagemaker" not in definition.lower():
             return None
-        scan_blob(self.index, f, definition, location=arn)
+        # The generic cloud blob helper has a smaller bound; this definition
+        # has already been checked against the Step Functions-specific budget.
+        apply_matches(f, blob_matches(self.index, definition), location=arn, weight_scale=0.8)
         if "arn:aws:states:::bedrock" in definition or "bedrock:invokeModel" in definition:
             f.add_model_provider("provider.aws-bedrock")
             f.add_evidence(

@@ -18,6 +18,104 @@ from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpError
 
 
+def _automation_definition(connector, padding):
+    """A generic HTTP action whose provider occurs after a large ordinary field."""
+    body = {"content": "x" * padding, "url": "https://api.openai.com/v1/responses"}
+    if connector == "lowcode.n8n":
+        return {
+            "id": "workflow",
+            "name": "Daily sync",
+            "nodes": [{"name": "HTTP Request", "type": "n8n-nodes-base.httpRequest", "parameters": body}],
+        }
+    if connector == "lowcode.make":
+        return {
+            "id": "workflow",
+            "name": "Daily sync",
+            "blueprint": {"flow": [{"module": "http:Action", **body}]},
+        }
+    if connector == "lowcode.zapier":
+        return {"id": "workflow", "title": "Daily sync", "steps": ["Webhooks"], **body}
+    return {"id": "workflow", "name": "Daily sync", "code": json.dumps(body), "config": []}
+
+
+@pytest.mark.parametrize("connector", ["lowcode.n8n", "lowcode.make", "lowcode.zapier", "lowcode.workato"])
+@pytest.mark.production_budgets
+def test_automation_finds_provider_after_old_definition_prefix(tmp_path, run_connector, connector):
+    source = tmp_path / "workflow.json"
+    source.write_text(json.dumps([_automation_definition(connector, 301_000)]))
+    findings, ctx = run_connector(connector, input=str(source))
+    assert len(findings) == 1
+    assert "provider.openai" in findings[0].model_providers
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("connector", ["lowcode.n8n", "lowcode.make", "lowcode.zapier", "lowcode.workato"])
+def test_automation_definition_budget_marks_incomplete_and_preserves_neighbours(
+    tmp_path, run_connector, connector
+):
+    oversized = _automation_definition(connector, automation.MAX_DEFINITION_CHARS + 1)
+    observed = {**_automation_definition(connector, 10), "id": "observed"}
+    source = tmp_path / "workflows.json"
+    source.write_text(json.dumps([oversized, observed]))
+    findings, ctx = run_connector(connector, input=str(source))
+    assert len(findings) == 1
+    assert findings[0].resource.endswith(":observed")
+    assert ctx.stats.incomplete
+    assert any("definition exceeds" in warning for warning in ctx.stats.warnings)
+
+
+def test_make_agent_matches_late_provider_and_reports_definition_budget(tmp_path, run_connector):
+    source = tmp_path / "agents.json"
+    source.write_text(
+        json.dumps(
+            [
+                {
+                    "_kind": "ai-agent",
+                    "id": "late",
+                    "name": "Assistant",
+                    "systemPrompt": "x" * 101_000,
+                    "url": "https://api.openai.com/v1/responses",
+                },
+                {
+                    "_kind": "ai-agent",
+                    "id": "oversized",
+                    "name": "Assistant",
+                    "systemPrompt": "x" * (automation.MAX_DEFINITION_CHARS + 1),
+                },
+            ]
+        )
+    )
+    findings, ctx = run_connector("lowcode.make", input=str(source))
+    assert len(findings) == 2
+    assert "provider.openai" in findings[0].model_providers
+    assert ctx.stats.incomplete
+    assert any("definition exceeds" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("padding, incomplete", [(101_000, False), (301_000, True)])
+def test_power_platform_bot_component_uses_disclosed_definition_budget(
+    tmp_path, run_connector, padding, incomplete
+):
+    records = [
+        {"_kind": "bot", "botid": "bot", "name": "Assistant"},
+        {
+            "_kind": "botcomponent",
+            "botcomponentid": "component",
+            "_parentbotid_value": "bot",
+            "data": "x" * padding + " https://api.openai.com/v1/responses",
+        },
+    ]
+    source = tmp_path / "bot.json"
+    source.write_text(json.dumps(records))
+    findings, ctx = run_connector("lowcode.power-platform", input=str(source))
+    assert len(findings) == 1
+    assert ctx.stats.incomplete is incomplete
+    if incomplete:
+        assert any("bot component definition exceeds" in warning for warning in ctx.stats.warnings)
+    else:
+        assert "provider.openai" in findings[0].model_providers
+
+
 def _live(index, cls, responses, **config):
     connector = cls(ConnectorContext(index=index, config=config))
     connector._auth = Mock()

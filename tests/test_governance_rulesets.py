@@ -87,6 +87,34 @@ def test_plan_keeps_stricter_review_parameters_additional_checks_and_unknown_rul
     assert _rule(payload, "future_policy") == source["rules"][-1]
 
 
+@pytest.mark.parametrize("context", ["CI gate", "analyze", "test (3.11)", "test (3.12)"])
+@pytest.mark.parametrize("integration", [12345, True, 15368.0, "15368", -1, {}])
+def test_plan_refuses_conflicting_or_malformed_required_check_binding(context: str, integration: Any) -> None:
+    source = _snapshot()
+    checks = _rule(source, "required_status_checks")["parameters"]["required_status_checks"]
+    check = next((item for item in checks if item["context"] == context), None)
+    if check is None:
+        check = {"context": context}
+        checks.append(check)
+    check["integration_id"] = integration
+    original = copy.deepcopy(source)
+
+    with pytest.raises(ValueError, match="conflicting app binding"):
+        prepare_payload(source, ruleset_id=23913372)
+
+    assert source == original
+
+
+@pytest.mark.parametrize("integration", [None, GITHUB_ACTIONS_APP_ID])
+def test_plan_binds_unbound_checks_and_preserves_existing_actions_binding(integration: int | None) -> None:
+    source = _snapshot()
+    check = _rule(source, "required_status_checks")["parameters"]["required_status_checks"][0]
+    check["integration_id"] = integration
+    payload = prepare_payload(source, ruleset_id=23913372)
+    required = _rule(payload, "required_status_checks")["parameters"]["required_status_checks"]
+    assert all(item["integration_id"] == GITHUB_ACTIONS_APP_ID for item in required)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

@@ -27,6 +27,7 @@ from shadowscan.utils.redaction_rules import (
     _interpolated,
     _kept_value,
     _name_before,
+    _password_literal,
     _placeholder,
     _sensitive_assignment_key,
 )
@@ -379,7 +380,7 @@ def _redact_credential_calls(text: str) -> str:
     # name withholds, once per kind of name.
     lexed: dict[int, tuple[list[tuple[int, int]], str]] = {}
     judged: dict[int, tuple[bool, list[tuple[int, int]]]] = {}
-    read_literals: set[tuple[int, int, tuple[int, ...]]] = set()
+    read_literals: set[tuple[int, int, tuple[int, ...], bool]] = set()
     for call in calls:
         if call.start() < skip_until:
             continue
@@ -404,14 +405,17 @@ def _redact_credential_calls(text: str) -> str:
         if callee.lower() == "login" and argument_start - call.start() > len(callee) + 1:
             level = min(level, 1)
         known = _sdk_credential_positions(callee)
-        if level or known:
+        authentication = _authentication_password_call(callee)
+        if level or known or authentication:
             if state in {"nesting", "length"}:
                 raise SanitizationLimitError(f"credential call {state} limit exceeded")
             # Literal credentials do not skip nested calls: a call inside
             # another argument can still pair a credential key with a value.
-            if (argument_start, level, known) not in read_literals:
-                read_literals.add((argument_start, level, known))
-                literals.extend(_credential_literals(lexer, spans, state == "closed", level, known))
+            if (argument_start, level, known, authentication) not in read_literals:
+                read_literals.add((argument_start, level, known, authentication))
+                literals.extend(
+                    _credential_literals(lexer, spans, state == "closed", level, known, authentication)
+                )
         if argument_start not in judged:
             judged[argument_start] = _credential_call_values(text, spans, state == "closed")
         sensitive, call_values = judged[argument_start]
@@ -512,6 +516,31 @@ _LOOKUP_VERBS = frozenset(
 # Factory methods take their receiver's name: Credentials.basic("user", "v"),
 # AwsBasicCredentials.create("id", "v") and Ruby's Cohere::Client.new("v").
 _CALLEE_FACTORIES = frozenset({"basic", "create", "from", "new", "of"})
+# These authentication constructors take (username, password). Their second
+# literal is a password regardless of whether it resembles a URL, environment
+# name, file path or readable prose. Generic '*Auth' callees retain the usual
+# conservative literal heuristics; an arbitrary 'login' name gains no authority.
+_PASSWORD_CONSTRUCTORS = frozenset(
+    {
+        "HTTPBasicAuth",
+        "HTTPDigestAuth",
+        "BasicAuth",
+        "BasicAuthenticationInterceptor",
+        "UsernamePasswordCredentials",
+    }
+)
+
+
+def _authentication_password_call(name: str) -> bool:
+    return name.rpartition(".")[2] in _PASSWORD_CONSTRUCTORS or name in {
+        "Credentials.basic",
+        "okhttp3.Credentials.basic",
+        "smtp.login",
+        "smtplib.SMTP.login",
+        "smtplib.SMTP_SSL.login",
+    }
+
+
 # Well-known LLM SDK calls that take a credential at a fixed position although
 # no word of their name names one. Each lists the zero-based positions where
 # its overloads take the key as a string; the first of them that holds a string
@@ -678,6 +707,7 @@ def _credential_literals(
     closed: bool,
     level: int,
     known: tuple[int, ...] = (),
+    authentication: bool = False,
 ) -> list[tuple[int, int]]:
     """Spans of credential string literals among one credential-named or well-known SDK call's arguments.
 
@@ -685,6 +715,8 @@ def _credential_literals(
     candidate positions of a well-known SDK call's credential argument; the
     literal at the first of them that holds one is withheld as a credential
     constructor's is, whatever the level. At level 0 no other argument is read.
+    ``authentication`` establishes the second positional literal as a password
+    whose shape cannot exempt it from redaction.
 
     A literal that starts a longer expression ("key" + suffix) withholds the
     whole argument. Recognized unterminated literals withhold the bounded
@@ -712,7 +744,8 @@ def _credential_literals(
     found: list[tuple[int, int]] = []
     for index, end, literal, named, bounded, wrappers in indexed:
         sdk = not named and index == target
-        if literal is None or not (level or sdk):
+        password = authentication and not named and index == 1
+        if literal is None or not (level or sdk or password):
             continue
         opening = literal.start("quote")
         char = text[opening]
@@ -735,17 +768,24 @@ def _credential_literals(
             # Reference fields alone publish no credential. Opaque static
             # material beside them is confidential even when the value is
             # computed at runtime. Never join fragments across a field.
-            if not any(_credential_literal(part, positional=False) for part in material.split()):
+            if password:
+                if not material.strip() or not _password_literal(material):
+                    continue
+            elif not any(_credential_literal(part, positional=False) for part in material.split()):
                 continue
         positional = sdk or (level == 2 and not named and not (index == 0 and positional_count > 1))
         # Multiline literals may wrap a credential across physical lines. Do
         # not let those line breaks hide its shape or its constructor context;
         # placeholders are checked before compacting their separate words.
         tested = "".join(value.split()) if multiline else value
-        if multiline and not interpolated and _placeholder(value):
+        if multiline and not interpolated and not password and _placeholder(value):
             continue
-        if not interpolated and not _credential_literal(tested, positional=positional):
-            continue
+        if not interpolated:
+            if password:
+                if not _password_literal(value):
+                    continue
+            elif not _credential_literal(tested, positional=positional):
+                continue
         conversion = _LITERAL_CONVERSION.match(text, stop, end)
         tail = _call_argument_start(text, conversion.end() if conversion else stop, end)
         for _ in range(wrappers):

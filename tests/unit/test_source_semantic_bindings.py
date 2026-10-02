@@ -9,6 +9,7 @@ import pytest
 from shadowscan.connectors.code import source_semantics
 from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded
 from shadowscan.models import Kind
+from shadowscan.risk import assess
 from shadowscan.signatures.matcher import MatchTimeoutError
 
 
@@ -52,7 +53,8 @@ def test_supporting_heuristics_require_ai_evidence_and_repetition_is_grouped(tmp
     baseline = _scan(tmp_path, run_connector, source)
     project = next(f for f in baseline if f.resource_type == "project")
     assert project.kind == Kind.FRAMEWORK_USAGE
-    assert "autonomous" in project.capabilities
+    assert "autonomous" not in project.capabilities
+    assert "autonomous" in project.metadata["potential_capabilities"]
     for number in range(12):
         (tmp_path / f"worker_{number}.py").write_text(source)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
@@ -60,6 +62,61 @@ def test_supporting_heuristics_require_ai_evidence_and_repetition_is_grouped(tmp
     assert not ctx.stats.incomplete
     assert repeated.kind == Kind.FRAMEWORK_USAGE
     assert repeated.confidence == project.confidence
+
+
+@pytest.mark.parametrize("ai_context", ["dependency", "separate-agent", "unused-import"])
+@pytest.mark.parametrize(
+    ("filename", "source"),
+    [
+        (
+            "build.py",
+            'import subprocess\ncommand = ["make", "all"]\n'
+            "max_iterations = 20\nsubprocess.run(command, check=True)\n",
+        ),
+        (
+            "build.ts",
+            'import { execSync } from "node:child_process";\n'
+            'const command = "make all";\nconst options = { maxSteps: 20 };\nexecSync(command);\n',
+        ),
+    ],
+)
+def test_dependency_or_separate_agent_cannot_score_unrelated_build_capabilities(
+    tmp_path, run_connector, ai_context, filename, source
+):
+    (tmp_path / "requirements.txt").write_text("langchain\n")
+    if ai_context == "unused-import":
+        source = (
+            "from langchain.agents import create_agent\n"
+            if filename.endswith(".py")
+            else 'import { createAgent } from "langchain";\n'
+        ) + source
+    (tmp_path / filename).write_text(source)
+    if ai_context == "separate-agent":
+        (tmp_path / "agent.py").write_text(
+            'from agents import Agent\nagent = Agent(name="summarizer", tools=[])\n'
+        )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    project = next(f for f in findings if f.resource_type == "project")
+    assert not ctx.stats.incomplete
+    assert not {"autonomous", "code-exec"} & set(project.capabilities)
+    assert {"autonomous", "code-exec"} <= set(project.metadata["potential_capabilities"])
+    assert not any(
+        factor.id in {"capability:autonomous", "capability:code-exec"} for factor in assess(project).factors
+    )
+
+
+def test_ai_source_context_preserves_supported_execution_capability(tmp_path, run_connector):
+    findings = _scan(
+        tmp_path,
+        run_connector,
+        "import subprocess\nfrom langchain.agents import create_agent\n"
+        "def run_command(command):\n    return subprocess.run(command, shell=True)\n"
+        "agent = create_agent(model, [run_command])\n",
+    )
+    project = next(f for f in findings if f.resource_type == "project")
+    assert project.kind == Kind.AGENT
+    assert {"tool-use", "code-exec"} <= set(project.capabilities)
+    assert any(factor.id == "capability:code-exec" for factor in assess(project).factors)
 
 
 @pytest.mark.parametrize(

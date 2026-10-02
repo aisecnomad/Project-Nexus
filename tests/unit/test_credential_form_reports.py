@@ -7,6 +7,7 @@ every report. The finding must still be reported with the value withheld.
 
 from __future__ import annotations
 
+import html
 import io
 import json
 import random
@@ -148,6 +149,47 @@ CASES = {
         "pair.py",
         (f'import requests\nrequests.get("https://api.openai.com/v1/models", auth=("svc", "{PASSWORD}"))\n'),
         PASSWORD,
+    ),
+    "python-auth-passphrase": (
+        "basic.py",
+        (
+            "import requests\nfrom requests.auth import HTTPBasicAuth\n"
+            f'requests.post("{AZURE}openai/deployments", '
+            'auth=HTTPBasicAuth("svc", "correct horse battery staple"))\n'
+        ),
+        "correct horse battery staple",
+    ),
+    "python-auth-opposite-quote": (
+        "pair.py",
+        (f'import requests\nrequests.get("{AZURE}openai/deployments", auth=("svc", "violet\'lantern"))\n'),
+        "violet'lantern",
+    ),
+    "python-auth-url-password": (
+        "basic.py",
+        (
+            "import requests\nfrom requests.auth import HTTPBasicAuth\n"
+            f'requests.post("{AZURE}openai/deployments", '
+            'auth=HTTPBasicAuth("svc", "violet://lantern"))\n'
+        ),
+        "violet://lantern",
+    ),
+    "python-auth-uppercase-password": (
+        "basic.py",
+        (
+            "import requests\nfrom requests.auth import HTTPBasicAuth\n"
+            f'requests.post("{AZURE}openai/deployments", '
+            'auth=HTTPBasicAuth("svc", "VIOLET_LANTERN"))\n'
+        ),
+        "VIOLET_LANTERN",
+    ),
+    "python-auth-path-password": (
+        "basic.py",
+        (
+            "import requests\nfrom requests.auth import HTTPBasicAuth\n"
+            f'requests.post("{AZURE}openai/deployments", '
+            'auth=HTTPBasicAuth("svc", "/violet/lantern.txt"))\n'
+        ),
+        "/violet/lantern.txt",
     ),
     "bearer-token-helper": (
         "bearer.ts",
@@ -447,7 +489,7 @@ def test_credential_forms_never_reach_any_report(tmp_path, index, case):
     assert set(outputs) == {"json", "sarif", "csv", "markdown", "html", "table"}
     for name, output in outputs.items():
         for secret in secrets:
-            assert secret not in output, name
+            assert secret not in html.unescape(output), name
         assert _GROWN_MARKER.search(output) is None, name
     # The credential line itself is evidence: the report shows it, withheld.
     assert REDACTED in outputs["json"]
@@ -474,6 +516,11 @@ def test_a_callee_that_names_nothing_leaves_the_scan_complete(tmp_path, index):
         "json-value-before-credential-name",
         "yaml-value-before-credential-name",
         "json-brace-inside-credential-value",
+        "python-auth-passphrase",
+        "python-auth-opposite-quote",
+        "python-auth-url-password",
+        "python-auth-uppercase-password",
+        "python-auth-path-password",
     ],
 )
 def test_fixed_credential_forms_are_redacted_in_actual_cli_json(tmp_path, scan_secrets, case):

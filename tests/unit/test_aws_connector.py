@@ -10,7 +10,7 @@ import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
-from shadowscan.connectors.cloud.aws import AwsConnector
+from shadowscan.connectors.cloud.aws import MAX_STATE_MACHINE_DEFINITION_CHARS, AwsConnector
 from shadowscan.models import ScanStats
 from shadowscan.utils.redaction import REDACTED
 
@@ -66,6 +66,61 @@ def aws(index, service):
     connector._session_ = Mock()
     connector._client = Mock(return_value=Mock(list_tags=Mock(return_value={"Tags": {}})))
     return connector
+
+
+@pytest.mark.parametrize("padding", [201_000, 450_000])
+@pytest.mark.production_budgets
+def test_stepfunctions_matches_late_actions_without_truncating_provider_definition(index, padding):
+    definition = json.dumps(
+        {
+            "Comment": "x" * padding,
+            "StartAt": "Invoke",
+            "States": {
+                "Invoke": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::bedrock:invokeModel",
+                    "Parameters": {"ModelId": "anthropic.claude-v2", "Body": {}},
+                    "End": True,
+                },
+            },
+        }
+    )
+    connector = aws(index, "stepfunctions")
+    connector._client.return_value.describe_state_machine.return_value = {"definition": definition}
+    connector._list_items = Mock(
+        return_value=[
+            {
+                "name": "workflow",
+                "stateMachineArn": f"arn:aws:states:us-east-1:{ACCOUNT}:stateMachine:workflow",
+            }
+        ]
+    )
+    findings = connector.run()
+    assert len(findings) == 1
+    assert "provider.aws-bedrock" in findings[0].model_providers
+    assert not connector.ctx.stats.incomplete
+    record = next(connector._collect_stepfunctions("us-east-1"))
+    assert record["definition"] == definition
+
+
+def test_stepfunctions_oversized_offline_definition_is_incomplete_and_keeps_other_findings(index):
+    connector = AwsConnector(context(index, account_id=ACCOUNT))
+    oversized = {
+        "_kind": "state-machine",
+        "name": "oversized",
+        "stateMachineArn": f"arn:aws:states:us-east-1:{ACCOUNT}:stateMachine:oversized",
+        "definition": "x" * (MAX_STATE_MACHINE_DEFINITION_CHARS + 1) + " bedrock:invokeModel",
+    }
+    observed = {
+        **oversized,
+        "name": "observed",
+        "stateMachineArn": f"arn:aws:states:us-east-1:{ACCOUNT}:stateMachine:observed",
+        "definition": "arn:aws:states:::bedrock:invokeModel",
+    }
+    findings = list(connector.analyze([oversized, observed]))
+    assert [finding.resource for finding in findings] == [observed["stateMachineArn"]]
+    assert connector.ctx.stats.incomplete
+    assert any("definition exceeds" in warning for warning in connector.ctx.stats.warnings)
 
 
 def test_aws_scalar_settings_are_single_items_and_unknown_services_are_rejected(index):
