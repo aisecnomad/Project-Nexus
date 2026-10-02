@@ -7,7 +7,8 @@ from copy import deepcopy
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector
-from shadowscan.engine import Engine, merge
+from shadowscan.engine import Engine
+from shadowscan.merge import merge
 from shadowscan.models import Evidence, Finding, Kind, Surface
 
 

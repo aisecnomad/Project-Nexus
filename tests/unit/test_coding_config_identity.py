@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from shadowscan.engine import merge
+from shadowscan.merge import merge
 from shadowscan.models import Kind
 
 

@@ -8,7 +8,9 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
 from shadowscan.connectors.common import unique_records
-from shadowscan.engine import Engine, _prune_runtime_links, correlate, merge
+from shadowscan.correlation import correlate
+from shadowscan.engine import Engine, _prune_runtime_links
+from shadowscan.merge import merge
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.risk import assess

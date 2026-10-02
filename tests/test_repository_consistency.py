@@ -449,6 +449,9 @@ def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
     locked = {name.lower(): version for name, version in pins}
     for requirement in _pyproject()["project"]["optional-dependencies"]["docs"]:
         name, _, floor = requirement.partition(">=")
+        # The lock pins the distribution; an extra ("mkdocstrings[python]")
+        # names its handler, locked under its own name.
+        name = name.partition("[")[0]
         assert locked.get(name.lower()) == floor, f"{requirement} and requirements-docs.lock disagree"
     install = "--require-hashes --only-binary=:all: -r requirements-docs.lock"
     for workflow in ("docs.yml", "ci.yml"):

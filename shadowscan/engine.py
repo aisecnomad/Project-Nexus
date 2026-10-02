@@ -21,11 +21,11 @@ from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
-from shadowscan.connectors.common import merge_duplicate_metadata
-from shadowscan.correlation import correlate_runtime
+from shadowscan.correlation import correlate, correlate_runtime
 from shadowscan.errors import SetupError
 from shadowscan.incremental import IncrementalCache
-from shadowscan.models import Finding, Kind, ScanResult, ScanStats, now_iso
+from shadowscan.merge import merge
+from shadowscan.models import Finding, ScanResult, ScanStats, now_iso
 from shadowscan.registry import Inventory
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
@@ -1023,172 +1023,6 @@ class Engine:
         result.stats = sorted(stats, key=lambda s: s.connector)
         result.finished_at = now_iso()
         return result
-
-
-# ------------------------------------------------------------------ merging
-
-# Classification precedence when two observations of one finding disagree.
-_KIND_PRIORITY = {Kind.AGENT: 3, Kind.SERVICE_IDENTITY: 2, Kind.OAUTH_GRANT: 1}
-
-
-def _merge_classification(cur: Finding, f: Finding) -> None:
-    """Select the classification and its resource subtype as one pair.
-
-    A lexical subtype tie-break keeps repeated/grouped merges associative
-    without attaching the first record's subtype to another record's kind.
-    """
-    classifications = [(finding.kind, finding.resource_type) for finding in (cur, f)]
-    classification = max(
-        classifications,
-        key=lambda value: (_KIND_PRIORITY.get(value[0], 0), value[0].value, value[1]),
-    )
-    for key, current_values in (
-        ("observed_kinds", {kind.value for kind, _ in classifications}),
-        ("observed_resource_types", {resource_type for _, resource_type in classifications}),
-    ):
-        for finding in (cur, f):
-            previous = finding.metadata.get(key)
-            if isinstance(previous, list):
-                current_values.update(value for value in previous if isinstance(value, str))
-        if len(current_values) > 1:
-            cur.metadata[key] = sorted(current_values)
-    cur.kind, cur.resource_type = classification
-
-
-def _merge_observations(cur: Finding, f: Finding) -> None:
-    """Union evidence, technologies, capabilities, tags, permissions and models."""
-    seen = {(e.signal, e.location, e.description) for e in cur.evidence}
-    for e in f.evidence:
-        evidence_key = (e.signal, e.location, e.description)
-        if evidence_key not in seen:
-            seen.add(evidence_key)
-            cur.evidence.append(e)
-    for fw in f.frameworks:
-        cur.add_framework(fw)
-    for p in f.model_providers:
-        cur.add_model_provider(p)
-    for c in f.capabilities:
-        cur.add_capability(c)
-    for t in f.tags:
-        cur.add_tag(t)
-    for p in f.permissions:
-        if p not in cur.permissions:
-            cur.permissions.append(p)
-    for m in f.models:
-        if m not in cur.models:
-            cur.models.append(m)
-    cur.owner = cur.owner or f.owner
-
-
-def merge(findings: list[Finding]) -> list[Finding]:
-    """Merge findings with the same id (same object seen by the same connector twice).
-
-    The first observation takes precedence for owner and metadata; lists such
-    as evidence and frameworks are unioned. Metadata keys that combine across
-    observations follow :func:`shadowscan.connectors.common.merge_duplicate_metadata`.
-    """
-    by_id: dict[str, Finding] = {}
-    for f in findings:
-        cur = by_id.get(f.id)
-        if cur is None:
-            by_id[f.id] = f
-            continue
-        _merge_classification(cur, f)
-        _merge_observations(cur, f)
-        merge_duplicate_metadata(cur, f)
-        # Widen the window only now: metadata merging may record each
-        # observation's own window (per-source runtime snapshots).
-        cur.first_seen = min((x for x in (cur.first_seen, f.first_seen) if x), default=None)
-        cur.last_seen = max((x for x in (cur.last_seen, f.last_seen) if x), default=None)
-        cur.recompute_confidence()
-    return list(by_id.values())
-
-
-# -------------------------------------------------------------- correlation
-
-_NAME_KEYS = (
-    "agent_name",
-    "name",
-    "display_name",
-    "app_slug",
-    "okta_name",
-    "developer_name",
-    "schema_name",
-    "app_id",
-    "client_id",
-    "msa_app_id",
-    "bot_id",
-    "principal",
-    "caller",
-    "repository",
-    "project",
-    "function_name",
-    "agent_id",
-)
-
-
-def _norm(s: Any) -> str | None:
-    if s is None:
-        return None
-    t = re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
-    return t if len(t) >= 5 else None
-
-
-def correlate(findings: list[Finding]) -> None:
-    """Link findings across surfaces that describe the same agent / identity / resource.
-
-    Keys: resource ids (ARNs, app/client ids), normalised names and repository labels found in
-    metadata. Linked ids are stored in ``metadata['related']`` on both sides.
-    """
-    keys: dict[str, set[str]] = {}
-    for f in findings:
-        cand: set[str] = set()
-        res = _norm(f.resource)
-        if res:
-            cand.add(f"res:{res}")
-        for k in _NAME_KEYS:
-            v = f.metadata.get(k)
-            if isinstance(v, str):
-                n = _norm(v)
-                if n:
-                    cand.add(f"name:{n}")
-        if f.kind in {Kind.AGENT, Kind.BOT_APP, Kind.SERVICE_IDENTITY, Kind.OAUTH_GRANT, Kind.MCP_SERVER}:
-            tail = f.title.split(":", 1)[-1].strip() if ":" in f.title else None
-            n = _norm(tail)
-            if n and len(n) >= 8:
-                cand.add(f"name:{n}")
-        # cloud resources referenced from other findings' metadata / evidence locations
-        for e in f.evidence:
-            if e.location and e.location.startswith(("arn:", "projects/", "/subscriptions/", "ocid1.")):
-                n = _norm(e.location)
-                if n:
-                    cand.add(f"res:{n}")
-        for k in cand:
-            keys.setdefault(k, set()).add(f.id)
-    related: dict[str, set[str]] = {}
-    for ids in keys.values():
-        if 1 < len(ids) <= 25:
-            for i in ids:
-                related.setdefault(i, set()).update(ids - {i})
-    if not related:
-        return
-    by_id = {f.id: f for f in findings}
-    for fid, others in related.items():
-        linked_finding = by_id.get(fid)
-        if linked_finding:
-            # Only link across different connectors / surfaces (within one
-            # connector, duplicates are merged already).
-            links = sorted(
-                o
-                for o in others
-                if by_id.get(o)
-                and (
-                    by_id[o].connector != linked_finding.connector
-                    or by_id[o].surface != linked_finding.surface
-                )
-            )
-            if links:
-                linked_finding.metadata["related"] = links
 
 
 def _prune_related(findings: list[Finding]) -> None:

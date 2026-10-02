@@ -1,20 +1,104 @@
-"""Conservative attribution of gateway telemetry to static framework findings.
+"""Cross-surface correlation and gateway-to-code attribution.
 
-Only operator-configured, exact caller/scope bindings establish code identity.
-Gateway user agents are observations, not attestations: an ``observed`` result
-means the linked gateway recorded a timestamped request bearing that framework
-fingerprint. It does not prove which library executed, agent task completion,
-or continuing activity beyond the exported observation window.
+``correlate`` links findings across surfaces by resource ids and normalised
+names.  ``correlate_runtime`` conservatively attributes gateway telemetry to
+static framework findings using only operator-configured exact caller/scope
+bindings.  Gateway user agents are observations, not attestations: an
+``observed`` result means the linked gateway recorded a timestamped request
+bearing that framework fingerprint.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
-from shadowscan.models import Evidence, Finding, Surface
+from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.redaction import REDACTED
 from shadowscan.utils.text import parse_timestamp, to_iso
+
+_NAME_KEYS = (
+    "agent_name",
+    "name",
+    "display_name",
+    "app_slug",
+    "okta_name",
+    "developer_name",
+    "schema_name",
+    "app_id",
+    "client_id",
+    "msa_app_id",
+    "bot_id",
+    "principal",
+    "caller",
+    "repository",
+    "project",
+    "function_name",
+    "agent_id",
+)
+
+
+def _normalise_key(s: Any) -> str | None:
+    """Normalise a value for fuzzy cross-surface matching."""
+    if s is None:
+        return None
+    t = re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
+    return t if len(t) >= 5 else None
+
+
+def correlate(findings: list[Finding]) -> None:
+    """Link findings across surfaces that describe the same agent / identity / resource.
+
+    Keys: resource ids (ARNs, app/client ids), normalised names and repository labels found in
+    metadata. Linked ids are stored in ``metadata['related']`` on both sides.
+    """
+    keys: dict[str, set[str]] = {}
+    for f in findings:
+        cand: set[str] = set()
+        res = _normalise_key(f.resource)
+        if res:
+            cand.add(f"res:{res}")
+        for k in _NAME_KEYS:
+            v = f.metadata.get(k)
+            if isinstance(v, str):
+                n = _normalise_key(v)
+                if n:
+                    cand.add(f"name:{n}")
+        if f.kind in {Kind.AGENT, Kind.BOT_APP, Kind.SERVICE_IDENTITY, Kind.OAUTH_GRANT, Kind.MCP_SERVER}:
+            tail = f.title.split(":", 1)[-1].strip() if ":" in f.title else None
+            n = _normalise_key(tail)
+            if n and len(n) >= 8:
+                cand.add(f"name:{n}")
+        for e in f.evidence:
+            if e.location and e.location.startswith(("arn:", "projects/", "/subscriptions/", "ocid1.")):
+                n = _normalise_key(e.location)
+                if n:
+                    cand.add(f"res:{n}")
+        for k in cand:
+            keys.setdefault(k, set()).add(f.id)
+    related: dict[str, set[str]] = {}
+    for ids in keys.values():
+        if 1 < len(ids) <= 25:
+            for i in ids:
+                related.setdefault(i, set()).update(ids - {i})
+    if not related:
+        return
+    by_id = {f.id: f for f in findings}
+    for fid, others in related.items():
+        linked_finding = by_id.get(fid)
+        if linked_finding:
+            links = sorted(
+                o
+                for o in others
+                if by_id.get(o)
+                and (
+                    by_id[o].connector != linked_finding.connector
+                    or by_id[o].surface != linked_finding.surface
+                )
+            )
+            if links:
+                linked_finding.metadata["related"] = links
 
 
 def _usable_code_identity(code: Finding) -> bool:

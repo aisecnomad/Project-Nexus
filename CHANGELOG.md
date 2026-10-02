@@ -418,6 +418,18 @@ field precision. Behavior changes that affect an existing baseline are listed in
 
 
 
+### Code structure and developer experience
+
+- **Module boundaries:** finding merge logic lives in `shadowscan/merge.py`
+  and cross-surface correlation in `shadowscan/correlation.py`; the engine
+  imports both. The public API is unchanged.
+- **Property-based tests:** Hypothesis tests for the redaction module check
+  idempotency, crash-freedom on arbitrary Unicode and removal of known token
+  formats. Hypothesis is part of the `dev` extra and the CI lock.
+- **Parallel test runs:** `pytest-xdist` joins the `dev` extra, with a
+  `make test-parallel` target.
+- **API reference:** mkdocstrings pages for the core modules are part of the
+  documentation site.
 
 ### October 1 scan integrity remediation
 
