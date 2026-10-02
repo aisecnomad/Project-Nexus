@@ -12,10 +12,10 @@ from collections.abc import Iterable
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.http import HttpClient
 
 
 class ZoomConnector(BaseConnector):
@@ -68,7 +68,7 @@ class ZoomConnector(BaseConnector):
                     app["_type"] = app_type
                     yield app
             except Exception as exc:  # noqa: BLE001 - preserve the next independent category
-                reason = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                reason = failure_summary(exc)
                 self.ctx.warn(f"saas.zoom: marketplace apps ({app_type}) not readable ({reason})")
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -173,7 +173,10 @@ class ZoomConnector(BaseConnector):
         users = app.get("installed_users_count")
         if users is None:
             users = app.get("users_count")
-        description = f"{source} app '{name}' ({app.get('app_usage') or app.get('usage') or 'unknown'} usage); scopes {', '.join(scopes)[:300] or 'unknown'}"
+        description = (
+            f"{source} app '{name}' ({app.get('app_usage') or app.get('usage') or 'unknown'} usage); scopes "
+            f"{', '.join(scopes)[:300] or 'unknown'}"
+        )
         if users is not None:
             description += f"; {users} reported users"
         f.add_evidence(Evidence(signal="zoom:app", description=description, weight=0.3))

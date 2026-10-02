@@ -71,8 +71,9 @@ acceptance before enabling enforcement.
 
 Use the commands in [evaluation.md](evaluation.md) and [canaries.md](canaries.md).
 When this dated result was recorded, CI covered Python 3.11/3.12. The current
-workflow covers Linux 3.11–3.13 and macOS 3.11/3.13 for lint, types, tests and
-the overall 80% and per-connector 75% coverage floors. Linux additionally runs
+workflow covers Linux 3.11–3.13 and macOS 3.11/3.13 for lint, types and tests;
+Linux 3.11 enforces the overall 80% and per-connector 75% coverage floors on
+statements and branches. Linux additionally runs
 the full runtime dependency audit, installed-wheel and container checks. It also
 validates the annotation ledger and frozen corpus, and retains evaluation JSON
 artifacts with each run.

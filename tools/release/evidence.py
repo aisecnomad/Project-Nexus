@@ -179,7 +179,10 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         "scope": {
             "sbom": "dependencies in requirements.lock (core and cloud extras); not a container/OS SBOM",
             "artifact": "wheel candidate; publication requires a separate maintainer action",
-            "assurance": "CI, CodeQL and artifact identity only; not a claim of live tenant validation or reproducible builds",
+            "assurance": (
+                "CI, CodeQL and artifact identity only; "
+                "not a claim of live tenant validation or reproducible builds"
+            ),
         },
         "files": [
             {"name": path.name, "sha256": _digest(path), "bytes": path.stat().st_size} for path in files

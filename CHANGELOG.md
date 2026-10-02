@@ -1,8 +1,11 @@
 # Changelog
 
+The detailed engineering log, recorded per change. RELEASE_NOTES.md
+summarizes each release for people who install and operate ShadowScan.
+
 ## 0.1.1 — Unreleased
 
-### October 1 review remediation
+### October 1 scan integrity remediation
 
 An AI-assisted audit of the unreleased candidate (not independent human review)
 found places where a scan could finish `complete` while skipping content or
@@ -54,6 +57,423 @@ has a regression test.
   collection pages until an empty page. A weekly scheduled `pip-audit` workflow
   was added. Unquoted Cursor `globs: **/*.ts` no longer causes a false exit 3,
   and `host_of` strips URL userinfo and handles IPv6 literals.
+### October 1 review corrections
+
+- Named Python direct-reference requirements retain their declared package
+  identity before URL or VCS inference. Extras, fragments, environment markers
+  and source lines remain available as evidence.
+- Python semantic analysis ignores constant-false loop bodies, preserves the
+  applicable loop `else` path, joins uncertain loop bindings conservatively,
+  and stops unreachable statements after explicit local control transfers.
+  This is bounded source analysis, not interprocedural execution proof.
+- Optional Git enrichment streams stdout and stderr under a combined 16 KiB
+  limit, caps accepted identity fields, and terminates children on overflow,
+  cancellation or deadline. Limit hits retain code findings and mark coverage
+  incomplete rather than publishing unbounded metadata.
+- Credential redaction covers additional constructor syntax, environment
+  fallback literals, credential records and explicitly named command/query
+  values. Regenerate stored reports and incremental baselines under the revised
+  policy before sharing them; ambiguous comments and arbitrary computed values
+  still require confidential handling.
+- Production evidence policies can add aggregate and per-kind 95% Wilson
+  lower-endpoint thresholds. Legacy point-estimate policies remain compatible;
+  successful decisions expose the lower endpoints. The example uses confidence
+  gates and per-kind sample floors; these are operator-selected targets, not
+  evidence of measured production accuracy.
+- Added a versioned active merge policy and bounded snapshot checker requiring
+  the aggregate CI gate, bound check origins, final-push review and no bypass
+  actors. They do not change live repository settings. Administrator activation,
+  independent human review, fresh holdout labels and tenant acceptance remain
+  external requirements.
+### October 1 review remediation
+
+Fixes and recommendations from the 2026-10-01 repository review. Upgrade
+steps are in docs/production.md ("October 1 review changes").
+
+- **Exit codes:** usage errors exit 1 instead of 2, so exit 2 only means a
+  complete scan reached `--fail-on`.
+- **Gateway identity:** `diff` lists scan-local gateway findings under
+  `not_comparable` instead of as new. The opt-in `SHADOWSCAN_IDENTITY_KEY`
+  (environment only, at least 32 bytes) keeps gateway IDs and collection scope
+  stable across scans; git child processes never receive it.
+- **Confidence:** outside the code surface, repeated evidence of one signal
+  counts once. n8n, Make and Zapier findings score all their evidence before
+  they are finalized.
+- **Inventory:** cards accept `discovery.discriminators`; `inventory stubs`
+  binds each card to its own finding and writes plain-string names.
+- **Cloud:** `cloud.aws` parses role trust policies (`Deny`, `NotAction` and
+  `NotPrincipal` never establish trust; a malformed policy makes the scan
+  incomplete). `cloud.oci` converts SDK models without silently dropping
+  fields. Every connector validates `max_pages` and caps it at 1000.
+- **Detection:** Vercel AI SDK multi-step tool loops, including AI SDK 7
+  `isStepCount`, are agents. Custom-pack framework code patterns apply in
+  Python and JavaScript. ShadowScan, Semgrep, Sigma and gitleaks rule files are
+  treated as data and listed in `metadata.detection_rule_files`.
+- **Threshold filtering:** `--min-confidence` removes `related` links and
+  `runtime_activity` references to omitted findings.
+- **Timestamps:** microsecond and nanosecond epoch values are parsed.
+- **Redaction:** keys passed positionally to well-known LLM SDK calls are
+  withheld, including the endpoint-`Uri` overloads. Long blank runs no longer
+  make the Python 3.11 tokenizer quadratic, and Python 3.12+ codec errors no
+  longer make a file's analysis incomplete.
+- **Removed:** the unused `safe_yaml.bounded_safe_load_all` and
+  `HttpClient.requests_made`; use `strict_bounded_safe_load_all`.
+- **Evaluation:** `tools/evaluation/current_idioms_corpus.json` (24 cases)
+  runs in `make evaluate` and CI.
+- **Tests and CI:** tests resolve hostnames hermetically and fail on outbound
+  connections. Both coverage floors count branches, and the connector floor
+  covers every module under `shadowscan/connectors/`. Coverage is traced on
+  Linux 3.11 only, and a traced run takes about half as long. Matcher budgets
+  are generous in tests unless a test opts into the shipped values. CI never
+  cancels a running `main` build and runs the secret hook over tracked files.
+- **Governance and docs:** `.github/rulesets/require-ci-and-review.json` versions the intended
+  `main` ruleset; the README regains its project-status section and an OpenSSF
+  Scorecard badge; RELEASE_NOTES.md summarizes releases for users; ADR-004
+  and ADR-005 propose a parsing strategy and code-scanner module boundaries.
+### October 1 review fixes: bounded matching, link walks and record tolerance
+
+Fixes for the findings of an AI-assisted repository review (not an
+independent human review); each behavior change has a regression test.
+
+- `code.filesystem`: the IaC wildcard-action and agent front-matter patterns
+  now run on the bounded regex engine with possessive whitespace, under the
+  per-input matching budget. Before, a planted file (`Action:` followed by a
+  long run of spaces, or `---` followed by many blank lines) backtracked
+  quadratically in stdlib patterns that nothing could interrupt, which could
+  hold the connector past its deadline and discard every code finding.
+- `code.filesystem`: symbolic links now count toward `max_files`, link checks
+  stop at the connector deadline with an explicit error (`connector deadline
+  reached while checking symbolic links`), and the project lookup behind each
+  link is cached per directory. A tree planted with thousands of links was
+  quadratic and uncounted. Scans of repositories holding more links than the
+  remaining `max_files` budget become incomplete; raise `max_files` or exclude
+  the link directories.
+- `code.filesystem`: a JSON, YAML or TOML file that merely contains the words
+  `"mcp"` and `"servers"` but configures no MCP server (an exported workflow
+  tagged `mcp`, a template with such a comment) is ordinary configuration
+  again. Before, it was treated as MCP configuration and the IaC,
+  configuration and lexical passes skipped it without a diagnostic, hiding
+  the workflow or the wildcard IAM grant. Dedicated MCP file names
+  (`.mcp.json`, `claude_desktop_config.json`, ...) are unchanged.
+- `code.filesystem`: a credential in a notebook code cell is counted once;
+  the raw document's copy of the cell no longer doubles the count and the
+  confidence. Outputs and markdown cells are still scanned.
+- `cloud.aws`: a malformed provider record (a function without an ARN, an
+  endpoint without a name, an alias version that is not a string) skips that
+  record with a warning and incomplete coverage instead of aborting every
+  remaining service and region. Failed SDK calls now report the operation
+  and the provider error code (`cloud.aws: get_agent access denied
+  (AccessDeniedException)`), never the message text, which can echo request
+  arguments or encoded policy context. `cloud.gcp` treats a service record
+  without a config name the same way.
+- `identity.entra`, `saas.microsoft-teams`, `lowcode.make`: response-derived
+  identifiers are percent-encoded before they enter a request path.
+  `max_app_role_lookups`, `max_users` and the automation connectors'
+  `max_pages` must be positive integers; a zero or non-numeric value now
+  stops the connector with a configuration error instead of being coerced.
+- Gateway timestamps: an eight-digit `yyyymmdd` value is a calendar day.
+  It was read as epoch seconds and attributed callers to 1970.
+- One `failure_summary` helper replaces eighteen copies of the HTTP-status or
+  exception-type expression in connector diagnostics (no output change).
+- Documentation: the README states the usage, setup and `diff` exit codes
+  and carries the OpenSSF Scorecard badge the roadmap refers to;
+  `docs/connectors.md` lists the GitHub credential-name permissions and adds
+  least-privilege rows and option lists for Slack, ServiceNow and Notion. A
+  repository test now checks the "25 of 27 connectors ship fixtures" claim.
+### Confined file portability and plugin deadlines
+
+- On platforms exposing `O_NOFOLLOW_ANY` without Linux `O_PATH` (including
+  supported macOS versions), confined file reads use one kernel-checked path
+  lookup, including reads relative to an already-open scan root. This avoids
+  opening every ancestor for reading while still rejecting symbolic links in
+  every component. FIFO protection and regular-file verification remain in
+  force; paths are never resolved through symlinks as a fallback.
+- Signature directory traversal now fails on unreadable subdirectories and
+  enforces its entry budget for directory-only trees. A partial signature pack
+  must not silently become an accepted policy or digest.
+- `pytest` console invocations can import checkout-only evaluation and canary
+  tooling without a caller-supplied `PYTHONPATH`; macOS CI exercises this entry
+  point as part of the full suite.
+- Optional `options.plugin_execution: process` / `--plugin-execution process`
+  runs approved third-party connectors in dedicated spawned workers, including
+  plugin import. Deadline expiry terminates the worker and marks its results
+  incomplete. Crashes, malformed output and output above the 16 MiB transport
+  limit also fail closed. The default remains `thread`; built-ins retain their
+  existing execution path. Process mode provides lifecycle isolation, not a
+  security sandbox or rollback of external effects.
+
+### October 1 discovery review corrections
+
+- Code collection identifies declared submodules whose source has not been
+  materialized and reports incomplete coverage instead of a complete empty
+  result. Remote clone collection also checks the Git tree for submodule
+  entries. Submodule URLs are never fetched automatically.
+- Ordinary Spring AI `ChatClient` and LangChain4j `AiServices` construction,
+  and standalone Java tool declarations, no longer establish an agent or
+  tool-use capability. Explicit agent construction and bounded, concrete tool
+  registration remain evidence.
+- Import-bound source calls distinguish configured workload capabilities from
+  features merely offered by their framework. Empty tool/handoff collections
+  and disabled delegation no longer add those capabilities or their risk
+  factors. Review changed findings and rebuild enforcement baselines.
+- Authored evaluation cases now check capability labels as well as kind and
+  product attribution. The frozen independent corpus and its labels are
+  unchanged; these regressions do not establish fresh field accuracy, live
+  tenant acceptance or independent human review.
+
+### October 1 code.filesystem coverage and precision
+
+- A coding-agent instruction document that links to another one in the same
+  project with the same test classification (`CLAUDE.md` to `AGENTS.md`) no
+  longer marks the scan incomplete. The target is scanned at its real path and
+  the alias-only file name is not reported as a second agent. Links across
+  projects or into and out of test paths, and directory links, stay gaps.
+- Credential policy: a real-format credential under a test, fixture or
+  `cassettes/` path stays a `secret` finding and now follows the project
+  test-code policy: half weight, lower confidence and risk, and the
+  `test-code-only` tag unless `include_tests` is set. Recorded cassettes
+  capture real traffic, so such keys are downweighted, never dropped.
+- A coding-agent configuration finding now needs more than an environment-variable
+  or display-name mention such as `GOOSE_PROVIDER`. Config files, instruction
+  documents, dependencies and code patterns such as a workflow step still
+  establish it. In test paths only config files and instruction documents count
+  unless `include_tests` is set.
+- MCP parsing skips `*.lock.yml` and `*.lock.yaml` files (compiled agentic
+  workflows) and cookiecutter `{{...}}` template paths, which no longer raise an
+  invalid-MCP error. Other GitHub Actions workflows are still parsed for MCP
+  servers passed as JSON step inputs (see the field scan follow-up below).
+- Not changed: signatures, risk scoring and inventory labeling. Oversize
+  recorded fixtures (`cassettes/`, test data) stay coverage gaps, because they
+  can hold real credentials; skipping them unread is an operator decision
+  through `oversize_skip_globs` (for example `*/cassettes/*`). Examples,
+  templates and benchmarks are not discounted like tests, because the bundled
+  corpora label their agents as real. Evidence is offline regression tests and
+  corpora only; it is not a measured field precision.
+
+### October 1 field scan follow-up
+
+Fixes for defects found by scanning five public agent repositories (see
+`archive/reviews/field-scan-2026-10-01.md`); each has a regression test.
+
+- The JSX lexer no longer marks valid TSX incomplete. It skips explicit type
+  arguments on elements (`<Select<Option> ...>`, `<Form<{ email: string }>>`),
+  comments between attributes (a comment just before `>` no longer makes the
+  tag self-closing), and treats `<Text>(...)</Text>` as an element
+  unless the parenthesized group is followed by `=>` or a return type. In the
+  field scan this removed 139 false incomplete files; unbalanced tags still
+  fail closed.
+- Gemini CLI's `httpUrl` is an MCP endpoint alias. Such extension manifests no
+  longer make the scan incomplete, and their remote servers are reported. A
+  header or env value that is only a shell-style reference (`Bearer $TOKEN`) is
+  not an inline credential.
+- GitHub Actions workflows that pass MCP settings to an agent action no longer
+  fail strict YAML parsing on the `on:` key. Servers embedded as JSON step inputs
+  are reported as MCP findings; unparseable embedded settings stay incomplete.
+- `GOOGLE_GENAI_USE_VERTEXAI` no longer attributes the Google Agent Development
+  Kit. It remains Vertex AI provider evidence.
+- Exported workflows under test or fixture paths follow the project test-code
+  policy: half weight and the `test-code-only` tag unless `include_tests` is set.
+- A `setup.py` marks a project root only when it references setuptools,
+  distutils or scikit-build, or calls `setup(...)`. Ordinary modules named
+  `setup.py` no longer split a package into a separate project; an unreadable
+  file keeps the previous behavior.
+- An MCP argument assigning a file path to a credential-file variable
+  (`GOOGLE_APPLICATION_CREDENTIALS=/app/key.json`), or one whose only redacted
+  part repeats a variable reference from `env` (`-v ${KEY_FILE}:/app/key.json`),
+  is still redacted but no longer marks the server as carrying an inline secret.
+  Literal values remain inline secrets.
+
+### Completeness, report safety and credential policy (2026-09-28)
+
+Behavior changes to review before upgrading (see
+[production](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#completeness-report-and-credential-changes)):
+
+- **Credential policy:** the scan-wide `options.allow_instance_credentials`
+  now replaces `allow_instance_credentials` in every connector entry. Only
+  `cloud.*` entries were replaced before, so a third-party connector's own
+  entry could grant it instance-credential approval. The scan-wide value
+  still goes to every `cloud.*` connector, plugins included, and now also to
+  any plugin that declares the cloud surface or documents the key in
+  `config_keys`; with the default `false` this only denies. Built-in
+  connectors behave as before.
+- **New incomplete scans (exit 3):**
+  - A shared HTTP response body must arrive within twice the client timeout
+    (60 seconds by default), not only within the 30-second per-read timeout.
+    A slower body, for example from a slow-drip server, is aborted (`HTTP
+    response exceeds the read deadline`) and the connector's collection is
+    incomplete, never truncated.
+  - `code.filesystem` opens each scan root once and reads every file, and
+    `CODEOWNERS`, relative to it without following a link in any path
+    component; before, only the final component was protected. A directory
+    replaced by a link during the scan fails the reads below it
+    (`file could not be read`). A root that cannot be opened this way is
+    reported, by its `label` when one is set, as
+    `could not open the scan root safely (<reason>)`.
+  - `code.gitlab` skips a group listing entry whose project `id` is not a
+    positive integer (`group project listing entry has no valid numeric id;
+    project skipped`) and scans the other projects. Such an id used to reach
+    request paths, where it could send the token to another API endpoint,
+    and a missing id aborted the whole listing.
+  - `code.github` skips an org or user listing entry whose `full_name` is not
+    a plain `owner/name` (`repository listing entry has no valid owner/name;
+    repository skipped`). It used to reach request paths and the clone URL.
+- **Changed diagnostics (these scans were already incomplete):**
+  - A YAML value PyYAML cannot construct, such as an impossible date or an
+    integer over 4,300 digits, is reported as malformed YAML: `invalid YAML`
+    for conda environment files (was `manifest parsing failed (ValueError)`)
+    and `invalid agent definition YAML` for agent front matter (was
+    `file analysis incomplete (ValueError)`). The agent definition is now
+    listed where it used to be dropped, which adds `agent_definitions`
+    metadata and can raise the finding's risk score. Scan configuration and
+    inventory files with such a value still fail at setup (exit 1), now with
+    `ConfigValidationError` and `InventoryValidationError` instead of an
+    unclassified `ValueError`.
+  - A cancellation or connector deadline while `code.filesystem` builds a
+    credential finding ends the connector, as it does everywhere else,
+    instead of becoming that file's `credential analysis incomplete` error.
+- **Scans that now complete:**
+  - A Python module none of whose imports can resolve to a signature no
+    longer makes a scan incomplete when it exceeds `max_ast_nodes` or the
+    import binder's nesting limit: the binder, which could add no evidence
+    there, is skipped. The check is linear in the module and matches at most
+    4,096 distinct import statements; other modules keep the
+    `import-bound analysis skipped (…); lexical evidence retained`
+    diagnostic. A scan of installed libraries such as mypy, pip, requests and
+    rich, which exited 3 because of `mypy/checker.py`, now completes.
+  - Configuration, inventory, signature pack, `diff` report and offline
+    export files below a traverse-only directory (mode `0711`) now open:
+    directories are opened for traversal only (`O_PATH` on Linux), not for
+    reading.
+  - An unrendered Helm, Jinja or Go-template YAML file, whose placeholders
+    read as mapping keys (`image: {{ .Values.image }}`) or whose conditional
+    branches repeat a field, no longer reports `structured parsing incomplete
+    (YAMLIntegrityError)`. Such a file is not YAML until rendered, so its
+    excerpts use lexical redaction, as for any template the YAML parser
+    rejects. Plain YAML with duplicate or non-finite data still fails closed.
+- **Report redaction** withholds more credential forms, in excerpts and in
+  structured connector metadata. Expect more `[REDACTED]` markers:
+  - string literals passed to credential constructors, helpers and factories
+    (`AzureKeyCredential("…")`, `HTTPBasicAuth("user", "…")`,
+    `Credentials.basic`, `setBearerToken`, `WithAPIKey`, `cohere.Client`),
+    including Rust `::new("…")`, C# target-typed `new("…")`, calls down a
+    builder chain (`builder().apiKey("…")`, `.header("x-api-key", "…")`) and
+    `auth=("user", "…")` tuples;
+  - literal defaults of credentials read from the environment
+    (`process.env.OPENAI_API_KEY || "…"`, `?? "…"`, `or "…"`, `?: "…"`,
+    `${OPENAI_API_KEY:-…}`);
+  - credential command-line options: `--api-key`, `--token`, `--password`,
+    `--key` and `--pwd`, also in argv lists; `curl -u` and
+    `-H "X-Api-Key:…"`; `-p` after `docker login`, other registry logins and
+    `az`, `oc` or `cf` logins; `sshpass -p`; MySQL `-p…`; a literal echoed
+    into `--password-stdin`; and `dotnet user-secrets set NAME VALUE`;
+  - Dockerfile `ENV`, `setx`, `setenv`, C `#define`, PowerShell and TOML
+    quoted keys assigned with `=`, and R `<-`;
+  - XML key/name attributes, element names and name/value records, read as
+    .NET settings by their last `:`, `__` or `.` segment as well as whole
+    (`<add key="OpenAI:Secret" value="…"/>`, `- name: AzureOpenAI__Key`). In
+    structured metadata the value is also removed from the record's other
+    fields;
+  - an opaque-looking value under a name whose last word, ignoring trailing
+    digits, names a credential (`openaiKey`, `key`, `KEY1`), and a lone
+    opaque value on the unindented line after a sensitive key;
+  - more token prefixes: Google `ya29.`, `1//0` and `GOCSPX-`; Slack `xapp-`
+    and `xoxe`; the GitLab `glrt-` family; `npm_`, `pypi-` and `dop_v1_`;
+    and Stripe, SendGrid, Databricks, Shopify, Atlassian, Linear, Notion,
+    Postman, Doppler, Supabase, Grafana, Sentry, Vault and Terraform Cloud
+    tokens. `Ocp-Apim-Subscription-Key` and names ending in
+    `subscriptionKey` are credentials.
+
+  A C# `new AzureKeyCredential("<key>")`, a Java `builder().apiKey("<key>")`
+  or a web.config `<appSettings>` key used to reach the reports of a complete
+  scan; regenerate such reports and rotate the keys they show. Endpoint URLs,
+  model names, variable names and references, placeholders and ordinary
+  values (`<add key="CacheKey" value="users"/>`) stay visible. SECURITY.md
+  lists the forms that are still not withheld, among them a space or comment
+  before a call's parenthesis, redundant parentheses, C# interpolated and
+  multi-line triple-quoted strings, one-letter options, a query parameter
+  outside a URL and an unquoted value that reads as an identifier.
+- **Redaction fixes:** a YAML parent key such as `openai:` no longer takes
+  the next line as its value, which leaked a nested `api_key: <value>`. A
+  `Bearer`/`Basic` scheme before a line break no longer drops a line from
+  the excerpt, and a marker inside an unquoted value no longer gains a `]`
+  each time a report sanitizes it again. Redaction is linear on hostile
+  layouts that used to time out, exhaust the redaction budget or hang the
+  scan without marking it incomplete: long runs of unfinished annotations,
+  minified lines with thousands of sensitive keys, and long unquoted values
+  after `key=`. Expressions nested more than 100 brackets deep are withheld
+  through the end of the excerpt, and an unquoted word holding more than 16
+  command-line options is withheld from its 17th option on.
+- **Finding identity:** IDs are computed from sanitized resource fields, so
+  an ID changes only where such a field held a value that is now withheld.
+  These redaction rules leave the findings and IDs of the demo, the sample
+  repository and every evaluation corpus unchanged; the classification
+  corrections of September 27 below can still change findings. The redaction
+  policy token changed, so findings verified clean under the old rules are
+  sanitized again. Report sanitization takes about 28% longer (11 s to 14 s
+  for 19 MB of library source).
+- **Reports:**
+  - CSV also inserts the `'` marker after a `,`, `;`, tab, `|` or line break
+    inside a value when a formula could start there (OWASP CSV injection), so
+    a report opened with another delimiter cannot create a formula cell.
+    Leading no-break spaces and double quotes no longer hide a trigger.
+    Consumers that strip only a leading `'` must strip these markers too, or
+    read `json`.
+  - Markdown writes `@` as `[@]` in untrusted text, like the existing
+    `hxxp://` and `www[.]` defanging, so a pasted report no longer
+    @-mentions users or teams or links e-mail addresses. Code spans stay
+    verbatim.
+- **Plugins and embedders:**
+  - `shadowscan.utils.text.sanitize_record` is removed; call
+    `shadowscan.utils.redaction.sanitize`.
+  - `HttpClient.paginate_cursor` is removed; paginate explicitly. The Slack
+    and Notion connectors keep their own cursor pagination.
+  - The engine no longer names connectors. Per-root incremental caching, the
+    instance-credential approval and the per-run gateway identity key are
+    hooks a connector class declares (`cache_roots_separately`,
+    `inherits_instance_credentials_approval`, `uses_run_identity_key`; see
+    `docs/architecture.md`). Offline export parsing moved from
+    `BaseConnector` to `shadowscan/connectors/offline.py` with
+    `BaseConnector` names unchanged, and duplicate-finding metadata merging
+    to `shadowscan.connectors.common.merge_duplicate_metadata`.
+  - `shadowscan.utils.redaction` is split into `redaction_*` modules with the
+    same public API and rule names. Patch rules through
+    `shadowscan.utils.redaction`, never through a `redaction_*` module;
+    `policy_token()` covers every module.
+  - `SignatureIndex.signals_of_type(kind)` returns the (signature, signal)
+    pairs of one signal type in pack order.
+
+Development:
+
+- ruff enforces line length (E501, 110 columns) outside `tests/` and
+  loop-variable capture in closures (B023) everywhere. mypy requires
+  annotated definitions (`disallow_untyped_defs`) and reports unused
+  `type: ignore` comments (`warn_unused_ignores`). Only `regex`, `boto3`,
+  `botocore` and `oci`, which ship neither stubs nor a `py.typed` marker, may
+  be imported untyped.
+- Unit tests live in files named after the module or feature they exercise,
+  not the review round that added them; test bodies are unchanged.
+- The evaluation, benchmark, canary and acceptance tools resolve the temporary
+  directories they create before handing paths to the scanner, so they pass on
+  macOS, where `/var` and `/tmp` are links into `/private`. The symbolic-link
+  checks on untrusted input are unchanged.
+- `docs/testing.md` describes the development environment, the offline suite
+  and every `make` gate CI runs. `docs/maintainer-onboarding.md` is a reviewer
+  and co-maintainer checklist, and `GOVERNANCE.md` has reviewer,
+  co-maintainer and offboarding sections.
+- `code.github` and `code.gitlab` share one implementation
+  (`shadowscan/connectors/code/remote.py`), and the four cloud connectors
+  share one offline-record dispatcher and audit-caller aggregator. New
+  offline exports cover every GCP and OCI record kind, raising line coverage
+  of `cloud/gcp.py` from 78% to 99% and of `cloud/oci.py` from 88% to 99%.
+  The scanning commands share one option decorator; options, defaults and
+  help are unchanged.
+- Consistency tests check that documents describing CSV markers name every
+  separator the reporter marks, and that the documented HTTP read deadline
+  matches the client.
+- Documentation: ADR-003 has a dated amendment recording the implemented
+  confidence and risk formulas, and `docs/concepts/risk.md` matches the
+  code. The cloud connector guide lists each connector's offline `_kind`
+  values, and the architecture guide the engine hooks.
 
 ### September 28 repository hygiene
 
@@ -391,8 +811,9 @@ Development:
   that cannot enforce the documented path confinement (Windows, or a platform
   without `O_NOFOLLOW`); `--help` and `--version` still work everywhere.
   `shadowscan.utils.platform.require_supported_platform()` performs the same
-  check for embedding callers. `redact` and `sanitize_record` in
-  `shadowscan.utils.text` stay as documented compatibility aliases.
+  check for embedding callers. `redact` in `shadowscan.utils.text` stays as
+  a documented compatibility alias. `sanitize_record` was removed later in
+  this release; call `shadowscan.utils.redaction.sanitize`.
 
 ### Community policy consistency
 
@@ -591,7 +1012,7 @@ Fixes and additions:
 #### Governance and documentation
 
 - `CONTRIBUTING.md` documents the actual single-maintainer, self-merge process with automated checks and requires independent human review before any tagged release; `docs/production.md` gives operators the commands to verify ruleset and review state themselves.
-- The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs under `docs/hardening-logs/`; the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
+- The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs (they now live under `archive/reviews/`); the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
 
 ### Production acceptance fixes (2026-09-25)
 

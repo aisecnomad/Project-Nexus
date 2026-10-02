@@ -162,6 +162,7 @@ def test_match_excerpt_redacts_before_truncating_and_preserves_secret_identity()
     assert matcher.match_secrets(secret)[0].value == secret
 
 
+@pytest.mark.production_budgets
 def test_builtin_newline_and_hostname_regressions_finish_within_budget(index):
     start = time.monotonic()
     with index.scan_budget(seconds=2):
@@ -174,6 +175,7 @@ def test_builtin_newline_and_hostname_regressions_finish_within_budget(index):
     assert providers == [("provider.openai", 2), ("provider.anthropic", 4)]
 
 
+@pytest.mark.production_budgets
 def test_parallel_tokenization_does_not_exhaust_regex_deadlines(index):
     text = "https://api.openai.com/v1\napi.anthropic.com\n" * 2000
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -182,6 +184,7 @@ def test_parallel_tokenization_does_not_exhaust_regex_deadlines(index):
         assert {"provider.openai", "provider.anthropic"} <= {m.signature_id for m in matches}
 
 
+@pytest.mark.production_budgets
 def test_parallel_match_processing_is_not_charged_to_regex_iterator(monkeypatch):
     import shadowscan.signatures.matcher as matcher_module
 

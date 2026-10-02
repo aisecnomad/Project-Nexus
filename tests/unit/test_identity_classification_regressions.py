@@ -197,11 +197,10 @@ def test_unverified_marker_adds_no_confidence_or_risk(index: SignatureIndex):
     marker = next(e for e in finding.evidence if e.signal == "jwt:signature")
     assert marker.weight == 0.0
     assert not [factor for factor in finding.risk.factors if "unverified" in factor.id]
-    weights = [e.weight for e in finding.evidence if e is not marker]
-    remaining = 1.0
-    for weight in weights:
-        remaining *= 1.0 - weight
-    assert finding.confidence == pytest.approx(1.0 - remaining, abs=0.001)
+    with_marker = finding.confidence
+    finding.evidence.remove(marker)
+    finding.recompute_confidence()
+    assert with_marker == pytest.approx(finding.confidence, abs=0.001)
 
 
 def test_failed_and_successful_verification_set_the_same_field(index: SignatureIndex):

@@ -38,7 +38,9 @@ MAX_FILE_BYTES = 32_000
 MAX_TOTAL_FILE_BYTES = 1_000_000
 _ID = re.compile(r"[a-z][a-z0-9_-]{1,79}\Z")
 _SIGNATURE = re.compile(r"[a-z0-9][a-z0-9._-]{0,100}\Z")
+_CAPABILITY = re.compile(r"[a-z][a-z0-9-]{0,79}\Z")
 _FINDING_SELECTORS = ("expected_findings", "forbidden_findings")
+_SelectorKey = tuple[str, str | None, str | None, tuple[str, ...] | None]
 
 
 class CorpusError(ValueError):
@@ -88,22 +90,31 @@ def _safe_name(name: Any) -> bool:
     )
 
 
+def _selector_key(selector: dict[str, Any]) -> _SelectorKey:
+    return (
+        selector["kind"],
+        selector.get("product_signature"),
+        selector.get("provider_signature"),
+        tuple(sorted(selector["capabilities"])) if "capabilities" in selector else None,
+    )
+
+
 def _validate_finding_selectors(assertions: dict[str, Any], where: str) -> None:
     """Constrain explicit labels to scanner fields, with one bounded selector per rule."""
     for relation in _FINDING_SELECTORS:
         selectors = assertions.get(relation, [])
         if not isinstance(selectors, list) or len(selectors) > 20:
             raise CorpusError(f"{where}: {relation} must contain at most 20 finding selectors")
-        seen: set[tuple[str, str | None, str | None]] = set()
+        seen: set[_SelectorKey] = set()
         for selector in selectors:
             _keys(
                 selector,
                 {"kind"},
-                {"product_signature", "provider_signature"},
+                {"product_signature", "provider_signature", "capabilities"},
                 f"{where} {relation} selector",
             )
             try:
-                kind = Kind(selector["kind"])
+                Kind(selector["kind"])
             except (ValueError, TypeError) as exc:
                 raise CorpusError(f"{where}: unknown {relation} finding kind") from exc
             for field in ("product_signature", "provider_signature"):
@@ -118,26 +129,30 @@ def _validate_finding_selectors(assertions: dict[str, Any], where: str) -> None:
                 raise CorpusError(f"{where}: product_signature must not be a provider ID")
             if provider is not None and not provider.startswith("provider."):
                 raise CorpusError(f"{where}: provider_signature must be a provider ID")
-            key = (kind.value, product, provider)
+            if "capabilities" in selector:
+                capabilities = selector["capabilities"]
+                if (
+                    not isinstance(capabilities, list)
+                    or len(capabilities) > 20
+                    or any(not isinstance(cap, str) or not _CAPABILITY.fullmatch(cap) for cap in capabilities)
+                    or len(set(capabilities)) != len(capabilities)
+                ):
+                    raise CorpusError(f"{where}: capabilities must contain up to 20 unique capability IDs")
+            key = _selector_key(selector)
             if key in seen:
                 raise CorpusError(f"{where}: duplicate {relation} selector")
             seen.add(key)
-    expected = {
-        (selector["kind"], selector.get("product_signature"), selector.get("provider_signature"))
-        for selector in assertions.get("expected_findings", [])
-    }
-    forbidden = {
-        (selector["kind"], selector.get("product_signature"), selector.get("provider_signature"))
-        for selector in assertions.get("forbidden_findings", [])
-    }
+    expected = {_selector_key(selector) for selector in assertions.get("expected_findings", [])}
+    forbidden = {_selector_key(selector) for selector in assertions.get("forbidden_findings", [])}
     if expected & forbidden:
         raise CorpusError(f"{where}: a finding selector cannot be both expected and forbidden")
-    for required_kind, required_product, required_provider in expected:
-        for excluded_kind, excluded_product, excluded_provider in forbidden:
+    for required_kind, required_product, required_provider, required_caps in expected:
+        for excluded_kind, excluded_product, excluded_provider, excluded_caps in forbidden:
             if (
                 required_kind == excluded_kind
                 and (excluded_product is None or excluded_product == required_product)
                 and (excluded_provider is None or excluded_provider == required_provider)
+                and (excluded_caps is None or excluded_caps == required_caps)
             ):
                 raise CorpusError(f"{where}: forbidden selector covers an expected finding")
 
@@ -222,114 +237,8 @@ def load_corpus(path: Path) -> tuple[dict[str, Any], list[Case], str]:
     ids: set[str] = set()
     total_bytes = 0
     for i, item in enumerate(items):
-        where = f"case {i}"
-        obj = _keys(
-            item,
-            {"id", "family", "description", "files", "target", "present"},
-            {"assertions", "source", "known_gap"},
-            where,
-        )
-        case_id, family, desc = obj["id"], obj["family"], obj["description"]
-        if not isinstance(case_id, str) or not _ID.fullmatch(case_id) or case_id in ids:
-            raise CorpusError(f"{where}: case IDs must be unique slugs")
-        ids.add(case_id)
-        if not isinstance(family, str) or not _ID.fullmatch(family):
-            raise CorpusError(f"{where}: family must be a slug")
-        if family == "all":
-            raise CorpusError(f"{where}: family 'all' is reserved for aggregate metrics")
-        if not isinstance(desc, str) or not 1 <= len(desc) <= 500:
-            raise CorpusError(f"{where}: description must be 1 to 500 characters")
-        if type(obj["present"]) is not bool:
-            raise CorpusError(f"{where}: present must be boolean")
-        known_gap = obj.get("known_gap", False)
-        if type(known_gap) is not bool:
-            raise CorpusError(f"{where}: known_gap must be boolean")
-        target = _keys(obj["target"], {"kind"}, {"signature"}, f"{where} target")
-        try:
-            kind = Kind(target["kind"])
-        except (ValueError, TypeError) as exc:
-            raise CorpusError(f"{where}: unknown finding kind") from exc
-        sig = target.get("signature")
-        if sig is not None and (not isinstance(sig, str) or not _SIGNATURE.fullmatch(sig)):
-            raise CorpusError(f"{where}: signature must be a signature ID")
-        assertions = _keys(
-            obj.get("assertions", {}),
-            set(),
-            {
-                "forbidden_signatures",
-                "max_agent_findings",
-                "max_secret_findings",
-                "server_count",
-                "server_names",
-                "exact_findings",
-                *_FINDING_SELECTORS,
-            },
-            f"{where} assertions",
-        )
-        for key in ("max_agent_findings", "max_secret_findings", "server_count"):
-            if key in assertions and (type(assertions[key]) is not int or not 0 <= assertions[key] <= 20):
-                raise CorpusError(f"{where}: {key} must be an integer from 0 to 20")
-        if "server_names" in assertions and (
-            not isinstance(assertions["server_names"], list)
-            or len(assertions["server_names"]) > 20
-            or any(
-                not isinstance(name, str) or not name or len(name) > 100
-                for name in assertions["server_names"]
-            )
-            or len(set(assertions["server_names"])) != len(assertions["server_names"])
-        ):
-            raise CorpusError(f"{where}: server_names must contain up to 20 unique names")
-        if "forbidden_signatures" in assertions and (
-            not isinstance(assertions["forbidden_signatures"], list)
-            or len(assertions["forbidden_signatures"]) > 20
-            or any(
-                not isinstance(signature, str) or not _SIGNATURE.fullmatch(signature)
-                for signature in assertions["forbidden_signatures"]
-            )
-            or len(set(assertions["forbidden_signatures"])) != len(assertions["forbidden_signatures"])
-        ):
-            raise CorpusError(f"{where}: forbidden_signatures must contain up to 20 unique signature IDs")
-        _validate_finding_selectors(assertions, where)
-        _validate_exact_findings(assertions, where)
-        files = obj["files"]
-        if not isinstance(files, dict) or not 1 <= len(files) <= MAX_FILES_PER_CASE:
-            raise CorpusError(f"{where}: files must contain 1 to 20 entries")
-        for name, contents in files.items():
-            if not _safe_name(name) or not isinstance(contents, str):
-                raise CorpusError(f"{where}: invalid text file or unsafe relative path")
-            size = len(contents.encode("utf-8"))
-            if size > MAX_FILE_BYTES:
-                raise CorpusError(f"{where}: file exceeds 32 KB")
-            total_bytes += size
-            if total_bytes > MAX_TOTAL_FILE_BYTES:
-                raise CorpusError("case files exceed 1 MB combined")
-        source = obj.get("source")
-        if source is not None:
-            source = _keys(
-                source,
-                {"repo", "url", "commit", "path", "sha256", "license", "label_evidence"},
-                set(),
-                f"{where} source",
-            )
-            if (
-                len(files) != 1
-                or not all(isinstance(v, str) and v and len(v) <= 500 for v in source.values())
-                or source["path"] not in files
-                or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source["repo"])
-                or not re.fullmatch(r"[0-9a-f]{40}", source["commit"])
-                or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
-            ):
-                raise CorpusError(f"{where}: invalid source attribution")
-            expected_url = f"https://github.com/{source['repo']}/blob/{source['commit']}/{source['path']}"
-            if source["url"] != expected_url:
-                raise CorpusError(f"{where}: source URL does not match repository commit and path")
-            if hashlib.sha256(files[source["path"]].encode("utf-8")).hexdigest() != source["sha256"]:
-                raise CorpusError(f"{where}: source snapshot digest mismatch")
-        if meta["type"] == "public-pinned" and source is None:
-            raise CorpusError(f"{where}: public pinned cases require source attribution")
-        cases.append(
-            Case(case_id, family, desc, files, kind, sig, obj["present"], assertions, source, known_gap)
-        )
+        case, total_bytes = _parse_case(item, f"case {i}", ids, total_bytes, meta["type"])
+        cases.append(case)
     gap_count = sum(case.known_gap for case in cases)
     if gap_count and gap_policy is None:
         raise CorpusError("known_gap cases require a bounded metadata known_gap_policy")
@@ -338,6 +247,126 @@ def load_corpus(path: Path) -> tuple[dict[str, Any], list[Case], str]:
             f"known_gap count {gap_count} exceeds the declared maximum {gap_policy['max_count']}"
         )
     return meta, cases, hashlib.sha256(raw).hexdigest()
+
+
+def _parse_case(item: Any, where: str, ids: set[str], total_bytes: int, corpus_type: str) -> tuple[Case, int]:
+    """Validate one corpus case; return it and the running total of case file bytes."""
+    obj = _keys(
+        item,
+        {"id", "family", "description", "files", "target", "present"},
+        {"assertions", "source", "known_gap"},
+        where,
+    )
+    case_id, family, desc = obj["id"], obj["family"], obj["description"]
+    if not isinstance(case_id, str) or not _ID.fullmatch(case_id) or case_id in ids:
+        raise CorpusError(f"{where}: case IDs must be unique slugs")
+    ids.add(case_id)
+    if not isinstance(family, str) or not _ID.fullmatch(family):
+        raise CorpusError(f"{where}: family must be a slug")
+    if family == "all":
+        raise CorpusError(f"{where}: family 'all' is reserved for aggregate metrics")
+    if not isinstance(desc, str) or not 1 <= len(desc) <= 500:
+        raise CorpusError(f"{where}: description must be 1 to 500 characters")
+    if type(obj["present"]) is not bool:
+        raise CorpusError(f"{where}: present must be boolean")
+    known_gap = obj.get("known_gap", False)
+    if type(known_gap) is not bool:
+        raise CorpusError(f"{where}: known_gap must be boolean")
+    target = _keys(obj["target"], {"kind"}, {"signature"}, f"{where} target")
+    try:
+        kind = Kind(target["kind"])
+    except (ValueError, TypeError) as exc:
+        raise CorpusError(f"{where}: unknown finding kind") from exc
+    sig = target.get("signature")
+    if sig is not None and (not isinstance(sig, str) or not _SIGNATURE.fullmatch(sig)):
+        raise CorpusError(f"{where}: signature must be a signature ID")
+    assertions = _case_assertions(obj.get("assertions", {}), where)
+    files = obj["files"]
+    if not isinstance(files, dict) or not 1 <= len(files) <= MAX_FILES_PER_CASE:
+        raise CorpusError(f"{where}: files must contain 1 to 20 entries")
+    for name, contents in files.items():
+        if not _safe_name(name) or not isinstance(contents, str):
+            raise CorpusError(f"{where}: invalid text file or unsafe relative path")
+        size = len(contents.encode("utf-8"))
+        if size > MAX_FILE_BYTES:
+            raise CorpusError(f"{where}: file exceeds 32 KB")
+        total_bytes += size
+        if total_bytes > MAX_TOTAL_FILE_BYTES:
+            raise CorpusError("case files exceed 1 MB combined")
+    source = obj.get("source")
+    if source is not None:
+        source = _case_source(source, files, where)
+    if corpus_type == "public-pinned" and source is None:
+        raise CorpusError(f"{where}: public pinned cases require source attribution")
+    case = Case(case_id, family, desc, files, kind, sig, obj["present"], assertions, source, known_gap)
+    return case, total_bytes
+
+
+def _case_assertions(value: Any, where: str) -> dict[str, Any]:
+    assertions = _keys(
+        value,
+        set(),
+        {
+            "forbidden_signatures",
+            "max_agent_findings",
+            "max_secret_findings",
+            "server_count",
+            "server_names",
+            "exact_findings",
+            *_FINDING_SELECTORS,
+        },
+        f"{where} assertions",
+    )
+    for key in ("max_agent_findings", "max_secret_findings", "server_count"):
+        if key in assertions and (type(assertions[key]) is not int or not 0 <= assertions[key] <= 20):
+            raise CorpusError(f"{where}: {key} must be an integer from 0 to 20")
+    if "server_names" in assertions and (
+        not isinstance(assertions["server_names"], list)
+        or len(assertions["server_names"]) > 20
+        or any(
+            not isinstance(name, str) or not name or len(name) > 100 for name in assertions["server_names"]
+        )
+        or len(set(assertions["server_names"])) != len(assertions["server_names"])
+    ):
+        raise CorpusError(f"{where}: server_names must contain up to 20 unique names")
+    if "forbidden_signatures" in assertions and (
+        not isinstance(assertions["forbidden_signatures"], list)
+        or len(assertions["forbidden_signatures"]) > 20
+        or any(
+            not isinstance(signature, str) or not _SIGNATURE.fullmatch(signature)
+            for signature in assertions["forbidden_signatures"]
+        )
+        or len(set(assertions["forbidden_signatures"])) != len(assertions["forbidden_signatures"])
+    ):
+        raise CorpusError(f"{where}: forbidden_signatures must contain up to 20 unique signature IDs")
+    _validate_finding_selectors(assertions, where)
+    _validate_exact_findings(assertions, where)
+    return assertions
+
+
+def _case_source(value: Any, files: dict[str, str], where: str) -> dict[str, Any]:
+    """Check a public case's attribution against its single pinned file."""
+    source = _keys(
+        value,
+        {"repo", "url", "commit", "path", "sha256", "license", "label_evidence"},
+        set(),
+        f"{where} source",
+    )
+    if (
+        len(files) != 1
+        or not all(isinstance(v, str) and v and len(v) <= 500 for v in source.values())
+        or source["path"] not in files
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source["repo"])
+        or not re.fullmatch(r"[0-9a-f]{40}", source["commit"])
+        or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
+    ):
+        raise CorpusError(f"{where}: invalid source attribution")
+    expected_url = f"https://github.com/{source['repo']}/blob/{source['commit']}/{source['path']}"
+    if source["url"] != expected_url:
+        raise CorpusError(f"{where}: source URL does not match repository commit and path")
+    if hashlib.sha256(files[source["path"]].encode("utf-8")).hexdigest() != source["sha256"]:
+        raise CorpusError(f"{where}: source snapshot digest mismatch")
+    return source
 
 
 _DEFAULT_EXCLUDE_NOTICE = "code.filesystem: default directory excludes skipped under"
@@ -368,6 +397,7 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
             "frameworks": sorted(set(f.frameworks)),
             "model_providers": sorted(set(f.model_providers)),
             "signatures": sorted(set(f.frameworks + f.model_providers)),
+            "capabilities": sorted(set(f.capabilities)),
             "confidence": f.confidence,
             **(
                 {
@@ -383,11 +413,14 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
 
 
 def _finding_checks(case: Case, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Match attribution and, when labeled, the exact capability set on one finding."""
     checks = []
     for relation in _FINDING_SELECTORS:
         for selector in case.assertions.get(relation, []):
-            observed = any(
-                finding["kind"] == selector["kind"]
+            candidates = [
+                finding
+                for finding in findings
+                if finding["kind"] == selector["kind"]
                 and (
                     "product_signature" not in selector
                     or selector["product_signature"] in finding["frameworks"]
@@ -396,14 +429,23 @@ def _finding_checks(case: Case, findings: list[dict[str, Any]]) -> list[dict[str
                     "provider_signature" not in selector
                     or selector["provider_signature"] in finding["model_providers"]
                 )
-                for finding in findings
+            ]
+            complete = "capabilities" not in selector or all("capabilities" in f for f in candidates)
+            observed = any(
+                "capabilities" not in selector
+                or (
+                    "capabilities" in finding
+                    and sorted(selector["capabilities"]) == sorted(finding["capabilities"])
+                )
+                for finding in candidates
             )
             checks.append(
                 {
                     "relation": relation,
                     "selector": selector,
                     "observed": observed,
-                    "passed": observed if relation == "expected_findings" else not observed,
+                    "passed": complete and (observed if relation == "expected_findings" else not observed),
+                    **({"capabilities_complete": complete} if "capabilities" in selector else {}),
                 }
             )
     return checks
@@ -441,11 +483,14 @@ def _assertions(
     failures = []
     for check in checks:
         if not check["passed"]:
-            action = (
-                "expected finding missing"
-                if check["relation"] == "expected_findings"
-                else "forbidden finding observed"
-            )
+            if check.get("capabilities_complete") is False:
+                action = "finding capability evidence missing"
+            else:
+                action = (
+                    "expected finding missing"
+                    if check["relation"] == "expected_findings"
+                    else "forbidden finding observed"
+                )
             failures.append(f"{action}: {json.dumps(check['selector'], sort_keys=True)}")
     if exact_set is not None and not exact_set["passed"]:
         failures.append(
@@ -474,7 +519,8 @@ def _assertions(
         observed_names = sorted(name for f in mcp for name in f["server_names"])
         if observed_names != sorted(case.assertions["server_names"]):
             failures.append(
-                f"active MCP server names: expected {sorted(case.assertions['server_names'])}; got {observed_names}"
+                "active MCP server names: expected "
+                f"{sorted(case.assertions['server_names'])}; got {observed_names}"
             )
     forbidden = set(case.assertions.get("forbidden_signatures", []))
     if forbidden:
@@ -525,18 +571,27 @@ def finding_assertion_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         name: {"checks": 0, "passed": 0, "failed": 0}
         for name in (*_FINDING_SELECTORS, "kind_only", "product_signature", "provider_signature")
     }
+    if any("capabilities" in check["selector"] for row in rows for check in row["finding_checks"]):
+        groups["capabilities"] = {"checks": 0, "passed": 0, "failed": 0}
     for row in rows:
         for check in row["finding_checks"]:
             selector = check["selector"]
             fields = [check["relation"]]
-            fields.extend(field for field in ("product_signature", "provider_signature") if field in selector)
+            fields.extend(
+                field
+                for field in ("product_signature", "provider_signature", "capabilities")
+                if field in selector
+            )
             if len(fields) == 1:
                 fields.append("kind_only")
             for field in fields:
                 groups[field]["checks"] += 1
                 groups[field]["passed" if check["passed"] else "failed"] += 1
     return {
-        "note": "Explicit checks on selected cases; selectors are partial unless exact_findings is set. Overlapping categories are not independent observations or field accuracy.",
+        "note": (
+            "Explicit checks on selected cases; selectors are partial unless exact_findings is set. "
+            "Overlapping categories are not independent observations or field accuracy."
+        ),
         "cases_with_checks": sum(bool(row["finding_checks"]) for row in rows),
         "exact_finding_sets": {
             "checks": sum(row["exact_finding_set"] is not None for row in rows),
@@ -594,7 +649,9 @@ def calibration(rows: list[dict[str, Any]]) -> dict[str, Any]:
             assert mean_score is not None and observed_fraction is not None
             ece += bucket["count"] / total * abs(mean_score - observed_fraction)
     return {
-        "note": "Descriptive selected-case score reliability only; confidence is not a calibrated probability.",
+        "note": (
+            "Descriptive selected-case score reliability only; confidence is not a calibrated probability."
+        ),
         "brier_proxy": statistics.mean((row["score"] - int(row["present"])) ** 2 for row in rows),
         "ece_proxy": ece,
         "bins": bins,

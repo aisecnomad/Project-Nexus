@@ -512,9 +512,11 @@ def _normalise_kong(rec: dict[str, Any]) -> Event:
         caller_kind="principal" if consumer else "ip",
         caller_label=str(consumer or client_ip or "anonymous"),
         timestamp=_timestamp(rec, "started_at", "timestamp"),
-        model=meta.get("response_model")
-        or meta.get("request_model")
-        or get_path(rec, "ai.proxy.meta.request_model"),
+        model=(
+            meta.get("response_model")
+            or meta.get("request_model")
+            or get_path(rec, "ai.proxy.meta.request_model")
+        ),
         provider=meta.get("provider_name"),
         host=host_of(get_path(rec, "upstream_uri", "request.url")),
         user_agent=headers.get("user-agent") if isinstance(headers, dict) else None,
@@ -688,10 +690,12 @@ def _normalise_azure_openai(rec: dict[str, Any]) -> Event:
         caller_kind="principal" if oid or upn else "ip",
         caller_label=str(upn or oid or caller),
         timestamp=_timestamp(rec, "time", "TimeGenerated", "timestamp"),
-        model=props.get("modelName")
-        or props.get("modelDeploymentName")
-        or props.get("deploymentName")
-        or props.get("model"),
+        model=(
+            props.get("modelName")
+            or props.get("modelDeploymentName")
+            or props.get("deploymentName")
+            or props.get("model")
+        ),
         provider="azure-openai",
         host=host_of(resource_id),
         user_agent=props.get("userAgent") or get_path(rec, "properties.headers.user-agent"),
@@ -861,37 +865,37 @@ def _normalise_access_log(rec: dict[str, Any]) -> Event:
     api_key = get_path(rec, "api_key", "x_api_key", "apikey", "authorization_hash", "consumer", "client_id")
     kind, caller = _identity(("api-key", api_key), ("user", user), ("user-agent", ua), ("ip", ip))
     caller = caller or "unknown"
+    timestamp = get_path(
+        rec,
+        "time",
+        "timestamp",
+        "@timestamp",
+        "time_local",
+        "time_iso8601",
+        "start_time",
+        "date",
+        "ts",
+        "datetime",
+    )
+    host = get_path(
+        rec,
+        "host",
+        "http_host",
+        "server_name",
+        "upstream_host",
+        "authority",
+        "http.host",
+        "cs-host",
+        "x-forwarded-host",
+        "domain",
+    )
     return Event(
         caller=f"access:{caller}",
         caller_kind=kind,
         caller_label=str(caller),
-        timestamp=parse_timestamp(
-            get_path(
-                rec,
-                "time",
-                "timestamp",
-                "@timestamp",
-                "time_local",
-                "time_iso8601",
-                "start_time",
-                "date",
-                "ts",
-                "datetime",
-            )
-        ),
+        timestamp=parse_timestamp(timestamp),
         model=get_path(rec, "model", "x_model", "request_model", "llm_model"),
-        host=get_path(
-            rec,
-            "host",
-            "http_host",
-            "server_name",
-            "upstream_host",
-            "authority",
-            "http.host",
-            "cs-host",
-            "x-forwarded-host",
-            "domain",
-        ),
+        host=host,
         user_agent=ua,
         ip=_text(ip),
         user=_text(user),
@@ -983,38 +987,56 @@ def _normalise_generic(rec: dict[str, Any]) -> Event | None:
     )
     if who is None:
         return None
+    timestamp = get_path(
+        rec,
+        "timestamp",
+        "time",
+        "@timestamp",
+        "ts",
+        "created_at",
+        "createdAt",
+        "start_time",
+        "startTime",
+        "date",
+        "datetime",
+        "event_time",
+    )
+    model = get_path(
+        rec,
+        "model",
+        "model_id",
+        "modelId",
+        "model_name",
+        "deployment",
+        "engine",
+        "llm",
+        "response.model",
+        "request.model",
+    )
+    tokens_in = get_path(
+        rec,
+        "prompt_tokens",
+        "input_tokens",
+        "tokens_in",
+        "usage.prompt_tokens",
+        "usage.input_tokens",
+        "promptTokens",
+    )
+    tokens_out = get_path(
+        rec,
+        "completion_tokens",
+        "output_tokens",
+        "tokens_out",
+        "usage.completion_tokens",
+        "usage.output_tokens",
+        "completionTokens",
+    )
     return Event(
         caller=f"{kind}:{who}",
         caller_kind=kind,
         caller_label=str(who),
-        timestamp=parse_timestamp(
-            get_path(
-                rec,
-                "timestamp",
-                "time",
-                "@timestamp",
-                "ts",
-                "created_at",
-                "createdAt",
-                "start_time",
-                "startTime",
-                "date",
-                "datetime",
-                "event_time",
-            )
-        ),
-        model=get_path(
-            rec,
-            "model",
-            "model_id",
-            "modelId",
-            "model_name",
-            "deployment",
-            "engine",
-            "llm",
-            "response.model",
-            "request.model",
-        ),
+        timestamp=parse_timestamp(timestamp),
+        model=model,
         provider=get_path(rec, "provider", "llm_provider", "custom_llm_provider", "vendor", "platform"),
         host=host_of(get_path(rec, "host", "url", "endpoint", "api_base", "base_url", "upstream")),
         user_agent=ua,
@@ -1024,28 +1046,8 @@ def _normalise_generic(rec: dict[str, Any]) -> Event | None:
         tools=_generic_tools(rec),
         tool_calls=_generic_tool_calls(rec),
         streaming=_b(get_path(rec, "stream", "streaming")),
-        tokens_in=_i(
-            get_path(
-                rec,
-                "prompt_tokens",
-                "input_tokens",
-                "tokens_in",
-                "usage.prompt_tokens",
-                "usage.input_tokens",
-                "promptTokens",
-            )
-        ),
-        tokens_out=_i(
-            get_path(
-                rec,
-                "completion_tokens",
-                "output_tokens",
-                "tokens_out",
-                "usage.completion_tokens",
-                "usage.output_tokens",
-                "completionTokens",
-            )
-        ),
+        tokens_in=_i(tokens_in),
+        tokens_out=_i(tokens_out),
         cost=_f(get_path(rec, "cost", "spend", "total_cost", "cost_usd")),
         status=_label(get_path(rec, "status", "status_code", "http_status")),
         path=get_path(rec, "path", "endpoint", "operation", "call_type", "route", "method_name"),

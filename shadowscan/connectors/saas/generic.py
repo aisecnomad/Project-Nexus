@@ -64,7 +64,10 @@ class GenericSaaSConnector(BaseConnector):
     )
     config_keys: ClassVar[dict[str, str]] = {
         "input": "CSV / JSON export (required)",
-        "platform": "label for the platform the export came from (e.g. 'google-marketplace', 'hubspot', 'defender-mcas')",
+        "platform": (
+            "label for the platform the export came from (e.g. 'google-marketplace', 'hubspot', "
+            "'defender-mcas')"
+        ),
         "fields": "optional column mapping {name: 'App Name', scopes: 'Permissions', ...}",
         "keep_all": "emit every app, not only AI / privileged matches (default false)",
     }
@@ -196,7 +199,11 @@ class GenericSaaSConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal=f"{self.platform}:app",
-                description=f"'{name}' from {self.platform} export; status {self._get(rec, 'status') or 'n/a'}; users {user_count if user_count is not None else users or '?'}; scopes {', '.join(scopes)[:300] or 'n/a'}",
+                description=(
+                    f"'{name}' from {self.platform} export; status {self._get(rec, 'status') or 'n/a'}; "
+                    f"users {user_count if user_count is not None else users or '?'}; scopes "
+                    f"{', '.join(scopes)[:300] or 'n/a'}"
+                ),
                 weight=0.2 + (min(0.2, user_count / 500) if user_count else 0),
             )
         )

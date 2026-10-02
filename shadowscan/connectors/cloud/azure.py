@@ -35,7 +35,7 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials
-from shadowscan.connectors.common import apply_matches, config_boolean, model_matches
+from shadowscan.connectors.common import apply_matches, config_boolean, failure_summary, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
@@ -103,10 +103,6 @@ def _subscription(resource_id: str) -> str | None:
     if "/subscriptions/" not in resource_id:
         return None
     return resource_id.split("/subscriptions/")[-1].split("/")[0]
-
-
-def _failure(exc: Exception) -> str:
-    return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
 
 
 class AzureConnector(BaseConnector):
@@ -205,7 +201,9 @@ class AzureConnector(BaseConnector):
                 params = {"api-version": api, **params}
             return self.http.get_json(path, params=params or None)
         except (HttpError, RequestException, ValueError) as exc:
-            self.ctx.warn(f"cloud.azure: {_failure(exc)} for {path}; coverage unknown", incomplete=True)
+            self.ctx.warn(
+                f"cloud.azure: {failure_summary(exc)} for {path}; coverage unknown", incomplete=True
+            )
             return None
 
     def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[Any] | None:
@@ -226,7 +224,9 @@ class AzureConnector(BaseConnector):
             try:
                 data = self._get(path, api)
             except (HttpError, RequestException, ValueError) as exc:
-                self.ctx.warn(f"cloud.azure: list collection failed ({_failure(exc)}); coverage unknown")
+                self.ctx.warn(
+                    f"cloud.azure: list collection failed ({failure_summary(exc)}); coverage unknown"
+                )
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("value"), list):
                 self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
@@ -313,7 +313,8 @@ class AzureConnector(BaseConnector):
                 )
             except (HttpError, RequestException, ValueError) as exc:
                 self.ctx.warn(
-                    f"cloud.azure: Resource Graph collection failed ({_failure(exc)}); coverage unknown"
+                    f"cloud.azure: Resource Graph collection failed ({failure_summary(exc)}); "
+                    "coverage unknown"
                 )
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
@@ -415,7 +416,9 @@ class AzureConnector(BaseConnector):
                         " (needs Microsoft.Web/sites/config/list/action; "
                         "set include_app_settings: false to skip app settings)"
                     )
-                self.ctx.warn(f"cloud.azure: appsettings {_failure(exc)} for {rid}{hint}", incomplete=True)
+                self.ctx.warn(
+                    f"cloud.azure: appsettings {failure_summary(exc)} for {rid}{hint}", incomplete=True
+                )
 
     def _collect_agents(self, account: dict[str, Any], project: dict[str, Any]) -> Iterator[dict[str, Any]]:
         token = self._foundry()
@@ -452,7 +455,7 @@ class AzureConnector(BaseConnector):
                 data = http.get_json("/assistants", params=dict(params))
             except (HttpError, RequestException, ValueError) as exc:
                 self.ctx.warn(
-                    f"cloud.azure: Foundry agents {_failure(exc)}; coverage unknown",
+                    f"cloud.azure: Foundry agents {failure_summary(exc)}; coverage unknown",
                     incomplete=True,
                 )
                 return

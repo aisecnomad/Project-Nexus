@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _nearest_root
 from shadowscan.models import Kind
+from shadowscan.signatures import SignatureIndex
+from shadowscan.signatures.loader import signature_from_dict
 
 
 def _by_kind(findings):
@@ -130,3 +134,151 @@ def test_mcp_toml_and_vscode_variants(tmp_path: Path, run_connector):
     mcp = {f.metadata["path"]: f for f in findings if f.kind == Kind.MCP_SERVER}
     assert mcp[".codex/config.toml"].metadata["client"] == "OpenAI Codex"
     assert mcp[".vscode/mcp.json"].metadata["servers"][0]["url"].startswith("http://")
+
+
+def test_same_text_from_distinct_signals_retains_agent_capabilities(tmp_path):
+    index = SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "custom.agent",
+                    "category": "framework",
+                    "signals": [
+                        {
+                            "type": "import",
+                            "languages": ["python"],
+                            "patterns": [r"^from custom_sdk import execute_agent\b"],
+                            "weight": 0.8,
+                        },
+                        {"type": "code", "patterns": [r"execute_agent\("], "weight": 0.5},
+                        {
+                            "type": "code",
+                            "patterns": [r"execute_agent\("],
+                            "weight": 0.95,
+                            "agent_indicator": True,
+                            "capabilities": ["code-exec"],
+                        },
+                    ],
+                }
+            )
+        ]
+    )
+    (tmp_path / "agent.py").write_text("from custom_sdk import execute_agent\nexecute_agent()\n")
+    context = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = FilesystemConnector(context).run()
+    project = next(f for f in findings if f.resource_type == "project")
+    assert project.kind == Kind.AGENT
+    assert "code-exec" in project.capabilities
+    code_evidence = [e for e in project.evidence if e.signal == "code:custom.agent"]
+    assert len(code_evidence) == 2
+    assert {e.weight for e in code_evidence} == {0.5, 0.95}
+
+
+SECRET = "sk-proj-aP9rVv3qN4zY7bC2hJ8Lm5Qw6Dt0KsX1eR7uT4p"
+
+
+def _scan(index, root: Path, **config):
+    ctx = ConnectorContext(config={"path": str(root), **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+def test_directory_exclusion_names_do_not_skip_files(tmp_path, index):
+    (tmp_path / "build").write_text(f"#!/bin/sh\nexport OPENAI_API_KEY={SECRET}\n")
+    for config in ({}, {"exclude": ["*.log"]}):
+        findings, ctx = _scan(index, tmp_path, **config)
+        assert any(f.kind == Kind.SECRET for f in findings) and ctx.stats.objects_examined == 1
+    (tmp_path / "build").unlink()
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "out.py").write_text(f"KEY = '{SECRET}'\n")
+    findings, _ = _scan(index, tmp_path)
+    assert not findings, "the build directory itself is still excluded"
+
+
+def _run(index, root, **config):
+    ctx = ConnectorContext(config={"path": str(root), "use_git": False, **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+def test_duplicate_manifest_and_text_observations_count_once(tmp_path, index):
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\nENV OPENAI_API_KEY=\n")
+    findings, _ = _run(index, tmp_path)
+    project = next(f for f in findings if f.resource_type == "project")
+    env_evidence = [e for e in project.evidence if e.signal == "env:provider.openai"]
+    assert len(env_evidence) == 1
+    assert project.confidence < 0.85  # a single mention is not a confirmed agent
+    (tmp_path / "Dockerfile").unlink()
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-proj-kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h\n")
+    findings, _ = _run(index, tmp_path)
+    secret = next(f for f in findings if f.kind == Kind.SECRET)
+    assert secret.metadata["count"] == 1 and len(secret.evidence) == 1
+
+
+DIFY_APP = {
+    "kind": "app",
+    "app": {"mode": "chat"},
+    "model_config": {"model": {"provider": "openai", "name": "gpt-4o"}},
+}
+
+
+def test_fixture_workflow_export_is_test_code_only(tmp_path: Path, run_connector) -> None:
+    (tmp_path / "app.json").write_text(json.dumps(DIFY_APP))
+    fixtures = tmp_path / "api" / "tests" / "fixtures" / "workflow"
+    fixtures.mkdir(parents=True)
+    (fixtures / "app.json").write_text(json.dumps(DIFY_APP))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    workflows = [f for f in findings if f.kind == Kind.WORKFLOW]
+    assert len(workflows) == 2
+    deployed = next(f for f in workflows if "fixtures" not in f.resource)
+    fixture = next(f for f in workflows if "fixtures" in f.resource)
+    assert "test-code-only" not in deployed.tags
+    assert "test-code-only" in fixture.tags
+    assert fixture.confidence < deployed.confidence
+
+
+def test_include_tests_restores_fixture_workflow_weight(tmp_path: Path, run_connector) -> None:
+    fixtures = tmp_path / "tests" / "fixtures"
+    fixtures.mkdir(parents=True)
+    (fixtures / "app.json").write_text(json.dumps(DIFY_APP))
+    (tmp_path / "app.json").write_text(json.dumps(DIFY_APP))
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False, include_tests=True)
+    workflows = [f for f in findings if f.kind == Kind.WORKFLOW]
+    assert len(workflows) == 2
+    assert not any("test-code-only" in f.tags for f in workflows)
+    assert workflows[0].confidence == workflows[1].confidence
+
+
+def _project_resources(findings) -> set[str]:
+    return {f.resource for f in findings if f.kind in {Kind.FRAMEWORK_USAGE, Kind.AGENT}}
+
+
+def test_module_named_setup_py_is_not_a_project_root(tmp_path: Path, run_connector) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "sdk"\ndependencies = ["openai"]\n')
+    package = tmp_path / "src" / "sdk" / "tracing"
+    package.mkdir(parents=True)
+    (package / "setup.py").write_text(
+        "import threading\n\nLOCK = threading.Lock()\n\n\ndef setup(app):\n    return app\n"
+    )
+    (package / "export.py").write_text("from openai import OpenAI\n\nclient = OpenAI()\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    resources = _project_resources(findings)
+    assert resources == {str(tmp_path)}
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'from setuptools import setup\n\nsetup(name="tool", install_requires=["openai"])\n',
+        'from distutils.core import setup\n\nsetup(name="tool")\n',
+    ],
+)
+def test_packaging_setup_py_still_marks_a_project(tmp_path: Path, run_connector, script: str) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "monorepo"\n')
+    tool = tmp_path / "tools" / "tool"
+    tool.mkdir(parents=True)
+    (tool / "setup.py").write_text(script)
+    (tool / "run.py").write_text("from openai import OpenAI\n\nclient = OpenAI()\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert str(tool) in _project_resources(findings)

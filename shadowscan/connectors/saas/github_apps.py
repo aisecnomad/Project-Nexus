@@ -19,7 +19,7 @@ from typing import Any, ClassVar
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import cap_confidence, config_boolean, finalize
+from shadowscan.connectors.common import cap_confidence, config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -35,14 +35,18 @@ class GitHubAppsConnector(BaseConnector):
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "github"
     description: ClassVar[str] = (
-        "GitHub Apps installed on an organisation (AI reviewers, coding agents), Copilot seats and approved fine-grained PATs."
+        "GitHub Apps installed on an organisation (AI reviewers, coding agents), Copilot seats and approved "
+        "fine-grained PATs."
     )
     config_keys: ClassVar[dict[str, str]] = {
         "org": "organisation login (env GITHUB_ORG)",
         "token": "org admin token (env GITHUB_TOKEN)",
         "api_url": "default https://api.github.com",
         "input": "offline: installations JSON",
-        "include_unrecognized_apps": "also report write-capable apps with no AI signature or AI-like name, capped at possible confidence (default false)",
+        "include_unrecognized_apps": (
+            "also report write-capable apps with no AI signature or AI-like name, capped at possible "
+            "confidence (default false)"
+        ),
     }
 
     def __init__(self, ctx: ConnectorContext):
@@ -93,7 +97,7 @@ class GitHubAppsConnector(BaseConnector):
     def _collection_warning(self, source: str, exc: Exception) -> None:
         # Sources need different grants. Keep findings from available sources,
         # report incomplete coverage, and never echo a provider's response body.
-        reason = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+        reason = failure_summary(exc)
         self.ctx.warn(f"saas.github-apps: {source} unavailable ({reason}); coverage incomplete")
 
     @staticmethod
@@ -230,7 +234,10 @@ class GitHubAppsConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="github:installation",
-                description=f"App '{slug}' on {inst.get('repository_selection')} repositories; permissions {', '.join(scopes)[:300]}; events {', '.join(events)[:200]}",
+                description=(
+                    f"App '{slug}' on {inst.get('repository_selection')} repositories; permissions "
+                    f"{', '.join(scopes)[:300]}; events {', '.join(events)[:200]}"
+                ),
                 location=inst.get("html_url"),
                 weight=0.3,
             )
@@ -282,7 +289,13 @@ class GitHubAppsConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="github:copilot",
-                description=f"Copilot plan {rec.get('plan_type')}, {seats.get('total', 0)} seats ({seats.get('active_this_cycle', 0)} active); seat management {rec.get('seat_management_setting')}; public code suggestions {rec.get('public_code_suggestions')}; IDE chat {rec.get('ide_chat')}; platform chat {rec.get('platform_chat')}; CLI {rec.get('cli')}",
+                description=(
+                    f"Copilot plan {rec.get('plan_type')}, {seats.get('total', 0)} seats "
+                    f"({seats.get('active_this_cycle', 0)} active); seat management "
+                    f"{rec.get('seat_management_setting')}; public code suggestions "
+                    f"{rec.get('public_code_suggestions')}; IDE chat {rec.get('ide_chat')}; platform chat "
+                    f"{rec.get('platform_chat')}; CLI {rec.get('cli')}"
+                ),
                 weight=0.9,
                 signature="coding-agent.github-copilot",
             )
@@ -318,7 +331,10 @@ class GitHubAppsConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="github:pat",
-                description=f"Fine-grained PAT '{name}' owned by {owner}; {pat.get('repository_selection')} repositories; expires {pat.get('token_expires_at') or 'never'}",
+                description=(
+                    f"Fine-grained PAT '{name}' owned by {owner}; {pat.get('repository_selection')} "
+                    f"repositories; expires {pat.get('token_expires_at') or 'never'}"
+                ),
                 weight=0.25,
             )
         )

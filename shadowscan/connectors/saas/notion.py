@@ -12,8 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorError, _positive_limit
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.base import BaseConnector, ConnectorError
+from shadowscan.connectors.common import finalize, max_pages_limit
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -40,7 +40,7 @@ class NotionConnector(BaseConnector):
             "https://api.notion.com",
             headers={"Authorization": f"Bearer {token}", "Notion-Version": "2022-06-28"},
         )
-        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        max_pages = max_pages_limit(self.ctx.get("max_pages", 1000))
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(max_pages):
@@ -127,7 +127,11 @@ class NotionConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="notion:bot",
-                description=f"Integration '{name}' owned by {owner_type or 'unknown'}{' (' + str(owner) + ')' if owner else ''}; workspace {bot.get('workspace_name') or '?'}",
+                description=(
+                    f"Integration '{name}' owned by "
+                    f"{owner_type or 'unknown'}{' (' + str(owner) + ')' if owner else ''}; workspace "
+                    f"{bot.get('workspace_name') or '?'}"
+                ),
                 weight=0.35 if owner_type == "workspace" else 0.25,
             )
         )

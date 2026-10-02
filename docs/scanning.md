@@ -10,15 +10,35 @@ that are never silent:
   own name is one the scanner never reads (a lockfile, generated bundle or
   image), or when it is a source file whose target is analyzed at its real path
   in the same project, with the same test classification, extension and
-  file-name signals. Every other link makes the scan incomplete (exit code 3):
-  directory links, whose alias paths are not inspected; configuration and
-  document aliases, whose parsing can depend on their path; source aliases into
-  another project or test directory; links into excluded or unread content;
-  links outside the root; and unresolved links.
+  file-name signals. A coding-agent instruction document (`AGENTS.md`,
+  `AGENT.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`,
+  `copilot-instructions.md`) that links to another instruction document in the
+  same project with the same test classification is also covered: the target is
+  scanned at its real path, so the alias is not a second agent definition and
+  its alias-only file name is not reported separately. Every other link makes
+  the scan incomplete (exit code 3): directory links, whose alias paths are not
+  inspected; other configuration and document aliases, whose parsing can depend
+  on their path; aliases into another project or test directory; links into
+  excluded or unread content; links outside the root; and unresolved links.
+  Files are read relative to the opened scan root without following a link in
+  any path component, so a directory replaced by a link after the walk listed it
+  fails that file's read (incomplete) instead of reading content outside the
+  root. Like a read by path, this needs only search permission on the
+  directories above each file.
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
+* **Submodules** are never initialized or fetched. Bounded `.gitmodules`
+  declarations identify missing, empty or unsafe source directories as coverage
+  gaps, including declarations inside materialized nested directories. Ordinary
+  files in materialized submodule directories are scanned by the same confined
+  walker. GitHub/GitLab clone collection additionally inventories gitlinks in
+  the committed `HEAD` tree; local scans do so only with `use_git: true` and a
+  local `.git` directory. Malformed declarations or a failed authorized Git
+  inventory make coverage incomplete. Explicitly excluded submodule paths are
+  outside the declared scan scope. A nonempty directory establishes only that
+  source is available to scan, not that it matches an authentic remote commit.
 * **Undecodable or binary content** in a file whose name the scanner would
   analyze (source, manifests, `.env`, configuration, MCP and agent files,
   notebooks) makes the scan incomplete with `binary or undecodable content in
@@ -53,6 +73,12 @@ environments and tool caches (`.git`, `node_modules`, `venv`, `__pycache__`,
 in `exclude`. Code under a listed name was not assessed; to cover it, scan that
 directory as its own root.
 
+Default local scans do not execute Git: an undeclared gitlink without a
+`.gitmodules` file is therefore not discoverable in that mode. The opt-in Git
+inventory reads committed `HEAD`, not staged-only index entries; an undeclared,
+staged-only gitlink is likewise outside that check. Use a reviewed committed
+checkout and declared submodule paths when completeness matters.
+
 By default, incomplete coverage is recorded as a warning and exits 3.
 `strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an
 error; it does not change the exit code. Raise `max_file_size`, explicitly
@@ -62,6 +88,14 @@ Analysis limits are reported with their reason, for example
 `file analysis incomplete (MatchTimeoutError: source binding call limit exceeded)`.
 The import binder only counts calls into modules that a signature describes,
 so large ordinary files (test suites, HTTP clients) no longer hit the limit.
+Its node budget (`max_ast_nodes`) and nesting limit likewise apply only to a
+Python module with an import that can resolve to a signature. The binder is
+skipped for any other module, of any size, because it could not contribute
+evidence there. Deciding that is linear in the module and matches at most
+4,096 distinct import statements, so it cannot exhaust a file's matching budget.
+A large module that does import such a library, or has more imports than that,
+still reports
+`import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
 
 ## Test and fixture code
 
@@ -69,10 +103,18 @@ Library test suites often construct agents to exercise integrations. Evidence
 found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
 `__mocks__/`, `test_*.py`, `*_test.go`, `*.spec.ts`, …) has half weight and cannot
 promote a project to an *agent*; a project whose evidence is entirely test code
-is tagged `test-code-only`. Set `include_tests: true` (`--include-tests`) to
-treat test code like any other source. Credentials are still reported from test
-paths unless they are recognisable placeholders (repeated characters, marker
-words such as `EXAMPLE`, or very low character diversity).
+is tagged `test-code-only`. Exported low-code workflows found under those paths
+follow the same rule. Set `include_tests: true` (`--include-tests`) to
+treat test code like any other source. A real-format credential under a test,
+fixture or `cassettes/` path is still reported as a `secret` finding, because
+recorded cassettes capture real traffic and a committed key is exposed wherever
+it lives; without `include_tests` it has half weight and the `test-code-only`
+tag. Recognisable placeholders (repeated characters, marker words such as
+`EXAMPLE`, or very low character diversity) are never reported.
+Evidence that only names a coding agent in a test path (an environment variable,
+a display name, a dependency or a code pattern) likewise does not establish a
+coding-agent configuration; instruction documents and coding-agent config
+files still do.
 
 ## Incremental scans
 
@@ -316,7 +358,8 @@ exact `api-key:credential:sha256:...` binding computed privately from the raw
 key, which the connector checks in memory without writing that public digest to
 findings. Keep binding configuration private: publishing a public digest of a
 guessable key would itself disclose the key. The exported HMAC is scan-local
-and cannot be pasted into a future binding. Other caller names changed by
+unless a stable identity key is set (below), and in either case cannot be
+pasted into a binding. Other caller names changed by
 credential redaction remain `unverified` for runtime attribution. Do not put
 raw API keys into bindings.
 
@@ -334,6 +377,25 @@ key for each scan. Direct connector instances use independent keys. Redacted sco
 marked incomplete; gateway exports are noncomparable across independent runs.
 Resolve the scope/credential overlap before interpreting a report comparison
 as evidence that a finding was resolved.
+
+To compare gateway callers across scans, set `SHADOWSCAN_IDENTITY_KEY` to at
+least 32 random bytes, hex or base64 encoded (for example the output of
+`openssl rand -hex 32`), in the environment of every scan that should be
+comparable. Hex is tried first. The engine then uses this key instead of a new
+key per scan: identical inputs and configuration give identical caller, scope
+and source pseudonyms and finding IDs, findings carry
+`metadata.identity_scope: keyed`, and the `collection_scope` fingerprint covers
+the gateway configuration through an HMAC under the key. The key is read only
+from the environment, never from a configuration file, and is never logged or
+written to reports, caches or record exports. A set value that does not decode
+to at least 32 bytes stops the command before any collection (exit 1). Treat
+the key as a secret: with it and a report, anyone can test guesses of short API
+keys, labels and bindings against the pseudonyms, and reports made under one key
+can be linked to each other. A different key changes every gateway ID and the
+collection scope, so `diff` never resolves findings across keys; rotating the key
+requires a fresh baseline. A caller that is missing from a complete export of
+the same source under the same key is reported resolved: the new export has no
+requests from it, which does not prove that the workload was removed.
 
 Code findings with frameworks gain `metadata.runtime_activity`:
 
@@ -362,9 +424,11 @@ Gateway finding IDs include the canonical input path and relevant connector
 configuration (label, format, filters and bindings). This changes IDs from older
 reports. Repeating an identical configured source within one connector instance
 is idempotent for nonredacted principal/service callers; API-key callers and
-redacted scopes use connector-local HMAC IDs. Gateway exports are noncomparable
-across independent scans to avoid claiming that a missing scan-local ID is a
-resolved finding. Distinct exports retain
+redacted scopes use connector-local HMAC IDs. Without `SHADOWSCAN_IDENTITY_KEY`,
+gateway exports are noncomparable across independent scans to avoid claiming
+that a missing scan-local ID is a resolved finding: their findings carry
+`metadata.identity_scope: run`, and `diff` lists them as not comparable (see
+[comparing reports](#comparing-reports)). Distinct exports retain
 separate provenance. Overlapping exports count observations from each source,
 so aggregate counts are not guaranteed to represent unique requests.
 
@@ -390,7 +454,12 @@ findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
 sequences after the provider prefix) is never a `secret` finding; it is listed
 on the project finding as low-weight `example-credential` evidence. A key alone
-does not establish LLM usage, and vendor-neutral heuristics (agent loops,
+does not establish LLM usage, a coding-agent configuration needs more than an
+environment-variable or display-name mention (`GOOSE_PROVIDER` in a detector
+list is not "Goose configured"; a config file, instruction document,
+dependency or workflow step still is), MCP parsing skips
+`*.lock.yml` / `*.lock.yaml` files (compiled agentic workflows) and cookiecutter
+`{{...}}` template paths, and vendor-neutral heuristics (agent loops,
 `subprocess.run`, auto-approve flags) only count in a project that also matches
 a framework, provider, platform, protocol or cloud-service signature. When every
 observation for a project other than those heuristics is an environment-variable
@@ -417,9 +486,11 @@ selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public
 digest does not hide guessable paths or labels; keep these settings nonsecret.
-Credential-bearing configurations omit the digest, and gateway exports cannot
-attest comparable scope because private caller/scope identities may change
-between scans.
+Credential-bearing configurations omit the digest. Gateway exports attest
+comparable scope only when `SHADOWSCAN_IDENTITY_KEY` is set: an HMAC under that
+key stands in for their configuration, which can hold guessable labels and
+bindings. Without the key their private caller/scope identities change between
+scans.
 
 Incomplete scans, changed scope, older reports without provenance, live provider
 collections and third-party connectors cannot establish equivalent coverage.
@@ -439,6 +510,16 @@ Connectors that were disabled or left out by `--only` do not make a scan
 incomplete (that is operator intent), but the JSON report lists them as
 `collection_scope.not_run` with the reason. The list is not part of the scope
 digest.
+
+A finding with `metadata.identity_scope: run`, which `gateway.logs` findings
+carry unless `SHADOWSCAN_IDENTITY_KEY` is set, has an ID derived from a key that
+is random for each scan: the same caller has a different ID in the next report.
+Diff therefore never reports such a finding as new, resolved or unknown because
+the other report lacks its ID. It lists it under `not_comparable` (`baseline` or
+`current`; marked `<` or `>` in text output), states the reason and exits 3. A
+finding whose ID appears in both reports is compared as usual. Any declared
+`identity_scope` other than `keyed`, the scope of findings made under
+`SHADOWSCAN_IDENTITY_KEY`, is treated the same way.
 
 Finding IDs do not depend on inferred kind. Stable resource-type families (or an
 explicit plugin `identity_discriminator`) separate distinct observations on a

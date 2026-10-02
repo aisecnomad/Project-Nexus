@@ -22,8 +22,14 @@ from typing import Any, ClassVar
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import apply_matches, finalize, name_matches
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import (
+    apply_matches,
+    failure_summary,
+    finalize,
+    max_pages_limit,
+    name_matches,
+)
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
@@ -32,12 +38,21 @@ from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import truncate
 
 TABLES = {
-    "sn_aia_agent": "sys_id,name,description,instructions,active,sys_created_by,sys_created_on,sys_updated_on,sys_updated_by,role,agent_type,model,llm_model,autonomous",
+    "sn_aia_agent": (
+        "sys_id,name,description,instructions,active,sys_created_by,sys_created_on,sys_updated_on,"
+        "sys_updated_by,role,agent_type,model,llm_model,autonomous"
+    ),
     "sn_aia_usecase": "sys_id,name,description,active,sys_created_by,sys_updated_on,agents,trigger_type",
-    "sn_aia_tool": "sys_id,name,description,type,agent,tool_type,script,flow,subflow,rest_message,table,active,sys_updated_on",
+    "sn_aia_tool": (
+        "sys_id,name,description,type,agent,tool_type,script,flow,subflow,rest_message,table,active,"
+        "sys_updated_on"
+    ),
     "sn_aia_trigger": "sys_id,name,usecase,trigger_type,table,condition,active,sys_updated_on",
     "sys_hub_flow": "sys_id,name,description,active,type,sys_created_by,sys_updated_on,sys_scope",
-    "oauth_entity": "sys_id,name,client_id,type,active,oauth_entity_scope,redirect_url,sys_created_by,sys_created_on,sys_updated_on,refresh_token_lifespan,access_token_lifespan",
+    "oauth_entity": (
+        "sys_id,name,client_id,type,active,oauth_entity_scope,redirect_url,sys_created_by,sys_created_on,"
+        "sys_updated_on,refresh_token_lifespan,access_token_lifespan"
+    ),
 }
 
 
@@ -100,7 +115,7 @@ class ServiceNowConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        max_pages = max_pages_limit(self.ctx.get("max_pages", 1000))
         for table, fields in TABLES.items():
             seen: set[str] = set()
             offset = 0
@@ -116,7 +131,7 @@ class ServiceNowConnector(BaseConnector):
                         },
                     )
                 except (HttpError, RequestException, ValueError, RuntimeError) as exc:
-                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    status = failure_summary(exc)
                     self.ctx.warn(f"lowcode.servicenow: table {table} collection incomplete ({status})")
                     break
                 if not isinstance(data, dict) or not isinstance(data.get("result"), list):
@@ -287,7 +302,11 @@ class ServiceNowConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="servicenow:sn_aia_agent",
-                description=f"AI Agent '{name}' (active={_val(a.get('active'))}, type={_val(a.get('agent_type'))}, model={_val(a.get('model')) or _val(a.get('llm_model')) or 'default'}) with {len(tools)} tool(s)",
+                description=(
+                    f"AI Agent '{name}' (active={_val(a.get('active'))}, type={_val(a.get('agent_type'))}, "
+                    f"model={_val(a.get('model')) or _val(a.get('llm_model')) or 'default'}) with "
+                    f"{len(tools)} tool(s)"
+                ),
                 weight=0.95,
                 signature="platform.servicenow-now-assist",
             )
@@ -341,10 +360,16 @@ class ServiceNowConnector(BaseConnector):
             last_seen=_val(u.get("sys_updated_on")),
         )
         f.add_framework("platform.servicenow-now-assist")
+        trigger_labels = ", ".join(
+            str(_val(t.get("trigger_type")) or _val(t.get("table")) or "?") for t in triggers[:5]
+        )
         f.add_evidence(
             Evidence(
                 signal="servicenow:sn_aia_usecase",
-                description=f"Use case '{name}' (active={_val(u.get('active'))}) with {len(triggers)} trigger(s): {', '.join(str(_val(t.get('trigger_type')) or _val(t.get('table')) or '?') for t in triggers[:5])}",
+                description=(
+                    f"Use case '{name}' (active={_val(u.get('active'))}) with {len(triggers)} trigger(s): "
+                    f"{trigger_labels}"
+                ),
                 weight=0.8,
                 signature="platform.servicenow-now-assist",
             )
@@ -407,7 +432,10 @@ class ServiceNowConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="servicenow:flow",
-                description=f"Flow '{name}' ({_val(rec.get('type'))}, active={_val(rec.get('active'))}) references AI: {truncate(text, 160)}",
+                description=(
+                    f"Flow '{name}' ({_val(rec.get('type'))}, active={_val(rec.get('active'))}) references "
+                    f"AI: {truncate(text, 160)}"
+                ),
                 weight=0.4,
             )
         )
@@ -454,7 +482,10 @@ class ServiceNowConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="servicenow:oauth_entity",
-                description=f"OAuth {_val(rec.get('type')) or 'client'} '{name}' (active={_val(rec.get('active'))}), refresh token lifespan {_val(rec.get('refresh_token_lifespan'))}s",
+                description=(
+                    f"OAuth {_val(rec.get('type')) or 'client'} '{name}' (active={_val(rec.get('active'))}), "
+                    f"refresh token lifespan {_val(rec.get('refresh_token_lifespan'))}s"
+                ),
                 weight=0.3,
             )
         )

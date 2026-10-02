@@ -11,10 +11,11 @@ from unittest.mock import Mock
 import pytest
 
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
+from shadowscan.connectors.code import filesystem as fs_module
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
-from shadowscan.models import ScanStats
+from shadowscan.models import ScanStats, now_iso
 from shadowscan.utils.git import (
     clone_environment,
     metadata_git_argv_prefix,
@@ -141,7 +142,7 @@ def test_opt_in_metadata_uses_offline_policy_even_with_local_transport_config(tm
             returncode=0, stdout="Known\x00known@example.test\x002026-09-23T00:00:00Z\n"
         )
     )
-    monkeypatch.setattr(subprocess, "run", call)
+    monkeypatch.setattr(fs_module, "run_bounded_metadata", call)
     connector = FilesystemConnector(_context(index, use_git=True))
     assert connector._git_info(tmp_path, ".")["last_author_email"] == "known@example.test"
     cmd = call.call_args.args[0]
@@ -160,7 +161,7 @@ def test_requested_metadata_failure_is_incomplete_without_unsafe_retry(tmp_path,
         call.side_effect = subprocess.TimeoutExpired("git", 20)
     elif failure == "missing-git":
         call.side_effect = FileNotFoundError()
-    monkeypatch.setattr(subprocess, "run", call)
+    monkeypatch.setattr(fs_module, "run_bounded_metadata", call)
     connector = FilesystemConnector(_context(index, use_git=True))
     assert connector._git_info(tmp_path, ".") == {}
     assert connector.ctx.stats.incomplete
@@ -172,7 +173,7 @@ def test_metadata_failure_preserves_code_findings(tmp_path, index, monkeypatch):
     (tmp_path / ".git").mkdir()
     (tmp_path / "requirements.txt").write_text("langchain\n")
     call = Mock(return_value=SimpleNamespace(returncode=128, stdout=""))
-    monkeypatch.setattr(subprocess, "run", call)
+    monkeypatch.setattr(fs_module, "run_bounded_metadata", call)
     connector = FilesystemConnector(_context(index, path=str(tmp_path), use_git=True))
     findings = connector.run()
     assert any("framework.langchain" in finding.frameworks for finding in findings)
@@ -187,7 +188,7 @@ def test_external_git_metadata_is_rejected_before_process_start(tmp_path, index,
     else:
         marker.symlink_to(tmp_path / "missing")
     call = Mock(side_effect=AssertionError("external metadata must not run Git"))
-    monkeypatch.setattr(subprocess, "run", call)
+    monkeypatch.setattr(fs_module, "run_bounded_metadata", call)
     connector = FilesystemConnector(_context(index, use_git=True))
     assert connector._git_info(tmp_path, ".") == {}
     assert connector.ctx.stats.incomplete
@@ -272,3 +273,54 @@ def test_gitlab_metadata_kind_and_scope_are_assigned_by_collector(index, monkeyp
     assert [record["_kind"] for record in records] == ["service_account", "group_access_token"]
     assert all(record["group"] == "expected" and "_local_path" not in record for record in records)
     assert len(list(connector.analyze(records))) == 2
+
+
+def test_git_author_containing_the_separator_cannot_forge_fields(tmp_path, index, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": True}, index=index)
+    ctx.stats = ScanStats(connector="code.filesystem", started_at=now_iso())
+    connector = FilesystemConnector(ctx)
+    forged = "Eve|forged@example.com|2001-01-01T00:00:00+00:00\x00a@b.c\x002026-01-01T00:00:00+00:00"
+
+    def fake_run(argv, **kwargs):
+        assert "--format=%an%x00%ae%x00%cI" in argv
+        return subprocess.CompletedProcess(argv, 0, stdout=forged, stderr="")
+
+    monkeypatch.setattr(fs_module, "run_bounded_metadata", fake_run)
+    info = connector._git_info(tmp_path, ".")
+    assert info == {
+        "last_author": "Eve|forged@example.com|2001-01-01T00:00:00+00:00",
+        "last_author_email": "a@b.c",
+        "last_commit": "2026-01-01T00:00:00+00:00",
+    }
+    monkeypatch.setattr(
+        fs_module,
+        "run_bounded_metadata",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout="a\x00b\x00not-a-date", stderr=""),
+    )
+    assert connector._git_info(tmp_path, ".") == {} and ctx.stats.warnings
+
+
+def test_git_metadata_decoding_is_lenient_and_isolated(tmp_path, index, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": True}, index=index)
+    ctx.stats = ScanStats(connector="code.filesystem", started_at=now_iso())
+    connector = FilesystemConnector(ctx)
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            argv, 0, stdout="Jos�\x00j@example.test\x002026-01-01T00:00:00Z", stderr=""
+        )
+
+    monkeypatch.setattr(fs_module, "run_bounded_metadata", fake_run)
+    assert connector._git_info(tmp_path, ".")["last_author_email"] == "j@example.test"
+    assert captured["ctx"] is ctx
+
+    def failing_run(argv, **kwargs):
+        raise ValueError("decode failure")
+
+    monkeypatch.setattr(fs_module, "run_bounded_metadata", failing_run)
+    assert connector._git_info(tmp_path, ".") == {}
+    assert any("git enrichment failed" in warning for warning in ctx.stats.warnings)

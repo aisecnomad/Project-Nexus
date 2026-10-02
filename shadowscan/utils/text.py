@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import math
-import os
 import re
-import stat
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import PurePath
 from typing import Any
 
-from shadowscan.utils.redaction import credential_id, sanitize
+from shadowscan.utils.files import NotRegularFileError, open_confined_file
+from shadowscan.utils.redaction import credential_id
 from shadowscan.utils.safe_json import strict_json_loads
 
 _BINARY_SNIFF = 8192
@@ -50,8 +49,16 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
     b"GIF89a",
     b"%PDF-",
 )
-# Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
+# Epoch seconds, milliseconds, microseconds or nanoseconds, optionally
+# fractional (nginx $msec, Kong, OpenTelemetry *UnixNano fields).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
+# (lower bound, upper bound, units per second). Since 2001-09-09 an epoch
+# value has 13 digits in milliseconds, 16 in microseconds and 19 in
+# nanoseconds, so magnitude identifies the unit. Smaller values are seconds;
+# larger ones are not a timestamp in any of these units and stay invalid.
+_EPOCH_UNITS = ((1e12, 1e15, 1e3), (1e15, 1e18, 1e6), (1e18, 1e19, 1e9))
+# A compact calendar day (yyyymmdd); checked before the epoch form claims it.
+_CALENDAR_DAY_RX = re.compile(r"(?:19|20)\d{6}")
 
 
 def redact(value: str, keep: int = 4) -> str:
@@ -66,39 +73,33 @@ def redact(value: str, keep: int = 4) -> str:
     return credential_id(value)
 
 
-def sanitize_record(obj: Any, *, _depth: int = 0) -> Any:
-    """Compatibility alias for the shared bounded evidence sanitizer.
+def read_text(
+    path: PurePath,
+    max_bytes: int,
+    errors: list[str] | None = None,
+    *,
+    dir_fd: int | None = None,
+) -> str | None:
+    """Read a bounded regular file without following a symlink in any path component.
 
-    ``_depth`` is ignored. New code should call ``sanitize`` directly.
-    """
-    del _depth
-    return sanitize(obj)
-
-
-def read_text(path: Path, max_bytes: int, errors: list[str] | None = None) -> str | None:
-    """Read a bounded regular file without following its final symlink.
-
-    Validate the opened descriptor, not a separate stat result: the file may
-    change between directory traversal and reading. Text with a byte-order mark
-    (UTF-8, UTF-16, UTF-32) is decoded and the mark removed. Callers pass only
-    names they would analyze, so any other content with a NUL byte in its
-    first 8 KiB is reported as ``BINARY_CONTENT_ERROR`` rather than ignored,
-    except a compiled or packed artifact without any file extension. Limits
-    and I/O failures are reported to callers that track completeness.
+    With ``dir_fd``, ``path`` is relative to that open directory, normally the
+    scan root, and only the components below it are opened; otherwise the
+    whole absolute path is. Each directory is opened with ``O_NOFOLLOW``
+    relative to its parent (:func:`open_confined_file`), so a directory swapped
+    for a link between directory traversal and reading fails the read instead
+    of redirecting it outside the tree. Validate the opened descriptor, not a
+    separate stat result: the file may change between directory traversal and
+    reading. Text with a byte-order mark (UTF-8, UTF-16, UTF-32) is decoded and
+    the mark removed. Callers pass only names they would analyze, so any other
+    content with a NUL byte in its first 8 KiB is reported as
+    ``BINARY_CONTENT_ERROR`` rather than ignored, except a compiled or packed
+    artifact without any file extension. Limits and I/O failures are reported
+    to callers that track completeness.
     """
     try:
         if max_bytes < 1:
             raise ValueError("max_bytes must be positive")
-        # O_NOFOLLOW covers the final component only. A directory swapped for a
-        # link after the walk listed it would still be followed; scans assume an
-        # immutable checkout (see _checked_scan_root). open_confined_file closes
-        # that gap but needs dir_fd support, which not every platform has.
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-        fd = os.open(path, flags)
-        with os.fdopen(fd, "rb") as fh:
-            info = os.fstat(fh.fileno())
-            if not stat.S_ISREG(info.st_mode):
-                raise ValueError("not a regular file")
+        with open_confined_file(path, label="file", dir_fd=dir_fd) as (fh, info):
             if info.st_size > max_bytes:
                 raise ValueError("file exceeds max_file_size")
             raw = fh.read(max_bytes + 1)
@@ -106,7 +107,12 @@ def read_text(path: Path, max_bytes: int, errors: list[str] | None = None) -> st
             raise ValueError("file exceeds max_file_size")
         for bom, codec in _BOM_CODECS:
             if raw.startswith(bom):
-                return raw.decode(codec, errors="replace")
+                decoded = raw.decode(codec, errors="replace")
+                # A mark does not make the rest text: a NUL in the decoded
+                # prefix is still binary content under an analyzable name.
+                if "\x00" in decoded[:_BINARY_SNIFF]:
+                    raise ValueError(BINARY_CONTENT_ERROR)
+                return decoded
         if b"\x00" in raw[:_BINARY_SNIFF]:
             if "." not in path.name and raw.startswith(_BINARY_MAGIC):
                 return None
@@ -115,7 +121,12 @@ def read_text(path: Path, max_bytes: int, errors: list[str] | None = None) -> st
     except (OSError, ValueError) as exc:
         if errors is not None:
             # Do not embed raw file contents or exception messages in reports.
-            errors.append(str(exc) if isinstance(exc, ValueError) else "file could not be read")
+            if isinstance(exc, NotRegularFileError):
+                errors.append("not a regular file")
+            elif isinstance(exc, ValueError):
+                errors.append(str(exc))
+            else:
+                errors.append("file could not be read")
         return None
 
 
@@ -155,7 +166,7 @@ def notebook_to_source(text: str, errors: list[str] | None = None) -> str:
 
 
 def parse_timestamp(value: Any) -> datetime | None:
-    """Best-effort timestamp parsing (ISO 8601, epoch seconds / millis)."""
+    """Best-effort timestamp parsing (ISO 8601, epoch seconds to nanoseconds)."""
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -169,8 +180,10 @@ def parse_timestamp(value: Any) -> datetime | None:
             return None
         if not math.isfinite(v):
             return None
-        if v > 1e12:
-            v /= 1000.0
+        for lower, upper, per_second in _EPOCH_UNITS:
+            if lower <= v < upper:
+                v /= per_second
+                break
         try:
             return datetime.fromtimestamp(v, tz=UTC)
         except (OverflowError, OSError, ValueError):
@@ -180,6 +193,14 @@ def parse_timestamp(value: Any) -> datetime | None:
         # No supported timestamp representation is this long; hostile claims
         # (thousands of digits) must not reach int()/float() conversion.
         return None
+    if _CALENDAR_DAY_RX.fullmatch(s):
+        # Eight digits starting 19xx/20xx are a calendar day (yyyymmdd, as in
+        # a log's ``date`` field); as epoch seconds they would all fall in
+        # 1970-1973. An impossible day is no timestamp at all.
+        try:
+            return datetime.strptime(s, "%Y%m%d").replace(tzinfo=UTC)
+        except ValueError:
+            return None
     if _EPOCH_RX.fullmatch(s):
         return parse_timestamp(float(s))
     s = s.replace("Z", "+00:00")
@@ -249,7 +270,7 @@ def host_of(url: str | None) -> str | None:
 
     Userinfo before the last ``@`` and the port are removed, and a bracketed
     IPv6 literal is returned without its brackets. A URL such as
-    ``https://api.openai.com:443@evil.example/`` therefore names ``evil.example``,
+    ``https://api.openai.com@evil.example/`` therefore names ``evil.example``,
     the host a client connects to, never the userinfo.
     """
     if not url:

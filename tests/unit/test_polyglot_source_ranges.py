@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -85,7 +86,7 @@ def test_polyglot_examples_do_not_create_agents(
         ),
         (
             "Agent.java",
-            "import dev.langchain4j.service.AiServices;\nclass App { void run() { AiServices.builder(Foo.class); } }\n",
+            "import dev.langchain4j.agentic.AgenticServices;\nclass App { void run() { AgenticServices.agentBuilder(Foo.class); } }\n",
             "framework.langchain4j",
         ),
         (
@@ -247,3 +248,18 @@ def test_php_echo_expression_is_executable(tmp_path: Path, run_connector):
     assert not ctx.stats.errors
     assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
     assert any(evidence.location == "template.php:2" for finding in findings for evidence in finding.evidence)
+
+
+def test_ruby_block_comments_scan_in_linear_time():
+    block = "=begin\nnote\n=end\nx = 1\n"
+    small, large = block * 2_000, block * 32_000
+    started = time.perf_counter()
+    noncode_ranges(small, "ruby")
+    small_time = time.perf_counter() - started
+    started = time.perf_counter()
+    noncode_ranges(large, "ruby")
+    large_time = time.perf_counter() - started
+    # Sixteen times the input must not cost more than 64 times the time (a
+    # quadratic scan would cost 256 times); no absolute bound, since coverage
+    # tracing on CI runners slows the loop by an interpreter-dependent factor.
+    assert large_time < max(small_time, 0.005) * 64

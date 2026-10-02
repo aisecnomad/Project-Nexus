@@ -316,7 +316,10 @@ class Finding:
     # ------------------------------------------------------------------ helpers
     def compute_id(self) -> str:
         if self.identity_schema == LEGACY_FINDING_IDENTITY_SCHEMA:
-            raw = f"{self.surface.value}|{self.connector}|{self.kind.value}|{self.provider}|{self.account}|{self.resource}"
+            raw = (
+                f"{self.surface.value}|{self.connector}|{self.kind.value}|"
+                f"{self.provider}|{self.account}|{self.resource}"
+            )
         else:
             raw = json.dumps(
                 [
@@ -440,16 +443,27 @@ class Finding:
             object.__setattr__(self, "_clean_digest", None)
 
     def recompute_confidence(self) -> None:
-        """Noisy-OR combination of evidence weights.
+        """Noisy-OR combination of evidence weights over correlated groups.
 
-        Independent weak signals reinforce each other but never exceed 1.0.
+        Evidence that shares a ``confidence_group`` attribute is one correlated
+        observation and contributes only its strongest weight. Outside the code
+        surface, evidence without one is grouped by ``signal``, so repeated
+        matches against one record (several scopes of one permission class,
+        several system prompts) cannot inflate the score. Source analysis sets
+        its own groups; the distinct files and patterns of a single-file code
+        finding (a workflow export, IaC) still corroborate each other.
+        Independent groups reinforce each other but never exceed 1.0.
         """
         p_none = 1.0
         groups: dict[str, float] = {}
+        by_signal = self.surface != Surface.CODE
         for number, ev in enumerate(self.evidence):
             w = max(0.0, min(1.0, ev.weight))
             group = ev.attributes.get("confidence_group")
-            key = f"group:{group}" if isinstance(group, str) else f"evidence:{number}"
+            if isinstance(group, str):
+                key = f"group:{group}"
+            else:
+                key = f"signal:{ev.signal}" if by_signal else f"evidence:{number}"
             groups[key] = max(groups.get(key, 0.0), w)
         for w in groups.values():
             p_none *= 1.0 - w

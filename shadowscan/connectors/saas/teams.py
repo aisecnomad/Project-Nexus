@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import config_boolean, finalize
+from shadowscan.connectors.common import config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -32,14 +33,17 @@ class TeamsConnector(BaseConnector):
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "microsoft-teams"
     description: ClassVar[str] = (
-        "Teams apps (custom + store) with bots, message extensions and Copilot agents, plus their installations."
+        "Teams apps (custom + store) with bots, message extensions and Copilot agents, plus their "
+        "installations."
     )
     config_keys: ClassVar[dict[str, str]] = {
         "tenant_id": "env AZURE_TENANT_ID",
         "client_id": "env AZURE_CLIENT_ID",
         "client_secret": "env AZURE_CLIENT_SECRET",
         "access_token": "pre-issued Graph token (env GRAPH_ACCESS_TOKEN)",
-        "include_store": "also list store apps in the catalog (default false; installations always inspected)",
+        "include_store": (
+            "also list store apps in the catalog (default false; installations always inspected)"
+        ),
         "max_teams": "cap on teams whose installed apps are enumerated (default 300)",
         "input": "offline: JSON export of teamsApps / installedApps",
     }
@@ -76,7 +80,7 @@ class TeamsConnector(BaseConnector):
         try:
             yield from http.paginate_odata(path, **kwargs)
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            status = failure_summary(exc)
             self.ctx.warn(f"saas.microsoft-teams: collection incomplete for {path} ({status})")
 
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -97,8 +101,9 @@ class TeamsConnector(BaseConnector):
             if not self._record_fields_valid(team, required=("id",), strings=("displayName",)):
                 self.ctx.warn("saas.microsoft-teams: malformed team identity; installed-app coverage unknown")
                 continue
+            team_path = quote(str(team["id"]), safe="")
             for inst in self._pages(
-                http, f"/teams/{team['id']}/installedApps", params={"$expand": "teamsApp,teamsAppDefinition"}
+                http, f"/teams/{team_path}/installedApps", params={"$expand": "teamsApp,teamsAppDefinition"}
             ):
                 inst["_kind"] = "installedApp"
                 inst["_team"] = team.get("displayName")
@@ -123,7 +128,8 @@ class TeamsConnector(BaseConnector):
                 elif existing != rec and app_id not in conflicting_apps:
                     conflicting_apps.add(app_id)
                     self.ctx.warn(
-                        "saas.microsoft-teams: conflicting Teams app records; app identity coverage incomplete"
+                        "saas.microsoft-teams: conflicting Teams app records; "
+                        "app identity coverage incomplete"
                     )
             else:
                 app = rec.get("teamsApp") or {}
@@ -286,7 +292,11 @@ class TeamsConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="teams:app",
-                description=f"{app.get('distributionMethod') or 'unknown'} app '{name}' v{latest.get('version') or '?'}{' with bot ' + str(bot.get('id')) if bot else ''}; installed in {len(installs)} team(s); RSC permissions: {', '.join(perms) or 'none'}",
+                description=(
+                    f"{app.get('distributionMethod') or 'unknown'} app '{name}' "
+                    f"v{latest.get('version') or '?'}{' with bot ' + str(bot.get('id')) if bot else ''}; "
+                    f"installed in {len(installs)} team(s); RSC permissions: {', '.join(perms) or 'none'}"
+                ),
                 weight=0.35 if bot else 0.15,
             )
         )

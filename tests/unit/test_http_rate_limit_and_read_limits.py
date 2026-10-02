@@ -231,6 +231,7 @@ def tls_server(tmp_path):
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(cert_path, key_path)
     server.socket = tls.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
@@ -246,12 +247,12 @@ def tls_server(tmp_path):
 
 def test_slow_drip_response_is_bounded_by_the_wall_clock(tls_server):
     base, cert = tls_server
-    http = HttpClient(
-        allow_private_origin=True, timeout=5, max_retries=0, ca_bundle=str(cert), max_read_seconds=1.0
-    )
+    # The whole body must finish within READ_DEADLINE_FACTOR times the per-read
+    # timeout: one second here, however slowly the server drips.
+    http = HttpClient(allow_private_origin=True, timeout=0.5, max_retries=0, ca_bundle=str(cert))
     started = time.monotonic()
     try:
-        with pytest.raises(requests.exceptions.ReadTimeout):
+        with pytest.raises(ValueError, match="read deadline"):
             http.get_json(f"{base}/drip")
     finally:
         http.session.close()
@@ -260,9 +261,7 @@ def test_slow_drip_response_is_bounded_by_the_wall_clock(tls_server):
 
 def test_fast_response_within_the_wall_clock_cap_is_unaffected(tls_server):
     base, cert = tls_server
-    http = HttpClient(
-        allow_private_origin=True, timeout=5, max_retries=0, ca_bundle=str(cert), max_read_seconds=5.0
-    )
+    http = HttpClient(allow_private_origin=True, timeout=5, max_retries=0, ca_bundle=str(cert))
     try:
         assert http.get_json(f"{base}/keys") == {"keys": []}
     finally:
@@ -309,9 +308,11 @@ def test_ca_bundle_defaults_leave_certifi_verification_untouched():
 
 
 @pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf"), True, "30"])
-def test_read_time_cap_must_be_a_positive_finite_number(value):
-    with pytest.raises(ValueError, match="max_read_seconds"):
-        HttpClient(max_read_seconds=value)  # type: ignore[arg-type]
+def test_read_deadline_needs_a_positive_finite_timeout(value):
+    # The body read deadline derives from the per-read timeout, so an invalid
+    # timeout is refused before any request is made.
+    with pytest.raises(ValueError, match="timeout"):
+        HttpClient(timeout=value)  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------------- JWKS and CA

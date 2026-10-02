@@ -1,0 +1,54 @@
+"""Platform preflight: unsupported hosts fail closed, help and version still work."""
+
+from __future__ import annotations
+
+import pytest
+from click.testing import CliRunner
+
+from shadowscan.cli import main
+from shadowscan.utils.platform import (
+    MISSING_NOFOLLOW_MESSAGE,
+    UNSUPPORTED_WINDOWS_MESSAGE,
+    UnsupportedPlatformError,
+    require_supported_platform,
+)
+
+
+def test_require_supported_platform_accepts_the_validated_host():
+    require_supported_platform()  # CI runs on Linux, the only validated target
+
+
+def test_require_supported_platform_rejects_windows(monkeypatch):
+    monkeypatch.setattr("shadowscan.utils.platform.sys.platform", "win32")
+    with pytest.raises(UnsupportedPlatformError, match="Windows is unsupported"):
+        require_supported_platform()
+
+
+def test_require_supported_platform_rejects_missing_nofollow(monkeypatch):
+    monkeypatch.setattr("shadowscan.utils.platform.sys.platform", "linux")
+    monkeypatch.delattr("shadowscan.utils.platform.os.O_NOFOLLOW", raising=False)
+    with pytest.raises(UnsupportedPlatformError, match="O_NOFOLLOW"):
+        require_supported_platform()
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["-h"], ["--version"]])
+def test_cli_help_and_version_still_work_on_unsupported_platforms(monkeypatch, argv):
+    monkeypatch.setattr("shadowscan.utils.platform.sys.platform", "win32")
+    result = CliRunner().invoke(main, argv)
+    assert result.exit_code == 0, result.output
+    assert "shadowscan" in result.output.lower()
+
+
+def test_cli_commands_fail_closed_on_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr("shadowscan.utils.platform.sys.platform", "win32")
+    result = CliRunner().invoke(main, ["code", str(tmp_path)])
+    assert result.exit_code == 1
+    assert UNSUPPORTED_WINDOWS_MESSAGE in result.output
+
+
+def test_cli_commands_fail_closed_without_nofollow(monkeypatch, tmp_path):
+    monkeypatch.setattr("shadowscan.utils.platform.sys.platform", "linux")
+    monkeypatch.delattr("shadowscan.utils.platform.os.O_NOFOLLOW", raising=False)
+    result = CliRunner().invoke(main, ["code", str(tmp_path)])
+    assert result.exit_code == 1
+    assert MISSING_NOFOLLOW_MESSAGE in result.output

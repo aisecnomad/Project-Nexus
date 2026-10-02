@@ -5,13 +5,19 @@ from __future__ import annotations
 import math
 import os
 import re
+import selectors
 import signal
 import stat
 import subprocess
+import threading
 import time
+from configparser import ConfigParser
+from configparser import Error as ConfigError
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 _OBJECT_ID_RX = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+MAX_METADATA_OUTPUT_BYTES = 16 * 1024
 
 if TYPE_CHECKING:
     from shadowscan.connectors.base import ConnectorContext
@@ -19,6 +25,85 @@ if TYPE_CHECKING:
 # Git refname rules we accept from untrusted API JSON. Hierarchical names
 # (release/1.2) are allowed; option-like and traversal forms are not.
 _REF_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
+MAX_GITMODULES_BYTES = 1024 * 1024
+_MAX_GITLINK_OUTPUT_BYTES = 8 * 1024 * 1024
+
+
+def _submodule_path(value: str) -> str:
+    """Accept a relative checkout path, never a filesystem escape or Git option."""
+    path = PurePosixPath(value)
+    if (
+        not value
+        or path.is_absolute()
+        or ".." in path.parts
+        or not path.parts
+        or "\\" in value
+        or ":" in path.parts[0]
+        or any(ord(char) < 32 for char in value)
+    ):
+        raise ValueError("invalid submodule path")
+    return path.as_posix()
+
+
+def _gitmodule_value(value: str) -> str:
+    """Decode Git's quoted path values without expanding variables or includes."""
+    out: list[str] = []
+    quoted = False
+    escaped = False
+    trailing_space = 0
+    escapes = {"n": "\n", "t": "\t", "b": "\b", '"': '"', "\\": "\\"}
+    for char in value:
+        if escaped:
+            if char not in escapes:
+                raise ValueError("unsupported submodule path escape")
+            out.append(escapes[char])
+            trailing_space = 0
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char in "#;" and not quoted:
+            break
+        else:
+            out.append(char)
+            trailing_space = trailing_space + 1 if char.isspace() and not quoted else 0
+    if quoted or escaped:
+        raise ValueError("invalid submodule path quoting")
+    decoded = "".join(out)
+    return _submodule_path(decoded[:-trailing_space] if trailing_space else decoded)
+
+
+def declared_submodule_paths(text: str) -> list[str]:
+    """Read only declarations from bounded .gitmodules text; never execute Git.
+
+    Includes and URLs have no authority here. Unsupported/ambiguous syntax is
+    a coverage error, so an unusual declaration cannot silently hide a module.
+    """
+    parser = ConfigParser(interpolation=None, delimiters=("=",), empty_lines_in_values=False)
+    try:
+        parser.read_string(text)
+        if parser.defaults():
+            raise ValueError("submodule defaults are unsupported")
+        paths: list[str] = []
+        seen: set[str] = set()
+        for section in parser.sections():
+            if not re.match(r"submodule(?:\s|\.|$)", section, re.IGNORECASE):
+                continue
+            if not re.fullmatch(r'submodule\s+"(?:[^"\\]|\\.)*"', section, re.IGNORECASE):
+                raise ValueError("invalid submodule section")
+            if not parser.has_option(section, "path"):
+                raise ValueError("submodule has no path")
+            path = _gitmodule_value(parser.get(section, "path"))
+            if path in seen:
+                raise ValueError("duplicate submodule path")
+            if len(paths) >= 10_000:
+                raise ValueError("submodule declaration limit exceeded")
+            seen.add(path)
+            paths.append(path)
+        return paths
+    except ConfigError:
+        raise ValueError("invalid submodule declarations") from None
 
 
 class CloneTimeoutError(TimeoutError):
@@ -27,6 +112,14 @@ class CloneTimeoutError(TimeoutError):
 
 class CloneSizeError(RuntimeError):
     """The checkout exceeds its observed size budget or cannot be measured."""
+
+
+class MetadataOutputLimitError(ValueError):
+    """Combined Git metadata stdout and stderr exceeded the bounded read budget."""
+
+
+class MetadataTimeoutError(TimeoutError):
+    """The metadata subprocess did not finish within its execution budget."""
 
 
 _MAX_CLONE_ENTRIES = 100_000
@@ -119,6 +212,13 @@ def _stop_clone(proc: subprocess.Popen[bytes]) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # Darwin's killpg() reports EPERM when the group holds only
+            # unreaped zombies, which is the normal state once the child has
+            # exited before the reader stopped. A still-running child that
+            # cannot be signalled is a real failure.
+            if proc.poll() is None:
+                raise
     else:
         # Windows Popen.kill covers only Git itself; taskkill also requests
         # termination of its transport children. A containing job object is
@@ -214,6 +314,95 @@ def run_bounded_clone(
         raise
 
 
+def run_bounded_metadata(
+    cmd: list[str],
+    env: dict[str, str],
+    ctx: ConnectorContext,
+    *,
+    timeout: float = 20.0,
+    max_bytes: int = MAX_METADATA_OUTPUT_BYTES,
+) -> subprocess.CompletedProcess[str]:
+    """Read metadata subprocess output within one combined byte/time budget.
+
+    Git commit fields and diagnostics are untrusted and can expand far beyond
+    their compressed objects. Read both pipes incrementally, retain only bounded
+    stdout, and discard stderr after charging it to the same budget. Nonblocking
+    pipes avoid reader threads that could outlive cancellation. Every failed read
+    kills and reaps the process group before its descriptors are closed.
+    """
+    if os.name != "posix":
+        raise ValueError("bounded Git metadata access is unavailable on this platform")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+        raise ValueError("metadata max_bytes must be a positive integer")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout):
+        raise ValueError("metadata timeout must be positive and finite")
+    if timeout <= 0:
+        raise ValueError("metadata timeout must be positive and finite")
+    ctx.check_deadline()
+    deadline = time.monotonic() + timeout
+    if ctx.deadline is not None:
+        deadline = min(deadline, ctx.deadline)
+    proc = subprocess.Popen(
+        cmd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        start_new_session=True,
+    )
+    stdout = bytearray()
+    total = 0
+    try:
+        with selectors.DefaultSelector() as selector:
+            assert proc.stdout is not None and proc.stderr is not None
+            for stream in (proc.stdout, proc.stderr):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ, stream is proc.stdout)
+            while selector.get_map():
+                ctx.check_deadline()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MetadataTimeoutError("git metadata completion deadline exceeded")
+                for key, _ in selector.select(timeout=min(remaining, 0.05)):
+                    ctx.check_deadline()
+                    try:
+                        chunk = os.read(key.fd, min(4096, max_bytes - total + 1))
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise MetadataOutputLimitError("git metadata output limit exceeded")
+                    if key.data:
+                        stdout.extend(chunk)
+        while True:
+            ctx.check_deadline()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MetadataTimeoutError("git metadata completion deadline exceeded")
+            try:
+                status = proc.wait(timeout=min(remaining, 0.05))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if status != 0:
+            _stop_clone(proc)
+        return subprocess.CompletedProcess(
+            cmd, status, stdout=stdout.decode("utf-8", errors="replace"), stderr=""
+        )
+    except BaseException:
+        _stop_clone(proc)
+        raise
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
+
+
 def exceeds_clone_size(size: object, unit: int, max_bytes: int) -> bool:
     """Compare a provider's nonnegative integer size estimate with the cap.
 
@@ -257,6 +446,9 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     # Clear the namespace rather than maintain a partial list of overrides.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env.pop("SSH_ASKPASS", None)
+    # Git never needs the report identity key (comparison.IDENTITY_KEY_ENV),
+    # so a child process of untrusted content never receives it.
+    env.pop("SHADOWSCAN_IDENTITY_KEY", None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -335,6 +527,83 @@ def metadata_git_argv_prefix() -> list[str]:
     fail closed rather than silently ignore an unknown environment setting.
     """
     return [*git_argv_prefix(), "--no-lazy-fetch", "--no-pager", "--literal-pathspecs"]
+
+
+def read_gitlink_paths(path: Path, *, timeout: float = 10.0) -> list[str] | None:
+    """Inventory committed gitlinks only where the caller already permits Git.
+
+    Clone scans call this for their own checkout. Local scans require the
+    existing ``use_git`` opt-in; default scans inspect .gitmodules instead.
+    No network, fsmonitor, hooks, pager or external gitfile is permitted. The
+    output and wall time are bounded before any returned path is trusted.
+    None means coverage is unknown, including unsupported Git versions.
+    HEAD also anchors incremental cache identity; staged-only modules require
+    .gitmodules declarations, just as they do in metadata-free local scans.
+    """
+    if not math.isfinite(timeout) or timeout <= 0:
+        return None
+    marker = path / ".git"
+    if marker.is_symlink() or not marker.is_dir():
+        return None
+    duration = min(timeout, 10.0)
+    env = metadata_git_env()
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    try:
+        proc = subprocess.Popen(
+            [*metadata_git_argv_prefix(), "-C", str(path), "ls-tree", "-r", "-z", "--full-tree", "HEAD"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=os.name == "posix",
+        )
+    except (OSError, ValueError):
+        return None
+    expired = threading.Event()
+
+    def abort() -> None:
+        expired.set()
+        _stop_clone(proc)
+
+    timer = threading.Timer(duration, abort)
+    timer.daemon = True
+    timer.start()
+    try:
+        assert proc.stdout is not None
+        output = proc.stdout.read(_MAX_GITLINK_OUTPUT_BYTES + 1)
+        if len(output) > _MAX_GITLINK_OUTPUT_BYTES or expired.is_set():
+            return None
+        if proc.wait(timeout=duration) != 0 or expired.is_set():
+            return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            _stop_clone(proc)
+        timer.join()
+        if proc.stdout is not None:
+            proc.stdout.close()
+    if output and not output.endswith(b"\0"):
+        return None
+    paths: set[str] = set()
+    try:
+        for entry in output.split(b"\0")[:-1]:
+            fields, name = entry.split(b"\t", 1)
+            mode, object_type, object_id = fields.decode("ascii").split(" ")
+            if not re.fullmatch(r"[0-7]{6}", mode) or not _OBJECT_ID_RX.fullmatch(object_id):
+                return None
+            if object_type not in {"blob", "commit"}:
+                return None
+            if mode == "160000":
+                if object_type != "commit":
+                    return None
+                paths.add(_submodule_path(name.decode("utf-8")))
+            elif object_type != "blob":
+                return None
+        return sorted(paths)
+    except (ValueError, UnicodeError):
+        return None
 
 
 def read_git_snapshot(path: str | os.PathLike[str], *, timeout: float = 10.0) -> dict[str, str] | None:

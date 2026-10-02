@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 import regex
@@ -13,7 +15,7 @@ from click.testing import CliRunner
 from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code import manifests
-from shadowscan.connectors.code.filesystem import FilesystemConnector, _parse_mcp_servers
+from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt, _parse_mcp_servers
 from shadowscan.models import Kind
 from shadowscan.utils.text import read_text
 
@@ -528,3 +530,185 @@ def test_analyzable_alias_to_a_lockfile_marks_incomplete(tmp_path, run_connector
 
     _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
     assert ctx.stats.incomplete
+
+
+SECRET = "sk-proj-aP9rVv3qN4zY7bC2hJ8Lm5Qw6Dt0KsX1eR7uT4p"
+
+
+def _scan(index, root: Path, **config):
+    ctx = ConnectorContext(config={"path": str(root), **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+def test_multiline_structured_secret_keeps_excerpt_lines_aligned(tmp_path, index):
+    (tmp_path / "config.toml").write_text(
+        '[llm]\npassword = """\nabcdefgh\nijklmnop"""\nendpoint = "https://api.openai.com/v1"\nmodel_name = "unrelated-line-six"\n'
+    )
+    findings, ctx = _scan(index, tmp_path)
+    domain_evidence = [e for f in findings for e in f.evidence if e.signal.startswith("domain:")]
+    expected = 'endpoint = "https://api.openai.com/v1"'
+    assert domain_evidence and all(
+        e.location == "config.toml:5" and e.snippet == expected for e in domain_evidence
+    )
+    assert "abcdefgh" not in json.dumps([f.to_dict() for f in findings])
+
+
+def test_notebook_outputs_and_markdown_cells_are_scanned_for_credentials(tmp_path, index):
+    notebook = {
+        "cells": [
+            {
+                "cell_type": "code",
+                "source": ["import os\n"],
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": [SECRET + "\n"]}],
+            },
+            {"cell_type": "markdown", "source": ["Use key `" + SECRET + "` for the demo\n"]},
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    (tmp_path / "demo.ipynb").write_text(json.dumps(notebook))
+    findings, ctx = _scan(index, tmp_path)
+    secret = next(f for f in findings if f.kind == Kind.SECRET)
+    assert secret.metadata["count"] == 1 and not ctx.stats.errors
+    assert SECRET not in json.dumps([f.to_dict() for f in findings])
+
+
+def test_agent_definition_and_manifest_aggregates_are_bounded(tmp_path, index):
+    agents = tmp_path / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    for i in range(60):
+        (agents / f"a{i}.md").write_text(
+            "---\nname: a\ntools:\n" + "".join(f"  - t{j}\n" for j in range(300)) + "---\nbody\n"
+        )
+    (tmp_path / "app.py").write_text("import openai\n")
+    (tmp_path / "secrets.env").write_text(f"OPENAI_API_KEY={SECRET}\n")
+    findings, ctx = _scan(index, tmp_path)
+    project = next(f for f in findings if f.resource_type == "project")
+    assert len(project.metadata["agent_definitions"]) == 50
+    assert all(len(d["tools"]) == 50 for d in project.metadata["agent_definitions"])
+    assert any("agent definition limit" in e for e in ctx.stats.errors)
+    assert any(f.kind == Kind.SECRET for f in findings)
+
+
+def _run(index, root, **config):
+    ctx = ConnectorContext(config={"path": str(root), "use_git": False, **config}, index=index)
+    return FilesystemConnector(ctx).run(), ctx
+
+
+def test_secret_excerpt_is_redacted_before_truncation(tmp_path, index):
+    # Derived at runtime so no secret-shaped literal sits in the source.
+    key = "pplx-" + hashlib.sha256(b"perplexity-sample").hexdigest()[:48]
+    (tmp_path / "client.py").write_text(
+        'headers = {"X-Trace": "' + "p" * 100 + '", "X-Custom-Header": "' + key + '"}\n'
+    )
+    findings, _ = _run(index, tmp_path)
+    secrets = [f for f in findings if f.kind == Kind.SECRET]
+    assert len(secrets) == 1
+    serialized = json.dumps(secrets[0].to_dict())
+    assert key[5:17] not in serialized and "pplx-" not in serialized
+
+
+def test_excerpt_helper_redacts_then_truncates():
+    line = "x" * 150 + " key=" + "s" * 40
+    assert "s" * 8 not in _excerpt([line], 1, "s" * 40)
+    assert _excerpt([line], 2) == ""
+
+
+# ------------------------------------------------------- planted files and link trees
+def test_planted_whitespace_runs_do_not_stall_iac_or_front_matter_matching(tmp_path, index):
+    # ``Action:`` followed by a long run of blank space, and a front matter
+    # opener followed by a long run of blank lines, used to backtrack
+    # quadratically in stdlib patterns outside the matching budget (minutes
+    # per file at the default size limit, then a discarded connector result).
+    (tmp_path / "main.tf").write_text("Action:" + " " * 400_000 + "\n")
+    agents = tmp_path / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "planner.md").write_text("---\n" + "\n" * 400_000)
+    (tmp_path / "crew.py").write_text("from crewai import Agent\n")
+    started = time.monotonic()
+    findings, ctx = _scan(index, tmp_path, use_git=False)
+    assert time.monotonic() - started < 5
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+
+
+def test_bounded_iac_and_front_matter_patterns_keep_their_matches():
+    from shadowscan.connectors.code.filesystem import _FRONTMATTER, _IAM_WILDCARD_RE
+
+    for text in ('Action: "*"', 'Action = ["*"]', '"Action": [ "*" ]', '"bedrock:*"'):
+        assert _IAM_WILDCARD_RE.search(text), text
+    assert not _IAM_WILDCARD_RE.search('Action: "s3:GetObject"')
+    assert _FRONTMATTER.match("---\nname: x\n---\nbody").group(1) == "name: x"
+    assert _FRONTMATTER.match("---  \r\nname: x\r\n---\r\nbody").group(1) == "name: x\r"
+    assert _FRONTMATTER.match("---\nname: x\n---") is None
+
+
+def _link_tree(root: Path, count: int) -> None:
+    (root / "real.py").write_text("from crewai import Agent\n")
+    links = root / "links"
+    links.mkdir()
+    for number in range(count):
+        os.symlink("../real.py", links / f"alias{number}.py")
+
+
+def test_symbolic_links_count_toward_max_files(tmp_path, index):
+    _link_tree(tmp_path, 50)
+    findings, ctx = _scan(index, tmp_path, max_files=20, use_git=False)
+    # The regular file is examined first; the links then exhaust the cap.
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert any("max_files (20) reached" in issue for issue in ctx.stats.errors)
+
+
+def test_symbolic_link_checks_stop_at_the_connector_deadline(tmp_path, index, monkeypatch):
+    _link_tree(tmp_path, 200)
+    original = FilesystemConnector._link_target_is_scanned
+
+    def slow(self, rel, target, root, walk=None):
+        time.sleep(0.01)
+        return original(self, rel, target, root, walk)
+
+    monkeypatch.setattr(FilesystemConnector, "_link_target_is_scanned", slow)
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=time.monotonic() + 1.5
+    )
+    started = time.monotonic()
+    FilesystemConnector(ctx).run()
+    # 200 links at 10 ms each would overrun a 1.5 s deadline; the walk stops
+    # cooperatively and records the gap instead.
+    assert time.monotonic() - started < 1.5
+    assert any("deadline reached while checking symbolic links" in issue for issue in ctx.stats.errors)
+
+
+def test_links_in_one_directory_list_their_ancestors_once(tmp_path, index, monkeypatch):
+    _link_tree(tmp_path, 300)
+    listed: list[str] = []
+    real_listdir = os.listdir
+
+    def counting_listdir(path="."):
+        listed.append(str(path))
+        return real_listdir(path)
+
+    monkeypatch.setattr(os, "listdir", counting_listdir)
+    _scan(index, tmp_path, use_git=False)
+    # One listing of the links directory serves every link in it; before,
+    # each link listed every ancestor again (quadratic in the link count).
+    assert listed.count(str(tmp_path / "links")) <= 2
+
+
+def test_notebook_credential_in_a_code_cell_is_counted_once(tmp_path, index):
+    notebook = {
+        "cells": [
+            {"cell_type": "code", "source": ['API_KEY = "' + SECRET + '"\n'], "outputs": []},
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    (tmp_path / "demo.ipynb").write_text(json.dumps(notebook))
+    findings, ctx = _scan(index, tmp_path)
+    secret = next(f for f in findings if f.kind == Kind.SECRET)
+    # The raw document repeats the cell at another line number; that is the
+    # same credential, not a second one.
+    assert secret.metadata["count"] == 1 and not ctx.stats.errors
+    assert len([e for e in secret.evidence if e.signal.startswith("secret")]) == 1

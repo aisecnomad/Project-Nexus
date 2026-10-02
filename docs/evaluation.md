@@ -8,10 +8,10 @@ scanning enabled. A warning, partial scan, skipped connector, or unstable
 repeated scan stops evaluation instead of counting missing detections as true
 negatives.
 
-The seven bundled corpora (synthetic, public, realistic, review, field review,
-attribution and independent) are regression checks on known inputs. The
-synthetic, realistic, review, attribution and public sets were written or selected
-by the maintainers; the independent corpus
+The eight bundled corpora (synthetic, public, realistic, review, field review,
+attribution, current SDK idioms and independent) are regression checks on known
+inputs. The synthetic, realistic, review, attribution, current SDK idioms and
+public sets were written or selected by the maintainers; the independent corpus
 was labeled separately, as described below. None of them is a random or
 representative sample of repositories, so none estimates field precision,
 recall or calibration; see the held-out procedure below for that.
@@ -37,6 +37,9 @@ python -m tools.evaluation.evaluate \
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/attribution_corpus.json \
   --output /tmp/nexus-attribution-eval.json
+python -m tools.evaluation.evaluate \
+  --corpus tools/evaluation/current_idioms_corpus.json \
+  --output /tmp/nexus-current-idioms-eval.json
 python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/independent_corpus.json \
   --annotations tools/evaluation/independent_annotations.json \
@@ -105,7 +108,7 @@ the scan incomplete. Review source evidence before using these languages to
 enforce a production policy gate.
 
 `tools/evaluation/realistic_corpus.json` holds multi-file repository
-snapshots (3 to 8 files each) written from scratch to resemble real projects:
+snapshots (5 to 7 files each) written from scratch to resemble real projects:
 a FastAPI service with a LangGraph agent, a Next.js app on the Vercel AI SDK
 with an MCP client config, a Terraform Bedrock agent module, a CrewAI crew
 with YAML agents, a Semantic Kernel console app, a LangChainGo service, an
@@ -174,6 +177,31 @@ annotation ledger remain frozen; adding regression cases does not refresh their
 independence. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
 
+`tools/evaluation/current_idioms_corpus.json` holds 24 short synthetic cases
+(17 positives, 7 negatives) written from scratch, with AI assistance, in the
+shape current SDK documentation uses. The positives are an AI SDK 7 chat route
+whose `streamText` call loops over imported tools with `stopWhen:
+isStepCount(5)`, an AI SDK 6 `ToolLoopAgent`, OpenAI Agents SDK agents in
+Python (`Runner.run`) and TypeScript (`run`), Claude Agent SDK `query()` in
+Python and TypeScript and a `ClaudeSDKClient` session with an in-process tool,
+LangGraph `create_react_agent`, LangChain 1.0 `create_agent`, a Google ADK
+`LlmAgent`, a Pydantic AI agent with a tool, a smolagents `CodeAgent`, a
+Strands agent, a Microsoft Agent Framework `ChatAgent`, a Mastra agent and an
+OpenAI chat-completions loop that dispatches the selected function. The hard
+negatives are a plain AI SDK 7 chat route, a multi-step call without tools, a
+tool loop disabled with `toolChoice: 'none'`, single chat-completions and
+Messages API calls without tools, a local `agents` package whose `Agent` and
+`Runner` classes are not the OpenAI SDK, and a repository of Semgrep, Sigma and
+gitleaks rules that name LLM keys and hosts, which must produce no finding at
+all. The positives also assert an agent finding attributed to the expected
+product or provider. One case is a `known_gap`: a single-step `generateText`
+call with an imported executable tool is model-selected dispatch, but without a
+stop condition the scanner only recognizes inline `tool({ execute })`
+definitions, so it reports SDK usage. Its first run, against the scanner before
+the October fixes, failed two cases: the AI SDK 7 tool loop was missed and the
+rule repository was reported as LLM usage. Like the other authored suites, its
+scores describe these cases only, not field precision or recall.
+
 `tools/evaluation/public_corpus.json` contains **five complete, pinned public
 files** from two external repositories: a LangGraph example and README at
 [`7daa3ab`](https://github.com/langchain-ai/langgraph/tree/7daa3ab49d678a5da75edb08baa87db4a2be52c3),
@@ -225,8 +253,8 @@ the binary target—for example, detecting Spring AI must not silently add a
 LangChain4j attribution.
 
 `assertions.expected_findings` and `assertions.forbidden_findings` each accept
-up to 20 selectors. A selector has `kind` and may include `product_signature`
-and `provider_signature`. The product signature matches the scanner finding's
+up to 20 selectors. A selector has `kind` and may include `product_signature`,
+`provider_signature` and `capabilities`. The product signature matches the scanner finding's
 `frameworks` field (which also contains platform, cloud and protocol IDs),
 while the provider signature matches only its `model_providers` field. When both
 are specified, they must occur **on the same finding**. For example:
@@ -245,20 +273,41 @@ are specified, they must occur **on the same finding**. For example:
 }
 ```
 
+An optional `capabilities` array compares the **exact set** of capability IDs
+on that same finding, regardless of order. It accepts at most 20 unique IDs.
+Omitting it leaves capabilities unchecked; `"capabilities": []` explicitly
+requires none. For example, an empty-tool OpenAI Agent can be checked with:
+
+```json
+{
+  "kind": "agent",
+  "product_signature": "framework.openai-agents-sdk",
+  "capabilities": []
+}
+```
+
+Use that selector in `expected_findings` to require the empty capability set.
+In `forbidden_findings`, it forbids exactly that set, not every finding with
+the same product. Capability checks have their own counter under
+`finding_assertions.capabilities` when present. Missing capability observations
+cannot satisfy an expected capability selector. Earlier corpora that omit
+capability selectors keep their existing semantics.
+
 Selectors cover **only** the listed assertions; an unexpected unlisted
 finding can still pass. Opt into `assertions.exact_findings` for exhaustive
 checks with up to 20 expected findings, each listing `kind`, the complete
 `product_signatures` array and the complete `provider_signatures` array.
 Use `[]` to assert that no findings at all are emitted. The list is compared
 as a multiset, so extra or duplicate findings and extra attribution IDs fail.
-It does not compare finding locations, metadata, evidence, confidence, or
-runtime execution. The report has per-case `finding_checks` and
+It does not compare capabilities, finding locations, metadata, evidence,
+confidence, or runtime execution; add the explicit selectors above for
+capability checks. The report has per-case `finding_checks` and
 `exact_finding_set` results and an aggregate `finding_assertions` section with
 both case coverage and pass/fail counts. Product and provider counters can
 overlap; they must not be treated as independent samples. No selectors or
 exact finding sets were added to the frozen independent corpus, whose reviewers
 labeled only the primary binary target. A future human-labeled holdout must
-predeclare and review any added kind and attribution labels **before** scanning;
+predeclare and review any added kind, attribution and capability labels **before** scanning;
 the current annotation ledger validates only the binary `present` decisions.
 
 A finding's displayed confidence is a heuristic
@@ -274,6 +323,10 @@ the tiny selected sample does not calibrate that score.
    static code with runtime activity. Freeze a random, stratified sample across
    framework, language, repository size, code owner and expected negative
    classes. Set the sample size and acceptance bounds before reviewing scores.
+   Include ordinary Java chat clients, standalone tool declarations, empty or
+   disabled tool/delegation options, and positive controls with actual configured
+   tools. Label source-coverage gaps separately from agent absence; an incomplete
+   checkout must not become a negative example merely because it yields no finding.
 2. Export each sampled input at a full commit or record snapshot, with a file
    SHA-256, license/permission to retain it, and no secrets. Keep the holdout
    outside the implementation branch. Two analysts should label it without
@@ -371,7 +424,7 @@ restricted release record. Changing labels, exclusions, scanner signatures or
 sampling after seeing results requires a new blinded holdout and reviewed policy.
 
 The standalone command requires declared human labels, rejects known-gap waivers
-and exact source reuse from the seven bundled evaluated corpora. It cannot find
+and exact source reuse from the eight bundled evaluated corpora. It cannot find
 undisclosed private prior evaluations or near duplicates. For a production
 rollout, run [`tools.acceptance.verify`](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) with
 declared `prior_corpora` and the separately reviewed tenant canary evidence.

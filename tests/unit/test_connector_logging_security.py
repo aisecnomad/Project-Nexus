@@ -161,16 +161,18 @@ def test_short_secret_expansion_is_bounded_before_replacement_allocation(monkeyp
 
     monkeypatch.setattr(redaction, "_MAX_SANITIZATION_CHARS", 64)
     calls = []
-    real_sanitizer = redaction.sanitize_text
+    # sanitize() runs the text passes directly, not through sanitize_text.
+    for name in ("_sanitize_established", "_redact_extended"):
+        real = getattr(redaction, name)
 
-    def observe_text(value):
-        calls.append(value)
-        return real_sanitizer(value)
+        def observe_text(value, real=real):
+            calls.append(value)
+            return real(value)
 
-    monkeypatch.setattr(redaction, "sanitize_text", observe_text)
+        monkeypatch.setattr(redaction, name, observe_text)
     with pytest.raises(SanitizationLimitError, match="credential replacement size limit"):
         sanitize([{"password": "a"}, "a" * 50], redact_short_secrets=True)
-    assert all(len(value) <= 64 for value in calls)
+    assert calls and all(len(value) <= 64 for value in calls)
 
 
 def test_specific_token_names_do_not_redact_usage_metrics():

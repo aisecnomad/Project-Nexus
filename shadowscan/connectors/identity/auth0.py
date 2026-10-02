@@ -13,8 +13,8 @@ from typing import Any, ClassVar
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import failure_summary, finalize, max_pages_limit
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -69,7 +69,10 @@ class Auth0Connector(BaseConnector):
             "/api/v2/clients",
             "client",
             include_fields="true",
-            fields="client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,initiate_login_uri,client_metadata,is_first_party,token_endpoint_auth_method,logo_uri,sso",
+            fields=(
+                "client_id,name,description,app_type,grant_types,callbacks,allowed_origins,web_origins,"
+                "initiate_login_uri,client_metadata,is_first_party,token_endpoint_auth_method,logo_uri,sso"
+            ),
         )
         yield from self._pages("/api/v2/client-grants", "client_grant")
 
@@ -77,12 +80,12 @@ class Auth0Connector(BaseConnector):
         """Bound pagination and retain collected identities when enrichment fails."""
         assert self.http
         seen: set[str] = set()
-        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        max_pages = max_pages_limit(self.ctx.get("max_pages", 1000))
         for page in range(max_pages):
             try:
                 batch = self.http.get_json(path, params={**params, "per_page": 100, "page": page})
             except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-                status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                status = failure_summary(exc)
                 self.ctx.warn(f"identity.auth0: collection incomplete for {path} ({status})")
                 return
             if not isinstance(batch, list):
@@ -228,7 +231,11 @@ class Auth0Connector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="auth0:client",
-                description=f"{c.get('app_type') or 'app'} '{name}', grant types {', '.join(grant_types) or 'n/a'}, {'first-party' if c.get('is_first_party') else 'third-party'}; {len(grants)} client grant(s) to {', '.join(audiences)[:200] or 'no API'}",
+                description=(
+                    f"{c.get('app_type') or 'app'} '{name}', grant types {', '.join(grant_types) or 'n/a'}, "
+                    f"{'first-party' if c.get('is_first_party') else 'third-party'}; {len(grants)} client "
+                    f"grant(s) to {', '.join(audiences)[:200] or 'no API'}"
+                ),
                 weight=0.3 if machine else 0.15,
             )
         )

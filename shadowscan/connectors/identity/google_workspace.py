@@ -27,15 +27,19 @@ from urllib.parse import quote
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
+from shadowscan.connectors.common import failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.identity import google_customer_id
 from shadowscan.utils.safe_json import strict_json_loads
 
-SCOPES = "https://www.googleapis.com/auth/admin.directory.user.readonly https://www.googleapis.com/auth/admin.directory.user.security https://www.googleapis.com/auth/admin.directory.customer.readonly"
+SCOPES = (
+    "https://www.googleapis.com/auth/admin.directory.user.readonly "
+    "https://www.googleapis.com/auth/admin.directory.user.security "
+    "https://www.googleapis.com/auth/admin.directory.customer.readonly"
+)
 _GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
@@ -47,10 +51,15 @@ class GoogleWorkspaceConnector(BaseConnector):
         "OAuth apps authorised by Google Workspace users (Admin SDK tokens), aggregated per client."
     )
     config_keys: ClassVar[dict[str, str]] = {
-        "service_account_file": "SA key JSON with domain-wide delegation (env GOOGLE_APPLICATION_CREDENTIALS)",
+        "service_account_file": (
+            "SA key JSON with domain-wide delegation (env GOOGLE_APPLICATION_CREDENTIALS)"
+        ),
         "admin_email": "admin user to impersonate (env GOOGLE_ADMIN_EMAIL)",
         "access_token": "pre-issued token instead of SA (env GOOGLE_ACCESS_TOKEN)",
-        "customer": "immutable customer ID (live default my_customer is resolved; required for complete offline scans)",
+        "customer": (
+            "immutable customer ID (live default my_customer is resolved; required for complete offline "
+            "scans)"
+        ),
         "max_users": "cap on users enumerated (default 10000)",
         "input": "offline: JSON export of token objects",
     }
@@ -75,7 +84,7 @@ class GoogleWorkspaceConnector(BaseConnector):
             if source
             else secrets.token_hex(16)
         )
-        self.max_users = int(ctx.get("max_users", 10_000))
+        self.max_users = _positive_limit(ctx.get("max_users", 10_000), "max_users")
         self.http: HttpClient | None = None
 
     def _resolve_customer(self) -> None:
@@ -86,9 +95,10 @@ class GoogleWorkspaceConnector(BaseConnector):
         except ConnectorError:
             raise  # deadline or cancellation, never a lookup result
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            status = failure_summary(exc)
             self.ctx.warn(
-                f"identity.google-workspace: customer identity could not be verified ({status}); coverage incomplete"
+                f"identity.google-workspace: customer identity could not be verified ({status}); coverage "
+                "incomplete"
             )
             return
         customer_id = (
@@ -115,7 +125,8 @@ class GoogleWorkspaceConnector(BaseConnector):
             if customer_id is None or (self._customer_id is not None and customer_id != self._customer_id):
                 self._customer_id = None
                 self.ctx.warn(
-                    "identity.google-workspace: malformed or conflicting record customerId; coverage incomplete"
+                    "identity.google-workspace: malformed or conflicting record customerId; coverage "
+                    "incomplete"
                 )
 
     def _auth(self) -> None:
@@ -152,7 +163,10 @@ class GoogleWorkspaceConnector(BaseConnector):
                     self.ctx.warn("identity.google-workspace: max_users reached")
                     break
                 if not isinstance(user, dict):
-                    self.ctx.warn("identity.google-workspace: invalid user record")  # type: ignore[unreachable]  # untrusted API JSON
+                    # Untrusted API JSON: the declared element type is not a guarantee.
+                    self.ctx.warn(  # type: ignore[unreachable]
+                        "identity.google-workspace: invalid user record"
+                    )
                     continue
                 self._check_record_customer(user)
                 email = user.get("primaryEmail")
@@ -166,7 +180,7 @@ class GoogleWorkspaceConnector(BaseConnector):
                     # user key cannot alter the request path or query.
                     data = self.http.get_json(f"/admin/directory/v1/users/{quote(email, safe='@')}/tokens")
                 except (HttpError, RequestException, ValueError) as exc:
-                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    status = failure_summary(exc)
                     token_errors[status] = token_errors.get(status, 0) + 1
                     continue
                 # Google omits empty repeated fields, but only an identified
@@ -185,12 +199,13 @@ class GoogleWorkspaceConnector(BaseConnector):
                         continue
                     yield {**tok, "userEmail": email}
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            status = failure_summary(exc)
             self.ctx.warn(f"identity.google-workspace: user enumeration incomplete ({status})")
         if token_errors:
             details = ", ".join(f"{status}: {total}" for status, total in sorted(token_errors.items()))
             self.ctx.warn(
-                f"identity.google-workspace: OAuth tokens unreadable for {sum(token_errors.values())} user(s) ({details}); app inventory incomplete"
+                f"identity.google-workspace: OAuth tokens unreadable for {sum(token_errors.values())} "
+                f"user(s) ({details}); app inventory incomplete"
             )
 
     @staticmethod
@@ -231,7 +246,8 @@ class GoogleWorkspaceConnector(BaseConnector):
                     arrays=("scopes",),
                 ):
                     self.ctx.warn(
-                        "identity.google-workspace: invalid token record or missing clientId; coverage incomplete"
+                        "identity.google-workspace: invalid token record or missing clientId; coverage "
+                        "incomplete"
                     )
                     continue
                 self._check_record_customer(tok)
@@ -260,7 +276,8 @@ class GoogleWorkspaceConnector(BaseConnector):
                     agg["displayText"] = tok["displayText"]
         if self._customer_id is None:
             self.ctx.warn(
-                "identity.google-workspace: immutable customer identity is unresolved; set verified customer for offline input; coverage incomplete"
+                "identity.google-workspace: immutable customer identity is unresolved; set verified customer "
+                "for offline input; coverage incomplete"
             )
         for agg in apps.values():
             f = self._app_finding(agg)
@@ -279,9 +296,9 @@ class GoogleWorkspaceConnector(BaseConnector):
             resource_type="oauth-client",
             provider="google-workspace",
             account=self._customer_id,
-            identity_discriminator="oauth-client"
-            if self._customer_id
-            else f"oauth-client:unresolved:{self._unresolved_scope}",
+            identity_discriminator=(
+                "oauth-client" if self._customer_id else f"oauth-client:unresolved:{self._unresolved_scope}"
+            ),
             metadata={"identity_unresolved": True} if self._customer_id is None else {},
         )
         assess_app(self.index, f, name=name, scopes=scopes, client_id=agg["clientId"])
@@ -292,7 +309,10 @@ class GoogleWorkspaceConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="google:oauth-token",
-                description=f"{len(users)} user(s) granted '{name}' ({agg['clientId']}) scopes: {' '.join(scopes)[:400]}",
+                description=(
+                    f"{len(users)} user(s) granted '{name}' ({agg['clientId']}) scopes: "
+                    f"{' '.join(scopes)[:400]}"
+                ),
                 weight=0.2 + min(0.3, len(users) / 200),
             )
         )

@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import sys
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 from unittest.mock import Mock
 
 import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
-from shadowscan.connectors.cloud.oci import OciConnector
+from shadowscan.connectors.cloud.oci import OciConnector, _model_dict
 from shadowscan.models import Kind, ScanStats
+from shadowscan.utils.redaction import REDACTED, sanitize
 
 TENANCY = "ocid1.tenancy.oc1..acme"
 COMPARTMENT = "ocid1.compartment.oc1..ml"
@@ -518,8 +523,428 @@ def test_oci_pages_accept_item_collections_and_reject_unknown_shapes(index, sdk)
     assert scanner.ctx.stats.incomplete
 
 
-def test_oci_record_conversion_falls_back_to_plain_attributes(sdk, monkeypatch):
+class _SdkLikeModel:
+    """Stores fields as OCI SDK models do: private attributes behind the names in ``swagger_types``."""
+
+    def __init__(self, **values: Any) -> None:
+        self.swagger_types = dict.fromkeys(values, "object")
+        self.attribute_map = {name: name.title().replace("_", "") for name in values}
+        for name, value in values.items():
+            setattr(self, f"_{name}", value)
+
+    def __getattr__(self, name: str) -> Any:
+        # Reached only for names without an instance attribute, like SDK properties.
+        if name in self.__dict__.get("swagger_types", {}) and f"_{name}" in self.__dict__:
+            return self.__dict__[f"_{name}"]
+        raise AttributeError(name)
+
+
+_CONVERSION_FAILURE = "could not convert {} to a record; coverage incomplete"
+
+
+def test_oci_records_use_sdk_field_names_not_private_attributes(index, sdk):
+    scanner = connector(index)
+    tool = sdk.generative_ai_agent.models.ToolSummary(
+        id="ocid1.genaiagenttool.oc1..sql",
+        tool_config=sdk.generative_ai_agent.models.SqlToolConfig(tool_config_type="SQL_TOOL_CONFIG"),
+    )
+    assert "_id" in vars(tool) and "id" not in vars(tool)  # why __dict__ is not a record
+    record = scanner._d(tool)
+    assert record is not None
+    assert record["id"] == "ocid1.genaiagenttool.oc1..sql"
+    assert record["tool_config"]["tool_config_type"] == "SQL_TOOL_CONFIG"
+    assert not scanner.ctx.stats.warnings and not scanner.ctx.stats.incomplete
+
+
+def test_oci_records_map_sdk_like_models_without_the_sdk(index, monkeypatch):
+    monkeypatch.setitem(sys.modules, "oci", None)  # the SDK cannot be imported
+    scanner = connector(index)
+    agent = _SdkLikeModel(
+        id=AGENT,
+        display_name="claims-assistant",
+        time_created=datetime(2026, 1, 2, 3, 4, 5),
+        knowledge_base_ids=("kb1",),
+        llm_config=_SdkLikeModel(model_id="cohere.command-r-plus"),
+        freeform_tags={"owner": "claims-team"},
+    )
+    assert scanner._d(agent) == {
+        "id": AGENT,
+        "display_name": "claims-assistant",
+        "time_created": "2026-01-02T03:04:05+00:00",
+        "knowledge_base_ids": ["kb1"],
+        "llm_config": {"model_id": "cohere.command-r-plus"},
+        "freeform_tags": {"owner": "claims-team"},
+    }
+    assert not scanner.ctx.stats.warnings and not scanner.ctx.stats.incomplete
+
+
+def test_oci_sdk_free_mapping_matches_the_sdk(sdk):
+    models = sdk.generative_ai_agent.models
+    agent = models.AgentSummary(
+        id=AGENT,
+        display_name="claims-assistant",
+        knowledge_base_ids=["kb1"],
+        time_created=datetime(2026, 1, 2, 3, 4, 5),
+        freeform_tags={"owner": "claims-team"},
+    )
+    tool = models.ToolSummary(id="t", tool_config=models.SqlToolConfig(tool_config_type="SQL_TOOL_CONFIG"))
+    for model in (agent, tool):
+        assert _model_dict(model) == sdk.util.to_dict(model)
+
+
+def test_oci_unconvertible_objects_are_incomplete_never_partial_records(index, sdk, monkeypatch):
+    scanner = connector(index)
+    # The SDK returns objects it does not recognise unchanged: not a record.
+    assert scanner._d(SimpleNamespace(id="ocid1.x", display_name="x")) is None
     monkeypatch.setattr(sdk.util, "to_dict", Mock(side_effect=ValueError("unsupported model")))
-    plain = SimpleNamespace(id="ocid1.x", display_name="x")
-    assert OciConnector._d(plain) == {"id": "ocid1.x", "display_name": "x"}
-    assert OciConnector._d(object()) == {}
+    assert scanner._d(sdk.generative_ai_agent.models.AgentSummary(id=AGENT, display_name="x")) is None
+    assert scanner.ctx.stats.warnings == [
+        "cloud.oci: " + _CONVERSION_FAILURE.format("SimpleNamespace"),
+        "cloud.oci: " + _CONVERSION_FAILURE.format("AgentSummary"),
+    ]
+    assert scanner.ctx.stats.incomplete
+
+
+def test_oci_sdk_free_mapping_rejects_unknown_objects_and_missing_fields(index, monkeypatch):
+    monkeypatch.setitem(sys.modules, "oci", None)
+    scanner = connector(index)
+    partial = _SdkLikeModel(id=AGENT)
+    partial.swagger_types["display_name"] = "str"  # declared, but never stored
+    assert scanner._d(partial) is None
+    assert scanner._d(object()) is None
+    assert scanner._d(_SdkLikeModel(id=AGENT, owner=object())) is None
+    assert len(scanner.ctx.stats.warnings) == 3 and scanner.ctx.stats.incomplete
+
+
+def test_oci_unconvertible_listing_item_is_skipped_and_neighbours_kept(index, sdk):
+    scanner = connector(index)
+    client = Mock()
+    client.list_oda_instances.return_value = _page(
+        sdk,
+        [
+            SimpleNamespace(id="ocid1.odainstance.oc1..opaque"),
+            sdk.oda.models.OdaInstanceSummary(id="ocid1.odainstance.oc1..hr", display_name="hr-assistant"),
+        ],
+    )
+    scanner._client = lambda cls, region=None: client  # type: ignore[method-assign]
+    records = list(scanner._collect_oda(sdk, REGION, COMPARTMENT))
+    assert [(r["_kind"], r["display_name"]) for r in records] == [("oda-instance", "hr-assistant")]
+    assert scanner.ctx.stats.warnings == ["cloud.oci: " + _CONVERSION_FAILURE.format("SimpleNamespace")]
+    assert scanner.ctx.stats.incomplete
+
+
+def context(index, **config):
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
+    return ctx
+
+
+def test_oci_clients_are_cached_per_region_with_timeouts(index):
+    pytest.importorskip("oci")
+    connector = OciConnector(context(index))
+    connector._config = {"region": "us-ashburn-1"}
+
+    class Client:
+        def __init__(self, config, **kwargs):
+            self.config, self.kwargs = config, kwargs
+
+    first = connector._client(Client, "r1")
+    assert connector._client(Client, "r1") is first
+    other = connector._client(Client, "r2")
+    assert other is not first and other.config["region"] == "r2"
+    assert first.kwargs["timeout"] == (10, 30)
+    assert first.kwargs["retry_strategy"] is not None
+
+
+def test_oci_function_reads_environment_and_legacy_config_keys(index):
+    connector = OciConnector(context(index))
+    base = {
+        "id": "ocid1.fnfunc.oc1..fn1",
+        "display_name": "fn",
+        "_region": "r",
+        "_compartment": "c",
+        "_application": "app",
+        "image": "ollama/ollama:latest",
+    }
+    current = connector._h_function({**base, "environment": {"OPENAI_API_KEY": "x"}})
+    legacy = connector._h_function({**base, "config": {"OPENAI_API_KEY": "x"}})
+    assert current is not None and legacy is not None
+    assert current.metadata["config_keys"] == legacy.metadata["config_keys"] == ["OPENAI_API_KEY"]
+
+
+def test_oci_function_collection_dumps_withhold_opaque_config_values(index):
+    from types import SimpleNamespace
+
+    connector = OciConnector(context(index))
+    connector._d = lambda obj: obj
+    client = Mock()
+    client.list_applications.return_value = SimpleNamespace(
+        data=[{"id": "app", "display_name": "app"}], has_next_page=False
+    )
+    client.list_functions.return_value = SimpleNamespace(
+        data=[{"id": "fn", "display_name": "fn"}], has_next_page=False
+    )
+    client.get_application.return_value = SimpleNamespace(
+        data={"id": "app", "config": {"INHERITED": "opaque-app-secret"}}
+    )
+    client.get_function.return_value = SimpleNamespace(
+        data={"id": "fn", "config": {"ARBITRARY": "opaque-function-secret"}}
+    )
+    (record,) = connector._collect_functions(client, "r", "c")
+    assert "config" not in record
+    assert set(sanitize(record)["environment"].values()) == {REDACTED}
+    assert not connector.ctx.stats.incomplete
+
+
+# Live provider response shapes, without cloud credentials.
+def test_oci_collections_and_keyword_only_genai_calls(index, monkeypatch):
+    """GenAI Agent list APIs return Collection(items), which OCI pagination flattens."""
+
+    class Client:
+        def __getattr__(self, name):
+            if name.startswith("list_"):
+                return lambda *args, **kwargs: []
+            raise AttributeError(name)
+
+        def list_agents(self, *, compartment_id):
+            assert compartment_id == "comp"
+            return SimpleNamespace(items=[SimpleNamespace(id="a1", display_name="assistant")])
+
+        def list_tools(self, *, compartment_id, agent_id):
+            assert (compartment_id, agent_id) == ("comp", "a1")
+            return SimpleNamespace(items=[SimpleNamespace(id="tool1")])
+
+        def list_agent_endpoints(self, *, compartment_id):
+            assert compartment_id == "comp"
+            return SimpleNamespace(items=[SimpleNamespace(id="e1", agent_id="a1")])
+
+        def list_knowledge_bases(self, *, compartment_id):
+            assert compartment_id == "comp"
+            return SimpleNamespace(items=[SimpleNamespace(id="kb1")])
+
+    client = Client()
+    oci = SimpleNamespace(
+        generative_ai_agent=SimpleNamespace(GenerativeAiAgentClient=Client),
+        generative_ai=SimpleNamespace(GenerativeAiClient=Client),
+        oda=SimpleNamespace(OdaClient=Client),
+        data_science=SimpleNamespace(DataScienceClient=Client),
+        functions=SimpleNamespace(FunctionsManagementClient=Client),
+        container_instances=SimpleNamespace(ContainerInstanceClient=Client),
+        vault=SimpleNamespace(VaultsClient=Client),
+        pagination=SimpleNamespace(
+            list_call_get_all_results=lambda fn, *args, **kw: SimpleNamespace(data=fn(*args, **kw))
+        ),
+        util=SimpleNamespace(to_dict=vars),
+    )
+    monkeypatch.setitem(sys.modules, "oci", oci)
+    ctx = context(index)
+    connector = OciConnector(ctx)
+    connector._client = lambda cls, region: client
+    records = list(connector._collect_region_comp("us-ashburn-1", "comp"))
+    assert {r["_kind"] for r in records} >= {"genai-agent", "genai-agent-endpoint", "genai-knowledge-base"}
+    assert records[0]["_tools"] == [{"id": "tool1"}]
+    assert not ctx.stats.incomplete
+
+
+def test_oci_denied_inventory_is_incomplete(index):
+    ctx = context(index)
+    connector = OciConnector(ctx)
+    assert connector._all(Mock(side_effect=RuntimeError("NotAuthorizedOrNotFound: 404"))) == []
+    assert ctx.stats.incomplete
+    assert "collection failed" in ctx.stats.warnings[0]
+
+
+def foundry_context(index):
+    ctx = ConnectorContext(config={"foundry_token": "synthetic"}, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
+    return ctx
+
+
+def oci_functions_client():
+    oci = pytest.importorskip("oci")
+    models = oci.functions.models
+    client = Mock(spec=oci.functions.FunctionsManagementClient)
+
+    def response(data):
+        return oci.response.Response(status=200, headers={}, data=data, request=None)
+
+    image_kw = (
+        {"source_details": models.ContainerImageFunctionSourceDetails(image="ollama/ollama:latest")}
+        if hasattr(models, "ContainerImageFunctionSourceDetails")
+        else {"image": "ollama/ollama:latest"}
+    )
+    application = models.ApplicationSummary(id="app1", display_name="workflows")
+    function = models.FunctionSummary(id="fn1", display_name="worker", application_id="app1", **image_kw)
+    # Real OCI summary models must never accidentally grow fictional config fields.
+    assert "config" not in application.swagger_types
+    assert "config" not in function.swagger_types
+    client.list_applications.return_value = response([application])
+    client.list_functions.return_value = response([function])
+    client.get_application.return_value = response(
+        models.Application(
+            id="app1",
+            config={
+                "OPENAI_API_KEY": "synthetic-application-secret",
+                "SHARED": "application",
+                "APP_ONLY": "present",
+            },
+        )
+    )
+    client.get_function.return_value = response(models.Function(id="fn1", config={"SHARED": "function"}))
+    return client, response
+
+
+def test_oci_reads_real_detail_models_inherits_config_and_preserves_image(index):
+    client, _ = oci_functions_client()
+    ctx = foundry_context(index)
+    connector = OciConnector(ctx)
+    records = list(connector._collect_functions(client, "us-ashburn-1", "comp"))
+    assert len(records) == 1
+    record = records[0]
+    client.get_application.assert_called_once_with("app1")
+    client.get_function.assert_called_once_with("fn1")
+    assert "config" not in record
+    assert record["environment"]["SHARED"] == "function"
+    assert record["environment"]["APP_ONLY"] == "present"
+    assert "synthetic-application-secret" not in json.dumps(sanitize(record))
+    finding = connector._h_function(record)
+    assert {"provider.openai", "provider.ollama"} <= set(finding.model_providers)
+    assert finding.metadata["image"] == "ollama/ollama:latest"
+    assert "OPENAI_API_KEY" in finding.metadata["config_keys"]
+    assert "synthetic-application-secret" not in json.dumps(finding.to_dict())
+    assert not ctx.stats.incomplete
+
+
+def test_oci_handler_accepts_legacy_config_exports(index):
+    connector = OciConnector(foundry_context(index))
+    finding = connector._h_function(
+        {
+            "id": "fn-legacy",
+            "display_name": "legacy-worker",
+            "image": "ollama/ollama:latest",
+            "config": {"OPENAI_API_KEY": "synthetic-legacy-secret"},
+        }
+    )
+    assert finding is not None
+    assert "provider.openai" in finding.model_providers
+    assert "OPENAI_API_KEY" in finding.metadata["config_keys"]
+
+
+@pytest.mark.parametrize("kind", ["application", "function"])
+def test_oci_denied_detail_preserves_known_evidence_and_marks_incomplete(index, kind):
+    client, _ = oci_functions_client()
+    getattr(client, f"get_{kind}").side_effect = RuntimeError("do not reflect credential-bearing errors")
+    ctx = foundry_context(index)
+    connector = OciConnector(ctx)
+    record = list(connector._collect_functions(client, "region", "comp"))[0]
+    finding = connector._h_function(record)
+    assert "provider.ollama" in finding.model_providers
+    assert finding.metadata["config_coverage"][kind] == "unknown"
+    assert ctx.stats.incomplete
+    assert "credential-bearing" not in str(ctx.stats.warnings)
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        None,
+        [],
+        {},
+        {"id": "wrong", "config": {}},
+        {"id": "fn1"},
+        {"id": "fn1", "config": []},
+        {"id": "fn1", "config": {"BAD": 12}},
+    ],
+)
+def test_oci_invalid_function_detail_preserves_summary(index, detail):
+    client, response = oci_functions_client()
+    client.get_function.return_value = response(detail)
+    ctx = foundry_context(index)
+    connector = OciConnector(ctx)
+    record = list(connector._collect_functions(client, "region", "comp"))[0]
+    assert record["id"] == "fn1"
+    assert connector._h_function(record).metadata["image"] == "ollama/ollama:latest"
+    assert ctx.stats.incomplete
+
+
+def test_oci_legacy_image_shape_remains_supported(index):
+    client, response = oci_functions_client()
+    client.list_functions.return_value = response(
+        [{"id": "fn1", "display_name": "worker", "image": "ollama/ollama:latest"}]
+    )
+    ctx = foundry_context(index)
+    connector = OciConnector(ctx)
+    record = list(connector._collect_functions(client, "region", "comp"))[0]
+    assert connector._h_function(record).metadata["image"] == "ollama/ollama:latest"
+    assert not ctx.stats.incomplete
+
+
+def test_oci_non_ai_summary_is_detected_from_function_detail(index):
+    client, response = oci_functions_client()
+    client.list_functions.return_value = response(
+        [{"id": "fn1", "display_name": "worker", "image": "registry.example/worker:v1"}]
+    )
+    client.get_application.return_value = response({"id": "app1", "config": {}})
+    client.get_function.return_value = response(
+        {"id": "fn1", "config": {"ANTHROPIC_API_KEY": "synthetic-function-secret"}}
+    )
+    ctx = foundry_context(index)
+    connector = OciConnector(ctx)
+    record = list(connector._collect_functions(client, "region", "comp"))[0]
+    assert "provider.anthropic" in connector._h_function(record).model_providers
+    assert not ctx.stats.incomplete
+
+
+def _context(index, **config) -> ConnectorContext:
+    ctx = ConnectorContext(config=config, index=index)
+    ctx.stats = ScanStats(connector="cloud.aws", started_at="2026-01-01T00:00:00+00:00")
+    return ctx
+
+
+def test_oci_custom_models_are_selected_by_type_not_vendor(index):
+    oci = pytest.importorskip("oci")
+    from shadowscan.connectors.cloud.oci import OciConnector
+
+    ctx = _context(index)
+    connector = OciConnector(ctx)
+    connector.tenancy = "ocid1.tenancy.oc1..t"
+    custom = oci.generative_ai.models.ModelSummary(
+        id="ocid1.generativeaimodel.oc1..custom1",
+        compartment_id="ocid1.compartment.oc1..c",
+        display_name="my-finetune",
+        type="CUSTOM",
+        vendor="cohere",
+        capabilities=["TEXT_GENERATION"],
+        base_model_id="ocid1.generativeaimodel.oc1..base",
+        lifecycle_state="ACTIVE",
+    )
+    base = oci.generative_ai.models.ModelSummary(
+        id="ocid1.generativeaimodel.oc1..base",
+        compartment_id="ocid1.compartment.oc1..c",
+        display_name="cohere.command",
+        type="BASE",
+        vendor="cohere",
+        capabilities=["TEXT_GENERATION", "FINE_TUNE"],
+        base_model_id=None,
+        lifecycle_state="ACTIVE",
+    )
+
+    class GenAI:
+        def list_endpoints(self, comp, **kwargs):
+            return SimpleNamespace(data=[], has_next_page=False)
+
+        def list_dedicated_ai_clusters(self, comp, **kwargs):
+            return SimpleNamespace(data=[], has_next_page=False)
+
+        def list_models(self, comp, **kwargs):
+            return SimpleNamespace(data=[custom, base], has_next_page=False)
+
+    def client(cls, region=None):
+        if cls is oci.generative_ai.GenerativeAiClient:
+            return GenAI()
+        raise AttributeError("service unavailable in this test")
+
+    with mock.patch.object(connector, "_client", client):
+        records = list(connector._collect_region_comp("us-chicago-1", "ocid1.compartment.oc1..c"))
+    custom_models = [(r["display_name"], r["type"]) for r in records if r["_kind"] == "genai-custom-model"]
+    assert custom_models == [("my-finetune", "CUSTOM")]
