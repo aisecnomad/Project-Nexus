@@ -10,182 +10,12 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
-## September 27 migration and acceptance
-
-The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
-from the reviewed revision into a fresh virtual environment; do not overlay it
-on a previous `shadowscan` distribution, because both use the same Python import
-and command paths. The CLI, Python imports, connector entry-point group and
-report schemas retain the `shadowscan` name. This rename does not publish a
-package or reserve the package-index namespace.
-
-Offline exports, approval inventories, imported reports, dependency manifests,
-notebooks and agent/MCP configuration with duplicate or non-finite data now fail
-validation. Affected scans are incomplete while valid neighboring evidence is
-retained. JSON readers and writers also reject `NaN`, infinities and exponent
-overflow rather than accepting non-standard values. Obtain an unambiguous,
-standards-compliant source and rerun collection; do not treat empty findings
-from rejected input as evidence that an earlier finding resolved.
-Conflicting schema aliases, case-folded CSV headers, pagination cursors and
-multiple records for one provider identity also make coverage incomplete. The
-scanner quarantines only the ambiguous identity where the format permits it and
-continues to retain findings from unambiguous neighboring records.
-Ordinary deterministic graph/flow construction and text generation without
-enabled tool execution no longer establish agent behavior. Source capabilities
-also stop inheriting unsupported features solely from framework membership.
-Review changed kinds, capabilities and risk scores, then collect a fresh baseline
-before using these reports in an enforcement decision.
-
-Built-in connector options now apply the same schema to YAML-loaded and
-programmatically constructed configurations. Connector option booleans accept
-explicit case-insensitive true/false forms; the connector `enabled` field also
-retains its documented aliases. Ambiguous values, unknown built-in keys and
-reserved keys fail before collection. Plugin keys remain plugin-defined, while
-cycles, excessive nesting and non-finite values still fail at the scanner
-boundary. Mutable risk and deadline settings are revalidated before every run.
-Configured inventory is reloaded for every run, including the first run after
-engine construction, so an approval file changed between construction and
-execution cannot supply a stale match.
-
-When HTML or CSV is sent to stdout, terminal control and bidirectional-formatting
-characters are rendered visibly; artifacts explicitly written with `-o` retain
-their serialized data. Reporter boundaries sanitize copied diagnostics without
-mutating in-memory scan state, ignore malformed related-finding metadata, preserve
-valid SARIF source paths and reject non-finite JSON. Serialization failures stop
-before stdout or an existing output file is changed; table output preflights
-diagnostics before emitting its header. Continue to treat reports as sensitive:
-these controls do not authorize publication of tenant or source data.
-
-Incremental scans now bind cache fingerprints to Python/platform, parser/regex
-and Git runtime versions. Git-aware reuse refuses `.git` indirection, and tree
-hashing, Git metadata, cache reads and post-scan maintenance cooperate with
-cancellation and connector deadlines. Startup maintenance has its own two-second
-monotonic budget; exceeding it disables cache reuse for that run so collection
-continues as a full scan. Enumeration is bounded by entries, depth, time and
-bytes. Cache maintenance applies a 30-day TTL, 256-entry and 512 MiB aggregate
-limits, deterministic oldest-access eviction and removal of stale pending and
-orphan-lock files. Post-lock inode checks prevent cleanup from splitting a slot
-across stale and replacement lock files. These are implementation defaults, not
-evidence of field accuracy; rebuild the incremental state when changing rollout
-baselines.
-
-Google Workspace domain-wide delegation pins the signed assertion audience and
-token exchange to `https://oauth2.googleapis.com/token`; a service-account
-document's `token_uri` cannot redirect the credential exchange.
-
-The `CI gate` job combines documentation, Linux Python 3.11–3.13 (including the
-container checks in Python 3.13), macOS Python 3.11 and 3.13, and DCO for pull
-requests. Core/development, runtime, build and documentation dependency sets are
-hash-locked, and CI audits all four. Add `CI gate` to the live required checks
-while retaining existing checks and independent approval. Verify the platform
-setting before claiming it is enforced: a workflow cannot change a branch
-ruleset by declaring a job.
-
-The revised synthetic cases remain regression data. Freeze a fresh population,
-human labels and acceptance policy using [the holdout procedure](evaluation.md#gate-a-frozen-holdout),
-then run the [scope-specific evidence gate](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
-For AWS or Slack deployments, retain complete and separately credentialed
-permission-denied receipts from [approved tenant canaries](canaries.md).
-Other connectors need their own acceptance evidence. The existing bundled
-corpora, replays and mocked transports do not meet these live requirements.
-
-After independent review, merge and successful exact-commit CI and CodeQL,
-exercise the manual release-evidence workflow described below. Retain its
-candidate, attestation and `release-publication-input-<SHA>` artifacts together.
-The latter contains the exact attested wheel bytes and is an input to a possible
-future OIDC trusted-publishing job; it does not publish anything or approve a
-release. Evidence from an earlier main commit does not cover these source or
-package changes, and local wheel checks do not establish GitHub-hosted provenance.
-
-## September 25 migration and acceptance
-
-Rebuild finding and comparison baselines after adopting the scanner-boundary
-corrections. Google Workspace customer attribution, unresolved permission/workflow
-identities, and semantic provider-dispatch classification can change finding IDs,
-registry status or finding kinds. Review existing inventory bindings and retain the
-previous pinned scanner and reports for rollback. Unresolved identity is evidence
-for investigation, not a resource that can be approved through an inventory card.
-
-For Google Workspace, add `admin.directory.customer.readonly` to the audit
-identity's approved scopes before live collection. The read-only customer lookup
-must establish a concrete customer ID, even for an empty tenant. Offline runs
-require that verified ID in `customer`. Regenerate accountless Google Workspace
-inventory cards with an explicit customer binding; an old globally scoped OAuth
-client card no longer approves grants across tenants. Re-run tenant acceptance
-after changing audit permissions. No live Google tenant validation is implied by
-the mocked provider-contract tests.
-
-Source excerpts now redact sensitive environment-call arguments, and repository
-connector debug diagnostics omit raw exception payloads. Run the synthetic report
-and log checks before distributing reports; redaction remains a defense in depth
-control, not permission to publish private source or unrestricted tenant exports.
-The sanitizer also propagates opaque secret values found in nested credential
-objects or lists to sibling fields in the same finding or connector record export.
-It leaves common credential descriptor labels intact so resource identity remains
-useful; the containing credential field is still redacted. Recheck stored reports
-and exports containing nested credential data before sharing or reusing them,
-because earlier scanner versions could leave an identical value in an unrelated
-description. Synthetic regressions exercise this path; no live tenant validation
-is implied.
-
-The two holdout acceptance paths share source-overlap checks. Copying or renaming
-previously evaluated source does not create new independent observations; repeated
-holdout sources cannot satisfy sample minima or tighten uncertainty estimates.
-Freeze a fresh independently human-labeled sample and its policy before evaluation.
-Neither these checks nor a passing regression suite supplies that human review or
-real tenant canary evidence.
-
-Slack findings now use the immutable workspace ID as `account`; workspace names
-are display metadata. Update inventory account bindings and collect a fresh
-Slack baseline after upgrading. An offline
-export must include a valid team record or an explicit operator-supplied
-`team_id`; conflicting workspace identities cannot establish attributed findings.
-Teams records without valid app identity make collection incomplete while valid
-neighboring observations remain available.
-
-Code findings can change after this scanner update. A single OpenAI Responses
-action requires an import-bound request and source-linked model-selected dispatch;
-it supplies tool-use evidence without asserting repeated autonomous execution.
-An iterative function loop additionally requires matching feedback to the next
-request. Provider analysis rejects unrelated dispatch, unreachable literal branches
-and locally shadowed execution calls. Reconcile a fresh code
-baseline and review changed finding identities before using `--fail-on` as an
-enforcement gate. Offline source tests establish these paths, not runtime use.
-
-Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
-required evidence for the intended deployment scope. It checks artifact identity,
-freshness and declared review/metric requirements. It does not authenticate
-reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
-tests into operational evidence. Keep receipts and human attestations in controlled
-audit storage and review their origin. Unsupported live connectors still require
-their own acceptance work; they cannot inherit an AWS or Slack result.
-
-The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
-requires successful main-branch CI and CodeQL runs for the exact selected commit.
-It rejects modified, untracked and ignored checkout files, builds from a clean
-`git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
-and produces GitHub artifact provenance. It then assembles the candidate and
-attestation bundles without rebuilding the wheel. It does not publish to PyPI,
-create a release, or declare tenant acceptance. Review and retain its artifacts
-before a separate maintainer publication decision.
-
-After merge and successful push CI, dispatch **Release candidate evidence** on
-`main` with `expected_commit` set to the full current main SHA, `ci_run_id`
-set to that commit's successful CI run ID, and `codeql_run_id` set to its
-successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
-failed checks and other workflows. Retain `release-candidate-<SHA>`,
-`release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
-hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
-attestations before publication. A future publisher must use the wheel in that
-publication-input artifact, not rebuild from a tag. Configure an environment-
-protected PyPI trusted publisher and grant `id-token: write` only in that future,
-isolated publication job. The current workflow deliberately has no package-index
-permission or upload action.
-
-The runtime SBOM covers locked Python core/cloud dependencies. It is not a
-container or operating-system SBOM and does not cover the base image, Git,
-CA certificates or other Debian packages. Generate and review a container/OS
-SBOM for the exact deployed image digest as a separate release control.
+The operator sections come first: installing a reviewed revision, the explicit
+security, Git and resource policies, release verification and rollout acceptance.
+Dated change and migration notes for the unreleased candidate follow them under
+[Candidate change history](#candidate-change-history). Nothing has been published,
+so those notes describe differences between candidate builds, not between
+releases.
 
 ## Install from a reviewed revision
 
@@ -526,321 +356,6 @@ A worker's soft connector timeout is not a hard kill for every child process.
 A local checkout example, such as
 `examples/github-action-code-scan.yml`, does not exercise the remote clone path.
 
-## Output and inventory migration
-
-Reports and inventory stub files now use atomic 0600 writes. An existing
-character device given as the report path, such as `/dev/null`, is written in
-place instead of being replaced. An existing named pipe is written in place only
-when you own it with mode 0600 and a reader already has it open. Sockets,
-directories and other non-regular paths are refused. Inventory stub and
-record-export directories are created as 0700; existing non-private directories
-are rejected without changing their permissions. Use dedicated directories for
-these outputs.
-
-The Markdown reporter defangs bare HTTP(S) and `www.` strings and writes `@` as
-`[@]` in untrusted text fields, so repository names, owners, diagnostics and
-evidence descriptions do not become links, @-mentions or e-mail links when
-reports are pasted into a ticket, pull request or wiki. Code spans keep
-identifiers verbatim. The CSV reporter inserts a literal `'` at the start of a
-value, and after each `,`, `;`, tab, `|` or line break inside it, where the
-text that follows begins with `=`, `+`, `-` or `@` (also after whitespace,
-including no-break spaces, or double quotes) or with a tab or carriage
-return; a value that begins with a line feed is marked too. Other tabs and
-line breaks inside a value are left alone. A report opened with another
-delimiter therefore cannot create a formula cell. Strip every marker when
-consuming CSV programmatically, or consume `json`.
-
-Dump filenames include the original connector configuration ordinal and a safe
-label. Repeated names or normalization-colliding labels no longer overwrite each
-other. Selecting a subset with `--only` retains the original ordinal. Use the
-export manifest to locate each instance's file and completion status instead of
-assuming a filename such as `cloud_aws.jsonl`. Exports remain sanitized and are
-not lossless copies of upstream responses. JWTs are never included.
-
-Generated resource patterns escape literal `*`, `?` and `[` characters. Review
-previously generated cards for those characters and regenerate literal bindings
-where necessary. Existing intentionally authored wildcard approvals remain valid.
-Resources or identity scopes whose identifiers were redacted cannot establish
-an exact approval: assign a stable nonsecret resource, provider, account and
-region identity before registering them. A report display value containing
-`[REDACTED]` is not an authority to approve every object that renders to the
-same value.
-AWS findings with only a short resource ID also require an account ID from
-the connector configuration or a trusted account export record. Without one,
-the scan is incomplete and a registry card cannot approve the finding. Check
-that distinct offline exports carry their own account scope before combining
-them into an inventory baseline.
-Generated cards now include `discovery.regions` when a region is known; review
-older cards with short resource IDs (for example a Bedrock agent ID without its
-ARN) and add explicit region constraints to avoid approving another region.
-
-For a labeled `code.filesystem` connector using `paths`, each root gets its own
-resource ID under the shared label, even if the list later contains just one
-path. Without `root_ids`, the suffix is `root-<SHA256 of canonical path>` and
-changes when a checkout moves. Set unique `root_ids` in the same order as
-`paths` to emit `root-id-<id>` suffixes that remain stable across CI workers;
-reorder the two lists together. Inventory entries using the old shared label
-will no longer approve these roots. Regenerate cards from a complete scan and
-approve each root separately. A scalar `path` retains its prior resource ID,
-so another option for stable identities is one connector per repository with
-its own explicit label.
-
-## Field review changes
-
-A field review of public repositories changed what some scans report. Compare a
-pinned baseline with a candidate before enforcing policy on the new output:
-
-- **Folded manifests.** A CrewAI `agents.yaml` or `langgraph.json` inside a
-  reported project no longer produces its own `agent-manifest` finding; it is
-  listed under the project finding's `metadata.manifests`. `diff` shows those
-  finding IDs as resolved. Inventory entries that bound a manifest path should
-  bind the project resource instead. A2A cards and M365 declarative agents are
-  unchanged.
-- **GitHub Apps.** Installations without an AI signature or AI-like name are no
-  longer reported. Set `include_unrecognized_apps: true` to keep reviewing them,
-  at possible confidence with the `unrecognized-app` tag. Read-only apps with an
-  AI-like name are now reported. `contents` or `pull_requests` write access no
-  longer implies `code-exec`, so such apps can drop a risk level (the Claude app
-  from critical to high); check `--fail-on` thresholds against a baseline.
-- **Completeness.** Syntax errors in ordinary configuration files and Python
-  test modules over `max_ast_nodes` produce warnings instead of incomplete
-  scans; the file is still read lexically. Enable `strict_coverage` to keep
-  treating them as incomplete. A file the parsers refuse for nesting depth or
-  XML entity expansion stays incomplete, since its content is unknown rather
-  than malformed. Notebooks whose outputs exceed `max_file_size`
-  now contribute their code-cell evidence; their outputs are not scanned for
-  credentials at that size, so the scan stays incomplete unless `scan_secrets`
-  is off. Raise `max_file_size` to scan the outputs too.
-- **Capabilities.** Test-only evidence and vendor-neutral idioms in MCP tool
-  servers no longer add capabilities; MCP server capabilities come from their
-  registered tools. Risk scores of affected findings change accordingly.
-
-## Completeness, report and credential changes
-
-The 2026-09-28 changes alter completeness, report text and credential policy.
-Compare a pinned baseline with a candidate before enforcing policy on the new
-output:
-
-- **Newly incomplete (exit 3).** A shared HTTP response body that misses the
-  [read deadline](#resource-limits-and-incomplete-scans); a `code.filesystem`
-  root that cannot be opened safely, or a directory replaced by a link during
-  the scan (see
-  [finding identity](#finding-identity-and-comparison-migration)); a
-  `code.gitlab` group listing entry without a positive integer project `id`;
-  and a `code.github` listing entry whose `full_name` is not a plain
-  `owner/name`.
-- **Changed diagnostics, still incomplete.** A YAML value PyYAML cannot
-  construct, such as an impossible date or an integer over 4,300 digits,
-  already made a scan incomplete; it is now reported as malformed YAML
-  (`invalid YAML`, `invalid agent definition YAML`), and the agent definition
-  is now listed where it used to be dropped, which can raise that finding's
-  risk score. Scan configuration and inventory files with such a value still
-  fail at setup (exit 1), now with `ConfigValidationError` or
-  `InventoryValidationError`. A cancellation or connector deadline while a
-  credential finding is built now ends that connector instead of being
-  recorded as one file's error; the scan was and is incomplete.
-- **Newly complete.** A Python module whose imports cannot resolve to any
-  signature is complete at any size or nesting depth, because the import
-  binder, which could add no evidence there, is skipped for it.
-  `mypy/checker.py` (52,729 AST nodes) used to make ordinary library trees
-  exit 3. A module that imports a library a signature describes keeps the
-  `max_ast_nodes` diagnostic: a warning in tests, an error elsewhere.
-  Configuration, inventory, signature pack, report and offline input files
-  below a traverse-only directory (mode `0711`) now open, since directories
-  are opened for traversal only.
-  An unrendered Helm, Jinja or Go-template YAML file, such as a chart
-  template with `image: {{ .Values.image }}`, no longer reports
-  `structured parsing incomplete`: it is not YAML until rendered, so its
-  excerpts use lexical redaction. Plain YAML with duplicate or non-finite
-  data still makes the scan incomplete.
-- **Reports.** CSV reports also carry `'` markers after a `,`, `;`, tab, `|`
-  or line break inside a value, not only at its start (see
-  [output migration](#output-and-inventory-migration)). Consumers that strip
-  only a leading marker must strip these too, or read `json`. Markdown writes
-  `@` as `[@]` in untrusted text, including owner e-mail addresses.
-- **Redaction.** Report excerpts and structured connector metadata withhold
-  more credential forms: literals passed to credential constructors and
-  builder chains, literal fallbacks of credential environment variables,
-  credential command-line options, .NET and XML settings, and opaque values
-  under credential-like names ([changelog](changelog.md) lists them). This is
-  a credential-policy change without configuration changes; scores and
-  evaluation results are unchanged. Expect more `[REDACTED]` markers, for
-  example on every literal after the first in a multi-argument credential
-  constructor (such as a client ID), on opaque-looking values under names
-  such as `cacheKey` or `nextPageToken`, and on a capitalized literal
-  fallback after a credential name. Reports produced before this release may
-  show such values although the scan exited 0, for example a web.config
-  `<appSettings>` key beside an Azure OpenAI endpoint, a C#
-  `new AzureKeyCredential("…")` or a `--key` command line. Regenerate earlier
-  reports that covered .NET or XML configuration, SDK client code or such
-  command lines, and rotate any key they show. The
-  [security policy](security.md) lists the forms still not withheld; keep
-  treating reports as confidential.
-- **Redaction limits.** Redaction is linear in its input, so minified bundles
-  and long runs of unfinished annotations no longer exhaust the redaction
-  budget or time out, and a long unquoted value after `key=` no longer hangs
-  a scan. Expressions nested more than 100 brackets deep are withheld through
-  the end of the excerpt, and an unquoted word holding more than 16
-  command-line options from its 17th option on. In structured metadata the
-  added rules run as a second pass over the first pass's output. That pass
-  refuses a value the earlier rules accepted, with a sanitization limit
-  (exit 3), only when removing a credential it found from the value's other
-  fields would exceed the replacement work budget or grow a text past the
-  size limit. Report sanitization takes about 28% longer.
-- **Finding identity.** IDs are computed from sanitized resource fields, so
-  an ID changes only where such a field held a value that is now withheld;
-  the demo, sample repository and evaluation corpora keep their IDs. The
-  redaction policy token changed, so findings verified clean under the old
-  rules are sanitized again automatically.
-- **Plugins and embedders.** `shadowscan.utils.text.sanitize_record` and
-  `HttpClient.paginate_cursor` are removed: call
-  `shadowscan.utils.redaction.sanitize`, and paginate explicitly. Patch
-  redaction rules only through `shadowscan.utils.redaction`. A plugin that
-  declares the cloud surface or documents `allow_instance_credentials`
-  receives the scan-wide approval (see
-  [explicit security policy](#explicit-security-policy)), and engine
-  behavior that differs by connector is a class hook (see
-  [architecture](architecture.md#engine-hooks)).
-
-## October field scan changes
-
-These corrections change what some scans report. Compare a pinned baseline with
-a candidate before enforcing policy on the new output:
-
-- **Completeness.** TSX files with typed elements, comments between JSX
-  attributes or element text starting with `(` no longer make scans incomplete.
-  Previously incomplete React repositories can now complete and become usable
-  `diff` baselines.
-- **New MCP findings.** Gemini `httpUrl` servers and MCP servers embedded in
-  GitHub Actions step inputs are new `mcp-server` findings. `diff` shows them as
-  new; review their risk before using `--fail-on`.
-- **Attribution.** Findings whose only Google ADK evidence was
-  `GOOGLE_GENAI_USE_VERTEXAI` lose `framework.google-adk` and its `multi-agent`
-  potential capability. `diff` reports them as changed; titles change too.
-- **Fixture workflows.** Exported workflows under test or fixture paths gain the
-  `test-code-only` tag, lower confidence and a lower risk score.
-- **Project roots.** Modules named `setup.py` that do not build a package no
-  longer create a project. Findings for such directories disappear from `diff`
-  as resolved and their evidence joins the enclosing project's finding.
-- **Credential files.** MCP servers whose only inline-secret evidence was a
-  credential-file path argument or a repeated variable reference lose the
-  `inline-secrets` tag and its risk factor.
-
-## Finding identity and comparison migration
-
-Finding IDs now separate stable source identity from inferred classification.
-A service principal transitioning from delegated to application permissions
-keeps its identity. Stable resource-type families separate different observation
-types on the same resource; plugins can provide an explicit stable
-`identity_discriminator` when needed. Never derive this discriminator from an
-inferred kind, risk level or current permissions.
-
-Reports declare `shadowscan.finding-identity/v2`. Rebuild comparison baselines
-after this upgrade: legacy or mismatched schemas cannot establish resolution
-and diff reports missing findings as unknown. Incremental cache format changes
-force a full rescan; cached approval is never reused. Review any downstream
-deduplication, SARIF alert history and ticket integrations that store old IDs.
-
-This candidate preserves the v2 algorithm (`ss-` plus the first 16 SHA-256 hex
-characters). Corrected JWT issuer labels can change provider-derived IDs for
-previously misclassified tokens; review those deltas when updating a baseline.
-
-Diffs now identify substantive changes in classification, permissions,
-capabilities, technologies, risk score/factors, registration and ownership,
-including changes within the same risk band. `changed_fields` identifies the
-changed attributes. Timestamp and evidence ordering alone do not create changes.
-`diff` and `inventory stubs` accept regular JSON report files up to 64 MiB,
-without input or ancestor symlinks. Duplicate keys, non-finite numbers, invalid
-finding fields and excessive nesting fail validation. All records are checked
-before stub generation writes files; this does not make multiple file writes
-transactional if a later filesystem operation fails.
-
-GitHub and GitLab API source downloads use immutable blob IDs returned by tree
-enumeration and verify each downloaded file against its Git object ID before
-scanning it. GitHub API findings include the tree SHA; GitLab API findings
-include the commit SHA resolved before pagination. Clone-mode findings include
-the checked-out commit and tree SHAs. These appear in each code finding's
-`metadata.source_snapshot`, alongside the provider, capture method and validated
-branch name when available. Missing or malformed snapshot identities and blob
-mismatches mark the scan incomplete; valid neighboring files remain usable.
-Symlinks and submodules are skipped with incomplete coverage. Provider settings,
-CI variable names and other metadata collected separately are not part of the
-source snapshot.
-
-Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
-Filesystem scans reject selected roots whose paths traverse a symbolic link.
-They then open each root once and read every file, including `CODEOWNERS`,
-relative to it without following a link in any path component. A scan needs
-read and search permission on the root and the directories below it, but on
-Linux and macOS only search permission on the directories above it (they are
-opened with `O_PATH` on Linux; on macOS the root is opened in one call with
-`O_NOFOLLOW_ANY`), so a checkout below a traverse-only directory such as a
-mode `0711` home directory is scanned completely. A root that cannot be opened
-this way is reported, by its `label` when one is set, as
-`could not open the scan root safely (<reason>)`, for example
-`permission denied`, and makes the scan incomplete. Source links encountered
-during a walk are skipped and mark coverage incomplete. A directory replaced
-by a link while the scan runs fails the reads below it and also marks
-coverage incomplete, so content outside the root is never analyzed. Review
-or explicitly exclude such paths before accepting a completeness gate.
-Pre/post content hashes can detect ordinary concurrent edits but do not form an
-atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
-and revert between those reads.
-Incremental state uses nonblocking advisory `flock` per cache slot
-(`<sha256>.lock`): shared for reading and exclusive for publication, as well as
-atomic writes and current-input fingerprint checks.
-Keep state in a dedicated private directory outside the scanned repository. A
-busy read lock causes a cache miss; a busy write lock skips that publication.
-Incremental state needs POSIX advisory locking (`fcntl`); platforms without it are ones the confined file reader already refuses, so no scan runs there. Symlinked, non-owner or non-private lock files are
-rejected. Use local filesystems with working advisory locks; a lock is not a
-distributed coordination service or a security boundary against another process
-with the same user ID.
-
-## Cloud collection changes
-
-AWS verifies the live account through STS before emitting account metadata,
-including when `account_id` is configured. For live scans, that setting is an
-expected account and a mismatch stops collection. AWS and OCI SDK clients have
-explicit 10-second connect and 30-second read timeouts with at most three
-attempts. These bounds do not replace the overall worker deadline. AWS Lambda
-and GCP project limits stop enumeration without materializing the full inventory.
-ECS discovery follows
-exact definition ARNs referenced by running tasks and service deployments,
-including referenced inactive revisions, and retains the latest active registered
-revision of each family as a separate evidence category. Stopped tasks and unused
-historical revisions are outside this collection scope. A registered-only label
-does not prove a definition is undeployed when discovery is incomplete.
-Late AWS list-page failures retain earlier observations, mark coverage incomplete,
-and cap pagination; a missing collection field is not an empty inventory.
-The per-region `max_ecs_api_calls` limit defaults
-to 2000; exceeding it or encountering denied/partial calls marks coverage
-incomplete. Add the read permissions listed in [connectors.md](connectors.md).
-
-GCP Owner/Editor-only principals remain visible as privileged access findings.
-Neither broad role grants nor ECS deployment references establish that AI code
-actually executed. Use trusted runtime telemetry for additional attribution.
-GCP audit caller findings keep events from separate projects distinct, including
-when the service account principal is the same. Azure Resource Graph failures on
-later pages preserve earlier observations and mark collection incomplete.
-Cloud Run discovers concrete regions using the locations API before listing
-services; the v2 services endpoint does not accept a `-` location. Unreachable
-regions in GCP list responses make coverage incomplete while retaining reachable
-observations. The audit identity must have `run.locations.list` and
-`run.services.list` for this discovery path. Azure ARM inventory pages also retain
-observations after later failures; diagnostic-setting coverage remains unknown
-unless every page was collected successfully.
-
-Foundry collection uses the verified classic Agent Service `/assistants` route
-with `api-version=v1` and validates its pagination envelope. Newer `/agents`
-families are outside that contract. OCI Function collection now reads both
-application and function details, merges inherited configuration with function
-overrides, and treats denied detail access as incomplete. Ensure the audit
-identity can read those details, not just enumerate summary records.
-
-Google Workspace per-user token envelopes preserve the parent user in both
-single-object and array forms. Regenerate earlier offline analyses affected by
-lost user attribution before using their counts as governance evidence.
-
 ## Release verification
 
 ### Merge gate and review status
@@ -982,7 +497,506 @@ the concrete status, denominator, control and reviewer artifacts:
 These checks require operator-specific tenant access and operational decisions.
 Until completed, describe deployment status as pending tenant and container acceptance.
 
-## Consolidated candidate compatibility
+## Candidate change history
+
+These notes record behavior changes made while the 0.1.1 candidate was being
+hardened. Read them when you have baselines, reports
+or inventories produced by an earlier candidate build; a deployment that starts
+from a reviewed revision and a fresh baseline does not need them.
+
+### September 27 migration and acceptance
+
+The distribution metadata now names `project-nexus-shadowscan`. Install a wheel
+from the reviewed revision into a fresh virtual environment; do not overlay it
+on a previous `shadowscan` distribution, because both use the same Python import
+and command paths. The CLI, Python imports, connector entry-point group and
+report schemas retain the `shadowscan` name. This rename does not publish a
+package or reserve the package-index namespace.
+
+Offline exports, approval inventories, imported reports, dependency manifests,
+notebooks and agent/MCP configuration with duplicate or non-finite data now fail
+validation. Affected scans are incomplete while valid neighboring evidence is
+retained. JSON readers and writers also reject `NaN`, infinities and exponent
+overflow rather than accepting non-standard values. Obtain an unambiguous,
+standards-compliant source and rerun collection; do not treat empty findings
+from rejected input as evidence that an earlier finding resolved.
+Conflicting schema aliases, case-folded CSV headers, pagination cursors and
+multiple records for one provider identity also make coverage incomplete. The
+scanner quarantines only the ambiguous identity where the format permits it and
+continues to retain findings from unambiguous neighboring records.
+Ordinary deterministic graph/flow construction and text generation without
+enabled tool execution no longer establish agent behavior. Source capabilities
+also stop inheriting unsupported features solely from framework membership.
+Review changed kinds, capabilities and risk scores, then collect a fresh baseline
+before using these reports in an enforcement decision.
+
+Built-in connector options now apply the same schema to YAML-loaded and
+programmatically constructed configurations. Connector option booleans accept
+explicit case-insensitive true/false forms; the connector `enabled` field also
+retains its documented aliases. Ambiguous values, unknown built-in keys and
+reserved keys fail before collection. Plugin keys remain plugin-defined, while
+cycles, excessive nesting and non-finite values still fail at the scanner
+boundary. Mutable risk and deadline settings are revalidated before every run.
+Configured inventory is reloaded for every run, including the first run after
+engine construction, so an approval file changed between construction and
+execution cannot supply a stale match.
+
+When HTML or CSV is sent to stdout, terminal control and bidirectional-formatting
+characters are rendered visibly; artifacts explicitly written with `-o` retain
+their serialized data. Reporter boundaries sanitize copied diagnostics without
+mutating in-memory scan state, ignore malformed related-finding metadata, preserve
+valid SARIF source paths and reject non-finite JSON. Serialization failures stop
+before stdout or an existing output file is changed; table output preflights
+diagnostics before emitting its header. Continue to treat reports as sensitive:
+these controls do not authorize publication of tenant or source data.
+
+Incremental scans now bind cache fingerprints to Python/platform, parser/regex
+and Git runtime versions. Git-aware reuse refuses `.git` indirection, and tree
+hashing, Git metadata, cache reads and post-scan maintenance cooperate with
+cancellation and connector deadlines. Startup maintenance has its own two-second
+monotonic budget; exceeding it disables cache reuse for that run so collection
+continues as a full scan. Enumeration is bounded by entries, depth, time and
+bytes. Cache maintenance applies a 30-day TTL, 256-entry and 512 MiB aggregate
+limits, deterministic oldest-access eviction and removal of stale pending and
+orphan-lock files. Post-lock inode checks prevent cleanup from splitting a slot
+across stale and replacement lock files. These are implementation defaults, not
+evidence of field accuracy; rebuild the incremental state when changing rollout
+baselines.
+
+Google Workspace domain-wide delegation pins the signed assertion audience and
+token exchange to `https://oauth2.googleapis.com/token`; a service-account
+document's `token_uri` cannot redirect the credential exchange.
+
+The `CI gate` job combines documentation, Linux Python 3.11–3.13 (including the
+container checks in Python 3.13), macOS Python 3.11 and 3.13, and DCO for pull
+requests. Core/development, runtime, build and documentation dependency sets are
+hash-locked, and CI audits all four. Add `CI gate` to the live required checks
+while retaining existing checks and independent approval. Verify the platform
+setting before claiming it is enforced: a workflow cannot change a branch
+ruleset by declaring a job.
+
+The revised synthetic cases remain regression data. Freeze a fresh population,
+human labels and acceptance policy using [the holdout procedure](evaluation.md#gate-a-frozen-holdout),
+then run the [scope-specific evidence gate](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+For AWS or Slack deployments, retain complete and separately credentialed
+permission-denied receipts from [approved tenant canaries](canaries.md).
+Other connectors need their own acceptance evidence. The existing bundled
+corpora, replays and mocked transports do not meet these live requirements.
+
+After independent review, merge and successful exact-commit CI and CodeQL,
+exercise the manual release-evidence workflow described below. Retain its
+candidate, attestation and `release-publication-input-<SHA>` artifacts together.
+The latter contains the exact attested wheel bytes and is an input to a possible
+future OIDC trusted-publishing job; it does not publish anything or approve a
+release. Evidence from an earlier main commit does not cover these source or
+package changes, and local wheel checks do not establish GitHub-hosted provenance.
+
+### September 25 migration and acceptance
+
+Rebuild finding and comparison baselines after adopting the scanner-boundary
+corrections. Google Workspace customer attribution, unresolved permission/workflow
+identities, and semantic provider-dispatch classification can change finding IDs,
+registry status or finding kinds. Review existing inventory bindings and retain the
+previous pinned scanner and reports for rollback. Unresolved identity is evidence
+for investigation, not a resource that can be approved through an inventory card.
+
+For Google Workspace, add `admin.directory.customer.readonly` to the audit
+identity's approved scopes before live collection. The read-only customer lookup
+must establish a concrete customer ID, even for an empty tenant. Offline runs
+require that verified ID in `customer`. Regenerate accountless Google Workspace
+inventory cards with an explicit customer binding; an old globally scoped OAuth
+client card no longer approves grants across tenants. Re-run tenant acceptance
+after changing audit permissions. No live Google tenant validation is implied by
+the mocked provider-contract tests.
+
+Source excerpts now redact sensitive environment-call arguments, and repository
+connector debug diagnostics omit raw exception payloads. Run the synthetic report
+and log checks before distributing reports; redaction remains a defense in depth
+control, not permission to publish private source or unrestricted tenant exports.
+The sanitizer also propagates opaque secret values found in nested credential
+objects or lists to sibling fields in the same finding or connector record export.
+It leaves common credential descriptor labels intact so resource identity remains
+useful; the containing credential field is still redacted. Recheck stored reports
+and exports containing nested credential data before sharing or reusing them,
+because earlier scanner versions could leave an identical value in an unrelated
+description. Synthetic regressions exercise this path; no live tenant validation
+is implied.
+
+The two holdout acceptance paths share source-overlap checks. Copying or renaming
+previously evaluated source does not create new independent observations; repeated
+holdout sources cannot satisfy sample minima or tighten uncertainty estimates.
+Freeze a fresh independently human-labeled sample and its policy before evaluation.
+Neither these checks nor a passing regression suite supplies that human review or
+real tenant canary evidence.
+
+Slack findings now use the immutable workspace ID as `account`; workspace names
+are display metadata. Update inventory account bindings and collect a fresh
+Slack baseline after upgrading. An offline
+export must include a valid team record or an explicit operator-supplied
+`team_id`; conflicting workspace identities cannot establish attributed findings.
+Teams records without valid app identity make collection incomplete while valid
+neighboring observations remain available.
+
+Code findings can change after this scanner update. A single OpenAI Responses
+action requires an import-bound request and source-linked model-selected dispatch;
+it supplies tool-use evidence without asserting repeated autonomous execution.
+An iterative function loop additionally requires matching feedback to the next
+request. Provider analysis rejects unrelated dispatch, unreachable literal branches
+and locally shadowed execution calls. Reconcile a fresh code
+baseline and review changed finding identities before using `--fail-on` as an
+enforcement gate. Offline source tests establish these paths, not runtime use.
+
+Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
+required evidence for the intended deployment scope. It checks artifact identity,
+freshness and declared review/metric requirements. It does not authenticate
+reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
+tests into operational evidence. Keep receipts and human attestations in controlled
+audit storage and review their origin. Unsupported live connectors still require
+their own acceptance work; they cannot inherit an AWS or Slack result.
+
+The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
+requires successful main-branch CI and CodeQL runs for the exact selected commit.
+It rejects modified, untracked and ignored checkout files, builds from a clean
+`git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
+and produces GitHub artifact provenance. It then assembles the candidate and
+attestation bundles without rebuilding the wheel. It does not publish to PyPI,
+create a release, or declare tenant acceptance. Review and retain its artifacts
+before a separate maintainer publication decision.
+
+After merge and successful push CI, dispatch **Release candidate evidence** on
+`main` with `expected_commit` set to the full current main SHA, `ci_run_id`
+set to that commit's successful CI run ID, and `codeql_run_id` set to its
+successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
+failed checks and other workflows. Retain `release-candidate-<SHA>`,
+`release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
+hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
+attestations before publication. A future publisher must use the wheel in that
+publication-input artifact, not rebuild from a tag. Configure an environment-
+protected PyPI trusted publisher and grant `id-token: write` only in that future,
+isolated publication job. The current workflow deliberately has no package-index
+permission or upload action.
+
+The runtime SBOM covers locked Python core/cloud dependencies. It is not a
+container or operating-system SBOM and does not cover the base image, Git,
+CA certificates or other Debian packages. Generate and review a container/OS
+SBOM for the exact deployed image digest as a separate release control.
+
+### Output and inventory migration
+
+Reports and inventory stub files now use atomic 0600 writes. An existing
+character device given as the report path, such as `/dev/null`, is written in
+place instead of being replaced. An existing named pipe is written in place only
+when you own it with mode 0600 and a reader already has it open. Sockets,
+directories and other non-regular paths are refused. Inventory stub and
+record-export directories are created as 0700; existing non-private directories
+are rejected without changing their permissions. Use dedicated directories for
+these outputs.
+
+The Markdown reporter defangs bare HTTP(S) and `www.` strings and writes `@` as
+`[@]` in untrusted text fields, so repository names, owners, diagnostics and
+evidence descriptions do not become links, @-mentions or e-mail links when
+reports are pasted into a ticket, pull request or wiki. Code spans keep
+identifiers verbatim. The CSV reporter inserts a literal `'` at the start of a
+value, and after each `,`, `;`, tab, `|` or line break inside it, where the
+text that follows begins with `=`, `+`, `-` or `@` (also after whitespace,
+including no-break spaces, or double quotes) or with a tab or carriage
+return; a value that begins with a line feed is marked too. Other tabs and
+line breaks inside a value are left alone. A report opened with another
+delimiter therefore cannot create a formula cell. Strip every marker when
+consuming CSV programmatically, or consume `json`.
+
+Dump filenames include the original connector configuration ordinal and a safe
+label. Repeated names or normalization-colliding labels no longer overwrite each
+other. Selecting a subset with `--only` retains the original ordinal. Use the
+export manifest to locate each instance's file and completion status instead of
+assuming a filename such as `cloud_aws.jsonl`. Exports remain sanitized and are
+not lossless copies of upstream responses. JWTs are never included.
+
+Generated resource patterns escape literal `*`, `?` and `[` characters. Review
+previously generated cards for those characters and regenerate literal bindings
+where necessary. Existing intentionally authored wildcard approvals remain valid.
+Resources or identity scopes whose identifiers were redacted cannot establish
+an exact approval: assign a stable nonsecret resource, provider, account and
+region identity before registering them. A report display value containing
+`[REDACTED]` is not an authority to approve every object that renders to the
+same value.
+AWS findings with only a short resource ID also require an account ID from
+the connector configuration or a trusted account export record. Without one,
+the scan is incomplete and a registry card cannot approve the finding. Check
+that distinct offline exports carry their own account scope before combining
+them into an inventory baseline.
+Generated cards now include `discovery.regions` when a region is known; review
+older cards with short resource IDs (for example a Bedrock agent ID without its
+ARN) and add explicit region constraints to avoid approving another region.
+
+For a labeled `code.filesystem` connector using `paths`, each root gets its own
+resource ID under the shared label, even if the list later contains just one
+path. Without `root_ids`, the suffix is `root-<SHA256 of canonical path>` and
+changes when a checkout moves. Set unique `root_ids` in the same order as
+`paths` to emit `root-id-<id>` suffixes that remain stable across CI workers;
+reorder the two lists together. Inventory entries using the old shared label
+will no longer approve these roots. Regenerate cards from a complete scan and
+approve each root separately. A scalar `path` retains its prior resource ID,
+so another option for stable identities is one connector per repository with
+its own explicit label.
+
+### Field review changes
+
+A field review of public repositories changed what some scans report. Compare a
+pinned baseline with a candidate before enforcing policy on the new output:
+
+- **Folded manifests.** A CrewAI `agents.yaml` or `langgraph.json` inside a
+  reported project no longer produces its own `agent-manifest` finding; it is
+  listed under the project finding's `metadata.manifests`. `diff` shows those
+  finding IDs as resolved. Inventory entries that bound a manifest path should
+  bind the project resource instead. A2A cards and M365 declarative agents are
+  unchanged.
+- **GitHub Apps.** Installations without an AI signature or AI-like name are no
+  longer reported. Set `include_unrecognized_apps: true` to keep reviewing them,
+  at possible confidence with the `unrecognized-app` tag. Read-only apps with an
+  AI-like name are now reported. `contents` or `pull_requests` write access no
+  longer implies `code-exec`, so such apps can drop a risk level (the Claude app
+  from critical to high); check `--fail-on` thresholds against a baseline.
+- **Completeness.** Syntax errors in ordinary configuration files and Python
+  test modules over `max_ast_nodes` produce warnings instead of incomplete
+  scans; the file is still read lexically. Enable `strict_coverage` to keep
+  treating them as incomplete. A file the parsers refuse for nesting depth or
+  XML entity expansion stays incomplete, since its content is unknown rather
+  than malformed. Notebooks whose outputs exceed `max_file_size`
+  now contribute their code-cell evidence; their outputs are not scanned for
+  credentials at that size, so the scan stays incomplete unless `scan_secrets`
+  is off. Raise `max_file_size` to scan the outputs too.
+- **Capabilities.** Test-only evidence and vendor-neutral idioms in MCP tool
+  servers no longer add capabilities; MCP server capabilities come from their
+  registered tools. Risk scores of affected findings change accordingly.
+
+### Completeness, report and credential changes
+
+The 2026-09-28 changes alter completeness, report text and credential policy.
+Compare a pinned baseline with a candidate before enforcing policy on the new
+output:
+
+- **Newly incomplete (exit 3).** A shared HTTP response body that misses the
+  [read deadline](#resource-limits-and-incomplete-scans); a `code.filesystem`
+  root that cannot be opened safely, or a directory replaced by a link during
+  the scan (see
+  [finding identity](#finding-identity-and-comparison-migration)); a
+  `code.gitlab` group listing entry without a positive integer project `id`;
+  and a `code.github` listing entry whose `full_name` is not a plain
+  `owner/name`.
+- **Changed diagnostics, still incomplete.** A YAML value PyYAML cannot
+  construct, such as an impossible date or an integer over 4,300 digits,
+  already made a scan incomplete; it is now reported as malformed YAML
+  (`invalid YAML`, `invalid agent definition YAML`), and the agent definition
+  is now listed where it used to be dropped, which can raise that finding's
+  risk score. Scan configuration and inventory files with such a value still
+  fail at setup (exit 1), now with `ConfigValidationError` or
+  `InventoryValidationError`. A cancellation or connector deadline while a
+  credential finding is built now ends that connector instead of being
+  recorded as one file's error; the scan was and is incomplete.
+- **Newly complete.** A Python module whose imports cannot resolve to any
+  signature is complete at any size or nesting depth, because the import
+  binder, which could add no evidence there, is skipped for it.
+  `mypy/checker.py` (52,729 AST nodes) used to make ordinary library trees
+  exit 3. A module that imports a library a signature describes keeps the
+  `max_ast_nodes` diagnostic: a warning in tests, an error elsewhere.
+  Configuration, inventory, signature pack, report and offline input files
+  below a traverse-only directory (mode `0711`) now open, since directories
+  are opened for traversal only.
+  An unrendered Helm, Jinja or Go-template YAML file, such as a chart
+  template with `image: {{ .Values.image }}`, no longer reports
+  `structured parsing incomplete`: it is not YAML until rendered, so its
+  excerpts use lexical redaction. Plain YAML with duplicate or non-finite
+  data still makes the scan incomplete.
+- **Reports.** CSV reports also carry `'` markers after a `,`, `;`, tab, `|`
+  or line break inside a value, not only at its start (see
+  [output migration](#output-and-inventory-migration)). Consumers that strip
+  only a leading marker must strip these too, or read `json`. Markdown writes
+  `@` as `[@]` in untrusted text, including owner e-mail addresses.
+- **Redaction.** Report excerpts and structured connector metadata withhold
+  more credential forms: literals passed to credential constructors and
+  builder chains, literal fallbacks of credential environment variables,
+  credential command-line options, .NET and XML settings, and opaque values
+  under credential-like names ([changelog](changelog.md) lists them). This is
+  a credential-policy change without configuration changes; scores and
+  evaluation results are unchanged. Expect more `[REDACTED]` markers, for
+  example on every literal after the first in a multi-argument credential
+  constructor (such as a client ID), on opaque-looking values under names
+  such as `cacheKey` or `nextPageToken`, and on a capitalized literal
+  fallback after a credential name. Reports produced before this release may
+  show such values although the scan exited 0, for example a web.config
+  `<appSettings>` key beside an Azure OpenAI endpoint, a C#
+  `new AzureKeyCredential("…")` or a `--key` command line. Regenerate earlier
+  reports that covered .NET or XML configuration, SDK client code or such
+  command lines, and rotate any key they show. The
+  [security policy](security.md) lists the forms still not withheld; keep
+  treating reports as confidential.
+- **Redaction limits.** Redaction is linear in its input, so minified bundles
+  and long runs of unfinished annotations no longer exhaust the redaction
+  budget or time out, and a long unquoted value after `key=` no longer hangs
+  a scan. Expressions nested more than 100 brackets deep are withheld through
+  the end of the excerpt, and an unquoted word holding more than 16
+  command-line options from its 17th option on. In structured metadata the
+  added rules run as a second pass over the first pass's output. That pass
+  refuses a value the earlier rules accepted, with a sanitization limit
+  (exit 3), only when removing a credential it found from the value's other
+  fields would exceed the replacement work budget or grow a text past the
+  size limit. Report sanitization takes about 28% longer.
+- **Finding identity.** IDs are computed from sanitized resource fields, so
+  an ID changes only where such a field held a value that is now withheld;
+  the demo, sample repository and evaluation corpora keep their IDs. The
+  redaction policy token changed, so findings verified clean under the old
+  rules are sanitized again automatically.
+- **Plugins and embedders.** `shadowscan.utils.text.sanitize_record` and
+  `HttpClient.paginate_cursor` are removed: call
+  `shadowscan.utils.redaction.sanitize`, and paginate explicitly. Patch
+  redaction rules only through `shadowscan.utils.redaction`. A plugin that
+  declares the cloud surface or documents `allow_instance_credentials`
+  receives the scan-wide approval (see
+  [explicit security policy](#explicit-security-policy)), and engine
+  behavior that differs by connector is a class hook (see
+  [architecture](architecture.md#engine-hooks)).
+
+### October field scan changes
+
+These corrections change what some scans report. Compare a pinned baseline with
+a candidate before enforcing policy on the new output:
+
+- **Completeness.** TSX files with typed elements, comments between JSX
+  attributes or element text starting with `(` no longer make scans incomplete.
+  Previously incomplete React repositories can now complete and become usable
+  `diff` baselines.
+- **New MCP findings.** Gemini `httpUrl` servers and MCP servers embedded in
+  GitHub Actions step inputs are new `mcp-server` findings. `diff` shows them as
+  new; review their risk before using `--fail-on`.
+- **Attribution.** Findings whose only Google ADK evidence was
+  `GOOGLE_GENAI_USE_VERTEXAI` lose `framework.google-adk` and its `multi-agent`
+  potential capability. `diff` reports them as changed; titles change too.
+- **Fixture workflows.** Exported workflows under test or fixture paths gain the
+  `test-code-only` tag, lower confidence and a lower risk score.
+- **Project roots.** Modules named `setup.py` that do not build a package no
+  longer create a project. Findings for such directories disappear from `diff`
+  as resolved and their evidence joins the enclosing project's finding.
+- **Credential files.** MCP servers whose only inline-secret evidence was a
+  credential-file path argument or a repeated variable reference lose the
+  `inline-secrets` tag and its risk factor.
+
+### Finding identity and comparison migration
+
+Finding IDs now separate stable source identity from inferred classification.
+A service principal transitioning from delegated to application permissions
+keeps its identity. Stable resource-type families separate different observation
+types on the same resource; plugins can provide an explicit stable
+`identity_discriminator` when needed. Never derive this discriminator from an
+inferred kind, risk level or current permissions.
+
+Reports declare `shadowscan.finding-identity/v2`. Rebuild comparison baselines
+after this upgrade: legacy or mismatched schemas cannot establish resolution
+and diff reports missing findings as unknown. Incremental cache format changes
+force a full rescan; cached approval is never reused. Review any downstream
+deduplication, SARIF alert history and ticket integrations that store old IDs.
+
+This candidate preserves the v2 algorithm (`ss-` plus the first 16 SHA-256 hex
+characters). Corrected JWT issuer labels can change provider-derived IDs for
+previously misclassified tokens; review those deltas when updating a baseline.
+
+Diffs now identify substantive changes in classification, permissions,
+capabilities, technologies, risk score/factors, registration and ownership,
+including changes within the same risk band. `changed_fields` identifies the
+changed attributes. Timestamp and evidence ordering alone do not create changes.
+`diff` and `inventory stubs` accept regular JSON report files up to 64 MiB,
+without input or ancestor symlinks. Duplicate keys, non-finite numbers, invalid
+finding fields and excessive nesting fail validation. All records are checked
+before stub generation writes files; this does not make multiple file writes
+transactional if a later filesystem operation fails.
+
+GitHub and GitLab API source downloads use immutable blob IDs returned by tree
+enumeration and verify each downloaded file against its Git object ID before
+scanning it. GitHub API findings include the tree SHA; GitLab API findings
+include the commit SHA resolved before pagination. Clone-mode findings include
+the checked-out commit and tree SHAs. These appear in each code finding's
+`metadata.source_snapshot`, alongside the provider, capture method and validated
+branch name when available. Missing or malformed snapshot identities and blob
+mismatches mark the scan incomplete; valid neighboring files remain usable.
+Symlinks and submodules are skipped with incomplete coverage. Provider settings,
+CI variable names and other metadata collected separately are not part of the
+source snapshot.
+
+Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
+Filesystem scans reject selected roots whose paths traverse a symbolic link.
+They then open each root once and read every file, including `CODEOWNERS`,
+relative to it without following a link in any path component. A scan needs
+read and search permission on the root and the directories below it, but on
+Linux and macOS only search permission on the directories above it (they are
+opened with `O_PATH` on Linux; on macOS the root is opened in one call with
+`O_NOFOLLOW_ANY`), so a checkout below a traverse-only directory such as a
+mode `0711` home directory is scanned completely. A root that cannot be opened
+this way is reported, by its `label` when one is set, as
+`could not open the scan root safely (<reason>)`, for example
+`permission denied`, and makes the scan incomplete. Source links encountered
+during a walk are skipped and mark coverage incomplete. A directory replaced
+by a link while the scan runs fails the reads below it and also marks
+coverage incomplete, so content outside the root is never analyzed. Review
+or explicitly exclude such paths before accepting a completeness gate.
+Pre/post content hashes can detect ordinary concurrent edits but do not form an
+atomic snapshot. Scan an immutable checkout/export to exclude changes that occur
+and revert between those reads.
+Incremental state uses nonblocking advisory `flock` per cache slot
+(`<sha256>.lock`): shared for reading and exclusive for publication, as well as
+atomic writes and current-input fingerprint checks.
+Keep state in a dedicated private directory outside the scanned repository. A
+busy read lock causes a cache miss; a busy write lock skips that publication.
+Incremental state needs POSIX advisory locking (`fcntl`); platforms without it are ones the confined file reader already refuses, so no scan runs there. Symlinked, non-owner or non-private lock files are
+rejected. Use local filesystems with working advisory locks; a lock is not a
+distributed coordination service or a security boundary against another process
+with the same user ID.
+
+### Cloud collection changes
+
+AWS verifies the live account through STS before emitting account metadata,
+including when `account_id` is configured. For live scans, that setting is an
+expected account and a mismatch stops collection. AWS and OCI SDK clients have
+explicit 10-second connect and 30-second read timeouts with at most three
+attempts. These bounds do not replace the overall worker deadline. AWS Lambda
+and GCP project limits stop enumeration without materializing the full inventory.
+ECS discovery follows
+exact definition ARNs referenced by running tasks and service deployments,
+including referenced inactive revisions, and retains the latest active registered
+revision of each family as a separate evidence category. Stopped tasks and unused
+historical revisions are outside this collection scope. A registered-only label
+does not prove a definition is undeployed when discovery is incomplete.
+Late AWS list-page failures retain earlier observations, mark coverage incomplete,
+and cap pagination; a missing collection field is not an empty inventory.
+The per-region `max_ecs_api_calls` limit defaults
+to 2000; exceeding it or encountering denied/partial calls marks coverage
+incomplete. Add the read permissions listed in [connectors.md](connectors.md).
+
+GCP Owner/Editor-only principals remain visible as privileged access findings.
+Neither broad role grants nor ECS deployment references establish that AI code
+actually executed. Use trusted runtime telemetry for additional attribution.
+GCP audit caller findings keep events from separate projects distinct, including
+when the service account principal is the same. Azure Resource Graph failures on
+later pages preserve earlier observations and mark collection incomplete.
+Cloud Run discovers concrete regions using the locations API before listing
+services; the v2 services endpoint does not accept a `-` location. Unreachable
+regions in GCP list responses make coverage incomplete while retaining reachable
+observations. The audit identity must have `run.locations.list` and
+`run.services.list` for this discovery path. Azure ARM inventory pages also retain
+observations after later failures; diagnostic-setting coverage remains unknown
+unless every page was collected successfully.
+
+Foundry collection uses the verified classic Agent Service `/assistants` route
+with `api-version=v1` and validates its pagination envelope. Newer `/agents`
+families are outside that contract. OCI Function collection now reads both
+application and function details, merges inherited configuration with function
+overrides, and treats denied detail access as incomplete. Ensure the audit
+identity can read those details, not just enumerate summary records.
+
+Google Workspace per-user token envelopes preserve the parent user in both
+single-object and array forms. Regenerate earlier offline analyses affected by
+lost user attribution before using their counts as governance evidence.
+
+### Consolidated candidate compatibility
 
 The consolidated candidate preserves the PR #30 runtime policies and reconciles
 verified additional fixes with PR #31, which merged during that work. The
