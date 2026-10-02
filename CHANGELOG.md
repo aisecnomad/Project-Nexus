@@ -503,6 +503,15 @@ field precision. Behavior changes that affect an existing baseline are listed in
 - JavaScript and TypeScript source calls that exceed the bounded semantic
   analysis budget now make coverage incomplete instead of silently losing
   agent-construction evidence. Valid neighboring findings are retained.
+- Binary-looking `.ts` source is no longer silently classified as MPEG video
+  from packet bytes. Source comments can mimic that prefix while hiding agent
+  construction. Such files make coverage incomplete; trusted operators may
+  explicitly exclude known media paths from the intended scan scope.
+- Failed incremental cache-decision hooks now make connector coverage incomplete,
+  retaining built-in validation diagnostics and exposing only exception types
+  for plugin hook failures.
+- Zapier blank-row tolerance requires a recognized identity column; all-blank
+  records with unknown JSON keys or CSV headers make coverage incomplete.
 - Generic Genkit initialization and flow/tool declarations no longer establish
   an agent or configured tool-use capability. Supported concrete agent
   definitions and model calls with registered tools retain detection.
@@ -546,8 +555,8 @@ has a regression test.
   inventory directory stops setup instead of being skipped. A recognised binary
   artifact (executable, archive, image, PDF or SQLite database, by its header)
   stays a quiet skip when it has no file extension, when only a directory-wide
-  signature glob such as `.cursor/rules/**` selected it, or when it is a `.ts`
-  MPEG transport-stream video segment; unrecognised binary content is a gap.
+  signature glob such as `.cursor/rules/**` selected it. An analyzable source
+  extension, including `.ts`, and unrecognised binary content remain a gap.
 - **Disclosure without failure.** Code scans list default-excluded directory
   names (`build`, `vendor`, `external`, ...) once per root, and default-scope AWS
   and GCP scans name the regions or locations that were not scanned. Both are

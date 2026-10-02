@@ -564,6 +564,8 @@ GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
 steps (→ code-exec), models. Live pagination is bounded by `max_pages`
 (default and maximum 1000). Make scans one `team_id`, or every team of an
 `organization_id` when `team_id` is unset.
+Zapier skips wholly blank text rows only with a recognized identity column
+(`title`, `name`, `Title`, `Zap`, `id`, or `Id`); unknown schemas are incomplete.
 An n8n workflow needs a nonempty provider ID for a usable resource identity.
 Exported blueprints without an ID retain detected AI evidence under an unresolved
 identity, make collection incomplete, and cannot be approved by a registry card.

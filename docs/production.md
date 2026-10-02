@@ -105,6 +105,21 @@ completed. Review the diagnostic and source, then provide an analyzable input
 or explicitly narrow the intended scope before using the result as a gate.
 Neighboring findings remain available for investigation.
 
+Binary-looking `.ts` files also make source coverage incomplete. Packet bytes
+cannot distinguish a video segment from TypeScript containing a padded comment.
+Review the affected paths and explicitly exclude verified media directories
+with the connector's `exclude` policy when they are outside the intended source
+scope. Recognized binary assets selected only by a directory-wide configuration
+glob keep their existing treatment.
+
+Failed incremental cache-decision hooks now mark connector coverage incomplete;
+built-in validation diagnostics remain available, while plugin hook failures
+expose only exception types.
+
+Zapier ignores wholly blank text rows only when a recognized identity column
+is present. Unknown JSON keys or CSV headers make coverage incomplete; existing
+padding rows under valid Zapier headers remain accepted.
+
 Generic Genkit initialization and standalone flow/tool declarations are
 framework evidence. Supported explicit agent definitions and concrete model
 calls using registered tools establish stronger configured behavior. Review

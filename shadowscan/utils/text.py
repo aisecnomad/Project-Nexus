@@ -60,11 +60,6 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
 # about 30 s for a 1 MB file with the GIL held), so a hostile cookie would stall
 # the scan. Such a file is reported as undecodable instead.
 _SLOW_SOURCE_CODECS = frozenset({"punycode"})
-# An MPEG transport stream (an HLS ``.ts`` video segment) is a run of 188-byte
-# packets, each starting with the sync byte 0x47, carrying compressed media.
-_TS_PACKET_SIZE = 188
-_TS_SYNC_BYTE = 0x47
-_TEXT_BYTES = bytes(range(0x20, 0x7F)) + b"\t\n\r"
 # Epoch seconds or milliseconds, optionally fractional (nginx $msec, Kong).
 _EPOCH_RX = re.compile(r"\d{1,19}(?:\.\d{1,9})?")
 # A compact calendar day (yyyymmdd); checked before the epoch form claims it.
@@ -83,35 +78,18 @@ def redact(value: str, keep: int = 4) -> str:
     return credential_id(value)
 
 
-def _is_transport_stream(raw: bytes) -> bool:
-    """Whether the sniffed prefix is MPEG transport stream packets rather than text.
-
-    Every 188-byte packet in it, at least three, must start with the sync byte,
-    and most of its bytes must be outside printable ASCII. A script padded to
-    put "G" at each packet start is still mostly text, so it stays a gap.
-    """
-    window = raw[:_BINARY_SNIFF]
-    if len(window) <= 2 * _TS_PACKET_SIZE:
-        return False
-    if any(window[offset] != _TS_SYNC_BYTE for offset in range(0, len(window), _TS_PACKET_SIZE)):
-        return False
-    return 2 * len(window.translate(None, _TEXT_BYTES)) > len(window)
-
-
 def _skips_binary(name: str, raw: bytes, analyzable_name: bool) -> bool:
     """Whether NUL-bearing ``raw`` is a recognised binary artifact to skip without a coverage gap.
 
-    The content must start with a ``_BINARY_MAGIC`` header or be an MPEG
-    transport stream. Even then a name analyzed for its own sake stays a gap,
-    unless it has no extension at all or is a ``.ts`` transport stream (a video
-    segment, not TypeScript). Unrecognised binary content is always a gap.
+    The content must start with a ``_BINARY_MAGIC`` header. Even then a name
+    analyzed for its own sake stays a gap unless it has no extension at all.
+    Packet-like ``.ts`` bytes cannot establish that the file is video rather
+    than TypeScript: source comments can contain the same binary padding.
+    Unrecognised binary content is always a gap.
     """
-    transport_stream = _is_transport_stream(raw)
-    if not (transport_stream or raw.startswith(_BINARY_MAGIC)):
+    if not raw.startswith(_BINARY_MAGIC):
         return False
-    if not analyzable_name or "." not in name:
-        return True
-    return transport_stream and name.lower().endswith(".ts")
+    return not analyzable_name or "." not in name
 
 
 def _python_source_text(raw: bytes) -> str | None:
@@ -183,11 +161,11 @@ def read_text(
     cookie declares. Callers pass only files they would analyze, so any other
     content with a NUL byte in its first 8 KiB is reported as
     ``BINARY_CONTENT_ERROR`` rather than ignored. The exception is a recognised
-    binary artifact (``_skips_binary``) without any file extension, a ``.ts``
-    MPEG transport stream, or, with ``analyzable_name`` False, any recognised
-    artifact: the caller then reads the file only because of the directory it
-    is in, such as an image kept beside coding-agent rules. Limits and I/O
-    failures are reported to callers that track completeness.
+    binary artifact (``_skips_binary``) without any file extension or, with
+    ``analyzable_name`` False, any recognised artifact: the caller then reads
+    the file only because of the directory it is in, such as an image kept
+    beside coding-agent rules. Limits and I/O failures are reported to callers
+    that track completeness.
     """
     try:
         if max_bytes < 1:

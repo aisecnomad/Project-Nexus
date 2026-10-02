@@ -243,8 +243,11 @@ def test_keyboard_interrupt_at_plugin_import_still_aborts_the_scan(monkeypatch, 
 _PLUGIN_CLASS = """
 import sys
 
-from shadowscan.connectors.base import BaseConnector
+from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.models import Surface
+
+constructed = False
+collected = False
 
 
 class Meta(type(BaseConnector)):
@@ -261,7 +264,14 @@ class Connector(BaseConnector, metaclass=Meta):
     def {hook}(cls, *args, **kwargs):
         {body}
 
+    def __init__(self, ctx):
+        global constructed
+        constructed = True
+        super().__init__(ctx)
+
     def collect(self):
+        global collected
+        collected = True
         yield from ()
 
     def analyze(self, records):
@@ -277,6 +287,11 @@ _HOOK_EXITS = {
     ),
     "split-exit-0": ("cache_roots_separately", "sys.exit(0)", "SystemExit"),
     "split-error": ("cache_roots_separately", f"raise ValueError('token={SECRET}')", "ValueError"),
+    "split-connector-error": (
+        "cache_roots_separately",
+        f"raise ConnectorError('opaque {SECRET}')",
+        "ConnectorError",
+    ),
 }
 
 
@@ -286,7 +301,8 @@ def test_plugin_exiting_from_an_engine_hook_is_an_incomplete_connector(
 ):
     hook, body, exception = _HOOK_EXITS[case]
     source = _PLUGIN_CLASS.format(meta="pass", hook=hook, body=body)
-    _install_plugin(monkeypatch, tmp_path, f"acme_hook_plugin_{case.replace('-', '_')}", source)
+    module = f"acme_hook_plugin_{case.replace('-', '_')}"
+    _install_plugin(monkeypatch, tmp_path, module, source)
     roots = [tmp_path / "roots" / name for name in ("one", "two")]
     for root in roots:
         root.mkdir(parents=True)
@@ -297,7 +313,40 @@ def test_plugin_exiting_from_an_engine_hook_is_an_incomplete_connector(
         extra_options=f"  incremental: true\n  state_dir: {tmp_path / 'state'}\n",
     )
 
-    _assert_plugin_incomplete(result, out, f"{hook}() raised {exception}")
+    error = _assert_plugin_incomplete(result, out, f"{hook}() raised {exception}")
+    assert error == f"{PLUGIN}: {hook}() raised {exception}"
+    assert not sys.modules[module].constructed and not sys.modules[module].collected
+
+
+@pytest.mark.parametrize(
+    "invalid_config,expected",
+    [
+        ({"duplicate_paths": True}, "labeled paths must resolve to distinct scan roots"),
+        ({"root_ids": ["only-one"]}, "root_ids must contain exactly one ID per path"),
+    ],
+)
+def test_failed_builtin_cache_hook_preserves_validation_diagnostics(tmp_path, invalid_config, expected):
+    roots = [tmp_path / name for name in ("one", "two")]
+    for root in roots:
+        root.mkdir()
+    config = {"paths": [str(root) for root in roots]}
+    if invalid_config.get("duplicate_paths"):
+        config["paths"] = [str(roots[0]), str(roots[0])]
+    else:
+        config.update(invalid_config)
+    result = Engine(
+        ScanConfig(
+            connectors=[ConnectorSpec("code.filesystem", config, label="repository")],
+            incremental=True,
+            state_dir=str(tmp_path / "state"),
+        ),
+        SignatureIndex([]),
+    ).run()
+
+    assert not result.complete and not result.findings
+    (stats,) = result.stats
+    assert stats.incomplete and stats.skipped
+    assert stats.errors == [f"code.filesystem: {expected}"]
 
 
 def test_plugin_exiting_while_its_class_is_verified_is_an_incomplete_connector(
