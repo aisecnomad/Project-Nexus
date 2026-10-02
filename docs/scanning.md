@@ -3,7 +3,7 @@
 ## Coverage policy
 
 A code scan is *complete* when every file it was asked to assess was assessed.
-Two situations are deliberately outside a repository's own content:
+The following coverage rules define how omitted source is handled:
 
 * **Symbolic links** are never followed. A link is skipped silently when its
   own name is one the scanner never reads (a lockfile, generated bundle or
@@ -28,6 +28,22 @@ Two situations are deliberately outside a repository's own content:
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
+* **Submodules** are never initialized or fetched. Bounded `.gitmodules`
+  declarations identify missing, empty or unsafe source directories as coverage
+  gaps, including declarations inside materialized nested directories. Ordinary
+  files in materialized submodule directories are scanned by the same confined
+  walker. GitHub/GitLab clone collection additionally inventories gitlinks in
+  the committed `HEAD` tree; local scans do so only with `use_git: true` and a
+  local `.git` directory. Malformed declarations or a failed authorized Git
+  inventory make coverage incomplete. Explicitly excluded submodule paths are
+  outside the declared scan scope. A nonempty directory establishes only that
+  source is available to scan, not that it matches an authentic remote commit.
+
+Default local scans do not execute Git: an undeclared gitlink without a
+`.gitmodules` file is therefore not discoverable in that mode. The opt-in Git
+inventory reads committed `HEAD`, not staged-only index entries; an undeclared,
+staged-only gitlink is likewise outside that check. Use a reviewed committed
+checkout and declared submodule paths when completeness matters.
 
 By default, incomplete coverage is recorded as a warning and exits 3.
 `strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an

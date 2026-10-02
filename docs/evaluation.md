@@ -225,8 +225,8 @@ the binary target—for example, detecting Spring AI must not silently add a
 LangChain4j attribution.
 
 `assertions.expected_findings` and `assertions.forbidden_findings` each accept
-up to 20 selectors. A selector has `kind` and may include `product_signature`
-and `provider_signature`. The product signature matches the scanner finding's
+up to 20 selectors. A selector has `kind` and may include `product_signature`,
+`provider_signature` and `capabilities`. The product signature matches the scanner finding's
 `frameworks` field (which also contains platform, cloud and protocol IDs),
 while the provider signature matches only its `model_providers` field. When both
 are specified, they must occur **on the same finding**. For example:
@@ -245,20 +245,41 @@ are specified, they must occur **on the same finding**. For example:
 }
 ```
 
+An optional `capabilities` array compares the **exact set** of capability IDs
+on that same finding, regardless of order. It accepts at most 20 unique IDs.
+Omitting it leaves capabilities unchecked; `"capabilities": []` explicitly
+requires none. For example, an empty-tool OpenAI Agent can be checked with:
+
+```json
+{
+  "kind": "agent",
+  "product_signature": "framework.openai-agents-sdk",
+  "capabilities": []
+}
+```
+
+Use that selector in `expected_findings` to require the empty capability set.
+In `forbidden_findings`, it forbids exactly that set, not every finding with
+the same product. Capability checks have their own counter under
+`finding_assertions.capabilities` when present. Missing capability observations
+cannot satisfy an expected capability selector. Earlier corpora that omit
+capability selectors keep their existing semantics.
+
 Selectors cover **only** the listed assertions; an unexpected unlisted
 finding can still pass. Opt into `assertions.exact_findings` for exhaustive
 checks with up to 20 expected findings, each listing `kind`, the complete
 `product_signatures` array and the complete `provider_signatures` array.
 Use `[]` to assert that no findings at all are emitted. The list is compared
 as a multiset, so extra or duplicate findings and extra attribution IDs fail.
-It does not compare finding locations, metadata, evidence, confidence, or
-runtime execution. The report has per-case `finding_checks` and
+It does not compare capabilities, finding locations, metadata, evidence,
+confidence, or runtime execution; add the explicit selectors above for
+capability checks. The report has per-case `finding_checks` and
 `exact_finding_set` results and an aggregate `finding_assertions` section with
 both case coverage and pass/fail counts. Product and provider counters can
 overlap; they must not be treated as independent samples. No selectors or
 exact finding sets were added to the frozen independent corpus, whose reviewers
 labeled only the primary binary target. A future human-labeled holdout must
-predeclare and review any added kind and attribution labels **before** scanning;
+predeclare and review any added kind, attribution and capability labels **before** scanning;
 the current annotation ledger validates only the binary `present` decisions.
 
 A finding's displayed confidence is a heuristic
@@ -274,6 +295,10 @@ the tiny selected sample does not calibrate that score.
    static code with runtime activity. Freeze a random, stratified sample across
    framework, language, repository size, code owner and expected negative
    classes. Set the sample size and acceptance bounds before reviewing scores.
+   Include ordinary Java chat clients, standalone tool declarations, empty or
+   disabled tool/delegation options, and positive controls with actual configured
+   tools. Label source-coverage gaps separately from agent absence; an incomplete
+   checkout must not become a negative example merely because it yields no finding.
 2. Export each sampled input at a full commit or record snapshot, with a file
    SHA-256, license/permission to retain it, and no secrets. Keep the holdout
    outside the implementation branch. Two analysts should label it without

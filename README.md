@@ -12,7 +12,7 @@
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
-registry of
+agent registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
 Counts and severity labels need an analyst review before they drive enforcement.
 
@@ -33,7 +33,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
  CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
 ```
 
-## Why
+## The Why
 
 Agents are no longer only Python scripts.
 They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
@@ -42,7 +42,7 @@ developer's editor, service principals with `Mail.ReadWrite` acting on behalf of
 Each surface has its own discovery API and its own vocabulary.
 ShadowScan normalizes these observations into one finding model with evidence,
 so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
-registered in the registry supplied for this scan?*
+registered in the agent registry supplied for this scan?*
 
 | Observation | What it establishes | Next check |
 |---|---|---|
@@ -95,7 +95,7 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 
 ## Frameworks & products recognised
 
-215 signatures / 1001 signals, YAML-defined with explicit opt-in overrides:
+215 signatures / 1004 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -226,7 +226,7 @@ connectors:
 required extras; `shadowscan connectors --json` also includes each connector's
 offline export formats. Every entry also accepts `enabled` (default true) and
 `label` (a distinct id when a connector runs more than once). See
-[docs/connectors.md](docs/connectors.md) for entry keys, credentials and
+[docs/connectors.md](docs/connectors.md) for entry keys, credentials, and
 least-privilege scopes per connector. Run repository scans in
 a separate job/configuration from live tenant collection. Mixing these credential
 boundaries requires an explicit `allow_credential_mixing` exception; keep the

@@ -41,6 +41,11 @@ are not imported while parsing, so their keys are not checked at that point.
 
 ## Validation maturity and evidence status
 
+For the October 1 code-collection and capability corrections, review the
+[migration notes](production.md#october-1-discovery-review-migration) and
+[source coverage policy](scanning.md#coverage-policy). Added regression tests
+do not raise a connector's live-acceptance or field-evaluation status.
+
 Connector availability is not production acceptance. This snapshot describes evidence published in this repository, not private tenant work or guarantees for a particular deployment. It was prepared on 2026-09-27 from [`main` at `3761a09`](https://github.com/aisecnomad/Project-Nexus/commit/3761a09d15ba0d10e24ad96d210b5405fa9c4497). Refresh it when new evidence is accepted.
 
 | Scope | Evidence published in this repository | Status supported by that evidence |
