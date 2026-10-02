@@ -392,10 +392,16 @@ def test_clone_cancellation_kills_child_process(tmp_path, index):
 
 # ---------------------------------------------------- interrupted scans leave no clone behind
 SLEEPER = "import os,pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(60)"
-# A child scanner: one fake long-running clone, started the way the CLI does (a worker thread under a
-# guard on the main thread) or directly on the main thread, with its temporary checkout registered.
+# A child scanner: one fake long-running clone, started the way Engine.run starts a connector (on a
+# pool thread, supervised by a wait on the main thread under the guard) or directly on the main
+# thread, with its temporary checkout registered. The clone leaves "<pidfile>.done" when it returns.
+#
+# The main thread must not wait with Thread.join(): on CPython 3.11 and 3.12, a KeyboardInterrupt
+# that interrupts join() marks the still-running thread as stopped, so interpreter shutdown does not
+# wait for it, and the process aborts (SIGABRT) if that thread holds the stderr lock at exit.
 CLONE_CHILD = """
-import os, pathlib, sys, threading
+import os, pathlib, sys
+from concurrent.futures import ThreadPoolExecutor, wait
 from shadowscan.utils.git import register_checkout, run_bounded_clone, terminate_clones_on_signal
 
 class Ctx:
@@ -408,16 +414,21 @@ sleeper = [sys.executable, "-c", sys.argv[4], pidfile]
 register_checkout(checkout)
 
 def clone():
-    run_bounded_clone(sleeper, dict(os.environ), Ctx(), 120)
+    try:
+        run_bounded_clone(sleeper, dict(os.environ), Ctx(), 120)
+    finally:
+        pathlib.Path(pidfile + ".done").touch()
 
 try:
     if mode == "main":
         clone()
     else:
         with terminate_clones_on_signal():
-            worker = threading.Thread(target=clone)
-            worker.start()
-            worker.join()
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                wait([pool.submit(clone)])
+            finally:
+                pool.shutdown(wait=False)
 except KeyboardInterrupt:
     print("interrupted", flush=True)
 """
@@ -554,9 +565,10 @@ def test_sigint_stops_the_clone_then_interrupts_as_before(tmp_path, mode):
     clone_pid = int(pidfile.read_text())
     try:
         child.send_signal(signal.SIGINT)
-        out, _ = child.communicate(timeout=15)
-        assert child.returncode == 0
+        out, err = child.communicate(timeout=15)
+        assert child.returncode == 0, err
         assert "interrupted" in out, "the previous handler (KeyboardInterrupt) must still run"
+        assert pidfile.with_name("pid.done").exists(), "the scanner exited before its clone worker returned"
         assert _wait_for(lambda: not _process_running(clone_pid), 5)
         assert not checkout.exists()
     finally:
