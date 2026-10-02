@@ -366,13 +366,24 @@ def test_bare_bearer_keeps_scheme_and_surrounding_words():
     ],
 )
 def test_hostile_repetitive_input_is_matched_in_linear_time(unit):
-    text = unit * (400_000 // len(unit))
+    # Linear, not fast: four times the input may take at most ten times as
+    # long, where quadratic work takes sixteen. An absolute bound failed on a
+    # loaded runner under coverage ('Cookie: a=1; ' tokenizes each of its
+    # 30,769 annotated assignments). The floor keeps timer noise on a fast
+    # unit from failing it; the ceiling still fails a stall.
+    small = min(_sanitize_seconds(unit * (100_000 // len(unit))) for _ in range(2))
+    large = _sanitize_seconds(unit * (400_000 // len(unit)))
+    assert large < 10 * max(small, 0.05), (small, large)
+    assert large < 60.0
+
+
+def _sanitize_seconds(text: str) -> float:
     started = time.perf_counter()
     try:
         sanitize_text(text)
     except Exception as exc:  # a fail-closed limit is acceptable; a stall is not
         assert exc.__class__.__name__ == "SanitizationLimitError"
-    assert time.perf_counter() - started < 5.0
+    return time.perf_counter() - started
 
 
 def test_real_jwts_are_still_redacted_in_every_position():
