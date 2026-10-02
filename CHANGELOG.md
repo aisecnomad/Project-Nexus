@@ -380,8 +380,9 @@ field precision. Behavior changes that affect an existing baseline are listed in
   a final non-root `USER`, no `ADD <url>` and hash-checked `pip install`; and an
   allow-list-style `.dockerignore`. Each rule runs on the real file and on a
   mutated copy (32 mutations) to show that it still catches the violation.
-- The `no-hardcoded-secrets` hook recognises 28 synthetic credential families
-  (the previous patterns found 7): GitHub `github_pat_`/`gho_`/`ghu_`/`ghs_`/
+- The `no-hardcoded-secrets` hook recognises many more credential shapes: of 28
+  planted synthetic examples the previous patterns found 7 and the new ones find
+  all 28. They include GitHub `github_pat_`/`gho_`/`ghu_`/`ghs_`/
   `ghr_`, AWS `ASIA` keys and `aws_secret_access_key = ...`, Google `AIza`, Slack
   `xoxp-`/`xoxa-`/`xoxr-`, Hugging Face `hf_`, Stripe live keys, signed JWTs,
   PEM private-key headers, Azure `AccountKey=`/`SharedAccessKey=` and passwords

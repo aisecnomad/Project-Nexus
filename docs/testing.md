@@ -117,7 +117,7 @@ page; `make docs` builds the site with `mkdocs build --strict` and catches the
 rest.
 
 `make secrets` runs `tools/check_secrets.py` over every tracked file. It reports
-credential-shaped strings (28 provider families, private-key headers, passwords
+credential-shaped strings (provider tokens and keys, private-key headers, passwords
 in URLs) and prints at most four characters of a match. Examples in documentation
 need an obvious placeholder (`example`, `redacted`, a run of `0` or `x`); tests and
 the labelled detection corpora are excluded.
