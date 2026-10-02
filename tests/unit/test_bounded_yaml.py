@@ -6,6 +6,7 @@ import io
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,35 @@ def test_shipped_alias_budget_accepts_1000_aliases_and_rejects_1001():
     assert bounded_safe_load(document(1_000))["b"] == [1] * 1_000
     with pytest.raises(YAMLResourceLimitError, match="alias limit"):
         bounded_safe_load(document(1_001))
+
+
+def test_sexagesimal_integer_cannot_cost_quadratic_time():
+    # YAML 1.1 builds "1:1:1:..." by repeated big-integer multiplication: 80 KB takes about
+    # 0.5 s and the cost quadruples per doubling, so unbounded this 400 KB scalar takes ~10 s.
+    hostile = "v: " + ":".join(["1"] * 200_000)
+    started = time.perf_counter()
+    with pytest.raises(YAMLResourceLimitError, match="number length limit"):
+        bounded_safe_load(hostile)
+    assert time.perf_counter() - started < 2.0
+    # An explicit tag takes the same path, and the message never repeats the value.
+    with pytest.raises(YAMLResourceLimitError) as excinfo:
+        bounded_safe_load("v: !!int " + "7" * 2_000)
+    assert "777" not in str(excinfo.value)
+
+
+def test_number_length_limit_leaves_real_numbers_alone():
+    data = bounded_safe_load(
+        "clock: 1:30:45\nhex: 0x" + "f" * 60 + "\nbig: " + "9" * 1_000 + "\nfloat: 1.5e+3\nlist: [1, 2.5]"
+    )
+    assert data["clock"] == 5445
+    assert data["hex"] == int("f" * 60, 16)
+    assert data["big"] == int("9" * 1_000)
+    assert data["float"] == 1500.0 and data["list"] == [1, 2.5]
+    # Only numbers: a long string, quoted or not, is not subject to the limit.
+    assert len(bounded_safe_load("s: " + "a" * 5_000)["s"]) == 5_000
+    assert len(bounded_safe_load("s: '" + "1" * 5_000 + "'")["s"]) == 5_000
+    with pytest.raises(YAMLResourceLimitError, match="number length limit"):
+        bounded_safe_load("big: " + "9" * 1_001)
 
 
 def test_node_count_is_bounded_during_composition():

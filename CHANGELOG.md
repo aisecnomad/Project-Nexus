@@ -83,6 +83,11 @@ field precision. Behavior changes that affect an existing baseline are listed in
   configuration with such a value printed a traceback. The bounded loaders raise
   `YAMLConstructionError` whose message gives only the line and column. A
   `RecursionError` during construction is a `YAMLResourceLimitError`.
+- An integer or float scalar longer than 1000 characters is a YAML resource
+  limit (`YAMLResourceLimitError`; the scan is incomplete) instead of being
+  converted. YAML 1.1 builds a sexagesimal integer (`1:1:1:...`) by repeated
+  big-integer multiplication, which is quadratic: 80 KB took 0.5 s, 1 MB about a
+  minute, and the 64 MiB input limit alone allowed hours.
 - A connector or plugin that calls `sys.exit()` or raises another
   non-`Exception` `BaseException` during import, construction or collection is a
   failed connector: its error is recorded, the scan is incomplete (exit 3) and
