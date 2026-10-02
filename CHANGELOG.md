@@ -134,6 +134,65 @@ field precision. Behavior changes that affect an existing baseline are listed in
   restoring incremental state with `actions/cache`: the fingerprint includes
   file identity, so a fresh checkout never reuses restored state.
 
+#### code.filesystem: silent coverage gaps and denial of service
+
+- Files that start with a UTF-8, UTF-16 or UTF-32 byte-order mark are decoded
+  and the mark is removed. A UTF-16 `requirements.txt` (what Windows PowerShell
+  5.1 `pip freeze >` writes), a UTF-16 `.env` and BOM-prefixed Python or JSON
+  sources used to read as nothing and gave a complete, empty scan. A Python
+  source is decoded with the codec its PEP 263 cookie declares; a codec that
+  cannot decode it is a gap, and `punycode` is refused because its decoder is
+  quadratic.
+- A file the scanner analyzes by name that still holds a NUL byte in its first
+  8 KiB (and is not a byte-order-marked text file) is a coverage gap, `binary or
+  undecodable content in analyzable file`, so the scan is incomplete (exit 3).
+  Compiled or packed artifacts without any file extension (ELF, Mach-O, wasm,
+  archives, images, PDF) and names the scanner never analyzes stay quiet.
+- The built-in directory exclusions are disclosed: a skipped non-empty `bin`,
+  `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`, `third_party`,
+  `thirdparty` or `external` directory is listed once per scan root in a warning
+  (the scan stays complete). The new `default_excludes` option and `shadowscan
+  code --no-default-excludes` scan them (also accepted by `code.github` and
+  `code.gitlab`); version-control metadata stays excluded. The incremental
+  fingerprint follows the option.
+- Two quadratic patterns that hold the GIL, so neither
+  `--connector-timeout-seconds` nor `--job-deadline-seconds` could interrupt
+  them, are linear now and run under a matching budget: the agent-definition
+  front matter (20 KB of blank lines took about 2.5 s) and the Terraform and
+  CloudFormation IAM wildcard check (a 110 KB `.tf` made a scan take 137 s). A
+  timeout is a file-level gap and the findings of other files are kept. Only
+  horizontal whitespace may follow a front-matter marker now.
+- `PackageReference` and `PackageVersion` items in `Directory.Build.props`,
+  `Directory.Build.targets` and shared `*.props`/`*.targets` files are read as
+  NuGet manifests (a `Microsoft.SemanticKernel` reference there gave no finding).
+- `exclude` and `paths` must be lists of non-empty strings. A bare string was
+  iterated per character, became the patterns `/` and `*`, excluded the whole
+  tree and reported a complete, empty scan (`paths: "/srv/repo"` would have
+  scanned `/`). The error names the option, never its value.
+- A file or directory whose name is not valid UTF-8 no longer breaks the table,
+  CSV, HTML, Markdown and SARIF reporters. Each undecodable byte is shown as a
+  `\xNN` escape in reports while the file is still read under its real name.
+- The directory walk uses an explicit stack. A chain about a thousand
+  directories deep used to raise `RecursionError` on Python 3.11 and lose every
+  finding.
+- Python (or a notebook) that the running interpreter cannot parse, for example
+  a PEP 695 `type A = int` on 3.11, adds a warning that import-bound analysis
+  was skipped instead of dropping it silently; the lexical evidence is kept.
+- An empty directory, or one holding only data files, named like an SDK
+  (`openai`, `agents`, `langchain`) no longer makes every import of that SDK
+  read as repository code. A `name.py` module, a package with `__init__.py` and
+  a directory without it that holds Python source (a bounded look of 256
+  entries and 8 levels) still count as local code.
+- MCP servers that declare themselves disabled (`disabled: true`,
+  `enabled: false`) are reported with the tag `declared-disabled` and
+  `disabled: true` in `metadata.servers`, and `metadata.disabled` is set when
+  none is enabled. The flag is client-specific (Cline honors it, Claude Code
+  does not) and repository-controlled, so honoring it let a repository hide a
+  server. `server_count` still counts the servers not declared disabled. The
+  three `mcp-disabled-*` evaluation cases are now labelled present and the
+  documented authored-corpus counts change from 29/48 to 32/45 positives and
+  negatives; the evaluation harness scans cases with `default_excludes: false`.
+
 #### CI, repository policy and developer tooling
 
 - CI no longer cancels a `main` push run when the next push arrives:

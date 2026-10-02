@@ -475,11 +475,17 @@ to another instruction document under the same condition, are skipped because
 nothing at the alias path is lost (see [scan semantics](scanning.md) for the
 exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links
-leaving the root and oversized files the scanner would
-inspect make the scan incomplete (exit 3) by default, with a warning naming
-the omission. `strict_coverage: true` (`--strict-coverage`) records those
+leaving the root, oversized files the scanner would
+inspect and files it analyzes by name but cannot read as text (a NUL byte
+outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) make the scan
+incomplete (exit 3) by default, with a warning naming the omission.
+`strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions
-in both modes. Raise `max_file_size` or add `exclude` patterns for known data files. Evidence found
+in both modes. Raise `max_file_size` or add `exclude` patterns for known data files.
+A non-empty `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
+`third_party`, `thirdparty` or `external` directory that the walk skips by default
+is listed in one warning per scan root (the scan stays complete); set
+`default_excludes: false` (`--no-default-excludes`) to scan them. Evidence found
 only in test or fixture paths has half weight and cannot promote a project to an
 agent unless `include_tests: true` (`--include-tests`) is set, and a project
 finding whose evidence is already reported by an MCP configuration, agent
@@ -741,6 +747,106 @@ a candidate before enforcing policy on the new output:
 - **MCP parsing.** Compiled agentic-workflow lock files (`*.lock.yml`) and
   cookiecutter `{{...}}` template paths are not parsed as MCP configuration and
   no longer make a scan incomplete.
+
+## October 2 review changes
+
+These fixes came from an AI-assisted review of the October 1 candidate; neither
+the review nor the fixes had a second-person review. Several of them turn a
+result that used to look complete into an incomplete one, so run a candidate
+scan next to the pinned baseline and read the differences before you enforce
+policy on the new output.
+
+New incomplete (exit 3) and configuration-error outcomes:
+
+- **Unreadable analyzable files.** A file that `code.filesystem` analyzes by
+  name and that still contains a NUL byte in its first 8 KiB (a binary `.plist`
+  or `.xml`, a UTF-16 file without a byte-order mark, a stray NUL in source or
+  Markdown) is a coverage gap named `binary or undecodable content in
+  analyzable file`. Fix the file or add it to `exclude`. UTF-8, UTF-16 and
+  UTF-32 files with a byte-order mark, and Python sources with a PEP 263 coding
+  cookie, are now decoded and analyzed, so dependency lists, `.env` files and
+  sources that used to read as empty can add findings.
+- **List options.** A bare string for `exclude` or `paths` (`exclude:
+  "vendor/*"`, `--set exclude=vendor/*`) is a configuration error. It used to be
+  split into characters, which excluded the whole tree and reported a complete,
+  empty scan. Use a list, or repeat `shadowscan code --exclude`.
+- **Signature packs and inventories.** A custom signature pack directory that
+  contributes no `.yaml`/`.yml` pack (empty, other file types, only symbolic
+  links) and an inventory glob that matches no file now fail at setup (exit 1).
+- **Connectors and plugins.** A connector or plugin that calls `sys.exit()` is
+  a failed connector and the scan is incomplete; it no longer ends the process
+  with the plugin's status and no report.
+- **Exports.** Gateway logfmt lines that repeat a key or leave a quote open,
+  gateway records whose timestamp no supported format parses, `saas.generic` and
+  `lowcode.zapier` rows with no name (blank rows, footers; map the column with
+  `fields.name`, or call it `title`/`name` for Zapier), Slack Connect bots from
+  partner workspaces, OCI policy statements over 8192 characters, and
+  Power Platform records that cannot be analysed are skipped with a warning and
+  make the scan incomplete. The remaining records are still reported.
+- **ServiceNow paging.** A short page no longer proves that a table ended.
+  Collection stops at an empty page, so a small `max_pages` makes any non-empty
+  table incomplete. Keep the default (1000) or size it above rows/500 + 1.
+- **Report comparison.** `diff` treats a report whose `summary` counts do not
+  match its `findings` array as incomparable (missing findings are unknown,
+  exit 3) instead of counting them as resolved.
+
+Changed results to review before you compare against a baseline:
+
+- **Disabled MCP servers.** A server entry that declares `disabled: true` or
+  `enabled: false` is reported, tagged `declared-disabled`, with `disabled: true`
+  in `metadata.servers`; `server_count` still counts only the others. The flag
+  is client-specific and comes from the repository, so honoring it let a
+  repository hide a server. `diff` shows a configuration whose only entries are
+  disabled as a new finding.
+- **Newly visible evidence.** NuGet `PackageReference` items in
+  `Directory.Build.props`, `*.targets` and shared `*.props` files, and imports
+  of an SDK whose name a repository shares with an empty or data-only
+  directory, now produce dependency and provider evidence.
+- **Gateway logs.** Only the request path decides whether a request is a static
+  asset or health probe, and a probe name must be the last segment: `/healthz/ready`
+  and `?_=.js` requests are classified by the normal LLM route and host rules.
+  Provider attribution follows the URL authority (`https://api.openai.com@evil.example/`
+  names `evil.example`). Microsecond, nanosecond, Go and RFC 2822 timestamps
+  are now parsed, which changes first/last-seen and activity analysis.
+- **Entra.** Permission names in findings may change from a raw GUID to the
+  label of the resource that defines the role. The "conflicting role labels"
+  warning appears only when a conflicting label is needed for a grant, so
+  exports in which different resources reuse a role id are no longer incomplete.
+- **JWT.** Without `jwks_url`, every token finding carries
+  `metadata.verified: false`; confidence and risk are unchanged.
+
+New warnings (the scan stays complete):
+
+- Default-excluded directories: one warning per scan root names the non-empty
+  `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
+  `third_party`, `thirdparty` and `external` directories the walk skipped.
+  Set `default_excludes: false` (`shadowscan code --no-default-excludes`) to
+  scan them. That option also stops skipping dependency trees and virtualenvs
+  (`node_modules`, `.venv`, `site-packages`), so pair it with `exclude:
+  [node_modules, .venv]`. Version-control metadata (`.git`, `.hg`, `.svn`) is
+  always excluded. Pipelines that fail on any warning must pass the option or
+  tolerate the warning.
+- Inventory placement: a scan warns, under the new `engine.inventory` entry of
+  `stats`, when an inventory or a file it loads is inside a path scanned in the
+  same run, and for each `*`-only resource pattern. Keep the inventory outside
+  the checkout that a pull request can change. Report consumers that list
+  `stats[].connector` will see the new entry name.
+- Python that does not parse (syntax newer than the runtime, a notebook with
+  shell or magic lines) keeps its lexical evidence and adds a warning.
+- Gateway scans note how many static-asset and probe requests were not counted.
+  Tooling that fails on any warning should key on `incomplete` or the exit code.
+
+Operational notes:
+
+- With a Kubernetes ConfigMap mount, pass the resolved file path as the
+  scan configuration; links are deliberately not followed.
+- `XDG_STATE_HOME` is ignored when it is empty or relative.
+- Remove an `actions/cache` step that restores `--incremental` state. The
+  fingerprint includes file identity, so a fresh checkout never reused it.
+- Maintainers: `main` push CI runs are no longer cancelled by the next push,
+  so expect more concurrent CI minutes on busy days. A new connector family
+  directory or nested connector package must be listed in `CONNECTOR_FAMILIES`
+  in `tools/coverage_gate.py`, or the coverage gate fails.
 
 ## Finding identity and comparison migration
 

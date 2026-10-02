@@ -250,8 +250,12 @@ declared `oversize_skip_globs` remain warnings. An in-root link stays complete
 when its own name is never read (a lockfile or an image) or when it is a source
 file whose target is analyzed in the same project with the same test
 classification; directory links are incomplete because their alias paths are
-not scanned. Evidence found only in test or fixture code cannot establish an
-agent unless `--include-tests` is set.
+not scanned. A file the scanner analyzes by name but cannot read as text (a NUL
+byte outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) is a gap
+too. A non-empty `bin/`, `build/`, `dist/`, `vendor/` or similar directory that
+the walk skips by default is listed in a warning; `--no-default-excludes` scans
+those directories. Evidence found only in test or fixture code cannot establish
+an agent unless `--include-tests` is set.
 
 The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
 `--fail-on`, and **0** for a completed scan that passes. SARIF records incomplete
