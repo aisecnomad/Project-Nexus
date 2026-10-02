@@ -172,7 +172,10 @@ The Linux jobs also run `tools/check_secrets.py`, the script behind the
 `CI gate` job requires every job, including DCO on pull requests, to succeed.
 A new push to a pull request cancels its running checks, but every run on
 `main` runs in its own concurrency group and finishes, because release evidence
-needs a successful push run for the exact commit. [CI integration](operations/ci.md)
+needs a successful push run for the exact commit. A weekly scheduled run on
+`main` rebuilds the worker image from current packages and rescans it with a
+fresh vulnerability database, so an advisory published after the last merge
+still fails a run. [CI integration](operations/ci.md)
 describes running the scanner itself inside a pipeline.
 
 ## Troubleshooting

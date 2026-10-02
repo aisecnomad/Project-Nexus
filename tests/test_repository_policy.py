@@ -835,6 +835,8 @@ def test_ci_gate_waits_for_every_job_and_cannot_skip_failed_dependencies() -> No
     [
         ("pull_request", "success", "success", "success", "success", True),
         ("push", "success", "success", "success", "skipped", True),
+        ("schedule", "success", "success", "success", "skipped", True),
+        ("schedule", "success", "success", "failure", "skipped", False),
         ("pull_request", "success", "success", "failure", "success", False),
         ("pull_request", "success", "success", "cancelled", "success", False),
         ("pull_request", "success", "success", "skipped", "success", False),

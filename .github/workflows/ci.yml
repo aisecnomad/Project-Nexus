@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly on main: the worker image is rebuilt from the current Wolfi packages
+  # and rescanned with a fresh vulnerability database even when nothing merges.
+  schedule:
+    - cron: "17 5 * * 1"  # Monday 05:17 UTC
 permissions:
   contents: read
 concurrency:
@@ -335,7 +339,7 @@ jobs:
           }
           if event == 'pull_request':
               expected['DCO_RESULT'] = 'success'
-          elif event == 'push':
+          elif event in ('push', 'schedule'):
               expected['DCO_RESULT'] = 'skipped'
           else:
               sys.exit(f'unsupported CI event: {event}')
