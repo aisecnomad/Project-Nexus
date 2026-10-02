@@ -5,7 +5,7 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
-### October 2 Git test fixes after #135
+### October 2 follow-ups to #135
 
 - `test-macos (3.11)` failed `main` after #135 merged. The confinement test for
   a symlinked `.git/objects` deletes that directory right after its fixture
@@ -21,6 +21,12 @@ summarizes each release for people who install and operate ShadowScan.
   other history tests, but were not marked `requires_git_2_45`. On an older
   Git, such as the 2.43 in Ubuntu 24.04, they failed instead of being skipped.
   They now carry the marker.
+- The CI lock takes Dependabot's development-tool updates from #136
+  (platformdirs 4.12.2, virtualenv 21.14.0), regenerated with the documented
+  command and uv 0.12.18. The docs lock moves platformdirs with it, regenerated
+  with its documented pip-compile command, because the combined install needs
+  one version of each shared package. Dependabot changes only the constraints
+  file, so its pull request failed the lock consistency tests.
 
 ### October 2 integration of #134 and repository hygiene review
 
