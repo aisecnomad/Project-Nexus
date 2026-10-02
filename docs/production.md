@@ -950,6 +950,8 @@ finish incomplete because the earlier result hid a gap.
   (also a string that starts with one, `{"log": "password: \"S\""}`), the rest
   of a double-quoted option or `auth=` password after an escaped quote
   (`--password "a\"S"`), the rest of a braced ODBC password (`Pwd={a;S}`), the
+  userinfo of a URL inside another URL's text (`redis://:S@a,redis://:S@b`,
+  `?next=https://u:secret@b`), the
   URL query keys `auth`, `pwd` and `pat`, Fireworks `fw_` keys and provider
   tokens next to non-Latin text. Reports generated before this revision can
   contain those values: regenerate them, restrict or delete the old copies, and

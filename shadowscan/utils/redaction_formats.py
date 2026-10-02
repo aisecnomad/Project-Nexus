@@ -254,6 +254,34 @@ def _sanitize_url(match: re.Match[str]) -> str:
     return "".join(parts)
 
 
+# The scheme of a URL inside the text of another (see ``_redact_nested_urls``).
+_NESTED_SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]{0,20}://")
+
+
+def _redact_nested_urls(text: str) -> str:
+    """Read each URL inside the text of another URL as a URL (see ``_sanitize_url``).
+
+    A URL runs to the first blank or quote, so one after a ',', a ';' or
+    '?next=' is part of the URL before it ('redis://:pw@a,redis://:pw@b',
+    'https://a/login?next=https://u:secret@b'), and the established pass reads
+    the first authority alone. Each inner URL is read as far as the next one,
+    which keeps the scan linear.
+    """
+
+    def nested(match: re.Match[str]) -> str:
+        url = match.group(0)
+        schemes = list(_NESTED_SCHEME.finditer(url, url.index("://") + 3))
+        if not schemes:
+            return url
+        pieces = [url[: schemes[0].start()]]
+        for scheme, following in zip(schemes, [*schemes[1:], None], strict=True):
+            inner = url[scheme.start() : following.start() if following else len(url)]
+            pieces.append(_URL.sub(_sanitize_url, inner))
+        return "".join(pieces)
+
+    return _URL.sub(nested, text) if "://" in text else text
+
+
 def _query_value(field: str, *, bare: bool = False) -> str:
     """Withhold a credential-named query field; bare query text uses explicit names.
 

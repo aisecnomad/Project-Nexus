@@ -64,6 +64,7 @@ from shadowscan.utils.redaction_formats import (
     _redact_compact_colons,
     _redact_cookie_headers,
     _redact_jwts,
+    _redact_nested_urls,
     _redact_query_text,
     _redact_secret_tokens,
     _sanitize_url,
@@ -188,7 +189,7 @@ def _checked_text(text: str) -> str:
     return text
 
 
-def _redact_extended(text: str) -> str:
+def _redact_extended(text: str, *, reread: bool = False) -> str:
     """The rules added to the established passes, on the text those leave (see ``sanitize_text``).
 
     Settings in markup and name/value records (hierarchical and
@@ -196,7 +197,9 @@ def _redact_extended(text: str) -> str:
     YAML values under credential-like names, and opaque values of options
     named for a credential. The options come last: withheld earlier, a value
     glued to a following name ('--key v#openaiKey = ...') would hide that
-    name from the others.
+    name from the others. URLs inside another URL's text are read after all
+    of them, and a text they change is then read once more, as the next
+    sanitization would read it (``reread``).
     """
     text = _redact_markup_settings(text)
     text = _redact_record_settings(text)
@@ -217,16 +220,21 @@ def _redact_extended(text: str) -> str:
     # ('api_key : <opaque>') is read by the established mapping pass as the start
     # of a mapping value; normalize it here so that sanitizing again changes nothing.
     result = _redact_mapping_values(text) if REDACTED in text else text
-    if not reshaped:
-        return result
-    # A cookie header withheld to the end of its line, or a withheld
-    # 'name:value', changes the statement around it for the statement rules:
-    # 'get(url, cookie=a; b=v' loses the ';' that ended the argument, and
-    # 'api_key:a=1; sid=v' becomes 'api_key:"[REDACTED]"; sid=v', an
-    # annotation they read on past the ';'; a bare marker left in an
-    # argument ('get(url, cookie=[REDACTED]') is one they quote. What they
-    # would change there on the next sanitization is changed now.
-    return _redact_mapping_values(_redact_python_assignments(result))
+    if reshaped:
+        # A cookie header withheld to the end of its line, or a withheld
+        # 'name:value', changes the statement around it for the statement rules:
+        # 'get(url, cookie=a; b=v' loses the ';' that ended the argument, and
+        # 'api_key:a=1; sid=v' becomes 'api_key:"[REDACTED]"; sid=v', an
+        # annotation they read on past the ';'; a bare marker left in an
+        # argument ('get(url, cookie=[REDACTED]') is one they quote. What they
+        # would change there on the next sanitization is changed now.
+        result = _redact_mapping_values(_redact_python_assignments(result))
+    # An inner URL's userinfo or query field, withheld only here, changes the
+    # URL the established passes read; they read the text once more.
+    nested = _redact_nested_urls(result)
+    if nested == result or reread:
+        return nested
+    return _redact_extended(_established_passes(nested), reread=True)
 
 
 def _sanitize_established(text: str) -> str:

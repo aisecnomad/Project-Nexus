@@ -209,6 +209,16 @@ integrating them:
   marker, and a set around a tuple of large texts was copied past the
   expanded-output limit. Both now fail the sanitization limit (exit 3), as
   the same tuple in a list does.
+- Redaction: a URL inside another URL's text is read as a URL, so its
+  userinfo, credential query fields and webhook path secret are withheld. A
+  URL runs to the first blank or quote, so the second URL of a list
+  (`redis://:a@h1,redis://:S@h2`, `amqp://u:secret@h1;amqp://u:secret@h2`)
+  or one in a query value, path or fragment (`?next=https://u:secret@b`) was
+  part of the first, whose authority alone was read, and its password was
+  shown. Each inner URL is read up to the next one, after every other rule,
+  and a text this changes is read once more, as the next sanitization would
+  read it. A percent-encoded inner URL (`?u=https%3A%2F%2Fu%3AS%40h`) is
+  still not decoded.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

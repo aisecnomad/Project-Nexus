@@ -143,8 +143,9 @@ coverage, even when a response includes an empty collection field.
   ordinary word contains (`sk-proj-`, `ghp_`, `AKIA`, `eyJ` and similar) also
   behind a digit; a word that merely ends in a prefix's text (`risk-`, `disk-`)
   stays. URL userinfo is withheld whole when the password holds a raw `/`, `?`
-  or `#` (`postgres://u:example#pw@host`). It also withholds values that their
-  context names as credentials:
+  or `#` (`postgres://u:example#pw@host`). A URL inside another URL's text
+  (`redis://:pw@a,redis://:pw@b`, `?next=https://u:secret@b`) is read as a URL
+  as well. It also withholds values that their context names as credentials:
   assignments, including annotated, multiline and R (`<-`) expressions and
   every operator that joins a name to a value, with the operator kept (`=>`,
   `:=`, `||=`, `+=`, `.=`, `?=`); a quoted word or an opaque value compared with a
@@ -259,8 +260,10 @@ coverage, even when a response includes an empty collection field.
   URL userinfo that cannot be delimited: a password holding raw whitespace,
   quotes or angle brackets, one holding both a raw `@` and a raw `/`, `?` or
   `#`, a token without a colon that holds one of those
-  (`https://tok?en@host`), or a numeric password followed by one
-  (`https://user:00000000?x@host`, which reads as a port); a token glued to a
+  (`https://tok?en@host`), a numeric password followed by one
+  (`https://user:00000000?x@host`, which reads as a port), or a
+  percent-encoded URL inside a query value
+  (`?u=https%3A%2F%2Fu%3Apw%40h`); a token glued to a
   letter (`apisk-proj-...`) or, for a shorter prefix, a digit; a value named
   only by a comment (`x = "..."  # openai key`); a bare value that is not an
   opaque key compared with a sensitive name (`token == hunter2`), a literal written before the

@@ -355,6 +355,8 @@ REDACTION_SHAPES: dict[str, Any] = {
     "dotted web tokens": lambda n: "eyJ." * (n // 4),
     "urls": lambda n: "https://u:p@h/?" * (n // 15),
     "bare authorities": lambda n: "https://" + "u:" * (n // 2),
+    "nested schemes": lambda n: "https://h/" + "a://" * (n // 4),
+    "nested userinfo": lambda n: "https://h/?u=" + "a://u:p#" * (n // 8) + "@h",
     "webhook hosts": lambda n: "a." * (n // 2) + "webhook.office.comx",
     "authorization schemes": lambda n: "Bearer a " * (n // 9),
     "scheme operators": lambda n: "Bearer => " * (n // 10),
