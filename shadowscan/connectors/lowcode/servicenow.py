@@ -22,8 +22,14 @@ from typing import Any, ClassVar
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import apply_matches, finalize, name_matches
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import (
+    apply_matches,
+    failure_summary,
+    finalize,
+    max_pages_limit,
+    name_matches,
+)
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
@@ -109,7 +115,7 @@ class ServiceNowConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
-        max_pages = min(_positive_limit(self.ctx.get("max_pages", 1000), "max_pages"), 1000)
+        max_pages = max_pages_limit(self.ctx.get("max_pages", 1000))
         for table, fields in TABLES.items():
             seen: set[str] = set()
             for page in range(max_pages):
@@ -124,7 +130,7 @@ class ServiceNowConnector(BaseConnector):
                         },
                     )
                 except (HttpError, RequestException, ValueError, RuntimeError) as exc:
-                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    status = failure_summary(exc)
                     self.ctx.warn(f"lowcode.servicenow: table {table} collection incomplete ({status})")
                     break
                 if not isinstance(data, dict) or not isinstance(data.get("result"), list):

@@ -1,47 +1,73 @@
-"""Fail CI when aggregate coverage hides an untested built-in connector."""
+"""Fail CI when aggregate coverage hides an untested built-in connector module."""
 
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 MIN_CONNECTOR_COVERAGE = 75.0
-CONNECTOR_FAMILIES = {"cloud", "code", "gateway", "identity", "lowcode", "saas"}
+CONNECTOR_PACKAGE = ("shadowscan", "connectors")
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: python -m tools.coverage_gate COVERAGE_JSON", file=sys.stderr)
-        return 2
-    report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    files = report["files"]
-    failures: list[str] = []
-    examined = 0
-    for path, details in sorted(files.items()):
+def connector_coverage(report: dict[str, Any]) -> dict[str, float]:
+    """Return the coverage percentage of every connector module in a ``coverage json`` report.
+
+    Every module under ``shadowscan/connectors/`` counts at any depth: the
+    family modules and their helpers, and also the shared ``base``, ``common``,
+    ``offline`` and registry modules that every connector runs through. Modules
+    without statements (empty package markers) have nothing to measure.
+
+    The percentage combines statements and branches, as the aggregate
+    ``fail_under`` floor does, so a module cannot pass on lines alone while
+    leaving half of its conditions untested.
+    """
+    measured: dict[str, float] = {}
+    for path, details in report["files"].items():
         parts = Path(path).parts
-        if (
-            len(parts) != 4
-            or parts[:2] != ("shadowscan", "connectors")
-            or parts[2] not in CONNECTOR_FAMILIES
-            or not parts[3].endswith(".py")
-            or parts[3] == "__init__.py"
-        ):
+        if parts[: len(CONNECTOR_PACKAGE)] != CONNECTOR_PACKAGE or not path.endswith(".py"):
             continue
         summary = details["summary"]
-        if not summary["num_statements"]:
+        total = summary["num_statements"] + summary["num_branches"]
+        if not total:
             continue
-        examined += 1
-        measured = summary["percent_statements_covered"]
-        if measured < MIN_CONNECTOR_COVERAGE:
-            failures.append(f"{path}: {measured:.1f}% < {MIN_CONNECTOR_COVERAGE:.0f}%")
-    if not examined:
+        covered = summary["covered_lines"] + summary["covered_branches"]
+        measured[Path(*parts).as_posix()] = 100.0 * covered / total
+    return measured
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if len(args) != 1:
+        print("usage: python -m tools.coverage_gate COVERAGE_JSON", file=sys.stderr)
+        return 2
+    try:
+        report = json.loads(Path(args[0]).read_text(encoding="utf-8"))
+        # Statement-only data would let every module pass on lines alone.
+        if report["meta"]["branch_coverage"] is not True:
+            print("coverage report has no branch data; run the suite with branch coverage", file=sys.stderr)
+            return 2
+        measured = connector_coverage(report)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"unreadable coverage report: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+    if not measured:
         print("coverage report contains no built-in connector modules", file=sys.stderr)
         return 2
+    failures = [
+        f"{path}: {percent:.2f}% < {MIN_CONNECTOR_COVERAGE:.0f}%"
+        for path, percent in sorted(measured.items())
+        if percent < MIN_CONNECTOR_COVERAGE
+    ]
     if failures:
         print("Built-in connector coverage below the CI floor:\n" + "\n".join(failures), file=sys.stderr)
         return 1
-    print(f"Checked {examined} built-in connector modules (at least {MIN_CONNECTOR_COVERAGE:.0f}% each)")
+    lowest = min(measured, key=lambda path: (measured[path], path))
+    print(
+        f"Checked {len(measured)} built-in connector modules, statements and branches "
+        f"(at least {MIN_CONNECTOR_COVERAGE:.0f}% each; lowest {lowest} at {measured[lowest]:.2f}%)"
+    )
     return 0
 
 

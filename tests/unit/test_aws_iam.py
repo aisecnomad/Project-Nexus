@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from unittest import mock
 from unittest.mock import Mock
+from urllib.parse import quote
 
 import pytest
 
@@ -259,3 +261,159 @@ def test_iam_qualifiers_remain_visible_without_asserting_effective_permissions(
     assert limitation in finding.metadata["policy_limitations"]
     assert finding.metadata["effective_permissions"] == "not-evaluated"
     assert connector.ctx.stats.incomplete
+
+
+# ------------------------------------------------------------- trust policies
+_BEDROCK_PRINCIPAL = {"Service": "bedrock.amazonaws.com"}
+_BEDROCK_TRUST = {"Effect": "Allow", "Principal": _BEDROCK_PRINCIPAL, "Action": "sts:AssumeRole"}
+_ACCOUNT_TRUST = {
+    "Effect": "Allow",
+    "Principal": {"AWS": f"arn:aws:iam::{ACCOUNT}:root"},
+    "Action": "sts:AssumeRole",
+}
+
+
+def _trust_finding(index, trust_policy):
+    """The IAM grant finding for a role holding an AI action and the given trust policy."""
+    connector = aws(index, "iam")
+    connector.collect = Mock(
+        return_value=iter(
+            [
+                {
+                    "_kind": "iam-principal",
+                    "name": "workload-role",
+                    "type": "Role",
+                    "arn": f"arn:aws:iam::{ACCOUNT}:role/workload-role",
+                    "actions": ["bedrock:InvokeModel"],
+                    "assume_role_policy": trust_policy,
+                }
+            ]
+        )
+    )
+    (finding,) = connector.run()
+    (evidence,) = [ev for ev in finding.evidence if ev.signal == "aws:iam"]
+    return finding, evidence.description, connector.ctx.stats
+
+
+@pytest.mark.parametrize(
+    "trust_policy",
+    [
+        {"Version": "2012-10-17", "Statement": [_BEDROCK_TRUST]},
+        {"Statement": _BEDROCK_TRUST},
+        {"Statement": [{**_BEDROCK_TRUST, "Action": ["sts:TagSession", "STS:assumerole"]}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Action": "sts:*"}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Action": "*"}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Action": "sts:Assume*"}]},
+        {
+            "Statement": [
+                {
+                    **_BEDROCK_TRUST,
+                    "Principal": {"Service": ["ecs-tasks.amazonaws.com", "bedrock.amazonaws.com"]},
+                }
+            ]
+        },
+        {"Statement": [{**_BEDROCK_TRUST, "Condition": {"StringEquals": {"aws:SourceAccount": ACCOUNT}}}]},
+        json.dumps({"Statement": [_BEDROCK_TRUST]}),
+        # The IAM API returns AssumeRolePolicyDocument URL-encoded.
+        quote(json.dumps({"Version": "2012-10-17", "Statement": [_BEDROCK_TRUST]}), safe=""),
+    ],
+)
+def test_allowed_bedrock_assume_role_marks_agent_execution_role(index, trust_policy):
+    finding, description, stats = _trust_finding(index, trust_policy)
+    assert "bedrock.amazonaws.com" in finding.metadata["trusted_services"]
+    assert "trusted by " in description and "bedrock.amazonaws.com" in description
+    assert "agent-execution-role" in finding.tags and "cloud.aws-bedrock-agents" in finding.frameworks
+    assert "Effective authorization is not evaluated." in description
+    assert not stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "trust_policy",
+    [
+        {"Statement": [{**_BEDROCK_TRUST, "Effect": "Deny"}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Effect": "Deny"}, _ACCOUNT_TRUST]},
+        # The service name appears, but not as a principal granted role assumption.
+        {"Statement": [{**_ACCOUNT_TRUST, "Sid": "bedrock.amazonaws.com"}]},
+        {
+            "Statement": [
+                {
+                    **_ACCOUNT_TRUST,
+                    "Condition": {"StringEquals": {"aws:PrincipalServiceName": "bedrock.amazonaws.com"}},
+                }
+            ]
+        },
+        {"Statement": [{**_BEDROCK_TRUST, "Action": "sts:TagSession"}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Action": "sts:Assume[R]ole"}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Principal": "*"}]},
+        {"Statement": [{"Effect": "Allow", "NotAction": "sts:TagSession", "Principal": _BEDROCK_PRINCIPAL}]},
+        {"Statement": [{"Effect": "Allow", "NotPrincipal": _BEDROCK_PRINCIPAL, "Action": "sts:AssumeRole"}]},
+    ],
+)
+def test_denied_or_unrelated_service_mentions_do_not_establish_trust(index, trust_policy):
+    finding, description, stats = _trust_finding(index, trust_policy)
+    assert finding.metadata["trusted_services"] == []
+    assert "trusted by users/accounts" in description and "bedrock.amazonaws.com" not in description
+    assert "agent-execution-role" not in finding.tags
+    assert "cloud.aws-bedrock-agents" not in finding.frameworks
+    assert not stats.incomplete
+
+
+@pytest.mark.parametrize("effect, trusted", [("Allow", ["oidc-federated"]), ("Deny", [])])
+def test_oidc_federation_requires_an_allowed_role_assumption(index, effect, trusted):
+    provider = f"arn:aws:iam::{ACCOUNT}:oidc-provider/token.actions.githubusercontent.com"
+    statement = {
+        "Effect": effect,
+        "Principal": {"Federated": provider},
+        "Action": "sts:AssumeRoleWithWebIdentity",
+    }
+    finding, _, stats = _trust_finding(index, {"Statement": [statement]})
+    assert finding.metadata["trusted_services"] == trusted
+    assert not stats.incomplete
+
+
+def test_principal_without_trust_policy_keeps_account_trust_and_completeness(index):
+    finding, description, stats = _trust_finding(index, None)
+    assert finding.metadata["trusted_services"] == []
+    assert "trusted by users/accounts" in description
+    assert not stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "trust_policy",
+    [
+        "not a policy",
+        "%7B%22Statement",
+        '{"Statement": [], "Statement": []}',
+        12,
+        [],
+        {},
+        {"Statement": []},
+        {"Statement": ["sts:AssumeRole"]},
+        {"Statement": [{**_BEDROCK_TRUST, "Effect": "allow"}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Effect": ["Allow"]}]},
+        # Without Effect and Action nothing is granted, so trust cannot be read.
+        {"Statement": [{"Principal": _BEDROCK_PRINCIPAL}]},
+        {"Statement": [{"Effect": "Allow", "Principal": _BEDROCK_PRINCIPAL}]},
+        {"Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole"}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Action": 5}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Principal": ["bedrock.amazonaws.com"]}]},
+        {"Statement": [{**_BEDROCK_TRUST, "Principal": {"Service": 5}}]},
+        {
+            "Statement": [
+                _BEDROCK_TRUST,
+                {**_ACCOUNT_TRUST, "Action": "sts:TagSession", "Principal": {"AWS": []}},
+            ]
+        },
+        {"Statement": [{**_BEDROCK_TRUST, "NotPrincipal": {"AWS": "*"}}]},
+    ],
+)
+def test_malformed_trust_policy_is_unknown_trust_and_incomplete(index, trust_policy):
+    finding, description, stats = _trust_finding(index, trust_policy)
+    # The grant evidence is kept; its trust is reported as unknown, never as none.
+    assert "trust policy malformed, trusted principals unknown" in description
+    assert "users/accounts" not in description
+    assert "malformed-trust-policy" in finding.metadata["policy_limitations"]
+    assert finding.metadata["trusted_services"] == []
+    assert "agent-execution-role" not in finding.tags
+    assert stats.incomplete and not stats.errors
+    assert "cloud.aws: malformed IAM trust policy; trusted principals unknown" in stats.warnings

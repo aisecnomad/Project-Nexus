@@ -39,9 +39,10 @@ from collections.abc import Iterable
 from typing import Any
 
 from shadowscan.config import ConfigValidationError, connector_boolean
-from shadowscan.connectors.base import ConnectorError
+from shadowscan.connectors.base import ConnectorError, _positive_limit
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
+from shadowscan.utils.http import HttpError
 from shadowscan.utils.text import redact
 
 TECH_CATEGORIES = {
@@ -74,6 +75,15 @@ _SIGNAL_LABEL = {
 }
 
 
+def failure_summary(exc: BaseException) -> str:
+    """Name a collection failure without its text: the HTTP status, else the exception type.
+
+    Provider error documents and SDK messages can echo request arguments or
+    credentials, so connector diagnostics never include them.
+    """
+    return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+
+
 def config_boolean(value: Any, name: str) -> bool:
     """Require the native boolean produced by the configuration boundary."""
     if not isinstance(value, bool):
@@ -82,6 +92,20 @@ def config_boolean(value: Any, name: str) -> bool:
         return connector_boolean(value, name)
     except ConfigValidationError:
         raise ConnectorError(f"{name} must be a boolean (true or false)") from None
+
+
+# Upper bound shared by every connector's ``max_pages`` setting.
+MAX_PAGES = 1000
+
+
+def max_pages_limit(value: Any) -> int:
+    """Validate a connector's ``max_pages`` setting: a positive integer, capped at 1000.
+
+    Booleans, fractions and values below 1 raise ConnectorError instead of
+    silently becoming a one-page scan. Reaching the bound during collection
+    is reported by the connector as incomplete coverage.
+    """
+    return min(_positive_limit(value, "max_pages"), MAX_PAGES)
 
 
 def describe_match(m: Match) -> str:

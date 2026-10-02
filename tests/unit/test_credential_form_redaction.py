@@ -502,6 +502,16 @@ def test_an_opaque_option_value_never_hides_a_following_assignment(separator):
     "source",
     [
         f"llm -k {HEX}",
+        # A function no rule names, and a listed SDK call through an aliased
+        # import (see _SDK_CREDENTIAL_ARGUMENTS): documented gaps (SECURITY.md).
+        pytest.param(
+            f'client = acme.Connect("{HEX}")',
+            marks=pytest.mark.xfail(strict=True, reason="a function no rule names is ordinary text"),
+        ),
+        pytest.param(
+            f'config := gogpt.DefaultConfig("{HEX}")',
+            marks=pytest.mark.xfail(strict=True, reason="aliased imports of listed SDK calls are not read"),
+        ),
         f'new AzureKeyCredential(Environment.GetEnvironmentVariable("K") ?? "{HEX}")',
         pytest.param(
             f'x = "{HEX}"  # openai key',

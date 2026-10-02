@@ -27,8 +27,8 @@ from urllib.parse import quote
 
 from requests import RequestException
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
+from shadowscan.connectors.common import failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
@@ -84,7 +84,7 @@ class GoogleWorkspaceConnector(BaseConnector):
             if source
             else secrets.token_hex(16)
         )
-        self.max_users = int(ctx.get("max_users", 10_000))
+        self.max_users = _positive_limit(ctx.get("max_users", 10_000), "max_users")
         self.http: HttpClient | None = None
 
     def _resolve_customer(self) -> None:
@@ -95,7 +95,7 @@ class GoogleWorkspaceConnector(BaseConnector):
         except ConnectorError:
             raise  # deadline or cancellation, never a lookup result
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            status = failure_summary(exc)
             self.ctx.warn(
                 f"identity.google-workspace: customer identity could not be verified ({status}); coverage "
                 "incomplete"
@@ -180,7 +180,7 @@ class GoogleWorkspaceConnector(BaseConnector):
                     # user key cannot alter the request path or query.
                     data = self.http.get_json(f"/admin/directory/v1/users/{quote(email, safe='@')}/tokens")
                 except (HttpError, RequestException, ValueError) as exc:
-                    status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+                    status = failure_summary(exc)
                     token_errors[status] = token_errors.get(status, 0) + 1
                     continue
                 # Google omits empty repeated fields, but only an identified
@@ -199,7 +199,7 @@ class GoogleWorkspaceConnector(BaseConnector):
                         continue
                     yield {**tok, "userEmail": email}
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
-            status = f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
+            status = failure_summary(exc)
             self.ctx.warn(f"identity.google-workspace: user enumeration incomplete ({status})")
         if token_errors:
             details = ", ".join(f"{status}: {total}" for status, total in sorted(token_errors.items()))

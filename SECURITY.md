@@ -78,7 +78,10 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   intermediate path components. YAML construction bounds nodes, aliases, depth,
   merge expansion and expanded content before Python objects are constructed.
   Sanitization bounds expanded structure and total replacement work. Ownership
-  patterns use bounded matching instead of backtracking regexes. Limit hits and
+  patterns use bounded matching instead of backtracking regexes, and the code
+  scanner's IaC and agent front-matter patterns run on the bounded engine under
+  the per-input matching budget. Symbolic links count toward `max_files` and
+  their checks stop at the connector deadline. Limit hits and
   malformed inputs make coverage incomplete while retaining valid neighboring
   findings. These are resource safeguards, not process isolation or a universal
   deadline across every external SDK call.
@@ -166,8 +169,25 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   so treat reports as confidential. These forms can remain: an unprefixed
   literal passed to an ordinary function or nested in another call inside a
   credential constructor (`AzureKeyCredential(str("..."))`); a value assembled
-  by actual interpolation or another computed expression; a word-like or
-  short value under a name that is not itself sensitive; a lowercase word
+  by actual interpolation or another computed expression. A few LLM SDK
+  calls take a key positionally under a name that names no credential; the
+  literal at the key's position in these is withheld: Semantic Kernel's .NET
+  Azure OpenAI and OpenAI connectors
+  (`AddAzureOpenAIChatCompletion("deployment", endpoint, "...")`,
+  `AddOpenAIChatCompletion("model", "...")`, including the overloads that
+  take an endpoint `Uri` before the key, and their chat client, embedding,
+  text-to-image and audio siblings and the matching services), go-openai's
+  `openai.DefaultConfig("...")`, `openai.NewClient("...")` and
+  `openai.DefaultAzureConfig("...", url)`, `new OpenAiService("...")`
+  (com.theokanning.openai) and `new GoogleGenerativeAI("...")`. Where a
+  variable stands at the key's position, a later literal such as an
+  organization ID may be withheld instead. Any other SDK call is an ordinary
+  function, as are a key at a position no listed overload uses and a listed
+  call through an aliased import (`gogpt.DefaultConfig("...")`).
+  These forms can also remain: a word-like or short value under
+  a name that is not itself sensitive (an unquoted value made only of
+  capitalized words, digits and underscores reads as an identifier, so
+  `KEY1=Gh4Hj9Kl8Zx2Qw` and `openaiKey: Zx9Kq2Lm8Np4` stay); a lowercase word
   after a space-separated option or as a fallback default; an option this
   list does not name, including command-specific one-letter options other
   than the recognized forms above; a positional

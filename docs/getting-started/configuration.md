@@ -2,7 +2,9 @@
 
 ShadowScan is configured through a YAML file passed with `-c` / `--config`.
 Environment variables are expanded using `${VAR}` syntax; missing required
-values fail closed.
+values fail closed. An invalid configuration, like an invalid command-line
+option, stops the command with exit code 1 before anything is scanned (see
+[exit codes](../operations/ci.md#exit-code-handling)).
 
 ## Common options
 

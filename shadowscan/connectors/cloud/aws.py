@@ -23,11 +23,14 @@ with ``shadowscan run cloud.aws --dump-records aws.jsonl``.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+import re
+from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatchcase
+from functools import partial
 from itertools import islice
 from typing import Any, ClassVar
+from urllib.parse import unquote
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import (
@@ -156,10 +159,13 @@ _LLM_SECRET_KEYWORDS = (
     "pinecone",
     "tavily",
 )
-# Evidence heuristics over a serialized trust policy, not URL validation: the
+# Evidence heuristics over trust policy principals, not URL validation: the
 # GitHub Actions OIDC issuer host and the Bedrock service principals.
 _GITHUB_ACTIONS_OIDC = "token.actions.githubusercontent.com"
 _BEDROCK_TRUST_SERVICES = frozenset({"bedrock.amazonaws.com", "bedrock-agentcore.amazonaws.com"})
+# Operations through which a trust policy lets a principal assume the role
+# (lowercase: IAM matches action names case-insensitively).
+_ASSUME_ROLE_ACTIONS = ("sts:assumerole", "sts:assumerolewithwebidentity", "sts:assumerolewithsaml")
 # Service principals in a role trust policy that run agents or AI workloads.
 _WORKLOAD_TRUST_SERVICES = (
     "lambda.amazonaws.com",
@@ -176,6 +182,19 @@ _WORKLOAD_TRUST_SERVICES = (
 _ENVELOPE_ARN_TYPES = frozenset({"bedrock-logging", "qbusiness-application", "lex-bot", "ssm-parameter"})
 _DENIED_CODES = frozenset({"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"})
 _UNAVAILABLE_MARKERS = ("Could not connect to the endpoint", "UnknownServiceError", "EndpointConnectionError")
+# A provider error code is a fixed identifier (``AccessDeniedException``,
+# ``ThrottlingException``); anything else is not reported as one.
+_ERROR_CODE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
+
+
+def _error_code(exc: BaseException) -> str | None:
+    """The provider's error code of a botocore ``ClientError``-shaped exception, else None."""
+    response = getattr(exc, "response", None)
+    error = response.get("Error") if isinstance(response, dict) else None
+    code = error.get("Code") if isinstance(error, dict) else None
+    return code if isinstance(code, str) and _ERROR_CODE_RE.fullmatch(code) else None
+
+
 # CloudTrail event fields that must be text (or absent) before aggregation.
 _CLOUDTRAIL_TEXT_FIELDS = (
     "principal",
@@ -397,10 +416,8 @@ class AwsConnector(BaseConnector):
                         self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
                     return
         except Exception as exc:  # noqa: BLE001 - preserve pages already yielded
-            response = getattr(exc, "response", None)
-            error = response.get("Error") if isinstance(response, dict) else None
-            code = error.get("Code") if isinstance(error, dict) else None
-            denied = isinstance(code, str) and code in _DENIED_CODES
+            code = _error_code(exc)
+            denied = code in _DENIED_CODES
             detail = f"access denied ({code})" if denied else type(exc).__name__
             self.ctx.warn(f"cloud.aws: {op} collection failed ({detail})")
 
@@ -447,19 +464,44 @@ class AwsConnector(BaseConnector):
         return self._safe(list, self._paginate(client, op, key, **kwargs)) or []
 
     def _safe(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Call one SDK operation; a failure warns, marks coverage incomplete and returns None.
+
+        The diagnostic names the operation and the provider's error code or
+        the exception type, never the message: SDK errors echo request
+        arguments, which are built from untrusted response fields, and
+        denied-authorization messages can carry encoded policy context.
+        """
         try:
             return fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
+            code = _error_code(exc)
             msg = str(exc)
-            if "AccessDenied" in msg or "UnauthorizedOperation" in msg or "not authorized" in msg:
-                self.ctx.warn(f"cloud.aws: access denied: {truncate(msg, 160)}", incomplete=True)
+            operation = getattr(fn, "__name__", None)
+            where = f" {operation}" if isinstance(operation, str) and operation.isidentifier() else ""
+            detail = code or type(exc).__name__
+            if code in _DENIED_CODES or "UnauthorizedOperation" in msg or "not authorized" in msg:
+                self.ctx.warn(f"cloud.aws:{where} access denied ({detail})", incomplete=True)
             elif any(marker in msg for marker in _UNAVAILABLE_MARKERS):
-                self.ctx.warn(
-                    f"cloud.aws: service coverage unavailable: {truncate(msg, 160)}",
-                    incomplete=True,
-                )
+                self.ctx.warn(f"cloud.aws:{where} service coverage unavailable ({detail})", incomplete=True)
             else:
-                self.ctx.warn(f"cloud.aws: {truncate(msg, 200)}", incomplete=True)
+                self.ctx.warn(f"cloud.aws:{where} request failed ({detail})", incomplete=True)
+            return None
+
+    def _guarded(self, kind: str, build: Callable[[], dict[str, Any] | None]) -> dict[str, Any] | None:
+        """Build one record from provider responses; a malformed response skips that record only.
+
+        Response fields are untrusted: a missing or mistyped field raises
+        inside the builder. The record is reported as a coverage gap and
+        collection continues with the next resource, service and region
+        instead of abandoning them all.
+        """
+        try:
+            return build()
+        except RECORD_ERRORS as exc:
+            self.ctx.warn(
+                f"cloud.aws: malformed {kind} record skipped ({type(exc).__name__}); coverage incomplete",
+                incomplete=True,
+            )
             return None
 
     # -------------------------------------------------------------- collect
@@ -497,7 +539,9 @@ class AwsConnector(BaseConnector):
     def _collect_bedrock(self, region: str) -> Iterator[dict[str, Any]]:
         ba = self._client("bedrock-agent", region)
         for summary in self._list_items(ba, "list_agents", "agentSummaries"):
-            yield self._bedrock_agent(ba, summary, region)
+            agent = self._guarded("Bedrock agent", partial(self._bedrock_agent, ba, summary, region))
+            if agent is not None:
+                yield agent
         for kb in self._list_items(ba, "list_knowledge_bases", "knowledgeBaseSummaries"):
             kb["_kind"] = "bedrock-knowledge-base"
             kb["_region"] = region
@@ -533,7 +577,17 @@ class AwsConnector(BaseConnector):
         versions = {"DRAFT"}
         for alias in aliases:
             routes = alias.get("routingConfiguration") or []
-            versions.update(route["agentVersion"] for route in routes if route.get("agentVersion"))
+            for route in routes:
+                # Provider JSON is untrusted: a version that is not a string
+                # would break the version sort for the whole agent.
+                version = route.get("agentVersion") if isinstance(route, dict) else None
+                if isinstance(version, str) and version:
+                    versions.add(version)
+                elif version is not None:
+                    self.ctx.warn(
+                        f"cloud.aws: invalid alias version for agent {agent_id}; version coverage incomplete",
+                        incomplete=True,
+                    )
         groups: list[dict[str, Any]] = []
         knowledge_bases: list[dict[str, Any]] = []
         collaborators: list[dict[str, Any]] = []
@@ -584,19 +638,9 @@ class AwsConnector(BaseConnector):
             rec["_region"] = region
             yield rec
         for gw in self._list_items(ac, "list_gateways", "items"):
-            gateway_id = gw.get("gatewayId")
-            targets = self._list_items(ac, "list_gateway_targets", "items", gatewayIdentifier=gateway_id)
-            gw["_targets"] = []
-            for target in targets:
-                detail = self._safe(
-                    ac.get_gateway_target,
-                    gatewayIdentifier=gateway_id,
-                    targetId=target["targetId"],
-                )
-                gw["_targets"].append({**target, **_without_metadata(detail or {})})
-            gw["_kind"] = "agentcore-gateway"
-            gw["_region"] = region
-            yield gw
+            gateway = self._guarded("AgentCore gateway", partial(self._agentcore_gateway, ac, gw, region))
+            if gateway is not None:
+                yield gateway
         for mem in self._list_items(ac, "list_memories", "memories"):
             mem["_kind"] = "agentcore-memory"
             mem["_region"] = region
@@ -607,53 +651,73 @@ class AwsConnector(BaseConnector):
                 item["_region"] = region
                 yield item
 
+    def _agentcore_gateway(self, ac: Any, gw: dict[str, Any], region: str) -> dict[str, Any]:
+        gateway_id = gw.get("gatewayId")
+        targets = self._list_items(ac, "list_gateway_targets", "items", gatewayIdentifier=gateway_id)
+        gw["_targets"] = []
+        for target in targets:
+            detail = self._safe(
+                ac.get_gateway_target,
+                gatewayIdentifier=gateway_id,
+                targetId=target["targetId"],
+            )
+            gw["_targets"].append({**target, **_without_metadata(detail or {})})
+        gw["_kind"] = "agentcore-gateway"
+        gw["_region"] = region
+        return gw
+
     def _collect_lambda(self, region: str) -> Iterator[dict[str, Any]]:
         lam = self._client("lambda", region)
         for n, fn in enumerate(self._paginate(lam, "list_functions", "Functions"), start=1):
             if n > self.max_lambda:
                 self.ctx.warn(f"cloud.aws: max_lambda reached in {region}", incomplete=True)
                 break
-            environment = fn.get("Environment", {})
-            environment_known = isinstance(environment, dict) and "Error" not in environment
-            variables = environment.get("Variables", {}) if isinstance(environment, dict) else {}
-            if not isinstance(variables, dict) or any(
-                not isinstance(k, str) or not isinstance(v, str) for k, v in variables.items()
-            ):
-                environment_known = False
-                variables = (
-                    {k: v for k, v in variables.items() if isinstance(k, str) and isinstance(v, str)}
-                    if isinstance(variables, dict)
-                    else {}
-                )
-            if not environment_known:
-                # Do not echo the provider error: it can contain sensitive
-                # configuration. Preserve known variables and other signals.
-                self.ctx.warn(
-                    "cloud.aws: Lambda environment unavailable or malformed; configuration coverage unknown"
-                )
-            rec = {
-                "_kind": "lambda",
-                "_region": region,
-                "FunctionName": fn.get("FunctionName"),
-                "FunctionArn": fn.get("FunctionArn"),
-                "Runtime": fn.get("Runtime"),
-                "Role": fn.get("Role"),
-                "Handler": fn.get("Handler"),
-                "Environment": variables,
-                "environment_coverage": "observed" if environment_known else "unknown",
-                "Layers": [layer.get("Arn") for layer in fn.get("Layers") or []],
-                "LastModified": fn.get("LastModified"),
-                "PackageType": fn.get("PackageType"),
-                "Description": fn.get("Description"),
-                "ImageUri": None,
-            }
-            if fn.get("PackageType") == "Image":
-                code = self._safe(lam.get_function, FunctionName=fn["FunctionName"]) or {}
-                image = code.get("Code") or {}
-                rec["ImageUri"] = image.get("ImageUri") or image.get("ResolvedImageUri")
-            tags = self._safe(lam.list_tags, Resource=fn["FunctionArn"]) or {}
-            rec["Tags"] = tags.get("Tags") or {}
-            yield rec
+            rec = self._guarded("Lambda function", partial(self._lambda_record, lam, fn, region))
+            if rec is not None:
+                yield rec
+
+    def _lambda_record(self, lam: Any, fn: dict[str, Any], region: str) -> dict[str, Any]:
+        environment = fn.get("Environment", {})
+        environment_known = isinstance(environment, dict) and "Error" not in environment
+        variables = environment.get("Variables", {}) if isinstance(environment, dict) else {}
+        if not isinstance(variables, dict) or any(
+            not isinstance(k, str) or not isinstance(v, str) for k, v in variables.items()
+        ):
+            environment_known = False
+            variables = (
+                {k: v for k, v in variables.items() if isinstance(k, str) and isinstance(v, str)}
+                if isinstance(variables, dict)
+                else {}
+            )
+        if not environment_known:
+            # Do not echo the provider error: it can contain sensitive
+            # configuration. Preserve known variables and other signals.
+            self.ctx.warn(
+                "cloud.aws: Lambda environment unavailable or malformed; configuration coverage unknown"
+            )
+        rec = {
+            "_kind": "lambda",
+            "_region": region,
+            "FunctionName": fn.get("FunctionName"),
+            "FunctionArn": fn.get("FunctionArn"),
+            "Runtime": fn.get("Runtime"),
+            "Role": fn.get("Role"),
+            "Handler": fn.get("Handler"),
+            "Environment": variables,
+            "environment_coverage": "observed" if environment_known else "unknown",
+            "Layers": [layer.get("Arn") for layer in fn.get("Layers") or []],
+            "LastModified": fn.get("LastModified"),
+            "PackageType": fn.get("PackageType"),
+            "Description": fn.get("Description"),
+            "ImageUri": None,
+        }
+        if fn.get("PackageType") == "Image":
+            code = self._safe(lam.get_function, FunctionName=fn["FunctionName"]) or {}
+            image = code.get("Code") or {}
+            rec["ImageUri"] = image.get("ImageUri") or image.get("ResolvedImageUri")
+        tags = self._safe(lam.list_tags, Resource=fn["FunctionArn"]) or {}
+        rec["Tags"] = tags.get("Tags") or {}
+        return rec
 
     def _collect_ecs(self, region: str) -> Iterator[dict[str, Any]]:
         yield from _EcsInventory(self, self._client("ecs", region), region).collect()
@@ -661,49 +725,62 @@ class AwsConnector(BaseConnector):
     def _collect_sagemaker(self, region: str) -> Iterator[dict[str, Any]]:
         sm = self._client("sagemaker", region)
         for ep in self._list_items(sm, "list_endpoints", "Endpoints"):
-            desc = self._safe(sm.describe_endpoint, EndpointName=ep["EndpointName"]) or {}
-            config_name = desc.get("EndpointConfigName", "")
-            cfg = self._safe(sm.describe_endpoint_config, EndpointConfigName=config_name) or {}
-            models = []
-            for v in cfg.get("ProductionVariants") or []:
-                m = self._safe(sm.describe_model, ModelName=v.get("ModelName", "")) or {}
-                primary = [m["PrimaryContainer"]] if m.get("PrimaryContainer") else []
-                containers = m.get("Containers") or primary
-                models.append(
-                    {
-                        "name": v.get("ModelName"),
-                        "instance": v.get("InstanceType"),
-                        "images": [c.get("Image") for c in containers],
-                        "env": {k: v2 for c in containers for k, v2 in (c.get("Environment") or {}).items()},
-                        "model_data": [c.get("ModelDataUrl") for c in containers],
-                    }
-                )
-            yield {
-                "_kind": "sagemaker-endpoint",
-                "_region": region,
-                "EndpointName": ep["EndpointName"],
-                "EndpointArn": ep.get("EndpointArn"),
-                "EndpointStatus": ep.get("EndpointStatus"),
-                "CreationTime": str(ep.get("CreationTime")),
-                "LastModifiedTime": str(ep.get("LastModifiedTime")),
-                "models": models,
-            }
+            rec = self._guarded("SageMaker endpoint", partial(self._sagemaker_record, sm, ep, region))
+            if rec is not None:
+                yield rec
+
+    def _sagemaker_record(self, sm: Any, ep: dict[str, Any], region: str) -> dict[str, Any]:
+        desc = self._safe(sm.describe_endpoint, EndpointName=ep["EndpointName"]) or {}
+        config_name = desc.get("EndpointConfigName", "")
+        cfg = self._safe(sm.describe_endpoint_config, EndpointConfigName=config_name) or {}
+        models = []
+        for v in cfg.get("ProductionVariants") or []:
+            m = self._safe(sm.describe_model, ModelName=v.get("ModelName", "")) or {}
+            primary = [m["PrimaryContainer"]] if m.get("PrimaryContainer") else []
+            containers = m.get("Containers") or primary
+            models.append(
+                {
+                    "name": v.get("ModelName"),
+                    "instance": v.get("InstanceType"),
+                    "images": [c.get("Image") for c in containers],
+                    "env": {k: v2 for c in containers for k, v2 in (c.get("Environment") or {}).items()},
+                    "model_data": [c.get("ModelDataUrl") for c in containers],
+                }
+            )
+        return {
+            "_kind": "sagemaker-endpoint",
+            "_region": region,
+            "EndpointName": ep["EndpointName"],
+            "EndpointArn": ep.get("EndpointArn"),
+            "EndpointStatus": ep.get("EndpointStatus"),
+            "CreationTime": str(ep.get("CreationTime")),
+            "LastModifiedTime": str(ep.get("LastModifiedTime")),
+            "models": models,
+        }
 
     def _collect_stepfunctions(self, region: str) -> Iterator[dict[str, Any]]:
         sfn = self._client("stepfunctions", region)
         for sm in self._list_items(sfn, "list_state_machines", "stateMachines"):
-            d = self._safe(sfn.describe_state_machine, stateMachineArn=sm["stateMachineArn"]) or {}
-            definition = d.get("definition") or ""
-            if any(service in definition.lower() for service in ("bedrock", "sagemaker", "lambda")):
-                yield {
-                    "_kind": "state-machine",
-                    "_region": region,
-                    "name": sm.get("name"),
-                    "stateMachineArn": sm["stateMachineArn"],
-                    "roleArn": d.get("roleArn"),
-                    "definition": definition[:200_000],
-                    "creationDate": str(sm.get("creationDate")),
-                }
+            rec = self._guarded(
+                "Step Functions state machine", partial(self._state_machine_record, sfn, sm, region)
+            )
+            if rec is not None:
+                yield rec
+
+    def _state_machine_record(self, sfn: Any, sm: dict[str, Any], region: str) -> dict[str, Any] | None:
+        d = self._safe(sfn.describe_state_machine, stateMachineArn=sm["stateMachineArn"]) or {}
+        definition = d.get("definition") or ""
+        if not any(service in definition.lower() for service in ("bedrock", "sagemaker", "lambda")):
+            return None
+        return {
+            "_kind": "state-machine",
+            "_region": region,
+            "name": sm.get("name"),
+            "stateMachineArn": sm["stateMachineArn"],
+            "roleArn": d.get("roleArn"),
+            "definition": definition[:200_000],
+            "creationDate": str(sm.get("creationDate")),
+        }
 
     def _collect_q(self, region: str) -> Iterator[dict[str, Any]]:
         q = self._client("qbusiness", region)
@@ -749,53 +826,62 @@ class AwsConnector(BaseConnector):
         policies: dict[str, dict[str, Any]] = {}
         for item in details:
             if item.get("_type") == "Policies":
+                arn = item.get("Arn")
+                if not isinstance(arn, str):
+                    self.ctx.warn(
+                        "cloud.aws: malformed IAM policy record skipped; coverage incomplete", incomplete=True
+                    )
+                    continue
                 for ver in item.get("PolicyVersionList") or []:
                     if ver.get("IsDefaultVersion"):
-                        policies[item["Arn"]] = ver.get("Document") or {}
+                        policies[arn] = ver.get("Document") or {}
         for item in details:
             if item.get("_type") in {"RoleDetailList", "UserDetailList", "GroupDetailList"}:
-                inline = (
-                    item.get("RolePolicyList")
-                    or item.get("UserPolicyList")
-                    or item.get("GroupPolicyList")
-                    or []
-                )
-                docs = [p.get("PolicyDocument") for p in inline]
-                attached = item.get("AttachedManagedPolicies") or []
-                unresolved = [p.get("PolicyArn") for p in attached if p.get("PolicyArn") not in policies]
-                if unresolved:
-                    self.ctx.warn(
-                        f"cloud.aws: unresolved attached policies for {item.get('Arn')}: "
-                        f"{', '.join(str(p) for p in unresolved)}",
-                        incomplete=True,
-                    )
-                docs += [policies.get(p.get("PolicyArn"), {}) for p in attached]
-                actions, ai_patterns, potential_actions, limitations = _iam_policy_signals(docs)
-                if item.get("PermissionsBoundary"):
-                    limitations.add("permissions-boundary-not-evaluated")
-                if limitations:
-                    self.ctx.warn(
-                        "cloud.aws: IAM policy analysis is partial ("
-                        + ", ".join(sorted(limitations))
-                        + "); effective authorization is not evaluated"
-                    )
-                if potential_actions or ai_patterns:
-                    last_used = item.get("RoleLastUsed")
-                    yield {
-                        "_kind": "iam-principal",
-                        "type": item["_type"].replace("DetailList", ""),
-                        "name": item.get("RoleName") or item.get("UserName") or item.get("GroupName"),
-                        "arn": item.get("Arn"),
-                        "created": str(item.get("CreateDate")),
-                        "last_used": str((last_used or {}).get("LastUsedDate")) if last_used else None,
-                        "assume_role_policy": item.get("AssumeRolePolicyDocument"),
-                        "actions": sorted(actions),
-                        "ai_action_patterns": sorted(ai_patterns),
-                        "potential_actions": sorted(potential_actions),
-                        "policy_limitations": sorted(limitations),
-                        "attached_policies": [p.get("PolicyName") for p in attached],
-                        "tags": {t["Key"]: t.get("Value") for t in item.get("Tags") or []},
-                    }
+                rec = self._guarded("IAM principal", partial(self._iam_principal_record, item, policies))
+                if rec is not None:
+                    yield rec
+
+    def _iam_principal_record(
+        self, item: dict[str, Any], policies: dict[str, dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        inline = item.get("RolePolicyList") or item.get("UserPolicyList") or item.get("GroupPolicyList") or []
+        docs = [p.get("PolicyDocument") for p in inline]
+        attached = item.get("AttachedManagedPolicies") or []
+        unresolved = [p.get("PolicyArn") for p in attached if p.get("PolicyArn") not in policies]
+        if unresolved:
+            self.ctx.warn(
+                f"cloud.aws: unresolved attached policies for {item.get('Arn')}: "
+                f"{', '.join(str(p) for p in unresolved)}",
+                incomplete=True,
+            )
+        docs += [policies.get(p.get("PolicyArn"), {}) for p in attached]
+        actions, ai_patterns, potential_actions, limitations = _iam_policy_signals(docs)
+        if item.get("PermissionsBoundary"):
+            limitations.add("permissions-boundary-not-evaluated")
+        if limitations:
+            self.ctx.warn(
+                "cloud.aws: IAM policy analysis is partial ("
+                + ", ".join(sorted(limitations))
+                + "); effective authorization is not evaluated"
+            )
+        if not (potential_actions or ai_patterns):
+            return None
+        last_used = item.get("RoleLastUsed")
+        return {
+            "_kind": "iam-principal",
+            "type": item["_type"].replace("DetailList", ""),
+            "name": item.get("RoleName") or item.get("UserName") or item.get("GroupName"),
+            "arn": item.get("Arn"),
+            "created": str(item.get("CreateDate")),
+            "last_used": str((last_used or {}).get("LastUsedDate")) if last_used else None,
+            "assume_role_policy": item.get("AssumeRolePolicyDocument"),
+            "actions": sorted(actions),
+            "ai_action_patterns": sorted(ai_patterns),
+            "potential_actions": sorted(potential_actions),
+            "policy_limitations": sorted(limitations),
+            "attached_policies": [p.get("PolicyName") for p in attached],
+            "tags": {t["Key"]: t.get("Value") for t in item.get("Tags") or []},
+        }
 
     def _paginate_details(self, iam: Any) -> Iterator[dict[str, Any]]:
         principal_filter = ["Role", "User", "Group", "LocalManagedPolicy", "AWSManagedPolicy"]
@@ -1721,10 +1807,15 @@ class AwsConnector(BaseConnector):
             apply_matches(f, self.index.match_scope(action), location=rec.get("arn"), weight_scale=0.3)
         # Ancillary privileges remain evidence only after an AI grant exists.
         wildcard = [a for a in actions if "*" in a or "?" in a]
-        trust = json.dumps(rec.get("assume_role_policy") or {})
-        principals = [svc for svc in _WORKLOAD_TRUST_SERVICES if svc in trust]
-        if "oidc-provider" in trust or _GITHUB_ACTIONS_OIDC in trust:
-            principals.append("oidc-federated")
+        principals = _trust_principals(rec.get("assume_role_policy"))
+        if principals is None:
+            # Unknown trust is not "no service trust": keep the grant evidence
+            # but never let the scan read as complete.
+            self.ctx.warn("cloud.aws: malformed IAM trust policy; trusted principals unknown")
+            limitations = [*limitations, "malformed-trust-policy"]
+            trust_note = "trust policy malformed, trusted principals unknown"
+        else:
+            trust_note = f"trusted by {', '.join(principals) or 'users/accounts'}"
         wildcard_note = " + wildcards " + ", ".join(wildcard[:3]) if wildcard else ""
         potential_note = "; potential NotAction grants " + ", ".join(potential[:8]) if potential else ""
         f.add_evidence(
@@ -1733,14 +1824,13 @@ class AwsConnector(BaseConnector):
                 description=(
                     f"Policy evidence for {rec.get('type')} '{rec.get('name')}': explicit actions "
                     f"{', '.join(llm[:8]) or 'none'}{wildcard_note}{potential_note}; "
-                    f"trusted by {', '.join(principals) or 'users/accounts'}. "
-                    "Effective authorization is not evaluated."
+                    f"{trust_note}. Effective authorization is not evaluated."
                 ),
                 location=rec.get("arn"),
                 weight=0.45 if llm else 0.25,
             )
         )
-        if _BEDROCK_TRUST_SERVICES.intersection(principals):
+        if principals and _BEDROCK_TRUST_SERVICES.intersection(principals):
             f.add_framework("cloud.aws-bedrock-agents")
             f.add_tag("agent-execution-role")
         if wildcard:
@@ -1757,7 +1847,7 @@ class AwsConnector(BaseConnector):
                 "effective_permissions": "not-evaluated",
                 "wildcards": wildcard[:10],
                 "attached_policies": rec.get("attached_policies"),
-                "trusted_services": principals,
+                "trusted_services": principals or [],
                 "action_count": len(actions),
             }
         )
@@ -2142,6 +2232,84 @@ def _policy_strings(value: Any) -> list[str] | None:
     ):
         return None
     return values
+
+
+def _policy_document(value: Any) -> Any:
+    """A policy document as given, or decoded from JSON text or URL-encoded JSON text.
+
+    The IAM API returns documents URL-encoded; SDKs and most exports decode them.
+    Raises ValueError (or RecursionError) for text that is neither.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        return strict_json_loads(value)
+    except json.JSONDecodeError:
+        # Only text that is not JSON at all is retried: an ambiguous (duplicate
+        # field) document stays malformed rather than being reinterpreted.
+        return strict_json_loads(unquote(value))
+
+
+def _grants_assume_role(action: str) -> bool:
+    """Whether an IAM action expression (``*`` and ``?`` wildcards, any case) includes role assumption."""
+    if "[" in action or "]" in action:
+        return False  # IAM uses * and ?, not fnmatch character classes.
+    return any(fnmatchcase(candidate, action.lower()) for candidate in _ASSUME_ROLE_ACTIONS)
+
+
+def _trust_principals(document: Any) -> list[str] | None:
+    """Workload service principals and OIDC federation that a role trust policy allows.
+
+    Only ``Allow`` statements whose ``Action`` includes role assumption count,
+    with principals read from ``Principal.Service`` and ``Principal.Federated``.
+    ``Deny``, ``NotAction`` and ``NotPrincipal`` statements never establish
+    trust; conditions are not evaluated. An absent document trusts no service.
+    Returns None for a malformed document: its trusted principals are unknown.
+    """
+    if document is None:
+        return []
+    try:
+        policy = _policy_document(document)
+    except (ValueError, RecursionError):
+        return None
+    statements = policy.get("Statement") if isinstance(policy, dict) else None
+    if isinstance(statements, dict):
+        statements = [statements]
+    if not isinstance(statements, list) or not statements:
+        return None
+    services: set[str] = set()
+    federated = False
+    for st in statements:
+        if (
+            not isinstance(st, dict)
+            or not isinstance(st.get("Effect"), str)
+            or st["Effect"] not in {"Allow", "Deny"}
+            or ("Action" in st) == ("NotAction" in st)
+            or ("Principal" in st) == ("NotPrincipal" in st)
+        ):
+            return None
+        if st["Effect"] != "Allow" or "Action" not in st or "Principal" not in st:
+            continue
+        actions = _policy_strings(st["Action"])
+        # "*" is everyone: it names no service or identity provider.
+        principal = {} if st["Principal"] == "*" else st["Principal"]
+        named = (
+            {key: _policy_strings(value) for key, value in principal.items()}
+            if isinstance(principal, dict)
+            else None
+        )
+        if actions is None or named is None or any(names is None for names in named.values()):
+            return None
+        if not any(_grants_assume_role(action) for action in actions):
+            continue
+        services.update(named.get("Service") or [])
+        federated = federated or any(
+            "oidc-provider" in name or _GITHUB_ACTIONS_OIDC in name for name in named.get("Federated") or []
+        )
+    principals = [svc for svc in _WORKLOAD_TRUST_SERVICES if svc in services]
+    if federated:
+        principals.append("oidc-federated")
+    return principals
 
 
 def _resource_services(resources: list[str] | None, limitations: set[str]) -> set[str]:

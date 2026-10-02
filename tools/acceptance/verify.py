@@ -27,9 +27,7 @@ from tools.canaries.run import _source_provenance
 from tools.evaluation.accept import wilson_lower95
 from tools.evaluation.annotations import validate_annotations
 from tools.evaluation.evaluate import (
-    DEFAULT_CORPUS as DEFAULT_CORPUS,
-)
-from tools.evaluation.evaluate import (
+    _CAPABILITY,
     Case,
     _assertions,
     _exact_finding_set,
@@ -39,6 +37,9 @@ from tools.evaluation.evaluate import (
     known_gaps,
     load_corpus,
     summarize,
+)
+from tools.evaluation.evaluate import (
+    DEFAULT_CORPUS as DEFAULT_CORPUS,
 )
 from tools.evaluation.sources import SourceOverlapError, bundled_source_index
 
@@ -441,13 +442,19 @@ def _evaluation_rows(rows: Any, cases: list[Case]) -> None:
         _require(row["assertion_failures"] == [], "evaluation_assertion_failure")
         _require(row["correct"] == (row["present"] == row["predicted"]), "inconsistent_evaluation_result")
         _require(isinstance(row["findings"], list), "invalid_evaluation_findings")
+        capabilities_labeled = any(
+            "capabilities" in selector
+            for relation in ("expected_findings", "forbidden_findings")
+            for selector in case.assertions.get(relation, [])
+        )
         matched = []
         for finding in row["findings"]:
             _keys(
                 finding,
                 {"kind", "resource_type", "frameworks", "model_providers", "signatures", "confidence"},
-                {"server_count", "server_names"},
+                {"server_count", "server_names", "capabilities"},
             )
+            _require(not capabilities_labeled or "capabilities" in finding, "missing_evaluation_capabilities")
             _require(
                 isinstance(finding["kind"], str)
                 and finding["kind"] in {kind.value for kind in Kind}
@@ -462,6 +469,14 @@ def _evaluation_rows(rows: Any, cases: list[Case]) -> None:
                     isinstance(ids, list)
                     and all(_identifier(sig) for sig in ids)
                     and ids == sorted(set(ids)),
+                    "invalid_evaluation_findings",
+                )
+            if "capabilities" in finding:
+                capabilities = finding["capabilities"]
+                _require(
+                    isinstance(capabilities, list)
+                    and all(isinstance(cap, str) and _CAPABILITY.fullmatch(cap) for cap in capabilities)
+                    and capabilities == sorted(set(capabilities)),
                     "invalid_evaluation_findings",
                 )
             _require(

@@ -611,3 +611,102 @@ def test_excerpt_helper_redacts_then_truncates():
     line = "x" * 150 + " key=" + "s" * 40
     assert "s" * 8 not in _excerpt([line], 1, "s" * 40)
     assert _excerpt([line], 2) == ""
+
+
+# ------------------------------------------------------- planted files and link trees
+def test_planted_whitespace_runs_do_not_stall_iac_or_front_matter_matching(tmp_path, index):
+    # ``Action:`` followed by a long run of blank space, and a front matter
+    # opener followed by a long run of blank lines, used to backtrack
+    # quadratically in stdlib patterns outside the matching budget (minutes
+    # per file at the default size limit, then a discarded connector result).
+    (tmp_path / "main.tf").write_text("Action:" + " " * 400_000 + "\n")
+    agents = tmp_path / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    (agents / "planner.md").write_text("---\n" + "\n" * 400_000)
+    (tmp_path / "crew.py").write_text("from crewai import Agent\n")
+    started = time.monotonic()
+    findings, ctx = _scan(index, tmp_path, use_git=False)
+    assert time.monotonic() - started < 5
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+
+
+def test_bounded_iac_and_front_matter_patterns_keep_their_matches():
+    from shadowscan.connectors.code.filesystem import _FRONTMATTER, _IAM_WILDCARD_RE
+
+    for text in ('Action: "*"', 'Action = ["*"]', '"Action": [ "*" ]', '"bedrock:*"'):
+        assert _IAM_WILDCARD_RE.search(text), text
+    assert not _IAM_WILDCARD_RE.search('Action: "s3:GetObject"')
+    assert _FRONTMATTER.match("---\nname: x\n---\nbody").group(1) == "name: x"
+    assert _FRONTMATTER.match("---  \r\nname: x\r\n---\r\nbody").group(1) == "name: x\r"
+    assert _FRONTMATTER.match("---\nname: x\n---") is None
+
+
+def _link_tree(root: Path, count: int) -> None:
+    (root / "real.py").write_text("from crewai import Agent\n")
+    links = root / "links"
+    links.mkdir()
+    for number in range(count):
+        os.symlink("../real.py", links / f"alias{number}.py")
+
+
+def test_symbolic_links_count_toward_max_files(tmp_path, index):
+    _link_tree(tmp_path, 50)
+    findings, ctx = _scan(index, tmp_path, max_files=20, use_git=False)
+    # The regular file is examined first; the links then exhaust the cap.
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert any("max_files (20) reached" in issue for issue in ctx.stats.errors)
+
+
+def test_symbolic_link_checks_stop_at_the_connector_deadline(tmp_path, index, monkeypatch):
+    _link_tree(tmp_path, 200)
+    original = FilesystemConnector._link_target_is_scanned
+
+    def slow(self, rel, target, root, walk=None):
+        time.sleep(0.01)
+        return original(self, rel, target, root, walk)
+
+    monkeypatch.setattr(FilesystemConnector, "_link_target_is_scanned", slow)
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=time.monotonic() + 1.5
+    )
+    started = time.monotonic()
+    FilesystemConnector(ctx).run()
+    # 200 links at 10 ms each would overrun a 1.5 s deadline; the walk stops
+    # cooperatively and records the gap instead.
+    assert time.monotonic() - started < 1.5
+    assert any("deadline reached while checking symbolic links" in issue for issue in ctx.stats.errors)
+
+
+def test_links_in_one_directory_list_their_ancestors_once(tmp_path, index, monkeypatch):
+    _link_tree(tmp_path, 300)
+    listed: list[str] = []
+    real_listdir = os.listdir
+
+    def counting_listdir(path="."):
+        listed.append(str(path))
+        return real_listdir(path)
+
+    monkeypatch.setattr(os, "listdir", counting_listdir)
+    _scan(index, tmp_path, use_git=False)
+    # One listing of the links directory serves every link in it; before,
+    # each link listed every ancestor again (quadratic in the link count).
+    assert listed.count(str(tmp_path / "links")) <= 2
+
+
+def test_notebook_credential_in_a_code_cell_is_counted_once(tmp_path, index):
+    notebook = {
+        "cells": [
+            {"cell_type": "code", "source": ['API_KEY = "' + SECRET + '"\n'], "outputs": []},
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    (tmp_path / "demo.ipynb").write_text(json.dumps(notebook))
+    findings, ctx = _scan(index, tmp_path)
+    secret = next(f for f in findings if f.kind == Kind.SECRET)
+    # The raw document repeats the cell at another line number; that is the
+    # same credential, not a second one.
+    assert secret.metadata["count"] == 1 and not ctx.stats.errors
+    assert len([e for e in secret.evidence if e.signal.startswith("secret")]) == 1

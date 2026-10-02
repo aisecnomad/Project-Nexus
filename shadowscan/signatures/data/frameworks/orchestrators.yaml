@@ -588,7 +588,7 @@ signatures:
     category: framework
     vendor: Vercel
     homepage: https://ai-sdk.dev
-    description: TypeScript toolkit for LLM apps and agents (generateText/streamText with tools, ToolLoopAgent).
+    description: TypeScript toolkit for LLM apps and agents (generateText/streamText tool loops, ToolLoopAgent).
     capabilities: [tool-use]
     signals:
       - type: dependency
@@ -604,7 +604,10 @@ signatures:
         patterns: ['\b(?:generateText|streamText|generateObject|streamObject)\s*\(\s*\{']
         weight: 0.6
       - type: code
-        patterns: ['\b(?:ToolLoopAgent|Experimental_Agent)\s*\(', '\bmaxSteps\s*:\s*\d+', '\bstopWhen\s*:\s*stepCountIs\s*\(', '\btools\s*:\s*\{[^}]*\btool\s*\(']
+        # In JavaScript the import binder decides these call options (stopWhen,
+        # maxSteps and tools of a bound generateText/streamText call); isStepCount
+        # is the AI SDK 7 name of stepCountIs.
+        patterns: ['\b(?:ToolLoopAgent|Experimental_Agent)\s*\(', '\bmaxSteps\s*:\s*\d+', '\bstopWhen\s*:\s*\[?\s*(?:stepCountIs|isStepCount|hasToolCall)\s*\(', '\btools\s*:\s*\{[^}]*\btool\s*\(']
         weight: 0.8
         agent_indicator: true
         capabilities: [tool-use]

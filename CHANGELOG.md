@@ -1,5 +1,8 @@
 # Changelog
 
+The detailed engineering log, recorded per change. RELEASE_NOTES.md
+summarizes each release for people who install and operate ShadowScan.
+
 ## 0.1.1 — Unreleased
 
 ### October 1 review corrections
@@ -30,6 +33,141 @@
   actors. They do not change live repository settings. Administrator activation,
   independent human review, fresh holdout labels and tenant acceptance remain
   external requirements.
+### October 1 review remediation
+
+Fixes and recommendations from the 2026-10-01 repository review. Upgrade
+steps are in docs/production.md ("October 1 review changes").
+
+- **Exit codes:** usage errors exit 1 instead of 2, so exit 2 only means a
+  complete scan reached `--fail-on`.
+- **Gateway identity:** `diff` lists scan-local gateway findings under
+  `not_comparable` instead of as new. The opt-in `SHADOWSCAN_IDENTITY_KEY`
+  (environment only, at least 32 bytes) keeps gateway IDs and collection scope
+  stable across scans; git child processes never receive it.
+- **Confidence:** outside the code surface, repeated evidence of one signal
+  counts once. n8n, Make and Zapier findings score all their evidence before
+  they are finalized.
+- **Inventory:** cards accept `discovery.discriminators`; `inventory stubs`
+  binds each card to its own finding and writes plain-string names.
+- **Cloud:** `cloud.aws` parses role trust policies (`Deny`, `NotAction` and
+  `NotPrincipal` never establish trust; a malformed policy makes the scan
+  incomplete). `cloud.oci` converts SDK models without silently dropping
+  fields. Every connector validates `max_pages` and caps it at 1000.
+- **Detection:** Vercel AI SDK multi-step tool loops, including AI SDK 7
+  `isStepCount`, are agents. Custom-pack framework code patterns apply in
+  Python and JavaScript. ShadowScan, Semgrep, Sigma and gitleaks rule files are
+  treated as data and listed in `metadata.detection_rule_files`.
+- **Threshold filtering:** `--min-confidence` removes `related` links and
+  `runtime_activity` references to omitted findings.
+- **Timestamps:** microsecond and nanosecond epoch values are parsed.
+- **Redaction:** keys passed positionally to well-known LLM SDK calls are
+  withheld, including the endpoint-`Uri` overloads. Long blank runs no longer
+  make the Python 3.11 tokenizer quadratic, and Python 3.12+ codec errors no
+  longer make a file's analysis incomplete.
+- **Removed:** the unused `safe_yaml.bounded_safe_load_all` and
+  `HttpClient.requests_made`; use `strict_bounded_safe_load_all`.
+- **Evaluation:** `tools/evaluation/current_idioms_corpus.json` (24 cases)
+  runs in `make evaluate` and CI.
+- **Tests and CI:** tests resolve hostnames hermetically and fail on outbound
+  connections. Both coverage floors count branches, and the connector floor
+  covers every module under `shadowscan/connectors/`. Coverage is traced on
+  Linux 3.11 only, and a traced run takes about half as long. Matcher budgets
+  are generous in tests unless a test opts into the shipped values. CI never
+  cancels a running `main` build and runs the secret hook over tracked files.
+- **Governance and docs:** `.github/rulesets/require-ci-and-review.json` versions the intended
+  `main` ruleset; the README regains its project-status section and an OpenSSF
+  Scorecard badge; RELEASE_NOTES.md summarizes releases for users; ADR-004
+  and ADR-005 propose a parsing strategy and code-scanner module boundaries.
+### October 1 review fixes: bounded matching, link walks and record tolerance
+
+Fixes for the findings of an AI-assisted repository review (not an
+independent human review); each behavior change has a regression test.
+
+- `code.filesystem`: the IaC wildcard-action and agent front-matter patterns
+  now run on the bounded regex engine with possessive whitespace, under the
+  per-input matching budget. Before, a planted file (`Action:` followed by a
+  long run of spaces, or `---` followed by many blank lines) backtracked
+  quadratically in stdlib patterns that nothing could interrupt, which could
+  hold the connector past its deadline and discard every code finding.
+- `code.filesystem`: symbolic links now count toward `max_files`, link checks
+  stop at the connector deadline with an explicit error (`connector deadline
+  reached while checking symbolic links`), and the project lookup behind each
+  link is cached per directory. A tree planted with thousands of links was
+  quadratic and uncounted. Scans of repositories holding more links than the
+  remaining `max_files` budget become incomplete; raise `max_files` or exclude
+  the link directories.
+- `code.filesystem`: a JSON, YAML or TOML file that merely contains the words
+  `"mcp"` and `"servers"` but configures no MCP server (an exported workflow
+  tagged `mcp`, a template with such a comment) is ordinary configuration
+  again. Before, it was treated as MCP configuration and the IaC,
+  configuration and lexical passes skipped it without a diagnostic, hiding
+  the workflow or the wildcard IAM grant. Dedicated MCP file names
+  (`.mcp.json`, `claude_desktop_config.json`, ...) are unchanged.
+- `code.filesystem`: a credential in a notebook code cell is counted once;
+  the raw document's copy of the cell no longer doubles the count and the
+  confidence. Outputs and markdown cells are still scanned.
+- `cloud.aws`: a malformed provider record (a function without an ARN, an
+  endpoint without a name, an alias version that is not a string) skips that
+  record with a warning and incomplete coverage instead of aborting every
+  remaining service and region. Failed SDK calls now report the operation
+  and the provider error code (`cloud.aws: get_agent access denied
+  (AccessDeniedException)`), never the message text, which can echo request
+  arguments or encoded policy context. `cloud.gcp` treats a service record
+  without a config name the same way.
+- `identity.entra`, `saas.microsoft-teams`, `lowcode.make`: response-derived
+  identifiers are percent-encoded before they enter a request path.
+  `max_app_role_lookups`, `max_users` and the automation connectors'
+  `max_pages` must be positive integers; a zero or non-numeric value now
+  stops the connector with a configuration error instead of being coerced.
+- Gateway timestamps: an eight-digit `yyyymmdd` value is a calendar day.
+  It was read as epoch seconds and attributed callers to 1970.
+- One `failure_summary` helper replaces eighteen copies of the HTTP-status or
+  exception-type expression in connector diagnostics (no output change).
+- Documentation: the README states the usage, setup and `diff` exit codes
+  and carries the OpenSSF Scorecard badge the roadmap refers to;
+  `docs/connectors.md` lists the GitHub credential-name permissions and adds
+  least-privilege rows and option lists for Slack, ServiceNow and Notion. A
+  repository test now checks the "25 of 27 connectors ship fixtures" claim.
+### Confined file portability and plugin deadlines
+
+- On platforms exposing `O_NOFOLLOW_ANY` without Linux `O_PATH` (including
+  supported macOS versions), confined file reads use one kernel-checked path
+  lookup, including reads relative to an already-open scan root. This avoids
+  opening every ancestor for reading while still rejecting symbolic links in
+  every component. FIFO protection and regular-file verification remain in
+  force; paths are never resolved through symlinks as a fallback.
+- Signature directory traversal now fails on unreadable subdirectories and
+  enforces its entry budget for directory-only trees. A partial signature pack
+  must not silently become an accepted policy or digest.
+- `pytest` console invocations can import checkout-only evaluation and canary
+  tooling without a caller-supplied `PYTHONPATH`; macOS CI exercises this entry
+  point as part of the full suite.
+- Optional `options.plugin_execution: process` / `--plugin-execution process`
+  runs approved third-party connectors in dedicated spawned workers, including
+  plugin import. Deadline expiry terminates the worker and marks its results
+  incomplete. Crashes, malformed output and output above the 16 MiB transport
+  limit also fail closed. The default remains `thread`; built-ins retain their
+  existing execution path. Process mode provides lifecycle isolation, not a
+  security sandbox or rollback of external effects.
+
+### October 1 discovery review corrections
+
+- Code collection identifies declared submodules whose source has not been
+  materialized and reports incomplete coverage instead of a complete empty
+  result. Remote clone collection also checks the Git tree for submodule
+  entries. Submodule URLs are never fetched automatically.
+- Ordinary Spring AI `ChatClient` and LangChain4j `AiServices` construction,
+  and standalone Java tool declarations, no longer establish an agent or
+  tool-use capability. Explicit agent construction and bounded, concrete tool
+  registration remain evidence.
+- Import-bound source calls distinguish configured workload capabilities from
+  features merely offered by their framework. Empty tool/handoff collections
+  and disabled delegation no longer add those capabilities or their risk
+  factors. Review changed findings and rebuild enforcement baselines.
+- Authored evaluation cases now check capability labels as well as kind and
+  product attribution. The frozen independent corpus and its labels are
+  unchanged; these regressions do not establish fresh field accuracy, live
+  tenant acceptance or independent human review.
 
 ### October 1 code.filesystem coverage and precision
 
@@ -822,7 +960,7 @@ Fixes and additions:
 #### Governance and documentation
 
 - `CONTRIBUTING.md` documents the actual single-maintainer, self-merge process with automated checks and requires independent human review before any tagged release; `docs/production.md` gives operators the commands to verify ruleset and review state themselves.
-- The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs under `docs/hardening-logs/`; the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
+- The three 2026-09-24 review documents are relabelled as internal AI-assisted hardening logs (they now live under `archive/reviews/`); the package classifier drops from Beta to Alpha; README gains a Project status section and corrected claims; SECURITY.md states that no versions are released yet.
 
 ### Production acceptance fixes (2026-09-25)
 

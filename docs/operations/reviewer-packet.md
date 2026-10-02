@@ -78,6 +78,25 @@ Pick one. Reading every connector is a multi-day job.
 | One live connector | `cloud.aws` or `identity.entra` plus its fixtures | Fail-closed on malformed pages? |
 | Release path | `.github/workflows/release.yml`, [production](../production.md) | Does anything publish a tag or package? |
 
+For the October 1 discovery corrections, include these paired checks:
+
+- Ordinary Java chat construction versus explicit agent factories and supported
+  concrete tool registration. A framework import is not sufficient evidence of
+  either agency or a configured tool.
+- Empty or disabled tool/delegation settings versus positive configured values,
+  including another agent in the same project. A negative setting on one call
+  must not erase independently supported capabilities elsewhere.
+- A missing declared submodule versus a materialized source directory and an
+  explicitly excluded path. Missing source must not look like a complete empty
+  scan, and no submodule URL may be fetched automatically.
+- Capability assertions in the authored evaluation corpus, separately from
+  binary agent-presence metrics. These are regression checks; commission fresh
+  blinded human labels before claiming field accuracy.
+
+Record live ruleset enforcement independently of code review. The required
+`CI gate`, existing checks and final-revision non-author approval must be
+effective on `main`; their presence in workflow files alone is insufficient.
+
 ## How to record a review
 
 Use a GitHub pull request approval from an account that did not author the

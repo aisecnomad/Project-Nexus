@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -91,6 +92,31 @@ def test_metadata_reader_rejects_combined_output_overflow_and_reaps_process(
     command = (
         f"import os,time; os.write(1,b'a'*{stdout_bytes}); os.write(2,b'b'*{stderr_bytes}); time.sleep(60)"
     )
+    with pytest.raises(MetadataOutputLimitError, match="^git metadata output limit exceeded$"):
+        run_bounded_metadata([sys.executable, "-c", command], safe_git_env(), _context(index), max_bytes=1024)
+    _assert_cleaned(started)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX only")
+def test_metadata_reader_overflow_from_an_exited_child_keeps_its_diagnostic(index, monkeypatch):
+    """A child that exits before the reader trips the limit is already a zombie.
+
+    Darwin's killpg() then fails with EPERM instead of ESRCH, which must not
+    replace the output-limit diagnostic; Linux reports success for the same
+    group. Reaping is waited for explicitly so the test is deterministic on
+    both platforms rather than depending on pipe capacity and timing.
+    """
+    started = _record_processes(monkeypatch)
+    original = git_module.subprocess.Popen
+
+    def exited_before_reading(*args, **kwargs):
+        proc = original(*args, **kwargs)
+        # Wait for the exit without reaping: the group now holds one zombie.
+        os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT)
+        return proc
+
+    monkeypatch.setattr(git_module.subprocess, "Popen", exited_before_reading)
+    command = "import os; os.write(1, b'a' * 1025)"
     with pytest.raises(MetadataOutputLimitError, match="^git metadata output limit exceeded$"):
         run_bounded_metadata([sys.executable, "-c", command], safe_git_env(), _context(index), max_bytes=1024)
     _assert_cleaned(started)

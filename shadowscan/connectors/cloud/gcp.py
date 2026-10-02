@@ -39,7 +39,7 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials, require_local_adc
-from shadowscan.connectors.common import apply_matches, model_matches
+from shadowscan.connectors.common import apply_matches, failure_summary, max_pages_limit, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
@@ -126,10 +126,6 @@ def _location(name: str) -> str | None:
     return name.split("/locations/")[1].split("/")[0] if "/locations/" in name else None
 
 
-def _failure(exc: Exception) -> str:
-    return f"HTTP {exc.status}" if isinstance(exc, HttpError) else type(exc).__name__
-
-
 class GcpConnector(BaseConnector):
     name: ClassVar[str] = "cloud.gcp"
     _ENV_VALUES_ARE_CONFIGURATION: ClassVar[bool] = True
@@ -157,8 +153,8 @@ class GcpConnector(BaseConnector):
         "audit_days": "look back N days in Cloud Audit Logs for Vertex callers (default 0 = off)",
         "max_projects": "default 200",
         "max_pages": (
-            "cap on pages per paginated call, at least 1 (default 1000; resource lists stop at 500 pages "
-            "and audit-log queries at 50 pages regardless)"
+            "maximum pages per paginated call, capped at 1000 (default 1000; resource lists stop at 500 "
+            "pages and audit-log queries at 50 pages regardless)"
         ),
         "input": "offline: JSONL dump of records",
     }
@@ -177,7 +173,7 @@ class GcpConnector(BaseConnector):
         self.max_projects = int(ctx.get("max_projects", 200))
         if self.max_projects < 1:
             raise ConnectorError("cloud.gcp: max_projects must be positive")
-        self.max_pages = max(1, int(ctx.get("max_pages", 1000)))
+        self.max_pages = max_pages_limit(ctx.get("max_pages", 1000))
         self.http: HttpClient | None = None
 
     def _auth(self) -> None:
@@ -268,7 +264,7 @@ class GcpConnector(BaseConnector):
                 self.ctx.warn(f"cloud.gcp: empty response for {url.split('?')[0]}")
             return data
         except (HttpError, RequestException, ValueError) as exc:
-            self.ctx.warn(f"cloud.gcp: collection failed for {url.split('?')[0]} ({_failure(exc)})")
+            self.ctx.warn(f"cloud.gcp: collection failed for {url.split('?')[0]} ({failure_summary(exc)})")
             return None
 
     def _next_page_token(self, data: dict[str, Any], seen: set[str], *, warn: str) -> str | None:
@@ -350,7 +346,19 @@ class GcpConnector(BaseConnector):
             filter="state:ENABLED",
             pageSize=200,
         )
-        enabled = [s.get("config", {}).get("name") for s in services]
+        enabled: list[str] = []
+        for service in services:
+            # Response shapes are untrusted: a service record without a config
+            # name is a coverage gap for this project, not a failure of every
+            # project and service that follows it.
+            config = service.get("config") if isinstance(service, dict) else None
+            name = config.get("name") if isinstance(config, dict) else None
+            if isinstance(name, str):
+                enabled.append(name)
+            else:
+                self.ctx.warn(
+                    f"cloud.gcp: malformed service record in {project}; service coverage incomplete"
+                )
         ai_enabled = [s for s in enabled if s in AI_SERVICES]
         yield {"_kind": "project", "project": project, "ai_services": ai_enabled}
         if _uses(enabled, "aiplatform.googleapis.com"):
@@ -430,7 +438,7 @@ class GcpConnector(BaseConnector):
             else:
                 yield {"_kind": "iam-policy", "_project": project, "bindings": policy.get("bindings", [])}
         except (HttpError, RequestException, ValueError) as exc:
-            self.ctx.warn(f"cloud.gcp: IAM policy not readable for {project} ({_failure(exc)})")
+            self.ctx.warn(f"cloud.gcp: IAM policy not readable for {project} ({failure_summary(exc)})")
 
     def _collect_service_accounts(self, project: str) -> Iterator[dict[str, Any]]:
         url = f"https://iam.googleapis.com/v1/projects/{project}/serviceAccounts"
@@ -477,7 +485,7 @@ class GcpConnector(BaseConnector):
             try:
                 data = self.http.post_json("https://logging.googleapis.com/v2/entries:list", json=body)
             except (HttpError, RequestException) as exc:
-                self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({_failure(exc)})")
+                self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({failure_summary(exc)})")
                 return
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("entries", []), list):
                 self.ctx.warn(f"cloud.gcp: invalid audit log response for {project}")

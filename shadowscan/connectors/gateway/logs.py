@@ -852,6 +852,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # Engine.run shares one key across its gateway jobs; direct connector
         # use gets an isolated key. Never place this key in config or reports.
         self._scope_key = ctx.gateway_identity_key or secrets.token_bytes(32)
+        # "keyed": the operator's stable key, so equal inputs keep equal IDs
+        # across scans. "run": IDs and pseudonyms are scan-local by design.
+        self.identity_scope = (
+            "keyed" if ctx.gateway_identity_key and ctx.gateway_identity_key_stable else "run"
+        )
         self.format = ctx.get("format")
         self.min_events = int(ctx.get("min_events", 1))
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
@@ -1553,6 +1558,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 "label": self.label,
                 "schemas": sorted(c.schemas),
             },
+            # With a per-scan key, another report's ID for this caller differs;
+            # report comparison must not read that as a new or resolved caller.
+            "identity_scope": self.identity_scope,
         }
 
     def _finding_title(self, f: Finding, c: _Caller, top_models: list[str]) -> str:
