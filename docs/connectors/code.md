@@ -29,7 +29,8 @@ including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
 Confidence groups cap repeated observations of the same technology. Unsupported
 dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
-languages use lexical signatures and require matching framework import/dependency
+languages, and framework code patterns from custom signature packs in any
+language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
@@ -66,8 +67,13 @@ Options: `path`/`paths`, `root_ids`, `exclude`, `max_file_size`, `max_files`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
-by default; `strict_coverage` promotes their diagnostics to errors. Declared
-oversize skip globs remain visible omissions. Each root is opened once, and every
+by default, as do undecodable or binary content in an analyzable file, non-regular
+entries named like configuration files, and directory nesting deeper than the
+walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
+oversize skip globs remain visible omissions, and directories skipped by the
+default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
+root that does not affect completeness. See the coverage policy in
+[scanning](../scanning.md#coverage-policy). Each root is opened once, and every
 file (including `CODEOWNERS`) is read relative to it without following a link in
 any path component. A directory replaced by a link while the scan runs therefore
 fails the reads below it, which makes the scan incomplete, instead of redirecting

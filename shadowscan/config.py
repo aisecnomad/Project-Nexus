@@ -83,6 +83,7 @@ _OPTION_FIELDS = {
     "incremental",
     "state_dir",
     "plugins",
+    "plugin_execution",
     "allow_signature_override",
     "allow_private_origin",
     "allow_instance_credentials",
@@ -99,27 +100,6 @@ _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 SHARED_CONNECTOR_KEYS = frozenset(
     {"input", "label", "max_input_bytes", "max_input_file_bytes", "max_input_files"}
 )
-# Keys a built-in connector reads without listing them in ``config_keys``
-# (aliases, alternatives named only in another key's description, and values
-# that code.github / code.gitlab hand to their child filesystem scans). The
-# drift test in tests/unit/test_config_validation.py compares this table with
-# the keys each connector actually reads.
-_UNDOCUMENTED_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
-    "cloud.gcp": frozenset({"max_pages"}),
-    "cloud.oci": frozenset({"max_pages", "region", "tenancy"}),
-    "code.filesystem": frozenset({"paths", "account", "owner", "provider", "metadata"}),
-    # code.github and code.gitlab forward these to the nested filesystem scan.
-    "code.github": frozenset(
-        {"github_token", "repos", "user", "exclude", "max_file_size", "max_files", "scan_secrets"}
-    ),
-    "code.gitlab": frozenset({"projects", "exclude", "max_file_size", "max_files", "scan_secrets"}),
-    "gateway.logs": frozenset({"gateway_name"}),
-    "identity.okta": frozenset({"bearer"}),
-    "lowcode.make": frozenset({"max_pages", "organization_id"}),
-    "lowcode.n8n": frozenset({"max_pages"}),
-    "lowcode.workato": frozenset({"max_pages"}),
-    "lowcode.zapier": frozenset({"max_pages"}),
-}
 # Built-in connector switches are normalised before connector construction so
 # environment expansion cannot turn the string ``"false"`` into a truthy
 # value.  Plugin configuration remains opaque: an approved plugin owns its
@@ -229,21 +209,17 @@ def _display_identifier(value: Any, fallback: str) -> str:
 def accepted_connector_keys(name: str) -> frozenset[str] | None:
     """Return the configuration keys a built-in connector accepts, or None for plugins.
 
-    Built-in connector modules are first-party code, so importing one to read
-    its ``config_keys`` is safe at parse time. Third-party plugins are not
-    imported before they are approved, so their keys cannot be checked and
-    ``None`` is returned.
+    A built-in connector accepts exactly its documented ``config_keys`` and
+    the shared keys. Built-in connector modules are first-party code, so
+    importing one to read its ``config_keys`` is safe at parse time.
+    Third-party plugins are not imported before they are approved, so their
+    keys cannot be checked and ``None`` is returned.
     """
     from shadowscan.connectors import builtin_connector_names, get_connector_class
 
     if name not in builtin_connector_names():
         return None
-    cls = get_connector_class(name)
-    return (
-        frozenset(cls.config_keys)
-        | SHARED_CONNECTOR_KEYS
-        | _UNDOCUMENTED_CONNECTOR_KEYS.get(name, frozenset())
-    )
+    return frozenset(get_connector_class(name).config_keys) | SHARED_CONNECTOR_KEYS
 
 
 def validate_connector_config(name: str, config: Mapping[Any, Any]) -> None:
@@ -354,6 +330,7 @@ class ScanConfig:
     incremental: bool = False
     state_dir: str | None = None
     plugins: list[str] = field(default_factory=list)
+    plugin_execution: str = "thread"
     allow_signature_override: bool = False
     allow_private_origin: bool = False
     allow_instance_credentials: bool = False
@@ -383,6 +360,8 @@ class ScanConfig:
 
     def validate_security_options(self) -> None:
         self.plugins = validate_plugins(self.plugins)
+        if not isinstance(self.plugin_execution, str) or self.plugin_execution not in {"thread", "process"}:
+            raise ConfigValidationError("options.plugin_execution must be thread or process")
         self.allow_signature_override = _boolean_option(
             self.allow_signature_override, "allow_signature_override"
         )
@@ -534,6 +513,7 @@ class ScanConfig:
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
+            plugin_execution=opts.get("plugin_execution", "thread"),
             allow_signature_override=_boolean_option(
                 opts.get("allow_signature_override", False), "allow_signature_override"
             ),

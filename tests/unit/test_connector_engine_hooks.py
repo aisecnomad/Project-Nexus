@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 import pytest
 
 import shadowscan.engine as engine_module
+from shadowscan.comparison import IDENTITY_KEY_ENV
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -116,6 +117,7 @@ def test_filesystem_root_split_hook_validates_labelled_roots_and_ids(tmp_path):
 
 
 def test_declared_run_identity_key_is_shared_within_a_run_and_rotated_between_runs(monkeypatch):
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
     connector, contexts = _recording_connector(uses_run_identity_key=True)
     specs = [ConnectorSpec("platform.recorder", label="one"), ConnectorSpec("platform.recorder", label="two")]
     engine = _run(monkeypatch, connector, specs, parallel=2)
@@ -125,12 +127,27 @@ def test_declared_run_identity_key_is_shared_within_a_run_and_rotated_between_ru
     assert engine.run().complete
     second_run = {ctx.gateway_identity_key for ctx in contexts}
     assert len(second_run) == 1 and second_run != first_run
+    assert not any(ctx.gateway_identity_key_stable for ctx in contexts)
+
+
+def test_operator_identity_key_is_shared_by_every_run(monkeypatch):
+    key = bytes(range(32))
+    monkeypatch.setenv(IDENTITY_KEY_ENV, key.hex())
+    connector, contexts = _recording_connector(uses_run_identity_key=True)
+    engine = _run(monkeypatch, connector, [ConnectorSpec("platform.recorder")])
+    assert engine.run().complete
+    assert [(ctx.gateway_identity_key, ctx.gateway_identity_key_stable) for ctx in contexts] == [
+        (key, True)
+    ] * 2
 
 
 def test_undeclared_connector_receives_no_run_identity_key(monkeypatch):
+    monkeypatch.setenv(IDENTITY_KEY_ENV, bytes(range(32)).hex())
     connector, contexts = _recording_connector()
     _run(monkeypatch, connector, [ConnectorSpec("platform.recorder")])
-    assert [ctx.gateway_identity_key for ctx in contexts] == [None]
+    assert [(ctx.gateway_identity_key, ctx.gateway_identity_key_stable) for ctx in contexts] == [
+        (None, False)
+    ]
 
 
 @pytest.mark.parametrize("approved", [False, True])

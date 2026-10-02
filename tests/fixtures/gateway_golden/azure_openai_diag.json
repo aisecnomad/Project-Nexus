@@ -3558,7 +3558,7 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.992,
+   "confidence": 0.991,
    "likelihood": "confirmed",
    "risk": {
     "score": 0,
@@ -3655,6 +3655,7 @@
       "azure-openai"
      ]
     },
+    "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|model": 1,
      "framework.microsoft-agent-framework|user_agent": 1,

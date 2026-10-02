@@ -100,7 +100,7 @@ signatures:
         patterns: ['(?i)\bOpenAI/(?:Python|JS|NET|Go|Java|Ruby)', '(?i)openai-(?:python|node|go|java|ruby|dotnet)', '(?i)\bAsyncOpenAI\b']
         weight: 0.7
       - type: model
-        patterns: ['^(?:gpt-|o1|o3|o4|chatgpt-|text-embedding-|dall-e|whisper|tts-|davinci|babbage|computer-use-preview|codex-)']
+        patterns: ['^(?:gpt-|chatgpt-|text-embedding-|codex-|tts-\d|(?:o1|o3|o4|dall-e|whisper|davinci|babbage|computer-use-preview)(?![A-Za-z0-9]))']
         weight: 0.8
       - type: secret
         # Only OpenAI-specific shapes: the project / service-account / admin
@@ -194,9 +194,9 @@ signatures:
         patterns: ['^claude-', 'anthropic\.claude-']
         weight: 0.8
       - type: secret
-        patterns: ['\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{20,}\b']
+        patterns: ['\bsk-ant-(?:api|admin|oat)\d{2}-[A-Za-z0-9_-]{20,}\b']
         weight: 0.9
-        description: Anthropic API key
+        description: Anthropic API key or Claude Code OAuth token
 
   - id: provider.google-gemini
     name: Google Gemini API (AI Studio)
@@ -406,7 +406,7 @@ signatures:
         values: ["bedrock:*", "bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:Converse", "bedrock:ConverseStream", "bedrock:Retrieve", "bedrock:RetrieveAndGenerate", "bedrock:GetFoundationModel", "bedrock:ListFoundationModels", "bedrock:CallWithBearerToken"]
         weight: 0.6
       - type: model
-        patterns: ['^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|stability|deepseek|writer|qwen|openai|twelvelabs)\.[a-z0-9.-]+(?::\d+)?(?:-v\d)?', '^arn:aws:bedrock:']
+        patterns: ['^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|stability|deepseek|writer|qwen|openai|twelvelabs)\.[a-z0-9.]+-[a-z0-9.-]+(?::\d+)?', '^arn:aws:bedrock:']
         weight: 0.85
       - type: user_agent
         # "Bedrock" alone also names Minecraft Bedrock clients: require the AWS
@@ -847,8 +847,12 @@ signatures:
         names: [HF_TOKEN, HUGGINGFACEHUB_API_TOKEN, HUGGING_FACE_HUB_TOKEN, HF_API_KEY, HF_HUB_TOKEN]
         weight: 0.6
       - type: domain
-        values: [api-inference.huggingface.co, router.huggingface.co, huggingface.co, "*.endpoints.huggingface.cloud"]
+        values: [api-inference.huggingface.co, router.huggingface.co, "*.endpoints.huggingface.cloud"]
         weight: 0.8
+      - type: domain
+        # Model cards, dataset downloads and docs links are not inference.
+        values: [huggingface.co]
+        weight: 0.15
       - type: image
         patterns: ['huggingface/text-generation-inference', 'huggingface/text-embeddings-inference']
         weight: 0.85
@@ -955,7 +959,7 @@ signatures:
         values: [api.perplexity.ai]
         weight: 0.9
       - type: model
-        patterns: ['^(?:sonar|pplx-)']
+        patterns: ['^(?:sonar(?:$|-(?:pro|reasoning|deep|small|medium|large|online|chat))|pplx-)']
         weight: 0.8
       - type: secret
         patterns: ['\bpplx-[A-Za-z0-9]{40,}\b']
@@ -1150,8 +1154,13 @@ signatures:
         patterns: ['\benv\.AI\.run\s*\(', '\[ai\]\s*\n\s*binding\s*=\s*"AI"', '\bAi\s*\(\s*env\.AI\s*\)']
         weight: 0.85
       - type: domain
-        values: [gateway.ai.cloudflare.com, "re:^api\\.cloudflare\\.com$"]
+        values: [gateway.ai.cloudflare.com]
         weight: 0.7
+      - type: domain
+        # Corroboration only: the general REST API also serves DNS, zones and
+        # account management, and domain signals cannot match a path.
+        values: [api.cloudflare.com]
+        weight: 0.1
       - type: model
         patterns: ['^@cf/', '^@hf/']
         weight: 0.9

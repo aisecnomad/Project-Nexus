@@ -86,7 +86,7 @@ Existing Make targets provide the next steps:
 
 ```bash
 make test-fast       # full test suite without coverage, stop at first failure
-make test            # full suite with the overall coverage floor
+make test            # full suite with line and branch coverage and the overall floor
 make coverage-gate   # connector coverage; run after make test
 make check           # all local quality gates
 ```
@@ -102,8 +102,10 @@ python -m coverage json -o /tmp/shadowscan-coverage.json
 python -m tools.coverage_gate /tmp/shadowscan-coverage.json
 ```
 
-The gate requires the JSON report argument; running one test is not enough to
-measure every connector. See [quality gates](#quality-gates) for CI requirements.
+The gate requires the JSON report argument and branch data; running one test is
+not enough to measure every connector. See [quality gates](#quality-gates) for
+CI requirements, and the [testing guide](docs/testing.md#the-full-suite) for the
+isolation every test runs under.
 
 ## Trust model
 
@@ -122,12 +124,16 @@ exact supported Python matrix and dependency pins.
 | Gate | Command | Requirement |
 |------|---------|-------------|
 | Lint | `ruff check shadowscan tests tools` | No errors |
-| Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release` | No errors |
-| Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate |
-| Connectors | `make coverage-gate` (after tests) | ≥ 75% per connector |
+| Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py` | No errors |
+| Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
+| Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
+| Secrets | `pre-commit run no-hardcoded-secrets --all-files` | No credential-shaped strings outside `tests/` |
+
+CI measures coverage on one Linux job (Python 3.11) and runs the same full
+suite untraced on the others; `pyproject.toml` enables branch coverage.
 
 Ruff enforces a 110-column line length outside `tests/` and flags loop
 variables captured by closures (B023). Mypy requires annotated definitions
@@ -140,7 +146,7 @@ The same gates as individual commands:
 python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 ruff check shadowscan tests tools
-mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py
 pip-audit --progress-spinner off
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate
@@ -152,6 +158,11 @@ extras for users, but the test suite is gated with them installed, so use
 `".[cloud,dev]"` as shown above. CI installs the hash-locked
 `requirements.lock`, which contains every cloud SDK. Offline fixtures cover the
 cloud connectors; do not commit live tenant exports.
+
+Dependabot updates only the version ranges in `pyproject.toml`, not the hash
+locks. Refresh the locks by hand as described in
+[docs/production.md](docs/production.md); the weekly `audit.yml` workflow
+re-audits every lock between commits.
 
 Do not commit private adjudicated evaluation corpora.
 
@@ -198,7 +209,7 @@ contract. In brief:
 2. Implement `collect()` (live API) and `analyze()` (offline records → findings).
 3. Register in `shadowscan/connectors/__init__.py`.
 4. Add offline test fixtures under `tests/fixtures/`.
-5. Achieve ≥ 75% statement coverage.
+5. Achieve ≥ 75% coverage of statements and branches (the per-connector floor).
 6. Document in `docs/connectors.md` with configuration keys, required API
    scopes, and offline export format.
 
@@ -235,8 +246,8 @@ independent human approval.
 Before merging, the maintainer checks:
 
 - The PR targets `main`, is up to date, conflicts are resolved, and current CI
-  and CodeQL checks pass, including the aggregate `CI gate` and strict checks `test (3.11)`,
-  `test (3.12)` and `analyze`. CI also runs signature validation, lint, typing,
+  and CodeQL checks pass, including the aggregate `CI gate` and the strict
+  required checks `test (3.11)`, `test (3.12)` and `analyze`. CI also runs signature validation, lint, typing,
   dependency audit, coverage, detection evaluation, and package and smoke checks.
 - The change respects the trust model, documents compatibility changes, and
   includes appropriate validation. An AI-assisted change must meet the same
@@ -251,8 +262,10 @@ Do not read a merged pull request, green check, AI review or version number as
 evidence that a second person examined the change. Repository settings are
 separate from this policy: inspect the
 [live rules](https://github.com/aisecnomad/Project-Nexus/rules) and PR checks
-before merging. The ruleset has no configured bypass actors, but it blocks
-nothing while it is disabled. Do not disable checks or review rules to make a
+before merging. The review/CI ruleset has no configured bypass actors; other
+rulesets may differ. Every ruleset blocks nothing while disabled. Apply and
+verify the [versioned merge policy](docs/operations/merge-policy.md) with repository
+administration access. Do not disable checks or review rules to make a
 merge possible, and recheck live enforcement before relying on it.
 
 **Independent human review is required before any tagged release.** The

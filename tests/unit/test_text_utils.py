@@ -25,6 +25,28 @@ def test_fractional_epoch_strings_support_gateway_timestamps():
     assert parse_timestamp("1704067200125") == datetime(2024, 1, 1, microsecond=125000, tzinfo=UTC)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [1704067200.125, 1704067200125, 1704067200125000, 1704067200125000000],
+    ids=["seconds", "milliseconds", "microseconds", "nanoseconds"],
+)
+@pytest.mark.parametrize("as_text", [False, True], ids=["number", "text"])
+def test_epoch_unit_is_inferred_from_magnitude(value, as_text):
+    # Exporters such as OpenTelemetry and Envoy write microseconds or
+    # nanoseconds; those must not silently lose first/last-seen times.
+    raw = str(value) if as_text else value
+    assert parse_timestamp(raw) == datetime(2024, 1, 1, microsecond=125000, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [10**19, 10**21, 9 * 10**17, -1704067200125000],
+    ids=["twenty-digits", "twenty-two-digits", "beyond-year-9999", "negative"],
+)
+def test_epoch_values_outside_every_unit_remain_invalid(value):
+    assert parse_timestamp(value) is None
+
+
 def test_redact_shim_remains_a_compatibility_alias():
     token = "sk-proj-exampletokenvalue"
     assert redact(token, keep=8) == credential_id(token)
@@ -34,3 +56,12 @@ def test_sanitize_record_alias_is_replaced_by_sanitize():
     token = "sk-proj-exampletokenvalue"
     assert not hasattr(text, "sanitize_record")
     assert sanitize({"token": token})["token"] != token
+
+
+def test_compact_calendar_days_are_dates_not_epoch_seconds():
+    # A gateway log's ``date: 20240101`` field was read as epoch seconds (1970).
+    assert parse_timestamp("20240101") == datetime(2024, 1, 1, tzinfo=UTC)
+    assert parse_timestamp("20240101") != parse_timestamp(20240101.0)
+    assert parse_timestamp("20241399") is None  # an impossible day is no timestamp
+    assert parse_timestamp("1704067200") == datetime(2024, 1, 1, tzinfo=UTC)
+    assert parse_timestamp("12345678") == datetime.fromtimestamp(12345678, tz=UTC)

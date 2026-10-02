@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -13,7 +14,7 @@ import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
-from shadowscan.connectors.cloud.oci import OciConnector
+from shadowscan.connectors.cloud.oci import OciConnector, _model_dict
 from shadowscan.models import Kind, ScanStats
 from shadowscan.utils.redaction import REDACTED, sanitize
 
@@ -522,11 +523,114 @@ def test_oci_pages_accept_item_collections_and_reject_unknown_shapes(index, sdk)
     assert scanner.ctx.stats.incomplete
 
 
-def test_oci_record_conversion_falls_back_to_plain_attributes(sdk, monkeypatch):
+class _SdkLikeModel:
+    """Stores fields as OCI SDK models do: private attributes behind the names in ``swagger_types``."""
+
+    def __init__(self, **values: Any) -> None:
+        self.swagger_types = dict.fromkeys(values, "object")
+        self.attribute_map = {name: name.title().replace("_", "") for name in values}
+        for name, value in values.items():
+            setattr(self, f"_{name}", value)
+
+    def __getattr__(self, name: str) -> Any:
+        # Reached only for names without an instance attribute, like SDK properties.
+        if name in self.__dict__.get("swagger_types", {}) and f"_{name}" in self.__dict__:
+            return self.__dict__[f"_{name}"]
+        raise AttributeError(name)
+
+
+_CONVERSION_FAILURE = "could not convert {} to a record; coverage incomplete"
+
+
+def test_oci_records_use_sdk_field_names_not_private_attributes(index, sdk):
+    scanner = connector(index)
+    tool = sdk.generative_ai_agent.models.ToolSummary(
+        id="ocid1.genaiagenttool.oc1..sql",
+        tool_config=sdk.generative_ai_agent.models.SqlToolConfig(tool_config_type="SQL_TOOL_CONFIG"),
+    )
+    assert "_id" in vars(tool) and "id" not in vars(tool)  # why __dict__ is not a record
+    record = scanner._d(tool)
+    assert record is not None
+    assert record["id"] == "ocid1.genaiagenttool.oc1..sql"
+    assert record["tool_config"]["tool_config_type"] == "SQL_TOOL_CONFIG"
+    assert not scanner.ctx.stats.warnings and not scanner.ctx.stats.incomplete
+
+
+def test_oci_records_map_sdk_like_models_without_the_sdk(index, monkeypatch):
+    monkeypatch.setitem(sys.modules, "oci", None)  # the SDK cannot be imported
+    scanner = connector(index)
+    agent = _SdkLikeModel(
+        id=AGENT,
+        display_name="claims-assistant",
+        time_created=datetime(2026, 1, 2, 3, 4, 5),
+        knowledge_base_ids=("kb1",),
+        llm_config=_SdkLikeModel(model_id="cohere.command-r-plus"),
+        freeform_tags={"owner": "claims-team"},
+    )
+    assert scanner._d(agent) == {
+        "id": AGENT,
+        "display_name": "claims-assistant",
+        "time_created": "2026-01-02T03:04:05+00:00",
+        "knowledge_base_ids": ["kb1"],
+        "llm_config": {"model_id": "cohere.command-r-plus"},
+        "freeform_tags": {"owner": "claims-team"},
+    }
+    assert not scanner.ctx.stats.warnings and not scanner.ctx.stats.incomplete
+
+
+def test_oci_sdk_free_mapping_matches_the_sdk(sdk):
+    models = sdk.generative_ai_agent.models
+    agent = models.AgentSummary(
+        id=AGENT,
+        display_name="claims-assistant",
+        knowledge_base_ids=["kb1"],
+        time_created=datetime(2026, 1, 2, 3, 4, 5),
+        freeform_tags={"owner": "claims-team"},
+    )
+    tool = models.ToolSummary(id="t", tool_config=models.SqlToolConfig(tool_config_type="SQL_TOOL_CONFIG"))
+    for model in (agent, tool):
+        assert _model_dict(model) == sdk.util.to_dict(model)
+
+
+def test_oci_unconvertible_objects_are_incomplete_never_partial_records(index, sdk, monkeypatch):
+    scanner = connector(index)
+    # The SDK returns objects it does not recognise unchanged: not a record.
+    assert scanner._d(SimpleNamespace(id="ocid1.x", display_name="x")) is None
     monkeypatch.setattr(sdk.util, "to_dict", Mock(side_effect=ValueError("unsupported model")))
-    plain = SimpleNamespace(id="ocid1.x", display_name="x")
-    assert OciConnector._d(plain) == {"id": "ocid1.x", "display_name": "x"}
-    assert OciConnector._d(object()) == {}
+    assert scanner._d(sdk.generative_ai_agent.models.AgentSummary(id=AGENT, display_name="x")) is None
+    assert scanner.ctx.stats.warnings == [
+        "cloud.oci: " + _CONVERSION_FAILURE.format("SimpleNamespace"),
+        "cloud.oci: " + _CONVERSION_FAILURE.format("AgentSummary"),
+    ]
+    assert scanner.ctx.stats.incomplete
+
+
+def test_oci_sdk_free_mapping_rejects_unknown_objects_and_missing_fields(index, monkeypatch):
+    monkeypatch.setitem(sys.modules, "oci", None)
+    scanner = connector(index)
+    partial = _SdkLikeModel(id=AGENT)
+    partial.swagger_types["display_name"] = "str"  # declared, but never stored
+    assert scanner._d(partial) is None
+    assert scanner._d(object()) is None
+    assert scanner._d(_SdkLikeModel(id=AGENT, owner=object())) is None
+    assert len(scanner.ctx.stats.warnings) == 3 and scanner.ctx.stats.incomplete
+
+
+def test_oci_unconvertible_listing_item_is_skipped_and_neighbours_kept(index, sdk):
+    scanner = connector(index)
+    client = Mock()
+    client.list_oda_instances.return_value = _page(
+        sdk,
+        [
+            SimpleNamespace(id="ocid1.odainstance.oc1..opaque"),
+            sdk.oda.models.OdaInstanceSummary(id="ocid1.odainstance.oc1..hr", display_name="hr-assistant"),
+        ],
+    )
+    scanner._client = lambda cls, region=None: client  # type: ignore[method-assign]
+    records = list(scanner._collect_oda(sdk, REGION, COMPARTMENT))
+    assert [(r["_kind"], r["display_name"]) for r in records] == [("oda-instance", "hr-assistant")]
+    assert scanner.ctx.stats.warnings == ["cloud.oci: " + _CONVERSION_FAILURE.format("SimpleNamespace")]
+    assert scanner.ctx.stats.incomplete
 
 
 def context(index, **config):

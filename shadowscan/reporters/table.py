@@ -10,7 +10,7 @@ from rich.table import Table
 from rich.text import Text
 
 from shadowscan.models import Finding, ScanResult
-from shadowscan.reporters._publication import publication_stats
+from shadowscan.reporters._publication import publication_stats, without_connector_prefix
 from shadowscan.utils.output import terminal_text
 
 _LEVEL_STYLE = {
@@ -139,12 +139,12 @@ def print_table(
     if errs:
         console.print("[bold red]Connector errors:[/bold red]")
         for c, error in errs[:20]:
-            console.print(Text(terminal_text(f"  {c}: {error}"), style="red"))
+            console.print(Text(terminal_text(f"  {c}: {without_connector_prefix(c, error)}"), style="red"))
     warns = [(st["connector"], warning) for st in stats for warning in st["warnings"]]
     if warns and (verbose or not result.complete):
         console.print("[bold yellow]Warnings:[/bold yellow]")
         for c, w in warns[:30]:
-            console.print(Text(terminal_text(f"  {c}: {w}"), style="yellow"))
+            console.print(Text(terminal_text(f"  {c}: {without_connector_prefix(c, w)}"), style="yellow"))
     totals = " · ".join(
         f"{st['connector']}: {st['objects_examined']} objects, {st['findings']} findings{_stat_state(st)}"
         for st in stats

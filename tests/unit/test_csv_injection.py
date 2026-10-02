@@ -7,7 +7,7 @@ import io
 
 import pytest
 
-from shadowscan.models import Evidence, Finding, Kind, ScanResult, Surface
+from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.reporters.csv_ import _safe_cell, render_csv
 
 TRIGGERS = ("=", "+", "-", "@")
@@ -103,6 +103,8 @@ def test_comma_reader_still_recovers_each_value_behind_its_marker():
         resource_type="repository",
         owner="@org/team",
     )
-    row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[finding])))))
+    # A complete scan has no status row before its findings.
+    stats = [ScanStats(connector="code.filesystem", started_at=now_iso())]
+    row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[finding], stats=stats)))))
     assert row["title"] == "x;'=2+5;"
     assert row["owner"] == "'@org/team"

@@ -61,7 +61,6 @@ signatures:
           - okta.logs.read
           - okta.users.manage.self
           # Slack
-          - admin
           - admin.users:write
           - admin.apps:write
           - admin.conversations:write
@@ -77,24 +76,21 @@ signatures:
           - admin:repo_hook
           - delete_repo
           - write:org
-          - workflow
           - administration:write
           - organization_administration:write
           - members:write
           - secrets:write
           - actions:write
           - organization_secrets:write
-          # GitLab (api is also the Salesforce full-API scope)
-          - api
+          # GitLab
           - sudo
           - admin_mode
           - write_repository
           # Salesforce
-          - full
-          - web
-          - refresh_token
-          - offline_access
           - sfap_api
+          # Matching is by bare scope name across providers, so names that are
+          # routine elsewhere are not listed: OIDC offline_access, Salesforce
+          # refresh_token / web / full, GitLab api, GitHub workflow, Slack admin.
           # AWS IAM
           - "*"
           - "*:*"

@@ -13,6 +13,11 @@ to another origin. Denied access, collection failures, pagination limits and
 oversized or slow responses (see
 [resource limits](production.md#resource-limits-and-incomplete-scans)) make
 the scan incomplete rather than producing a clean result.
+TLS verification cannot be disabled and `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` are
+ignored, so a private endpoint admitted with `--allow-private-origin` behind
+internal PKI fails verification (and the scan is incomplete) unless the connector
+offers an explicit CA option. Only `identity.jwt` does today (`ca_bundle`, JWKS
+endpoint); other connectors trust the default CA store.
 
 Offline file and directory inputs use shared safety limits: 10,000 files,
 32 MiB per file and 256 MiB total per connector by default. JSONL, CSV and gateway
@@ -29,6 +34,11 @@ lists them after each connector's own keys. `code.filesystem`, `code.github` and
 ignore those three keys, but a value supplied for one must still be a positive
 integer or the entry fails validation.
 
+Connectors that page through a live API accept `max_pages`, a positive integer
+(default 1000; larger values are capped at 1000). Zero, a negative or fractional
+number, a boolean or non-numeric text is a configuration error, never a silent
+one-page scan; reaching the page bound marks coverage incomplete.
+
 See [scan state and runtime correlation](scanning.md) for incremental scans,
 gateway workload bindings and completion semantics.
 
@@ -38,6 +48,51 @@ the YAML file or `--set` option is parsed (`connector 'identity.okta' does not
 accept 'fetch_tokenz'`), so a typo cannot silently disable an option. Keys
 starting with an underscore are reserved for the engine. Third-party plugins
 are not imported while parsing, so their keys are not checked at that point.
+
+## Third-party plugin execution
+
+Plugins still require an explicit allowlist in `options.plugins` or
+`--allow-plugin NAME`. The default `options.plugin_execution: thread` retains
+existing behavior. For reviewed plugins that can block inside an SDK or native
+extension, select a dedicated spawned process per connector:
+
+```yaml
+options:
+  plugins: [platform.example]
+  plugin_execution: process
+  connector_timeout_seconds: 120
+connectors:
+  - name: platform.example
+```
+
+The equivalent CLI override is `--plugin-execution process`. Built-in connectors
+continue to use the existing thread backend. A plugin is imported only inside
+its child process, and its original completion deadline includes import,
+collection, result serialization and transfer. The parent accepts only bounded
+JSON results (16 MiB maximum), validates their model and statistics, and discards
+results on timeout, crash, serialization failure or malformed output. These
+failures mark the scan incomplete (exit 3); they never fall back to threads.
+Each terminated worker frees capacity for queued connectors. Termination uses
+SIGTERM and, if needed, SIGKILL with at most 0.5 seconds of waiting at each step;
+the parent retains a separate deadline guard with two seconds for cleanup.
+
+This is **lifecycle isolation, not a security sandbox**. A child retains the
+scanner's operating-system privileges and environment, including credentials.
+Sibling connector configurations are not passed to it. Descendant subprocesses
+and external side effects are not rolled back by worker termination; plugins
+that launch other programs need external process-group/container supervision.
+A cache or record export published before termination may remain on disk; the
+failed connector's manifest entry is explicitly incomplete and not exported.
+Do not consume such artifacts as accepted results.
+
+The backend uses `spawn` on supported POSIX platforms (Linux and macOS); embedding
+applications must call the scanner behind Python's usual
+`if __name__ == "__main__":` guard. Plugin configuration and supplied signature
+objects must be serializable by Python's spawn machinery. Workers are daemonic,
+so a plugin cannot start its own `multiprocessing.Process` children. Choose the
+thread backend or an external supervised scanner process for such plugins.
+Neither backend enforces CPU/memory quotas or prevents deliberate malicious
+filesystem or network activity.
 
 ## Validation maturity and evidence status
 
@@ -114,7 +169,8 @@ including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
 Confidence groups cap repeated observations of the same technology. Unsupported
 dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
-languages use lexical signatures and require matching framework import/dependency
+languages, and framework code patterns from custom signature packs in any
+language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
@@ -155,6 +211,12 @@ fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
 `metadata` is a mapping merged into every finding's metadata.
+`oversize_skip_globs` replaces the default list of case-insensitive file-name
+globs. The defaults cover lockfiles, minified bundles, source maps, images,
+fonts, archives and compiled artifacts, and a glob with `/` matches the relative
+path. A file over `max_file_size` that matches one is skipped with a warning
+and the scan stays complete, even under `strict_coverage`. Any other oversize
+analyzable file makes coverage incomplete.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
 relative to it without following a link in any path component. A root that
@@ -238,7 +300,11 @@ match AI SaaS signatures or hold privileged scopes, and service apps
 (`application_type: service` / `client_credentials` / token-exchange).
 Token: SSWS API token (`token`, env `OKTA_API_TOKEN`) or OAuth bearer
 (`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read`; `bearer` wins when
-both are set. Options: `include_inactive`, `fetch_tokens`.
+both are set. Options: `include_inactive`, `fetch_tokens`. A 429 is retried
+after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
+per wait); exhausted retries mark the scan incomplete.
+Live collection also needs `org_url` (`https://<org>.okta.com`, env
+`OKTA_ORG_URL`).
 
 ### `identity.entra`
 Microsoft Graph: service principals, delegated `oauth2PermissionGrants`,
@@ -252,6 +318,14 @@ coverage incomplete. Their permission evidence remains available for investigati
 and cannot establish an approved registry binding. A service principal exported
 with conflicting records is reported the same way, keeping AI evidence from up to
 16 of its snapshots (64 evidence items) without choosing one snapshot's identity.
+
+Client credentials: `tenant_id`, `client_id` and `client_secret` (env
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`).
+`include_first_party: true` also reports Microsoft first-party service
+principals that match no AI signature; Copilot ones are always kept.
+`max_app_role_lookups` caps the per-service-principal `appRoleAssignments`
+calls (default 2000). Reaching the cap leaves app-only permissions partial and
+the scan incomplete.
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
@@ -274,21 +348,28 @@ unverifiable scope makes collection incomplete; retained observations cannot be
 approved or merged with observations from another unresolved connector instance.
 Google Workspace inventory bindings must include the matching customer in
 `discovery.accounts`. Regenerate older cards whose account list is empty.
-Live user suspension flags, when present, must be boolean. A malformed flag
-makes coverage incomplete while valid neighboring users remain eligible for
-collection.
+`max_users` caps the users enumerated (default 10000); reaching it makes the
+scan incomplete. Live user suspension flags, when present, must be boolean. A
+malformed flag makes coverage incomplete while valid neighboring users remain
+eligible for collection.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
 audiences and scopes, AI-named apps. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
+Options: `domain` (tenant domain such as `acme.eu.auth0.com`, env
+`AUTH0_DOMAIN`) and the M2M application's `client_id` and `client_secret` (env
+`AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`).
 
 ### `identity.jwt`
 Decodes tokens (never stored) and classifies the holder as `human`, `service`,
 `workload`, `delegated`, `agent` or `delegated-agent` using issuer-specific
 conventions (Entra `idtyp=app`, Okta `cid == sub`, Auth0 `gty`, Google service
 accounts, Cognito, Keycloak, SPIFFE) plus RFC 8693 `act` chains and
-agent-related claims. Scopes/roles are classified by the policy signatures;
+agent-related claims. GitHub Actions, Kubernetes service-account and GitLab CI
+job tokens are `workload` identities. An agent-related claim counts only with a
+meaningful value: `bot: false`, `purpose: ""` or `tools: []` do not make an
+agent. Scopes/roles are classified by the policy signatures;
 lifetime and algorithm hygiene are flagged. Optional `jwks_url` verification
 fetches a bounded JWKS through the shared HTTPS client and accepts only RS256,
 ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
@@ -297,6 +378,16 @@ unverified token's issuer does not choose or authorize a key source. The JWKS UR
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
 `metadata.verified` as signature evidence, not permission to act.
+A token analyzed without `jwks_url`, or whose verification failed, carries
+`metadata.signature_verified: false`, the `signature-unverified` tag and a
+`jwt:signature` evidence item: its issuer family, identity type and privileged
+scopes come from unauthenticated claims and can be forged. The marker does not
+change confidence or risk. For a JWKS endpoint behind a private CA, set
+`ca_bundle` to a PEM file; it replaces the default CA store for that fetch and
+certificate verification stays on.
+
+Tokens come from `input` (one token per line, or JSON) or from the `tokens`
+list in the connector entry. Keep live tokens out of committed configuration.
 
 CLI equivalents: `--jwks-url`, `--expected-issuer`, and repeatable
 `--jwt-algorithm`. The latter two require `--jwks-url`.
@@ -340,6 +431,11 @@ token audience. A denied child request or failed continuation marks coverage
 incomplete while retaining findings from other environments. Before relying on
 live coverage, verify the application's Power Platform roles and known apps
 in a read-only tenant canary.
+Options: `tenant_id`, `client_id` and `client_secret` (env `AZURE_TENANT_ID`,
+`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`; the client must be a Power Platform
+application user). `environments` restricts live collection to the listed
+environments, matched by name or display name. `include_bots` defaults to
+true; `false` skips the Dataverse query for Copilot Studio agents.
 
 ### `lowcode.salesforce`
 SOQL/Tooling: `BotDefinition`/`BotVersion` (Einstein bots & Agentforce
@@ -347,21 +443,34 @@ agents), `GenAiPlannerDefinition`/`GenAiPluginDefinition`/`GenAiFunctionDefiniti
 (topics, actions, Apex/Flow targets), `GenAiPromptTemplate`, `FlowDefinitionView`
 with AI hints, `ConnectedApplication` + `OauthToken` (user-authorised apps,
 aggregated). Auth: `access_token` or client-credentials connected app.
+Options: `instance_url` (`https://<org>.my.salesforce.com`, env
+`SFDC_INSTANCE_URL`), `access_token` (env `SFDC_ACCESS_TOKEN`) or the connected
+app's `client_id` and `client_secret` (env `SFDC_CLIENT_ID`,
+`SFDC_CLIENT_SECRET`), `api_version` (default `v62.0`) and `max_pages` (per
+query, at most 1000).
 
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
 `sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
+
+Options: `instance` (env `SNOW_INSTANCE`), `username` and `password` (env
+`SNOW_USERNAME`, `SNOW_PASSWORD`) or `token` (env `SNOW_TOKEN`) for a bearer
+token instead of basic auth; `max_pages` (per table, at most 1000); `input`
+for an offline JSON export of the table records.
 
 ### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
 GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
 steps (→ code-exec), models. Live pagination is bounded by `max_pages`
-(default 1000). Make scans one `team_id`, or every team of an
+(default and maximum 1000). Make scans one `team_id`, or every team of an
 `organization_id` when `team_id` is unset.
 An n8n workflow needs a nonempty provider ID for a usable resource identity.
 Exported blueprints without an ID retain detected AI evidence under an unresolved
 identity, make collection incomplete, and cannot be approved by a registry card.
+n8n authenticates with `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`),
+against `api_url` (env `N8N_API_URL`, for example
+`https://n8n.example.com/api/v1`).
 
 ## SaaS
 
@@ -386,6 +495,10 @@ installed apps per team (capped by `max_teams`).
 Malformed app IDs, conflicting expanded identities and malformed nested
 definitions or permissions make collection incomplete. An installation ID is
 not a fallback catalog app ID. Valid neighboring records remain available.
+Options: `tenant_id`, `client_id` and `client_secret` (env `AZURE_TENANT_ID`,
+`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`) or `access_token` (env
+`GRAPH_ACCESS_TOKEN`). `include_store: true` also lists store apps in the
+catalog; installed apps are always inspected.
 
 ### `saas.github-apps`
 Org installations with permissions and repository selection (AI reviewers,
@@ -408,10 +521,24 @@ Notion and Atlassian provider error envelopes make collection incomplete even
 when they include empty record arrays; the same rule applies to offline exports.
 Valid observations from other pages and products remain available.
 
+Notion options: `token` (env `NOTION_TOKEN`), an internal integration secret
+whose integration has the *read user information* capability for
+`GET /v1/users`; `max_pages`; `input` for an offline `/v1/users` export.
+
+Atlassian options: `site` (`https://<org>.atlassian.net`, env
+`ATLASSIAN_SITE`), a site admin `email` and `api_token` (env `ATLASSIAN_EMAIL`,
+`ATLASSIAN_API_TOKEN`), and `products` (`jira`, `confluence`; default both).
+Zoom options: `account_id`, `client_id` and `client_secret` (env
+`ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`) for a
+Server-to-Server OAuth app, or `access_token` (env `ZOOM_ACCESS_TOKEN`).
+
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
 and privileged/data scopes (`keep_all: true` to emit everything).
+`platform` (default `saas`) names the export's source, for example
+`google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
+and resource IDs and sets the provider, so keep it stable between scans.
 
 ## Cloud
 
@@ -424,6 +551,13 @@ container. Those values are ordinary configuration rather than credentials, so
 they are not also removed from sibling fields such as ARNs; values under
 sensitive names and recognizable credential formats are removed everywhere.
 Findings record environment variable names only.
+
+Instance and workload credentials are used only when the scan-wide
+`options.allow_instance_credentials` is true (default false). These are EC2 or
+ECS roles, Azure managed identity, GCP metadata Application Default
+Credentials, and OCI instance or resource principals. The engine replaces an
+`allow_instance_credentials` value in a connector entry with the scan-wide
+value; see [Production](production.md).
 
 ### `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
@@ -468,6 +602,16 @@ are not evaluated; partial semantics make coverage incomplete. S3/IAM-only
 wildcards do not independently produce LLM grants. Effective access also depends
 on applicable policies outside this collector's view.
 
+Role trust policies are parsed, not searched as text. A service principal
+(`Principal.Service`) or OIDC provider (`Principal.Federated`) is trusted only
+through an `Allow` statement whose `Action` includes `sts:AssumeRole`,
+`sts:AssumeRoleWithWebIdentity` or `sts:AssumeRoleWithSAML` (IAM wildcards, any
+case). `Deny`, `NotAction` and `NotPrincipal` statements, and service names in a
+`Sid` or `Condition`, never establish trust; conditions are not evaluated. A
+trusted Bedrock or AgentCore principal tags the role `agent-execution-role`. The
+document may be an object, JSON text or URL-encoded JSON; a malformed one is
+reported as unknown trust (`malformed-trust-policy`) and makes the scan incomplete.
+
 AWS clients ignore configured endpoint URL overrides and use bundled SDK models;
 external model paths (`AWS_DATA_PATH`, user SDK model directories) cannot replace
 service endpoint rules, including after role assumption. This does not replace
@@ -485,9 +629,14 @@ shows access, not observed agent execution.
 Cloud Run discovery enumerates project locations and then lists services in each
 concrete region (`run.locations.list` and `run.services.list` permissions).
 Unreachable locations reported by GCP make the scan incomplete. `max_projects`
-limits discovery without loading all projects first; `max_pages` (default 1000)
-bounds every paginated call; resource lists stop at 500 pages and audit-log
+limits discovery without loading all projects first; `max_pages` (default and
+maximum 1000) bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.
+`locations` lists the Vertex AI and Dialogflow locations to query (default
+`us-central1`, `us-east4`, `us-west1`, `europe-west1`, `europe-west4`,
+`asia-southeast1`, `asia-northeast1`). `credentials_file` names an explicit
+Google credentials file (env `GOOGLE_APPLICATION_CREDENTIALS`); otherwise the
+local gcloud Application Default Credentials are used.
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
@@ -504,6 +653,10 @@ Foundry agent discovery targets the classic Agent Service contract:
 require their own contract and are not implied by this support. Missing, denied
 or malformed collections remain incomplete; pagination must finish before
 absence can be inferred.
+`subscriptions` lists the subscription IDs to scan (default: every visible
+subscription). `include_app_settings` (default true) reads Web and Function
+app settings, recording names and checking values for credentials; `false`
+skips them.
 
 ### `cloud.oci`
 Generative AI Agents (agents, endpoints, tools, knowledge bases), Digital
@@ -514,13 +667,16 @@ instance or resource principal.
 Options: `profile`, `config_file`, `auth`, `tenancy` (default: from the
 profile or the principal signer), `region` (session region for
 `instance_principal`; config auth uses the profile's region), `regions`,
-`compartments`, `max_pages` (default 1000).
+`compartments`, `max_pages` (default and maximum 1000).
 Function inspection retrieves application and function details, combines
 inherited configuration with function overrides, and supports both legacy image
 fields and `source_details.image`. Denied or invalid detail reads mark coverage
 incomplete while preserving available resource evidence. Audit credentials need
 the corresponding application/function read permissions; list-only access is
 insufficient to inspect configuration.
+SDK objects become records through `oci.util.to_dict`, or through the model's
+declared fields when the SDK cannot be imported; an object that cannot be
+converted is skipped with a warning and makes the scan incomplete.
 
 ## Least privilege
 
@@ -528,9 +684,15 @@ All connectors are read-only. Prefer dedicated audit credentials:
 
 | Connector | Minimum |
 |---|---|
-| GitHub | fine-grained PAT: contents/metadata read (`secrets:read` optional) |
+| GitHub | fine-grained PAT: contents/metadata read; `secrets:read` for Actions secret names, plus `variables:read`, Codespaces `secrets:read` and Dependabot `secrets:read` for the other credential-name listings (each optional; a denied listing marks coverage incomplete) |
 | GitLab | PAT `read_api`, `read_repository` |
 | Okta | API token from a read-only admin, or OAuth `okta.apps.read` |
+| Slack | token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`) |
+| ServiceNow | basic or bearer credentials with read access to the `sn_aia_*`, `sys_hub_flow` and `oauth_entity` tables through the Table API |
+| Notion | internal integration token with the *read user information* capability (`GET /v1/users`) |
+| Zoom | Server-to-Server OAuth app with `marketplace:read:list_apps:admin` |
+| Atlassian | site admin basic auth with an API token for the Universal Plugin Manager listing |
+| Auth0 | Management API v2 token with `read:clients`, `read:client_grants` |
 | Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition` |

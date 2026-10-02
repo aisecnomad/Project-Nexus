@@ -329,8 +329,8 @@ _COMBINED = re.compile(
     r'(?P<status>\d{3}) (?P<bytes>\S+)(?: "(?P<referer>[^"]*)" "(?P<ua>[^"]*)")?(?: "(?P<extra>[^"]*)")?'
 )
 _LOGFMT_PAIR = re.compile(r'(?<![\w.-])(\w[\w.-]*+)=("[^"]*"|\S+)')
-_HOST_IN_LINE = re.compile(
-    r"\b(?:host|authority|upstream_host|server_name)[=:]\s*\"?([A-Za-z0-9.-]+\.[a-z]{2,})", re.I
+_HOST_IN_TRAILER = re.compile(
+    r"(?<![\w.-])(?:host|authority|upstream_host|server_name)[=:]\s*([A-Za-z0-9.-]+\.[a-z]{2,})", re.I
 )
 
 
@@ -346,7 +346,10 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
     m = _COMBINED.match(line)
     if m:
         d = m.groupdict()
-        h = _HOST_IN_LINE.search(line)
+        # The request line, referer and user agent are client-controlled and
+        # can carry a look-alike host= token. Only text after the final quote is
+        # written by the server, so the host is read from there and nowhere else.
+        h = _HOST_IN_TRAILER.search(line.rpartition('"')[2])
         rec = {
             "remote_addr": d["ip"],
             "remote_user": None if d["user"] == "-" else d["user"],
@@ -479,10 +482,16 @@ class _Caller:
 # provider, or owner. Memory remains bounded as record cardinality increases.
 _MAX_DISTINCT_KEYS = 2000
 _MAX_INVALID_LINE_ERRORS = 20
+# Domain signals weighted below this are hints, not evidence of inference traffic.
+_MIN_LLM_HOST_WEIGHT = 0.3
 _MAX_DISTINCT_CALLERS = 10_000
 _MAX_USAGE_INTERVALS = 2_000
 _MAX_TOTAL_USAGE_INTERVALS = 20_000
 _MAX_TOTAL_DETAIL_KEYS = 50_000
+# Token counts and spend beyond this are not plausible usage. A negative or
+# absurd figure in an untrusted log must not offset real usage or be reported
+# verbatim in caller totals.
+_MAX_USAGE_VALUE = 10**15
 
 
 @dataclass(slots=True)
@@ -522,6 +531,21 @@ def _json_lines_fallback(lines: list[str]) -> bool:
     """Reject obvious pretty-printed documents; retain later valid JSONL rows."""
     first = next((line.strip() for line in lines if line.strip()), "")
     return bool(first) and first != "{" and not first.startswith("[")
+
+
+def _discard_unusable_usage(ev: Event) -> bool:
+    """Zero negative or absurd token and cost figures; report whether any were dropped."""
+    dropped = False
+    if not 0 <= ev.tokens_in <= _MAX_USAGE_VALUE:
+        ev.tokens_in = 0
+        dropped = True
+    if not 0 <= ev.tokens_out <= _MAX_USAGE_VALUE:
+        ev.tokens_out = 0
+        dropped = True
+    if not 0 <= ev.cost <= _MAX_USAGE_VALUE:
+        ev.cost = 0.0
+        dropped = True
+    return dropped
 
 
 def _record_activity(c: _Caller, ev: Event) -> None:
@@ -852,6 +876,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # Engine.run shares one key across its gateway jobs; direct connector
         # use gets an isolated key. Never place this key in config or reports.
         self._scope_key = ctx.gateway_identity_key or secrets.token_bytes(32)
+        # "keyed": the operator's stable key, so equal inputs keep equal IDs
+        # across scans. "run": IDs and pseudonyms are scan-local by design.
+        self.identity_scope = (
+            "keyed" if ctx.gateway_identity_key and ctx.gateway_identity_key_stable else "run"
+        )
         self.format = ctx.get("format")
         self.min_events = int(ctx.get("min_events", 1))
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
@@ -1051,7 +1080,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     for rec in self._gateway_records(data):
                         yield from self._expand_record(rec)
                 if not saw_record:
-                    self.ctx.error("gateway.logs: empty offline export; use [] for an empty inventory")
+                    self.ctx.error(f"gateway.logs: {self._empty_export_message(budget)}")
                 continue
             if suffix == ".json":
                 yield from self._load_json_export(source, budget)
@@ -1065,7 +1094,12 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 if parsed is not None:
                     yield from self._expand_record(parsed)
             if not saw_content:
-                self.ctx.warn("gateway.logs: empty text export; use [] for an empty JSON export")
+                message = (
+                    self._empty_export_message(budget)
+                    if budget.limit_hit
+                    else "empty text export; use [] for an empty JSON export"
+                )
+                self.ctx.warn(f"gateway.logs: {message}")
 
     def _load_json_export(self, source: Path, budget: _OfflineInputBudget) -> Iterator[dict[str, Any]]:
         """A .json export: one document, or one object per line as a fallback."""
@@ -1146,6 +1180,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         detail_budget = _DetailBudget()
         n = 0
         skipped = 0
+        unusable_usage = 0
         omitted_caller_records = 0
         omitted_caller_requests = 0
         retained_intervals = 0
@@ -1170,6 +1205,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 ):
                     skipped += 1
                     continue
+                unusable_usage += _discard_unusable_usage(ev)
                 self._runtime_context(ev, rec, framework_cache, clean)
                 identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
                 if identity not in callers and len(callers) >= _MAX_DISTINCT_CALLERS:
@@ -1201,6 +1237,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 continue
         self.ctx.examined(n)
         self._report_limits(callers, detail_budget, omitted_caller_records, omitted_caller_requests)
+        if unusable_usage:
+            self.ctx.warn(
+                f"gateway.logs: {unusable_usage} record(s) carried negative or out of range token or cost "
+                "values; those values were ignored and token and cost totals are incomplete"
+            )
         if skipped:
             self.log.info("gateway.logs: %d/%d records skipped (unrecognised or non-LLM)", skipped, n)
         for c in callers.values():
@@ -1395,7 +1436,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             # A known provider/agent host identifies inference traffic even
             # when the operation is not an enumerated endpoint; static assets
             # and health probes were excluded above.
-            return bool(ev.host and self.index.match_domain(ev.host))
+            return self._is_llm_host(ev.host)
         if ev.model:
             return True
         if ev.schema == "generic" and _provider_signature(self.index, ev.provider):
@@ -1407,7 +1448,14 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 return True
         # Domain-only egress logs can identify a model provider. A path such as
         # /favicon.ico on that host is not an inference transaction.
-        return bool(ev.host and not ev.path and self.index.match_domain(ev.host))
+        return bool(not ev.path and self._is_llm_host(ev.host))
+
+    def _is_llm_host(self, host: str | None) -> bool:
+        # Generic vendor hosts (a general REST API, a dataset site) carry hint weights below
+        # the threshold and do not identify inference traffic by themselves.
+        return bool(host) and any(
+            m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host or "")
+        )
 
     @staticmethod
     def _accumulate(
@@ -1553,6 +1601,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 "label": self.label,
                 "schemas": sorted(c.schemas),
             },
+            # With a per-scan key, another report's ID for this caller differs;
+            # report comparison must not read that as a new or resolved caller.
+            "identity_scope": self.identity_scope,
         }
 
     def _finding_title(self, f: Finding, c: _Caller, top_models: list[str]) -> str:

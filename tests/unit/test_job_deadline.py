@@ -47,7 +47,7 @@ def test_deadline_is_available_to_each_scan_command(command):
 
 def test_cli_rejects_nonfinite_deadline():
     result = CliRunner().invoke(main, ["code", ".", "--job-deadline-seconds", "nan"])
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     assert "positive finite number" in result.output
 
 
@@ -90,7 +90,7 @@ def test_cli_deadline_cancels_when_command_preflight_fails(monkeypatch):
     arm = Mock(return_value=watchdog)
     monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
     result = CliRunner().invoke(main, ["run", "no.such.connector", "--job-deadline-seconds", "1"])
-    assert result.exit_code == 2
+    assert result.exit_code == 1
     arm.assert_called_once_with(1.0)
     watchdog.cancel.assert_called_once_with()
 
@@ -107,7 +107,7 @@ def test_cli_deadline_cancels_when_subcommand_parsing_fails(monkeypatch, args):
     arm = Mock(return_value=watchdog)
     monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
     result = CliRunner().invoke(main, args)
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 1, result.output
     arm.assert_called_once_with(1.0)
     watchdog.cancel.assert_called_once_with()
 

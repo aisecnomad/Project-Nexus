@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
 import yaml
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, Surface
@@ -284,3 +287,149 @@ def test_citation_filter_ignores_standalone_export_markers_only(tmp_path):
     assert entry.resources == ["agent-one"]
     assert Inventory([entry]).match(_finding("agent-one")) is entry
     assert Inventory([entry]).match(_finding("agent-prod")) is None
+
+
+def _repository_observations() -> tuple[Finding, Finding]:
+    """A repository's agent project and its Claude Code configuration share one resource."""
+    shared = {
+        "surface": Surface.CODE,
+        "connector": "code.filesystem",
+        "resource": "github:acme/sample-monorepo",
+        "provider": "filesystem",
+    }
+    project = Finding(
+        kind=Kind.AGENT,
+        title="Agent in repository root",
+        resource_type="project",
+        metadata={"agent_name": "Repository agent"},
+        **shared,
+    )
+    config = Finding(
+        kind=Kind.AGENT_CONFIG,
+        title="Claude Code configured in repository root",
+        resource_type="coding-agent-config",
+        identity_discriminator="coding-agent-config:coding-agent.claude-code",
+        metadata={"agent_name": "Claude Code"},
+        **shared,
+    )
+    return project, config
+
+
+def test_generated_cards_sharing_a_resource_each_approve_only_their_finding(tmp_path):
+    project, config = _repository_observations()
+    paths = []
+    for finding in (project, config):
+        path = tmp_path / f"{finding.resource_type}.yaml"
+        path.write_text(yaml.safe_dump(card_stub_for(finding)))
+        paths.append(path)
+
+    both = Inventory.load(paths)
+    assert both.match(project).agent_id == "repository-agent"
+    assert both.match(config).agent_id == "claude-code"
+
+    # Registering the project alone must not register its configuration file.
+    project_only = Inventory.load(paths[:1])
+    assert project_only.match(project).agent_id == "repository-agent"
+    assert project_only.match(config) is None
+
+
+def test_resource_wide_approval_still_conflicts_with_a_generated_card(tmp_path):
+    project, config = _repository_observations()
+    path = tmp_path / "generated.yaml"
+    path.write_text(yaml.safe_dump(card_stub_for(project)))
+    authored = InventoryEntry(agent_id="whole-repository", resources=[project.resource])
+    inventory = Inventory([*Inventory.load([path]).entries, authored])
+    assert inventory.match(project) is None
+    assert project.metadata["registry_match_reason"] == "ambiguous-resource-approval"
+    assert inventory.match(config).agent_id == "whole-repository"
+
+
+@pytest.mark.parametrize("suffix", ["yaml", "csv"])
+def test_authored_discriminators_restrict_an_approval_to_those_observations(tmp_path, suffix):
+    project, config = _repository_observations()
+    path = tmp_path / f"inventory.{suffix}"
+    if suffix == "csv":
+        path.write_text(f"id,resources,discriminators\nrepository,{project.resource},project\n")
+    else:
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "metadata": {"agent_id": "repository"},
+                    "discovery": {"resources": [project.resource], "discriminators": ["project"]},
+                }
+            )
+        )
+    inventory = Inventory.load([path])
+    assert inventory.match(project).agent_id == "repository"
+    assert inventory.match(config) is None
+
+
+@pytest.mark.parametrize("resource_type,discriminator", [("/unnamed", ""), ("repository", " padded ")])
+def test_generated_card_without_a_usable_discriminator_stays_unbound(tmp_path, resource_type, discriminator):
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Agent",
+        resource="github:org/agent",
+        resource_type=resource_type,
+        identity_discriminator=discriminator,
+    )
+    card = card_stub_for(finding)
+    assert card["discovery"]["resources"] == [] and card["discovery"]["discriminators"] == []
+    path = tmp_path / "generated.yaml"
+    path.write_text(yaml.safe_dump(card))
+    assert Inventory.load([path]).match(finding) is None
+
+
+def test_generated_card_names_are_name_strings_not_python_reprs(tmp_path):
+    finding = _finding(
+        "github:org/assistant",
+        metadata={
+            "agent_definitions": [
+                {"file": ".claude/agents/reviewer.md", "name": "code-reviewer", "tools": "Bash, Edit"}
+            ],
+            "names": ["Ops Bot", "   "],
+            "agent_name": "Release Agent",
+        },
+    )
+    card = card_stub_for(finding)
+    assert card["discovery"]["names"] == ["Ops Bot", "Release Agent", "code-reviewer"]
+    path = tmp_path / "generated.yaml"
+    path.write_text(yaml.safe_dump(card))
+    assert Inventory.load([path]).entries[0].names == ["Ops Bot", "Release Agent", "code-reviewer"]
+
+
+def test_inventory_stubs_register_every_finding_of_a_shared_repository_resource(tmp_path, fixtures):
+    # The documented shadow-to-registered workflow on the sample repository,
+    # whose agent project and Claude Code configuration share the repository
+    # resource: every generated card registers its own finding and no other.
+    config = tmp_path / "scan.yaml"
+    config.write_text(
+        "connectors:\n  - name: code.filesystem\n"
+        f"    path: {fixtures / 'sample_repo'}\n    label: github:acme/sample-monorepo\n"
+    )
+    first, rescan, stubs = tmp_path / "first.json", tmp_path / "rescan.json", tmp_path / "stubs"
+    runner = CliRunner()
+    result = runner.invoke(main, ["scan", "-c", str(config), "--format", "json", "-o", str(first)])
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(main, ["inventory", "stubs", str(first), "-o", str(stubs)])
+    assert result.exit_code == 0, result.output
+    args = ["scan", "-c", str(config), "-i", str(stubs), "--format", "json", "-o", str(rescan)]
+    result = runner.invoke(main, args)
+    assert result.exit_code == 0, result.output
+
+    cards = {path.name: yaml.safe_load(path.read_text()) for path in stubs.glob("*.yaml")}
+    findings = json.loads(rescan.read_text())["findings"]
+    shared = [finding for finding in findings if finding["resource"] == "github:acme/sample-monorepo"]
+    assert {finding["kind"] for finding in shared} == {"agent", "agent-config"}
+    registered = set()
+    for finding in findings:
+        suffix = hashlib.sha256(finding["id"].encode()).hexdigest()[:8]
+        own = [card for name, card in cards.items() if name.endswith(f"-{suffix}.yaml")]
+        if own:
+            assert finding["shadow"] is False, finding["metadata"].get("registry_match_reason")
+            assert finding["registry_match"] == own[0]["metadata"]["agent_id"]
+            registered.add(finding["id"])
+    assert len(registered) == len(cards)
+    assert {finding["id"] for finding in shared} <= registered

@@ -33,6 +33,7 @@ discovery:
   # providers: [aws]                          # optional exact provider constraint
   # accounts: ["123456789012"]                 # optional exact tenant/account constraint
   # regions: [us-east-1]                     # optional exact region constraint
+  # discriminators: [bedrock-agent]          # optional exact observation-type constraint
 ```
 
 Standalone `[cite_start]` / `[cite: n]` export markers are ignored only in the
@@ -58,10 +59,12 @@ hr-helper,HR Helper,erin@acme.com,power-platform:bot:bot-1|okta:app:0oa9x,HR bot
 ```
 
 Pass any mix with `--inventory` (repeatable) or `inventory:` in the config;
-directories are searched recursively.
+directories are searched recursively. A symbolic link inside an inventory directory
+is rejected and stops setup (exit 1) rather than being skipped, so an approved
+agent cannot silently disappear from the registry.
 
 YAML and JSON list fields (`resources`, `names`, `surfaces`, `providers`,
-`accounts`, `regions`, `frameworks`, `tags`) must be arrays of nonempty strings. Quote
+`accounts`, `regions`, `discriminators`, `frameworks`, `tags`) must be arrays of nonempty strings. Quote
 numeric account IDs. Optional lists may be omitted or empty; scalar strings
 are rejected rather than interpreted character by character. CSV retains
 pipe-separated lists. Malformed entries, duplicate keys, unknown simple-inventory
@@ -71,8 +74,13 @@ or discovery fields and inconsistent CSV columns fail validation before scanning
 
 Automatic registration requires exactly one matching `discovery.resources`
 pattern (or `resources` in the simple format). Resource matching is case-sensitive.
-Optional `surfaces`, `providers`, `accounts`, and `regions` lists are enforced; a finding
-without a required scope cannot match. A missing resource or one whose
+Optional `surfaces`, `providers`, `accounts`, `regions` and `discriminators` lists are
+enforced; a finding without a required scope cannot match. Several findings can
+share one resource, such as a repository's agent project and its coding-agent
+configuration. An entry without `discriminators` approves all of them;
+`discriminators` limits it to the findings whose `identity_discriminator` (the
+stable observation type in the JSON report, such as `project` or
+`coding-agent-config:coding-agent.claude-code`) it lists. A missing resource or one whose
 resource, provider, account or region contains `[REDACTED]` cannot be
 automatically approved by any pattern; supply a stable nonsecret identity for
 registration. Prefer exact
@@ -85,6 +93,14 @@ Names, aliases, and agent-ID similarities produce `registry_suggestions` only.
 They never confer registered status, inherit an owner, or reduce risk. An
 explicit resource mismatch cannot fall through to name-based approval. Multiple
 matching inventory entries require review and leave the resource unregistered.
+
+A gateway finding's resource (for example `principal:svc-ops`) is a caller name
+the log producer supplied, often the caller itself. When its identity assurance
+is `operator-asserted` or `unverified` (generic and access-log exports, shared or
+missing names), a matching card still registers it, but the finding carries
+`metadata.registry_match_assurance` and the `registry-identity-unverified` tag:
+the registration is only as trustworthy as the log's caller field. Review such
+registrations before treating the agent as sanctioned.
 
 **Migration:** cards that previously matched by name need explicit resource
 bindings. The bundled `agent-card.yaml` contains example bindings for offline AWS
@@ -105,18 +121,28 @@ shadowscan inventory stubs today.json -o inventory/pending/ --min-risk medium
 
 `inventory stubs` writes one capability-card skeleton per shadow finding (agent,
 mcp-server, workflow, bot-app, agent-config by default): the discovered
-resource goes into `discovery.resources` with literal glob characters escaped
-so the generated card approves only that exact resource. A redacted resource or
-scope leaves `discovery.resources` empty pending an identity review. Generated
-cards also bind the finding's region when present. Detected capabilities go into
-`capability_surface`, the risk score into `risk_scoring`, and the owner (when
-known) into `owner_team`. Review, complete and move the card into the inventory
-directory; on the next scan the finding is registered and its risk drops.
+resource goes into `discovery.resources` with literal glob characters escaped,
+and the finding's `identity_discriminator` into `discovery.discriminators`, so
+the generated card approves only that finding, even where other findings share
+its resource. A redacted resource or scope leaves `discovery.resources` empty
+pending an identity review. Generated cards also bind the finding's region when
+present. The finding's names go into `discovery.names` as review suggestions,
+detected capabilities into `capability_surface`, the risk score into
+`risk_scoring`, and the owner (when known) into `owner_team`. Review, complete
+and move the card into the inventory directory; on the next scan the finding is
+registered and its risk drops.
+
+Cards generated by earlier versions bind only the resource: one such card
+approves every finding on its resource, and two such cards for one resource
+leave both findings unregistered as ambiguous. Regenerate them from a current
+report or add `discriminators`.
 
 Track drift between runs with `shadowscan diff last.json today.json`: new
 findings, risk-level changes and resolved findings from complete, comparable
 scans. Missing findings from incomplete or differently scoped scans remain
-unknown. See [comparison semantics](scanning.md#comparing-reports).
+unknown. Gateway callers keep their finding IDs between runs only when both
+scans set `SHADOWSCAN_IDENTITY_KEY`; otherwise diff lists them as not
+comparable. See [comparison semantics](scanning.md#comparing-reports).
 
 Generated stub files use mode 0600 in a 0700 output directory. Deliberate wildcard
 approvals remain supported in manually reviewed inventory entries. Do not remove

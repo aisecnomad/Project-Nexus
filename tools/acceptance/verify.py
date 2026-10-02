@@ -24,6 +24,7 @@ from shadowscan.signatures import get_index
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.output import write_private_text
 from tools.canaries.run import _source_provenance
+from tools.evaluation.accept import wilson_lower95
 from tools.evaluation.annotations import validate_annotations
 from tools.evaluation.evaluate import (
     _CAPABILITY,
@@ -45,6 +46,7 @@ from tools.evaluation.sources import SourceOverlapError, bundled_source_index
 SCHEMA = "shadowscan.production-evidence/v1"
 REPORT_SCHEMA = "shadowscan.production-evidence-report/v1"
 MAX_BYTES = 2 * 1024 * 1024
+_LOWER95_FIELDS = {f"min_{metric}_lower95" for metric in ("precision", "recall", "specificity")}
 LIMITATION = (
     "Checks artifact consistency and declared thresholds only. Human independence, "
     "holdout freshness, real tenant transport, process exits and principal separation "
@@ -172,7 +174,7 @@ def _policy(policy: Any, now: datetime) -> timedelta:
             "min_recall",
             "min_specificity",
         },
-        {"per_kind"},
+        {"per_kind"} | _LOWER95_FIELDS,
     )
     _require(_time(policy["frozen_at"]) <= now, "future_policy")
     _require(
@@ -183,6 +185,7 @@ def _policy(policy: Any, now: datetime) -> timedelta:
     _require(policy["min_cases"] >= 20, "insufficient_minimum_sample")
     for name in ("min_precision", "min_recall", "min_specificity"):
         _require(type(policy[name]) in (float, int) and 0 < policy[name] <= 1, "invalid_metric_threshold")
+    _confidence_policy(policy)
     if "per_kind" in policy:
         kinds = policy["per_kind"]
         _require(
@@ -195,12 +198,41 @@ def _policy(policy: Any, now: datetime) -> timedelta:
             _keys(
                 limits,
                 {"min_positive_cases", "min_negative_cases", "max_false_positives", "max_false_negatives"},
+                _LOWER95_FIELDS,
             )
             for name in ("min_positive_cases", "min_negative_cases"):
                 _require(type(limits[name]) is int and 1 <= limits[name] <= 500, "invalid_kind_policy")
             for name in ("max_false_positives", "max_false_negatives"):
                 _require(type(limits[name]) is int and 0 <= limits[name] <= 500, "invalid_kind_policy")
+            _confidence_policy(limits)
     return timedelta(hours=policy["max_age_hours"])
+
+
+def _confidence_policy(policy: dict[str, Any]) -> None:
+    """An optional confidence policy declares all three finite lower endpoints."""
+    declared = _LOWER95_FIELDS.intersection(policy)
+    _require(not declared or declared == _LOWER95_FIELDS, "incomplete_confidence_policy")
+    for name in declared:
+        value = policy[name]
+        _require(
+            type(value) in (int, float) and math.isfinite(value) and 0 < value <= 1,
+            "invalid_confidence_threshold",
+        )
+
+
+def _lower95(counts: dict[str, Any]) -> dict[str, float | None]:
+    """Compute the same two-sided 95% Wilson lower endpoints as the holdout gate."""
+    return {
+        "precision": wilson_lower95(counts["tp"], counts["tp"] + counts["fp"]),
+        "recall": wilson_lower95(counts["tp"], counts["tp"] + counts["fn"]),
+        "specificity": wilson_lower95(counts["tn"], counts["tn"] + counts["fp"]),
+    }
+
+
+def _confidence_bounds(endpoints: dict[str, float | None], policy: dict[str, Any], code: str) -> None:
+    if set(policy) >= _LOWER95_FIELDS:
+        for name, endpoint in endpoints.items():
+            _require(endpoint is not None and endpoint >= policy[f"min_{name}_lower95"], code)
 
 
 def _exclude_evaluated_cases(cases: list[Case], corpus_digest: str, base: Path, additional: Any) -> None:
@@ -349,6 +381,8 @@ def _evaluation(
         _require(
             overall[name] is not None and overall[name] >= policy[f"min_{name}"], "metric_threshold_not_met"
         )
+    endpoints = _lower95(overall)
+    _confidence_bounds(endpoints, policy, "confidence_threshold_not_met")
     by_kind = _kind_metrics(rows, cases, policy)
     return {
         "cases": overall["cases"],
@@ -357,6 +391,7 @@ def _evaluation(
         "precision": overall["precision"],
         "recall": overall["recall"],
         "specificity": overall["specificity"],
+        "lower95": endpoints,
         "by_kind": by_kind,
     }
 
@@ -483,11 +518,12 @@ def _evaluation_rows(rows: Any, cases: list[Case]) -> None:
 
 
 def _kind_metrics(rows: list[dict[str, Any]], cases: list[Case], policy: dict[str, Any]) -> dict[str, Any]:
-    """Summarize each target kind and enforce the policy's per-kind sample and error budgets."""
+    """Enforce per-kind sample, error and optional confidence limits on recomputed counts."""
     by_kind: dict[str, Any] = {}
     for kind in sorted({case.kind.value for case in cases}):
         selected = [{**row, "family": kind} for row in rows if row["target"]["kind"] == kind]
-        by_kind[kind] = summarize(selected)[kind]
+        counts = summarize(selected)[kind]
+        by_kind[kind] = {**counts, "lower95": _lower95(counts)}
     if "per_kind" in policy:
         _require(set(policy["per_kind"]) == set(by_kind), "kind_policy_scope_mismatch")
         for kind, counts in by_kind.items():
@@ -502,6 +538,7 @@ def _kind_metrics(rows: list[dict[str, Any]], cases: list[Case], policy: dict[st
                 and counts["fn"] <= limits["max_false_negatives"],
                 "kind_error_budget_exceeded",
             )
+            _confidence_bounds(counts["lower95"], limits, "kind_confidence_threshold_not_met")
     return by_kind
 
 
