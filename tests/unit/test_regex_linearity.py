@@ -256,10 +256,23 @@ def test_allowlist_entries_name_real_patterns_and_give_reasons():
         assert len(reason.split()) >= 5, f"explain why /{source}/ is safe"
 
 
-def test_the_sweep_flags_quadratic_and_exponential_patterns_and_passes_linear_ones():
-    # The sweep has to keep biting: a quadratic pattern, an exponential one, and a linear control.
+class _NeverReturns:
+    """Stands in for an exponential pattern: the search does not come back within the stall limit."""
+
+    pattern = "never"
+    flags = 0
+
+    def search(self, text: str) -> None:
+        time.sleep(60)
+
+    match = search
+
+
+def test_the_sweep_flags_quadratic_and_stalled_patterns_and_passes_linear_ones():
+    # The sweep has to keep biting: a quadratic pattern, one that never returns, and a linear control.
     assert _sweep(re.compile(r"\w+\s*=\s*\w+!"), anchored=False) is not None
-    assert _sweep(re.compile(r"(a+)+$"), anchored=False, stall=3.0) is not None
+    stalled = _sweep(_NeverReturns(), anchored=False, stall=2.0)  # type: ignore[arg-type]
+    assert stalled is not None and "stalled" in stalled
     # Starts at a literal, so a long run of letters is skipped in one pass: linear.
     assert _sweep(re.compile(r"=[a-z]+;"), anchored=False) is None
 

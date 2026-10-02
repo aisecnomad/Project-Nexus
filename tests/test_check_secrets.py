@@ -92,7 +92,7 @@ _PLANTED = [
 
 
 @pytest.mark.parametrize(
-    "family,before,secret,after",
+    "family,before,sample,after",
     [pytest.param(*case[1:], id=case[0]) for case in _PLANTED],
 )
 def test_planted_credential_is_reported_without_its_value(
@@ -101,10 +101,10 @@ def test_planted_credential_is_reported_without_its_value(
     capsys: pytest.CaptureFixture[str],
     family: str,
     before: str,
-    secret: str,
+    sample: str,
     after: str,
 ) -> None:
-    text = f"# config\nvalue = {before}{secret}{after}\n"
+    text = f"# config\nvalue = {before}{sample}{after}\n"
     assert [(line, kind) for line, kind, _ in findings(text)] == [(2, family)]
     monkeypatch.chdir(tmp_path)
     Path("sample.txt").write_text(text, encoding="utf-8")
@@ -114,9 +114,9 @@ def test_planted_credential_is_reported_without_its_value(
     assert output == (
         f"sample.txt:2: possible hardcoded {family}: {match[:4]}... ({len(match)} characters)\n"
     )
-    # At most four characters of a match are printed, never a run of the secret.
+    # At most four characters of a match are printed, never a run of the planted value.
     assert not [
-        secret[index : index + 5] for index in range(len(secret) - 4) if secret[index : index + 5] in output
+        sample[index : index + 5] for index in range(len(sample) - 4) if sample[index : index + 5] in output
     ]
 
 
@@ -150,7 +150,7 @@ def test_exit_codes_and_paths_that_are_skipped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    secret = "gh" + "p_" + _random("e1", 36)
+    planted = "gh" + "p_" + _random("e1", 36)
     excluded = [
         "tests/unit/test_example.py",
         "./tests/fixtures/export.json",
@@ -165,7 +165,7 @@ def test_exit_codes_and_paths_that_are_skipped(
     ]
     for name in excluded + reported:
         Path(name).parent.mkdir(parents=True, exist_ok=True)
-        Path(name).write_text(secret, encoding="utf-8")
+        Path(name).write_text(planted, encoding="utf-8")
     Path("clean.md").write_text("No credentials here.\n", encoding="utf-8")
     Path("link.txt").symlink_to(tmp_path / reported[0])
     Path("submodule").mkdir()
