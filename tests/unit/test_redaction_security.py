@@ -285,7 +285,9 @@ def test_generic_saas_does_not_copy_arbitrary_export_columns():
 )
 def test_csv_formula_values_are_literal_text(formula, expected):
     f = _finding(title=formula, owner=formula, evidence=[Evidence(signal="test", description=formula)])
-    row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[f])))))
+    # A complete scan: an incomplete one leads with a status row.
+    complete = ScanResult(findings=[f], stats=[ScanStats(connector="test", started_at="now")])
+    row = next(csv.DictReader(io.StringIO(render_csv(complete))))
     for column in ("title", "owner", "top_evidence"):
         assert row[column] == expected
     assert row["confidence"] == "0.0"
@@ -601,6 +603,7 @@ def _token_samples() -> list[tuple[str, str]]:
         ("glc_", "gl" + "c_" + _run(_ALNUM + "+/", 40)),
         ("sntry[su]_", "sn" + "trys_" + _run(_ALNUM + "+=_-", 40)),
         ("hv[sbr]\\.", "h" + "vs." + _run(_WORD, 30)),
+        ("fw_", "fw_" + "aB3xY7" * 4),
         ("[A-Za-z0-9]{14}\\.atlasv1\\.", _run(_ALNUM, 14) + "." + "atl" + "asv1." + _run(_WORD, 70)),
     ]
 

@@ -203,6 +203,23 @@ def _sensitive_assignment_key(key: str) -> bool:
     )
 
 
+# Short option spellings that name a credential on a command line ('--pat',
+# '--auth') but are too broad as record field names. '--key' is not listed:
+# its value is a credential only when it is opaque (see _opaque_option).
+_CREDENTIAL_FLAG_NAMES = frozenset({"pat", "pass", "passphrase", "pwd", "auth"})
+# A ';' ends an unquoted value only before whitespace, the end of the text or
+# another ``name=`` pair (connection strings, shell lists); a password may
+# contain one.
+_VALUE_SEMICOLON = r";(?!\s|\Z|[A-Za-z_][A-Za-z0-9_.-]*\s*=)"
+
+
+def _sensitive_flag(name: str) -> bool:
+    """Whether an argv option (without its dashes) always carries a credential in its next value."""
+    if name.lower().startswith(("no-", "no_")):
+        return False
+    return _KEY_NORMALISE.sub("", name.lower()) in _CREDENTIAL_FLAG_NAMES or _sensitive_key(name)
+
+
 def _redact_value(value: Any) -> Any:
     if value is None or value == "":
         return value

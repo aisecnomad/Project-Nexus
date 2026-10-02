@@ -3,7 +3,8 @@
 ## Coverage policy
 
 A code scan is *complete* when every file it was asked to assess was assessed.
-The following coverage rules define how omitted source is handled:
+Situations that are deliberately outside a repository's own content, and gaps
+that are never silent:
 
 * **Symbolic links** are never followed. A link is skipped silently when its
   own name is one the scanner never reads (a lockfile, generated bundle or
@@ -58,6 +59,46 @@ The following coverage rules define how omitted source is handled:
   inventory make coverage incomplete. Explicitly excluded submodule paths are
   outside the declared scan scope. A nonempty directory establishes only that
   source is available to scan, not that it matches an authentic remote commit.
+* **Undecodable or binary content** in a file whose name the scanner would
+  analyze (source, manifests, `.env`, configuration, MCP and agent files,
+  notebooks) makes the scan incomplete with `binary or undecodable content in
+  analyzable file`. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
+  parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
+  not text in any supported encoding, yet interpreters such as Node and `sh`
+  still run a script with a NUL in a comment, so it is a gap, not an empty file;
+  this includes UTF-16 without a byte-order mark. Invalid UTF-8 without a NUL
+  byte is decoded with replacement characters and analyzed. Names the scanner
+  never reads (images, archives, `.bin`, compiled artifacts) stay silent, and so
+  does a recognised binary artifact (an executable, archive, image, PDF or
+  SQLite database, by its header) that has no file extension, that only a
+  directory-wide signature glob such as `.cursor/rules/**` selected, or that is
+  a `.ts` MPEG transport-stream video segment. Unrecognised binary content stays
+  a gap in those places too. An operator can exclude a known binary with an
+  `exclude` file glob.
+* **Entries that are not regular files** (a directory, FIFO, socket or device)
+  named like a file the scanner analyzes, such as `.mcp.json` or
+  `requirements.txt`, make the scan incomplete, as a symbolic link of the same
+  name does. A directory is only reported when its name is an MCP configuration
+  file name such as `.mcp.json`; directories that agent tools read as
+  directories (`.roo/rules/`, `.clinerules/`, `.cursor/rules/`) are not. Its
+  contents are still scanned.
+* **Directory nesting** of any depth is walked on an explicit stack, so a tree
+  deeper than the Python runtime's recursion limit loses no findings.
+
+Default directory excludes are part of the documented scope and never make a
+scan incomplete, but they are not silent. The names in `DEFAULT_EXCLUDES` are
+skipped at any depth (`bin`, `build`, `dist`, `external`, `obj`, `out`, `target`,
+`vendor`, `third_party`, `coverage` and others, plus version-control metadata,
+dependency trees and tool caches). For each scan root one warning lists the
+non-empty first-party-capable directories that were skipped, with how many
+carried each name (`default-excluded directories not scanned: build (2),
+vendor (1); set default_excludes: false to scan them`). Version-control
+metadata, dependency trees, virtual environments and tool caches (`.git`,
+`node_modules`, `venv`, `__pycache__`, `.idea` and similar) are not listed, and
+neither is a name the operator listed in `exclude`. Code under a listed name was
+not assessed; `default_excludes: false` (`--no-default-excludes`) scans it, or
+scan that directory as its own root.
 
 Default local scans do not execute Git: an undeclared gitlink without a
 `.gitmodules` file is therefore not discoverable in that mode. The opt-in Git
@@ -500,8 +541,21 @@ Incomplete scans, changed scope, older reports without provenance, live provider
 collections and third-party connectors cannot establish equivalent coverage.
 Their missing findings are reported as `unknown`, and diff exits 3. New and
 changed findings remain visible. Currently only local repositories and offline
-exports from built-in connectors can attest comparable scope; live account and
-permission coverage require additional provider-specific provenance.
+exports from built-in connectors can attest comparable scope, `gateway.logs`
+only when both scans were keyed with the same identity key; live account and
+permission coverage require additional provider-specific provenance. The digest
+covers the resolved absolute scan paths, so compare scans of the same checkout
+location; a label does not stand in for the path, because a narrower scan under
+the same label would otherwise make out-of-scope findings look resolved.
+
+By default `diff` exits 0 when the comparison is complete, whatever it finds.
+`--fail-on-new` exits 2 when there are new findings or a finding's risk level
+rose; an incomplete comparison still exits 3.
+
+Connectors that were disabled or left out by `--only` do not make a scan
+incomplete (that is operator intent), but the JSON report lists them as
+`collection_scope.not_run` with the reason. The list is not part of the scope
+digest.
 
 A finding with `metadata.identity_scope: run`, which `gateway.logs` findings
 carry unless `SHADOWSCAN_IDENTITY_KEY` is set, has an ID derived from a key that
@@ -524,14 +578,21 @@ entries cause a full rescan.
 | CLI exit | Meaning |
 |---|---|
 | `0` | Scan completed and the configured risk threshold was not reached. |
+| `1` | Setup or configuration error (invalid config, missing inventory or signature path, unwritable report); no scan result. |
 | `2` | Completed scan reached `--fail-on` (Click also uses 2 for invocation errors). |
 | `3` | Collection or analysis was incomplete, including empty or partly invalid connector selection. |
+
+An incomplete scan that also reaches `--fail-on` exits 3. In CI, fail on any
+non-zero exit rather than only on 2 and 3.
 
 `--min-confidence` and YAML `options.min_confidence` accept finite values in
 `[0, 1]`; invalid thresholds stop the scan instead of silently clearing the gate.
 
 Incomplete results preserve valid findings, set `summary.complete` to false and
 SARIF `invocations[].executionSuccessful` to false, and include diagnostics.
+An incomplete CSV report starts with a `SCAN-INCOMPLETE` status row
+(`kind` = `scan-status`, the unfinished connectors in `connector`) right after the
+header, so it cannot be mistaken for a complete scan with no findings.
 Failed or denied live collection for an enabled source marks coverage incomplete;
 review per-connector diagnostics and rerun after restoring access.
 Malformed files are isolated, so one bad manifest cannot suppress neighboring

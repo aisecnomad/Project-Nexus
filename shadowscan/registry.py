@@ -109,6 +109,30 @@ def _has_usable_discriminator(finding: Finding) -> bool:
     return bool(value) and value == value.strip()
 
 
+# A gateway resource such as ``principal:svc-ops`` is a field the log producer
+# (often the caller itself) wrote. A match on it is flagged, not trusted.
+UNVERIFIED_IDENTITY_TAG = "registry-identity-unverified"
+
+
+def _unauthenticated_caller_assurance(finding: Finding) -> str | None:
+    """Weakest identity assurance behind a gateway caller name, unless it is provider-authenticated.
+
+    Returns ``operator-asserted`` or ``unverified``; a gateway finding whose
+    observations carry no recognizable assurance counts as ``unverified``.
+    """
+    if finding.surface != Surface.GATEWAY:
+        return None
+    observations = finding.metadata.get("runtime_observations")
+    levels = (
+        {item.get("identity_assurance") for item in observations if isinstance(item, dict)}
+        if isinstance(observations, list)
+        else set()
+    )
+    if not levels or not levels <= {"operator-asserted", "provider-authenticated-field"}:
+        return "unverified"
+    return "operator-asserted" if "operator-asserted" in levels else None
+
+
 def _metadata_names(finding: Finding) -> list[str]:
     """Name strings in finding metadata, including names of listed agent definitions."""
     out: list[str] = []
@@ -207,7 +231,13 @@ class Inventory:
             else:
                 # A missing path is reported by name only: the message must stay
                 # safe for the CLI to print verbatim (see shadowscan.errors).
-                raise SetupPathError(sanitize_text(f"inventory path not found: {p}"))
+                raise SetupPathError(
+                    sanitize_text(
+                        f"inventory path not found: {p} "
+                        "(create it, pass an existing card file or directory such as agent-card.yaml, "
+                        "or omit the inventory)"
+                    )
+                )
             for f in files:
                 inv.entries.extend(cls._load_file(f))
                 inv.sources.append(str(f))
@@ -368,10 +398,16 @@ class Inventory:
 
         Case folding resource IDs can approve a different object (for example,
         a case-sensitive cloud ARN or repository path). Unknown scopes and
-        conflicting inventory identities fail closed.
+        conflicting inventory identities fail closed. A match on a gateway
+        caller name whose identity is only operator-asserted or unverified is
+        kept but flagged with ``metadata['registry_match_assurance']`` and the
+        ``registry-identity-unverified`` tag.
         """
         finding.metadata.pop("registry_suggestions", None)
         finding.metadata.pop("registry_match_reason", None)
+        finding.metadata.pop("registry_match_assurance", None)
+        if UNVERIFIED_IDENTITY_TAG in finding.tags:
+            finding.tags.remove(UNVERIFIED_IDENTITY_TAG)
         # Finding construction redacts credentials before reconciliation. A
         # lossy resource ID is not an identity: distinct repositories, URLs or
         # cloud objects can all become the same ".../[REDACTED]" string. Even
@@ -399,6 +435,12 @@ class Inventory:
         ]
         if len(matches) == 1:
             finding.metadata.pop("registry_suggestions", None)
+            assurance = _unauthenticated_caller_assurance(finding)
+            if assurance:
+                # Keep the documented match, but a caller name taken from a log
+                # does not prove the caller is the registered agent: say so.
+                finding.metadata["registry_match_assurance"] = assurance
+                finding.add_tag(UNVERIFIED_IDENTITY_TAG)
             return matches[0]
         if len(matches) > 1:
             finding.metadata["registry_suggestions"] = sorted({e.agent_id for e in matches})

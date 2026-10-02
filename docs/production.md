@@ -10,6 +10,72 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 1 scan integrity remediation
+
+Rollout effects of the remediation listed in the changelog. Re-run any baseline
+collected before this revision: some scans that previously finished complete now
+finish incomplete because the earlier result hid a gap.
+
+- **More exit 3 on real estates.** Expect new incomplete diagnostics for files
+  with source or config names that hold a NUL byte, any file without a
+  supported export suffix in a connector's offline input directory (rotated
+  logs, a `README.md`, `.DS_Store`), unnamed `saas.generic` rows and negative
+  gateway usage. Fix the input (exclude the path, remove the extra files or point
+  `input` at the export file, supply rotated logs by name, map the name column)
+  rather than ignoring exit 3. Do not read a finding that disappeared before this
+  revision as resolved; compare only complete scans of the same scope.
+- **Notices are not completeness.** The default-exclude notice and the AWS/GCP
+  default-region notice are warnings that leave the scan complete. Scope a scan to
+  an excluded directory as its own root, or set `regions` (AWS) or `locations`
+  (GCP), to cover it. Review the
+  notices before treating a clean report as estate-wide.
+- **New report fields.** `collection_scope.not_run`, finding metadata
+  `registry_match_assurance` and tag `registry-identity-unverified`, and
+  `signature_verified` on JWT findings are additive. A gateway finding approved
+  only by an operator-asserted caller name is still registered; treat that match
+  as unverified until the caller binding is authenticated.
+- **CSV consumers.** An incomplete CSV report has a first data row with
+  `id=SCAN-INCOMPLETE`, `kind=scan-status` and the unfinished connectors in the
+  `connector` column. Skip or alert on it; exit code 3 remains the primary signal.
+- **Redaction.** Reports withhold more than before: `--passphrase`, `--pat`
+  and `--auth` option values, whole PGP private key blocks (earlier reports
+  could show a block's body when its first line followed a name such as
+  `private_key:`), every cookie in a `Cookie` header, compact `x-api-key:S` and
+  `password:S` values, unquoted values containing `;`, escaped-quote JSON values, the
+  URL query keys `auth`, `pwd` and `pat`, Fireworks `fw_` keys and provider
+  tokens next to non-Latin text. Reports generated before this revision can
+  contain those values: regenerate them, restrict or delete the old copies, and
+  rotate any key, PGP private key or session cookie they show. Expect extra
+  `[REDACTED]` markers (`ffmpeg -pass 1`, the text after `;` in `NAME=S;rest`,
+  the scheme after `Authorization:`). Finding IDs built from sanitized
+  resource fields can change where those fields held such values.
+- **Credential digest (open item).** Code and cloud findings (credentials in
+  source files, and in cloud environment variables and app settings) still
+  carry `credential:sha256:<digest>`, an unsalted SHA-256 of the raw credential
+  used for stable finding identity. Anyone holding a report can confirm a
+  candidate credential against it. Gateway reports carry only scan-local
+  `credential:hmac-sha256:` identifiers; the public digest appears only in the
+  operator's gateway binding configuration, which must stay private. Treat
+  reports as sensitive, and plan an operator-supplied keyed digest, which
+  changes finding identity and bindings, as a separate migration.
+- **Lower risk for routine scope names.** OIDC `offline_access`, Salesforce
+  `full`, `web` and `refresh_token`, GitLab `api`, GitHub `workflow` and Slack
+  `admin` no longer match `policy.privileged-scopes`, because scopes are
+  matched by bare name across providers. Findings that held only these scopes
+  lose that risk factor and can drop a risk level. GitLab `api` and GitHub
+  `workflow` remain powerful on their own providers: review those grants by
+  hand rather than relying on the risk level.
+- **Private CA.** Set `ca_bundle` on `identity.jwt` to a PEM file to scan an
+  endpoint behind internal PKI; TLS verification stays on and the bundle replaces
+  the default store. A relative path resolves beside the configuration file.
+  Other connectors do not accept it yet.
+- **Known limits.** The default 120 s connector deadline cannot finish a roughly
+  20,000-file repository or a 30 MiB gateway log (raise
+  `connector_timeout_seconds`); gateway finding IDs are scan-local unless
+  `SHADOWSCAN_IDENTITY_KEY` is set, so `diff` of gateway findings between
+  unkeyed runs is not stable; logfmt gateway lines still use last-key-wins
+  for `host`.
+
 ## October 1 review migration
 
 Collect a fresh baseline after adopting the review corrections. Named Python
@@ -116,12 +182,14 @@ Configured inventory is reloaded for every run, including the first run after
 engine construction, so an approval file changed between construction and
 execution cannot supply a stale match.
 
-When HTML or CSV is sent to stdout, terminal control and bidirectional-formatting
-characters, zero-width characters, the byte-order mark and Unicode tag characters
-are rendered visibly; artifacts explicitly written with `-o` retain their
-serialized data, except that a lone surrogate (which no encoder accepts, and which
-a name read from an export can hold) is written as the escape text `\ud800` in
-every format. Reporter boundaries sanitize copied diagnostics without
+HTML and CSV reports, whether sent to stdout or written with `-o`, render
+terminal control and bidirectional-formatting characters visibly (tab and line
+breaks remain data in CSV; tab and line feed in HTML), so `cat` or `less` on a
+saved report cannot execute escape sequences taken from a scanned log. Output
+sent to stdout also renders zero-width characters, the byte-order mark and
+Unicode tag characters visibly, and a lone surrogate (which no encoder accepts,
+and which a name read from an export can hold) is written as the escape text
+`\ud800` in every format. Reporter boundaries sanitize copied diagnostics without
 mutating in-memory scan state, ignore malformed related-finding metadata, preserve
 valid SARIF source paths and reject non-finite JSON. Serialization failures stop
 before stdout or an existing output file is changed; table output preflights
@@ -460,8 +528,9 @@ Configuration rejects duplicate authored YAML keys and unknown top-level or
 `fail_on` thresholds or `parallel` values stop the scan before collection.
 Environment references are validated in disabled connector declarations too;
 remove unused placeholders or give intentionally optional values a fallback.
-Relative inventory globs and `options.workdir`, like other configured paths,
-resolve beside the configuration file, independent of the process directory.
+Relative inventory globs and `options.workdir`, like other configured paths
+(including `identity.jwt` `ca_bundle`), resolve beside the configuration file,
+independent of the process directory.
 
 The new policies also expose `--connector-timeout-seconds`,
 `--allow-credential-mixing/--deny-credential-mixing` and

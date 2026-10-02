@@ -9,12 +9,17 @@ Signals evaluated:
 * issuer family (Okta, Entra, Google, Auth0, Cognito, Keycloak, SPIFFE, custom)
 * machine identity: ``gty=client-credentials``, Entra ``idtyp=app`` / ``appid``
   without user claims, Okta ``cid == sub``, Google service-account emails,
-  Cognito access tokens without ``username``, SPIFFE subjects
+  Cognito access tokens without ``username``, SPIFFE subjects; GitHub Actions,
+  Kubernetes and GitLab CI job tokens are workloads
 * delegation / on-behalf-of: RFC 8693 ``act`` / ``may_act`` chains, ``azp != aud``
 * agent hints in claims (``agent_id``, ``agent``, ``bot``, ``client_name`` matching
-  AI product names), audiences that are LLM / agent APIs
+  AI product names; an empty or false value is not a hint), audiences that are
+  LLM / agent APIs
 * privilege: scopes / roles / permissions classified by policy signatures
 * hygiene: lifetime > 24h, no ``exp``, ``alg=none``, symmetric algs on public issuers
+* provenance: without a JWKS the signature is not checked; the finding then carries
+  ``signature_verified: false``, a ``signature-unverified`` tag and a zero-weight
+  ``jwt:signature`` evidence item, and its claims are unauthenticated
 
 Input: ``tokens: [...]`` in config, ``input`` file (one token per line, JSON list,
 or JSON objects with a ``token`` field), or the CLI ``shadowscan jwt`` command.
@@ -85,12 +90,30 @@ AGENT_CLAIM_KEYS = (
 # delegated token carries app_displayname). Their *value* must match an AI
 # product / agent name signature before they count as an agent hint.
 _AGENT_NAMING_CLAIMS = frozenset({"client_name", "app_displayname", "azp_name"})
+# GitHub Actions names the account that started the run in ``actor`` (and,
+# when present, ``triggering_actor``). Usually that is a person, so these
+# count as agent hints only when the value names an AI agent or product
+# (``claude[bot]``, ``copilot-swe-agent[bot]``). The ``[bot]`` suffix of every
+# GitHub App login (``dependabot[bot]``) is not enough.
+_GITHUB_ACTOR_CLAIMS = ("actor", "triggering_actor")
+# Falsy spellings of an agent claim ("bot": "false"); the claim is then absent.
+_FALSE_STRINGS = frozenset({"false", "no", "none", "null", "0"})
+# Issuer families whose tokens are issued to a workload (CI job, pod), never a person.
+_WORKLOAD_ISSUER_FAMILIES = frozenset({"github-actions", "kubernetes"})
 _KUBERNETES_LEGACY_CLAIMS = (
     "kubernetes.io/serviceaccount/namespace",
     "kubernetes.io/serviceaccount/secret.name",
     "kubernetes.io/serviceaccount/service-account.name",
     "kubernetes.io/serviceaccount/service-account.uid",
 )
+
+
+def _meaningful(value: Any) -> bool:
+    """An agent claim counts only with a value: ``bot=false`` or ``purpose=""`` is absent."""
+    if isinstance(value, str):
+        text = value.strip()
+        return bool(text) and text.lower() not in _FALSE_STRINGS
+    return bool(value)
 
 
 class JwtConnector(BaseConnector, _NoDump):
@@ -105,6 +128,9 @@ class JwtConnector(BaseConnector, _NoDump):
         "jwks_url": "optional operator-trusted JWKS endpoint for signature verification",
         "expected_issuer": "optional exact expected issuer; otherwise signature-only verification",
         "allowed_algorithms": "optional nonempty subset of RS256, ES256, EdDSA, PS256",
+        "ca_bundle": (
+            "optional PEM file trusted instead of the default CA store for the JWKS endpoint (private CA)"
+        ),
         "input": "file with one token per line or JSON list / objects with `token`",
     }
     offline_formats: ClassVar[str] = "text (one JWT per line) / JSON"
@@ -201,7 +227,8 @@ class JwtConnector(BaseConnector, _NoDump):
         cached = self._jwks_cache.get(jwks_url)
         if cached is None:
             try:
-                cached = fetch_jwks(jwks_url)
+                ca_bundle = self.ctx.get("ca_bundle")
+                cached = fetch_jwks(jwks_url, ca_bundle=ca_bundle) if ca_bundle else fetch_jwks(jwks_url)
             except Exception as exc:  # noqa: BLE001 - remembered so every token reports the same outcome
                 cached = exc
             self._jwks_cache[jwks_url] = cached
@@ -271,10 +298,15 @@ class JwtConnector(BaseConnector, _NoDump):
                 weight=_IDENTITY_WEIGHT[identity_type],
             )
         )
-        if verified is not None:
-            self._signature_evidence(f, verified)
-        else:
+        # Without a JWKS the signature is never checked: issuer family, identity
+        # type and privileged scopes then come from unauthenticated claims.
+        f.metadata["signature_verified"] = verified is True
+        if verified is not True:
+            f.add_tag("signature-unverified")
+        if verified is None:
             _unchecked_signature_evidence(f)
+        else:
+            self._signature_evidence(f, verified)
         f.add_tag(f"identity:{identity_type}")
         f.title = f"JWT ({identity_type}) for {sub or azp or '?'} from {family}"
         f.owner = (
@@ -348,10 +380,14 @@ class JwtConnector(BaseConnector, _NoDump):
         """Identity type, the reasons for it, agent-hint claims and the authorised party."""
         identity_type, reasons = _machine_identity(f, claims, family, sub)
         agent_hints: dict[str, Any] = {}
-        for key in AGENT_CLAIM_KEYS:
-            if key not in claims or key in {"act", "may_act"}:
+        github = family == "github-actions"
+        for key in (*AGENT_CLAIM_KEYS, "triggering_actor") if github else AGENT_CLAIM_KEYS:
+            if key not in claims or key in {"act", "may_act"} or not _meaningful(claims[key]):
                 continue
-            if key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
+            if github and key in _GITHUB_ACTOR_CLAIMS:
+                if not any(match.agent_indicator for match in name_matches(self.index, str(claims[key]))):
+                    continue
+            elif key in _AGENT_NAMING_CLAIMS and not name_matches(self.index, str(claims[key])):
                 continue
             agent_hints[key] = claims[key]
         if "act" in claims or "may_act" in claims:
@@ -469,6 +505,19 @@ def _machine_identity(f: Finding, claims: dict[str, Any], family: str, sub: str)
     ):
         identity_type = "service"
         reasons.append("Keycloak service account")
+    if identity_type == "human" and (
+        family in _WORKLOAD_ISSUER_FAMILIES
+        # gitlab.com also issues ordinary sign-in tokens; only CI job claims mark a workload.
+        or (family == "gitlab" and ("job_id" in claims or "pipeline_id" in claims))
+    ):
+        identity_type = "workload"
+        reasons.append(f"{family} issuer (CI job or in-cluster workload identity)")
+    elif identity_type == "human" and (
+        # Any cluster's issuer: GKE's is container.googleapis.com, in the google family.
+        sub.startswith("system:serviceaccount:") or _has_kubernetes_service_account_claims(claims)
+    ):
+        identity_type = "workload"
+        reasons.append("Kubernetes service-account token (in-cluster workload identity)")
     return identity_type, reasons
 
 

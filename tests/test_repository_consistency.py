@@ -795,7 +795,9 @@ def test_documented_csv_markers_match_the_reporter() -> None:
     # Consumers strip the markers the documents describe. A consumer told only
     # about a leading marker corrupts every value with a marker inside it.
     candidates = [chr(code) for code in range(1, 128)] + ["\x85", "\xa0", "\u2028", "\u2029"]
-    inside = {sep for sep in candidates if _safe_cell(f"a{sep}=1") != f"a{sep}=1"}
+    # A control character is rendered visibly in the cell; only a "'" before
+    # the formula marks it.
+    inside = {sep for sep in candidates if _safe_cell(f"a{sep}=1") == f"a{sep}'=1"}
     assert inside, "the CSV reporter no longer marks a formula inside a cell; update this test"
     unnamed = inside - _CSV_SEPARATOR_NAMES.keys()
     assert not unnamed, f"name {sorted(unnamed)!r} here and in the CSV documentation"

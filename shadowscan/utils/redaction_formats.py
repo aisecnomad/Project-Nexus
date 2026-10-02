@@ -12,7 +12,15 @@ from __future__ import annotations
 import re
 from urllib.parse import unquote
 
-from shadowscan.utils.redaction_rules import _REFERENCE, REDACTED, _sensitive_assignment_key
+from shadowscan.utils.redaction_rules import (
+    _KEY_NORMALISE,
+    _REFERENCE,
+    _VALUE_SEMICOLON,
+    REDACTED,
+    _kept_value,
+    _redact_value,
+    _sensitive_assignment_key,
+)
 
 # A token inside a longer identifier ('risk-assessment-2024') is not one, so a
 # prefix needs a boundary before it. '\b' is too strict: 'n', 'D' and '_' are word
@@ -56,11 +64,13 @@ _GENERIC_TOKEN = (
     r"|PMAK-[a-f0-9]{24}-[a-f0-9]{34}|dp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{40,}"
     r"|sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,}|glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/]{32,}"
     r"|sntry[su]_[A-Za-z0-9+/=_-]{30,}|hv[sbr]\.[A-Za-z0-9_-]{24,}"
+    r"|fw_(?=[A-Za-z]*\d)[A-Za-z0-9]{24,}"
     r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}"
 )
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
-_SECRET_TOKEN = re.compile(r"\b(?:" + _SPECIFIC_TOKEN + "|" + _GENERIC_TOKEN + r")\b")
+# ASCII boundaries: a token written directly after CJK or other non-Latin text is one.
+_SECRET_TOKEN = re.compile(r"\b(?:" + _SPECIFIC_TOKEN + "|" + _GENERIC_TOKEN + r")\b", re.ASCII)
 _UNDERSCORE_OR_ESCAPE_TOKEN = re.compile(
     r"(?P<glue>_|" + _ESCAPE + r")(?:" + _SPECIFIC_TOKEN + "|" + _GENERIC_TOKEN + r")\b"
 )
@@ -99,10 +109,18 @@ _JWT = re.compile(
 # '---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----' and a PuTTY key file, whose private part
 # ends at its 'Private-MAC:' line.
 _PEM = re.compile(
-    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----.*?"
-    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY(?: BLOCK)?-----|\Z)"
+    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)"
     r"|---- BEGIN SSH2 (?:ENCRYPTED )?PRIVATE KEY ----.*?(?:---- END SSH2 (?:ENCRYPTED )?PRIVATE KEY ----|\Z)"
     r"|PuTTY-User-Key-File-[0-9]+:.*?(?:Private-MAC:[^\r\n]*|\Z)",
+    re.DOTALL,
+)
+# OpenPGP's armored 'PRIVATE KEY BLOCK'. The established passes withhold it
+# first, as they do a PEM key, wherever that shows nothing their order
+# withholds (see redaction._withhold_key_blocks); otherwise every line from
+# the block on is withheld.
+_ADDED_PEM = re.compile(
+    r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----.*?"
+    r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----|\Z)",
     re.DOTALL,
 )
 _AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+[A-Za-z0-9+/_.=-]+")
@@ -248,6 +266,10 @@ def _query_value(field: str, *, bare: bool = False) -> str:
         "signature",
         "x-amz-signature",
         "x-goog-signature",
+        "x-amz-security-token",
+        "auth",
+        "pwd",
+        "pat",
     }
     if not bare:
         sensitive = sensitive or decoded in {"key", "code"}
@@ -268,3 +290,138 @@ def _redact_query_text(text: str) -> str:
         return "".join(pieces)
 
     return _QUERY_TEXT.sub(replace, text) if "?" in text else text
+
+
+# Cookie headers hold several ``name=value`` pairs separated by ';', any of
+# which can be a session credential and may be quoted (sid="v"), so the whole
+# header value is withheld, to the end of the line. A header may follow a JSON
+# string escape ('\\r\\nCookie: ...'). The pass runs after the statement
+# rules: a value they already withheld as a quoted marker that a ',', ')',
+# ']' or '}' then ends is an argument ('get(url, cookie=session_cookie,
+# timeout=5)'), and what follows it is the next argument, not another cookie.
+_COOKIE_HEADER = re.compile(
+    r"(?i)(?:(?<![\w.-])|(?<=\\[nrtbf])|(?<=\\u[0-9a-f]{4}))(?P<key>set-cookie2?|cookie2?)"
+    r"(?P<sep>[ \t]*[:=][ \t]*)(?=\S)"
+)
+_LINE_END = re.compile(r"[\r\n]")
+_COOKIE_ARGUMENT = re.compile(r"(?P<quote>[\"'])\[REDACTED\](?P=quote)[ \t]*[,)\]}]")
+_ALPHANUMERIC_TEXT = re.compile(r"[A-Za-z0-9]")
+# ``api-key:value`` with no space (an HTTP header written inline). Limited to
+# these header and field names: a suffix rule would also rewrite identifiers
+# such as ``example-credential:provider.openai`` or ``arn:...:secret:name``.
+_COMPACT_HEADER_NAMES = frozenset(
+    {
+        "apikey",
+        "xapikey",
+        "xgoogapikey",
+        "ocpapimsubscriptionkey",
+        "xauthtoken",
+        "xaccesstoken",
+        "xapitoken",
+        "authorization",
+        "proxyauthorization",
+        "password",
+        "passwd",
+    }
+)
+_COMPACT_COLON = re.compile(r"(?P<key>(?<![\w.-])[A-Za-z_][A-Za-z0-9_.-]*):(?=[^\s\"'\\])")
+# The letters of a JSON string escape that ends the text before a name
+# ('\\npassword:v', '\\r\\nX-Api-Key:v', '\\u000apassword:v'). The key above
+# starts at the escape's letter, since a backslash may precede a name.
+_ESCAPE_LETTERS = re.compile(r"[nrtbf]|u[0-9A-Fa-f]{4}")
+# A ``${NAME}`` reference is one unit of the value, so a placeholder is read
+# whole and kept; its content is a name, so a failed read stops at once.
+_COMPACT_VALUE = re.compile(
+    r"\[REDACTED\]|(?:\$\{[A-Za-z0-9_.:-]*+\}|[^\s,;\}\]\)\"'])+"
+    r"(?:" + _VALUE_SEMICOLON + r"(?:\$\{[A-Za-z0-9_.:-]*+\}|[^\s,;\}\]\)\"'])*)*"
+)
+# Report identifiers the gateway connector writes in place of a caller key.
+_OPAQUE_IDENTITY = re.compile(r"(?:credential|caller):(?:hmac-)?sha256:[a-f0-9]{64}")
+
+
+def _quoted_context(text: str, position: int) -> bool:
+    """Whether the name at ``position`` sits inside a quoted string (its opening quote precedes it)."""
+    return position > 0 and text[position - 1] in "\"'"
+
+
+def _redact_cookie_headers(text: str) -> str:
+    """Withhold whole ``Cookie`` and ``Set-Cookie`` header values (see ``_COOKIE_HEADER``).
+
+    Runs after the statement rules. After '=', an argument they already
+    withheld ends the argument (see ``_COOKIE_ARGUMENT``) and the rest of its
+    line is read for another header ('get(u, cookie=c, timeout=5) Cookie: ...');
+    any other value is withheld to the end of its line. The marker stays bare
+    after '=' (the statement rules, run again once this pass changed the text,
+    quote it where it is an argument) and is quoted after a colon, unless it
+    sits inside a quoted string, so the mapping rules read one scalar.
+    """
+    if "ookie" not in text and "OOKIE" not in text and "ookie" not in text.lower():
+        return text
+    out: list[str] = []
+    pos = 0
+    while (match := _COOKIE_HEADER.search(text, pos)) is not None:
+        start = match.end()
+        assigned = "=" in match.group("sep")
+        if assigned:
+            argument = _COOKIE_ARGUMENT.match(text, start)
+            if argument is not None:
+                out.append(text[pos : argument.end()])
+                pos = argument.end()
+                continue
+        line_end = _LINE_END.search(text, start)
+        end = len(text) if line_end is None else line_end.start()
+        raw = text[start:end]
+        bare = raw.rstrip(" \t")
+        out.append(text[pos:start])
+        if _ALPHANUMERIC_TEXT.search(bare.replace(REDACTED, "")) is None:
+            out.append(raw)  # already withheld: only markers and punctuation are left
+        else:
+            quoted = not assigned and not _quoted_context(text, match.start("key"))
+            out.append(('"' + REDACTED + '"' if quoted else REDACTED) + raw[len(bare) :])
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _redact_compact_colons(text: str) -> str:
+    """Withhold ``api-key:value`` (no space) after a credential header or field name."""
+    pieces: list[str] = []
+    cursor = 0
+    position = 0
+    while match := _COMPACT_COLON.search(text, position):
+        position = match.end()
+        key = match.group("key")
+        name = _KEY_NORMALISE.sub("", key.lower())
+        if name not in _COMPACT_HEADER_NAMES and match.start() and text[match.start() - 1] == "\\":
+            escape = _ESCAPE_LETTERS.match(key)
+            if escape is not None:
+                name = _KEY_NORMALISE.sub("", key[escape.end() :].lower())
+        if name not in _COMPACT_HEADER_NAMES:
+            continue
+        value = _COMPACT_VALUE.match(text, position)
+        if value is None:
+            continue
+        # Escaped JSON (\"api-key:S\") leaves the delimiter's backslash behind.
+        raw = value.group(0)
+        bare = raw.rstrip("\\")
+        if (
+            not bare
+            or bare == REDACTED
+            or _OPAQUE_IDENTITY.fullmatch(bare)
+            or _OPAQUE_IDENTITY.fullmatch(key + ":" + bare)
+            or _kept_value(bare)
+            or _redact_value(bare) == bare
+        ):
+            position = value.end()
+            continue
+        # Inside a quoted string (a curl header, a JSON value) the marker stays
+        # bare so the string keeps its delimiters; elsewhere it is quoted so
+        # the mapping-value rules read it as one scalar.
+        withheld = REDACTED if _quoted_context(text, match.start("key")) else '"' + REDACTED + '"'
+        pieces.append(text[cursor:position])
+        pieces.append(withheld + raw[len(bare) :])
+        cursor = position = value.end()
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)

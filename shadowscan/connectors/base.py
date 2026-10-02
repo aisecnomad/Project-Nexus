@@ -337,6 +337,7 @@ class BaseConnector(ABC):
     _MAX_OFFLINE_TOTAL_BYTES: ClassVar[int] = _offline.MAX_OFFLINE_TOTAL_BYTES
     _MAX_OFFLINE_ENTRIES: ClassVar[int] = _offline.MAX_OFFLINE_ENTRIES
     _MAX_INVALID_LINE_ERRORS: ClassVar[int] = _offline.MAX_INVALID_LINE_ERRORS
+    _MAX_LISTED_UNSUPPORTED: ClassVar[int] = _offline.MAX_LISTED_UNSUPPORTED
 
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
         """Validate exports under shared input budgets and preserve valid records."""
@@ -344,6 +345,10 @@ class BaseConnector(ABC):
 
     def _offline_budget(self) -> OfflineInputBudget:
         return OfflineInputBudget(self.max_input_bytes, self.max_input_files)
+
+    @staticmethod
+    def _empty_export_message(budget: OfflineInputBudget) -> str:
+        return _offline.empty_export_message(budget)
 
     def _offline_files(self, path: str, suffixes: AbstractSet[str] | None = None) -> Iterator[Path]:
         return _offline.offline_files(self, path, suffixes)

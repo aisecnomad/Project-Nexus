@@ -39,12 +39,17 @@ _CLI_OPTION = re.compile(r"-(?<![\w./\\\]-]-)-?[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za
 _CLI_GLUED_OPTION = re.compile(r"--[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*")
 _CLI_LLM = re.compile(r"(?:^|[\s(/])llm(?:[ \t]+[^\r\n;&|]*)?[ \t]+$")
 _CLI_BOUNDARY = re.compile(r"[\w./\\\]-]")
-_CLI_USER_OPTIONS = frozenset({"a", "u", "U", "auth", "basic-auth", "proxy-user", "user"})
+_CLI_USER_OPTIONS = frozenset({"a", "u", "U", "basic-auth", "proxy-user", "user"})
+# Short spellings that name a credential as an option but are too broad as
+# record field names; their whole value is withheld.
+_CLI_SECRET_OPTIONS = frozenset({"auth", "pass", "passphrase", "pat", "pwd"})
 _CLI_HEADER_OPTIONS = frozenset({"H", "header", "headers"})
 _CLI_SPACE = re.compile(r"[ \t]*\\\r?\n[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
 _CLI_LIST_GAP = re.compile(r"[ \t]*,[ \t]*|[ \t]*\r?\n[ \t]*-[ \t]+|[ \t]+")
+# An unterminated quote (a copied fragment) runs the value to its line end.
 _CLI_VALUE = re.compile(
     r"\"(?P<double>[^\"\r\n]*)\"|'(?P<single>[^'\r\n]*)'|(?P<bare>[^\s\"'`;|&<>(){}\[\],\\]+)"
+    r"|[\"'](?P<open>[^\r\n]+)"
 )
 # One character of an unquoted value (the 'bare' group above), and a run of them.
 _CLI_BARE_CHARACTER = re.compile(r"[^\s\"'`;|&<>(){}\[\],\\]")
@@ -100,6 +105,8 @@ _USER_SECRETS_SET = re.compile(
 
 def _cli_option_mode(option: str) -> str:
     name = option.lstrip("-")
+    if name.lower() in _CLI_SECRET_OPTIONS:
+        return "secret"
     if name in _CLI_USER_OPTIONS:
         return "user"
     if name in _CLI_HEADER_OPTIONS:
@@ -277,7 +284,9 @@ def _cli_value_span(
             return marked.span() if rest and _cli_secret_span(mode, rest, position, strict) else None
     if value is None:
         return None
-    group = next(name for name in ("double", "single", "bare") if value.group(name) is not None)
+    group = next(name for name in ("double", "single", "bare", "open") if value.group(name) is not None)
+    if group == "open" and mode != "secret":
+        return None
     return _cli_secret_span(mode, value.group(group), value.start(group), strict)
 
 
@@ -401,16 +410,19 @@ def _redact_options(text: str, *, opaque: bool) -> str:
         if mode in {"", "opaque"} and (logins or mysql):
             # A login's '-p' and a MySQL client's '-pValue' ('-pSecret') come first.
             mode = _cli_password_mode(text, match, logins, mysql) or mode
-        if not mode or (mode == "opaque") != opaque:
-            continue
         # An opening quote belongs to the option unless it closes a preceding word.
         quote = text[start - 1] if start and text[start - 1] in "\"'" else ""
         if quote and start > 1 and _CLI_BOUNDARY.match(text, start - 2):
             quote = ""
-        if start - len(quote) < cursor:
+        inside = start - len(quote) < cursor
+        # An option inside a value withheld before it is part of that value,
+        # but its own value after that one is still read ('--auth x=--pwd v',
+        # '--passphrase x#--key v'): main withheld each. Inside an 'opaque'
+        # value, read last, it is skipped, as main's last pass skipped it.
+        if not mode or (inside and opaque) or (not inside and (mode == "opaque") != opaque):
             continue
         span = _option_value_span(text, match, mode, quote, runs)
-        if span is None:
+        if span is None or span[0] < cursor:
             continue
         spans.append(span)
         cursor = span[1]

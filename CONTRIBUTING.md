@@ -161,6 +161,11 @@ extras for users, but the test suite is gated with them installed, so use
 `requirements.lock`, which contains every cloud SDK. Offline fixtures cover the
 cloud connectors; do not commit live tenant exports.
 
+Dependabot updates the version ranges in `pyproject.toml` and the reviewed
+inputs in `requirements-ci-constraints.txt`, not the hash locks. Refresh the locks by hand as described in
+[docs/production.md](docs/production.md); the weekly `audit.yml` workflow
+re-audits every lock between commits.
+
 Do not commit private adjudicated evaluation corpora.
 
 ## Pull requests

@@ -61,6 +61,12 @@ MAX_OFFLINE_TOTAL_BYTES = 512 * 1024 * 1024
 MAX_OFFLINE_LINE_BYTES = 4 * 1024 * 1024
 MAX_OFFLINE_ENTRIES = 200_000
 MAX_INVALID_LINE_ERRORS = 20
+# Unsupported files named in the diagnostic for an offline directory, before
+# the rest are counted.
+MAX_LISTED_UNSUPPORTED = 5
+# The connector deadline is checked every this many lines of an offline file,
+# so blank-line padding cannot outrun it.
+DEADLINE_CHECK_LINES = 1024
 OFFLINE_SUFFIXES = frozenset({".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".csv"})
 
 # Envelope keys that hold a record collection.
@@ -151,6 +157,8 @@ class OfflineInputBudget:
     bytes_read: int = 0
     files_seen: int = 0
     file_limit_warning_sent: bool = False
+    # Set by iter_bounded_lines when a size limit ended the file it was reading.
+    limit_hit: str | None = None
 
     @property
     def remaining_bytes(self) -> int:
@@ -190,6 +198,8 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
     count = 0
     files_seen = 0
     found = False
+    unsupported: list[str] = []
+    unsupported_count = 0
 
     def failed(_: OSError) -> None:
         ctx.error(f"{name}: offline directory could not be read")
@@ -224,6 +234,19 @@ def offline_files(conn: BaseConnector, path: str, suffixes: AbstractSet[str] | N
                     return
                 files_seen += 1
                 yield item
+            else:
+                unsupported_count += 1
+                if len(unsupported) < conn._MAX_LISTED_UNSUPPORTED:
+                    unsupported.append(str(item.relative_to(root)))
+    if unsupported_count:
+        # Rotated logs (access.log.1, access.log-20250901) and backups are
+        # history the scan did not read; it must not look complete.
+        more = unsupported_count - len(unsupported)
+        listed = ", ".join(unsupported) + (f", and {more} more" if more else "")
+        ctx.warn(
+            f"{name}: {unsupported_count} unsupported file(s) in the offline directory were not "
+            f"read ({listed}); convert or rename them to a supported format"
+        )
     if not found:
         ctx.error(f"{name}: offline directory contains no supported export files")
 
@@ -323,33 +346,45 @@ def iter_bounded_lines(
 
     Only the per-file cap is checked before reading. The aggregate budget
     is charged line by line, so records that precede the limit are yielded
-    even when the file as a whole would not fit.
+    even when the file as a whole would not fit. The connector deadline is
+    checked periodically so that blank-line padding cannot outrun it, and
+    ``budget.limit_hit`` names the limit that ended the file, if one did.
     """
     ctx, name = conn.ctx, conn.name
+    budget.limit_hit = None
     try:
         with open_confined_file(path.expanduser().absolute(), label="offline input") as (raw, before):
             if before.st_size > min(conn.max_input_file_bytes, conn._MAX_OFFLINE_FILE_BYTES):
-                ctx.warn(f"{name}: max_input_file_bytes ({conn.max_input_file_bytes}) reached")
+                budget.limit_hit = f"max_input_file_bytes ({conn.max_input_file_bytes})"
+                ctx.warn(f"{name}: {budget.limit_hit} reached")
                 return
             stream = gzip.GzipFile(fileobj=raw, mode="rb") if compressed else raw
             file_bytes = 0
+            lines_read = 0
             try:
                 while True:
+                    if lines_read % DEADLINE_CHECK_LINES == 0:
+                        ctx.check_deadline()
+                    lines_read += 1
                     remaining = min(conn.max_input_file_bytes - file_bytes, budget.remaining_bytes)
                     read_size = min(MAX_OFFLINE_LINE_BYTES + 1, remaining + 1)
                     line = stream.readline(read_size)
                     if not line:
                         break
                     if len(line) > MAX_OFFLINE_LINE_BYTES:
-                        ctx.warn(f"{name}: max_input_line_bytes ({MAX_OFFLINE_LINE_BYTES}) reached")
+                        budget.limit_hit = f"max_input_line_bytes ({MAX_OFFLINE_LINE_BYTES})"
+                        ctx.warn(f"{name}: {budget.limit_hit} reached")
                         return
                     if len(line) > remaining:
                         file_limited = conn.max_input_file_bytes - file_bytes <= budget.remaining_bytes
                         exceeded = "max_input_file_bytes" if file_limited else "max_input_bytes"
+                        limit_value = conn.max_input_file_bytes if file_limited else budget.max_bytes
+                        budget.limit_hit = f"{exceeded} ({limit_value})"
                         ctx.warn(f"{name}: {exceeded} reached; remaining offline input was skipped")
                         return
                     if not budget.consume(len(line)):
-                        ctx.warn(f"{name}: max_input_bytes ({budget.max_bytes}) reached")
+                        budget.limit_hit = f"max_input_bytes ({budget.max_bytes})"
+                        ctx.warn(f"{name}: {budget.limit_hit} reached")
                         return
                     file_bytes += len(line)
                     try:
@@ -370,6 +405,15 @@ def iter_bounded_lines(
 
 
 # -------------------------------------------------------------------- parsing
+def empty_export_message(budget: OfflineInputBudget) -> str:
+    """Blame the size limit, not the data, when a limit ended the file before any record."""
+    if budget.limit_hit:
+        return (
+            f"no records were read before {budget.limit_hit} was reached; raise the limit or split the export"
+        )
+    return "empty offline export; use [] for an empty inventory"
+
+
 def load_offline(conn: BaseConnector, path: str) -> Iterator[dict[str, Any]]:
     """Validate exports under shared input budgets and preserve valid records."""
     budget = conn._offline_budget()
@@ -397,13 +441,14 @@ def load_offline_file(
                 continue
             yield from conn._unwrap(data, _prefixed(report, f"line {number}"))
         if not saw_record:
-            report("empty offline export; use [] for an empty inventory")
+            report(empty_export_message(budget))
         return
     if suffix == ".csv":
         yield from _csv_rows(
             csv.DictReader(conn._iter_bounded_lines(source, budget), strict=True),
             report,
             conn._is_csv_provider_error,
+            budget,
         )
         return
     text = conn._read_offline_text(source, budget)
@@ -478,10 +523,16 @@ def csv_records(text: str, report: Report) -> Iterator[dict[str, Any]]:
 
 
 def _csv_rows(
-    reader: csv.DictReader[str], report: Report, is_provider_error: Callable[[dict[str, str]], bool]
+    reader: csv.DictReader[str],
+    report: Report,
+    is_provider_error: Callable[[dict[str, str]], bool],
+    budget: OfflineInputBudget | None = None,
 ) -> Iterator[dict[str, Any]]:
     try:
         fields = reader.fieldnames
+        if not fields and budget is not None and budget.limit_hit:
+            report(empty_export_message(budget))
+            return
         if (
             not fields
             or any(not field.strip() for field in fields)

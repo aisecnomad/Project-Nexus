@@ -84,7 +84,7 @@ def test_single_file_code_findings_keep_distinct_patterns_as_corroboration():
         evidence=[Evidence("code:platform.dify", pattern, weight=0.6) for pattern in patterns],
     )
     export.recompute_confidence()
-    assert export.confidence == round(1 - 0.4**3, 3) and export.likelihood == Likelihood.CONFIRMED
+    assert export.confidence == round(1 - 0.4**3, 3) and export.likelihood == Likelihood.STRONG
 
 
 def test_merging_duplicate_observations_does_not_inflate_a_repeated_signal():

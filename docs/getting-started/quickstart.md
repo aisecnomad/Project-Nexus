@@ -5,8 +5,12 @@
 No credentials needed — scan a repository or directory:
 
 ```bash
-shadowscan code . --inventory inventory/
+shadowscan code .
 ```
+
+To mark which agents are sanctioned, add `--inventory <path>` with an existing
+card file or directory (for example the bundled `agent-card.yaml`); the path must
+exist. See [inventory](../inventory.md).
 
 ## 2. Try the offline demo
 
@@ -80,8 +84,14 @@ printf '%s\n' "$TOKEN" | shadowscan jwt --jwks-url https://acme.okta.com/oauth2/
 
 ```bash
 shadowscan inventory stubs report.json -o inventory/pending/
-shadowscan diff last-week.json today.json
+shadowscan diff last-week.json today.json                 # informational: exit 0 unless the comparison is incomplete (3)
+shadowscan diff last-week.json today.json --fail-on-new   # exit 2 on new findings or a higher risk level
 ```
+
+`diff` can complete only for local repository scans and offline exports; a
+live API connector or a third-party connector always gives 3, and `gateway.logs`
+does unless both scans were keyed with the same identity key (see
+[scan state](../scanning.md)).
 
 ## Exit codes
 
@@ -91,6 +101,9 @@ shadowscan diff last-week.json today.json
 | `1`  | No scan result: invalid option, value, path or configuration, or a setup or output error |
 | `2`  | Completed scan, findings reached `--fail-on` level |
 | `3`  | Incomplete scan (API failures, timeouts, permission denials) |
+
+Treat any non-zero exit as a failure in CI. Do not test only for 2 and 3: exit 1
+means nothing was scanned.
 
 ## Next steps
 

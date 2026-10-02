@@ -138,7 +138,6 @@ from shadowscan.utils.safe_yaml import (
     strict_bounded_safe_load,
 )
 from shadowscan.utils.text import (
-    BINARY_CONTENT_ERROR,
     notebook_to_source,
     parse_timestamp,
     read_text,
@@ -244,6 +243,9 @@ VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
 # Entries inspected to decide whether a skipped directory holds any file.
 _EMPTY_DIRECTORY_PROBE_ENTRIES = 256
 
+# Non-regular entries named individually per root, before the rest are summarized.
+_MAX_NON_REGULAR_NOTES = 10
+
 LOCK_FILES = {
     "package-lock.json",
     "yarn.lock",
@@ -321,11 +323,27 @@ DEADLINE_MARGIN_MIN_SECONDS = 0.25
 
 # Generated or locked files the walker never reads at any size.
 _NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
+# A name no real file can have (a path component cannot contain NUL), so only
+# a wildcard glob segment such as ``**`` matches it.
+_ANY_FILE_NAME = "\x00"
 
 
 def _never_read_by_name(name: str) -> bool:
     """Whether the walker skips ``name`` silently because it never carries evidence."""
     return name in LOCK_FILES or name.endswith(_NEVER_READ_SUFFIXES)
+
+
+def _special_file_kind(mode: int) -> str:
+    """Name the kind of a non-regular, non-directory entry for diagnostics."""
+    for test, kind in (
+        (stat.S_ISFIFO, "FIFO"),
+        (stat.S_ISSOCK, "socket"),
+        (stat.S_ISCHR, "character device"),
+        (stat.S_ISBLK, "block device"),
+    ):
+        if test(mode):
+            return kind
+    return "special file"
 
 
 PROJECT_ROOT_MARKERS = {
@@ -493,6 +511,10 @@ _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/"
 # possessive quantifier never backtracks, and the bounded engine applies the
 # per-input matching budget where the pattern runs (_parse_agent_definition).
 _FRONTMATTER = regex.compile(r"^---[ \t\r]*+\n(.*?)\n---[ \t\r]*+\n", regex.S)
+# Front-matter keys whose bare glob values _quote_glob_values quotes.
+_GLOB_KEYS = ("globs", "paths")
+# A YAML comment starts at a "#" that follows a space or tab.
+_COMMENT_START = re.compile(r"[ \t]#")
 # Files whose parsed structure supplies credential context for excerpt
 # redaction (see _structured_context).
 _JSON_SUFFIXES = (".json", ".jsonc", ".json5")
@@ -1033,8 +1055,9 @@ class FilesystemConnector(BaseConnector):
             "(default false)"
         ),
         "strict_coverage": (
-            "report coverage gaps (unread analyzable oversize files, symbolic links whose alias path is not "
-            "covered) as errors instead of warnings; either way the scan is incomplete (default false)"
+            "report coverage gaps (unread analyzable oversize files, non-regular entries named like "
+            "configuration files, symbolic links whose alias path is not covered) as errors instead of "
+            "warnings; either way the scan is incomplete (default false)"
         ),
         "include_tests": (
             "let test and fixture code establish agents and credential findings at full weight "
@@ -1174,6 +1197,22 @@ class FilesystemConnector(BaseConnector):
             if PurePosixPath(rel).match(g) or PurePosixPath(rel).match(g.rstrip("/") + "/*"):
                 return True
         return False
+
+    def _analyzed_name(self, rel: str, name: str) -> bool:
+        """Whether the scanner would read a regular file called ``name`` for evidence.
+
+        Names without an extension count only when they are manifests, MCP
+        configuration or carry a file-name signature; other extensionless
+        entries (executables, sockets) are not analyzable by name.
+        """
+        ext = Path(name).suffix.lower()
+        return (
+            ext in SOURCE_EXTENSIONS
+            or ext in TEXT_CONFIG_EXTENSIONS
+            or is_manifest_name(name)
+            or name in MCP_CONFIG_NAMES
+            or bool(self.index.match_file(rel))
+        )
 
     def _disclosed_default_exclusion(self, rel: str, name: str) -> bool:
         """Whether only a built-in exclusion of a disclosed name skips this directory.
@@ -1442,6 +1481,8 @@ class FilesystemConnector(BaseConnector):
                     self.ctx.error(f"code.filesystem: could not inspect {rel}")
                     continue
                 if not stat.S_ISREG(info.st_mode):
+                    if self._analyzed_name(rel, fn):
+                        self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
                     continue
                 if info.st_size > self._size_limit(fn) and self._oversize_skippable(rel, fn):
                     self._skip_oversize(rel, info.st_size)
@@ -1483,8 +1524,35 @@ class FilesystemConnector(BaseConnector):
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {rel}")
                 continue
+            if name in MCP_CONFIG_NAMES:
+                # The walk descends into it, but no client reads a directory
+                # as the configuration file its name implies. A file-signature
+                # glob is not such a name: ``.roo/**`` or ``.clinerules`` also
+                # match directories that their clients read as directories.
+                self._skip_non_regular(walk, root, rel, "directory")
             kept.append(name)
         return kept
+
+    def _skip_non_regular(self, walk: _WalkCounters, root: Path, rel: str, kind: str) -> None:
+        """Record an entry the scanner cannot read as a file although its name says it would.
+
+        Like a link, such an entry hides whatever a client would find there:
+        coverage is incomplete. The first few are named; the rest are counted.
+        """
+        walk.non_regular += 1
+        if walk.non_regular > _MAX_NON_REGULAR_NOTES + 1:
+            return
+        if walk.non_regular == _MAX_NON_REGULAR_NOTES + 1:
+            message = f"code.filesystem: further non-regular entries under {root} not listed"
+        else:
+            message = (
+                f"code.filesystem: {rel}: skipped, not a regular file ({kind}) but named like "
+                "analyzable content"
+            )
+        if self.strict_coverage:
+            self.ctx.error(f"{message}; coverage incomplete")
+        else:
+            self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
 
     def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
         """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
@@ -1678,9 +1746,11 @@ class FilesystemConnector(BaseConnector):
 
         # 1. file-name signals (config files of agents / MCP / A2A ...)
         file_matches = self.index.match_file(rel)
-        if not (_analyzed_by_name(path.name) or file_matches):
+        by_name = _analyzed_by_name(path.name)
+        if not (by_name or file_matches):
             return
-        loaded = self._read_source(rel, path, scan.root_fd, scan.base)
+        named = by_name or self._named_by_signature(rel, file_matches)
+        loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if loaded is None:
             return
         text, raw_notebook = loaded
@@ -1716,23 +1786,24 @@ class FilesystemConnector(BaseConnector):
         self._record_special_files(scan, file)
 
     def _read_source(
-        self, rel: str, path: Path, root_fd: int, base: Path | None = None
+        self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
     ) -> tuple[str, str | None] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document.
 
         The file is read relative to the open scan root ``root_fd``: by its on-disk
         name (``path`` below ``base``), while ``rel`` is the report-safe name used in
         diagnostics. A notebook's text is its code cells. None means nothing is
-        analyzed; the recorded diagnostics say why.
+        analyzed; the recorded diagnostics say why. ``named`` is False when only a
+        directory-wide signature glob selects the file, so a recognised binary
+        artifact there (an image beside coding-agent rules) is skipped without a
+        coverage gap.
         """
         read_errors: list[str] = []
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
-        text = read_text(on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd)
+        text = read_text(
+            on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd, analyzable_name=named
+        )
         for issue in read_errors:
-            if issue == BINARY_CONTENT_ERROR and not _analyzed_by_name(path.name):
-                # Read only because a file-name signature matched (an image under
-                # a rules directory): binary content there was never analyzed.
-                continue
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
                     f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
@@ -1745,6 +1816,19 @@ class FilesystemConnector(BaseConnector):
         if path.suffix.lower() != ".ipynb":
             return text, None
         return self._notebook_source(rel, text)
+
+    def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
+        """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
+
+        A signal that also matches a name no file can have, in the same
+        directory, comes from a directory-wide glob such as ``.cursor/rules/**``:
+        it says nothing about this file, which may be an image kept beside the
+        rules. A literal name such as ``.cursorrules`` selects the file itself.
+        """
+        parent = rel.rpartition("/")[0]
+        probe = f"{parent}/{_ANY_FILE_NAME}" if parent else _ANY_FILE_NAME
+        directory_wide = {(m.signature.id, id(m.signal)) for m in self.index.match_file(probe)}
+        return any((m.signature.id, id(m.signal)) not in directory_wide for m in file_matches)
 
     def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None] | None:
         """Return a notebook's code cells and, when within max_file_size, its raw document."""
@@ -3282,7 +3366,7 @@ class FilesystemConnector(BaseConnector):
         m = _FRONTMATTER.match(text, timeout=_pattern_timeout(), concurrent=False)
         if m:
             try:
-                fm = strict_bounded_safe_load(m.group(1)) or {}
+                fm = strict_bounded_safe_load(_quote_glob_values(m.group(1))) or {}
             except (ValueError, RecursionError, yaml.YAMLError):
                 # Includes resource limits, duplicate fields, non-finite
                 # numbers, and SafeLoader's plain ValueError for an
@@ -3307,6 +3391,63 @@ class FilesystemConnector(BaseConnector):
                             truncate(sanitize_text(v), 200) if isinstance(v, str) else _clip(sanitize(v))
                         )
         return info
+
+
+def _strip_comment(text: str) -> str:
+    """Remove a trailing YAML comment and the blanks before it."""
+    start = _COMMENT_START.search(text)
+    return text if start is None else text[: start.start()].rstrip(" \t")
+
+
+def _quote_glob_values(front_matter: str) -> str:
+    """Quote bare ``globs``/``paths`` values that start with ``*``.
+
+    Cursor and Claude Code rule files routinely write ``globs: **/*.ts``
+    unquoted, which YAML reads as an alias and rejects. Only those two keys
+    (a scalar, a flow list or block list items) are rewritten, so a real alias
+    elsewhere is untouched and the bounded loader still parses the result.
+    Lines are split with string methods, not backtracking patterns: the front
+    matter is untrusted, and the scan budget cannot interrupt stdlib ``re``,
+    so a long run of blanks must cost linear time.
+    """
+
+    def quote(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    out: list[str] = []
+    in_list = False
+    for raw in front_matter.split("\n"):
+        line = raw.rstrip("\r")
+        head, colon, rest = line.partition(":")
+        name = head.rstrip(" \t")
+        if colon and name in _GLOB_KEYS:
+            value = rest.strip(" \t")
+            if value.startswith("#"):
+                value = ""
+            elif value.startswith("*"):
+                value = _strip_comment(value)
+            in_list = not value
+            if value.startswith("*"):
+                raw = f"{name}: {quote(value)}"
+            elif (
+                value.startswith("[")
+                and value.endswith("]")
+                and "*" in value
+                and not re.search(r"[\"']", value)
+            ):
+                items = [item.strip() for item in value[1:-1].split(",")]
+                raw = f"{name}: [{', '.join(quote(i) if i.startswith('*') else i for i in items)}]"
+        elif in_list:
+            # A block item is blanks, "-", at least one blank, then the glob.
+            item = _strip_comment(line)
+            body = item.lstrip(" \t")
+            glob = body[1:].lstrip(" \t")
+            if body.startswith("-") and glob.startswith("*") and len(glob) < len(body) - 1:
+                raw = item[: len(item) - len(glob)] + quote(glob.rstrip(" \t"))
+            elif line[:1] not in ("", " ", "\t", "-", "#"):
+                in_list = False
+        out.append(raw)
+    return "\n".join(out)
 
 
 _MAX_CARD_FILES = 200
@@ -3349,6 +3490,7 @@ class _WalkCounters:
     """What one directory walk has examined so far, shared with its link checks."""
 
     examined: int = 0  # files and links counted toward max_files
+    non_regular: int = 0  # entries named like analyzable content that are not regular files
     stop_at: float | None = None  # monotonic time after which link checks stop (deadline minus margin)
     # Directory (POSIX, relative to the root) -> project root of the files in
     # it, so a directory holding many links lists its ancestors once.

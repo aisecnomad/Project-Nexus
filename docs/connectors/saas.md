@@ -46,7 +46,7 @@ incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
 and privileged/data scopes (`keep_all: true` to emit everything). Records
-without an app name are skipped and counted, and an export where no record
+without an app name are skipped and counted (fully blank rows are ignored), and an export where no record
 maps to a name makes the scan incomplete instead of looking empty.
 
 

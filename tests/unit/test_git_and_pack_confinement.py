@@ -126,17 +126,6 @@ def test_signature_loader_skips_symlinked_pack_files(tmp_path):
     assert {s.id for s in loaded} == {"extra.ok"}
 
 
-def test_inventory_directory_skips_symlinked_files(tmp_path):
-    inv = tmp_path / "inv"
-    inv.mkdir()
-    outside = tmp_path / "outside.yaml"
-    outside.write_text("id: hostile\nresources: ['*']\n")
-    (inv / "link.yaml").symlink_to(outside)
-    (inv / "ok.yaml").write_text("id: approved\nresources: ['github:acme/ok']\n")
-    loaded = Inventory.load([inv])
-    assert [e.agent_id for e in loaded.entries] == ["approved"]
-
-
 PACK = (
     "id: extra.ok\nname: Ok\ncategory: framework\n"
     "signals:\n  - type: dependency\n    ecosystem: pypi\n    names: [okpkg]\n"

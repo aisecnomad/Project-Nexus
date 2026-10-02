@@ -224,8 +224,12 @@ _RECORD_INLINE_VALUE = re.compile(
 )
 # A quoted value runs to its closing quote, past a '}' inside it ('"p}v"').
 _RECORD_QUOTED_VALUE = re.compile(r"\"(?:\\.|[^\"\\\r\n])*\"|'(?:\\.|[^'\\\r\n])*'")
+# An escaped quote never opens a string: every quote of a JSON document copied
+# into a string literal is escaped, and a scan for a closing quote that
+# restarted at each of them read the rest of the text again every time.
 _FLOW_RECORD_TOKEN = re.compile(
-    r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[{}]|name|key|value|Name|Key|Value|NAME|KEY|VALUE"
+    r"(?<!\\)\"(?:\\.|[^\"\\])*\"|(?<!\\)'(?:\\.|[^'\\])*'"
+    r"|[{}]|name|key|value|Name|Key|Value|NAME|KEY|VALUE"
 )
 _REVERSE_RECORD_PREFIX = re.compile(r"[ \t]*(?:-[ \t]+)?")
 _RECORD_BRACE = re.compile(r"\}")

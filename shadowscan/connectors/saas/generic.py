@@ -118,7 +118,12 @@ class GenericSaaSConnector(BaseConnector):
                 continue
             analysed += 1
             if not self._get(rec, "name"):
-                unnamed += 1
+                # Blank spreadsheet rows carry no app and need no diagnostic;
+                # every other unnamed record is a coverage gap.
+                if any(str(value).strip() for value in rec.values() if value is not None):
+                    unnamed += 1
+                else:
+                    analysed -= 1
                 continue
             try:
                 f = self._finding(rec)

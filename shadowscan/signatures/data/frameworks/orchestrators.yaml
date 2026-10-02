@@ -511,8 +511,10 @@ signatures:
     agent_indicator: true
     signals:
       - type: dependency
+        # OpenAI Swarm is installed from git; the bare PyPI name `swarm` is an
+        # unrelated package, so only the vendor-qualified name counts.
         ecosystem: pypi
-        names: [swarm, openai-swarm]
+        names: [openai-swarm]
         weight: 0.6
       - type: import
         languages: [python]

@@ -8,7 +8,7 @@ import html
 import json
 
 from shadowscan.models import ScanResult
-from shadowscan.reporters._publication import publication_stats, related_finding_ids
+from shadowscan.reporters._publication import publication_stats, related_finding_ids, visible_controls
 
 _CSS = (
     "\n"
@@ -79,7 +79,9 @@ _JS = (
 
 
 def _e(s: object) -> str:
-    return html.escape("" if s is None else str(s))
+    """Escape markup and show terminal controls, so ``cat report.html`` cannot run escape sequences."""
+    text = "" if s is None else str(s).replace("\r\n", "\n")
+    return html.escape(visible_controls(text, keep="\t\n"))
 
 
 def _tags(values: list[str]) -> str:

@@ -10,7 +10,8 @@ import time
 
 import pytest
 
-from shadowscan.models import Evidence, Finding, Kind, ScanResult, Surface
+from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface, now_iso
+from shadowscan.reporters._publication import visible_controls
 from shadowscan.reporters.csv_ import _safe_cell, render_csv
 
 TRIGGERS = ("=", "+", "-", "@")
@@ -106,7 +107,9 @@ def test_comma_reader_still_recovers_each_value_behind_its_marker():
         resource_type="repository",
         owner="@org/team",
     )
-    row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[finding])))))
+    # A complete scan has no status row before its findings.
+    stats = [ScanStats(connector="code.filesystem", started_at=now_iso())]
+    row = next(csv.DictReader(io.StringIO(render_csv(ScanResult(findings=[finding], stats=stats)))))
     assert row["title"] == "x;'=2+5;"
     assert row["owner"] == "'@org/team"
 
@@ -124,7 +127,9 @@ def test_linear_pass_matches_the_reference_pattern_on_random_strings():
     rng = random.Random(20261001)
     for _ in range(6000):
         value = "".join(rng.choice(_TRICKY_ALPHABET) for _ in range(rng.randint(0, 14)))
-        assert _safe_cell(value) == _REFERENCE_FORMULA_CELL.sub("'", value), repr(value)
+        # Controls other than tab, CR and LF are rendered visibly before the formula pass.
+        shown = visible_controls(value, keep="\t\r\n")
+        assert _safe_cell(value) == _REFERENCE_FORMULA_CELL.sub("'", shown), repr(value)
 
 
 @pytest.mark.parametrize(
@@ -159,6 +164,7 @@ def test_a_hostile_finding_title_renders_quickly():
         resource_type="repository",
     )
     started = time.perf_counter()
-    report = render_csv(ScanResult(findings=[finding]))
+    stats = [ScanStats(connector="code.filesystem", started_at=now_iso())]
+    report = render_csv(ScanResult(findings=[finding], stats=stats))
     assert time.perf_counter() - started < 1.0
     assert next(csv.DictReader(io.StringIO(report)))["title"].endswith("'=1+1")

@@ -95,6 +95,14 @@ They never confer registered status, inherit an owner, or reduce risk. An
 explicit resource mismatch cannot fall through to name-based approval. Multiple
 matching inventory entries require review and leave the resource unregistered.
 
+A gateway finding's resource (for example `principal:svc-ops`) is a caller name
+the log producer supplied, often the caller itself. When its identity assurance
+is `operator-asserted` or `unverified` (generic and access-log exports, shared or
+missing names), a matching card still registers it, but the finding carries
+`metadata.registry_match_assurance` and the `registry-identity-unverified` tag:
+the registration is only as trustworthy as the log's caller field. Review such
+registrations before treating the agent as sanctioned.
+
 ### Inventory placement and wildcard warnings
 
 An inventory is an approval list, so whoever can edit it can approve findings.

@@ -38,7 +38,7 @@ def _finding(**overrides: Any) -> Finding:
 
 
 @pytest.mark.parametrize("report_format", ["html", "csv"])
-def test_stdout_neutralizes_report_controls_but_file_output_preserves_data(
+def test_stdout_and_saved_reports_neutralize_report_controls(
     report_format: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result = ScanResult(findings=[_finding(title=CONTROL_PAYLOAD)])
@@ -52,10 +52,16 @@ def test_stdout_neutralizes_report_controls_but_file_output_preserves_data(
     assert all(control not in terminal for control in ("\x1b", "\x07", "\x9b", "\u202e"))
     assert "\\u001b" in terminal and "\\u0007" in terminal and "\\u202e" in terminal
 
+    # A saved artifact is read with cat or less as often as it is opened in a
+    # viewer, so it must not carry raw escape sequences either.
     destination = tmp_path / f"report.{report_format}"
     _emit(result, report_format, str(destination), verbose=False, max_rows=None)
     saved = destination.read_text(encoding="utf-8")
-    assert CONTROL_PAYLOAD in saved
+    assert CONTROL_PAYLOAD not in saved
+    assert all(control not in saved for control in ("\x1b", "\x07", "\x9b", "\u202e"))
+    assert "\\u001b" in saved and "\\u0007" in saved and "\\u202e" in saved
+    # The data is still there, only its controls are visible.
+    assert "name\\u001b]52;c;Y2xpcGJvYXJk\\u0007" in saved
 
 
 def test_every_stats_publisher_redacts_direct_caller_diagnostics() -> None:

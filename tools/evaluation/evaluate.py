@@ -385,16 +385,13 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
     started = time.perf_counter()
     findings = FilesystemConnector(ctx).run()
     elapsed = time.perf_counter() - started
-    if (
-        ctx.stats is None
-        or ctx.stats.incomplete
-        or ctx.stats.skipped
-        or ctx.stats.errors
-        or ctx.stats.warnings
-    ):
+    # The default-exclude notice is informational (it never marks a scan
+    # incomplete); every other warning still invalidates the evaluation.
+    warnings = list(ctx.stats.warnings) if ctx.stats else []
+    if ctx.stats is None or ctx.stats.incomplete or ctx.stats.skipped or ctx.stats.errors or warnings:
         raise RuntimeError(
             f"{case.id}: scan incomplete: "
-            + "; ".join((ctx.stats.errors + ctx.stats.warnings) if ctx.stats else ["no status"])
+            + "; ".join((ctx.stats.errors + warnings) if ctx.stats else ["no status"])
         )
     return elapsed, [
         {

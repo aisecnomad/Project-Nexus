@@ -121,8 +121,13 @@ them to `exclude` unless that is intended); version-control metadata (`.git`,
 same option is accepted by `code.github` and `code.gitlab` and forwarded to the
 scan of each checkout.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
-by default; `strict_coverage` promotes their diagnostics to errors. Declared
-oversize skip globs remain visible omissions. Each root is opened once, and every
+by default, as do binary content (a NUL byte) in an analyzable file, non-regular
+entries named like configuration files, and directory nesting deeper than the
+walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
+oversize skip globs remain visible omissions, and directories skipped by the
+default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
+root that does not affect completeness. See the coverage policy in
+[scanning](../scanning.md#coverage-policy). Each root is opened once, and every
 file (including `CODEOWNERS`) is read relative to it without following a link in
 any path component. A directory replaced by a link while the scan runs therefore
 fails the reads below it, which makes the scan incomplete, instead of redirecting

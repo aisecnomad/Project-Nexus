@@ -179,6 +179,9 @@ _FSTRING_ENDS = frozenset(
 )
 _NEWLINE_TOKENS = frozenset({token.NEWLINE, token.NL})
 _SPACE_TOKENS = frozenset({token.INDENT, token.DEDENT, token.COMMENT, token.ERRORTOKEN})
+# A ';' glued into an unquoted value: not followed by whitespace, the end of
+# the text or another ``name=`` pair (see redaction_assignments._VALUE_SEMICOLON).
+_GLUED_SEMICOLON = re.compile(r";(?!\s|\Z|[A-Za-z_][A-Za-z0-9_.-]*\s*=)")
 # Operators after which an assigned expression continues on the next line.
 _CONTINUING_OPERATORS = frozenset({"+", "-", "*", "/", "**", "&", "|", "?", ":", "=", "."})
 
@@ -409,9 +412,11 @@ class _AssignmentScanner:
         record = _AnnotationScan() if annotated else None
         definitive = True
         stopped: tokenize.TokenInfo | None = None
+        quoted = False
         try:
             for item in tokenize.generate_tokens(lines.readline):
                 stopped = item
+                quoted = quoted or '"' in item.string or "'" in item.string
                 # The tokenizer yields every token of a line before it reads
                 # the next. That line starts a statement, whose leading blanks
                 # are measured indentation, only after a newline outside brackets.
@@ -455,6 +460,11 @@ class _AssignmentScanner:
                         and not brackets
                         and (item.string == ";" or (argument and item.string == ","))
                     ):
+                        # An unquoted value (.env style) may itself contain a
+                        # ';' that is not followed by whitespace or ``name=``.
+                        if item.string == ";" and not quoted and _GLUED_SEMICOLON.match(text, position):
+                            previous_operator = item.string
+                            continue
                         end = position
                         break
                     previous_operator = item.string

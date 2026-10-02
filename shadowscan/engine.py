@@ -30,7 +30,12 @@ from shadowscan.registry import Inventory
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
-from shadowscan.utils.http import reset_allow_private_origin, set_allow_private_origin
+from shadowscan.utils.http import (
+    reset_allow_private_origin,
+    reset_request_deadline,
+    set_allow_private_origin,
+    set_request_deadline,
+)
 from shadowscan.utils.output import prepare_private_directory, write_private_text
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize
 
@@ -231,6 +236,8 @@ class _ConnectorRunner:
             return get_connector_class(name)
         except Exception as exc:  # noqa: BLE001 - reported as an incomplete connector by _collect
             return exc
+        except BaseException as exc:  # noqa: BLE001 - plugin code calling sys.exit() is a connector failure
+            return _hook_failure(name, "connector lookup", exc)
         finally:
             reset_allow_private_origin(origin_token)
 
@@ -238,28 +245,38 @@ class _ConnectorRunner:
         resolved = self._resolve(spec.name, state)
         roots = spec.config.get("paths")
         root_ids = spec.config.get("root_ids")
-        if not isinstance(roots, list) or not self._split_roots(spec, resolved, roots, root_ids):
-            return self._run_one(spec, resolved, f"{number:04d}", state)
-        return self._run_split(number, spec, resolved, state, roots, root_ids)
+        if isinstance(roots, list):
+            split, resolved = self._split_roots(spec, resolved, roots, root_ids)
+            if split:
+                return self._run_split(number, spec, resolved, state, roots, root_ids)
+        return self._run_one(spec, resolved, f"{number:04d}", state)
 
-    def _split_roots(self, spec: ConnectorSpec, resolved: _Resolved, roots: list[Any], root_ids: Any) -> bool:
-        """Decide whether a multi-root scan can be cached per repository."""
+    def _split_roots(
+        self, spec: ConnectorSpec, resolved: _Resolved, roots: list[Any], root_ids: Any
+    ) -> tuple[bool, _Resolved]:
+        """Decide whether a multi-root scan can be cached per repository.
+
+        Also returns the job's connector class, or the failure ``_run_one``
+        reports as an incomplete connector when the class's hook fails.
+        """
         if not (self._config.incremental and not spec.config.get("input") and len(roots) > 1):
-            return False
+            return False, resolved
         if isinstance(resolved, Exception):
-            return False  # _run_one reports the lookup failure as incomplete
+            return False, resolved  # _run_one reports the lookup failure as incomplete
         try:
             labelled = bool(spec.label or spec.config.get("label"))
             if not _hooks(resolved).cache_roots_separately(roots, root_ids, labelled=labelled):
-                return False
+                return False, resolved
         except ConnectorError:
             # Run once so constructor validation reports an incomplete
             # scan, rather than partially scanning the valid children.
-            return False
+            return False, resolved
+        except BaseException as exc:  # noqa: BLE001 - a failing plugin hook is a connector failure
+            return False, _hook_failure(spec.name, "cache_roots_separately()", exc)
         try:
-            return self._cache.supports_connector(spec, resolved)
+            return self._cache.supports_connector(spec, resolved), resolved
         except Exception:  # noqa: BLE001 - _run_one reports import failures as incomplete
-            return False
+            return False, resolved
 
     def _run_split(
         self,
@@ -307,10 +324,10 @@ class _ConnectorRunner:
         return spec, combined, stats
 
     def _connector_config(
-        self, spec: ConnectorSpec, hooks: type[BaseConnector], dump_key: str
+        self, spec: ConnectorSpec, inherits_approval: bool, dump_key: str
     ) -> dict[str, Any]:
         cfg = dict(spec.config)
-        if "allow_instance_credentials" in cfg or hooks.inherits_instance_credentials_approval():
+        if "allow_instance_credentials" in cfg or inherits_approval:
             # Scan-wide approval cannot be bypassed by a connector-level key.
             cfg["allow_instance_credentials"] = self._config.allow_instance_credentials
         if spec.label:
@@ -325,7 +342,13 @@ class _ConnectorRunner:
     ) -> _JobResult:
         self._engine._report_progress(spec.id, "starting")
         hooks = _hooks(resolved)
-        cfg = self._connector_config(spec, hooks, dump_key)
+        try:
+            inherits_approval = hooks.inherits_instance_credentials_approval()
+        except BaseException as exc:  # noqa: BLE001 - a failing plugin hook is a connector failure
+            # _collect raises the failure before the connector is constructed.
+            resolved = _hook_failure(spec.name, "inherits_instance_credentials_approval()", exc)
+            hooks, inherits_approval = _hooks(resolved), True
+        cfg = self._connector_config(spec, inherits_approval, dump_key)
         identity_key = self._run_identity_key if hooks.uses_run_identity_key else None
         ctx = ConnectorContext(
             config=cfg,
@@ -340,6 +363,7 @@ class _ConnectorRunner:
         fs: list[Finding] = []
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._config.allow_private_origin)
+        limits_token = set_request_deadline(state.deadline, state.cancelled)
         try:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
@@ -348,7 +372,7 @@ class _ConnectorRunner:
             raise
         except BaseException as exc:  # noqa: BLE001 - isolate construction and collection failures,
             # including a plugin's sys.exit(), which must not end the scan as a clean pass.
-            message = ctx.sanitize_message(f"{spec.name}: {type(exc).__name__}: {exc}")
+            message = ctx.sanitize_message(_failure_message(spec, exc))
             st = ctx.stats or ScanStats(connector=spec.id, started_at=started_at)
             st.connector = spec.id
             st.finished_at = now_iso()
@@ -358,6 +382,7 @@ class _ConnectorRunner:
             st.errors.append(message)
             log.warning("connector failed; diagnostic recorded in incomplete scan stats")
         finally:
+            reset_request_deadline(limits_token)
             reset_allow_private_origin(origin_token)
         st.findings = len(fs)
         _sanitize_diagnostics(st)
@@ -446,6 +471,31 @@ class _ConnectorRunner:
                 st.incomplete = True
                 st.errors.append("static input changed during the scan; rerun required")
         return st, False
+
+
+def _hook_failure(name: str, call: str, exc: BaseException) -> ConnectorError:
+    """The error ``_collect`` reports when plugin code fails outside collection.
+
+    Covers looking up a connector class and calling its engine hooks. A
+    KeyboardInterrupt still ends the scan. Only the exception type is kept,
+    as for a plugin that fails at import: a ``SystemExit`` argument or other
+    exception text from plugin code may carry a credential.
+    """
+    if isinstance(exc, KeyboardInterrupt):
+        raise exc
+    return ConnectorError(f"{name}: {call} raised {type(exc).__name__}")
+
+
+def _failure_message(spec: ConnectorSpec, exc: BaseException) -> str:
+    """Describe a connector failure once, without a repr-quoted KeyError or a doubled connector prefix."""
+    if isinstance(exc, KeyError) and len(exc.args) == 1 and isinstance(exc.args[0], str):
+        return f"{spec.name}: {exc.args[0]}"
+    if type(exc) is ConnectorError:
+        # The message a connector writes for itself, as BaseConnector.run reports it.
+        text = str(exc)
+        return text if text.startswith(f"{spec.name}:") else f"{spec.name}: {text}"
+    detail = str(exc)
+    return f"{spec.name}: {type(exc).__name__}" + (f": {detail}" if detail else "")
 
 
 def _sanitize_diagnostics(st: ScanStats) -> None:
@@ -757,6 +807,20 @@ class Engine:
             if spec.enabled and (not only or spec.id in only or spec.name in only)
         ]
 
+    def _not_run(self, jobs: list[_Job]) -> list[dict[str, str]]:
+        """Configured connectors that were deliberately not run, for the report's reader.
+
+        Disabling a connector or narrowing with ``--only`` is operator intent
+        and never makes a scan incomplete, but the report would otherwise show
+        no trace that a configured source was left out.
+        """
+        selected = {number for number, _ in jobs}
+        return [
+            {"connector": spec.id, "reason": "disabled" if not spec.enabled else "not selected by --only"}
+            for number, spec in enumerate(self.config.connectors, 1)
+            if number not in selected
+        ]
+
     @staticmethod
     def _reject_selection(result: ScanResult, invalid: list[str]) -> ScanResult:
         result.collection_scope = {
@@ -919,6 +983,10 @@ class Engine:
         result.collection_scope = build_collection_scope(
             self.config, self.index, specs, identity_key=self._identity_key
         )
+        not_run = self._not_run(jobs)
+        if not_run:
+            # Outside the fingerprint and comparability: operator intent only.
+            result.collection_scope["not_run"] = not_run
         stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
         cache = IncrementalCache(self.config, self.index)
         dump_records = self.config.dump_records

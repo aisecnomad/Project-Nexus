@@ -13,6 +13,11 @@ to another origin. Denied access, collection failures, pagination limits and
 oversized or slow responses (see
 [resource limits](production.md#resource-limits-and-incomplete-scans)) make
 the scan incomplete rather than producing a clean result.
+TLS verification cannot be disabled and `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` are
+ignored, so a private endpoint admitted with `--allow-private-origin` behind
+internal PKI fails verification (and the scan is incomplete) unless the connector
+offers an explicit CA option. Only `identity.jwt` does today (`ca_bundle`, JWKS
+endpoint); other connectors trust the default CA store.
 
 Offline file and directory inputs use shared safety limits: 10,000 files,
 32 MiB per file and 256 MiB total per connector by default. JSONL, CSV and gateway
@@ -20,7 +25,10 @@ text logs stream line by line, with a 4 MiB line cap; gzip gateway logs are boun
 by expanded size. Override `max_input_files`, `max_input_file_bytes` or
 `max_input_bytes` in the connector config when a trusted export needs larger
 limits. The existing hard ceilings remain 64 MiB per file and 512 MiB total.
-Any skipped symlink or input-limit hit marks the connector incomplete.
+Any skipped symlink or input-limit hit marks the connector incomplete, and so
+does any file in an offline input directory without one of the connector's
+export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
+`input` at the export file.
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and
@@ -377,7 +385,9 @@ match AI SaaS signatures or hold privileged scopes, and service apps
 (`application_type: service` / `client_credentials` / token-exchange).
 Token: SSWS API token (`token`, env `OKTA_API_TOKEN`) or OAuth bearer
 (`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read`; `bearer` wins when
-both are set. Options: `include_inactive`, `fetch_tokens`.
+both are set. Options: `include_inactive`, `fetch_tokens`. A 429 is retried
+after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
+per wait); exhausted retries mark the scan incomplete.
 Live collection also needs `org_url` (`https://<org>.okta.com`, env
 `OKTA_ORG_URL`).
 
@@ -439,7 +449,10 @@ Decodes tokens (never stored) and classifies the holder as `human`, `service`,
 `workload`, `delegated`, `agent` or `delegated-agent` using issuer-specific
 conventions (Entra `idtyp=app`, Okta `cid == sub`, Auth0 `gty`, Google service
 accounts, Cognito, Keycloak, SPIFFE) plus RFC 8693 `act` chains and
-agent-related claims. Scopes/roles are classified by the policy signatures;
+agent-related claims. GitHub Actions, Kubernetes service-account and GitLab CI
+job tokens are `workload` identities. An agent-related claim counts only with a
+meaningful value: `bot: false`, `purpose: ""` or `tools: []` do not make an
+agent. Scopes/roles are classified by the policy signatures;
 lifetime and algorithm hygiene are flagged. Optional `jwks_url` verification
 fetches a bounded JWKS through the shared HTTPS client and accepts only RS256,
 ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
@@ -447,9 +460,14 @@ ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
 unverified token's issuer does not choose or authorize a key source. The JWKS URL
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
-`metadata.verified` as signature evidence, not permission to act. Without
-`jwks_url`, every token reports `metadata.verified: false` and a "signature not
-checked" evidence line: its claims are unauthenticated.
+`metadata.verified` as signature evidence, not permission to act.
+A token analyzed without `jwks_url`, or whose verification failed, carries
+`metadata.signature_verified: false`, the `signature-unverified` tag and a
+`jwt:signature` evidence item: its issuer family, identity type and privileged
+scopes come from unauthenticated claims and can be forged. The marker does not
+change confidence or risk. For a JWKS endpoint behind a private CA, set
+`ca_bundle` to a PEM file; it replaces the default CA store for that fetch and
+certificate verification stays on.
 
 Tokens come from `input` (one token per line, or JSON) or from the `tokens`
 list in the connector entry. Keep live tokens out of committed configuration.
