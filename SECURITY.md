@@ -108,7 +108,7 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   ordinary word contains (`sk-proj-`, `ghp_`, `AKIA`, `eyJ` and similar) also
   behind a digit; a word that merely ends in a prefix's text (`risk-`, `disk-`)
   stays. URL userinfo is withheld whole when the password holds a raw `/`, `?`
-  or `#` (`postgres://u:Pass#word@host`). It also withholds values that their
+  or `#` (`postgres://u:example#pw@host`). It also withholds values that their
   context names as credentials:
   assignments, including annotated, multiline and R (`<-`) expressions and
   every operator that joins a name to a value, with the operator kept (`=>`,
@@ -193,7 +193,7 @@ Use dedicated read-only audit credentials and narrowly scoped inventory approval
   quotes or angle brackets, one holding both a raw `@` and a raw `/`, `?` or
   `#`, a token without a colon that holds one of those
   (`https://tok?en@host`), or a numeric password followed by one
-  (`https://user:12345?x@host`, which reads as a port); a token glued to a
+  (`https://user:00000000?x@host`, which reads as a port); a token glued to a
   letter (`apisk-proj-...`) or, for a shorter prefix, a digit; a value named
   only by a comment (`x = "..."  # openai key`); a bare value that is not an
   opaque key compared with a sensitive name (`token == hunter2`), a literal written before the

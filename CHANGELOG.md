@@ -198,6 +198,79 @@ field precision. Behavior changes that affect an existing baseline are listed in
   documented authored-corpus counts change from 29/48 to 32/45 positives and
   negatives; the evaluation harness scans cases with `default_excludes: false`.
 
+#### Redaction and report output
+
+- Credential redaction reads an operator whole. `'api_key' => '<value>'` used to
+  become `'api_key' =[REDACTED] '<value>'` and `if token == '<value>':` became
+  `if token =[REDACTED] '<value>':` (the marker replaced the operator's second
+  character and the literal stayed in the report); `!=`, `||=`, `+=` and `.=`
+  were not read at all. `=>`, `==`, `===`, `!=`, `!==`, `=~`, `:=`, `||=`, `&&=`,
+  `??=`, `+=`, `-=`, `.=`, `?=` and `<-` now join a name to a value like `=` and
+  `:` do: the literal is withheld and the operator is kept. A comparison with a
+  sensitive name withholds only a quoted word or an opaque value, so `x == 1`
+  and `key => users` stay.
+- Provider tokens and JWTs are withheld when a word character precedes them:
+  after a JSON-escaped line break or tab (`\n`, `\t`, `\x22`), a percent escape
+  (`%3D`) or `_`, and, for the unmistakable prefixes (`sk-proj-` and the other
+  `sk-<qualifier>-` forms, `ghp_`, `github_pat_`, `xox*-`, `AIza`, `AKIA`, `eyJ`),
+  after a digit. Words that merely end in a prefix's text (`risk-`, `disk-`) stay.
+  The JWT rule reads each run of base64url characters once (a 400 KB run of
+  `eyJ-eyJ-...` took about a minute).
+- URL userinfo is withheld whole when the password holds a raw `/`, `?` or `#`
+  (`postgres://u:example#pw@h`, `https://svc:example7?x@llm-gw.example/v1`); URLs
+  such as `https://host/path?x=a@b` are unchanged.
+- `--dump-records` and report metadata withhold structured fields by the words of
+  their name. `webhook_secret`, `signing_secret`, `bot_token`, `client_key`,
+  `openai_key`, `pwd`, `passphrase`, `db_pass` and `jwtSecret` kept their raw
+  values in the `NNNN-*.jsonl` dump of a `saas.generic` export. Cursors
+  (`next_token`, `skipToken`), tokenizer tokens, switches (`requires_auth`) and
+  the bare `key` of tags and objects are unchanged.
+- A value of an unknown type in finding metadata or a record dump (bytes, a set,
+  an exception, a plugin's object) is converted to text and redacted like any
+  other value instead of reaching a report raw through `json.dumps(default=str)`
+  or `repr`.
+- Private-key blocks in PGP, RFC 4716 (SSH2) and PuTTY forms are withheld with
+  their line count; `passphrase`, `SECRET_KEY_BASE`, `creds`, `db_pass`,
+  `smtp_pwd`-style names, npm's `_auth` and an ODBC `Pwd=` member are withheld
+  whatever the value, as are authentication headers named for a credential word
+  (`curl -H "X-Token: v"`).
+- `-f csv` neutralizes formula cells in one linear pass. A run of 20,000 CRLF
+  pairs in a title, owner or evidence text took about five seconds and every
+  doubling cost four times as much. The inserted markers are unchanged.
+- The terminal shows zero-width characters, the byte-order mark and Unicode tag
+  characters as escapes. A lone surrogate in a name read from an export no longer
+  fails `-o x.csv|md|html` or prints a traceback; it is written as `\ud800`.
+- Markdown reports defang `http://`, `https://` and `ftp://` after any non-letter
+  and `www.` after any non-alphanumeric (`_https://host` was still an autolink),
+  and SARIF message text escapes `\`, `[` and `]` so scanned text cannot write a
+  `[text](destination)` link. These two follow the GFM and SARIF 3.11.6 rules and
+  were not checked in a viewer. `SECURITY.md` lists what can still remain.
+
+#### Source lexer
+
+- The JavaScript lexer no longer treats a keyword-named property or method as a
+  keyword. After `o.of`, `o?.in`, `this.#typeof` or `o.for(x)` a `/` is a
+  division, so `o.of / 1; <code>; 2 / 1;` can no longer turn the code between
+  the two slashes into a "regular expression" that hides it (the scan reported
+  0 findings and was complete). `of` is a keyword only after an operand, and a
+  regular expression after a spread is lexed as one. A `/` after `await` or
+  `yield` cannot be classified without a parse and makes the file's lexical
+  analysis incomplete. So does a regular expression after a closing brace that
+  holds a quote, backtick or slash, which a block-then-regex statement could use
+  to hide the rest of a line.
+- Line comments end at the language's real line terminators: LF, CR, U+2028 and
+  U+2029 in JavaScript and TypeScript (also inside a JSX tag), `?>` in PHP,
+  escaped line breaks in Java. Replacing every LF of 1,221 real JavaScript files
+  with CR, U+2028 or U+2029 changed what 838 of them hid before and none after.
+  A backslash no longer escapes the quote of a JSX attribute string.
+- The JSX look-ahead has a per-file allowance. A 250 KB run of `<A>(` took over
+  a minute and discarded the results of the whole scan; it now ends in under a
+  second as an incomplete file while the other files are scanned. A megabyte of
+  `#` in Swift (13 s) and the Java escape search are no longer quadratic.
+- A regular-expression literal up to 262,144 characters lexes completely. The
+  `emoji-regex` tables found in most npm trees (10 to 17 KB on one line) used to
+  make the whole scan incomplete.
+
 #### CI, repository policy and developer tooling
 
 - CI no longer cancels a `main` push run when the next push arrives:

@@ -189,7 +189,7 @@ def _authority_end(rest: str) -> int:
 
     That is the first '/', '?' or '#', since an '@' in a path or query value must not be
     mistaken for a hostname separator. A password may hold those characters raw
-    ('postgres://u:Pass#word@h', 'https://svc:Zq7?x@gw.example/v1'): when what comes
+    ('postgres://u:example#pw@h', 'https://svc:example7?x@gw.example/v1'): when what comes
     first reads as 'user:password', the userinfo runs to the last '@' that is followed
     by a host and optional port, as far as the URL text goes. Every step is a single scan.
     """

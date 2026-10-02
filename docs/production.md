@@ -48,8 +48,11 @@ engine construction, so an approval file changed between construction and
 execution cannot supply a stale match.
 
 When HTML or CSV is sent to stdout, terminal control and bidirectional-formatting
-characters are rendered visibly; artifacts explicitly written with `-o` retain
-their serialized data. Reporter boundaries sanitize copied diagnostics without
+characters, zero-width characters, the byte-order mark and Unicode tag characters
+are rendered visibly; artifacts explicitly written with `-o` retain their
+serialized data, except that a lone surrogate (which no encoder accepts, and which
+a name read from an export can hold) is written as the escape text `\ud800` in
+every format. Reporter boundaries sanitize copied diagnostics without
 mutating in-memory scan state, ignore malformed related-finding metadata, preserve
 valid SARIF source paths and reject non-finite JSON. Serialization failures stop
 before stdout or an existing output file is changed; table output preflights
@@ -835,6 +838,34 @@ New warnings (the scan stays complete):
   shell or magic lines) keeps its lexical evidence and adds a warning.
 - Gateway scans note how many static-asset and probe requests were not counted.
   Tooling that fails on any warning should key on `incomplete` or the exit code.
+
+Redaction and lexing changes to review:
+
+- **Redaction policy.** Credential operators, token boundaries, URL userinfo,
+  record-field names, unknown value types and private-key blocks are redacted
+  more completely (see the changelog). Reports can hold a little more
+  `[REDACTED]` than before: comparisons with a sensitive name, `creds` and
+  `db_pass`, record fields named for a credential word, and arrow functions whose
+  parameter is named for a credential, which keep the arrow but lose the body.
+  No finding, detection or exit code changes. The policy digest changes with the
+  rules, so verified-clean digests cached on findings are recomputed, and
+  `scanner_source_sha256` changes, so artifacts from an older build are not
+  comparable (as for any release).
+- **Earlier dumps.** `--dump-records` files written by an earlier version keep
+  their older, less redacted content. Regenerate them with this version before
+  you share them; a dump written now holds `[REDACTED]` for the newly covered
+  field names, and offline re-analysis of it sees the marker.
+- **Lexer.** Code that was hidden is now scanned when it followed a
+  keyword-named property (`o.of / 1; ...`), a comment ended by a bare CR,
+  U+2028 or U+2029, a JSX attribute string ending in a backslash, or a PHP
+  comment closed by `?>`; expect new findings in such files. New incomplete
+  (exit 3) cases are a `/` directly after `await` or `yield`, a regular
+  expression after `}` that holds a quote, backtick or slash, and a JSX file
+  that exhausts its look-ahead allowance (`file analysis incomplete
+  (MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)`;
+  hostile or machine-generated input, not configurable). Projects that vendor
+  `emoji-regex` or similar generated tables stop reporting
+  `incomplete source lexical analysis` for them.
 
 Operational notes:
 
