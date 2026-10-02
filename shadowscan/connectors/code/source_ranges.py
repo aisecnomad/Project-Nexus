@@ -13,6 +13,8 @@ import re
 import tokenize
 from dataclasses import dataclass
 
+from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
+
 _RUBY_BLOCK_END = re.compile(r"(?m)^=end(?:\s|$)")
 
 _FSTRING_PREFIX = re.compile(r"(?i)^([rubf]{1,3})(\"\"\"|'''|\"|')")
@@ -122,9 +124,35 @@ def _javascript_regex_end(text: str, start: int) -> int | None:
 
 
 _MAX_TYPE_ARGUMENTS_LENGTH = 1024
+# Deciding whether a "<" opens a JSX element looks ahead over a bounded window. Each look-ahead is
+# cheap, but a file of thousands of "<A>(" would repeat a window of thousands of characters for every
+# one of them. The look-ahead of one walk is therefore charged to an allowance made of a fixed floor
+# plus a multiple of the input length: far more than real components spend (a small fraction of a
+# character per character), and little enough that hostile input ends within a second or so.
+_LOOKAHEAD_FLOOR = 65_536
+_LOOKAHEAD_PER_CHARACTER = 4
 
 
-def _type_arguments_end(text: str, start: int) -> int | None:
+class _LookaheadBudget:
+    """The look-ahead allowance of one lexical walk; exhausting it raises ``MatchTimeoutError``.
+
+    The connector reports that as an incomplete scan of the file, like the other bounded analyses.
+    The per-file time budget is checked at the same points.
+    """
+
+    __slots__ = ("remaining",)
+
+    def __init__(self, size: int) -> None:
+        self.remaining = _LOOKAHEAD_FLOOR + _LOOKAHEAD_PER_CHARACTER * size
+
+    def spend(self, count: int) -> None:
+        self.remaining -= count
+        if self.remaining < 0:
+            raise MatchTimeoutError("JavaScript lexical analysis look-ahead budget exceeded")
+        pattern_timeout()
+
+
+def _type_arguments_end(text: str, start: int, budget: _LookaheadBudget) -> int | None:
     """Return the offset after a balanced TypeScript type-argument list at ``text[start] == "<"``.
 
     Handles nested lists, quoted literal types and `=>` in function types.
@@ -133,48 +161,56 @@ def _type_arguments_end(text: str, start: int) -> int | None:
     depth = 0
     pos = start
     limit = min(len(text), start + _MAX_TYPE_ARGUMENTS_LENGTH)
+    end = None
     while pos < limit:
         char = text[pos]
         if char in "\"'`":
-            end = text.find(char, pos + 1, limit)
-            if end < 0:
-                return None
-            pos = end + 1
+            closing = text.find(char, pos + 1, limit)
+            if closing < 0:
+                pos = limit
+                break
+            pos = closing + 1
             continue
         if char == "<":
             depth += 1
         elif char == ">" and text[pos - 1] != "=":
             depth -= 1
             if depth == 0:
-                return pos + 1
+                end = pos + 1
+                break
         pos += 1
-    return None
+    budget.spend(pos - start)
+    return end
 
 
-def _parenthesized_end(text: str, start: int) -> int | None:
+def _parenthesized_end(text: str, start: int, budget: _LookaheadBudget) -> int | None:
     """Return the offset after the balanced parenthesized group at ``text[start] == "("``."""
     depth = 0
     pos = start
     limit = min(len(text), start + _MAX_REGEX_LENGTH)
+    end = None
     while pos < limit:
         char = text[pos]
         if char in "\"'`":
-            end = text.find(char, pos + 1, limit)
-            if end < 0:
-                return None
-            pos = end + 1
+            closing = text.find(char, pos + 1, limit)
+            if closing < 0:
+                pos = limit
+                break
+            pos = closing + 1
             continue
         if char == "(":
             depth += 1
         elif char == ")":
             depth -= 1
             if depth == 0:
-                return pos + 1
+                end = pos + 1
+                break
         pos += 1
-    return None
+    budget.spend(pos - start)
+    return end
 
 
-def _jsx_open_tag(text: str, start: int) -> tuple[str, int] | None:
+def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str, int] | None:
     """Return the JSX tag name and the offset where its attributes begin.
 
     TSX allows explicit type arguments on an element (`<Select<Option> ...>`,
@@ -193,7 +229,7 @@ def _jsx_open_tag(text: str, start: int) -> tuple[str, int] | None:
         pos += 1
     name = text[start + 1 : pos]
     if pos < len(text) and text[pos] == "<":
-        after = _type_arguments_end(text, pos)
+        after = _type_arguments_end(text, pos, budget)
         if after is None or after == len(text) or text[after] not in " \t\r\n/>":
             return None
         return name, after
@@ -204,7 +240,7 @@ def _jsx_open_tag(text: str, start: int) -> tuple[str, int] | None:
     # that merely starts with a parenthesis (`<Text>({n})</Text>`) is JSX.
     if name[0].isupper():
         if text.startswith(">(", pos):
-            group_end = _parenthesized_end(text, pos + 1)
+            group_end = _parenthesized_end(text, pos + 1, budget)
             if group_end is None or text[group_end : group_end + 64].lstrip().startswith(("=>", ":")):
                 return None
         # Constrained and defaulted TSX generic arrows can look like JSX
@@ -471,6 +507,7 @@ class _JavaScriptLexer:
     """
 
     __slots__ = (
+        "budget",
         "can_start_regex",
         "control_parens",
         "control_pending",
@@ -488,6 +525,7 @@ class _JavaScriptLexer:
         self.text = text
         self.size = len(text)
         self.jsx = jsx
+        self.budget = _LookaheadBudget(self.size)
         self.spans: list[tuple[int, int]] = []
         # Template text is inert; ${...} expressions are scanned as executable code.
         # The stack also allows nested template literals in interpolation bodies.
@@ -579,7 +617,7 @@ class _JavaScriptLexer:
                 spans.append((start, i + 1))
                 self._enter_expression("jsx_expression")
                 return i + 1
-            opened = _jsx_open_tag(text, i) if text[i] == "<" else None
+            opened = _jsx_open_tag(text, i, self.budget) if text[i] == "<" else None
             if opened is not None:
                 spans.append((start, i))
                 modes.append(("jsx_tag", i))
@@ -727,7 +765,7 @@ class _JavaScriptLexer:
                 jsx
                 and text[i] == "<"
                 and can_start_regex[-1]
-                and (opened := _jsx_open_tag(text, i)) is not None
+                and (opened := _jsx_open_tag(text, i, self.budget)) is not None
             ):
                 self.pending_jsx_tags.append(opened[0])
                 modes.append(("jsx_tag", i))
@@ -821,14 +859,20 @@ class _Expression:
     depth: int = 1
 
 
-_LINE_BREAK_LF = re.compile("\n")
-_LINE_BREAK_CR = re.compile("[\n\r]")
+# Where a ``//`` or ``#`` comment ends. One search per comment finds its end: a pattern that scanned
+# ahead for a terminator and then looked for an earlier escape would rescan the rest of the file for
+# every comment that an escape ends early.
+_COMMENT_END_LF = re.compile("\n")
+_COMMENT_END_CR = re.compile("[\n\r]")
 # C# new-line characters also include NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR.
-_LINE_BREAK_UNICODE = re.compile("[\n\r\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
+_COMMENT_END_UNICODE = re.compile("[\n\r\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}]")
 # Java translates unicode escapes before it lexes: `// note \u000a import x;` ends the comment at the
-# escape. A backslash starts an escape only after an even number of backslashes.
-_JAVA_LINE_BREAK_ESCAPE = re.compile(r"(?<!\\)(?:\\\\)*(\\u+000[aAdD])")
+# escape (group 1). A backslash starts an escape only after an even number of backslashes.
+_COMMENT_END_JAVA = re.compile(r"[\n\r]|(?<!\\)(?:\\\\)*(\\u+000[aAdD])")
 _RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
+# A Swift raw string opens with 1-255 "#" and a quote. Possessive, so that a long run of "#" costs one
+# bounded pass at each position in C instead of 255 steps of Python (13 s for a megabyte of "#").
+_SWIFT_RAW_OPEN = re.compile(r'#{1,255}+(?=")')
 _RUBY_HEREDOC = re.compile(r"<<[-~]?(['\"]?)([A-Za-z_]\w*)\1")
 _PHP_HEREDOC = re.compile(r"<<<[ \t]*(['\"]?)([A-Za-z_]\w*)\1")
 _GO_IMPORT_BLOCK = re.compile(r"import\s*\(")
@@ -838,15 +882,17 @@ _RUBY_PERCENT_PAIRS = {"{": "}", "[": "]", "(": ")", "<": ">"}
 _PREFIXED_LITERALS = frozenset({"dotnet", "dart", "rust", "swift"})
 
 
-def _line_break_pattern(language: str) -> re.Pattern[str]:
-    """Return the line terminators that end a ``//`` or ``#`` comment in ``language``.
+def _comment_end_pattern(language: str, dialect: str | None) -> re.Pattern[str]:
+    """Return the pattern that finds where a ``//`` or ``#`` comment in ``language`` ends.
 
     Go, Rust and Ruby compilers treat a bare CR as white space; the others end the
     comment there, and C# also at NEL and the Unicode line and paragraph separators.
     """
     if language in {"go", "rust", "ruby"}:
-        return _LINE_BREAK_LF
-    return _LINE_BREAK_UNICODE if language == "dotnet" else _LINE_BREAK_CR
+        return _COMMENT_END_LF
+    if language == "dotnet":
+        return _COMMENT_END_UNICODE
+    return _COMMENT_END_JAVA if language == "java" and dialect == ".java" else _COMMENT_END_CR
 
 
 def _ruby_percent_delimiter(text: str, start: int) -> bool:
@@ -926,12 +972,9 @@ def _literal_prefix(text: str, i: int, language: str) -> str:
     elif language == "rust" and text.startswith(('b"', "b'"), i):
         return "b"
     elif language == "swift" and text[i] == "#":
-        j = i
-        size = len(text)
-        while j < size and text[j] == "#" and j - i < 255:
-            j += 1
-        if j < size and text[j] == '"':
-            return text[i:j]
+        raw = _SWIFT_RAW_OPEN.match(text, i)
+        if raw is not None:
+            return raw.group()
     return ""
 
 
@@ -982,12 +1025,12 @@ class _SourceLexer:
     """
 
     __slots__ = (
+        "comment_end",
         "dialect",
         "go_import_block",
         "heredocs",
         "incomplete",
         "language",
-        "line_break",
         "line_checked_through",
         "line_start",
         "modes",
@@ -1003,7 +1046,7 @@ class _SourceLexer:
         self.size = len(text)
         self.language = language
         self.dialect = dialect
-        self.line_break = _line_break_pattern(language)
+        self.comment_end = _comment_end_pattern(language, dialect)
         self.spans: list[tuple[int, int]] = []
         self.modes: list[_Literal | _Expression] = []
         self.incomplete = False
@@ -1060,13 +1103,8 @@ class _SourceLexer:
 
     def _line_comment_end(self, start: int) -> int:
         """Return where the ``//`` or ``#`` comment at ``start`` ends: at its language's first line break."""
-        match = self.line_break.search(self.text, start)
-        end = self.size if match is None else match.start()
-        if self.dialect == ".java":
-            escape = _JAVA_LINE_BREAK_ESCAPE.search(self.text, start, end)
-            if escape is not None:
-                end = escape.start(1)
-        return end
+        match = self.comment_end.search(self.text, start)
+        return self.size if match is None else match.start(match.lastindex or 0)
 
     def _php_template(self, i: int) -> int:
         """Mask template text up to and including the next PHP opening tag."""

@@ -353,6 +353,23 @@ def test_java_text_that_is_not_a_line_break_escape_stays_in_the_comment(text: st
     assert [source[start:end] for start, end in ignored] == [source.split("\n")[0]]
 
 
+def test_java_comments_ended_by_escapes_scan_in_linear_time():
+    # Every comment here is ended by its own escape, with no real line break anywhere. A search that
+    # scanned ahead for the next line break before looking for the escape would rescan the rest of the
+    # file for each comment (quadratic).
+    block = "// \\u000a "
+    small, large = block * 2_000, block * 32_000
+    started = time.perf_counter()
+    noncode_ranges(small, "java", ".java")
+    small_time = time.perf_counter() - started
+    started = time.perf_counter()
+    ignored, _ = noncode_ranges(large, "java", ".java")
+    large_time = time.perf_counter() - started
+    assert len(ignored) == 32_000
+    # Sixteen times the input must not cost more than 64 times the time (quadratic costs 256 times).
+    assert large_time < max(small_time, 0.005) * 64
+
+
 def test_kotlin_does_not_translate_unicode_escapes_in_comments():
     source = "// note \\u000a import dev.langchain4j.service.AiServices\nclass App\n"
     ignored, _ = noncode_ranges(source, "java", ".kt")
@@ -386,3 +403,28 @@ def test_code_after_a_comment_is_scanned_whatever_ends_the_line(
     assert not ctx.stats.errors
     # Lexing establishes the call is source; without a library import it stays a weak candidate.
     assert findings and any(e.signal.startswith("code:") for finding in findings for e in finding.evidence)
+
+
+@pytest.mark.parametrize("hashes", [1, 2, 3, 255])
+def test_swift_raw_string_delimiters_mask_their_contents(hashes: int):
+    delimiter = "#" * hashes
+    source = f'let docs = {delimiter}"AiServices.builder(\\(x)"{delimiter}\nAiServices.builder(foo)\n'
+    ignored, ambiguous = noncode_ranges(source, "swift", ".swift")
+    assert not ambiguous
+    assert [source[start:end] for start, end in ignored] == [
+        source[source.index(delimiter) : source.index("\n")]
+    ]
+
+
+def test_long_run_of_hashes_in_swift_costs_little_more_than_ordinary_text():
+    # A hash is a possible raw-string delimiter, which used to cost 255 Python steps at every hash of
+    # a run: tens of seconds for a megabyte. Compare against text of the same size, since an absolute
+    # bound would depend on how slowly the interpreter runs under coverage tracing.
+    size = 200_000
+    started = time.perf_counter()
+    noncode_ranges("a" * size, "swift", ".swift")
+    ordinary = time.perf_counter() - started
+    started = time.perf_counter()
+    noncode_ranges("#" * size, "swift", ".swift")
+    hashes = time.perf_counter() - started
+    assert hashes < max(ordinary, 0.01) * 8

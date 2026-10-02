@@ -4,14 +4,17 @@ a regular expression or a division exactly where the language says it is."""
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
+from shadowscan.connectors.code import source_ranges
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.models import Kind
+from shadowscan.signatures.matcher import MatchTimeoutError
 
 VALID_TSX = {
     "type-arguments-on-child": (
@@ -326,3 +329,114 @@ def test_line_comment_does_not_hide_the_code_of_a_file_node_runs(tmp_path: Path,
     report = _code_report(tmp_path, source)
     assert report["summary"]["complete"]
     assert _fingerprint(report) == _fingerprint(control)
+
+
+# --- Bounded work ---------------------------------------------------------------------------------
+# Every "<" that might open a JSX element looks ahead over a bounded window. 62,500 repeats of "<A>(" took
+# over a minute (and lost every result of the scan with the deadline) before the look-ahead was budgeted.
+
+LIMIT, AMBIGUOUS, COMPLETE = "limit", "ambiguous", "complete"
+HOSTILE = {
+    "tag-then-parenthesis": ("<A>(" * 62_500, LIMIT),
+    "type-arguments": ("<A<" * 83_333, LIMIT),
+    "unclosed-tags": ("<div " * 50_000, AMBIGUOUS),
+    "unclosed-expressions": ("<a>{" * 62_500, AMBIGUOUS),
+    "unterminated-comments": ("/* " * 83_334, AMBIGUOUS),
+    "generic-arrow-heads": ("<T extends X>(" * 17_857, AMBIGUOUS),
+    "backticks": ("`" * 250_000, COMPLETE),
+    "braces": ("{" * 250_000, COMPLETE),
+    "angle-brackets": ("<" * 250_000, COMPLETE),
+    "closing-tags": ("</a>" * 62_500, COMPLETE),
+}
+
+
+@pytest.mark.parametrize("source, outcome", HOSTILE.values(), ids=HOSTILE.keys())
+def test_hostile_jsx_ends_quickly_as_a_limit_or_an_incomplete_lexing(source: str, outcome: str) -> None:
+    started = time.perf_counter()
+    if outcome == LIMIT:
+        with pytest.raises(MatchTimeoutError, match="look-ahead budget"):
+            noncode_ranges(source, "javascript", ".tsx", jsx=True)
+    else:
+        _, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
+        assert ambiguous is (outcome == AMBIGUOUS)
+    assert time.perf_counter() - started < 5
+
+
+def test_hostile_jsx_file_is_an_incomplete_scan_and_keeps_the_other_findings(tmp_path: Path) -> None:
+    (tmp_path / "evil.tsx").write_text("<A>(" * 62_500)
+    (tmp_path / "ok.js").write_text(EVASION_PAYLOAD)
+    started = time.perf_counter()
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+    assert time.perf_counter() - started < 20
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.stdout)
+    assert not report["summary"]["complete"]
+    assert report["stats"][0]["errors"] == [
+        "code.filesystem: evil.tsx: file analysis incomplete "
+        "(MatchTimeoutError: JavaScript lexical analysis look-ahead budget exceeded)"
+    ]
+    assert report["findings"], "the other file is still scanned"
+
+
+def _realistic_component(n: int) -> str:
+    return f"""\
+export const Panel{n} = ({{ count, items }}: {{ count: number; items: Option[] }}) => {{
+  const [value, setValue] = useState<string>("");
+  const identity = <T,>(x: T): T => x;
+  const constrained = <T extends object>(x: T): T => x;
+  const defaulted = <T = string>(x: T): T => x;
+  return (
+    <Box padding={{2}}>
+      {{/* heading {n} */}}
+      <Text>({{count}})</Text>
+      <Select<Option>
+        // pick one of the options
+        value={{value}}
+        onChange={{(v: string) => setValue(v)}}
+        options={{items.map((i) => ({{ value: i.value, label: i.label }}))}}
+      />
+      <ul role="list">
+        {{items.map((item) => (
+          <li key={{item.value}}>{{item.label}} ({{item.value}})</li>
+        ))}}
+      </ul>
+      <Form<{{ email: string }}> onSubmit={{() => go()}}>
+        <input type="text" placeholder="it's fine" />
+      </Form>
+      <p>Don't panic &mdash; {{count > 0 ? `${{count}} items` : "none"}} and {{count / 2}} half</p>
+    </Box>
+  );
+}};
+"""
+
+
+def test_large_realistic_tsx_file_lexes_fast_and_unambiguously() -> None:
+    # Element type arguments, comments between attributes, `<Text>({n})</Text>` and generic arrow
+    # functions: the constructs from the field scans, repeated to 1 MB, must stay inside the budget.
+    parts = ['import React, { useState } from "react";\n']
+    size = 0
+    while size < 1_000_000:
+        parts.append(_realistic_component(len(parts)))
+        size += len(parts[-1])
+    source = "\n".join(parts)
+    started = time.perf_counter()
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
+    assert time.perf_counter() - started < 5
+    assert not ambiguous
+    assert not any(start <= source.index("useState<string>") < end for start, end in ignored)
+    assert any(start <= source.index("pick one of") < end for start, end in ignored)
+
+
+def test_look_ahead_budget_is_proportional_to_the_input() -> None:
+    small = source_ranges._LookaheadBudget(0)
+    large = source_ranges._LookaheadBudget(1_000_000)
+    assert 0 < small.remaining < large.remaining
+    with pytest.raises(MatchTimeoutError, match="look-ahead budget"):
+        small.spend(small.remaining + 1)
+
+
+def test_look_ahead_honours_the_per_file_time_budget(index) -> None:
+    # The same checkpoints that spend the allowance poll the input's execution deadline.
+    with pytest.raises(MatchTimeoutError), index.scan_budget(seconds=0.01):
+        time.sleep(0.05)
+        noncode_ranges("export const T = ({ n }) => <Text>({n})</Text>;", "javascript", ".tsx", jsx=True)
