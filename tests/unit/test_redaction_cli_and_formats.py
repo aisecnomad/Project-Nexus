@@ -137,6 +137,33 @@ def test_text_shape_gaps_are_redacted(text, expected):
     assert _clean(text) == expected
 
 
+_PGP_KEY = f"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n{SECRET}\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----"
+
+
+@pytest.mark.parametrize(
+    ("prefix", "expected"),
+    [
+        ("private_key: ", f'private_key: "{REDACTED}"'),
+        ("secret: ", f'secret: "{REDACTED}"'),
+        ("GPG_PRIVATE_KEY: ", f'GPG_PRIVATE_KEY: "{REDACTED}"'),
+        ("Authorization: ", f'Authorization: "{REDACTED}"'),
+        ("INFO loaded secret: ", f'INFO loaded secret: "{REDACTED}"'),
+        ("ENV GPG_KEY ", f"ENV GPG_KEY {REDACTED}"),
+        ("api-key:", f'api-key:"{REDACTED}"'),
+        ("x-api-key: ", f'x-api-key: "{REDACTED}"'),
+        ("Cookie: x ", f'Cookie: "{REDACTED}"'),
+        ("note: ", f"note: {REDACTED}"),
+    ],
+)
+def test_pgp_private_key_body_is_withheld_after_a_credential_name(prefix, expected):
+    # The name's rule withheld the BEGIN line, and the block rule, which
+    # starts there, no longer found the block: its body lines were shown.
+    for newline in ("\n", "\r\n"):
+        text = prefix + _PGP_KEY.replace("\n", newline)
+        assert _clean(text) == expected + "\n" * 4
+        assert SECRET not in json.dumps(sanitize({"excerpt": text, "items": [text]}))
+
+
 @pytest.mark.parametrize(
     ("text", "kept"),
     [

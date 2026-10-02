@@ -92,7 +92,10 @@ _PEM = re.compile(
     r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY-----.*?(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY-----|\Z)",
     re.DOTALL,
 )
-# OpenPGP's armored 'PRIVATE KEY BLOCK', in the extended pass.
+# OpenPGP's armored 'PRIVATE KEY BLOCK'. The established passes withhold it
+# first, as they do a PEM key, wherever that shows nothing their order
+# withholds (see redaction._withhold_key_blocks); the extended pass withholds
+# a block whose BEGIN line the established passes left.
 _ADDED_PEM = re.compile(
     r"-----BEGIN (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----.*?"
     r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----|\Z)",

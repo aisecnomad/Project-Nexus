@@ -95,6 +95,21 @@ MAIN_WITHHELD_FORMS = [
 ]
 
 
+# Withheld before the name passes, an armored PGP private key block took the
+# start of a value that runs past its END line, and the rest of the value
+# was shown. Main (d65b27f) withholds each secret.
+_PGP_BEGIN = "-----BEGIN PGP PRIVATE KEY BLOCK-----"
+_PGP_END = "-----END PGP PRIVATE KEY BLOCK-----"
+MAIN_WITHHELD_FORMS += [
+    (f'{_PGP_BEGIN}\npassword: "abc\n{_PGP_END}\n{SECRET}"\n', "quoted mapping value past the block"),
+    (f"{_PGP_BEGIN}\npassword:\n  x\n  {_PGP_END}\n  {SECRET}\n", "indented YAML value past the block"),
+    (f"{_PGP_BEGIN}\nENV GPG_PASSWORD \\\n{_PGP_END} {SECRET}\n", "continued ENV value past the block"),
+    (f"{_PGP_BEGIN}\n<password>abc\n{_PGP_END}\n{SECRET}</password>\n", "element content past the block"),
+    (f'{_PGP_BEGIN}\napi_key = """abc\n{_PGP_END}\n{SECRET}"""\n', "triple-quoted value past the block"),
+    (f"{_PGP_BEGIN}\npassword: [abc,\n{_PGP_END}\n{SECRET}]\n", "bracketed value past the block"),
+]
+
+
 @pytest.mark.parametrize(("source", "rule"), MAIN_WITHHELD_FORMS)
 def test_what_main_withholds_stays_withheld(source, rule):
     assert SECRET in source

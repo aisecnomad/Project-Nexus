@@ -25,7 +25,7 @@ import hashlib
 import re
 import sys
 import types
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from shadowscan.utils import (
@@ -56,6 +56,7 @@ from shadowscan.utils.redaction_commands import (
     _redact_user_secrets,
 )
 from shadowscan.utils.redaction_formats import (
+    _ADDED_PEM,
     _AUTH,
     _JWT,
     _PEM,
@@ -129,7 +130,9 @@ def sanitize_text(text: str) -> str:
     ('v#password = ...') hides that name from the assignment rules, and the
     credential after the name is no longer withheld. Run last, an added rule
     only adds markers, and whatever the established passes withhold stays
-    withheld.
+    withheld. Armored PGP private key blocks are the one added rule applied
+    first, next to the PEM keys, and only where the result shows nothing the
+    established order withholds (see ``_withhold_key_blocks``).
     """
     return _redact_extended(_sanitize_established(text))
 
@@ -184,9 +187,125 @@ def _redact_extended(text: str) -> str:
 
 
 def _sanitize_established(text: str) -> str:
-    """The established passes, in their order and with their rules (see ``sanitize_text``)."""
-    text = _checked_text(text)
-    text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
+    """The established passes, in their order and with their rules (see ``sanitize_text``).
+
+    Armored PGP private key blocks are withheld next to the PEM keys, before
+    any pass reads a name (see ``_withhold_key_blocks``).
+    """
+    text = _PEM.sub(_withheld_block, _checked_text(text))
+    blocks = list(_ADDED_PEM.finditer(text))
+    return _withhold_key_blocks(text, blocks) if blocks else _established_passes(text)
+
+
+def _withheld_block(match: re.Match[str]) -> str:
+    """The marker for a private key block, keeping its line breaks so excerpt lines stay aligned."""
+    return REDACTED + "\n" * match.group(0).count("\n")
+
+
+def _withhold_key_blocks(text: str, blocks: list[re.Match[str]]) -> str:
+    """The established passes on ``text``, with its armored PGP private key ``blocks`` withheld first.
+
+    A credential name before a block ('private_key: -----BEGIN PGP ...')
+    made the established rules withhold its BEGIN line, and the extended
+    rule that withholds a block starts at that line: the key's body on the
+    lines after it was shown. Withheld before every name pass, as a PEM key
+    is, the whole block goes and the name before it stays. A value that
+    starts inside a block and runs past its END line ('password: "...' in
+    the block, closed on a later line), though, is withheld by the
+    established order and was shown once the block went first. So the
+    blocks go first only where no line outside them then shows anything the
+    established order withholds (see ``_shows_no_more``). Otherwise the
+    text every pass leaves in the established order is kept up to the line
+    of the first block, and every line from there on is withheld; the
+    established passes then read that text once more, as the next
+    sanitization would.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    for block in blocks:
+        pieces.append(text[cursor : block.start()])
+        pieces.append(_withheld_block(block))
+        cursor = block.end()
+    pieces.append(text[cursor:])
+    first = _established_passes("".join(pieces))
+    kept = _redact_extended(_established_passes(text))
+    if _shows_no_more(text, blocks, kept, _redact_extended(first)):
+        return first
+    lines = kept.split("\n")
+    if len(lines) != text.count("\n") + 1:
+        return REDACTED + "\n" * text.count("\n")
+    start = text.count("\n", 0, blocks[0].start())
+    return _established_passes("\n".join([*lines[:start], REDACTED, *[""] * (len(lines) - start - 1)]))
+
+
+def _shows_no_more(text: str, blocks: list[re.Match[str]], kept: str, shown: str) -> bool:
+    """Whether ``shown`` shows nothing that ``kept`` withholds outside the ``blocks`` of ``text``.
+
+    Every pass keeps the lines of a text, so the two are compared line by
+    line. The lines inside a block are withheld in ``shown``. Any other line
+    must be its line in ``kept`` with at most one more span withheld: the
+    text before one of its markers starts ``kept``'s line and the text after
+    that marker ends it. The marker of a block is on its first line, so the
+    start of its last line, where the rest of the block was, counts as one.
+    The blanks and carriage return that end a line are not compared: the
+    block's marker keeps only the line feeds of the CRLF breaks inside it,
+    and a mapping value withheld in ``kept`` keeps the blanks after it.
+    """
+    kept_lines, shown_lines = kept.split("\n"), shown.split("\n")
+    if not len(kept_lines) == len(shown_lines) == text.count("\n") + 1:
+        return False
+    inside: set[int] = set()
+    ends: set[int] = set()
+    line = position = 0
+    for block in blocks:
+        line += text.count("\n", position, block.start())
+        last = line + block.group().count("\n")
+        inside.update(range(line + 1, last))
+        if last > line:
+            ends.add(last)
+        line, position = last, block.end()
+    return all(
+        index in inside
+        or _line_shows_no_more(kept_line.rstrip(" \t\r"), shown_line.rstrip(" \t\r"), end=index in ends)
+        for index, (kept_line, shown_line) in enumerate(zip(kept_lines, shown_lines, strict=True))
+    )
+
+
+def _line_shows_no_more(kept: str, shown: str, *, end: bool) -> bool:
+    """Whether ``shown`` is ``kept`` with at most one more span withheld (see ``_shows_no_more``).
+
+    ``end`` counts the start of ``shown`` as a marker.
+    """
+    if kept == shown:
+        return True
+    limit = min(len(kept), len(shown))
+    head = _common_length(lambda size: kept[:size] == shown[:size], limit)
+    tail = _common_length(lambda size: kept[len(kept) - size :] == shown[len(shown) - size :], limit)
+    markers = [(0, 0)] if end else []
+    found = shown.find(REDACTED)
+    while found >= 0:
+        markers.append((found, found + len(REDACTED)))
+        found = shown.find(REDACTED, found + len(REDACTED))
+    return any(
+        before <= head and len(shown) - after <= tail and before + len(shown) - after <= len(kept)
+        for before, after in markers
+    )
+
+
+def _common_length(equal: Callable[[int], bool], limit: int) -> int:
+    """The largest size up to ``limit`` for which ``equal`` holds, if it holds for every smaller one."""
+    low, high = 0, limit
+    while low < high:
+        middle = (low + high + 1) // 2
+        if equal(middle):
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
+def _established_passes(text: str) -> str:
+    """The established passes that follow the private keys, in their order (see ``_sanitize_established``)."""
     text = _URL.sub(_sanitize_url, text)
     text = _redact_markup_credentials(text)
     text = _redact_name_value_pairs(text)
