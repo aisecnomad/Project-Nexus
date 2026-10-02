@@ -25,6 +25,37 @@ def test_fractional_epoch_strings_support_gateway_timestamps():
     assert parse_timestamp("1704067200125") == datetime(2024, 1, 1, microsecond=125000, tzinfo=UTC)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        1704067200125000,  # microseconds
+        "1704067200125000",
+        1704067200125000000,  # nanoseconds
+        "1704067200125000000",
+        "2024-01-01 00:00:00.125 +0000 UTC",  # Go time.Time.String()
+        "2024-01-01 00:00:00.125000999 +0000 UTC m=+0.004321001",
+        "2024-01-01 01:00:00.125 +0100 CET",
+        "Mon, 01 Jan 2024 00:00:00 GMT",  # RFC 2822
+        "Sun, 31 Dec 2023 19:00:00 -0500",
+    ],
+)
+def test_sub_millisecond_epochs_go_and_rfc2822_times_parse(value):
+    # These used to become None, so events silently lost their time.
+    expected = datetime(2024, 1, 1, tzinfo=UTC)
+    parsed = parse_timestamp(value)
+    assert parsed is not None and parsed.replace(microsecond=0) == expected
+    if "GMT" not in str(value) and "-0500" not in str(value):
+        assert parsed.microsecond == 125000
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["Mon, 31 Feb 2024 00:00:00 GMT", "2024-01-01 00:00:00 UTC m=+1", "yesterday", "Jan 2024", "1 2 3"],
+)
+def test_malformed_go_and_rfc2822_times_stay_unparsed(value):
+    assert parse_timestamp(value) is None
+
+
 def test_redact_shim_remains_a_compatibility_alias():
     token = "sk-proj-exampletokenvalue"
     assert redact(token, keep=8) == credential_id(token)

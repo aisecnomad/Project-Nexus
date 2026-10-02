@@ -345,6 +345,39 @@ _HOST_IN_LINE = re.compile(
 )
 
 
+# Field names that the gateway schemas read event times from.
+_TIMESTAMP_FIELDS = (
+    "timestamp",
+    "time",
+    "@timestamp",
+    "ts",
+    "date",
+    "datetime",
+    "event_time",
+    "time_local",
+    "time_iso8601",
+    "created_at",
+    "createdAt",
+    "request_created_at",
+    "start_time",
+    "startTime",
+    "started_at",
+    "starting_at",
+    "endTime",
+    "TimeGenerated",
+    "receiveTimestamp",
+    "effective_at",
+    "aggregation_timestamp",
+)
+
+
+def _has_unparsed_timestamp(rec: dict[str, Any]) -> bool:
+    """Whether a timestamp field holds a value that no supported format parses."""
+    return any(
+        rec.get(key) not in (None, "") and parse_timestamp(rec[key]) is None for key in _TIMESTAMP_FIELDS
+    )
+
+
 def _is_static_or_probe(path: str | None) -> bool:
     """Whether the request path, without its query string or fragment, names a static asset or probe."""
     if not path:
@@ -1182,6 +1215,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         n = 0
         skipped = 0
         static_excluded = 0
+        untimed = 0
         omitted_caller_records = 0
         omitted_caller_requests = 0
         retained_intervals = 0
@@ -1207,6 +1241,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     skipped += 1
                     static_excluded += _is_static_or_probe(ev.path)
                     continue
+                if ev.timestamp is None and _has_unparsed_timestamp(rec):
+                    untimed += 1
                 self._runtime_context(ev, rec, framework_cache, clean)
                 identity = json.dumps([ev.caller, ev.scope], sort_keys=True)
                 if identity not in callers and len(callers) >= _MAX_DISTINCT_CALLERS:
@@ -1238,6 +1274,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 continue
         self.ctx.examined(n)
         self._report_limits(callers, detail_budget, omitted_caller_records, omitted_caller_requests)
+        if untimed:
+            self.ctx.warn(
+                f"gateway.logs: records with an unparseable timestamp field: {untimed}; their requests "
+                "are counted without activity timing"
+            )
         if static_excluded:
             self.ctx.warn(
                 "gateway.logs: requests for static assets or health probes not counted as LLM traffic: "

@@ -443,6 +443,31 @@ def test_logfmt_lines_with_repeated_keys_or_open_quotes_are_malformed(tmp_path, 
     ]
 
 
+def test_unparseable_event_times_are_counted_not_silently_dropped(tmp_path, run_connector):
+    records = [
+        {"api_key": "KEY-REAL-0001", "model": "gpt-4o", "timestamp": "Mon, 01 Jan 2024 00:00:00 GMT"},
+        {
+            "api_key": "KEY-REAL-0001",
+            "model": "gpt-4o",
+            "timestamp": "2024-01-01 00:00:05.5 +0000 UTC m=+1.5",
+        },
+        {"api_key": "KEY-REAL-0001", "model": "gpt-4o", "timestamp": "first tuesday of the month"},
+    ]
+    path = tmp_path / "gateway.jsonl"
+    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert len(findings) == 1 and findings[0].metadata["events"] == 3
+    assert (findings[0].first_seen, findings[0].last_seen) == (
+        "2024-01-01T00:00:00+00:00",
+        "2024-01-01T00:00:05+00:00",
+    )
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "gateway.logs: records with an unparseable timestamp field: 1; their requests are counted "
+        "without activity timing"
+    ]
+
+
 def test_logfmt_quoted_values_are_parsed_in_linear_time():
     started = time.monotonic()
     with pytest.raises(ValueError):
