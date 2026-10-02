@@ -6,6 +6,7 @@ import csv
 import datetime
 import io
 import json
+import re
 import stat
 
 import jwt
@@ -24,6 +25,7 @@ from shadowscan.reporters.csv_ import render_csv
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures.loader import Signature
 from shadowscan.signatures.matcher import SignatureIndex
+from shadowscan.utils import redaction_formats
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize, sanitize_text
 
 SECRET = "opaque-synthetic-credential-value"
@@ -530,3 +532,122 @@ def test_an_unterminated_key_block_is_withheld_to_the_end_of_the_text(start):
 )
 def test_public_keys_and_prose_about_key_formats_are_kept(text):
     assert sanitize_text(text) == text
+
+
+# ---------------------------------------------------------------- token formats
+
+
+def _run(alphabet: str, length: int) -> str:
+    # Ends in a word character: the backstop stops at a word boundary, so a token that ended in
+    # a hyphen would legitimately leave that one character behind.
+    return (alphabet * length)[: length - 1] + "7"
+
+
+_ALNUM, _HEX, _WORD = "aB3xY7", "0123456789abcdef", "aB3_x-Y7"
+
+
+def _token_samples() -> list[tuple[str, str]]:
+    """One synthetic token per alternative of the backstop, assembled so that no sample is a literal.
+
+    The pairs are (the alternative's own source, a string it matches in full). Splitting a prefix
+    keeps a secret scanner from reading a test fixture as a credential.
+    """
+    return [
+        ("sk-(?:proj|ant|live|or-v1|lf|litellm|svcacct|admin)-", "sk" + "-proj-" + _run(_WORD, 20)),
+        ("gh[pousr]_", "gh" + "p_" + _run(_ALNUM, 36)),
+        ("github_pat_", "github" + "_pat_" + _run(_ALNUM + "_", 40)),
+        ("gl(?:pat|rt|ptt|dt|ft|soat|cbt|imt|oas|agent|ffct)-", "gl" + "pat-" + _run(_WORD, 20)),
+        ("GR1348941", "GR" + "1348941" + _run(_WORD, 24)),
+        ("xox[abeprs]-", "xo" + "xb-" + _run(_ALNUM + "-", 24)),
+        ("xoxe\\.xox[bp]-", "xo" + "xe.xoxp-" + _run(_ALNUM + "-", 24)),
+        ("xapp-", "xa" + "pp-" + _run(_ALNUM + "-", 24)),
+        ("AIza", "AI" + "za" + _run(_WORD, 30)),
+        ("ya29\\.", "ya" + "29." + _run(_WORD, 30)),
+        ("1//0", "1/" + "/0" + _run(_WORD, 40)),
+        ("GOCSPX-", "GOC" + "SPX-" + _run(_WORD, 28)),
+        ("(?:AKIA|ASIA)", "AK" + "IA" + _run("ABCDEF0123456789", 16)),
+        ("hf_", "hf" + "_" + _run(_ALNUM, 30)),
+        ("sk-[A-Za-z0-9_-]{8,}", "sk" + "-" + _run(_WORD, 24)),
+        ("gsk_", "gs" + "k_" + _run(_ALNUM, 52)),
+        ("pcsk_", "pc" + "sk_" + _run(_ALNUM + "_", 30)),
+        ("e2b_", "e2" + "b_" + _run(_HEX, 40)),
+        ("tgp_v1_", "tgp" + "_v1_" + _run(_WORD, 40)),
+        ("lsv2_(?:pt|sk)_", "ls" + "v2_pt_" + _run(_HEX, 32) + "_" + _run(_HEX, 10)),
+        ("tvly-(?:dev-|prod-)?", "tv" + "ly-dev-" + _run(_WORD, 28)),
+        ("xai-", "xa" + "i-" + _run(_ALNUM, 70)),
+        ("pplx-", "pp" + "lx-" + _run(_ALNUM, 50)),
+        ("csk-", "cs" + "k-" + _run(_ALNUM, 40)),
+        ("nvapi-", "nv" + "api-" + _run(_WORD, 70)),
+        ("r8_", "r" + "8_" + _run(_ALNUM, 40)),
+        ("fc-", "f" + "c-" + _run(_HEX, 32)),
+        ("app-", "ap" + "p-" + _run(_ALNUM, 24)),
+        ("sk_[a-f0-9]{40,}", "sk" + "_" + _run(_HEX, 44)),
+        ("npm_", "np" + "m_" + _run(_ALNUM, 40)),
+        ("pypi-AgE", "py" + "pi-AgE" + _run(_WORD, 56)),
+        ("do[opr]_v1_", "do" + "p_v1_" + _run(_HEX, 64)),
+        ("(?:sk|rk)_(?:live|test)_", "rk" + "_live_" + _run(_ALNUM, 24)),
+        ("whsec_", "wh" + "sec_" + _run(_ALNUM, 32)),
+        ("SG\\.", "S" + "G." + _run(_WORD, 22) + "." + _run(_WORD, 22)),
+        ("dapi", "da" + "pi" + _run(_HEX, 32)),
+        ("shp(?:at|ca|pa|ss)_", "sh" + "pat_" + _run(_HEX, 32)),
+        ("ATATT3", "ATA" + "TT3" + _run(_WORD, 50)),
+        ("lin_api_", "lin" + "_api_" + _run(_ALNUM, 40)),
+        ("ntn_", "nt" + "n_" + _run(_ALNUM, 46)),
+        ("PMAK-", "PM" + "AK-" + _run(_HEX, 24) + "-" + _run(_HEX, 34)),
+        ("dp\\.(?:pt|st|sa|ct|scim|audit)\\.", "d" + "p.pt." + _run(_ALNUM, 46)),
+        ("sbp_", "sb" + "p_" + _run(_HEX, 40)),
+        ("sb_secret_", "sb" + "_secret_" + _run(_WORD, 30)),
+        ("glsa_", "gl" + "sa_" + _run(_ALNUM, 32) + "_" + _run(_HEX, 8)),
+        ("glc_", "gl" + "c_" + _run(_ALNUM + "+/", 40)),
+        ("sntry[su]_", "sn" + "trys_" + _run(_ALNUM + "+=_-", 40)),
+        ("hv[sbr]\\.", "h" + "vs." + _run(_WORD, 30)),
+        ("[A-Za-z0-9]{14}\\.atlasv1\\.", _run(_ALNUM, 14) + "." + "atl" + "asv1." + _run(_WORD, 70)),
+    ]
+
+
+def _backstop_alternatives() -> list[str]:
+    alternatives: list[str] = []
+    for pattern in (redaction_formats._SPECIFIC_TOKEN, redaction_formats._GENERIC_TOKEN):
+        depth, current, in_class, index = 0, "", False, 0
+        while index < len(pattern):
+            char = pattern[index]
+            if char == "\\":
+                current += pattern[index : index + 2]
+                index += 2
+                continue
+            if in_class:
+                in_class = char != "]"
+            elif char == "[":
+                in_class = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif char == "|" and depth == 0:
+                alternatives.append(current)
+                current = ""
+                index += 1
+                continue
+            current += char
+            index += 1
+        alternatives.append(current)
+    return alternatives
+
+
+def test_the_token_table_covers_every_alternative_of_the_backstop():
+    alternatives = _backstop_alternatives()
+    samples = _token_samples()
+    assert len(samples) == len(alternatives), "a token format was added or removed: update the samples"
+    for (prefix, sample), alternative in zip(samples, alternatives, strict=True):
+        assert alternative.startswith(prefix), (prefix, alternative)
+        assert re.fullmatch(alternative, sample), f"the sample for {prefix} does not match its format"
+
+
+@pytest.mark.parametrize("prefix,sample", _token_samples(), ids=[prefix for prefix, _ in _token_samples()])
+def test_every_provider_token_format_is_withheld(prefix, sample):
+    for text in (f"key = {sample}", f"see {sample} here", f"Authorization failed for {sample}."):
+        redacted = sanitize_text(text)
+        assert sample not in redacted, text
+        assert REDACTED in redacted, text
+    # The token is cut at its own boundary: the surrounding words stay readable.
+    assert sanitize_text(f"see {sample} here") == f"see {REDACTED} here"

@@ -8,9 +8,11 @@ input must keep scoring exactly as before the hardening.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import random
+import re
 from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 
@@ -22,9 +24,20 @@ from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.engine import Engine
-from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel, ScanStats, Surface, now_iso
+from shadowscan.models import (
+    Evidence,
+    Finding,
+    Kind,
+    Risk,
+    RiskFactor,
+    RiskLevel,
+    ScanStats,
+    Surface,
+    now_iso,
+)
 from shadowscan.risk import (
     CAPABILITY_WEIGHTS,
+    GOVERNANCE_WEIGHTS,
     KIND_BASE,
     PROVIDER_WEIGHTS,
     TAG_WEIGHTS,
@@ -787,3 +800,94 @@ def test_builtin_tag_keys_do_not_warn(caplog, monkeypatch):
     with caplog.at_level(logging.WARNING, logger="shadowscan.risk"):
         RiskPolicy.from_options({"tags": dict.fromkeys(TAG_WEIGHTS, 1)})
     assert not [record for record in caplog.records if record.name == "shadowscan.risk"]
+
+
+# ------------------------------------------------- default weights, levels, evidence groups
+
+# The default weights are policy: a change moves every score, so it has to be deliberate. When this
+# fails, update docs/concepts/risk.md, the changelog and the migration notes, then this digest.
+_DEFAULT_WEIGHTS_DIGEST = "f54bf45ac9389723d138fc0beb8fdc248870850b84acc6192d02ea71ca550930"
+
+
+def test_default_risk_weights_change_only_deliberately():
+    tables = {
+        "kinds": {kind.value: weight for kind, weight in KIND_BASE.items()},
+        "capabilities": CAPABILITY_WEIGHTS,
+        "tags": TAG_WEIGHTS,
+        "providers": PROVIDER_WEIGHTS,
+        "governance": GOVERNANCE_WEIGHTS,
+    }
+    digest = hashlib.sha256(json.dumps(tables, sort_keys=True).encode()).hexdigest()
+    assert digest == _DEFAULT_WEIGHTS_DIGEST, f"the default risk weights changed (new digest {digest})"
+
+
+def test_documented_default_weights_match_the_code():
+    doc = Path(__file__).resolve().parents[2] / "docs" / "concepts" / "risk.md"
+    rows = re.findall(
+        r"^\| (`[^|]+`) \| [^|]* \| ([\u2212+-]?\d+) \|$", doc.read_text(encoding="utf-8"), re.M
+    )
+    checked = 0
+    for names, cell in rows:
+        weight = int(cell.replace("\u2212", "-"))
+        for name in (part.strip().strip("`") for part in names.split(" / ")):
+            if name in GOVERNANCE_WEIGHTS:
+                assert GOVERNANCE_WEIGHTS[name] == weight, name
+            elif name.startswith("tag:"):
+                assert TAG_WEIGHTS[name[4:]][0] == weight, name
+            elif name.startswith("capability:"):
+                assert CAPABILITY_WEIGHTS[name[11:]][0] == weight, name
+            else:
+                continue
+            checked += 1
+    assert checked >= 10, "the documented weight table was not found"
+
+
+@pytest.mark.parametrize(
+    "score,level",
+    [
+        (100, "critical"),
+        (75, "critical"),
+        (74, "high"),
+        (50, "high"),
+        (49, "medium"),
+        (25, "medium"),
+        (24, "low"),
+        (1, "low"),
+        (0, "info"),
+        (-3, "info"),
+    ],
+)
+def test_risk_level_boundaries_match_the_documented_ranges(score, level):
+    assert RiskLevel.from_score(score) is RiskLevel(level)
+
+
+def _confidence(*weights: float, groups: tuple[str | None, ...] | None = None) -> float:
+    groups = groups or (None,) * len(weights)
+    finding = _finding(
+        evidence=[
+            Evidence(
+                signal=f"test:{number}",
+                description=f"observation {number}",
+                weight=weight,
+                attributes={"confidence_group": group} if group else {},
+            )
+            for number, (weight, group) in enumerate(zip(weights, groups, strict=True))
+        ]
+    )
+    finding.recompute_confidence()
+    return finding.confidence
+
+
+def test_independent_evidence_combines_by_noisy_or():
+    assert _confidence(0.4, 0.5) == 0.7  # 1 - 0.6 * 0.5
+    assert _confidence(0.4, 0.5, 0.5) == 0.85
+
+
+def test_evidence_in_one_confidence_group_counts_once_at_its_strongest():
+    # Repeated observations of one thing (the same idiom in several files) are correlated:
+    # adding them up would turn a pile of weak signals into certainty.
+    assert _confidence(0.4, 0.5, groups=("g", "g")) == 0.5
+    assert _confidence(0.2, 0.2, 0.2, 0.2, groups=("g", "g", "g", "g")) == 0.2
+    # Different groups, and grouped plus ungrouped evidence, are independent of each other.
+    assert _confidence(0.4, 0.5, groups=("one", "two")) == 0.7
+    assert _confidence(0.4, 0.5, 0.4, groups=("g", "g", None)) == 0.7
