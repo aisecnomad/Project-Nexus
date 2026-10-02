@@ -14,6 +14,9 @@ _MAX_REPORT_BYTES = 64 * 1024 * 1024
 _IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 _SHA = re.compile(r"[0-9a-f]{40}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+# Report text is printed into CI logs: keep it to one printable line per field.
+_UNPRINTABLE = re.compile(r"[^\x20-\x7e]")
+_MAX_LISTED = 200
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -45,6 +48,24 @@ def _timestamp(value: Any) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("database timestamp requires a timezone")
     return parsed.astimezone(UTC)
+
+
+def _finding(entry: dict[str, Any], result: dict[str, Any]) -> dict[str, str]:
+    """The identifying fields of one reported vulnerability, as bounded printable text."""
+
+    def text(source: dict[str, Any], key: str) -> str:
+        value = source.get(key)
+        return _UNPRINTABLE.sub("?", value)[:200] if isinstance(value, str) else ""
+
+    return {
+        "vulnerability": text(entry, "VulnerabilityID"),
+        "severity": text(entry, "Severity"),
+        "package": text(entry, "PkgName"),
+        "installed_version": text(entry, "InstalledVersion"),
+        "fixed_version": text(entry, "FixedVersion"),
+        "status": text(entry, "Status"),
+        "package_type": text(result, "Type"),
+    }
 
 
 def verify_database(directory: Path, *, now: datetime | None = None) -> dict[str, Any]:
@@ -151,14 +172,15 @@ def verify_bundle(
             for result in results
         ):
             raise ValueError(f"vulnerability report is missing {expected_type} inventory")
-    vulnerabilities: list[dict[str, Any]] = []
+    vulnerabilities: list[dict[str, str]] = []
     for result in results:
         entries = result.get("Vulnerabilities", [])
         if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
             raise ValueError("malformed vulnerability entries")
         if any(entry.get("Severity") not in {"HIGH", "CRITICAL"} for entry in entries):
             raise ValueError("vulnerability severity does not match the gate policy")
-        vulnerabilities.extend(entries)
+        vulnerabilities.extend(_finding(entry, result) for entry in entries)
+    vulnerabilities.sort(key=lambda finding: (finding["vulnerability"], finding["package"]))
     if (scan_exit == 1) != bool(vulnerabilities):
         raise ValueError("scanner exit does not match reported vulnerabilities")
     required = (
@@ -181,6 +203,7 @@ def verify_bundle(
         "policy": {"severity": ["HIGH", "CRITICAL"], "ignore_unfixed": False, "max_database_age_hours": 48},
         "scan_exit": scan_exit,
         "high_critical_vulnerabilities": len(vulnerabilities),
+        "blocking_vulnerabilities": vulnerabilities,
         "status": "blocked" if vulnerabilities else "passed",
         "scope": "detected Debian and Python packages; no production acceptance or reproducible-build claim",
         "files": [
@@ -188,6 +211,20 @@ def verify_bundle(
             for filename in required
         ],
     }
+
+
+def _blocked_summary(findings: list[dict[str, str]]) -> str:
+    """Name every blocking finding so a failed job explains itself without its artifact."""
+    lines = [f"container scan blocked by {len(findings)} HIGH/CRITICAL vulnerabilities:"]
+    for finding in findings[:_MAX_LISTED]:
+        package = f"{finding['package_type']}:{finding['package']}"
+        lines.append(
+            f"  {finding['vulnerability']} {finding['severity']} {package} {finding['installed_version']} "
+            f"status={finding['status'] or '-'} fixed={finding['fixed_version'] or '-'}"
+        )
+    if len(findings) > _MAX_LISTED:
+        lines.append(f"  ... {len(findings) - _MAX_LISTED} more in container-evidence.json")
+    return "\n".join(lines) + "\n"
 
 
 def main() -> None:
@@ -219,7 +256,7 @@ def main() -> None:
             json.dump(manifest, stream, indent=2, sort_keys=True, allow_nan=False)
             stream.write("\n")
         if manifest["status"] != "passed":
-            parser.exit(1, "container scan blocked by HIGH/CRITICAL vulnerabilities\n")
+            parser.exit(1, _blocked_summary(manifest["blocking_vulnerabilities"]))
     except (OSError, ValueError, TypeError, AttributeError) as exc:
         parser.error(str(exc))
 

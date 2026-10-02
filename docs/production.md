@@ -550,8 +550,12 @@ cancelled or is unexpectedly skipped. Verify that the live ruleset requires
 `CI gate` before treating the full matrix as an enforced merge gate. The dedicated
 container job builds one Docker image and checks its non-root UID, signature assets
 and network-isolated scan with a read-only root filesystem and resource limits.
+It also requires the expat bundled with the image's Python, which parses every XML
+file read from a repository and which the image scan does not inventory, to be
+2.8.5 or newer; the build fails if any file keeps a setuid or setgid bit.
 It inventories that exact local image with a CycloneDX SBOM and blocks HIGH or
-CRITICAL OS and Python vulnerabilities, including unfixed findings. It records
+CRITICAL OS and Python vulnerabilities, including unfixed findings, and lists each
+blocking finding in the job log. It records
 the image ID, source revision, pinned scanner and fresh vulnerability database
 identities; scanner errors also block the gate.
 Focused regressions cover the review findings, private-address enforcement,
@@ -779,6 +783,14 @@ Git and certificates. This applies available fixes; it does not establish that
 the resulting image is vulnerability-free. Retain the rebuilt image's actual
 scan, and keep the candidate blocked while HIGH/CRITICAL findings remain.
 Do not remove unfixed findings from the gate to turn it green.
+
+A later October 2 base-image refresh moved the worker to Python 3.12.15. Its
+bundled expat 2.8.5 carries the fixes for the expat denial-of-service and
+memory-safety advisories that affect the 2.8.3 copy in the previous image; the
+image scan reports Debian's `libexpat1`, which only `git-http-push` loads, and
+cannot see Python's own copy. The build now also removes setuid and setgid bits
+(`mount`, `su`, `passwd` and others). Neither change removes the unfixed Debian
+findings that still block the container gate.
 
 The release-evidence workflow now verifies active merge protections before
 building a candidate. Use the settings preparation and readback commands in

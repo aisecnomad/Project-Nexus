@@ -134,7 +134,7 @@ jobs:
           # environment audit permits an intentionally skipped editable package.
           for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do
             pip-audit --require-hashes --strict --progress-spinner off \
-              --disable-pip --no-deps -r "$lock"
+              --disable-pip -r "$lock"
           done
       - name: Run the test suite
         if: ${{ !matrix.coverage }}
@@ -228,9 +228,11 @@ jobs:
           [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
           printf 'CONTAINER_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
           docker image inspect "$image_id" > "$evidence_dir/image-inspect.json"
+          # Repository XML is parsed by Python's bundled expat, which an image
+          # scan does not inventory; 2.8.5 carries the October 2026 expat fixes.
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --entrypoint python "$image_id" \
-            -c 'import os, subprocess; assert os.geteuid() == 65532; subprocess.run(["python", "-m", "shadowscan.signatures.validate"], check=True)'
+            -c 'import os, pyexpat, subprocess; assert os.geteuid() == 65532; expat = tuple(int(part) for part in pyexpat.EXPAT_VERSION.removeprefix("expat_").split(".")); assert expat >= (2, 8, 5), pyexpat.EXPAT_VERSION; subprocess.run(["python", "-m", "shadowscan.signatures.validate"], check=True)'
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --memory 1g --pids-limit 128 \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m \

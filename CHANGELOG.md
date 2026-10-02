@@ -5,6 +5,36 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 2 integration of the open pull requests
+
+The open pull requests #107 and #110 to #122 land together. The stack
+#107, #110 to #120 keeps one commit per pull request with that pull request's
+exact tree; #121 and #122 keep their own commits. Changes made while
+integrating them:
+
+- Worker image: the base image moves to the `python:3.12-slim-trixie` index
+  resolved on 2026-10-02 (Python 3.12.15). Its bundled expat 2.8.5, which
+  parses every XML file the scanner reads from a repository, fixes the
+  denial-of-service and memory-safety advisories that affect expat 2.8.3 and
+  earlier; the image scanner does not report these, because Python bundles its
+  own expat. The build removes every setuid and setgid bit and fails if one
+  remains.
+- `tools/container/verify.py` lists each blocking finding (identifier,
+  package, installed and fixed version, status) in the job log and in
+  `container-evidence.json`, so a failed gate explains itself without its
+  artifact. The CI smoke run requires the bundled expat to be 2.8.5 or newer.
+- The lock audits drop pip-audit's redundant `--no-deps`; `--require-hashes`
+  already pins every requirement.
+- `bounded_safe_load_all` is removed, as both #112 and #121 intended; the
+  stack still defined it.
+- Ruff `BLE` and `RUF100`, enabled by #121, now cover the stack's code: two
+  broad redaction handlers state why they are broad, a `noqa` on a handler that
+  always re-raises is removed, and two tests catch the exact exception they
+  expect.
+- `docs/connectors/reference.md` is regenerated from the stack's connectors,
+  and `docs/production.md` puts operator guidance first with every dated note,
+  including the stack's, under "Candidate change history" (#122).
+
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 
 Fixes for defects found by an AI-assisted review of commit `d65b27f`. The

@@ -32,5 +32,5 @@ jobs:
           # Same commands as the CI lock audit: fail if a locked package cannot be checked.
           for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do
             pip-audit --require-hashes --strict --progress-spinner off \
-              --disable-pip --no-deps -r "$lock"
+              --disable-pip -r "$lock"
           done

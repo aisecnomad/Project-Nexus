@@ -1004,6 +1004,8 @@ def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> N
     assert "--format cyclonedx" in script and '"$CONTAINER_IMAGE_ID"' in script
     assert "python -m tools.container.verify database" in script
     assert "python -m tools.container.verify bundle" in script
+    # Repository XML is parsed by Python's bundled expat, which the image scan cannot see.
+    assert "pyexpat.EXPAT_VERSION" in script and "assert expat >= (2, 8, 5)" in script
     assert not any("cache@" in step.get("uses", "") for step in steps)
     assert not any(step.get("continue-on-error") for step in steps)
     upload = steps[-1]
@@ -1019,6 +1021,14 @@ def test_container_updates_installed_base_packages_before_dependency_install() -
     assert update < upgrade < install
     assert "security-tracker.debian.org/tracker/DSA-6531-1" in dockerfile
     assert "security-tracker.debian.org/tracker/CVE-2026-103111" in dockerfile
+
+
+def test_container_build_removes_setuid_and_setgid_bits_and_checks_none_remain() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    strip = dockerfile.index("&& find / -xdev -type f -perm /6000 -exec chmod a-s {} +")
+    check = dockerfile.index('&& test -z "$(find / -xdev -type f -perm /6000 -print -quit)"')
+    assert dockerfile.index("apt-get install -y --no-install-recommends git") < strip < check
+    assert check < dockerfile.index("pip install --no-cache-dir --require-hashes")
 
 
 def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:
@@ -1100,7 +1110,7 @@ def test_container_evidence_cannot_accept_incomplete_or_mismatched_scans(tmp_pat
     report = json.loads(report_path.read_text())
     if case in {"vulnerable-unfixed", "hidden-vulnerability"}:
         report["Results"][0]["Vulnerabilities"] = [
-            {"VulnerabilityID": "CVE-TEST-0001", "Severity": "HIGH", "FixedVersion": ""}
+            {"VulnerabilityID": "CVE-TEST-0001", "Severity": "HIGH", "FixedVersion": "", "PkgName": "login"}
         ]
         scan_exit = 1 if case == "vulnerable-unfixed" else 0
     elif case == "scanner-error":
@@ -1160,6 +1170,8 @@ def test_container_evidence_cannot_accept_incomplete_or_mismatched_scans(tmp_pat
     assert manifest["image_id"] == image_id
     assert manifest["status"] == ("blocked" if case == "vulnerable-unfixed" else "passed")
     assert len(manifest["files"]) == 6
+    blocking = [(item["vulnerability"], item["package"]) for item in manifest["blocking_vulnerabilities"]]
+    assert blocking == ([("CVE-TEST-0001", "login")] if case == "vulnerable-unfixed" else [])
 
 
 def test_database_verification_requires_a_real_digest(tmp_path: Path) -> None:
@@ -1182,7 +1194,15 @@ def test_container_evidence_cli_retains_blocked_results_and_fails_the_job(
         path = tmp_path / "container-vulnerabilities.json"
         report = json.loads(path.read_text())
         report["Results"][0]["Vulnerabilities"] = [
-            {"VulnerabilityID": "CVE-TEST-0001", "Severity": "CRITICAL", "FixedVersion": ""}
+            {
+                "VulnerabilityID": "CVE-TEST-0001",
+                "Severity": "CRITICAL",
+                "FixedVersion": "",
+                # Report text reaches the CI log: a line break must not start a workflow command.
+                "PkgName": "login\n::error::forged",
+                "InstalledVersion": "1:4.17.4-2",
+                "Status": "affected",
+            }
         ]
         path.write_text(json.dumps(report))
     result = subprocess.run(
@@ -1211,6 +1231,13 @@ def test_container_evidence_cli_retains_blocked_results_and_fails_the_job(
     assert result.returncode == (1 if vulnerable else 0), result.stdout + result.stderr
     manifest = json.loads((tmp_path / "container-evidence.json").read_text())
     assert manifest["status"] == ("blocked" if vulnerable else "passed")
+    if vulnerable:
+        assert "blocked by 1 HIGH/CRITICAL vulnerabilities" in result.stderr
+        assert (
+            "  CVE-TEST-0001 CRITICAL debian:login?::error::forged 1:4.17.4-2 status=affected"
+            in result.stderr
+        )
+        assert not any(line.startswith("::") for line in result.stderr.splitlines())
 
 
 @pytest.mark.parametrize(

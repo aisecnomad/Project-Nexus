@@ -69,7 +69,7 @@ audit: ## Audit the environment and every hash-locked dependency set, as CI does
 	pip-audit --skip-editable --progress-spinner off
 	set -e; for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do \
 		pip-audit --require-hashes --strict --progress-spinner off \
-			--disable-pip --no-deps -r "$$lock"; \
+			--disable-pip -r "$$lock"; \
 	done
 
 .PHONY: evaluate
