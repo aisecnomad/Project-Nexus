@@ -469,7 +469,9 @@ def _dockerfile_violations(text: str) -> list[str]:
             problems.append(f"ADD fetches a remote source: {arguments}")
         elif keyword == "RUN":
             for command in re.split(r"&&|\|\||;|\|", arguments):
-                if re.search(r"\bpip3?\s+install\b", command) and not _pip_install_is_hash_checked(command):
+                if re.search(r"\bpip3?(?:\s+--python\s+\S+)?\s+install\b", command) and not (
+                    _pip_install_is_hash_checked(command)
+                ):
                     problems.append(f"pip install without --require-hashes: {command.strip()}")
     if user is None or user in {"root", "0"}:
         problems.append(f"the final stage runs as {user or 'root (no USER)'}; end with a non-root USER")
@@ -775,7 +777,10 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         ),
         pytest.param(
             "Dockerfile",
-            _replace("pip install --no-cache-dir --require-hashes", "pip install --no-cache-dir"),
+            _replace(
+                "--python /opt/venv/bin/python install --no-cache-dir --require-hashes",
+                "--python /opt/venv/bin/python install --no-cache-dir",
+            ),
             "pip install without --require-hashes",
             id="unhashed-pip-install",
         ),
@@ -1009,6 +1014,7 @@ def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> N
     assert "python -m tools.container.verify bundle" in script
     # Repository XML is parsed by Python's bundled expat, which the image scan cannot see.
     assert "pyexpat.EXPAT_VERSION" in script and "assert expat >= (2, 8, 5)" in script
+    assert '--scan-exit "$scan_exit" --os-type wolfi' in script
     assert not any("cache@" in step.get("uses", "") for step in steps)
     assert not any(step.get("continue-on-error") for step in steps)
     upload = steps[-1]
@@ -1018,20 +1024,40 @@ def test_container_scan_uses_verified_tool_fresh_database_and_exact_image() -> N
 
 def test_container_updates_installed_base_packages_before_dependency_install() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    update = dockerfile.index("RUN apt-get update")
-    upgrade = dockerfile.index("&& apt-get upgrade -y --no-install-recommends")
-    install = dockerfile.index("&& apt-get install -y --no-install-recommends git ca-certificates")
-    assert update < upgrade < install
-    assert "security-tracker.debian.org/tracker/DSA-6531-1" in dockerfile
-    assert "security-tracker.debian.org/tracker/CVE-2026-103111" in dockerfile
+    build, runtime = dockerfile.split("\nFROM ", 2)[1:]
+    assert build.index("RUN apk upgrade --no-cache") < build.index(
+        "&& apk add --no-cache python-3.12 py3.12-pip"
+    )
+    assert runtime.index("RUN apk upgrade --no-cache") < runtime.index(
+        "&& apk add --no-cache python-3.12 git"
+    )
+    # pip and the build tools never reach the runtime stage.
+    assert "pip" not in runtime.split("RUN apk upgrade", 1)[1].split("\nCOPY --from=build")[0].replace(
+        "python-3.12", ""
+    )
+
+
+def test_container_stages_share_one_reviewed_base_digest() -> None:
+    images = [
+        arguments.split()[0]
+        for keyword, arguments in _dockerfile_instructions((ROOT / "Dockerfile").read_text(encoding="utf-8"))
+        if keyword == "FROM"
+    ]
+    assert len(images) == 2 and images[0] == images[1]
+    assert re.fullmatch(r"chainguard/wolfi-base:latest@sha256:[0-9a-f]{64}", images[0])
 
 
 def test_container_build_removes_setuid_and_setgid_bits_and_checks_none_remain() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    strip = dockerfile.index("&& find / -xdev -type f -perm /6000 -exec chmod a-s {} +")
-    check = dockerfile.index('&& test -z "$(find / -xdev -type f -perm /6000 -print -quit)"')
-    assert dockerfile.index("apt-get install -y --no-install-recommends git") < strip < check
-    assert check < dockerfile.index("pip install --no-cache-dir --require-hashes")
+    runtime = dockerfile.split("\nFROM ", 2)[2]
+    strip = runtime.index("&& find / -xdev -type f -perm /6000 -exec chmod a-s {} +")
+    check = runtime.index('&& test -z "$(find / -xdev -type f -perm /6000 -print -quit)"')
+    assert (
+        runtime.index("apk add --no-cache python-3.12 git")
+        < strip
+        < check
+        < runtime.index("USER 65532:65532")
+    )
 
 
 def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:
@@ -1062,7 +1088,7 @@ def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:
                 }
             },
             "components": [
-                {"purl": "pkg:deb/debian/git@2.47.3"},
+                {"purl": "pkg:apk/wolfi/git@2.55.0-r0?arch=x86_64&distro=20230201"},
                 {"purl": "pkg:pypi/project-nexus-shadowscan@0.1.1"},
             ],
         },
@@ -1070,7 +1096,7 @@ def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:
             "ArtifactType": "container_image",
             "Metadata": {"ImageID": image_id},
             "Results": [
-                {"Class": "os-pkgs", "Type": "debian", "Packages": [{"Name": "git"}]},
+                {"Class": "os-pkgs", "Type": "wolfi", "Packages": [{"Name": "git"}]},
                 {"Class": "lang-pkgs", "Type": "python-pkg", "Packages": [{"Name": "requests"}]},
             ],
         },
@@ -1163,6 +1189,7 @@ def test_container_evidence_cannot_accept_incomplete_or_mismatched_scans(tmp_pat
         "scanner_version": "0.74.0",
         "scanner_sha256": "e" * 64,
         "scan_exit": scan_exit,
+        "os_type": "wolfi",
         "now": now,
     }
     if case not in {"passed", "vulnerable-unfixed"}:
@@ -1175,6 +1202,26 @@ def test_container_evidence_cannot_accept_incomplete_or_mismatched_scans(tmp_pat
     assert len(manifest["files"]) == 6
     blocking = [(item["vulnerability"], item["package"]) for item in manifest["blocking_vulnerabilities"]]
     assert blocking == ([("CVE-TEST-0001", "login")] if case == "vulnerable-unfixed" else [])
+
+
+@pytest.mark.parametrize("os_type", ["debian", "alpine"])
+def test_container_evidence_must_inventory_the_declared_operating_system(
+    tmp_path: Path, os_type: str
+) -> None:
+    # A Wolfi report and inventory never satisfy a Debian expectation, and an
+    # undeclared family is refused rather than checked loosely.
+    image_id, now = _container_evidence(tmp_path)
+    with pytest.raises(ValueError, match="debian packages|unsupported operating-system"):
+        verify_bundle(
+            tmp_path,
+            image_id=image_id,
+            source_sha="d" * 40,
+            scanner_version="0.74.0",
+            scanner_sha256="e" * 64,
+            scan_exit=0,
+            os_type=os_type,
+            now=now,
+        )
 
 
 def test_database_verification_requires_a_real_digest(tmp_path: Path) -> None:
@@ -1225,6 +1272,8 @@ def test_container_evidence_cli_retains_blocked_results_and_fails_the_job(
             "e" * 64,
             "--scan-exit",
             "1" if vulnerable else "0",
+            "--os-type",
+            "wolfi",
         ],
         cwd=ROOT,
         capture_output=True,
@@ -1237,8 +1286,7 @@ def test_container_evidence_cli_retains_blocked_results_and_fails_the_job(
     if vulnerable:
         assert "blocked by 1 HIGH/CRITICAL vulnerabilities" in result.stderr
         assert (
-            "  CVE-TEST-0001 CRITICAL debian:login?::error::forged 1:4.17.4-2 status=affected"
-            in result.stderr
+            "  CVE-TEST-0001 CRITICAL wolfi:login?::error::forged 1:4.17.4-2 status=affected" in result.stderr
         )
         assert not any(line.startswith("::") for line in result.stderr.splitlines())
 

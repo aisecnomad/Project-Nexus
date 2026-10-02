@@ -17,6 +17,9 @@ _DIGEST = re.compile(r"[0-9a-f]{64}")
 # Report text is printed into CI logs: keep it to one printable line per field.
 _UNPRINTABLE = re.compile(r"[^\x20-\x7e]")
 _MAX_LISTED = 200
+# The operating-system package families the worker image may be built on, with
+# the package URL prefix the scanner records for each.
+OS_PACKAGE_PURLS = {"debian": "pkg:deb/debian/", "wolfi": "pkg:apk/wolfi/"}
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -97,6 +100,7 @@ def verify_bundle(
     scanner_version: str,
     scanner_sha256: str,
     scan_exit: int,
+    os_type: str,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Validate inventory and report contracts before accepting a scan result."""
@@ -106,6 +110,8 @@ def verify_bundle(
         or not _DIGEST.fullmatch(scanner_sha256)
     ):
         raise ValueError("invalid image, source or scanner identity")
+    if os_type not in OS_PACKAGE_PURLS:
+        raise ValueError("unsupported operating-system package type")
     if scan_exit not in (0, 1):
         raise ValueError(f"container vulnerability scan failed (exit {scan_exit})")
     database = verify_database(directory, now=now)
@@ -146,8 +152,8 @@ def verify_bundle(
     if not isinstance(components, list) or any(not isinstance(component, dict) for component in components):
         raise ValueError("container inventory is missing components")
     purls = [component.get("purl", "") for component in components]
-    if not any(isinstance(purl, str) and purl.startswith("pkg:deb/") for purl in purls):
-        raise ValueError("container inventory is missing Debian packages")
+    if not any(isinstance(purl, str) and purl.startswith(OS_PACKAGE_PURLS[os_type]) for purl in purls):
+        raise ValueError(f"container inventory is missing {os_type} packages")
     if not any(
         isinstance(purl, str) and purl.startswith("pkg:pypi/project-nexus-shadowscan@") for purl in purls
     ):
@@ -163,7 +169,7 @@ def verify_bundle(
     results = report.get("Results")
     if not isinstance(results, list) or any(not isinstance(result, dict) for result in results):
         raise ValueError("vulnerability report is missing package results")
-    for expected_class, expected_type in (("os-pkgs", "debian"), ("lang-pkgs", "python-pkg")):
+    for expected_class, expected_type in (("os-pkgs", os_type), ("lang-pkgs", "python-pkg")):
         if not any(
             result.get("Class") == expected_class
             and result.get("Type") == expected_type
@@ -205,7 +211,10 @@ def verify_bundle(
         "high_critical_vulnerabilities": len(vulnerabilities),
         "blocking_vulnerabilities": vulnerabilities,
         "status": "blocked" if vulnerabilities else "passed",
-        "scope": "detected Debian and Python packages; no production acceptance or reproducible-build claim",
+        "os_type": os_type,
+        "scope": (
+            f"detected {os_type} and Python packages; no production acceptance or reproducible-build claim"
+        ),
         "files": [
             {"name": filename, "sha256": hashlib.sha256((directory / filename).read_bytes()).hexdigest()}
             for filename in required
@@ -239,6 +248,7 @@ def main() -> None:
     bundle.add_argument("--scanner-version", required=True)
     bundle.add_argument("--scanner-sha256", required=True)
     bundle.add_argument("--scan-exit", type=int, required=True)
+    bundle.add_argument("--os-type", choices=sorted(OS_PACKAGE_PURLS), required=True)
     args = parser.parse_args()
     try:
         if args.command == "database":
@@ -251,6 +261,7 @@ def main() -> None:
             scanner_version=args.scanner_version,
             scanner_sha256=args.scanner_sha256,
             scan_exit=args.scan_exit,
+            os_type=args.os_type,
         )
         with (args.directory / "container-evidence.json").open("x", encoding="utf-8") as stream:
             json.dump(manifest, stream, indent=2, sort_keys=True, allow_nan=False)

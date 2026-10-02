@@ -297,7 +297,7 @@ jobs:
           python -m tools.container.verify bundle "$CONTAINER_EVIDENCE" \
             --image-id "$CONTAINER_IMAGE_ID" --source-sha "$GITHUB_SHA" \
             --scanner-version "$TRIVY_VERSION" --scanner-sha256 "$TRIVY_SHA256" \
-            --scan-exit "$scan_exit"
+            --scan-exit "$scan_exit" --os-type wolfi
       - name: Retain container evidence including blocked scans
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

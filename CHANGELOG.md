@@ -12,17 +12,23 @@ The open pull requests #107 and #110 to #122 land together. The stack
 exact tree; #121 and #122 keep their own commits. Changes made while
 integrating them:
 
-- Worker image: the base image moves to the `python:3.12-slim-trixie` index
-  resolved on 2026-10-02 (Python 3.12.15). Its bundled expat 2.8.5, which
-  parses every XML file the scanner reads from a repository, fixes the
-  denial-of-service and memory-safety advisories that affect expat 2.8.3 and
-  earlier; the image scanner does not report these, because Python bundles its
-  own expat. The build removes every setuid and setgid bit and fails if one
-  remains.
+- Worker image: built on Chainguard's Wolfi base (`chainguard/wolfi-base`,
+  pinned by index digest in both stages) instead of `python:3.12-slim-trixie`.
+  The Debian image could not pass the strict container gate: 55 unfixed HIGH
+  entries in util-linux, ncurses, Perl, systemd libraries and Git's
+  `libcurl3t64-gnutls`. Python 3.12, its expat and Git are now Wolfi packages
+  that the image scan inventories; the official image's interpreter and its
+  bundled expat 2.8.3, affected by denial-of-service and memory-safety
+  advisories and used for every XML file the scanner reads, were invisible to
+  the scan. pip and the build tools stay in the build stage, the scanner runs
+  from `/opt/venv`, and the build removes every setuid and setgid bit and fails
+  if one remains. The gate policy is unchanged.
 - `tools/container/verify.py` lists each blocking finding (identifier,
   package, installed and fixed version, status) in the job log and in
   `container-evidence.json`, so a failed gate explains itself without its
-  artifact. The CI smoke run requires the bundled expat to be 2.8.5 or newer.
+  artifact. The CI smoke run requires the image's expat to be 2.8.5 or newer,
+  and `--os-type` states the distribution whose packages the inventory must
+  contain.
 - The lock audits drop pip-audit's redundant `--no-deps`; `--require-hashes`
   already pins every requirement.
 - `bounded_safe_load_all` is removed, as both #112 and #121 intended; the

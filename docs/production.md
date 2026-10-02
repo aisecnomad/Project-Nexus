@@ -104,10 +104,12 @@ different resolver version only as an intentional toolchain change. Use
 `--upgrade` only for an intentional dependency refresh. Preserve each lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
-The Dockerfile installs the runtime and build locks under `--require-hashes`,
-builds the package with `--no-build-isolation`, and runs as UID/GID 65532. Its
-literal `FROM` pins the multi-arch `python:3.12-slim-trixie` image index. The
-image build checks that Git is 2.45 or newer for history enrichment.
+The Dockerfile installs the runtime and build locks under `--require-hashes`
+into a virtual environment, builds the package with `--no-build-isolation`, and
+runs as UID/GID 65532. Both stages pin the same multi-arch
+`chainguard/wolfi-base:latest` image index by its literal digest; Python 3.12
+and Git are Wolfi packages, and pip stays in the build stage. The image build
+checks that Git is 2.45 or newer for history enrichment.
 Review that exact digest and any Dependabot refresh before deployment:
 
 ```bash
@@ -116,9 +118,9 @@ docker build --tag shadowscan:reviewed .
 
 Retain the reviewed base and built image digests. The build context is an
 allowlist (`.dockerignore`) of package sources, signature data, packaging
-inputs and the runtime/build locks. Distribution packages from `apt-get` and image
+inputs and the runtime/build locks. Distribution packages from `apk` and image
 metadata remain mutable, so the Dockerfile does not promise byte-for-byte
-reproducible images. There is no claim of a hermetic apt snapshot. CI
+reproducible images. There is no claim of a hermetic package snapshot. CI
 smoke-tests a non-root, read-only and network-isolated image; build and test the
 deployment image, generate its container/OS SBOM, and validate resource limits
 and output-directory permissions before rollout.
@@ -554,9 +556,9 @@ cancelled or is unexpectedly skipped. Verify that the live ruleset requires
 `CI gate` before treating the full matrix as an enforced merge gate. The dedicated
 container job builds one Docker image and checks its non-root UID, signature assets
 and network-isolated scan with a read-only root filesystem and resource limits.
-It also requires the expat bundled with the image's Python, which parses every XML
-file read from a repository and which the image scan does not inventory, to be
-2.8.5 or newer; the build fails if any file keeps a setuid or setgid bit.
+It also requires the expat that the image's Python uses to parse every XML file
+read from a repository to be 2.8.5 or newer, and the build fails if any file
+keeps a setuid or setgid bit.
 It inventories that exact local image with a CycloneDX SBOM and blocks HIGH or
 CRITICAL OS and Python vulnerabilities, including unfixed findings, and lists each
 blocking finding in the job log. It records
@@ -776,9 +778,9 @@ built image. CI retains the image identity, OS/Python SBOM and vulnerability
 result; HIGH/CRITICAL vulnerabilities, scanner errors and unavailable database
 updates fail the gate. These results depend on the database at scan time.
 Record the deployed image digest and rescan that exact image before deployment;
-an earlier source commit or Docker tag does not identify its bytes. Apt still
-uses live Debian mirrors, so independently rebuilding the source does not
-produce a guaranteed identical image.
+an earlier source commit or Docker tag does not identify its bytes. apk still
+reads the live Wolfi repository, so independently rebuilding the source does
+not produce a guaranteed identical image.
 
 The first October 2 container scan found HIGH-severity Debian advisories,
 including advisories without a recorded stable-package fix. The worker build
@@ -795,6 +797,20 @@ image scan reports Debian's `libexpat1`, which only `git-http-push` loads, and
 cannot see Python's own copy. The build now also removes setuid and setgid bits
 (`mount`, `su`, `passwd` and others). Neither change removes the unfixed Debian
 findings that still block the container gate.
+
+The worker image then moved from `python:3.12-slim-trixie` to Chainguard's
+Wolfi base. On Debian the gate could not pass without exempting findings: the
+55 unfixed HIGH entries (16 advisories in 22 packages) sat in packages the
+worker never executes, such as util-linux, ncurses, Perl and systemd libraries,
+and in `libcurl3t64-gnutls`, which Git's HTTPS transport needs and which had no
+trixie fix. Wolfi installs none of the unused packages and carries current
+fixes, so the gate stays strict and passes on the scanned image. Python, its
+expat and Git are now packages the image scan inventories; the official Python
+image built the interpreter outside the package manager, where the scan could
+not see it. Rebuild and rescan deployment images: the base distribution, the
+package names in the image inventory (`pkg:apk/wolfi/...`) and the virtual
+environment path (`/opt/venv`) changed. The CLI, entry point, non-root UID and
+mount points are unchanged.
 
 The release-evidence workflow now verifies active merge protections before
 building a candidate. Use the settings preparation and readback commands in
@@ -1135,7 +1151,7 @@ permission or upload action.
 
 The runtime SBOM covers locked Python core/cloud dependencies. It is not a
 container or operating-system SBOM and does not cover the base image, Git,
-CA certificates or other Debian packages. Generate and review a container/OS
+CA certificates or other Wolfi packages. Generate and review a container/OS
 SBOM for the exact deployed image digest as a separate release control.
 
 ### Output and inventory migration
