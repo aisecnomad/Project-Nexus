@@ -25,6 +25,7 @@ from bisect import bisect_right
 from collections import ChainMap
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 import regex
 
@@ -43,6 +44,9 @@ from shadowscan.utils.redaction import sanitize_text
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
+# The Python binder checks the file's matching budget every this many visited
+# nodes: its walk is pure Python, which no regex timeout covers.
+_BUDGET_CHECK_NODES = 256
 # Proving a file unbindable matches at most this many distinct synthesized
 # statements (real modules need a few hundred), of which at most 512 name an
 # attribute of an imported module; a file needing more keeps the binder.
@@ -93,6 +97,8 @@ class _Call:
 @dataclass
 class _LoopTransfers:
     scope_depth: int
+    # The scope the loop body is layered on; transfers record their changes over it.
+    base: Mapping[str, _Binding | None]
     scope: dict[str, _Binding | None] | None = None
     has_break: bool = False
 
@@ -218,6 +224,16 @@ class _PythonBindings(ast.NodeVisitor):
         self.imports: list[tuple[_Binding, int]] = []
         self._loop_transfers: list[_LoopTransfers] = []
         self.decorator_calls: set[int] = set()
+        self._visited = 0
+
+    def visit(self, node: ast.AST) -> Any:
+        self._visited += 1
+        if not self._visited % _BUDGET_CHECK_NODES:
+            try:
+                pattern_timeout()
+            except MatchTimeoutError as exc:
+                raise SourceBudgetExceeded("source binding time budget exceeded") from exc
+        return super().visit(node)
 
     def _visit_block(self, statements: Sequence[ast.AST]) -> bool:
         """Visit a syntactic suite until an explicit, unconditional transfer.
@@ -245,14 +261,38 @@ class _PythonBindings(ast.NodeVisitor):
                 self.visit(value)
 
     @staticmethod
-    def _join_scopes(*outcomes: Mapping[str, _Binding | None]) -> dict[str, _Binding | None]:
-        """Keep a binding only when every possible lexical outcome agrees."""
-        return {
-            name: outcomes[0].get(name)
-            if all(outcome.get(name) == outcomes[0].get(name) for outcome in outcomes[1:])
-            else None
-            for name in set().union(*outcomes)
-        }
+    def _join_into(
+        before: MutableMapping[str, _Binding | None], outcomes: Sequence[Mapping[str, _Binding | None]]
+    ) -> None:
+        """Keep a binding of ``before`` only when every possible outcome leaves it unchanged.
+
+        Each outcome holds only the names a suite may have assigned (an overlay
+        of ``before``, or a whole mapping after a star import), so the join costs
+        those names rather than the enclosing scope. An assigned name is recorded
+        even when it agrees: it shadows an outer scope from here on.
+        """
+        for name in set().union(*outcomes):
+            prior = before.get(name)
+            before[name] = prior if all(outcome.get(name, prior) == prior for outcome in outcomes) else None
+
+    @staticmethod
+    def _changes(
+        scope: Mapping[str, _Binding | None], base: Mapping[str, _Binding | None]
+    ) -> Mapping[str, _Binding | None]:
+        """The bindings ``scope`` holds over ``base``, the scope it was layered on.
+
+        Loop bodies and if branches layer an overlay on their enclosing scope, so
+        the changes are the overlays between them. A star import replaces the
+        scope with a mapping of every name: that whole mapping is then the change.
+        """
+        layers: list[Mapping[str, _Binding | None]] = []
+        current = scope
+        while current is not base:
+            if not isinstance(current, ChainMap) or len(current.maps) != 2:
+                return current
+            layers.append(current.maps[0])
+            current = current.maps[1]
+        return {name: scope[name] for name in set().union(*layers)}
 
     def visit_Return(self, node: ast.Return) -> bool:
         if node.value is not None:
@@ -279,29 +319,48 @@ class _PythonBindings(ast.NodeVisitor):
             # A conditional break/continue may leave its branch before later
             # statements restore a binding. Keep that earlier mutation as a
             # possible loop outcome rather than letting visit_If discard it.
-            # Merge in place: retain at most one transfer scope per loop,
-            # rather than a full symbol table for every hostile break site.
+            # Merge in place: retain at most one transfer scope per loop, and
+            # in it only the names the body changed, never a full symbol table.
             transfers = self._loop_transfers[-1]
-            transfers.scope = (
-                self._join_scopes(transfers.scope, self.scopes[-1])
-                if transfers.scope is not None
-                else dict(self.scopes[-1])
-            )
+            changes = self._changes(self.scopes[-1], transfers.base)
+            if transfers.scope is None:
+                transfers.scope = dict(changes)
+            else:
+                recorded, base = transfers.scope, transfers.base
+                for name in set(recorded).union(changes):
+                    prior = base.get(name)
+                    value = recorded.get(name, prior)
+                    recorded[name] = value if changes.get(name, prior) == value else None
             transfers.has_break |= is_break
 
-    def _visit_loop_body(
-        self, statements: list[ast.stmt]
-    ) -> tuple[list[Mapping[str, _Binding | None]], bool]:
-        transfers = _LoopTransfers(len(self.scopes))
+    def _visit_loop(self, body: list[ast.stmt], target: ast.AST | None = None) -> bool:
+        """Visit a loop body layered on its scope, join what it may change; return whether it can break.
+
+        The iterable may be empty, and further iterations may overwrite an
+        imported namespace. A single lexical iteration never proves the binding
+        left behind by an unknown runtime iteration count. The body writes to an
+        overlay, so the join costs the names it assigns, not the whole scope.
+        """
+        before = self.scopes[-1]
+        overlay: dict[str, _Binding | None] = {}
+        chain = ChainMap(overlay, before)
+        self.scopes[-1] = chain
+        if target is not None:
+            self._store(target)
+        transfers = _LoopTransfers(len(self.scopes), before)
         self._loop_transfers.append(transfers)
         try:
-            self._visit_block(statements)
+            self._visit_block(body)
         finally:
             self._loop_transfers.pop()
-        outcomes: list[Mapping[str, _Binding | None]] = [self.scopes[-1]]
+        scope = self.scopes[-1]
+        # A star import replaces the scope with a mapping of every name.
+        outcomes: list[Mapping[str, _Binding | None]] = [overlay if scope is chain else scope]
         if transfers.scope is not None:
             outcomes.append(transfers.scope)
-        return outcomes, transfers.has_break
+        self.scopes[-1] = before
+        self._join_into(before, outcomes)
+        return transfers.has_break
 
     def _offset(self, line: int, column: int) -> int:
         # AST columns are UTF-8 bytes, not Unicode code points.
@@ -517,13 +576,7 @@ class _PythonBindings(ast.NodeVisitor):
             and not node.iter.value
         ):
             return self._visit_block(node.orelse)
-        before = dict(self.scopes[-1])
-        self._store(node.target)
-        outcomes, has_break = self._visit_loop_body(node.body)
-        # The iterable may be empty, and further iterations may overwrite an
-        # imported namespace. A single lexical iteration never proves the
-        # binding left behind by an unknown runtime iteration count.
-        self.scopes[-1] = self._join_scopes(before, *outcomes)
+        has_break = self._visit_loop(node.body, node.target)
         return self._loop_else(node.orelse, has_break=has_break)
 
     visit_AsyncFor = visit_For
@@ -534,9 +587,7 @@ class _PythonBindings(ast.NodeVisitor):
             # The else suite runs on the zero-iteration path. Neither calls nor
             # assignments in the body can alter the incoming bindings.
             return self._visit_block(node.orelse)
-        before = dict(self.scopes[-1])
-        outcomes, has_break = self._visit_loop_body(node.body)
-        self.scopes[-1] = self._join_scopes(before, *outcomes)
+        has_break = self._visit_loop(node.body)
         if isinstance(node.test, ast.Constant) and node.test.value:
             # A constant-true condition cannot reach else. Without an outer
             # loop break, it cannot reach the following statement either.
@@ -544,14 +595,20 @@ class _PythonBindings(ast.NodeVisitor):
         return self._loop_else(node.orelse, has_break=has_break)
 
     def _loop_else(self, otherwise: list[ast.stmt], *, has_break: bool) -> bool:
-        before_else = dict(self.scopes[-1])
         # This runs after the loop's transfer frame is popped. A break in a
         # nested loop's else belongs to the enclosing loop, unlike its body.
-        stopped = self._visit_block(otherwise)
-        if has_break:
-            # A break bypasses else, so its mutations cannot become certain.
-            self.scopes[-1] = self._join_scopes(before_else, self.scopes[-1])
-        return stopped and not has_break
+        if not has_break:
+            return self._visit_block(otherwise)
+        # A break bypasses else, so its mutations cannot become certain.
+        before = self.scopes[-1]
+        overlay: dict[str, _Binding | None] = {}
+        chain = ChainMap(overlay, before)
+        self.scopes[-1] = chain
+        self._visit_block(otherwise)
+        scope = self.scopes[-1]
+        self.scopes[-1] = before
+        self._join_into(before, [overlay if scope is chain else scope])
+        return False
 
     def visit_With(self, node: ast.With | ast.AsyncWith) -> None:
         for item in node.items:

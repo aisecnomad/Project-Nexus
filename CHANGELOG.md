@@ -109,6 +109,14 @@ integrating them:
   `--job-deadline-seconds` could fire. A file with a run of more than 32 blanks
   is refused before parsing and reported like other unreadable declarations
   (submodule coverage unknown, scan incomplete).
+- The Python import binder joins a loop's bindings over the names the loop
+  assigns, as it already did for `if` branches, instead of copying and joining
+  the whole enclosing scope for every `for`/`while` loop and loop `else`. A
+  143 KB file of 6000 module-level names and 4000 loops (under the AST cap)
+  took 15 s, seven times its matching budget; it now takes 0.5 s. The binder
+  also checks the file's matching budget every 256 visited nodes, so any
+  remaining expensive walk ends at that budget as partial import-bound
+  analysis (scan incomplete) instead of overrunning it.
 
 ### October 2 review fixes (AI-assisted, not independently reviewed)
 

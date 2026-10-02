@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from shadowscan.connectors.code import source_semantics
+from shadowscan.connectors.code.source_semantics import SourceBudgetExceeded
 from shadowscan.models import Kind
+from shadowscan.signatures.matcher import MatchTimeoutError
 
 
 def _scan(tmp_path, run_connector, source, suffix=".py"):
@@ -281,3 +285,48 @@ def test_source_binding_budget_exhaustion_marks_scan_incomplete(
     assert ctx.stats.incomplete
     assert any("source binding" in error and "limit exceeded" in error for error in ctx.stats.errors)
     assert not any(f.kind == Kind.AGENT for f in findings)
+
+
+def _binding_seconds(names: int, loops: int, loop: str) -> float:
+    source = (
+        "import openai\n"
+        + "".join(f"name_{number} = 0\n" for number in range(names))
+        + loop * loops
+        + "client = openai.OpenAI()\n"
+    )
+    best = float("inf")
+    for _ in range(3):
+        started = time.perf_counter()
+        source_semantics._python_bindings(source, None, 10**7)
+        best = min(best, time.perf_counter() - started)
+    return best
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [
+        "for item in items:\n    pass\n",
+        "while ready():\n    pass\n",
+        "for item in items:\n    if item:\n        break\nelse:\n    done = 1\n",
+        "if ready():\n    while ready():\n        continue\n",
+    ],
+    ids=["for", "while", "break-else", "nested-in-if"],
+)
+def test_loop_joins_cost_the_loop_not_the_enclosing_scope(loop):
+    # Each loop copied and joined the whole enclosing scope: 6000 module names and
+    # 4000 loops (48k nodes, under the AST cap) took 15 s instead of 0.6 s.
+    small = _binding_seconds(400, 250, loop)
+    large = _binding_seconds(1600, 1000, loop)
+    # Four times the input must not cost more than ten times the time (a join
+    # over the whole scope costs sixteen times). The floor absorbs timer noise.
+    assert large < max(small, 0.02) * 10, (small, large)
+
+
+def test_binder_walk_checks_the_file_budget(monkeypatch):
+    def expired(*_args):
+        raise MatchTimeoutError("signature matching exceeded the input execution budget")
+
+    monkeypatch.setattr(source_semantics, "pattern_timeout", expired)
+    source = "import openai\n" + "value = 1\n" * 2000 + "client = openai.OpenAI()\n"
+    with pytest.raises(SourceBudgetExceeded, match="time budget"):
+        source_semantics._python_bindings(source, None, 10**7)
