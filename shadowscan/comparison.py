@@ -167,6 +167,16 @@ def _complete(report: dict[str, Any]) -> bool:
     )
 
 
+def _connector_coverage(report: dict[str, Any]) -> list[str]:
+    """Connectors that completed in a complete report.
+
+    Scan-level ``engine.*`` records are not connectors. In a complete report
+    they carry warnings only (an inventory kept in the scanned tree, say), so
+    one appearing between scans does not change what was collected.
+    """
+    return sorted(s["connector"] for s in report["stats"] if not s["connector"].startswith("engine."))
+
+
 def _scope_digest(report: dict[str, Any]) -> str | None:
     scope = report.get("collection_scope")
     if not isinstance(scope, dict) or scope.get("schema") != _SCHEMA or scope.get("comparable") is not True:
@@ -263,9 +273,7 @@ def compare_reports(baseline: dict[str, Any], current: dict[str, Any]) -> dict[s
                 "collect a fresh baseline after upgrade"
             )
     if _complete(baseline) and _complete(current):
-        if sorted(s["connector"] for s in baseline["stats"]) != sorted(
-            s["connector"] for s in current["stats"]
-        ):
+        if _connector_coverage(baseline) != _connector_coverage(current):
             reasons.append("connector completion coverage differs")
     bs, cs = _scope_digest(baseline), _scope_digest(current)
     if not bs or not cs:

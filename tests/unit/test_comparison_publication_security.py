@@ -122,6 +122,17 @@ def test_matching_scope_hash_does_not_hide_lost_connector_statistics(other_conne
     assert "connector completion coverage differs" in result["reasons"]
 
 
+def test_scan_level_advisory_warnings_do_not_change_connector_coverage():
+    before, after = _report("missing"), _report()
+    advisory = copy.deepcopy(after["stats"][0])
+    advisory.update(
+        connector="engine.inventory", warnings=["inventory approvals.yaml is inside scanned path ."]
+    )
+    after["stats"].append(advisory)
+    result = compare_reports(before, after)
+    assert result["comparable"] and len(result["resolved"]) == 1
+
+
 def test_unchanged_imported_record_is_validated_before_comparison_succeeds():
     before, after = _report("repo"), _report("repo")
     before["findings"][0]["evidence"] = "malformed-private-content"
