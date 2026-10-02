@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from tools.governance_check import GITHUB_ACTIONS_APP_ID, REQUIRED_CHECKS, check_ruleset
 from tools.release.rules import MAIN_RULESET_ID, prepare_update, verify_receipt, verify_ruleset
 
 REPOSITORY = "aisecnomad/Project-Nexus"
@@ -33,8 +34,8 @@ def _ruleset() -> dict[str, Any]:
                     "required_approving_review_count": 1,
                     "dismiss_stale_reviews_on_push": True,
                     "require_code_owner_review": False,
-                    "require_last_push_approval": False,
-                    "required_review_thread_resolution": False,
+                    "require_last_push_approval": True,
+                    "required_review_thread_resolution": True,
                     "require_extra_approval_for_unattributed_changes": True,
                     "allowed_merge_methods": ["merge", "squash", "rebase"],
                 },
@@ -45,10 +46,10 @@ def _ruleset() -> dict[str, Any]:
                     "strict_required_status_checks_policy": True,
                     "do_not_enforce_on_create": False,
                     "required_status_checks": [
-                        {"context": "test (3.11)", "integration_id": 123},
-                        {"context": "test (3.12)", "integration_id": 123},
-                        {"context": "analyze"},
-                        {"context": "CI gate"},
+                        {"context": "test (3.11)", "integration_id": GITHUB_ACTIONS_APP_ID},
+                        {"context": "test (3.12)", "integration_id": GITHUB_ACTIONS_APP_ID},
+                        {"context": "analyze", "integration_id": GITHUB_ACTIONS_APP_ID},
+                        {"context": "CI gate", "integration_id": GITHUB_ACTIONS_APP_ID},
                     ],
                 },
             },
@@ -67,6 +68,7 @@ def _ruleset() -> dict[str, Any]:
             {"type": "code_quality", "parameters": {"severity": "warnings"}},
             {"type": "required_signatures"},
             {"type": "non_fast_forward"},
+            {"type": "deletion"},
         ],
         "current_user_can_bypass": "never",
         "node_id": "unverified incidental metadata",
@@ -233,14 +235,99 @@ def test_prepare_activates_same_ruleset_additively_and_preserves_stronger_settin
     assert body["name"] == original["name"]
     assert body["enforcement"] == "active"
     assert _parameters(body, "required_status_checks")["required_status_checks"] == checks + [
-        {"context": "CI gate"}
+        {"context": "CI gate", "integration_id": GITHUB_ACTIONS_APP_ID}
     ]
     expected = copy.deepcopy(original)
     expected["enforcement"] = "active"
-    _parameters(expected, "required_status_checks")["required_status_checks"].append({"context": "CI gate"})
+    _parameters(expected, "required_status_checks")["required_status_checks"].append(
+        {"context": "CI gate", "integration_id": GITHUB_ACTIONS_APP_ID}
+    )
     assert body == {key: expected[key] for key in body}
     assert _verify(original | body)
     assert prepare_update(original | body, repository=REPOSITORY, default_branch="main") == body
+
+
+def test_prepare_tightens_the_original_live_policy_to_the_shared_minimum() -> None:
+    original = _ruleset()
+    original["enforcement"] = "disabled"
+    original["rules"] = [rule for rule in original["rules"] if rule["type"] != "deletion"]
+    review = _parameters(original, "pull_request")
+    review["require_last_push_approval"] = False
+    review["required_review_thread_resolution"] = False
+    contexts = _parameters(original, "required_status_checks")["required_status_checks"]
+    contexts.pop()
+    for check in contexts:
+        check.pop("integration_id")
+    tool = _parameters(original, "code_scanning")["code_scanning_tools"][0]
+    tool["alerts_threshold"] = "none"
+    before = copy.deepcopy(original)
+    body = prepare_update(original, repository=REPOSITORY, default_branch="main")
+    assert original == before
+    assert check_ruleset(body) == []
+    assert _parameters(body, "pull_request") == review | {
+        "require_last_push_approval": True,
+        "required_review_thread_resolution": True,
+    }
+    assert _parameters(body, "required_status_checks")["required_status_checks"] == [
+        {"context": name, "integration_id": GITHUB_ACTIONS_APP_ID}
+        for name in ("test (3.11)", "test (3.12)", "analyze", "CI gate")
+    ]
+    assert _parameters(body, "code_scanning")["code_scanning_tools"][0] == tool | {
+        "alerts_threshold": "errors"
+    }
+    assert next(rule for rule in body["rules"] if rule["type"] == "code_quality") == next(
+        rule for rule in original["rules"] if rule["type"] == "code_quality"
+    )
+    assert _verify(original | body)
+
+
+def test_prepare_preserves_stronger_alerts_and_extra_status_check_bindings() -> None:
+    original = _ruleset()
+    tool = _parameters(original, "code_scanning")["code_scanning_tools"][0]
+    tool["alerts_threshold"] = "all"
+    tool["security_alerts_threshold"] = "all"
+    extra = {"context": "organization-review", "integration_id": 42}
+    _parameters(original, "required_status_checks")["required_status_checks"].append(extra)
+    body = prepare_update(original, repository=REPOSITORY, default_branch="main")
+    assert _parameters(body, "code_scanning")["code_scanning_tools"][0] == tool
+    assert _parameters(body, "required_status_checks")["required_status_checks"][-1] == extra
+
+
+@pytest.mark.parametrize("name", sorted(REQUIRED_CHECKS))
+def test_prepare_refuses_conflicting_required_check_app_bindings(name: str) -> None:
+    ruleset = _ruleset()
+    check = next(
+        check
+        for check in _parameters(ruleset, "required_status_checks")["required_status_checks"]
+        if check["context"] == name
+    )
+    check["integration_id"] = 42
+    with pytest.raises(ValueError, match="conflicting app binding"):
+        prepare_update(ruleset, repository=REPOSITORY, default_branch="main")
+
+
+@pytest.mark.parametrize(
+    "case", ["last-push", "resolution", "deletion", "unbound", "wrong-app", "missing-test", "alerts"]
+)
+def test_release_verification_and_receipt_recheck_use_the_shared_minimum(case: str) -> None:
+    receipt = _verify(_ruleset())
+    ruleset = receipt["ruleset"]
+    if case in ("last-push", "resolution"):
+        field = "require_last_push_approval" if case == "last-push" else "required_review_thread_resolution"
+        _parameters(ruleset, "pull_request")[field] = False
+    elif case == "deletion":
+        ruleset["rules"] = [rule for rule in ruleset["rules"] if rule["type"] != "deletion"]
+    elif case in ("unbound", "wrong-app"):
+        check = _parameters(ruleset, "required_status_checks")["required_status_checks"][-1]
+        check["integration_id"] = None if case == "unbound" else 42
+    elif case == "missing-test":
+        _parameters(ruleset, "required_status_checks")["required_status_checks"].pop(0)
+    else:
+        _parameters(ruleset, "code_scanning")["code_scanning_tools"][0]["alerts_threshold"] = "none"
+    assert check_ruleset(ruleset)
+    for verify in (_verify, lambda value: verify_receipt(receipt, repository=REPOSITORY)):
+        with pytest.raises(ValueError, match="minimum merge policy failed"):
+            verify(ruleset)
 
 
 @pytest.mark.parametrize("case", ["bypass", "weak-approval", "missing-bypass", "wrong-id", "no-analyze"])

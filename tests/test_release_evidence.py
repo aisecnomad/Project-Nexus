@@ -37,15 +37,20 @@ def _merge_rules() -> dict[str, Any]:
                         "required_approving_review_count": 1,
                         "dismiss_stale_reviews_on_push": True,
                         "require_code_owner_review": False,
-                        "require_last_push_approval": False,
-                        "required_review_thread_resolution": False,
+                        "require_last_push_approval": True,
+                        "required_review_thread_resolution": True,
                     },
                 },
                 {
                     "type": "required_status_checks",
                     "parameters": {
                         "strict_required_status_checks_policy": True,
-                        "required_status_checks": [{"context": "CI gate"}, {"context": "analyze"}],
+                        "required_status_checks": [
+                            {"context": "CI gate", "integration_id": 15368},
+                            {"context": "analyze", "integration_id": 15368},
+                            {"context": "test (3.11)", "integration_id": 15368},
+                            {"context": "test (3.12)", "integration_id": 15368},
+                        ],
                     },
                 },
                 {
@@ -62,6 +67,7 @@ def _merge_rules() -> dict[str, Any]:
                 },
                 {"type": "non_fast_forward"},
                 {"type": "required_signatures"},
+                {"type": "deletion"},
             ],
         },
         repository=REPOSITORY,

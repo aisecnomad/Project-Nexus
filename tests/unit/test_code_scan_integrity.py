@@ -176,7 +176,10 @@ def test_fifo_named_like_an_analyzable_file_is_a_coverage_gap(tmp_path, run_conn
 
 @pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="needs unix sockets")
 def test_socket_named_like_a_config_file_is_a_coverage_gap(tmp_path, run_connector):
-    sock = socket.socket(socket.AF_UNIX)
+    try:
+        sock = socket.socket(socket.AF_UNIX)
+    except OSError:
+        pytest.skip("unix sockets unavailable")
     try:
         try:
             sock.bind(str(tmp_path / ".mcp.json"))

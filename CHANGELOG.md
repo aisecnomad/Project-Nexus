@@ -512,8 +512,10 @@ field precision. Behavior changes that affect an existing baseline are listed in
   Unfixed HIGH/CRITICAL advisories continue to block the container gate.
 - Release candidate evidence now checks active merge rules, independent-review
   requirements, strict `CI gate`/CodeQL checks and bypass visibility. An offline
-  settings-patch command preserves existing protections while adding the
-  missing aggregate check. Repository administration remains a separate action.
+  settings-patch command preserves additional protections while adding the
+  aggregate check, binding required checks to GitHub Actions and requiring
+  final-push approval, resolved review threads and deletion protection.
+  Repository administration remains a separate action.
 - These changes add authored regression evidence. They do not establish live
   tenant acceptance, fresh field accuracy or independent human approval.
 

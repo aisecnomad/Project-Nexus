@@ -102,7 +102,10 @@ Generic Genkit initialization and standalone flow/tool declarations are
 framework evidence. Supported explicit agent definitions and concrete model
 calls using registered tools establish stronger configured behavior. Review
 changed kinds, capabilities and risk scores, then collect a fresh comparison
-baseline. The added examples are authored regressions; obtain fresh
+baseline. Tool registration must resolve to a direct module-level initializer
+or a standalone call with an explicit statement boundary; dynamic bindings and
+uncertain boundaries remain supporting framework evidence. The added examples
+are authored regressions; obtain fresh
 human-reviewed evidence using the
 [holdout procedure](evaluation.md#build-a-genuinely-held-out-field-set).
 
@@ -1528,13 +1531,18 @@ python -m tools.release.rules verify --input /secure/main-rules-after.json \
   --default-branch main
 ```
 
-Preparation activates the same ruleset and adds `CI gate`; it preserves existing
-status check bindings and all other rules. It refuses weakened approval rules,
+Preparation activates the same ruleset and tightens it to the versioned minimum
+policy: all four required checks are bound to the GitHub Actions app, final-push
+approval and review-thread resolution are required, deletion is blocked and
+CodeQL errors remain blocking. It retains additional checks and stronger rules,
+pins an unbound required check and refuses a conflicting nonempty app binding.
+It also refuses missing independent approval or stale-review dismissal,
 ambiguous branch scopes, nonempty or unavailable bypass lists and malformed
 settings. Generate the body from current settings rather than from an older
 snapshot, so that later administrator changes are not overwritten, and compare
 it with the [versioned merge policy](operations/merge-policy.md). The verifier
-checks a supplied settings snapshot. The release workflow obtains its snapshot
+checks a supplied settings snapshot against the same minimum policy as the
+governance checker. The release workflow obtains its snapshot
 directly from GitHub; an offline receipt cannot authenticate its own API origin,
 establish historical enforcement or prove an actual human approved the final PR.
 

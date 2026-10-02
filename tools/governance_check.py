@@ -30,9 +30,11 @@ def check_ruleset(snapshot: Any) -> list[str]:
     conditions = snapshot.get("conditions")
     refs = conditions.get("ref_name") if isinstance(conditions, dict) else None
     if (
-        not isinstance(refs, dict)
-        or not isinstance(refs.get("include"), list)
-        or not any(ref in refs["include"] for ref in ("~DEFAULT_BRANCH", "refs/heads/main"))
+        not isinstance(conditions, dict)
+        or set(conditions) != {"ref_name"}
+        or not isinstance(refs, dict)
+        or set(refs) != {"include", "exclude"}
+        or refs.get("include") not in (["~DEFAULT_BRANCH"], ["refs/heads/main"])
         or refs.get("exclude") != []
     ):
         failures.append("main_scope_not_explicit")
@@ -72,11 +74,18 @@ def check_ruleset(snapshot: Any) -> list[str]:
         else:
             for name in sorted(REQUIRED_CHECKS):
                 matches = [check for check in required if check.get("context") == name]
-                if len(matches) != 1 or matches[0].get("integration_id") != GITHUB_ACTIONS_APP_ID:
+                if (
+                    len(matches) != 1
+                    or type(matches[0].get("integration_id")) is not int
+                    or matches[0]["integration_id"] != GITHUB_ACTIONS_APP_ID
+                ):
                     failures.append("required_check_missing_or_unbound")
     for name in ("deletion", "non_fast_forward", "required_signatures", "code_scanning"):
         if name not in rules:
             failures.append(name + "_required")
+    for name in ("deletion", "non_fast_forward", "required_signatures"):
+        if name in rules and rules[name].get("parameters", {}) != {}:
+            failures.append("invalid_rule_parameters")
     scanning = rules.get("code_scanning", {}).get("parameters")
     tools = scanning.get("code_scanning_tools") if isinstance(scanning, dict) else None
     if not isinstance(tools, list) or not any(

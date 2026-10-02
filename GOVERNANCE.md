@@ -13,7 +13,8 @@ review from someone with write access, an up-to-date branch and passing
 `CI gate`, `test (3.11)`, `test (3.12)` and `analyze` checks before a pull request can
 merge, and dismissal of stale approvals after a new push. The October 2 readback
 found the `CI gate` context missing from the disabled ruleset; the source's
-settings-patch generator adds it while preserving the other checks.
+settings-patch generator adds it and tightens the supplied settings to the
+versioned minimum policy while retaining additional protections.
 Ruleset enforcement has been
 switched on and off during 2026-09; a disabled ruleset blocks nothing. The
 author cannot approve their own change; the single maintainer therefore needs a

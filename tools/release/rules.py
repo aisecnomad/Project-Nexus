@@ -18,6 +18,7 @@ from typing import Any
 
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.safe_json import strict_json_loads
+from tools.governance_check import GITHUB_ACTIONS_APP_ID, REQUIRED_CHECKS, check_ruleset
 
 MAIN_RULESET_ID = 23913372
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -172,6 +173,9 @@ def verify_ruleset(
     checked = _validate_ruleset(
         ruleset, repository=repository, ruleset_id=ruleset_id, default_branch=default_branch
     )
+    failures = check_ruleset(checked)
+    if failures:
+        raise ValueError("minimum merge policy failed: " + ", ".join(failures))
     return {
         "schema_version": 1,
         "repository": repository,
@@ -205,7 +209,7 @@ def verify_receipt(receipt: Any, *, repository: str, ruleset_id: int = MAIN_RULE
 def prepare_update(
     ruleset: Any, *, repository: str, default_branch: str, ruleset_id: int = MAIN_RULESET_ID
 ) -> dict[str, Any]:
-    """Activate the same ruleset and add CI gate without weakening any rule."""
+    """Tighten the same ruleset to the shared minimum without weakening rules."""
     checked = _validate_ruleset(
         ruleset,
         repository=repository,
@@ -216,10 +220,27 @@ def prepare_update(
     )
     body = {key: copy.deepcopy(checked[key]) for key in _PUT_FIELDS}
     body["enforcement"] = "active"
+    approval = next(rule for rule in body["rules"] if rule["type"] == "pull_request")["parameters"]
+    approval["require_last_push_approval"] = True
+    approval["required_review_thread_resolution"] = True
     checks = next(rule for rule in body["rules"] if rule["type"] == "required_status_checks")
     contexts = checks["parameters"]["required_status_checks"]
-    if not any(check["context"] == "CI gate" for check in contexts):
-        contexts.append({"context": "CI gate"})
+    by_context = {check["context"]: check for check in contexts}
+    for name in sorted(REQUIRED_CHECKS):
+        if name not in by_context:
+            contexts.append({"context": name, "integration_id": GITHUB_ACTIONS_APP_ID})
+        else:
+            check = by_context[name]
+            integration = check.get("integration_id")
+            if integration is not None and integration != GITHUB_ACTIONS_APP_ID:
+                raise ValueError("required status check has a conflicting app binding")
+            check["integration_id"] = GITHUB_ACTIONS_APP_ID
+    if not any(rule["type"] == "deletion" for rule in body["rules"]):
+        body["rules"].append({"type": "deletion"})
+    scanning = next(rule for rule in body["rules"] if rule["type"] == "code_scanning")
+    for tool in scanning["parameters"]["code_scanning_tools"]:
+        if tool["tool"] == "CodeQL" and tool["alerts_threshold"] == "none":
+            tool["alerts_threshold"] = "errors"
     verify_ruleset(
         checked | body, repository=repository, ruleset_id=ruleset_id, default_branch=default_branch
     )

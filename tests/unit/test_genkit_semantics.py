@@ -134,6 +134,45 @@ def test_function_local_tool_registration_cannot_bind_module_generation(tmp_path
 
 
 @pytest.mark.parametrize("suffix", [".js", ".ts"])
+@pytest.mark.parametrize(
+    "registration",
+    [
+        'const register = () => ai.defineTool({name: "lookup"}, async (input) => input);\n',
+        'const register = () =>\n  ai.defineTool({name: "lookup"}, async (input) => input);\n',
+        'const register = async () =>\n  ai.defineTool({name: "lookup"}, async (input) => input);\n',
+        'const register = () => (ai.defineTool({name: "lookup"}, async (input) => input));\n',
+        'if (false)\n  ai.defineTool({name: "lookup"}, async (input) => input);\n',
+    ],
+)
+def test_concise_arrow_or_conditional_tool_registration_is_not_module_execution(
+    tmp_path, run_connector, suffix, registration
+):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        _INITIALIZE + registration + 'await ai.generate({tools: ["lookup"]});\n',
+        suffix,
+    )
+    assert finding.kind == Kind.FRAMEWORK_USAGE
+    assert finding.capabilities == []
+    assert finding.metadata["agent_indicators"] == 0
+
+
+@pytest.mark.parametrize("suffix", [".js", ".ts"])
+def test_standalone_module_tool_registration_preserves_named_generation(tmp_path, run_connector, suffix):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        _INITIALIZE
+        + 'ai.defineTool({name: "lookup"}, async (input) => input);\n'
+        + 'await ai.generate({tools: ["lookup"]});\n',
+        suffix,
+    )
+    assert finding.kind == Kind.AGENT
+    assert finding.capabilities == ["tool-use"]
+
+
+@pytest.mark.parametrize("suffix", [".js", ".ts"])
 def test_long_bound_agent_calls_fail_incomplete(tmp_path, run_connector, suffix):
     (tmp_path / f"app{suffix}").write_text(
         'import { Agent } from "@openai/agents";\n'

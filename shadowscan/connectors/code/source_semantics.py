@@ -941,17 +941,41 @@ def _javascript_bindings(
 
 
 def _javascript_assignment(masked: str, call: _Call) -> tuple[str, tuple[int, int]] | None:
-    """Recognize only a complete direct variable initializer, never a call inside an expression."""
-    prefix = masked[max(0, call.start - 2000) : call.start]
+    """Recognize a complete direct initializer at an explicit statement boundary.
+
+    Newlines do not prove a boundary: a concise arrow body or an unbraced
+    conditional can continue across them. An explicit semicolon or the true
+    start of the module is required on both assignment and standalone paths.
+    """
+    base = max(0, call.start - 2000)
+    prefix = masked[base : call.start]
     match = re.search(
-        r"(?:^|[;{}\n])\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)"
+        r"(?:^|;)\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)"
         r"\s*(?::[^;={}\n]{1,500})?\s*=\s*$",
         prefix,
     )
-    if match is None or not re.match(r"\s*(?:;|$|\n)", masked[call.end :]):
+    if (
+        match is None
+        or base > 0
+        and match.start() == 0
+        and prefix[0] != ";"
+        or not re.match(r"\s*(?:;|$)", masked[call.end :])
+    ):
         return None
-    start = max(0, call.start - 2000) + match.start(1)
+    start = base + match.start(1)
     return match[1], (start, call.end)
+
+
+def _javascript_standalone_call(masked: str, call: _Call) -> bool:
+    """Whether the entire module statement is this call, without an enclosing expression."""
+    base = max(0, call.start - 2000)
+    prefix = masked[base : call.start]
+    match = re.search(r"(?:^|;)\s*(?:await\s+)?$", prefix)
+    return bool(
+        match is not None
+        and (base == 0 or match.start() > 0 or prefix[0] == ";")
+        and re.match(r"\s*(?:;|$)", masked[call.end :])
+    )
 
 
 def _javascript_module_level(masked: str, offset: int) -> bool:
@@ -1005,6 +1029,8 @@ def _javascript_genkit_calls(text: str, masked: str, initial: list[_Call]) -> li
         if registered is None:
             continue
         assigned = _javascript_assignment(masked, call)
+        if assigned is None and not _javascript_standalone_call(masked, call):
+            continue
         variable, registration_span = assigned if assigned is not None else (None, None)
         registrations.append((call, registered, variable, registration_span))
         if variable is not None and registration_span is not None:
