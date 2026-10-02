@@ -9,6 +9,7 @@ the values of 'ENV NAME v', 'setx NAME v' and '#define NAME v'.
 
 from __future__ import annotations
 
+import heapq
 import re
 
 from shadowscan.utils.redaction_rules import (
@@ -35,6 +36,8 @@ from shadowscan.utils.redaction_rules import (
 # loses a value that looks like an opaque key, as the same name does in an
 # assignment. The leading literal dash lets the regex engine skip ahead quickly.
 _CLI_OPTION = re.compile(r"-(?<![\w./\\\]-]-)-?[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*")
+_CLI_GLUED_OPTION = re.compile(r"--[A-Za-z][A-Za-z0-9]*(?:[-_.][A-Za-z0-9]+)*")
+_CLI_LLM = re.compile(r"(?:^|[\s(/])llm(?:[ \t]+[^\r\n;&|]*)?[ \t]+$")
 _CLI_BOUNDARY = re.compile(r"[\w./\\\]-]")
 _CLI_USER_OPTIONS = frozenset({"a", "u", "U", "auth", "basic-auth", "proxy-user", "user"})
 _CLI_HEADER_OPTIONS = frozenset({"H", "header", "headers"})
@@ -324,6 +327,46 @@ def _redact_opaque_options(text: str) -> str:
     with options (see _CLI_WORD_OPTIONS), which nothing reads after it.
     """
     return text if "-" not in text else _redact_options(text, opaque=True)
+
+
+def _redact_extended_options(text: str) -> str:
+    """Recognize glued credential options and llm's command-specific '-k'.
+
+    Short '-k' remains ordinary for curl and unrelated commands. This pass
+    runs after established context readers, before an opaque '--key' value
+    could consume a credential option glued after it.
+    """
+    if "-" not in text:
+        return text
+    spans: list[tuple[int, int]] = []
+    runs = _ValueRuns(text)
+    cursor = 0
+    matches = heapq.merge(
+        _CLI_OPTION.finditer(text), _CLI_GLUED_OPTION.finditer(text), key=lambda item: item.start()
+    )
+    seen = -1
+    for match in matches:
+        if match.start() == seen:
+            continue
+        seen = match.start()
+        if match.start() < cursor:
+            continue
+        mode = _cli_option_mode(match.group())
+        if match.group() == "-k":
+            head = _CLI_CONTINUATION.sub(
+                " ", text[max(0, match.start() - _CLI_COMMAND_CONTEXT) : match.start()]
+            )
+            command = head[max(head.rfind(separator) for separator in ";&|\n\r") + 1 :]
+            mode = "secret" if _CLI_LLM.search(command) else ""
+        elif not match.group().startswith("--") or mode != "secret":
+            continue
+        if not mode:
+            continue
+        span = _option_value_span(text, match, mode, "", runs)
+        if span is not None:
+            spans.append(span)
+            cursor = span[1]
+    return _withhold_spans(text, spans)
 
 
 def _redact_options(text: str, *, opaque: bool) -> str:

@@ -128,7 +128,7 @@ tells you what a package, host, user agent, model id, scope or file path maps to
   person. Independent human review is required before any tagged release; see
   the [review and merge policy](CONTRIBUTING.md#review-and-merge-policy). The
   intended branch ruleset is versioned in
-  [.github/rulesets/main.json](.github/rulesets/main.json).
+  [.github/rulesets/require-ci-and-review.json](.github/rulesets/require-ci-and-review.json).
 * **Recommendation.** Review the revision yourself or have it reviewed, then
   pin that full commit SHA as shown below. Review state cannot be established
   from a checkout; verify it with the commands in

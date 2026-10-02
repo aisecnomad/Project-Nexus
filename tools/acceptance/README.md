@@ -95,32 +95,56 @@ The three-repository and two-negatives-per-positive rules apply to public or
 AI-labeled evaluation corpora, not to the private human holdout. Review source
 diversity and class balance explicitly, and choose stricter counts from the
 deployment population and risk.
-The gate compares **point estimates**, not confidence intervals or calibrated
-probabilities. Review sample uncertainty, strata, coverage and operational budgets
-outside this gate. A report with classification errors can meet operator-selected
-metrics; structural assertion failures always fail the gate.
+Existing policies compare these **point estimates**. For enforcement decisions,
+also declare all three optional `min_precision_lower95`, `min_recall_lower95`,
+and `min_specificity_lower95` thresholds. Together they check the lower endpoints
+of two-sided 95% Wilson intervals, using the same calculation as
+`tools.evaluation.accept`. Partial sets, non-finite values, booleans and targets
+outside `(0, 1]` are rejected. Undefined endpoints fail an enabled confidence gate.
+A passing decision includes aggregate and per-kind `lower95` metrics, with JSON
+`null` for undefined rates, even for a legacy policy without confidence thresholds.
+
+A perfect result on seven positives has a precision/recall lower endpoint of
+about 0.646; 75 independent, perfectly classified positives give about 0.951.
+Both have point estimates of 1.0, but only the latter supports an illustrative
+0.95 lower-bound gate. These intervals assume suitable binomial sampling; they
+do not repair purposive selection, clustered sources, label errors, or shared
+reviewer biases. Choose thresholds and positive/negative sample floors from the
+intended population and risk before observing results. The evaluator's 500-case
+limit may be insufficient for very high confidence targets; an unattainable policy
+must fail rather than silently lower its threshold. Review strata, coverage and
+operational budgets separately. Classification errors can meet the declared
+thresholds; structural assertion failures always fail the gate.
 
 For an enforcement decision, specify optional `policy.per_kind` so strong aggregate
 scores cannot conceal misses for an important target kind. Its keys must exactly
 match the holdout's target finding kinds. Each kind requires positive and negative
 sample minima (at least one each) and maximum false positive/negative counts.
+Each kind can also declare the same complete set of three Wilson thresholds.
+These are applied to that kind's own counts, so a large aggregate cannot conceal
+a small or unreliable important kind. Sample minima and error budgets still apply.
 For example, an agent-only policy can add:
 
 ```json
 "per_kind": {
   "agent": {
-    "min_positive_cases": 25,
-    "min_negative_cases": 75,
+    "min_positive_cases": 100,
+    "min_negative_cases": 200,
     "max_false_positives": 0,
-    "max_false_negatives": 0
+    "max_false_negatives": 0,
+    "min_precision_lower95": 0.95,
+    "min_recall_lower95": 0.95,
+    "min_specificity_lower95": 0.95
   }
 }
 ```
 
-These counts are illustrative, not measured field performance. An existing
-manifest without `per_kind` remains valid and uses its original aggregate
-thresholds. The decision now includes per-kind confusion matrices even when
-per-kind limits were not supplied, so reviewers can inspect what was covered.
+These counts and thresholds are illustrative, not measured field performance or
+universal production defaults. The template enables aggregate and agent-specific
+Wilson gates; adjust its kind keys to exactly match the intended holdout. An existing
+manifest without `per_kind` or Wilson thresholds remains valid and uses its original
+aggregate point thresholds. Per-kind confusion matrices and Wilson endpoints are
+included even when per-kind limits were not supplied, so reviewers can inspect coverage.
 
 ## Tenant evidence
 

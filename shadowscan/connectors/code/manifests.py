@@ -142,6 +142,7 @@ MANIFEST_FILENAMES = {
 }
 
 _REQ_LINE = re.compile(r"^[ \t]*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*([<>=!~;@ ].*)?$")
+_REQ_DIRECT_REF = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\]\s*)?@\s*\S")
 _GIT_URL = re.compile(
     r"(?:git\+)?(?:https?|ssh|git)://[^\s#]+?/([A-Za-z0-9_.-]+?)(?:\.git)?(?:@[^\s#]+)?(?:#.*)?$"
 )
@@ -154,6 +155,13 @@ def parse_requirements(text: str) -> ManifestResult:
         if line.startswith(("-e ", "--editable ")):
             line = line.split(None, 1)[1].strip()
         if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        # A PEP 508 direct reference declares its distribution name before
+        # the URL. Prefer that name over a URL basename or legacy #egg hint,
+        # and preserve fragments, extras and environment markers in the spec.
+        direct = _REQ_DIRECT_REF.match(line, timeout=_pattern_timeout(), concurrent=False)
+        if direct:
+            res.deps.append(Dep("pypi", direct.group(1), line, i))
             continue
         if line.startswith(("http://", "https://", "git+", "ssh://", "git://")) or "://" in line:
             # The fragment is part of a VCS requirement, not a comment.
@@ -171,17 +179,6 @@ def parse_requirements(text: str) -> ManifestResult:
                 res.deps.append(Dep("pypi", m.group(1), line, i))
             continue
         line = line.split("#", 1)[0].strip()
-        if "@" in line and not line.startswith("-e"):
-            # PEP 508 direct reference: name @ url
-            name = line.split("@", 1)[0].strip()
-            if re.fullmatch(
-                r"[A-Za-z0-9][A-Za-z0-9._-]*(\[[^\]]*\])?",
-                name,
-                timeout=_pattern_timeout(),
-                concurrent=False,
-            ):
-                res.deps.append(Dep("pypi", name.split("[", 1)[0], line, i))
-                continue
         m = _REQ_LINE.match(line, timeout=_pattern_timeout(), concurrent=False)
         if m:
             res.deps.append(Dep("pypi", m.group(1), (m.group(3) or "").strip() or None, i))

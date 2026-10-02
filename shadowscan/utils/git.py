@@ -6,6 +6,7 @@ import contextlib
 import math
 import os
 import re
+import selectors
 import shutil
 import signal
 import stat
@@ -19,6 +20,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 _OBJECT_ID_RX = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+MAX_METADATA_OUTPUT_BYTES = 16 * 1024
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -115,6 +117,14 @@ class CloneTimeoutError(TimeoutError):
 
 class CloneSizeError(RuntimeError):
     """The checkout exceeds its observed size budget or cannot be measured."""
+
+
+class MetadataOutputLimitError(ValueError):
+    """Combined Git metadata stdout and stderr exceeded the bounded read budget."""
+
+
+class MetadataTimeoutError(TimeoutError):
+    """The metadata subprocess did not finish within its execution budget."""
 
 
 class CloneInterruptedError(RuntimeError):
@@ -219,6 +229,14 @@ def _signal_clone_group(proc: subprocess.Popen[bytes]) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # Darwin's killpg() reports EPERM for a group that holds an
+            # unreaped zombie: the child itself once it exited before the
+            # reader stopped, or a helper it spawned while it still runs. The
+            # direct child is ours to signal by pid; the wait below settles
+            # whether it is gone.
+            if proc.poll() is None:
+                proc.kill()
     else:
         # Windows Popen.kill covers only Git itself; taskkill also requests
         # termination of its transport children. A containing job object is
@@ -433,6 +451,95 @@ def run_bounded_clone(
             raise
         finally:
             _ACTIVE_CLONES.discard(proc)
+
+
+def run_bounded_metadata(
+    cmd: list[str],
+    env: dict[str, str],
+    ctx: ConnectorContext,
+    *,
+    timeout: float = 20.0,
+    max_bytes: int = MAX_METADATA_OUTPUT_BYTES,
+) -> subprocess.CompletedProcess[str]:
+    """Read metadata subprocess output within one combined byte/time budget.
+
+    Git commit fields and diagnostics are untrusted and can expand far beyond
+    their compressed objects. Read both pipes incrementally, retain only bounded
+    stdout, and discard stderr after charging it to the same budget. Nonblocking
+    pipes avoid reader threads that could outlive cancellation. Every failed read
+    kills and reaps the process group before its descriptors are closed.
+    """
+    if os.name != "posix":
+        raise ValueError("bounded Git metadata access is unavailable on this platform")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+        raise ValueError("metadata max_bytes must be a positive integer")
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout):
+        raise ValueError("metadata timeout must be positive and finite")
+    if timeout <= 0:
+        raise ValueError("metadata timeout must be positive and finite")
+    ctx.check_deadline()
+    deadline = time.monotonic() + timeout
+    if ctx.deadline is not None:
+        deadline = min(deadline, ctx.deadline)
+    proc = subprocess.Popen(
+        cmd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+        start_new_session=True,
+    )
+    stdout = bytearray()
+    total = 0
+    try:
+        with selectors.DefaultSelector() as selector:
+            assert proc.stdout is not None and proc.stderr is not None
+            for stream in (proc.stdout, proc.stderr):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ, stream is proc.stdout)
+            while selector.get_map():
+                ctx.check_deadline()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MetadataTimeoutError("git metadata completion deadline exceeded")
+                for key, _ in selector.select(timeout=min(remaining, 0.05)):
+                    ctx.check_deadline()
+                    try:
+                        chunk = os.read(key.fd, min(4096, max_bytes - total + 1))
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise MetadataOutputLimitError("git metadata output limit exceeded")
+                    if key.data:
+                        stdout.extend(chunk)
+        while True:
+            ctx.check_deadline()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MetadataTimeoutError("git metadata completion deadline exceeded")
+            try:
+                status = proc.wait(timeout=min(remaining, 0.05))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if status != 0:
+            _stop_clone(proc)
+        return subprocess.CompletedProcess(
+            cmd, status, stdout=stdout.decode("utf-8", errors="replace"), stderr=""
+        )
+    except BaseException:
+        _stop_clone(proc)
+        raise
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
 
 
 def exceeds_clone_size(size: object, unit: int, max_bytes: int) -> bool:

@@ -52,6 +52,7 @@ from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credent
 from shadowscan.utils.redaction_commands import (
     _redact_command_credentials,
     _redact_environment_commands,
+    _redact_extended_options,
     _redact_opaque_options,
     _redact_user_secrets,
 )
@@ -60,14 +61,17 @@ from shadowscan.utils.redaction_formats import (
     _URL,
     _redact_authorization,
     _redact_jwts,
+    _redact_query_text,
     _redact_secret_tokens,
     _sanitize_url,
 )
 from shadowscan.utils.redaction_markup import (
+    _redact_flow_records,
     _redact_markup_credentials,
     _redact_markup_settings,
     _redact_name_value_pairs,
     _redact_record_settings,
+    _redact_reversed_records,
 )
 from shadowscan.utils.redaction_rules import (
     _FINGERPRINT,
@@ -193,6 +197,9 @@ def _redact_extended(text: str) -> str:
     text = _redact_connection_passwords(text)
     text = _redact_opaque_assignments(text, extended=True)
     text = _redact_fallback_defaults(text, extended=True)
+    text = _redact_reversed_records(text)
+    text = _redact_query_text(text)
+    text = _redact_extended_options(text)
     text = _redact_opaque_options(text)
     # A bare marker that these passes leave after a sensitive key's colon
     # ('api_key : <opaque>') is read by the established mapping pass as the start
@@ -206,6 +213,7 @@ def _sanitize_established(text: str) -> str:
     text = _PEM.sub(lambda m: REDACTED + "\n" * m.group(0).count("\n"), text)
     text = _URL.sub(_sanitize_url, text)
     text = _redact_markup_credentials(text)
+    text = _redact_flow_records(text, quoted_only=True)
     text = _redact_name_value_pairs(text)
     text = _redact_command_credentials(text)
     text = _redact_environment_commands(text)

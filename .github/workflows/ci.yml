@@ -59,7 +59,7 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py
       # The full suite without coverage tracing; the Linux coverage leg of the
       # test job enforces both coverage floors. The console entry point is used
       # on purpose: it must import the checkout-only tools packages.
@@ -124,7 +124,7 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+      - run: mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off

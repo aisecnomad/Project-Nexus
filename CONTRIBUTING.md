@@ -124,7 +124,7 @@ exact supported Python matrix and dependency pins.
 | Gate | Command | Requirement |
 |------|---------|-------------|
 | Lint | `ruff check shadowscan tests tools` | No errors |
-| Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release` | No errors |
+| Types | `mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py` | No errors |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
@@ -148,7 +148,7 @@ python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
 make secrets
 ruff check shadowscan tests tools
-mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release
+mypy shadowscan tools/evaluation tools/canaries tools/acceptance tools/release tools/governance_check.py
 pip-audit --progress-spinner off
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate
@@ -243,8 +243,8 @@ independent human approval.
 Before merging, the maintainer checks:
 
 - The PR targets `main`, is up to date, conflicts are resolved, and current CI
-  and CodeQL checks pass, including the aggregate `CI gate` and strict checks `test (3.11)`,
-  `test (3.12)` and `analyze`. CI also runs signature validation, lint, typing,
+  and CodeQL checks pass, including the aggregate `CI gate` and the strict
+  required checks `test (3.11)`, `test (3.12)` and `analyze`. CI also runs signature validation, lint, typing,
   dependency audit, coverage, detection evaluation, and package and smoke checks.
 - The change respects the trust model, documents compatibility changes, and
   includes appropriate validation. An AI-assisted change must meet the same
@@ -259,8 +259,10 @@ Do not read a merged pull request, green check, AI review or version number as
 evidence that a second person examined the change. Repository settings are
 separate from this policy: inspect the
 [live rules](https://github.com/aisecnomad/Project-Nexus/rules) and PR checks
-before merging. The ruleset has no configured bypass actors, but it blocks
-nothing while it is disabled. Do not disable checks or review rules to make a
+before merging. The review/CI ruleset has no configured bypass actors; other
+rulesets may differ. Every ruleset blocks nothing while disabled. Apply and
+verify the [versioned merge policy](docs/operations/merge-policy.md) with repository
+administration access. Do not disable checks or review rules to make a
 merge possible, and recheck live enforcement before relying on it.
 
 **Independent human review is required before any tagged release.** The

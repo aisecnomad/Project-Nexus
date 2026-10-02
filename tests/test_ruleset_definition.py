@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-RULESET = ROOT / ".github" / "rulesets" / "main.json"
+RULESET = ROOT / ".github" / "rulesets" / "require-ci-and-review.json"
 WORKFLOWS = ROOT / ".github" / "workflows"
 # GitHub Actions' app ID: a check reported by any other app or by a plain
 # commit status must not satisfy the requirement.

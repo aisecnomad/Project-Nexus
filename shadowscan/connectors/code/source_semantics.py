@@ -23,7 +23,7 @@ import threading
 import weakref
 from bisect import bisect_right
 from collections import ChainMap
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 
 import regex
@@ -85,6 +85,13 @@ class _Call:
     start: int = 0
     end: int = 0
     decorator: bool = False
+
+
+@dataclass
+class _LoopTransfers:
+    scope_depth: int
+    scope: dict[str, _Binding | None] | None = None
+    has_break: bool = False
 
 
 # These APIs construct agents even when their arguments have a different order
@@ -205,7 +212,92 @@ class _PythonBindings(ast.NodeVisitor):
         self.scope_kinds = ["module"]
         self.calls: list[_Call] = []
         self.imports: list[tuple[_Binding, int]] = []
+        self._loop_transfers: list[_LoopTransfers] = []
         self.decorator_calls: set[int] = set()
+
+    def _visit_block(self, statements: Sequence[ast.AST]) -> bool:
+        """Visit a syntactic suite until an explicit, unconditional transfer.
+
+        This only proves local reachability: return/raise/break/continue and
+        constant or fully terminating if branches. Calls, exception handlers,
+        context-manager suppression and interprocedural/global mutation timing
+        are not assumed to establish that a surrounding suite terminates.
+        """
+        return any(self.visit(statement) is True for statement in statements)
+
+    def generic_visit(self, node: ast.AST) -> None:
+        # Generic constructs (notably try suites) keep their existing bounded
+        # lexical traversal, but a return cannot make later statements in the
+        # same suite into reachable construction evidence.
+        for _, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                if value and all(isinstance(item, ast.stmt) for item in value):
+                    self._visit_block(value)
+                else:
+                    for item in value:
+                        if isinstance(item, ast.AST):
+                            self.visit(item)
+            elif isinstance(value, ast.AST):
+                self.visit(value)
+
+    @staticmethod
+    def _join_scopes(*outcomes: Mapping[str, _Binding | None]) -> dict[str, _Binding | None]:
+        """Keep a binding only when every possible lexical outcome agrees."""
+        return {
+            name: outcomes[0].get(name)
+            if all(outcome.get(name) == outcomes[0].get(name) for outcome in outcomes[1:])
+            else None
+            for name in set().union(*outcomes)
+        }
+
+    def visit_Return(self, node: ast.Return) -> bool:
+        if node.value is not None:
+            self.visit(node.value)
+        return True
+
+    def visit_Raise(self, node: ast.Raise) -> bool:
+        if node.exc is not None:
+            self.visit(node.exc)
+        if node.cause is not None:
+            self.visit(node.cause)
+        return True
+
+    def visit_Break(self, node: ast.Break) -> bool:
+        self._record_loop_transfer(is_break=True)
+        return True
+
+    def visit_Continue(self, node: ast.Continue) -> bool:
+        self._record_loop_transfer(is_break=False)
+        return True
+
+    def _record_loop_transfer(self, *, is_break: bool) -> None:
+        if self._loop_transfers and self._loop_transfers[-1].scope_depth == len(self.scopes):
+            # A conditional break/continue may leave its branch before later
+            # statements restore a binding. Keep that earlier mutation as a
+            # possible loop outcome rather than letting visit_If discard it.
+            # Merge in place: retain at most one transfer scope per loop,
+            # rather than a full symbol table for every hostile break site.
+            transfers = self._loop_transfers[-1]
+            transfers.scope = (
+                self._join_scopes(transfers.scope, self.scopes[-1])
+                if transfers.scope is not None
+                else dict(self.scopes[-1])
+            )
+            transfers.has_break |= is_break
+
+    def _visit_loop_body(
+        self, statements: list[ast.stmt]
+    ) -> tuple[list[Mapping[str, _Binding | None]], bool]:
+        transfers = _LoopTransfers(len(self.scopes))
+        self._loop_transfers.append(transfers)
+        try:
+            self._visit_block(statements)
+        finally:
+            self._loop_transfers.pop()
+        outcomes: list[Mapping[str, _Binding | None]] = [self.scopes[-1]]
+        if transfers.scope is not None:
+            outcomes.append(transfers.scope)
+        return outcomes, transfers.has_break
 
     def _offset(self, line: int, column: int) -> int:
         # AST columns are UTF-8 bytes, not Unicode code points.
@@ -389,8 +481,7 @@ class _PythonBindings(ast.NodeVisitor):
             pending.extend(ast.iter_child_nodes(item))
         self.scopes.append(locals_)
         self.scope_kinds.append("function")
-        for statement in body:
-            self.visit(statement)
+        self._visit_block(body)
         self.scopes.pop()
         self.scope_kinds.pop()
 
@@ -404,26 +495,66 @@ class _PythonBindings(ast.NodeVisitor):
         self.scopes[-1][node.name] = None
         self.scopes.append({})
         self.scope_kinds.append("class")
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
         self.scopes.pop()
         self.scope_kinds.pop()
 
-    def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+    def visit_For(self, node: ast.For | ast.AsyncFor) -> bool:
         self.visit(node.iter)
+        # Empty literal collections cannot enter a synchronous for body.
+        # Async iteration and calls (including range()) are not evaluated.
+        if not isinstance(node, ast.AsyncFor) and (
+            isinstance(node.iter, (ast.List, ast.Tuple, ast.Set))
+            and not node.iter.elts
+            or isinstance(node.iter, ast.Dict)
+            and not node.iter.keys
+            or isinstance(node.iter, ast.Constant)
+            and isinstance(node.iter.value, (str, bytes))
+            and not node.iter.value
+        ):
+            return self._visit_block(node.orelse)
+        before = dict(self.scopes[-1])
         self._store(node.target)
-        for statement in [*node.body, *node.orelse]:
-            self.visit(statement)
+        outcomes, has_break = self._visit_loop_body(node.body)
+        # The iterable may be empty, and further iterations may overwrite an
+        # imported namespace. A single lexical iteration never proves the
+        # binding left behind by an unknown runtime iteration count.
+        self.scopes[-1] = self._join_scopes(before, *outcomes)
+        return self._loop_else(node.orelse, has_break=has_break)
 
     visit_AsyncFor = visit_For
+
+    def visit_While(self, node: ast.While) -> bool:
+        self.visit(node.test)
+        if isinstance(node.test, ast.Constant) and not node.test.value:
+            # The else suite runs on the zero-iteration path. Neither calls nor
+            # assignments in the body can alter the incoming bindings.
+            return self._visit_block(node.orelse)
+        before = dict(self.scopes[-1])
+        outcomes, has_break = self._visit_loop_body(node.body)
+        self.scopes[-1] = self._join_scopes(before, *outcomes)
+        if isinstance(node.test, ast.Constant) and node.test.value:
+            # A constant-true condition cannot reach else. Without an outer
+            # loop break, it cannot reach the following statement either.
+            return not has_break
+        return self._loop_else(node.orelse, has_break=has_break)
+
+    def _loop_else(self, otherwise: list[ast.stmt], *, has_break: bool) -> bool:
+        before_else = dict(self.scopes[-1])
+        # This runs after the loop's transfer frame is popped. A break in a
+        # nested loop's else belongs to the enclosing loop, unlike its body.
+        stopped = self._visit_block(otherwise)
+        if has_break:
+            # A break bypasses else, so its mutations cannot become certain.
+            self.scopes[-1] = self._join_scopes(before_else, self.scopes[-1])
+        return stopped and not has_break
 
     def visit_With(self, node: ast.With | ast.AsyncWith) -> None:
         for item in node.items:
             self.visit(item.context_expr)
             if item.optional_vars:
                 self._store(item.optional_vars, self._resolve(item.context_expr))
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
 
     visit_AsyncWith = visit_With
 
@@ -457,8 +588,7 @@ class _PythonBindings(ast.NodeVisitor):
             self.visit(node.type)
         if node.name:
             self.scopes[-1][node.name] = None
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_block(node.body)
 
     def visit_Match(self, node: ast.Match) -> None:
         self.visit(node.subject)
@@ -470,37 +600,40 @@ class _PythonBindings(ast.NodeVisitor):
                     self.scopes[-1][pattern.rest] = None
             if case.guard:
                 self.visit(case.guard)
-            for statement in case.body:
-                self.visit(statement)
+            self._visit_block(case.body)
 
-    def visit_If(self, node: ast.If) -> None:
+    def visit_If(self, node: ast.If) -> bool:
         self.visit(node.test)
         if isinstance(node.test, ast.Constant):
-            for statement in node.body if node.test.value else node.orelse:
-                self.visit(statement)
-            return
+            return self._visit_block(node.body if node.test.value else node.orelse)
         # Neither branch is assumed to execute. Only bindings identical after
         # both branches survive into subsequent code. Each branch writes to an
         # overlay of the enclosing bindings, so the merge costs the branches'
         # own assignments rather than a copy of the whole scope per ``if``,
-        # which made a file of many top-level names and ifs quadratic.
+        # which made a file of many top-level names and ifs quadratic. A branch
+        # that ends in an unconditional transfer (return, raise, break,
+        # continue) contributes no bindings to the code after the ``if``.
         before = self.scopes[-1]
         outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
         for branch in (node.body, node.orelse):
             overlay: dict[str, _Binding | None] = {}
             chain = ChainMap(overlay, before)
             self.scopes[-1] = chain
-            for statement in branch:
-                self.visit(statement)
+            stopped = self._visit_block(branch)
             # A star import replaces the branch's scope with a plain mapping
             # of every name; that mapping is then the branch's whole outcome.
             scope = self.scopes[-1]
-            outcomes.append(overlay if scope is chain else scope)
+            outcome = overlay if scope is chain else scope
+            outcomes.append(outcome)
+            if not stopped:
+                continuing.append(outcome)
         self.scopes[-1] = before
-        for name in set(outcomes[0]) | set(outcomes[1]):
-            first = outcomes[0].get(name, before.get(name))
-            second = outcomes[1].get(name, before.get(name))
-            before[name] = first if first == second else None
+        joined = continuing or outcomes
+        for name in set().union(*joined):
+            values = [outcome.get(name, before.get(name)) for outcome in joined]
+            before[name] = values[0] if all(value == values[0] for value in values[1:]) else None
+        return not continuing
 
 
 _LiteralGroups = tuple[tuple[str, ...], ...]

@@ -10,6 +10,42 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 1 review migration
+
+Collect a fresh baseline after adopting the review corrections. Named Python
+direct-reference dependencies now use their declared package identity, and
+Python source analysis excludes provably unreachable local statements and loop
+bodies. Findings may appear or disappear, or change framework attribution;
+inspect those differences before using a comparison to enforce policy. The
+analysis remains bounded and does not prove runtime or interprocedural behavior.
+
+Opt-in Git enrichment now limits combined command output to 16 KiB, author and
+email fields to 1,024 characters each, and timestamps to 64 characters. Exceeded
+limits, malformed metadata, cancellation and deadlines retain source findings
+while making coverage incomplete. Re-run affected repositories with reviewed
+metadata or with history enrichment disabled; an incomplete scan cannot establish
+resolution of earlier findings.
+
+Credential redaction recognizes more constructor, environment fallback, record,
+command and query forms. The redaction policy token changes automatically with
+these rules. Regenerate persisted reports, exports and incremental baselines
+before sharing or reusing them, because an older artifact can contain values
+now withheld. Reports remain sensitive: ambiguous comment-only credential hints
+and arbitrary computed expressions do not establish safe public disclosure.
+
+Production acceptance policies may now freeze aggregate and per-kind
+`min_precision_lower95`, `min_recall_lower95` and `min_specificity_lower95`
+thresholds together. Successful decisions expose the recomputed 95% Wilson lower endpoints;
+the revised example also sets per-kind sample floors. Existing point-estimate
+policies retain their behavior. Freeze confidence thresholds before collecting
+new independently human-labeled holdout evidence, rather than tuning a policy to
+a previously observed result. A small perfect sample need not pass these gates.
+
+The [versioned merge policy](operations/merge-policy.md) and offline snapshot
+checker prepare the requested review and CI enforcement. They cannot activate
+live settings through the connected GitHub App. Administrator activation,
+independent human approval and approved tenant acceptance remain outstanding.
+
 ## October 1 discovery review migration
 
 Review finding kinds, capabilities and risk scores before replacing an existing
@@ -1217,6 +1253,13 @@ lost user attribution before using their counts as governance evidence.
 
 ### Merge gate and review status
 
+The [versioned policy and activation procedure](operations/merge-policy.md)
+retain the existing required checks and add `CI gate`, bind them to GitHub
+Actions, and require fresh non-author approval with no bypass actors. Use
+`python -m tools.governance_check RULESET_JSON` on a fresh API snapshot before
+relying on enforcement. Neither the policy file nor this checker updates live
+repository administration settings.
+
 Ruleset
 [23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
 is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an
@@ -1233,15 +1276,19 @@ no observation as permanent; only the live commands below describe the current
 state. Keep the CodeQL job's displayed name `analyze` consistent with the
 required check.
 
-The intended configuration is versioned in
-[`.github/rulesets/main.json`](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/rulesets/main.json).
-It requires `CI gate`, `test (3.11)`, `test (3.12)` and `analyze`, each
-reported by GitHub Actions, plus one approving review of the final revision,
-and it lists no bypass actors. `tests/test_ruleset_definition.py` fails if a
-required check no longer matches a workflow job. The file is not applied
-automatically and does not describe the live state: a repository administrator
-applies it under **Settings → Rules → Rulesets → New ruleset → Import a
-ruleset**, or edits ruleset 23913372 to match.
+Both rulesets were read back active on 2026-10-01 (updated 17:30 UTC).
+`Require CI and CodeQL` requires one approving review of the final revision
+with stale reviews dismissed, the strict required checks `test (3.11)`,
+`test (3.12)` and `analyze`, CodeQL alert gating and signed commits, and lists
+no bypass actors; `CI gate` is not yet among its required checks. `Protect
+main` adds linear history and deletion protection and still names bypass
+actors. Classic branch protection is not readable through the app
+integration. Read and retain the current configuration before changing it,
+and compare it against the [versioned merge policy](operations/merge-policy.md):
+`python -m tools.governance_check <snapshot.json>` reports every difference
+with a fixed diagnostic code. The policy file is not applied automatically and
+does not describe the live state; a repository administrator applies it under
+**Settings → Rules → Rulesets**.
 
 Whatever the ruleset's state, the history is unchanged: the repository has a
 single maintainer, and no change merged to `main` through 2026-09-25 (including
