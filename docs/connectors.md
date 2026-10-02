@@ -369,8 +369,11 @@ not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
 Findings use the immutable workspace ID as `account`; the display name is stored
 in `metadata.workspace_name`. An offline export without a team record requires
-an explicit `team_id`. Conflicting envelopes or record-level workspace IDs make
-the scan incomplete and prevent attribution. Update inventory account bindings
+an explicit `team_id`. Conflicting or malformed workspace envelopes make the
+scan incomplete and prevent attribution. A record that names another or an
+invalid workspace ID (for example a Slack Connect bot) is skipped and counted,
+and the scan is incomplete; the workspace's other records are still reported.
+Update inventory account bindings
 and collect a fresh comparison baseline when upgrading from name-based IDs.
 
 ### `saas.microsoft-teams`
