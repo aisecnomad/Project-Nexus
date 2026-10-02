@@ -704,6 +704,23 @@ def test_startup_maintenance_deadline_disables_cache_and_runs_full_scan(tmp_path
     assert not list((tmp_path / "state").glob("*.json"))
 
 
+@pytest.mark.parametrize(
+    "flags",
+    [{"incomplete": True}, {"errors": ["connector failed"]}, {"skipped": True}],
+    ids=["incomplete", "errors", "skipped"],
+)
+def test_a_result_that_is_not_a_clean_complete_scan_is_never_cached(tmp_path, index, flags):
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index)
+    snapshot = Snapshot("a" * 64, "b" * 64)
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z", **flags))
+    assert not (cache.directory / f"{snapshot.slot}.json").exists()
+    assert cache.load(cfg.connectors[0], snapshot) is None
+    # The same snapshot is stored when the scan was clean, so the refusal above is the flags' doing.
+    cache.save(snapshot, [], ScanStats(connector="test", started_at="2026-09-27T00:00:00Z"))
+    assert (cache.directory / f"{snapshot.slot}.json").exists()
+
+
 def test_cache_load_propagates_connector_cancellation(tmp_path, index):
     cfg = config(tmp_path)
     cache = IncrementalCache(cfg, index)

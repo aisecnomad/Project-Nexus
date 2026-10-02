@@ -223,6 +223,23 @@ def test_skipped_inventory_symlinks_are_reported(tmp_path, index, glob):
     assert checked.exit_code == 0 and warning in " ".join(checked.output.split())
 
 
+def test_recursive_inventory_glob_names_the_links_it_does_not_enter(tmp_path):
+    from shadowscan.utils.files import policy_glob
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "hostile.yaml").write_text("id: hostile\nresources: ['github:acme/hostile']\n")
+    inv = tmp_path / "inv"
+    inv.mkdir()
+    (inv / "ok.yaml").write_text("id: approved\nresources: ['github:acme/ok']\n")
+    (inv / "linked").symlink_to(outside, target_is_directory=True)
+    (inv / "link.yaml").symlink_to(outside / "hostile.yaml")
+    links: list[str] = []
+    assert list(policy_glob(inv / "**" / "*.yaml", links)) == [inv / "ok.yaml"]
+    # The directory link matched ``**`` and the file link matched ``*.yaml``; neither was followed.
+    assert sorted(links) == sorted([str(inv / "linked"), str(inv / "link.yaml")])
+
+
 @pytest.mark.parametrize("pattern", ["inv/**", "invv/*.yaml", "inv/*.yml"])
 def test_inventory_glob_matching_nothing_is_an_error_like_a_missing_path(tmp_path, pattern):
     from click.testing import CliRunner

@@ -86,6 +86,16 @@ def test_alias_and_document_budgets_apply_across_stream():
         list(yaml.load_all("---\na: 1\n" * 4, Loader=SmallStreamLoader))
 
 
+def test_shipped_alias_budget_accepts_1000_aliases_and_rejects_1001():
+    # The tests above shrink the budget in a subclass; this pins the limit callers actually get.
+    def document(count: int) -> str:
+        return "a: &a 1\nb: [" + ",".join(["*a"] * count) + "]"
+
+    assert bounded_safe_load(document(1_000))["b"] == [1] * 1_000
+    with pytest.raises(YAMLResourceLimitError, match="alias limit"):
+        bounded_safe_load(document(1_001))
+
+
 def test_node_count_is_bounded_during_composition():
     class SmallLoader(BoundedSafeLoader):
         MAX_NODES = 10

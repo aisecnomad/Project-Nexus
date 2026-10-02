@@ -513,6 +513,15 @@ def test_ci_enforces_the_documented_coverage_floors() -> None:
         assert any("python -m tools.coverage_gate" in script for script in scripts), name
 
 
+def test_local_make_targets_enforce_the_same_coverage_floors_as_ci() -> None:
+    """`make check` is documented as the local copy of CI, so its floors cannot be lower."""
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    floors = [float(value) for value in re.findall(r"--cov-fail-under=(\d+(?:\.\d+)?)", makefile)]
+    assert floors, "the Makefile test target no longer enforces an aggregate coverage floor"
+    assert min(floors) >= COVERAGE_FLOOR
+    assert re.search(r"^\s+python -m tools\.coverage_gate\b", makefile, re.M)
+
+
 def test_container_build_is_digest_pinned_hash_locked_and_non_root() -> None:
     assert not _violations(ROOT / "Dockerfile")
     assert not _violations(ROOT / ".dockerignore")
