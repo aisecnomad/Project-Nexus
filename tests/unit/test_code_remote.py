@@ -10,6 +10,7 @@ from time import monotonic
 from unittest.mock import Mock
 
 import pytest
+import responses
 
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code import remote
@@ -710,3 +711,170 @@ def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
     GitHubConnector(ctx).run()
     assert len(ctx.stats.errors) == ConnectorContext._MAX_DIAGNOSTICS + 1
     assert sum("diagnostic limit reached" in e for e in ctx.stats.errors) == 1
+
+
+# ---------------------------------------------------- listing completeness
+def _listing_connector(index, cls, **config):
+    """A connector listing an org/group of eight repositories ordered by activity (most recent first)."""
+    scope = {"org": "acme"} if cls is GitHubConnector else {"group": "acme"}
+    connector = _connector(index, cls, **scope, **config)
+    connector.http = Mock()
+    return connector
+
+
+def _entry(cls, name):
+    if cls is GitHubConnector:
+        return {"full_name": f"acme/{name}"}
+    return {"id": int(name[1:]), "path_with_namespace": f"acme/{name}"}
+
+
+def _identity(cls, record):
+    return record["full_name"] if cls is GitHubConnector else record["path_with_namespace"]
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_a_push_during_the_scan_cannot_hide_a_repository_that_was_not_listed_yet(index, cls):
+    """Reviewer PoC: with page N+1 fetched after page N was scanned, a push moved r7 behind the cursor."""
+    names = [f"r{n}" for n in range(1, 9)]
+    order = list(names)  # most recently pushed first
+    connector = _listing_connector(index, cls)
+
+    def pages(path, **_):
+        if "/projects" not in path and "/repos" not in path:
+            return
+        for start in range(0, len(order), 3):  # three entries per page, fetched when asked for
+            yield from (_entry(cls, name) for name in list(order[start : start + 3]))
+
+    connector.http.paginate_link.side_effect = pages
+    connector.http.try_get_json.return_value = {}
+    seen = []
+    for record in connector.collect():
+        if "full_name" in record or "path_with_namespace" in record:
+            seen.append(_identity(cls, record))
+            if len(seen) == 1:  # somebody pushes to r7 while the scanner is busy with the first repository
+                order.remove("r7")
+                order.insert(0, "r7")
+    assert sorted(seen) == sorted(f"acme/{name}" for name in names)
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_listing_is_read_to_the_end_before_the_first_repository_is_handed_out(index, cls):
+    connector = _listing_connector(index, cls)
+    fetched = []
+
+    def pages(path, **_):
+        if "/projects" not in path and "/repos" not in path:
+            return
+        for page in (1, 2, 3):
+            fetched.append(page)
+            yield _entry(cls, f"r{page}")
+
+    connector.http.paginate_link.side_effect = pages
+    connector.http.try_get_json.return_value = {}
+    records = connector.collect()
+    assert fetched == []  # nothing happens until the records are consumed
+    first = next(iter(records))
+    assert _identity(cls, first).startswith("acme/r") and fetched == [1, 2, 3]
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_failed_listing_still_scans_what_was_listed_and_then_fails(index, cls):
+    connector = _listing_connector(index, cls)
+
+    def pages(path, **_):
+        if "/projects" not in path and "/repos" not in path:
+            return
+        yield _entry(cls, "r1")
+        yield _entry(cls, "r2")
+        raise RuntimeError("Pagination limit reached; collection incomplete")
+
+    connector.http.paginate_link.side_effect = pages
+    connector.http.try_get_json.return_value = {}
+    listed = []
+    with pytest.raises(RuntimeError, match="collection incomplete"):
+        for record in connector.collect():
+            if "full_name" in record or "path_with_namespace" in record:
+                listed.append(_identity(cls, record))
+    assert listed == ["acme/r1", "acme/r2"]
+
+
+def test_listings_use_an_ordering_a_push_cannot_change(index):
+    github = _connector(index, GitHubConnector, org="acme", user="octo")
+    github.http = Mock()
+    github.http.paginate_link.return_value = []
+    list(github.collect())
+    calls = {call.args[0]: call.kwargs["params"] for call in github.http.paginate_link.call_args_list}
+    assert calls["/orgs/acme/repos"]["sort"] == calls["/users/octo/repos"]["sort"] == "full_name"
+    assert calls["/orgs/acme/repos"]["direction"] == calls["/users/octo/repos"]["direction"] == "asc"
+    gitlab = _connector(index, GitLabConnector, group="acme")
+    gitlab.http = Mock()
+    gitlab.http.paginate_link.return_value = []
+    gitlab.http.try_get_json.return_value = {}
+    list(gitlab.collect())
+    params = gitlab.http.paginate_link.call_args_list[-1].kwargs["params"]
+    assert (params["order_by"], params["sort"]) == ("id", "asc")
+
+
+GITLAB_API = "https://gitlab.example.com/api/v4"
+
+
+def _gitlab_group_pages(total, *, second_total=None, pages=2):
+    """Register a two-page group listing of three projects whose pages state *total* (X-Total)."""
+    for suffix in ("service_accounts", "access_tokens", "variables"):
+        responses.get(f"{GITLAB_API}/groups/acme/{suffix}", json=[])
+    responses.get(f"{GITLAB_API}/groups/acme", json={})
+    headers = {"X-Total": str(total), "X-Total-Pages": str(pages)}
+    responses.get(
+        f"{GITLAB_API}/groups/acme/projects",
+        json=[{"id": 1, "path_with_namespace": "acme/a"}, {"id": 2, "path_with_namespace": "acme/b"}],
+        headers={**headers, "Link": f'<{GITLAB_API}/groups/acme/projects?page=2>; rel="next"'},
+    )
+    responses.get(
+        f"{GITLAB_API}/groups/acme/projects",
+        json=[{"id": 3, "path_with_namespace": "acme/c"}],
+        headers={**headers, "X-Total": str(second_total or total)},
+    )
+
+
+@responses.activate
+def test_gitlab_listing_that_matches_its_reported_totals_is_complete(index):
+    _gitlab_group_pages(3)
+    connector = _connector(index, GitLabConnector, group="acme", api_url=GITLAB_API)
+    assert [record["id"] for record in connector.collect() if "path_with_namespace" in record] == [1, 2, 3]
+    assert connector.ctx.stats.warnings == [] and not connector.ctx.stats.incomplete
+    first = responses.calls[-2].request.url
+    assert "order_by=id" in first and "sort=asc" in first
+
+
+@pytest.mark.parametrize(
+    "total,second_total,pages",
+    [(4, None, 2), (2, None, 2), (3, 4, 2), (3, None, 3), ("many", None, 2)],
+    ids=["entries-missing", "extra-entries", "total-changed-between-pages", "wrong-page-count", "garbage"],
+)
+@responses.activate
+def test_gitlab_listing_that_disagrees_with_its_reported_totals_is_incomplete(
+    index, total, second_total, pages
+):
+    _gitlab_group_pages(total, second_total=second_total, pages=pages)
+    connector = _connector(index, GitLabConnector, group="acme", api_url=GITLAB_API)
+    records = [record for record in connector.collect() if "path_with_namespace" in record]
+    assert len(records) == 3  # what was listed is still scanned
+    assert connector.ctx.stats.incomplete
+    assert any("does not match its reported X-Total" in w for w in connector.ctx.stats.warnings)
+
+
+@responses.activate
+def test_github_listing_reports_no_totals_and_requests_a_stable_order(index):
+    api = "https://api.github.com"
+    responses.get(
+        f"{api}/orgs/acme/repos",
+        json=[{"full_name": "acme/a"}, {"full_name": "acme/b"}],
+        headers={"Link": f'<{api}/orgs/acme/repos?page=2>; rel="next"'},
+    )
+    responses.get(f"{api}/orgs/acme/repos", json=[{"full_name": "acme/c"}])
+    connector = _connector(index, GitHubConnector, org="acme")
+    assert [record["full_name"] for record in connector.collect()] == ["acme/a", "acme/b", "acme/c"]
+    assert connector.ctx.stats.warnings == []
+    query = responses.calls[0].request.url.split("?", 1)[1]
+    assert "sort=full_name" in query and "direction=asc" in query

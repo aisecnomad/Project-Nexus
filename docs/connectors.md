@@ -176,6 +176,12 @@ also makes coverage incomplete; the connector will not scan a different repo
 as a substitute for the requested one. An org or user listing entry whose
 `full_name` is not a plain `owner/name` is an error that makes the scan
 incomplete; that repository is never requested or cloned.
+The listing is read to the end, in `full_name` order, before the first
+repository is cloned or scanned. A push during the scan therefore cannot move a
+repository that was not listed yet out of the listing, which an
+activity-ordered, lazily paged listing allowed. If the listing fails part-way
+(or exceeds `max_repos`) the repositories already listed are still scanned and
+the scan is incomplete.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) checks GitHub's reported repository size
@@ -217,6 +223,10 @@ configured project names and export before treating an empty result as clean.
 A group listing entry whose project `id` is not a positive integer is an
 error that makes the scan incomplete; that project is skipped before any
 request is made for it, and the other projects are still scanned.
+As for `code.github`, the group listing (ordered by project `id`) is read to the
+end before the first project is cloned. It is also compared with the totals
+GitLab reports (`X-Total`, `X-Total-Pages`; GitLab omits them for very large
+groups): entries that do not add up make coverage incomplete.
 Polling cannot provide a hard disk or network-transfer limit; enforce a writable
 disk quota on the worker.
 

@@ -117,6 +117,9 @@ class GitLabConnector(RemoteRepositoryConnector):
         self.http = self._api_client({"PRIVATE-TOKEN": self.token} if self.token else {})
 
     def collect(self) -> Iterable[dict[str, Any]]:
+        return self._complete_listing(self._enumerate())
+
+    def _enumerate(self) -> Iterator[dict[str, Any]]:
         group = self.ctx.get("group", env="GITLAB_GROUP")
         projects = self.ctx.get("projects") or []
         if not (group or projects):
@@ -164,11 +167,13 @@ class GitLabConnector(RemoteRepositoryConnector):
                 "per_page": 100,
                 "include_subgroups": "true",
                 "archived": "false" if not self.include_archived else None,
-                "order_by": "last_activity_at",
+                # Ordered by a key a push cannot change, so that offset paging stays stable.
+                "order_by": "id",
+                "sort": "asc",
                 "simple": "false",
             }
             params = {k: v for k, v in params.items() if v is not None}
-            for p in self.http.paginate_link(f"/groups/{gid}/projects", params=params):
+            for p in self._paginate_listing(f"/groups/{gid}/projects", params):
                 if not _is_project_id(p.get("id")):
                     # The id addresses every later request about this project;
                     # skip the entry rather than send it to another endpoint.

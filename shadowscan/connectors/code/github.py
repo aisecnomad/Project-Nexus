@@ -19,7 +19,7 @@ from __future__ import annotations
 import base64
 import re
 import shutil
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar, TypeGuard
 from urllib.parse import quote, urlsplit
 
@@ -144,6 +144,9 @@ class GitHubConnector(RemoteRepositoryConnector):
 
     # --------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
+        return self._complete_listing(self._enumerate())
+
+    def _enumerate(self) -> Iterator[dict[str, Any]]:
         org = self.ctx.get("org", env="GITHUB_ORG")
         user = self.ctx.get("user")
         repos = self.ctx.get("repos") or []
@@ -171,13 +174,15 @@ class GitHubConnector(RemoteRepositoryConnector):
             if name not in seen:
                 seen.add(name)
                 yield remote_record(data)
+        # Ordered by a key a push cannot change, so that offset paging stays stable.
+        order = {"sort": "full_name", "direction": "asc"}
         listings: list[tuple[str, dict[str, Any]]] = []
         if org:
-            listings.append((f"/orgs/{org}/repos", {"per_page": 100, "type": "all", "sort": "pushed"}))
+            listings.append((f"/orgs/{org}/repos", {"per_page": 100, "type": "all", **order}))
         if user:
-            listings.append((f"/users/{user}/repos", {"per_page": 100, "sort": "pushed"}))
+            listings.append((f"/users/{user}/repos", {"per_page": 100, **order}))
         for path, params in listings:
-            for r in self.http.paginate_link(path, params=params):
+            for r in self._paginate_listing(path, params):
                 name = r.get("full_name") if isinstance(r, dict) else None
                 if not _is_full_name(name):
                     # The name addresses every later request about the repository

@@ -240,6 +240,60 @@ class RemoteRepositoryConnector(BaseConnector):
     def _cap_reached(self) -> None:
         self.ctx.warn(f"{self.name}: {self.limit_key} ({self.max_records}) reached", incomplete=True)
 
+    # --------------------------------------------------------------- listing
+    def _paginate_listing(self, path: str, params: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Page through a provider listing and compare it with the totals the provider reports.
+
+        GitLab states ``X-Total`` and ``X-Total-Pages``; GitHub states neither. Entries that do not add up
+        to them mean the listing changed while it was read or left something out: coverage is unknown.
+        """
+        reported: dict[str, set[str]] = {"X-Total": set(), "X-Total-Pages": set()}
+        pages = 0
+
+        def note_page(resp: Any) -> None:
+            nonlocal pages
+            pages += 1
+            for header, values in reported.items():
+                if (value := resp.headers.get(header)) is not None:
+                    values.add(str(value))
+
+        count = 0
+        for item in self.http.paginate_link(path, params=params, on_page=note_page):
+            count += 1
+            yield item
+        # An empty collection arrives as one empty page, which GitLab may count as zero pages.
+        expected = {"X-Total": {count}, "X-Total-Pages": {pages} | ({0} if count == 0 else set())}
+        for header, values in reported.items():
+            if not values:
+                continue
+            numbers = {int(v) for v in values if v.isascii() and v.isdecimal() and len(v) <= 12}
+            if len(numbers) != len(values) or not numbers <= expected[header]:
+                self.ctx.warn(
+                    f"{self.name}: repository listing returned {count} entries in {pages} pages, which "
+                    f"does not match its reported {header}; coverage unknown",
+                    incomplete=True,
+                )
+
+    def _complete_listing(self, listing: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        """Finish enumerating before any repository is cloned or scanned.
+
+        Listings used to be consumed lazily: page N+1 was fetched only after every repository of page N had
+        been cloned and scanned. A push meanwhile can move a repository that was not listed yet behind the
+        cursor of an activity-ordered listing, and nothing noticed that it was never examined. Reading the
+        whole listing first (still bounded by the repository cap), in an order a push cannot change, leaves
+        nothing to move. A failure part-way keeps what was listed: those repositories are scanned, then the
+        failure ends the scan as incomplete, as it did before.
+        """
+        listed: list[dict[str, Any]] = []
+        failure: Exception | None = None
+        try:
+            listed.extend(listing)
+        except Exception as exc:  # noqa: BLE001 - re-raised once the repositories already listed are scanned
+            failure = exc
+        yield from listed
+        if failure is not None:
+            raise failure
+
     # --------------------------------------------------------------- offline
     @abstractmethod
     def _offline_record(self, name: str) -> dict[str, Any]:

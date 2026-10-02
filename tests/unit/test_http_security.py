@@ -564,3 +564,23 @@ def test_http_client_rejects_control_characters_in_headers_without_echoing_them(
     with pytest.raises(ValueError) as failure:
         HttpClient("https://example.com", headers={"Authorization": "SSWS 00SuperSecret\n"})
     assert "SuperSecret" not in str(failure.value)
+
+
+def test_link_pagination_reports_each_validated_page_to_the_callback():
+    link = '<https://api.example.com/v1/items?page=2>; rel="next"'
+    http, _ = client(
+        response([{"id": 1}], headers={"Link": link, "X-Total": "2"}),
+        response([{"id": 2}], headers={"X-Total": "2"}),
+    )
+    totals = []
+    items = list(http.paginate_link("/items", on_page=lambda page: totals.append(page.headers["X-Total"])))
+    assert [item["id"] for item in items] == [1, 2]
+    assert totals == ["2", "2"]
+
+
+def test_link_pagination_callback_never_sees_an_invalid_page():
+    http, _ = client(response({"error": "denied"}))
+    seen = []
+    with pytest.raises(RuntimeError, match="collection failed"):
+        list(http.paginate_link("/items", on_page=seen.append))
+    assert seen == []
