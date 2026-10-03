@@ -8,6 +8,8 @@ private-key pre-commit check to find.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import random
 import string
 import time
@@ -15,7 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from tools.check_secrets import display, findings, main
+from tools import check_secrets
+from tools.check_secrets import digest, display, findings, main
 
 _ALNUM = string.ascii_letters + string.digits
 _UPPER = string.ascii_uppercase + string.digits
@@ -123,15 +126,8 @@ def test_planted_credential_is_reported_without_its_value(
 @pytest.mark.parametrize(
     "text",
     [
-        pytest.param("OPENAI_API_KEY=" + "sk-" + "x" * 40, id="placeholder-run"),
-        pytest.param("ANTHROPIC_API_KEY=" + "sk-" + "ant-api03-REPLACE_ME_WITH_REAL_KEY", id="replace-me"),
-        pytest.param("aws_access_key_id = " + "AK" + "IAIOSFODNN7EXAMPLE", id="aws-documentation-example"),
         pytest.param("aws_secret_access_key = <your-secret-access-key>", id="angle-placeholder"),
         pytest.param("SLACK_BOT_TOKEN=" + "xo" + "xb-your-bot-token", id="slack-placeholder"),
-        pytest.param("DATABASE_URL=postgres://app:${DB_PASSWORD}@db:5432/app", id="url-env-reference"),
-        pytest.param("DATABASE_URL=postgres://app:REPLACE_ME@localhost:5432/app", id="url-replace-me"),
-        pytest.param("DATABASE_URL=postgres://postgres:postgres@localhost/app", id="url-user-as-password"),
-        pytest.param("DATABASE_URL=postgres://returns:password@localhost/app", id="url-password-word"),
         pytest.param("risk-" + "assessmentframeworkversion2026", id="sk-inside-a-word"),
         pytest.param("task-" + _random("w1", 30), id="sk-inside-task"),
         pytest.param("lookup_" + "gh" + "p_" + _random("w2", 36), id="github-prefix-inside-identifier"),
@@ -142,16 +138,16 @@ def test_planted_credential_is_reported_without_its_value(
         pytest.param("signature: eyJhbGciOi", id="short-jwt-prefix"),
     ],
 )
-def test_placeholders_and_lookalikes_are_not_reported(text: str) -> None:
+def test_lookalikes_that_have_no_credential_shape_are_not_reported(text: str) -> None:
     assert list(findings(text)) == []
 
 
-def test_exit_codes_and_paths_that_are_skipped(
+def test_exit_codes_and_all_directories_are_checked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
     planted = "gh" + "p_" + _random("e1", 36)
-    excluded = [
+    scanned = [
         "tests/unit/test_example.py",
         "./tests/fixtures/export.json",
         "shadowscan/signatures/data/pack.yaml",
@@ -163,23 +159,162 @@ def test_exit_codes_and_paths_that_are_skipped(
         "tools/evaluation/independent_annotations.json",
         "tools/evaluation/x/corpus.json",
     ]
-    for name in excluded + reported:
+    for name in scanned + reported:
         Path(name).parent.mkdir(parents=True, exist_ok=True)
         Path(name).write_text(planted, encoding="utf-8")
     Path("clean.md").write_text("No credentials here.\n", encoding="utf-8")
     Path("link.txt").symlink_to(tmp_path / reported[0])
     Path("submodule").mkdir()
-    assert main(excluded + ["clean.md", "link.txt", "submodule"]) == 0
+    assert main(["clean.md", "link.txt", "submodule"]) == 0
     assert capsys.readouterr().out == ""
     # No file at all means the listing that feeds the check failed: never a pass.
     assert main([]) == 2
     assert "no files to check" in capsys.readouterr().err
-    for name in reported:
+    for name in scanned + reported:
         assert main([name]) == 1
         assert capsys.readouterr().out.startswith(f"{name}:1: possible hardcoded GitHub token")
     # A named file that cannot be read fails closed instead of passing unchecked.
     assert main(["missing.txt"]) == 1
     assert "missing.txt: cannot read" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "sk-" + "x" * 40,
+        "sk-proj-" + _random("placeholder", 32) + "example",
+        "sk-ant-api03-" + _random("redacted", 32) + "redacted",
+        "AK" + "IAIOSFODNN7EXAMPLE",
+        "postgres://app:${DB_PASSWORD}@db:5432/app",
+        "postgres://app:REPLACE_ME@localhost:5432/app",
+        "postgres://postgres:postgres@localhost/app",
+        "postgres://returns:password@localhost/app",
+        "postgres://app:" + _random("your", 20) + "your@db/app",
+    ],
+)
+def test_credential_shaped_placeholders_also_need_an_exact_approval(text: str) -> None:
+    assert list(findings(text))
+
+
+def _approve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str, text: str) -> dict:
+    source = tmp_path / path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(text, encoding="utf-8")
+    ((_, family, value),) = findings(text)
+    entry = {"path": path, "family": family, "sha256": digest(value), "reason": "Synthetic test input."}
+    if family == "private key":
+        entry["content_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    manifest = tmp_path / "allowlist.json"
+    manifest.write_text(json.dumps({"version": 1, "entries": [entry]}), encoding="utf-8")
+    monkeypatch.setattr(check_secrets, "REPOSITORY_ROOT", tmp_path)
+    monkeypatch.setattr(check_secrets, "ALLOWLIST_PATH", manifest)
+    monkeypatch.chdir(tmp_path)
+    return entry
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tests/fixtures/export.json",
+        "tests/unit/test_example.py",
+        "shadowscan/signatures/data/pack.yaml",
+        "tools/evaluation/corpus.json",
+        "SECURITY.md",
+    ],
+)
+def test_exact_synthetic_approval_does_not_exempt_new_values_or_another_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], path: str
+) -> None:
+    synthetic = "gh" + "p_" + _random("approved", 36)
+    _approve(tmp_path, monkeypatch, path, synthetic)
+    assert main([path]) == 0
+    assert main([str(tmp_path / path)]) == 0
+    assert main(["./" + path]) == 0
+    unexpected = "gh" + "p_" + _random("unexpected", 36)
+    (tmp_path / path).write_text(synthetic + "\n" + unexpected, encoding="utf-8")
+    assert main([path]) == 1
+    assert ":2: possible hardcoded GitHub token" in capsys.readouterr().out
+    copied = tmp_path / "copied.txt"
+    copied.write_text(synthetic, encoding="utf-8")
+    assert main([str(copied)]) == 1
+    assert "possible hardcoded GitHub token" in capsys.readouterr().out
+
+
+def test_stale_approvals_fail_even_during_a_partial_hook_run(tmp_path, monkeypatch, capsys):
+    _approve(tmp_path, monkeypatch, "tests/fixture.txt", "gh" + "p_" + _random("stale", 36))
+    (tmp_path / "tests/fixture.txt").write_text("removed fixture", encoding="utf-8")
+    (tmp_path / "clean.txt").write_text("clean", encoding="utf-8")
+    assert main(["clean.txt"]) == 1
+    assert "stale approval" in capsys.readouterr().err
+
+
+def test_private_key_approval_binds_its_body_and_not_only_the_begin_marker(tmp_path, monkeypatch, capsys):
+    marker = "-----BEGIN " + "PRIVATE" + " KEY-----"
+    _approve(tmp_path, monkeypatch, "tests/key.txt", marker + "\nSYNTHETIC_BODY\n")
+    assert main(["tests/key.txt"]) == 0
+    (tmp_path / "tests/key.txt").write_text(marker + "\n" + _random("body", 64), encoding="utf-8")
+    assert main(["tests/key.txt"]) == 1
+    assert "fixture contents changed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "change,message",
+    [
+        ({"path": "../fixture.txt"}, "repository-relative"),
+        ({"family": "unknown"}, "unknown family"),
+        ({"sha256": "invalid"}, "invalid SHA-256"),
+        ({"reason": ""}, "missing review reason"),
+        ({"content_sha256": "invalid"}, "invalid whole-file"),
+        ({"extra": "field"}, "invalid fields"),
+    ],
+)
+def test_malformed_approval_fails_closed(tmp_path, monkeypatch, capsys, change, message):
+    entry = _approve(tmp_path, monkeypatch, "fixture.txt", "gh" + "p_" + _random("schema", 36))
+    entry.update(change)
+    check_secrets.ALLOWLIST_PATH.write_text(json.dumps({"version": 1, "entries": [entry]}))
+    assert main(["fixture.txt"]) == 1
+    assert message in capsys.readouterr().err
+
+
+def test_private_key_marker_cannot_be_approved_without_its_whole_file_digest(tmp_path, monkeypatch, capsys):
+    entry = _approve(tmp_path, monkeypatch, "fixture.txt", "-----BEGIN " + "PRIVATE" + " KEY-----")
+    del entry["content_sha256"]
+    check_secrets.ALLOWLIST_PATH.write_text(json.dumps({"version": 1, "entries": [entry]}))
+    assert main(["fixture.txt"]) == 1
+    assert "whole-file digest" in capsys.readouterr().err
+
+
+def test_unparseable_allowlist_does_not_echo_its_contents(tmp_path, monkeypatch, capsys):
+    _approve(tmp_path, monkeypatch, "fixture.txt", "gh" + "p_" + _random("parse", 36))
+    for malformed in (_random("bad-json", 36), "[" * 2000 + "0" + "]" * 2000):
+        check_secrets.ALLOWLIST_PATH.write_text(malformed)
+        assert main(["fixture.txt"]) == 1
+        output = capsys.readouterr().err
+        assert output in {
+            "check_secrets: cannot read or parse approval manifest\n",
+            "check_secrets: allowlist must contain version and entries\n",
+        }
+        assert malformed not in output
+
+
+def test_duplicate_approvals_and_json_fields_fail_closed(tmp_path, monkeypatch, capsys):
+    entry = _approve(tmp_path, monkeypatch, "fixture.txt", "gh" + "p_" + _random("duplicate", 36))
+    check_secrets.ALLOWLIST_PATH.write_text(json.dumps({"version": 1, "entries": [entry, entry]}))
+    assert main(["fixture.txt"]) == 1
+    assert "duplicate approval" in capsys.readouterr().err
+    check_secrets.ALLOWLIST_PATH.write_text('{"version":1,"entries":[],"entries":[]}')
+    assert main(["fixture.txt"]) == 1
+    assert "duplicate JSON field" in capsys.readouterr().err
+
+
+def test_missing_manifest_or_approved_fixture_fails_closed(tmp_path, monkeypatch, capsys):
+    _approve(tmp_path, monkeypatch, "fixture.txt", "gh" + "p_" + _random("missing", 36))
+    (tmp_path / "fixture.txt").unlink()
+    assert main(["fixture.txt"]) == 1
+    assert "missing or is not a regular file" in capsys.readouterr().err
+    check_secrets.ALLOWLIST_PATH.unlink()
+    assert main(["fixture.txt"]) == 1
+    assert "cannot read or parse approval manifest" in capsys.readouterr().err
 
 
 def test_patterns_stay_linear_on_hostile_input() -> None:

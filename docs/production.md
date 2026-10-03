@@ -270,6 +270,12 @@ while Git runs; preflight is not a filesystem snapshot or process sandbox.
 Unsupported versions and failed metadata reads, including unavailable history
 objects, make the scan incomplete while preserving code findings.
 
+Incremental scans with `use_git: true` run the same bounded preflight before
+Git fingerprinting and cache reuse, within the connector deadline. Unsafe
+metadata disables reuse; the full scan retains source findings and reports
+incomplete coverage. Updating the scanner invalidates previous cache entries
+through its source digest.
+
 Metadata commands disable hooks, lazy fetching and every transport. Authenticated
 cloning uses a separate HTTPS-only policy. Remote JSON fields such as
 `_local_path` cannot select local scan roots or substitute for a verified offline
@@ -591,7 +597,8 @@ branches, so a well-tested engine cannot conceal an untested provider; the
 other jobs run the same tests untraced. Coverage proves execution of code paths in tests; it does not prove
 provider compatibility or complete tenant inventory. The aggregate `CI gate`
 requires every Linux and macOS matrix job, documentation and container security to succeed; it also
-requires DCO on pull requests. It fails if a required prerequisite fails, is
+requires DCO on every pull-request commit, including merge commits that can
+introduce authored conflict resolutions. It fails if a required prerequisite fails, is
 cancelled or is unexpectedly skipped. Verify that the live ruleset requires
 `CI gate` before treating the full matrix as an enforced merge gate. The dedicated
 container job builds one Docker image and checks its non-root UID, signature assets
@@ -903,9 +910,15 @@ now preserves context across errors, warnings and skip reasons, and JSON
 statistics are checked together. Continue treating reports as sensitive; no
 redaction rule recognizes every possible secret or private datum.
 
-CI and `make check` now enforce the bounded secret-pattern gate over every
-tracked text file. The intentional test, signature-pack and evaluation-corpus
-exemptions require review. The evaluation path contract now rejects ambiguous case/Unicode names,
+CI and `make check` enforce the bounded secret-pattern gate over every tracked
+file. The October 3 follow-up replaces directory and placeholder exemptions
+with `tools/secret_allowlist.json`: each synthetic fixture or documentation
+example is approved by exact repository path, credential family and matched-text
+SHA-256, with a review reason. Private-key BEGIN markers additionally bind the
+whole file's bytes so an approval cannot cover another key body. The gate rejects
+new credential-shaped values, malformed entries and stale approvals, including
+during partial hooks. Review changes to these approvals with the fixture itself;
+do not add live credentials to the manifest. The evaluation path contract rejects ambiguous case/Unicode names,
 file/directory collisions and components over 255 UTF-8 bytes. Correct such
 layouts before re-running a private holdout; do not silently rename its samples
 after freezing the acceptance policy.
@@ -1896,6 +1909,26 @@ files. On other supported POSIX platforms the component-by-component confined
 walk remains in use. Signature-pack directory enumeration fails if a subtree
 cannot be read or the entry budget is exceeded, including directory-only
 trees; correct those inputs before accepting the policy.
+
+Source-checkout enumeration is bounded separately by `max_entries` (default
+1,000,000). It counts every inspected directory entry, including skipped names
+and coverage probes, before retaining it in memory. The existing `max_files`
+limit keeps its file-and-link semantics. Reaching either entry or file limit
+retains findings from source already assessed and marks coverage incomplete.
+Cancellation and the connector deadline also make coverage incomplete;
+directory-only and fully excluded trees check both during enumeration.
+`code.github` and `code.gitlab` forward
+`max_entries` to each checkout. Increase the entry limit explicitly when
+a reviewed scan scope needs it, and retain operating-system memory limits.
+
+Incremental fingerprints include the entry count of coverage probes inside
+default-excluded directories, as well as whether those probes find a file.
+Changing only descendants of an excluded directory can therefore invalidate
+the cache when finding its contents requires more entries. A previously complete
+cached scan cannot mask new `max_entries` exhaustion. These probes share the
+fingerprint's entry, cancellation and deadline budgets. Earlier candidate
+cache entries miss automatically after this scanner-source change; no manual
+state migration is needed.
 
 Incremental state uses nonblocking advisory `flock` per cache slot
 (`<sha256>.lock`): shared for reading and exclusive for publication, as well as

@@ -179,7 +179,8 @@ def test_metadata_and_incremental_git_ignore_inherited_repo_and_config(tmp_path,
         ["config", "user.email", "expected@example.test"],
         ["config", "user.name", "Expected Author"],
         ["add", "agent.py"],
-        ["-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "initial"],
+        ["-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"]
+        + ["commit", "--quiet", "--allow-empty", "-m", "initial"],
     ):
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=env)
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "wrong.git"))

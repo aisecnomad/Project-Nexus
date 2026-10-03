@@ -123,8 +123,8 @@ jobs:
       - name: Check tracked files for hardcoded credentials
         run: |
           set -euo pipefail
-          # The same standard-library script as the pre-commit hook; it skips
-          # the paths that hold synthetic credentials on purpose.
+          # The same standard-library script as the pre-commit hook: every
+          # tracked file, with exact reviewed synthetic-value approvals only.
           git ls-files -z | xargs -0 python tools/check_secrets.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate

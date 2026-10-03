@@ -5,6 +5,78 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 3 incremental enumeration-budget review
+
+- Incremental fingerprints now include the number of entries inspected by
+  coverage probes in default-excluded directories. Moving a vendored file
+  deeper can exceed `max_entries` without changing the probe's non-empty
+  result; previously that change could reuse a cached complete scan. The
+  changed fingerprint forces a full scan, which reports incomplete coverage
+  when the entry limit is exhausted. Probes also share the fingerprint's
+  cancellation, deadline and entry budgets. Regression tests cover cache
+  invalidation and fingerprint-budget accounting.
+- The testing guide now documents exact synthetic-secret approvals rather
+  than the removed directory exclusions and placeholder-word exemptions.
+
+### October 3 merge integration hygiene
+
+- DCO checks every commit in the pull-request range, including merge commits.
+  A merge can introduce conflict resolutions or other content beyond its
+  signed-off parents; skipping it let that content pass without the merge
+  author's certification. Regression tests exercise signed and unsigned
+  two-parent commits with a file authored only in the merge.
+
+### Bounded source-directory enumeration
+
+- `code.filesystem` now limits directory enumeration before retaining entry
+  names, including directories, excluded files and coverage probes. The new
+  `max_entries` option defaults to 1,000,000 and is independent of `max_files`.
+  GitHub and GitLab forward it to each checkout. Enumeration also checks
+  cancellation and connector deadlines when there are no analyzable files.
+  Entry and file limits retain findings already assessed and mark the scan incomplete
+  (exit 3). Regression tests cover the limit, ignored and directory-only
+  inputs, cancellation, deadlines and findings retained after a partial walk.
+
+### October 3 incremental metadata confinement
+
+- Incremental scans with `use_git: true` apply the bounded Git metadata
+  preflight before fingerprinting, including when considering a cache hit.
+  Unsafe metadata disables reuse and the full scan reports incomplete coverage
+  while retaining source findings. This matches the existing history-enrichment
+  policy; the preflight shares the connector deadline.
+
+### October 3 secret-gate hygiene review
+
+- Scan tests, signature packs and evaluation corpora for hardcoded credentials
+  instead of exempting their directories. Synthetic fixtures and documentation
+  placeholders require exact path, credential-family and SHA-256 approvals in
+  `tools/secret_allowlist.json`; placeholder words no longer suppress findings.
+  Private-key marker approvals also bind the whole fixture's bytes. Malformed,
+  duplicate, stale or missing approvals fail the gate, including partial hooks.
+
+### October 2 follow-ups to #135
+
+- `test-macos (3.11)` failed `main` after #135 merged. The confinement test for
+  a symlinked `.git/objects` deletes that directory right after its fixture
+  commits. Since Git 2.47 a commit starts `git maintenance run --auto` in the
+  background, and the detached process removed its `maintenance.lock` while
+  `shutil.rmtree` was deleting the directory; Python 3.11 reports the vanished
+  file as an error. With Git 2.55 and Python 3.11 the test failed in 4 of 150
+  repeated runs. Every test helper that commits now passes
+  `-c maintenance.auto=false`, and the repeated runs pass 150 of 150. The
+  scanner's own Git commands (a clone and read-only metadata reads) never start
+  maintenance.
+- Five tests that read a repository snapshot need Git 2.45 or newer, like the
+  other history tests, but were not marked `requires_git_2_45`. On an older
+  Git, such as the 2.43 in Ubuntu 24.04, they failed instead of being skipped.
+  They now carry the marker.
+- The CI lock takes Dependabot's development-tool updates from #136
+  (platformdirs 4.12.2, virtualenv 21.14.0), regenerated with the documented
+  command and uv 0.12.18. The docs lock moves platformdirs with it, regenerated
+  with its documented pip-compile command, because the combined install needs
+  one version of each shared package. Dependabot changes only the constraints
+  file, so its pull request failed the lock consistency tests.
+
 ### October 2 integration of #134 and repository hygiene review
 
 Pull request #134 landed through an integration pull request as one

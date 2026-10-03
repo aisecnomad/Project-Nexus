@@ -106,6 +106,7 @@ class GitHubConnector(RemoteRepositoryConnector):
         "exclude": "forwarded to the filesystem scanner (see code.filesystem)",
         "max_file_size": "forwarded to the filesystem scanner (see code.filesystem)",
         "max_files": "forwarded to the filesystem scanner (see code.filesystem)",
+        "max_entries": "forwarded to the filesystem scanner (see code.filesystem)",
         "scan_secrets": "forwarded to the filesystem scanner (see code.filesystem)",
         "clone_depth": "git clone depth (default 1)",
         "clone_max_bytes": (
@@ -233,6 +234,7 @@ class GitHubConnector(RemoteRepositoryConnector):
                 "default_excludes",
                 "max_file_size",
                 "max_files",
+                "max_entries",
                 "scan_timeout",
                 "scan_secrets",
                 "use_git",
