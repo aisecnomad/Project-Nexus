@@ -129,7 +129,7 @@ exact supported Python matrix and dependency pins.
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
-| Secrets | `make secrets` | No hardcoded credentials in tracked files; tests, fixtures, signature packs and evaluation corpora hold synthetic examples and are skipped |
+| Secrets | `make secrets` | Every tracked file is scanned; only exact reviewed synthetic-value approvals are accepted |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
 
@@ -174,11 +174,21 @@ Do not commit private adjudicated evaluation corpora.
 
 The secret-pattern gate runs in CI, in `make check` and in the pre-commit hook.
 It names the file, line and credential family of each match, never the value,
-and fails on a file it cannot read. The script itself skips `tests/`, the
-signature packs and the evaluation corpora, which hold synthetic
-credential-shaped strings on purpose. Those exemptions require review, and the
-bounded pattern check does not establish that the repository contains no
-secrets.
+and fails on a file it cannot read. Tests, signature packs and evaluation
+corpora are checked too. `tools/secret_allowlist.json` contains only the exact
+repository path, credential family, SHA-256 of the matched text and review
+reason for approved synthetic fixtures or documentation placeholders. There
+are no directory exemptions or automatic placeholder-word exemptions.
+
+Review each new credential-shaped example before adding its digest to the
+manifest. Never approve an actual service credential. Changing a placeholder
+in documentation also requires an explicit approval. Private-key detections
+match a BEGIN marker, so their entries must additionally bind the SHA-256 of
+the whole file's bytes; a marker approval cannot cover a replacement key body.
+The script validates every entry, including during partial pre-commit runs,
+and fails on malformed, duplicate or stale approvals. Remove entries when their
+fixture is removed. The bounded pattern check does not establish that the
+repository contains no secrets.
 
 ## Pull requests
 
@@ -319,7 +329,9 @@ the work under the Apache-2.0 license and that you agree to the
 
 You can sign off your commits with `git commit -s`, which adds a
 `Signed-off-by` line. CI calls the reusable [`DCO` workflow](.github/workflows/dco.yml)
-to check every non-merge commit in a pull request for a matching sign-off.
+to check every commit in a pull request for a matching sign-off. Merge commits
+also need sign-off because conflict resolutions can introduce new authored
+content; use `git merge --signoff` when updating a branch by merging.
 The `CI gate` check requires successful DCO, documentation, and every Python
 matrix job, including the container smoke test. Whether that check is configured
 to block merges follows the live repository rules (see

@@ -100,9 +100,17 @@ and local `use_git: true` also inventory committed gitlinks using the hardened
 metadata path. No submodule is initialized or fetched; see the detailed
 [coverage policy](../scanning.md#coverage-policy) for scope and limitations.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
+
+`max_entries` defaults to 1,000,000 filesystem entries inspected during
+enumeration. It counts directories, skipped files and entries revisited by
+coverage probes, and is independent of the existing `max_files` limit on
+files and symbolic links. Reaching either limit makes coverage incomplete
+(exit 3). Enumeration checks connector cancellation and deadlines even when
+every entry is excluded or the tree holds only directories. `code.github`
+and `code.gitlab` forward this option to each checkout scan.
 
 `paths`, `exclude` and `oversize_skip_globs` must be lists of non-empty strings.
 A bare string, such as the YAML scalar `exclude: "vendor/*"`, is a configuration

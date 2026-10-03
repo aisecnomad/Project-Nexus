@@ -1043,7 +1043,7 @@ def test_every_reporter_renders_a_repository_with_non_utf8_names(tmp_path, fmt):
 
 
 # ------------------------------------------------------- numeric limits
-@pytest.mark.parametrize("option", ["max_file_size", "max_files"])
+@pytest.mark.parametrize("option", ["max_file_size", "max_files", "max_entries"])
 @pytest.mark.parametrize("value", [True, False, 1.9, 0, -5, "abc", [100]], ids=repr)
 def test_integer_limits_reject_booleans_fractions_and_non_numbers(tmp_path, run_connector, option, value):
     # `max_file_size: true` was a 1-byte limit that skipped every file, and 1.9 became 1.

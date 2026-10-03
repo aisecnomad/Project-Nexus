@@ -5,6 +5,25 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 3 merge integration hygiene
+
+- DCO checks every commit in the pull-request range, including merge commits.
+  A merge can introduce conflict resolutions or other content beyond its
+  signed-off parents; skipping it let that content pass without the merge
+  author's certification. Regression tests exercise signed and unsigned
+  two-parent commits with a file authored only in the merge.
+
+### Bounded source-directory enumeration
+
+- `code.filesystem` now limits directory enumeration before retaining entry
+  names, including directories, excluded files and coverage probes. The new
+  `max_entries` option defaults to 1,000,000 and is independent of `max_files`.
+  GitHub and GitLab forward it to each checkout. Enumeration also checks
+  cancellation and connector deadlines when there are no analyzable files.
+  Entry and file limits retain findings already assessed and mark the scan incomplete
+  (exit 3). Regression tests cover the limit, ignored and directory-only
+  inputs, cancellation, deadlines and findings retained after a partial walk.
+
 ### October 3 incremental metadata confinement
 
 - Incremental scans with `use_git: true` apply the bounded Git metadata
@@ -12,6 +31,15 @@ summarizes each release for people who install and operate ShadowScan.
   Unsafe metadata disables reuse and the full scan reports incomplete coverage
   while retaining source findings. This matches the existing history-enrichment
   policy; the preflight shares the connector deadline.
+
+### October 3 secret-gate hygiene review
+
+- Scan tests, signature packs and evaluation corpora for hardcoded credentials
+  instead of exempting their directories. Synthetic fixtures and documentation
+  placeholders require exact path, credential-family and SHA-256 approvals in
+  `tools/secret_allowlist.json`; placeholder words no longer suppress findings.
+  Private-key marker approvals also bind the whole fixture's bytes. Malformed,
+  duplicate, stale or missing approvals fail the gate, including partial hooks.
 
 ### October 2 follow-ups to #135
 

@@ -60,12 +60,7 @@ CANCELLABLE_PUSH_RUNS = {
 }
 # Explicit, justified exceptions to the failure-suppression rule, keyed by the
 # workflow and the exact stripped `run:` line.
-SUPPRESSION_EXCEPTIONS = {
-    (
-        "dco.yml",
-        'if [ "$(git rev-list --min-parents=2 --max-parents=2 -1 "$sha" 2>/dev/null || true)" = "$sha" ]; then',
-    ): "a failed merge probe prints nothing, so the commit counts as a non-merge and its sign-off is checked",
-}
+SUPPRESSION_EXCEPTIONS: dict[tuple[str, str], str] = {}
 
 
 @pytest.mark.parametrize("fail_check", [False, True])
@@ -679,9 +674,9 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         ),
         pytest.param(
             ".github/workflows/dco.yml",
-            _replace("2>/dev/null || true)", "2>/dev/null || :)"),
+            _replace('git cat-file -e "${HEAD_SHA}^{commit}"', 'git cat-file -e "${HEAD_SHA}^{commit}" || :'),
             "suppresses a failure",
-            id="changed-exception-line",
+            id="dco-suppressed-ref-check",
         ),
         pytest.param(
             ".github/workflows/ci.yml",
@@ -944,12 +939,22 @@ def test_ci_secret_check_scans_tracked_files_only(tmp_path: Path) -> None:
     token = "ghp_" + "A1b2C3d4" * 4 + "E5f6"  # shaped like a GitHub token; not a credential
     planted = {
         "app.py": "print('ok')\n",
-        "tests/test_fixture.py": f"TOKEN = {token!r}\n",  # excluded by the script itself
-        "shadowscan/signatures/data/pack.yaml": f"example: {token}\n",  # excluded by the script itself
+        "tests/test_fixture.py": f"TOKEN = {token!r}\n",  # explicitly approved synthetic value
+        "shadowscan/signatures/data/pack.yaml": f"example: {token}\n",  # explicitly approved synthetic value
     }
     for name, text in planted.items():
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text(text, encoding="utf-8")
+    from tools.check_secrets import digest
+
+    approvals = [
+        {"path": name, "family": "GitHub token", "sha256": digest(token), "reason": "Synthetic fixture."}
+        for name in planted
+        if name != "app.py"
+    ]
+    (repo / "tools" / "secret_allowlist.json").write_text(
+        json.dumps({"version": 1, "entries": approvals}), encoding="utf-8"
+    )
     (repo / "untracked.py").write_text(f"TOKEN = {token!r}\n", encoding="utf-8")
     env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
 
@@ -1305,6 +1310,8 @@ def test_container_evidence_cli_retains_blocked_results_and_fails_the_job(
     "case,passes",
     [
         ("signed", True),
+        ("signed_merge", True),
+        ("unsigned_merge", False),
         ("mixed_case", True),
         ("divergent", True),
         ("unsigned", False),
@@ -1389,6 +1396,17 @@ def test_dco_executes_against_real_commit_ranges(tmp_path: Path, case: str, pass
             }
     git("commit", "--allow-empty", "-qm", message, extra_env=extra)
     head = git("rev-parse", "HEAD")
+    if case in {"signed_merge", "unsigned_merge"}:
+        # A valid merge commit can add content that neither parent authored.
+        # Certifying the feature parent must not certify these extra changes.
+        introduced = tmp_path / "merge-only.txt"
+        introduced.write_text("New content authored in the merge\n", encoding="utf-8")
+        git("add", introduced.name)
+        tree = git("write-tree")
+        merge_message = signed if case == "signed_merge" else "Unsigned merge"
+        head = git("commit-tree", tree, "-p", base, "-p", head, "-m", merge_message)
+        assert git("show", f"{head}:{introduced.name}") == "New content authored in the merge"
+        assert len(git("show", "-s", "--format=%P", head).split()) == 2
     if case == "divergent":
         git("checkout", "-q", "main")
         git("commit", "--allow-empty", "-qm", "Main advanced")
