@@ -1155,3 +1155,39 @@ def test_default_excluded_directory_that_gains_a_file_is_disclosed_despite_the_c
     replayed = Engine(cfg, index).run()
     assert replayed.stats[0].cached
     assert replayed.stats[0].warnings == changed.stats[0].warnings
+
+
+def test_deeper_default_excluded_probe_cannot_reuse_complete_entry_limited_scan(tmp_path, index):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["max_entries"] = 4
+    vendored = tmp_path / "repo" / "vendor"
+    vendored.mkdir()
+    source = vendored / "file.txt"
+    source.write_text("ignored source\n")
+    first = Engine(cfg, index).run()
+    assert first.complete
+    assert Engine(cfg, index).run().stats[0].cached
+
+    # Only descendants of the excluded directory change. Its non-empty
+    # status stays the same, but finding a file now exceeds max_entries.
+    nested = vendored / "a" / "b" / "c"
+    nested.mkdir(parents=True)
+    source.rename(nested / source.name)
+    changed = Engine(cfg, index).run()
+    assert not changed.stats[0].cached and not changed.complete
+    assert any("max_entries (4)" in issue for issue in changed.stats[0].errors)
+
+    cfg.incremental = False
+    full_scan = Engine(cfg, index).run()
+    assert full_scan.complete == changed.complete
+    assert full_scan.stats[0].errors == changed.stats[0].errors
+
+
+def test_default_excluded_probe_consumes_the_fingerprint_entry_budget(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    nested = tmp_path / "repo" / "vendor" / "a" / "b" / "c"
+    nested.mkdir(parents=True)
+    (nested / "file.txt").write_text("ignored source\n")
+    monkeypatch.setattr("shadowscan.incremental._MAX_HASH_ENTRIES", 5)
+    cache = IncrementalCache(cfg, index)
+    assert cache.snapshot(cfg.connectors[0]) is None

@@ -5,6 +5,19 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 3 incremental enumeration-budget review
+
+- Incremental fingerprints now include the number of entries inspected by
+  coverage probes in default-excluded directories. Moving a vendored file
+  deeper can exceed `max_entries` without changing the probe's non-empty
+  result; previously that change could reuse a cached complete scan. The
+  changed fingerprint forces a full scan, which reports incomplete coverage
+  when the entry limit is exhausted. Probes also share the fingerprint's
+  cancellation, deadline and entry budgets. Regression tests cover cache
+  invalidation and fingerprint-budget accounting.
+- The testing guide now documents exact synthetic-secret approvals rather
+  than the removed directory exclusions and placeholder-word exemptions.
+
 ### October 3 merge integration hygiene
 
 - DCO checks every commit in the pull-request range, including merge commits.

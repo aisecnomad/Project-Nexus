@@ -32,6 +32,7 @@ from shadowscan.connectors.code.filesystem import (
     DISCLOSED_DEFAULT_EXCLUDES,
     VCS_METADATA_EXCLUDES,
     _holds_file,
+    _WalkBudget,
 )
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
@@ -328,8 +329,14 @@ def _tree_digest(
                 if name in built_in and name in DISCLOSED_DEFAULT_EXCLUDES:
                     # The scan warns about a skipped directory of this name that
                     # holds a file; a cached result must not drop that warning.
+                    # Probe work also consumes the scanner's max_entries budget:
+                    # the same non-empty result at a deeper path can turn a
+                    # previously complete scan into an incomplete one.
                     skipped = path.relative_to(root).as_posix()
-                    digest.update(_json(["skipped-directory", skipped, _holds_file(path)]))
+                    probe = _WalkBudget(check_deadline=budget.check)
+                    holds_file = _holds_file(path, probe)
+                    budget.check(entries=probe.entries)
+                    digest.update(_json(["skipped-directory", skipped, holds_file, probe.entries]))
                 continue
             if path.is_symlink():
                 # Ancillary readers such as CODEOWNERS can inspect descendants

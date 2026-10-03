@@ -1921,6 +1921,15 @@ directory-only and fully excluded trees check both during enumeration.
 `max_entries` to each checkout. Increase the entry limit explicitly when
 a reviewed scan scope needs it, and retain operating-system memory limits.
 
+Incremental fingerprints include the entry count of coverage probes inside
+default-excluded directories, as well as whether those probes find a file.
+Changing only descendants of an excluded directory can therefore invalidate
+the cache when finding its contents requires more entries. A previously complete
+cached scan cannot mask new `max_entries` exhaustion. These probes share the
+fingerprint's entry, cancellation and deadline budgets. Earlier candidate
+cache entries miss automatically after this scanner-source change; no manual
+state migration is needed.
+
 Incremental state uses nonblocking advisory `flock` per cache slot
 (`<sha256>.lock`): shared for reading and exclusive for publication, as well as
 atomic writes and current-input fingerprint checks.
