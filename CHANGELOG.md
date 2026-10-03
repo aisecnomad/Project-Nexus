@@ -7,16 +7,13 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Agent registry lab
 
-- `examples/labs/agent-registry-lab.ipynb` is a notebook lab that creates an
-  agent on Amazon Bedrock AgentCore Runtime and on Gemini Enterprise Agent
-  Platform's Agent Runtime, registers each in the platform registry (an AWS
-  Agent Registry record with its approval workflow; an Agent Registry service
-  with its derived agent, plus the Gemini Enterprise app registration),
-  discovers them as a consumer and binds the deployed runtimes in a sanctioned
-  inventory. A credential-free dry-run mode validates every request against
-  the SDK service models. The cloud connectors still observe runtimes only;
-  neither registry is a scan surface. `examples/labs/README.md` and the cloud
-  connector guide describe the lab.
+- `examples/labs/agent-registry-lab.ipynb` is a short notebook lab that
+  defines an agent with an A2A agent card, registers it in AWS Agent Registry
+  (registry, `AGENT` record, approval workflow) and in the Agent Registry of
+  Gemini Enterprise Agent Platform (service and derived agent), discovers it
+  as a consumer and deletes everything again. `examples/labs/README.md` and
+  the cloud connector guide describe it. The cloud connectors still observe
+  deployed runtimes only; neither registry is a scan surface.
 
 ### October 3 incremental enumeration-budget review
 

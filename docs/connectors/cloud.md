@@ -166,8 +166,8 @@ registry: a registered agent that was never deployed produces no finding, and a
 deployed agent that nobody registered is a shadow finding until an inventory
 card claims it. The
 [agent registry lab notebook](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/labs/agent-registry-lab.ipynb)
-creates an agent on each platform, registers it, discovers it as a consumer and
-binds the deployed runtime in a sanctioned inventory.
+registers an A2A agent card in each registry and discovers it as a consumer,
+which gives you known registry entries to compare scan results against.
 
 ## Scaling
 
