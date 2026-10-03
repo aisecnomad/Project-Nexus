@@ -4,8 +4,8 @@ The versioned [ruleset policy](https://github.com/aisecnomad/Project-Nexus/blob/
 is a desired configuration, not evidence that GitHub is enforcing it. Both
 visible repository rulesets have been enabled and disabled several times since
 2026-09; the dated readbacks are under
-[merge gate and review status](../production.md#merge-gate-and-review-status),
-and the most recent one found both disabled. Separate classic branch protection
+[merge gate and review status](../production.md#merge-gate-and-review-status)
+and include disabled snapshots. Separate classic branch protection
 was unavailable to the integration used for those reads. Check the live
 settings rather than treating any dated observation as permanent.
 

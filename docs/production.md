@@ -563,7 +563,7 @@ The [two-ruleset payload helper](https://github.com/aisecnomad/Project-Nexus/tre
 additionally prepares `Protect main` and `Require CI and CodeQL` together,
 removing bypass actors from both. The observed snapshots and proposed PUT
 bodies are in [.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
-Both rulesets remained disabled during this implementation readback. Refresh
+The committed observed snapshots capture disabled rulesets. Refresh
 those observations and regenerate the bodies before applying them; the files
 are preparation, not evidence of active enforcement. After administrator PUTs,
 compare each fresh full API response against its exact approved body:
