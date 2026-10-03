@@ -19,6 +19,7 @@ from shadowscan.models import Finding, Kind, ScanStats, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
 from shadowscan.utils import digest as digest_module
+from shadowscan.utils.git import git_argv_prefix, safe_git_env
 
 
 def config(tmp_path: Path, **overrides) -> ScanConfig:
@@ -681,6 +682,88 @@ def test_gitfile_checkout_is_not_eligible_for_git_aware_reuse(tmp_path, index):
     (tmp_path / "repo" / ".git").write_text(f"gitdir: {external}\n")
     cache = IncrementalCache(cfg, index)
     assert cache.snapshot(cfg.connectors[0]) is None
+
+
+@pytest.mark.parametrize("layout", ["config-include", "common-directory", "internal-link"])
+def test_git_fingerprint_refuses_unconfined_metadata_before_git(tmp_path, index, monkeypatch, layout):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["use_git"] = True
+    marker = tmp_path / "repo" / ".git"
+    marker.mkdir()
+    external = tmp_path / "outside"
+    external.mkdir()
+    if layout == "config-include":
+        (marker / "config").write_text(f'[include]\n path = "{external / "config"}"\n')
+    elif layout == "common-directory":
+        (marker / "commondir").write_text(f"{external}\n")
+    else:
+        (marker / "objects").symlink_to(external, target_is_directory=True)
+    cache = IncrementalCache(cfg, index)
+
+    def unexpected_git(*args, **kwargs):
+        pytest.fail("unconfined metadata reached Git during fingerprinting")
+
+    monkeypatch.setattr("shadowscan.incremental.subprocess.run", unexpected_git)
+    assert cache.snapshot(cfg.connectors[0]) is None
+
+
+@pytest.mark.requires_git_2_45
+def test_unsafe_metadata_change_cannot_reuse_complete_scan(tmp_path, index):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["use_git"] = True
+    repo = tmp_path / "repo"
+
+    def git(*args):
+        subprocess.run(
+            [*git_argv_prefix(), "-c", "commit.gpgsign=false", "-C", str(repo), *args],
+            check=True,
+            capture_output=True,
+            env=safe_git_env(),
+        )
+
+    git("init")
+    git("config", "user.name", "Synthetic")
+    git("config", "user.email", "synthetic@example.invalid")
+    git("add", "requirements.txt")
+    git("-c", "maintenance.auto=false", "commit", "-m", "initial")
+    assert Engine(cfg, index).run().complete
+    assert Engine(cfg, index).run().stats[0].cached
+
+    external = tmp_path / "outside.config"
+    external.write_text("[core]\n bare = false\n")
+    with (repo / ".git" / "config").open("a") as stream:
+        stream.write(f'\n[include]\n path = "{external}"\n')
+    result = Engine(cfg, index).run()
+    assert not result.complete and not result.stats[0].cached
+    assert result.findings
+    assert any("metadata" in warning or "gitlinks" in warning for warning in result.stats[0].warnings)
+
+
+def test_git_preflight_obeys_deadline_and_rechecks_cancellation(tmp_path, index, monkeypatch):
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["use_git"] = True
+    (tmp_path / "repo" / ".git").mkdir()
+    cache = IncrementalCache(cfg, index)
+    cancelled = False
+    timeouts = []
+
+    def preflight(root, *, timeout):
+        nonlocal cancelled
+        timeouts.append(timeout)
+        cancelled = True
+
+    def check_deadline():
+        if cancelled:
+            raise ConnectorError("connector completion deadline exceeded")
+
+    def unexpected_git(*args, **kwargs):
+        pytest.fail("cancelled fingerprint reached Git after metadata preflight")
+
+    monkeypatch.setattr("shadowscan.incremental.require_local_git_metadata", preflight)
+    monkeypatch.setattr("shadowscan.incremental.subprocess.run", unexpected_git)
+    with pytest.raises(ConnectorError, match="deadline"):
+        cache.snapshot(cfg.connectors[0], check_deadline=check_deadline, deadline=time.monotonic() + 5)
+    assert len(timeouts) == 1 and 0 < timeouts[0] <= 5
 
 
 def test_fingerprinting_propagates_connector_cancellation(tmp_path, index):

@@ -270,6 +270,12 @@ while Git runs; preflight is not a filesystem snapshot or process sandbox.
 Unsupported versions and failed metadata reads, including unavailable history
 objects, make the scan incomplete while preserving code findings.
 
+Incremental scans with `use_git: true` run the same bounded preflight before
+Git fingerprinting and cache reuse, within the connector deadline. Unsafe
+metadata disables reuse; the full scan retains source findings and reports
+incomplete coverage. Updating the scanner invalidates previous cache entries
+through its source digest.
+
 Metadata commands disable hooks, lazy fetching and every transport. Authenticated
 cloning uses a separate HTTPS-only policy. Remote JSON fields such as
 `_local_path` cannot select local scan roots or substitute for a verified offline

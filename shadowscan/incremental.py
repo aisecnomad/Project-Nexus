@@ -36,7 +36,7 @@ from shadowscan.connectors.code.filesystem import (
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
-from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
+from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env, require_local_git_metadata
 from shadowscan.utils.redaction import sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 
@@ -206,6 +206,11 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
         raise ValueError("git metadata must be a local .git directory")
     if os.environ.get("GIT_REPLACE_REF_BASE") or os.environ.get("GIT_SHALLOW_FILE"):
         raise ValueError("external git history override")
+    # A cache lookup must enforce the same confinement as collection before
+    # Git reads any configuration. Recheck even for an unchanged HEAD: unsafe
+    # metadata must not authorize reuse of a previously complete scan.
+    require_local_git_metadata(root, timeout=budget.timeout(10))
+    budget.check()
 
     def git(*args: str) -> bytes:
         budget.check()

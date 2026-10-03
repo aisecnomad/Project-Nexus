@@ -5,6 +5,14 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 3 incremental metadata confinement
+
+- Incremental scans with `use_git: true` apply the bounded Git metadata
+  preflight before fingerprinting, including when considering a cache hit.
+  Unsafe metadata disables reuse and the full scan reports incomplete coverage
+  while retaining source findings. This matches the existing history-enrichment
+  policy; the preflight shares the connector deadline.
+
 ### October 2 follow-ups to #135
 
 - `test-macos (3.11)` failed `main` after #135 merged. The confinement test for
