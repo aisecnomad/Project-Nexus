@@ -14,6 +14,11 @@ summarizes each release for people who install and operate ShadowScan.
   as a consumer and deletes everything again. `examples/labs/README.md` and
   the cloud connector guide describe it. The cloud connectors still observe
   deployed runtimes only; neither registry is a scan surface.
+- `examples/labs/agent-registry-lab-console.md` is the console-only edition
+  of the same lab for non-technical AI governance students: publisher,
+  curator and consumer roles, approval and retirement in the AWS console,
+  Gemini Enterprise and the Agent Registry page on Google Cloud, discussion
+  questions and instructor preparation notes.
 
 ### October 3 incremental enumeration-budget review
 

@@ -1,11 +1,12 @@
 # Labs
 
-Hands-on notebooks for the platforms ShadowScan reconciles against. They
+Hands-on labs for the platforms ShadowScan reconciles against. They
 create real cloud resources: run them in sandbox accounts and projects, and
 keep credentials in your environment rather than in cells.
 
 | Lab | What it does | Time |
 | --- | --- | --- |
+| [`agent-registry-lab-console.md`](agent-registry-lab-console.md) | Console-only edition for non-technical AI governance students: the same registration flow through the AWS and Google Cloud consoles, with publisher, curator and consumer roles, discussion questions and instructor preparation notes. No code. | about 45 minutes plus discussion |
 | [`agent-registry-lab.ipynb`](agent-registry-lab.ipynb) | Defines an agent with an A2A agent card, registers it in AWS Agent Registry (registry, record, approval) and in the Agent Registry of Gemini Enterprise Agent Platform (service and derived agent), discovers it as a consumer, and deletes everything. | about 15 minutes |
 
 ## Running the agent registry lab
