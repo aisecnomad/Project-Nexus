@@ -157,6 +157,18 @@ SDK objects become records through `oci.util.to_dict`, or through the model's
 declared fields when the SDK cannot be imported; an object that cannot be
 converted is skipped with a warning and makes the scan incomplete.
 
+## Agent registries
+
+AWS Agent Registry (part of Amazon Bedrock AgentCore) and the Agent Registry of
+Gemini Enterprise Agent Platform catalog the agents that someone registered.
+`cloud.aws` and `cloud.gcp` observe deployed runtimes and do not read either
+registry: a registered agent that was never deployed produces no finding, and a
+deployed agent that nobody registered is a shadow finding until an inventory
+card claims it. The
+[agent registry lab notebook](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/labs/agent-registry-lab.ipynb)
+creates an agent on each platform, registers it, discovers it as a consumer and
+binds the deployed runtime in a sanctioned inventory.
+
 ## Scaling
 
 Cloud collection issues its detail calls one at a time: Lambda tags per

@@ -23,6 +23,8 @@ htmlcov/
 /report.*
 /shadowscan-report*
 /exports/
+# Working directory of examples/labs notebooks (agent sources, inventory cards, reports).
+/lab-output/
 .env
 .env.*
 !.env.example
