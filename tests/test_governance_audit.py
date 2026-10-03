@@ -16,7 +16,8 @@ RULESET_IDS = (23892853, 23913372)
 
 
 @pytest.mark.parametrize(
-    "change", ["none", "disabled", "missing_gate", "wrong_repository", "denied", "malformed"]
+    "change",
+    ["none", "disabled", "missing_gate", "missing_bypass", "wrong_repository", "denied", "malformed"],
 )
 def test_scheduled_audit_requires_enforced_readback_without_admin_writes(tmp_path: Path, change: str) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/audit.yml").read_text())
@@ -39,6 +40,8 @@ def test_scheduled_audit_requires_enforced_readback_without_admin_writes(tmp_pat
     ruleset = snapshots["23913372"]
     if change == "disabled":
         ruleset["enforcement"] = "disabled"
+    elif change == "missing_bypass":
+        del ruleset["bypass_actors"]
     elif change == "wrong_repository":
         ruleset["source"] = "different/repository"
     elif change == "missing_gate":

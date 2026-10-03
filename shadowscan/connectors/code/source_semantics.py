@@ -5,8 +5,9 @@ JavaScript uses a bounded lexical resolver for imports and direct calls. Dynamic
 imports, re-exports and uncertain/shadowed JavaScript bindings remain supporting
 framework evidence. No scanned code is imported or executed.
 
-Python AST work is capped at 50,000 nodes and source calls at 512 per file;
-call expressions are bounded to 8 KiB. A Python file whose imports provably
+Python AST work and JavaScript literal-branch tokens are capped at 50,000 per
+file; JavaScript statement nesting is bounded to 128 levels and source calls to
+512 per file. Call expressions are bounded to 8 KiB. A Python file whose imports provably
 cannot resolve to any signature skips the binder at any size, since it could
 yield no evidence (``_python_bindable``, linear in the file and bounded to 4,096
 statement matches). Regex operations share the scanner's per-input deadline.
@@ -31,6 +32,11 @@ import regex
 
 from shadowscan.connectors.code.genkit_semantics import genkit_call_capabilities, genkit_tool_registration
 from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
+from shadowscan.connectors.code.javascript_reachability import (
+    JavascriptReachabilityLimit,
+    javascript_dead_ranges,
+)
+from shadowscan.connectors.code.javascript_tool_attribution import javascript_tool_regions
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.provider_tools import (
@@ -40,7 +46,13 @@ from shadowscan.connectors.code.provider_tools import (
     python_provider_tool_literals,
 )
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
-from shadowscan.connectors.code.source_capabilities import CallCapabilities, configured_capabilities
+from shadowscan.connectors.code.source_capabilities import (
+    CONFIGURED_FRAMEWORKS,
+    CallCapabilities,
+    configured_capabilities,
+    python_tool_argument_position,
+)
+from shadowscan.connectors.code.tool_attribution import python_tool_regions
 from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools, has_vercel_tool_loop
 from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
@@ -495,8 +507,12 @@ class _PythonBindings(ast.NodeVisitor):
         if (
             binding
             and binding.constructed
-            and (binding.module == "pydantic_ai" or binding.module.startswith("pydantic_ai."))
-            and _symbol_tail(binding.symbol) in {"Agent.tool", "Agent.tool_plain"}
+            and (
+                (binding.module == "pydantic_ai" or binding.module.startswith("pydantic_ai."))
+                and _symbol_tail(binding.symbol) in {"Agent.tool", "Agent.tool_plain"}
+                or (binding.module == "fastmcp" or binding.module.startswith("mcp."))
+                and _symbol_tail(binding.symbol) in {"FastMCP.tool", "MCPServer.tool", "Server.tool"}
+            )
             and (self.relevant is None or self.relevant(binding))
         ):
             if len(self.calls) >= MAX_BOUND_CALLS:
@@ -950,13 +966,17 @@ def _javascript_bindings(
     pieces.append(text[previous:])
     masked = "".join(pieces)
     bindings: dict[str, _Binding] = {}
+    binding_positions: dict[str, int] = {}
     imports: list[tuple[_Binding, int]] = []
+    import_positions: list[int] = []
     declaration_spans: list[tuple[int, int]] = []
 
-    def bind(name: str, module: str, symbol: str, line: int) -> None:
+    def bind(name: str, module: str, symbol: str, line: int, position: int) -> None:
         if re.fullmatch(r"[A-Za-z_$][\w$]*", name):
             bindings[name] = _Binding(module, symbol)
+            binding_positions[name] = position
             imports.append((bindings[name], line))
+            import_positions.append(position)
 
     rx = regex.compile(r"\bimport\s+(?!type\b)([^;]{1,2000}?)\s+from\s*(['\"])([^'\"\r\n]{1,240})\2")
     line_at = line_counter(text)
@@ -968,16 +988,16 @@ def _javascript_bindings(
         declaration_spans.append(match.span())
         namespace = re.search(r"\*\s+as\s+([\w$]+)", spec)
         if namespace:
-            bind(namespace.group(1), module, "", line)
+            bind(namespace.group(1), module, "", line, match.start())
         named = re.search(r"\{([^}]+)\}", spec)
         if named:
             for item in named.group(1).split(","):
                 parts = re.split(r"\s+as\s+", item.strip())
                 if parts and not parts[0].startswith("type "):
-                    bind(parts[-1], module, parts[0], line)
+                    bind(parts[-1], module, parts[0], line, match.start())
         default = re.match(r"\s*([A-Za-z_$][\w$]*)\s*(?:,|$)", spec)
         if default:
-            bind(default.group(1), module, "default", line)
+            bind(default.group(1), module, "default", line, match.start())
 
     rx = regex.compile(
         r"\b(?:const|let|var)\s+([\w$]+|\{[^}\r\n]{1,1000}\})\s*=\s*"
@@ -993,9 +1013,9 @@ def _javascript_bindings(
         if spec.startswith("{"):
             for item in spec[1:-1].split(","):
                 parts = [part.strip() for part in item.split(":")]
-                bind(parts[-1], module, parts[0], line)
+                bind(parts[-1], module, parts[0], line, match.start())
         else:
-            bind(spec, module, "", line)
+            bind(spec, module, "", line, match.start())
 
     # Only imported roots that can resolve to a loaded signature can produce
     # bound evidence. Narrow before the per-name shadow checks and call scan so
@@ -1004,7 +1024,36 @@ def _javascript_bindings(
     # reports every relevant import through its own signature lookup.
     if relevant is not None:
         bindings = {name: binding for name, binding in bindings.items() if relevant(binding)}
-    _drop_uncertain_bindings(bindings, masked, declaration_spans)
+    # Even a dead var/function declaration can shadow a name through JavaScript
+    # hoisting. Keep the conservative shadow check over the original code mask.
+    shadow_masked = masked
+    if bindings:
+        try:
+            dead = javascript_dead_ranges(text, masked, ignored)
+        except JavascriptReachabilityLimit as exc:
+            raise SourceBudgetExceeded(str(exc)) from exc
+        dead_starts = [start for start, _ in dead]
+
+        def unreachable(position: int) -> bool:
+            branch = bisect_right(dead_starts, position) - 1
+            return branch >= 0 and position < dead[branch][1]
+
+        bindings = {
+            name: binding for name, binding in bindings.items() if not unreachable(binding_positions[name])
+        }
+        imports = [
+            imported
+            for imported, position in zip(imports, import_positions, strict=True)
+            if not unreachable(position)
+        ]
+        pieces = []
+        previous = 0
+        for start, end in dead:
+            pieces.extend((masked[previous:start], re.sub(r"[^\r\n]", " ", masked[start:end])))
+            previous = end
+        pieces.append(masked[previous:])
+        masked = "".join(pieces)
+    _drop_uncertain_bindings(bindings, shadow_masked, declaration_spans)
     calls = _javascript_calls(text, masked, bindings)
     calls.extend(_javascript_genkit_calls(text, masked, calls))
     if len(calls) > MAX_BOUND_CALLS:
@@ -1354,36 +1403,101 @@ def bound_source_matches(
     found = _import_evidence(index, language, imports, module_matches)
     requests = _LoopRequests()
     tool_literal_cache = ProviderLiteralCache()
-    tool_literals = (
-        python_provider_tool_literals(
-            tree,
-            {
-                id(call.node)
-                for call in calls
-                if call.node is not None
+    tool_request_ids: set[int] = set()
+    positional_tools: dict[int, int] = {}
+    for call in calls:
+        if call.node is None:
+            continue
+        symbol = _symbol_tail(call.binding.symbol)
+        for match in module_matches(call.binding):
+            signature = match.signature
+            if (
+                signature.category == "provider"
                 and _TOOL_REQUEST_METHODS.search(call.binding.symbol)
                 and _TOOL_ARGUMENTS.search(call.structural_arguments)
-                and any(match.signature.category == "provider" for match in module_matches(call.binding))
-            },
-        )
-        if tree is not None
-        else {}
+            ):
+                tool_request_ids.add(id(call.node))
+            factory = _FACTORIES.get(signature.id)
+            if signature.id in CONFIGURED_FRAMEWORKS and factory and re.fullmatch(factory, symbol):
+                tool_request_ids.add(id(call.node))
+                position = python_tool_argument_position(signature.id, symbol)
+                if position is not None:
+                    positional_tools[id(call.node)] = position
+    tool_literals = (
+        python_provider_tool_literals(tree, tool_request_ids, positional_tools) if tree is not None else {}
     )
     graph_lines = _langgraph_agent_lines(tree, calls)
+    constructors: list[tuple[ast.Call, int | None]] = []
+    registrations: list[tuple[ast.Call | None, int, bool]] = []
+    javascript_constructors: list[tuple[int, int]] = []
+    mcp_constructors: list[tuple[int, int]] = []
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
         requests.record(language, call, signatures, tree is not None)
-        found.extend(
-            _call_evidence(
-                language,
-                call,
-                signatures,
-                graph_lines,
-                tool_literals.get(id(call.node), {}),
-                tool_literal_cache,
-            )
+        evidence = _call_evidence(
+            language,
+            call,
+            signatures,
+            graph_lines,
+            tool_literals.get(id(call.node), {}),
+            tool_literal_cache,
         )
-    found.extend(_protocol_evidence(index, tree, text, ignored, requests))
+        found.extend(evidence)
+        if language == "javascript" and any(match.extra.get("verified_agent") for match in evidence):
+            javascript_constructors.append((call.start, call.end))
+        if (
+            language == "javascript"
+            and call.binding.symbol == "McpServer"
+            and call.binding.module.startswith("@modelcontextprotocol/sdk/server/")
+        ):
+            mcp_constructors.append((call.start, call.end))
+        if call.node is not None and any(match.extra.get("verified_agent") for match in evidence):
+            symbol = _symbol_tail(call.binding.symbol)
+            position = (
+                0
+                if symbol == "initialize_agent"
+                else 1
+                if symbol in {"create_agent", "create_react_agent", "create_tool_calling_agent"}
+                else None
+            )
+            constructors.append((call.node, position))
+        if any(
+            match.signal.description == "import-bound Pydantic agent tool registration" for match in evidence
+        ) or (
+            call.decorator
+            and call.binding.constructed
+            and (call.binding.module == "fastmcp" or call.binding.module.startswith("mcp."))
+            and _symbol_tail(call.binding.symbol) in {"FastMCP.tool", "MCPServer.tool", "Server.tool"}
+        ):
+            registrations.append((call.node, call.line, call.decorator))
+    dispatch_calls: set[int] = set()
+    found.extend(_protocol_evidence(index, tree, text, ignored, requests, dispatch_calls))
+    if found:
+        if tree is not None:
+            regions = python_tool_regions(
+                text,
+                tree,
+                constructors,
+                registrations,
+                dispatch_calls,
+            )
+        else:
+            try:
+                regions = javascript_tool_regions(text, ignored, javascript_constructors, mcp_constructors)
+            except JavascriptReachabilityLimit as exc:
+                raise SourceBudgetExceeded(str(exc)) from exc
+        found[0].extra["registered_tool_regions"] = regions.bodies
+        found[0].extra["registered_tool_declarations"] = regions.declarations
+        for match in found:
+            span = match.extra.get("bound_call_span")
+            if (
+                span is not None
+                and "code-exec" in match.capabilities()
+                and match.signature.category == "framework"
+                and not match.extra.get("verified_agent")
+                and not any(start <= span[0] < end for start, end in regions.bodies)
+            ):
+                match.extra["contextual_capabilities"] = match.capabilities()
     return found
 
 
@@ -1483,6 +1597,7 @@ def _call_evidence(
             arguments=call.arguments,
             masked=call.structural_arguments,
             verified_graph=signature.id == "framework.langgraph" and symbol == "StateGraph" and verified,
+            python_literals=tool_literals,
         )
         if signature.id == "framework.genkit":
             verified, configured = genkit_call_capabilities(
@@ -1622,6 +1737,8 @@ def _call_evidence(
                     extra=capabilities.metadata(True, []),
                 )
             )
+    for match in found:
+        match.extra["bound_call_span"] = (call.start, call.end)
     return found
 
 
@@ -1631,6 +1748,7 @@ def _protocol_evidence(
     text: str,
     ignored: list[tuple[int, int]],
     requests: _LoopRequests,
+    dispatch_calls: set[int],
 ) -> list[Match]:
     """Return tool-calling protocol evidence from the loops and dispatch around bound requests."""
     protocol = index.get("protocol.openai-function-calling")
@@ -1638,7 +1756,7 @@ def _protocol_evidence(
         return []
     found: list[Match] = []
     if tree is not None:
-        for line in provider_tool_loop_lines(tree, requests.provider):
+        for line in provider_tool_loop_lines(tree, requests.provider, dispatch_calls=dispatch_calls):
             found.append(
                 Match(
                     protocol,
@@ -1655,7 +1773,7 @@ def _protocol_evidence(
                     extra={"verified_agent": True},
                 )
             )
-        for line in responses_tool_loop_lines(tree, requests.responses):
+        for line in responses_tool_loop_lines(tree, requests.responses, dispatch_calls=dispatch_calls):
             found.append(
                 Match(
                     protocol,
@@ -1674,7 +1792,7 @@ def _protocol_evidence(
                 )
             )
     dispatch_lines = (
-        responses_dispatch_lines(tree, requests.responses)
+        responses_dispatch_lines(tree, requests.responses, dispatch_calls=dispatch_calls)
         if tree is not None
         else javascript_responses_dispatch_lines(text, ignored, requests.javascript_constructors)
     )

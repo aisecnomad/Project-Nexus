@@ -262,6 +262,7 @@ def _assign(
     dispatch: bool,
     declared_tools: set[str],
     imports: dict[str, str],
+    dispatch_calls: set[int] | None = None,
 ) -> None:
     targets, expression = _assignment(statement)
     kind = _value(expression, values) if expression is not None else None
@@ -286,6 +287,8 @@ def _assign(
             )
             if dispatch and target_is_tool:
                 kind = "result"
+                if dispatch_calls is not None:
+                    dispatch_calls.add(id(call))
             elif name in {"loads", "str", "bytes", "dict"}:
                 kind = "arguments"
         elif any(_depends(argument, values, "result", budget) for argument in arguments) and name in {
@@ -439,6 +442,7 @@ def _tool_iteration(
     declared_tools: set[str],
     imports: dict[str, str],
     collected: set[str],
+    dispatch_calls: set[int],
 ) -> bool:
     for number, action in enumerate(body):
         budget.tick()
@@ -458,18 +462,40 @@ def _tool_iteration(
                     declared_tools,
                     imports,
                     collected,
+                    dispatch_calls,
                 )
             # Branch-local proof: nothing bound inside a branch is trusted after it.
-            if any(
-                _tool_iteration(branch, local.copy(), history, budget, declared_tools, imports, collected)
-                for branch in (action.body, action.orelse)
-            ):
-                return True
+            for branch in (action.body, action.orelse):
+                branch_calls = set(dispatch_calls)
+                branch_collected: set[str] = set()
+                proved = _tool_iteration(
+                    branch,
+                    local.copy(),
+                    history,
+                    budget,
+                    declared_tools,
+                    imports,
+                    branch_collected,
+                    branch_calls,
+                )
+                if proved or branch_collected:
+                    dispatch_calls.update(branch_calls)
+                    collected.update(branch_collected)
+                if proved:
+                    return True
         elif _feedback(action, history, local, budget):
             return True
         elif (results := _collected(action, history, local, budget)) is not None:
             collected.add(results)
-        _assign(action, local, budget, dispatch=True, declared_tools=declared_tools, imports=imports)
+        _assign(
+            action,
+            local,
+            budget,
+            dispatch=True,
+            declared_tools=declared_tools,
+            imports=imports,
+            dispatch_calls=dispatch_calls,
+        )
     return False
 
 
@@ -480,6 +506,7 @@ def _statements(
     budget: _Budget,
     declared_tools: set[str],
     imports: dict[str, str],
+    dispatch_calls: set[int],
 ) -> bool:
     for number, statement in enumerate(statements):
         budget.tick()
@@ -489,13 +516,19 @@ def _statements(
             if isinstance(statement.test, ast.Constant):
                 selected = statement.body if bool(statement.test.value) else statement.orelse
                 return _statements(
-                    [*selected, *statements[number + 1 :]], values, history, budget, declared_tools, imports
+                    [*selected, *statements[number + 1 :]],
+                    values,
+                    history,
+                    budget,
+                    declared_tools,
+                    imports,
+                    dispatch_calls,
                 )
-            if any(
-                _statements(branch, values.copy(), history, budget, declared_tools, imports)
-                for branch in (statement.body, statement.orelse)
-            ):
-                return True
+            for branch in (statement.body, statement.orelse):
+                branch_calls = set(dispatch_calls)
+                if _statements(branch, values.copy(), history, budget, declared_tools, imports, branch_calls):
+                    dispatch_calls.update(branch_calls)
+                    return True
         elif (
             isinstance(statement, ast.For)
             and isinstance(statement.target, ast.Name)
@@ -504,11 +537,17 @@ def _statements(
             local = values.copy()
             local[statement.target.id] = "tool"
             collected: set[str] = set()
-            if _tool_iteration(statement.body, local, history, budget, declared_tools, imports, collected):
+            selected_calls = set(dispatch_calls)
+            if _tool_iteration(
+                statement.body, local, history, budget, declared_tools, imports, collected, selected_calls
+            ):
+                dispatch_calls.update(selected_calls)
                 return True
             _assign(statement, values, budget, dispatch=False, declared_tools=declared_tools, imports=imports)
             for name in collected:
                 values[name] = "results"
+            if collected:
+                dispatch_calls.update(selected_calls)
             continue
         elif _feedback(statement, history, values, budget):
             return True
@@ -525,11 +564,12 @@ def _request_loop(
     budget: _Budget,
     declared_tools: set[str],
     imports: dict[str, str],
+    dispatch_calls: set[int],
 ) -> bool:
     values = {response: kind}
     if _history_rebound(loop, history, budget):
         return False
-    return _statements(following, values, history, budget, declared_tools, imports)
+    return _statements(following, values, history, budget, declared_tools, imports, dispatch_calls)
 
 
 _RAW_METHOD = "with_raw_response"
@@ -630,7 +670,9 @@ def _loop_request(
     return None
 
 
-def provider_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[int]:
+def provider_tool_loop_lines(
+    tree: ast.AST, request_calls: set[int], *, dispatch_calls: set[int] | None = None
+) -> list[int]:
     """Return request lines with the supported request/dispatch/feedback flow.
 
     ``request_calls`` contains only AST calls whose import-bound provenance is
@@ -667,8 +709,19 @@ def provider_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[int
             ):
                 continue
             following = [*inner, *loop.body[number + 1 :]]
+            selected_calls: set[int] = set()
             if _request_loop(
-                loop, following, response, kind, history.id, budget, _declared_tools(tools, budget), imports
+                loop,
+                following,
+                response,
+                kind,
+                history.id,
+                budget,
+                _declared_tools(tools, budget),
+                imports,
+                selected_calls,
             ):
                 lines.add(call.lineno)
+                if dispatch_calls is not None:
+                    dispatch_calls.update(selected_calls)
     return sorted(lines)

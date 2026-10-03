@@ -16,10 +16,10 @@ from shadowscan.connectors.gateway.logs import (
     normalise,
     normalise_with_record,
 )
+from shadowscan.connectors.gateway.logs import _binding_credential_id as credential_id
 from shadowscan.correlation import correlate_runtime
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, ScanStats, Surface
-from shadowscan.utils.redaction import credential_id
 
 
 def _scan(index, records, **config):
@@ -269,8 +269,9 @@ def test_short_key_id_embedded_in_other_fields_is_removed_from_report(index, rec
     assert not ctx.stats.incomplete
 
 
-def test_imported_public_fingerprint_is_withheld_without_losing_exact_binding(index):
-    public_id = credential_id("t1")
+@pytest.mark.parametrize("scheme", ["sha256", "hmac-sha256"])
+def test_imported_public_fingerprint_is_withheld_without_losing_exact_binding(index, scheme):
+    public_id = f"credential:{scheme}:" + "a" * 64
     record = {
         "api_key_id": public_id,
         "model": public_id,
@@ -286,7 +287,7 @@ def test_imported_public_fingerprint_is_withheld_without_losing_exact_binding(in
         format="openai-usage",
         correlation_bindings=[
             {
-                "caller": f"openai:{public_id}",
+                "caller": f"openai:{credential_id(public_id)}",
                 "scope": {},
                 "code_resource": "github:org/app",
             }

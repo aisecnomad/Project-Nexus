@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 REDACTED = "[REDACTED]"
-_FINGERPRINT = re.compile(r"^credential:sha256:[a-f0-9]{64}$")
+_FINGERPRINT = re.compile(r"^credential:(?:hmac-)?sha256:[a-f0-9]{64}$")
 _SENSITIVE_SUFFIXES = (
     "apikey",
     "accesskey",

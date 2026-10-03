@@ -29,10 +29,10 @@ from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 
 _SCHEMA = "shadowscan.collection-scope/v1"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
-_EMBEDDED_CREDENTIAL_FINGERPRINT = re.compile(r"credential:sha256:[a-f0-9]{64}")
+_EMBEDDED_CREDENTIAL_FINGERPRINT = re.compile(r"credential:(?:hmac-)?sha256:[a-f0-9]{64}")
 MAX_REPORT_BYTES = 64 * 1024 * 1024
 # Environment variable with the operator's stable identity key; the engine
-# reads it. Gateway findings stay comparable across scans only under one key.
+# reads it. Gateway identities and credential pseudonyms are stable under one key.
 IDENTITY_KEY_ENV = "SHADOWSCAN_IDENTITY_KEY"
 _GATEWAY_SCOPE = "shadowscan.collection-scope.gateway.v1"
 
@@ -158,6 +158,15 @@ def build_collection_scope(
                     "signatures": index.fingerprint(),
                     "scanner": _scanner_digest(),
                     "version": __version__,
+                    # Key rotation invalidates comparisons using keyed
+                    # credential evidence without revealing the secret key.
+                    "credential_identity_key": (
+                        hmac.digest(
+                            identity_key, b"shadowscan.collection-scope.credential-key.v1", "sha256"
+                        ).hex()
+                        if identity_key is not None
+                        else None
+                    ),
                 }
             )
         ).hexdigest()

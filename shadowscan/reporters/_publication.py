@@ -13,7 +13,8 @@ from shadowscan.utils.redaction import sanitize
 # Every character terminal_text() renders visibly: C0 and C1 controls, bidi
 # formatting and line/paragraph separators.
 _TERMINAL_CONTROLS = re.compile(
-    "[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]"
+    "[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069"
+    "\ufeff\ud800-\udfff\U000e0000-\U000e007f]"
 )
 
 

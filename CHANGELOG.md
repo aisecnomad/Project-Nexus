@@ -5,6 +5,47 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 3 live merge-policy drift audit
+
+- The weekly dependency-audit workflow now independently checks both live main
+  rulesets against the reviewed update payloads using read-only GitHub API
+  requests. Disabled, weakened, malformed or unavailable policy evidence fails
+  the job. The audit does not apply settings or establish independent human
+  review; an administrator must apply and read back the documented updates.
+  Regression tests run the workflow's exact script against valid and invalid
+  synthetic API snapshots.
+
+### October 3 keyed credential evidence and invisible-character publication
+
+- Code and cloud credential evidence now uses domain-separated HMAC-SHA-256
+  pseudonyms rather than public SHA-256 digests of credentials. Engine workers
+  share one random private key per scan. The existing `SHADOWSCAN_IDENTITY_KEY`
+  opt-in supplies a stable key; it never enters configuration, reports or caches.
+  Credential-bearing static results are rescanned without that stable key;
+  stable-key rotation invalidates cached pseudonyms and collection comparability.
+  Cache format 4 requires a fresh scan of previous entries. Resource-based
+  finding IDs and existing private gateway exact-binding mappings are preserved.
+  Regenerate older reports and comparison baselines; their public credential
+  digests remain susceptible to candidate guessing. See the deployment guide.
+- Saved HTML, CSV and Markdown now expose zero-width characters, byte-order
+  marks, Unicode tag characters and lone surrogates consistently with terminal
+  tables. Printable source characters and intentional format whitespace remain.
+
+### October 3 source capability attribution
+
+- Unregistered tools and unrelated execution helpers no longer grant a
+  project's agent `tool-use` or `code-exec`, or raise its confidence. Their
+  evidence remains visible with zero weight and a contextual attribution;
+  unproven features remain in `potential_capabilities`. Narrow local Python
+  registrations, supported tool collections, direct unshadowed helper calls,
+  and verified provider dispatch retain connected execution evidence. Tool
+  registration does not establish runtime execution.
+- JavaScript/TypeScript binding excludes provably constant-dead literal
+  `if`/`else` and `while` branches while retaining executed alternatives and
+  conservative hoisted-name shadow checks. Dynamic conditions and unsupported
+  expression shapes remain possible source evidence. This is bounded static
+  recognition, not whole-program reachability analysis.
+
 ### October 3 incremental enumeration-budget review
 
 - Incremental fingerprints now include the number of entries inspected by
