@@ -50,7 +50,11 @@ def _repository(root, *, declarations=True, gitlink=True):
     if declarations:
         _declare(root)
     _git(root, "add", "requirements.txt", *([".gitmodules"] if declarations else []))
-    _git(root, "-c", "commit.gpgsign=false", "commit", "-qm", "synthetic source")
+    _git(
+        root,
+        *("-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"),
+        *("commit", "-qm", "synthetic source"),
+    )
     return root
 
 

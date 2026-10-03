@@ -909,7 +909,7 @@ def _source_repository(tmp_path, *, lfs_pointer=False):
     _run_git("-C", str(work), "add", "-A")
     _run_git(
         *("-C", str(work), "-c", "user.name=Test", "-c", "user.email=test@example.test"),
-        *("-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"),
+        *("-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "commit", "-q", "-m", "init"),
     )
     return work
 
@@ -949,7 +949,7 @@ def _clone_fetch(index, monkeypatch, tmp_path, cls, source, **config):
     return connector.ctx.stats
 
 
-@needs_git
+@pytest.mark.requires_git_2_45
 @pytest.mark.parametrize("cls", PROVIDERS)
 def test_clone_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index, monkeypatch, cls):
     stats = _clone_fetch(index, monkeypatch, tmp_path, cls, _source_repository(tmp_path, lfs_pointer=True))
@@ -959,7 +959,7 @@ def test_clone_with_an_lfs_pointer_is_incomplete_coverage(tmp_path, index, monke
     ]
 
 
-@needs_git
+@pytest.mark.requires_git_2_45
 @pytest.mark.parametrize("cls", PROVIDERS)
 def test_strict_coverage_makes_an_lfs_pointer_an_error(tmp_path, index, monkeypatch, cls):
     stats = _clone_fetch(
@@ -976,14 +976,14 @@ def test_strict_coverage_makes_an_lfs_pointer_an_error(tmp_path, index, monkeypa
     ]
 
 
-@needs_git
+@pytest.mark.requires_git_2_45
 @pytest.mark.parametrize("cls", PROVIDERS)
 def test_ordinary_clone_stays_complete(tmp_path, index, monkeypatch, cls):
     stats = _clone_fetch(index, monkeypatch, tmp_path, cls, _source_repository(tmp_path))
     assert stats.warnings == [] and not stats.incomplete
 
 
-@needs_git
+@pytest.mark.requires_git_2_45
 def test_clone_that_cannot_be_inspected_for_lfs_pointers_is_incomplete_coverage(tmp_path, index, monkeypatch):
     monkeypatch.setattr(remote, "checkout_has_lfs_pointers", lambda *args, **kwargs: None)
     stats = _clone_fetch(index, monkeypatch, tmp_path, GitHubConnector, _source_repository(tmp_path))

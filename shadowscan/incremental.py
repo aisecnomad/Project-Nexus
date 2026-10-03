@@ -32,11 +32,12 @@ from shadowscan.connectors.code.filesystem import (
     DISCLOSED_DEFAULT_EXCLUDES,
     VCS_METADATA_EXCLUDES,
     _holds_file,
+    _WalkBudget,
 )
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
-from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env
+from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env, require_local_git_metadata
 from shadowscan.utils.redaction import sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 
@@ -206,6 +207,11 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
         raise ValueError("git metadata must be a local .git directory")
     if os.environ.get("GIT_REPLACE_REF_BASE") or os.environ.get("GIT_SHALLOW_FILE"):
         raise ValueError("external git history override")
+    # A cache lookup must enforce the same confinement as collection before
+    # Git reads any configuration. Recheck even for an unchanged HEAD: unsafe
+    # metadata must not authorize reuse of a previously complete scan.
+    require_local_git_metadata(root, timeout=budget.timeout(10))
+    budget.check()
 
     def git(*args: str) -> bytes:
         budget.check()
@@ -323,8 +329,14 @@ def _tree_digest(
                 if name in built_in and name in DISCLOSED_DEFAULT_EXCLUDES:
                     # The scan warns about a skipped directory of this name that
                     # holds a file; a cached result must not drop that warning.
+                    # Probe work also consumes the scanner's max_entries budget:
+                    # the same non-empty result at a deeper path can turn a
+                    # previously complete scan into an incomplete one.
                     skipped = path.relative_to(root).as_posix()
-                    digest.update(_json(["skipped-directory", skipped, _holds_file(path)]))
+                    probe = _WalkBudget(check_deadline=budget.check)
+                    holds_file = _holds_file(path, probe)
+                    budget.check(entries=probe.entries)
+                    digest.update(_json(["skipped-directory", skipped, holds_file, probe.entries]))
                 continue
             if path.is_symlink():
                 # Ancillary readers such as CODEOWNERS can inspect descendants

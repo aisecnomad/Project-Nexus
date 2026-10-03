@@ -30,6 +30,9 @@ def _repository(root: Path) -> Path:
     _git(root, "init", "--quiet", "-b", "main")
     (root / "agent.py").write_text("from crewai import Agent\n")
     _git(root, "add", "agent.py")
+    # A commit starts `git maintenance run --auto`, which Git 2.47 and later
+    # detach. The background process holds .git/objects/maintenance.lock while
+    # the tests below rewrite .git, and its removal raced shutil.rmtree.
     _git(
         root,
         "-c",
@@ -38,6 +41,8 @@ def _repository(root: Path) -> Path:
         "user.email=synthetic-outside@example.test",
         "-c",
         "commit.gpgsign=false",
+        "-c",
+        "maintenance.auto=false",
         "commit",
         "--quiet",
         "-m",

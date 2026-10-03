@@ -180,6 +180,7 @@ _MENTION_SIGNALS = frozenset({"env", "name"})
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
 DEFAULT_MAX_NOTEBOOK_SIZE = 20 * 1024 * 1024
+DEFAULT_MAX_WALK_ENTRIES = 1_000_000
 
 DEFAULT_EXCLUDES = {
     ".git",
@@ -400,7 +401,7 @@ def _marks_project(directory: Path, names: Iterable[str]) -> bool:
     )
 
 
-def _holds_file(directory: Path) -> bool:
+def _holds_file(directory: Path, budget: _WalkBudget | None = None) -> bool:
     """Whether a skipped ``directory`` holds anything that is not a directory.
 
     Probes at most ``_EMPTY_DIRECTORY_PROBE_ENTRIES`` entries without following
@@ -415,10 +416,13 @@ def _holds_file(directory: Path) -> bool:
         return True
     pending = [directory]
     inspected = 0
+    budget = budget or _WalkBudget()
     while pending:
+        budget.check()
         try:
             with os.scandir(pending.pop()) as entries:
                 for entry in entries:
+                    budget.count_entry()
                     inspected += 1
                     if inspected > _EMPTY_DIRECTORY_PROBE_ENTRIES or not entry.is_dir(follow_symlinks=False):
                         return True
@@ -1078,6 +1082,10 @@ class FilesystemConnector(BaseConnector):
             "fonts, archives and compiled artifacts)"
         ),
         "max_files": "stop after this many files and symbolic links (default 100000)",
+        "max_entries": (
+            "stop after this many filesystem entries inspected during directory enumeration, including "
+            "directories, skipped entries and coverage probes (default 1000000); exhaustion is incomplete"
+        ),
         "max_notebook_size": (
             "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even "
             "when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a "
@@ -1127,6 +1135,9 @@ class FilesystemConnector(BaseConnector):
             ctx.get("max_file_size", 1_000_000), "code.filesystem: max_file_size"
         )
         self.max_files = _positive_limit(ctx.get("max_files", 100_000), "code.filesystem: max_files")
+        self.max_entries = _positive_limit(
+            ctx.get("max_entries", DEFAULT_MAX_WALK_ENTRIES), "code.filesystem: max_entries"
+        )
         self.scan_timeout = _scan_timeout(ctx.get("scan_timeout", 2.0))
         # max_ast_nodes and max_notebook_size are validated below.
         self.max_ast_nodes: int | None = ctx.get("max_ast_nodes")
@@ -1323,6 +1334,7 @@ class FilesystemConnector(BaseConnector):
         """
         relative = target.relative_to(root)
         target_rel = relative.as_posix()
+        budget = walk.budget if walk is not None else None
         if target.is_dir():
             # A directory alias changes every descendant's path. Even an
             # included target cannot prove that path-based signals at the
@@ -1347,9 +1359,9 @@ class FilesystemConnector(BaseConnector):
         # second agent definition, so the alias-only file-name signal is not a
         # gap. Project ownership and test classification must still match.
         if _is_coding_agent_doc(link_name) and _is_coding_agent_doc(target.name):
-            return _project_root(root, rel) == _project_root(root, target_rel) and _is_test_path(
-                rel
-            ) == _is_test_path(target_rel)
+            return _project_root(root, rel, budget=budget) == _project_root(
+                root, target_rel, budget=budget
+            ) and _is_test_path(rel) == _is_test_path(target_rel)
         # Only source aliases are equivalent without opening the link: config
         # and document parsing can depend on the file name and directory.
         if link_ext not in SOURCE_EXTENSIONS or Path(target.name).suffix.lower() != link_ext:
@@ -1357,9 +1369,9 @@ class FilesystemConnector(BaseConnector):
         # The real path must keep the alias's project ownership and evidence
         # weight; another project or a test directory would change both.
         cache = walk.project_roots if walk is not None else None
-        if _project_root(root, rel, cache) != _project_root(root, target_rel, cache) or _is_test_path(
-            rel
-        ) != _is_test_path(target_rel):
+        if _project_root(root, rel, cache, budget=budget) != _project_root(
+            root, target_rel, cache, budget=budget
+        ) or _is_test_path(rel) != _is_test_path(target_rel):
             return False
         # File-name signatures can apply to the alias but not the real file.
         target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
@@ -1468,7 +1480,8 @@ class FilesystemConnector(BaseConnector):
         # planted with links cannot hold the walk past it.
         deadline = self.ctx.deadline
         walk = _WalkCounters(
-            stop_at=None if deadline is None else deadline - deadline_margin(deadline - time.monotonic())
+            stop_at=None if deadline is None else deadline - deadline_margin(deadline - time.monotonic()),
+            budget=_WalkBudget(self.max_entries, self.ctx.check_deadline),
         )
 
         resolved_root = Path(os.path.realpath(root))
@@ -1493,7 +1506,8 @@ class FilesystemConnector(BaseConnector):
         # even when this source tree produces no findings (and no enrichment).
         if self.use_git and os.path.lexists(root / ".git"):
             self.check_gitlink_coverage(root)
-        for dirpath, dirnames, filenames in _walk_directories(root, walk_error):
+        for dirpath, dirnames, filenames in _walk_directories(root, walk_error, budget=walk.budget):
+            walk.budget.check()
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if ".gitmodules" in filenames:
@@ -1507,6 +1521,7 @@ class FilesystemConnector(BaseConnector):
                 roots.append(rel_dir)
                 proj = rel_dir
             for fn in sorted(filenames):
+                walk.budget.check()
                 shown = _report_name(fn)
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
                 if self._excluded_file(rel):
@@ -1552,11 +1567,12 @@ class FilesystemConnector(BaseConnector):
         """
         kept = []
         for name in sorted(dirnames):
+            walk.budget.check()
             shown = _report_name(name)
             rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
             if self._excluded(rel, name):
-                if self._disclosed_default_exclusion(rel, name) and _holds_file(path):
+                if self._disclosed_default_exclusion(rel, name) and _holds_file(path, walk.budget):
                     self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
                 continue
             try:
@@ -1739,6 +1755,8 @@ class FilesystemConnector(BaseConnector):
         self._default_skipped = {}
         try:
             self._walk_entries(scan)
+        except _WalkLimitError as exc:
+            self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
         finally:
             os.close(scan.root_fd)
             scan.root_fd = -1
@@ -3698,6 +3716,31 @@ def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int 
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
+class _WalkLimitError(ValueError):
+    """A bounded enumeration stopped; retain findings and report incomplete coverage."""
+
+
+@dataclass
+class _WalkBudget:
+    """Bound retained directory names and all auxiliary listings within one source-tree scan."""
+
+    maximum: int = DEFAULT_MAX_WALK_ENTRIES
+    check_deadline: Callable[[], None] | None = None
+    entries: int = 0
+
+    def check(self) -> None:
+        if self.check_deadline is not None:
+            # Completion failures use the connector's single canonical error.
+            # Only entry exhaustion is recoverable inside the directory walk.
+            self.check_deadline()
+
+    def count_entry(self) -> None:
+        self.check()
+        self.entries += 1
+        if self.entries > self.maximum:
+            raise _WalkLimitError(f"max_entries ({self.maximum}) reached during directory enumeration")
+
+
 @dataclass
 class _WalkCounters:
     """What one directory walk has examined so far, shared with its link checks."""
@@ -3708,9 +3751,16 @@ class _WalkCounters:
     # Directory (POSIX, relative to the root) -> project root of the files in
     # it, so a directory holding many links lists its ancestors once.
     project_roots: dict[str, str] = field(default_factory=dict)
+    budget: _WalkBudget = field(default_factory=_WalkBudget)
 
 
-def _project_root(root: Path, rel: str, cache: dict[str, str] | None = None) -> str:
+def _project_root(
+    root: Path,
+    rel: str,
+    cache: dict[str, str] | None = None,
+    *,
+    budget: _WalkBudget | None = None,
+) -> str:
     """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
 
     That is the deepest ancestor directory below the scan root holding a
@@ -3723,13 +3773,19 @@ def _project_root(root: Path, rel: str, cache: dict[str, str] | None = None) -> 
         return cache[directory]
     passed: list[str] = []
     result = "."
+    budget = budget or _WalkBudget()
     for parent in PurePosixPath(rel).parents:
         ancestor = parent.as_posix()
         if ancestor == ".":
             break
         passed.append(ancestor)
         try:
-            names = os.listdir(root / ancestor)
+            budget.check()
+            names = []
+            with os.scandir(root / ancestor) as entries:
+                for entry in entries:
+                    budget.count_entry()
+                    names.append(entry.name)
         except OSError:
             continue
         if _marks_project(root / ancestor, names):
@@ -3744,7 +3800,7 @@ def _project_root(root: Path, rel: str, cache: dict[str, str] | None = None) -> 
 
 
 def _walk_directories(
-    top: Path, onerror: Callable[[OSError], None]
+    top: Path, onerror: Callable[[OSError], None], *, budget: _WalkBudget | None = None
 ) -> Iterator[tuple[str, list[str], list[str]]]:
     """Walk ``top`` top-down like ``os.walk(top, followlinks=False, onerror=onerror)``, without recursion.
 
@@ -3753,16 +3809,21 @@ def _walk_directories(
     contract: a directory is yielded before its children, a link to a directory is
     listed in ``dirnames`` but never entered, the caller may prune or reorder
     ``dirnames`` in place, and a directory that cannot be listed is passed to
-    ``onerror`` and skipped.
+    ``onerror`` and skipped. Every name is charged before retention, including
+    names the caller later excludes. The shared budget also checks cancellation
+    and deadlines, and bounds auxiliary coverage probes.
     """
     stack = [os.fspath(top)]
+    budget = budget or _WalkBudget()
     while stack:
+        budget.check()
         current = stack.pop()
         dirs: list[str] = []
         files: list[str] = []
         try:
             with os.scandir(current) as entries:
                 for entry in entries:
+                    budget.count_entry()
                     try:
                         is_dir = entry.is_dir()
                     except OSError:
@@ -3773,6 +3834,7 @@ def _walk_directories(
             continue
         yield current, dirs, files
         for name in reversed(dirs):
+            budget.check()
             child = os.path.join(current, name)
             if not os.path.islink(child):
                 stack.append(child)
