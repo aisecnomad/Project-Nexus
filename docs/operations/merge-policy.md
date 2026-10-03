@@ -63,6 +63,23 @@ Any later push needs renewed review. Exercise the rule with an ordinary
 unapproved pull request: GitHub must refuse its merge. This check does not
 require weakening the rules or merging the probe.
 
+## Detect protection drift between commits
+
+The weekly [dependency and governance audit](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/audit.yml)
+has a separate read-only job that fetches both current rulesets and compares
+their repository identities and settings to the reviewed update payloads. It
+also runs on manual dispatch from `main`. A disabled rule, omitted bypass
+information, missing aggregate `CI gate`, wrong application binding, changed
+policy, malformed response or denied read fails the audit. Review any drift
+before intentionally updating the versioned policy, including stronger changes.
+
+The job uses only the workflow's read-only token and never applies settings or
+supplies an administrator credential. If GitHub withholds part of the response,
+an administrator must verify a full readback using the procedure above; the
+failed audit does not establish that protection is absent. The audit fails
+until administrator-applied settings match the reviewed policy. Adding this
+job does not enable protections or replace an independent human review.
+
 Repository administration and independent reviewer availability remain
 external prerequisites. Human-labeled holdouts and live tenant receipts are
 separate acceptance evidence; see [evaluation](../evaluation.md),
