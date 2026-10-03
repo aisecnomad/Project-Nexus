@@ -113,7 +113,8 @@ def test_enumeration_checks_completion_while_entries_are_ignored(
     assert FilesystemConnector(ctx).run() == []
     assert examined == [0, 1]
     assert ctx.stats.incomplete
-    assert any("directory enumeration" in message for message in ctx.stats.errors)
+    assert ctx.stats.skipped
+    assert ctx.stats.errors == ["connector completion deadline exceeded"]
 
 
 def test_max_files_keeps_its_file_limit_independently(tmp_path, run_connector):
