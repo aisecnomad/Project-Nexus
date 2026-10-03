@@ -3728,12 +3728,9 @@ class _WalkBudget:
 
     def check(self) -> None:
         if self.check_deadline is not None:
-            try:
-                self.check_deadline()
-            except ConnectorError:
-                raise _WalkLimitError(
-                    "directory enumeration cancelled or connector deadline exceeded"
-                ) from None
+            # Completion failures use the connector's single canonical error.
+            # Only entry exhaustion is recoverable inside the directory walk.
+            self.check_deadline()
 
     def count_entry(self) -> None:
         self.check()
