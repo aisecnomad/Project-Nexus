@@ -181,7 +181,7 @@ def test_repository_http_failure_is_a_warning_and_cleans_up(tmp_path, index, mon
     assert list(connector.analyze([_record()])) == []
     assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
     assert connector.ctx.stats.warnings == [
-        f"{cls.name}: acme/app: HTTP 502 for https://api.example.test/repository",
+        f"{cls.name}: acme/app: HTTP 502 for https://api.example.test",
     ]
     assert fetched and not fetched[0].exists()
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import ipaddress
 import json
+import logging
 import socket
 import traceback
 from unittest.mock import Mock
@@ -9,7 +11,9 @@ from unittest.mock import Mock
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
+from rich.console import Console
 
+from shadowscan.cli import _setup_logging
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.github import GitHubConnector, repository_target
 from shadowscan.connectors.code.gitlab import GitLabConnector
@@ -19,6 +23,7 @@ from shadowscan.utils.http import (
     _blocked_host,
     _blocked_ip,
     _DestinationPolicyAdapter,
+    diagnostic_url,
     validate_url,
 )
 
@@ -119,6 +124,91 @@ def test_http_error_never_retains_echoed_opaque_credentials():
     assert secret not in caught.value.url
     assert caught.value.body == ""
     assert secret not in str(HttpError(403, "https://api.example.com/items", secret))
+
+
+@pytest.mark.parametrize("status", [403, 500])
+def test_redirect_error_and_retry_diagnostics_omit_request_paths(monkeypatch, status):
+    opaque = "opaqueReviewCredential2026"
+    output = io.StringIO()
+    monkeypatch.setattr(
+        "shadowscan.cli.err_console",
+        Console(file=output, force_terminal=False, color_system=None, width=200),
+    )
+    monkeypatch.setattr("shadowscan.utils.http.time.sleep", Mock())
+    http, session = client(
+        response(status=302, headers={"Location": f"/{opaque}"}),
+        response(status=status),
+        response(status=status),
+        headers={"Authorization": f"Bearer {opaque}"},
+        max_retries=2,
+    )
+    # Exercise the normal CLI sink as well as the exception's retained fields.
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    try:
+        _setup_logging(verbose=0, quiet=False)
+        with pytest.raises(HttpError) as caught:
+            http.get_json("/items")
+    finally:
+        for handler in root.handlers:
+            handler.close()
+        root.handlers[:] = handlers
+        root.setLevel(level)
+    assert caught.value.url == "https://api.example.com"
+    assert opaque not in repr(vars(caught.value)) + str(caught.value) + repr(caught.value.args)
+    assert opaque not in output.getvalue()
+    assert session.request.call_count == (3 if status == 500 else 2)
+    if status == 500:
+        assert "HTTP 500 from https://api.example.com; retrying" in output.getvalue()
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        (
+            "https://user:opaque@api.example.com:8443/private?value=opaque#opaque",
+            "https://api.example.com:8443",
+        ),
+        ("https://[2001:4860:4860::8888]:8443/private", "https://[2001:4860:4860::8888]:8443"),
+        ("https://api.example.com:opaque/private", "<invalid HTTPS origin>"),
+        ("https://[opaque/private", "<invalid HTTPS origin>"),
+        ("https://api.example.com\\opaque/private", "<invalid HTTPS origin>"),
+        ("https://api.example.com%opaque/private", "<invalid HTTPS origin>"),
+        ("https://opaque\ud800/private", "<invalid HTTPS origin>"),
+        ("opaque/private", "<invalid HTTPS origin>"),
+        (None, "<invalid HTTPS origin>"),
+    ],
+)
+def test_http_diagnostic_urls_retain_only_valid_origins(url, expected):
+    assert diagnostic_url(url) == expected
+    error = HttpError(500, url)
+    assert error.url == expected
+    assert "opaque" not in str(error) + repr(error.args)
+
+
+@pytest.mark.parametrize("source", ["initial", "redirect", "pagination"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.com:opaqueReviewCredential2026/items",
+        "https://[opaqueReviewCredential2026]/items",
+    ],
+)
+def test_malformed_request_url_diagnostics_never_echo_url_values(source, url):
+    if source == "redirect":
+        http, session = client(response(status=302, headers={"Location": url}))
+    elif source == "pagination":
+        http, session = client(response({"value": [], "@odata.nextLink": url}))
+    else:
+        http, session = client()
+    with pytest.raises(ValueError) as caught:
+        if source == "pagination":
+            list(http.paginate_odata("/items"))
+        else:
+            http.get_json(url if source == "initial" else "/items")
+    assert str(caught.value) == "Invalid API URL"
+    assert "opaqueReviewCredential2026" not in "".join(traceback.format_exception(caught.value))
+    assert session.request.call_count == (0 if source == "initial" else 1)
 
 
 def test_denied_optional_get_marks_incomplete_through_callback():
@@ -913,7 +1003,7 @@ def test_incomplete_scan_message_for_a_denied_request_has_no_body():
     warnings = []
     http, _ = client(response({"message": body}, status=403), on_warning=warnings.append)
     assert http.try_get_json("/items", default=[]) == []
-    assert warnings == ["Collection incomplete: HTTP 403 for /v1/items"]
+    assert warnings == ["Collection incomplete: HTTP 403 for https://api.example.com"]
 
 
 @pytest.mark.parametrize("url", [None, b"https://api.example.com/x"])

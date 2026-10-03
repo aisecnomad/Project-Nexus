@@ -106,6 +106,33 @@ def test_metadata_reader_preserves_nonzero_status_without_diagnostic_contents(in
     _assert_cleaned(started)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX only")
+@pytest.mark.parametrize(
+    "payload",
+    [b"", b"100644 blob " + b"a" * 40 + b"\trequirements.txt\0", b"first\0second\0"],
+)
+def test_metadata_reader_drains_successful_child_that_exited_before_reading(index, monkeypatch, payload):
+    """A fast Git command may exit before either pipe is registered with the selector."""
+    started = _record_processes(monkeypatch)
+    original = git_module.subprocess.Popen
+
+    def exited_before_reading(*args, **kwargs):
+        proc = original(*args, **kwargs)
+        _wait_for_exit_without_reaping(proc.pid)
+        return proc
+
+    monkeypatch.setattr(git_module.subprocess, "Popen", exited_before_reading)
+    result = run_bounded_metadata(
+        [sys.executable, "-c", f"import os; os.write(1, {payload!r})"],
+        safe_git_env(),
+        _context(index),
+        strict_utf8=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout == payload.decode("utf-8") and result.stderr == ""
+    _assert_cleaned(started)
+
+
 @pytest.mark.parametrize("stdout_bytes,stderr_bytes", [(1025, 0), (0, 1025), (512, 513)])
 def test_metadata_reader_rejects_combined_output_overflow_and_reaps_process(
     index, monkeypatch, stdout_bytes, stderr_bytes

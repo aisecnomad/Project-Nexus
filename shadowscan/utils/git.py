@@ -883,7 +883,23 @@ def require_local_git_metadata(path: Path, *, timeout: float = 10.0) -> None:
         raise ValueError("git metadata must be a confined local directory") from None
 
 
-def read_gitlink_paths(path: Path, *, timeout: float = 10.0) -> list[str] | None:
+def _gitlink_failure(diagnostics: list[str] | None, reason: str, error: BaseException | None = None) -> None:
+    """Retain a controlled failure category without paths, stderr or exception text."""
+    if diagnostics is None:
+        return
+    # The confined metadata preflight translates OS errors to ValueError. Its
+    # context still carries the numeric errno, which distinguishes a permission
+    # failure from an unavailable descriptor without exposing the private path.
+    underlying = error if isinstance(error, OSError) else error.__context__ if error is not None else None
+    number = underlying.errno if isinstance(underlying, OSError) else None
+    if type(number) is int and 0 < number < 4096:
+        reason += f" (errno {number})"
+    diagnostics.append(reason)
+
+
+def read_gitlink_paths(
+    path: Path, *, timeout: float = 10.0, diagnostics: list[str] | None = None
+) -> list[str] | None:
     """Inventory committed gitlinks only where the caller already permits Git.
 
     Clone scans call this for their own checkout. Local scans require the
@@ -893,14 +909,19 @@ def read_gitlink_paths(path: Path, *, timeout: float = 10.0) -> list[str] | None
     None means coverage is unknown, including unsupported Git versions.
     HEAD also anchors incremental cache identity; staged-only modules require
     .gitmodules declarations, just as they do in metadata-free local scans.
+    An optional diagnostics list receives one controlled failure category, never
+    subprocess stderr, exception text or a path. Unknown coverage still returns
+    None; diagnostics must never turn a failed inventory into an empty one.
     """
     if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
+        _gitlink_failure(diagnostics, "invalid inventory deadline")
         return None
     duration = min(timeout, 10.0)
     deadline = time.monotonic() + duration
     try:
         require_local_git_metadata(path, timeout=duration)
-    except ValueError:
+    except ValueError as exc:
+        _gitlink_failure(diagnostics, "metadata preflight refused input", exc)
         return None
     env = metadata_git_env()
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
@@ -915,12 +936,23 @@ def read_gitlink_paths(path: Path, *, timeout: float = 10.0) -> list[str] | None
             max_bytes=_MAX_GITLINK_OUTPUT_BYTES,
             strict_utf8=True,
         )
-    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+    except MetadataTimeoutError:
+        _gitlink_failure(diagnostics, "metadata subprocess deadline exceeded")
+        return None
+    except MetadataOutputLimitError:
+        _gitlink_failure(diagnostics, "metadata subprocess output limit exceeded")
+        return None
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as exc:
+        _gitlink_failure(diagnostics, "metadata subprocess could not be read", exc)
         return None
     if result.returncode != 0:
+        _gitlink_failure(
+            diagnostics, f"metadata subprocess exited unsuccessfully (status {result.returncode})"
+        )
         return None
     output = result.stdout.encode("utf-8")
     if output and not output.endswith(b"\0"):
+        _gitlink_failure(diagnostics, "metadata output is not NUL-terminated")
         return None
     paths: set[str] = set()
     try:
@@ -928,17 +960,22 @@ def read_gitlink_paths(path: Path, *, timeout: float = 10.0) -> list[str] | None
             fields, name = entry.split(b"\t", 1)
             mode, object_type, object_id = fields.decode("ascii").split(" ")
             if not re.fullmatch(r"[0-7]{6}", mode) or not _OBJECT_ID_RX.fullmatch(object_id):
+                _gitlink_failure(diagnostics, "metadata output contains an invalid tree record")
                 return None
             if object_type not in {"blob", "commit"}:
+                _gitlink_failure(diagnostics, "metadata output contains an invalid object type")
                 return None
             if mode == "160000":
                 if object_type != "commit":
+                    _gitlink_failure(diagnostics, "metadata output contains an invalid gitlink type")
                     return None
                 paths.add(_submodule_path(name.decode("utf-8")))
             elif object_type != "blob":
+                _gitlink_failure(diagnostics, "metadata output contains an invalid file type")
                 return None
         return sorted(paths)
     except (ValueError, UnicodeError):
+        _gitlink_failure(diagnostics, "metadata output contains a malformed tree record")
         return None
 
 

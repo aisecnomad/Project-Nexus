@@ -128,6 +128,27 @@ def test_plan_refuses_duplicate_rules_or_missing_existing_status_contexts() -> N
         prepare_payload(source, ruleset_id=23913372)
 
 
+@pytest.mark.parametrize("binding", [True, 0, -1, 42, 15368.0, "15368"])
+def test_plan_refuses_to_replace_a_conflicting_or_malformed_check_binding(binding: Any) -> None:
+    source = _snapshot()
+    checks = _rule(source, "required_status_checks")["parameters"]["required_status_checks"]
+    checks[0]["integration_id"] = binding
+    original = copy.deepcopy(source)
+    with pytest.raises(ValueError, match="conflicting app binding"):
+        prepare_payload(source, ruleset_id=23913372)
+    assert source == original
+
+
+@pytest.mark.parametrize("binding", [None, GITHUB_ACTIONS_APP_ID])
+def test_plan_pins_unbound_checks_and_preserves_the_expected_app(binding: int | None) -> None:
+    source = _snapshot()
+    checks = _rule(source, "required_status_checks")["parameters"]["required_status_checks"]
+    checks[0]["integration_id"] = binding
+    checks[1].pop("integration_id", None)
+    payload = prepare_payload(source, ruleset_id=23913372)
+    assert check_ruleset(payload) == []
+
+
 @pytest.mark.parametrize(
     "weakening",
     ["disabled", "bypass", "approval", "stale", "last_push", "threads", "gate", "unbound", "strict", "rule"],

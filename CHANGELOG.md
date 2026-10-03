@@ -5,6 +5,29 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 3 review remediation
+
+- Shared HTTP diagnostics now retain only an HTTPS origin and status. URL
+  paths, userinfo, queries and fragments are omitted, and malformed URL
+  parsing produces fixed messages. Regression tests exercise the CLI logger,
+  request errors, redirects and pagination; transport policy remains enforced.
+- Configured capability analysis now covers supported ADK, Strands, AutoGen,
+  LlamaIndex and Semantic Kernel constructors. Empty or unresolved options
+  retain SDK features as potential capabilities instead of adding them to risk.
+  Explicit participant collections and enabled execution options are interpreted
+  using the SDK contract; weak planning vocabulary alone no longer establishes
+  autonomous operation. Positive and negative cases cover the new behavior.
+- Git submodule inventory can report controlled failure categories and numeric
+  OS errors without publishing subprocess diagnostics or paths. Unknown
+  coverage remains incomplete. Fast-exit metadata subprocess regressions and
+  diagnostic assertions support investigation of the observed macOS failure;
+  they do not establish its root cause or claim that it is fixed.
+- Ruleset preparation refuses conflicting check-provider bindings. The merge
+  runbook prepares both rulesets from fresh administrator snapshots, preserves
+  stronger settings and verifies exact readback. Prepared policy files do not
+  activate GitHub enforcement. Independent review and live tenant acceptance
+  remain external prerequisites.
+
 ### October 2 integration of #134 and repository hygiene review
 
 Pull request #134 landed through an integration pull request as one

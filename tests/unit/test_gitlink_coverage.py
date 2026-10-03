@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import subprocess
 import sys
 import time
@@ -179,7 +180,11 @@ def test_git_quoted_paths_preserve_spaces_and_ignore_urls_and_includes():
 @pytest.mark.parametrize("gitlink", [False, True])
 def test_opted_in_git_inventory_covers_committed_gitlinks_without_declarations(tmp_path, index, gitlink):
     root = _repository(tmp_path / "repo", declarations=False, gitlink=gitlink)
-    assert read_gitlink_paths(root) == (["agents/hidden"] if gitlink else [])
+    diagnostics = []
+    assert read_gitlink_paths(root, diagnostics=diagnostics) == (["agents/hidden"] if gitlink else []), (
+        diagnostics
+    )
+    assert not diagnostics
     _, stats = _scan(root, index, use_git=True)
     assert stats.incomplete is gitlink
 
@@ -249,8 +254,44 @@ def test_gitlink_inventory_bounds_process_time_output_and_result(tmp_path, monke
     )
     monkeypatch.setattr(git_utils, "_MAX_GITLINK_OUTPUT_BYTES", 1024)
     started = time.monotonic()
-    assert read_gitlink_paths(tmp_path, timeout=0.1 if reason == "timeout" else 3) is None
+    diagnostics = []
+    assert (
+        read_gitlink_paths(tmp_path, timeout=0.1 if reason == "timeout" else 3, diagnostics=diagnostics)
+        is None
+    )
     assert time.monotonic() - started < 5
+    assert diagnostics == [
+        {
+            "timeout": "metadata subprocess deadline exceeded",
+            "output": "metadata subprocess output limit exceeded",
+            "malformed": "metadata output contains a malformed tree record",
+            "failure": "metadata subprocess exited unsuccessfully (status 1)",
+        }[reason]
+    ]
+
+
+@pytest.mark.parametrize("stage", ["preflight", "subprocess"])
+def test_gitlink_diagnostics_keep_errno_but_never_exception_text_or_paths(tmp_path, monkeypatch, stage):
+    (tmp_path / ".git").mkdir()
+
+    def unavailable(*args, **kwargs):
+        try:
+            raise PermissionError(errno.EACCES, "private-token", "/private/customer-repository")
+        except PermissionError:
+            if stage == "preflight":
+                raise ValueError("private configuration contents") from None
+            raise
+
+    target = "require_local_git_metadata" if stage == "preflight" else "run_bounded_metadata"
+    monkeypatch.setattr(git_utils, target, unavailable)
+    diagnostics = []
+    assert read_gitlink_paths(tmp_path, diagnostics=diagnostics) is None
+    expected = (
+        "metadata preflight refused input"
+        if stage == "preflight"
+        else "metadata subprocess could not be read"
+    )
+    assert diagnostics == [f"{expected} (errno {errno.EACCES})"]
 
 
 def test_unavailable_git_inventory_is_incomplete_and_keeps_findings(tmp_path, index, monkeypatch):
@@ -261,6 +302,24 @@ def test_unavailable_git_inventory_is_incomplete_and_keeps_findings(tmp_path, in
     findings, stats = _scan(tmp_path, index, use_git=True)
     assert findings and stats.incomplete
     assert "could not inventory gitlinks safely" in stats.warnings[0]
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_failed_git_inventory_reports_safe_cause_and_preserves_findings(tmp_path, index, monkeypatch, strict):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "requirements.txt").write_text("langgraph\n")
+    monkeypatch.setattr(
+        git_utils,
+        "run_bounded_metadata",
+        Mock(side_effect=PermissionError(errno.EACCES, "private-token", "/private/customer-repository")),
+    )
+    monkeypatch.setattr(FilesystemConnector, "_git_info", lambda *a: {})
+    findings, stats = _scan(tmp_path, index, use_git=True, strict_coverage=strict)
+    assert findings and stats.incomplete
+    assert (stats.errors if strict else stats.warnings) == [
+        "code.filesystem: could not inventory gitlinks safely; submodule coverage unknown "
+        f"(metadata subprocess could not be read (errno {errno.EACCES}))"
+    ]
 
 
 @pytest.mark.parametrize("marker", ["gitfile", "symlink", "broken-symlink"])

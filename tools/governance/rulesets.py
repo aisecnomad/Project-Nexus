@@ -123,6 +123,13 @@ def prepare_payload(snapshot: Any, *, ruleset_id: int) -> dict[str, Any]:
             if len(matches) > 1:
                 raise ValueError("duplicate required CI or CodeQL contexts; review changed source settings")
             if matches:
+                integration = matches[0].get("integration_id")
+                if integration is not None and (
+                    type(integration) is not int or integration != GITHUB_ACTIONS_APP_ID
+                ):
+                    raise ValueError(
+                        "required status check has a conflicting app binding; review source settings"
+                    )
                 matches[0]["integration_id"] = GITHUB_ACTIONS_APP_ID
             else:
                 required.append({"context": name, "integration_id": GITHUB_ACTIONS_APP_ID})
