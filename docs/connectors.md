@@ -32,7 +32,7 @@ export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and
-`code.gitlab` scan checkouts instead of exports: they are bounded by `max_files`,
+`code.gitlab` scan checkouts instead of exports: they are bounded by `max_files`, `max_entries`,
 `max_repos` and `max_projects` and do not advertise the export limits. They
 ignore those three keys, but a value supplied for one must still be a positive
 integer or the entry fails validation.
@@ -229,7 +229,7 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
 `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
@@ -323,7 +323,7 @@ Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
 `GITHUB_TOKEN`, falling back to `github_token` / env `GH_TOKEN`); `api_url`,
 `mode`, `include_archived`, `include_forks`, `max_repos`, `clone_depth`,
 `topics`. The filesystem scanner options `exclude`, `max_file_size`,
-`max_files`, `scan_timeout`, `scan_secrets` and `use_git` are forwarded to
+`max_files`, `max_entries`, `scan_timeout`, `scan_secrets` and `use_git` are forwarded to
 every repository scan. `repos` and `topics` must be lists of non-empty strings,
 and `max_repos` and `clone_depth` whole numbers; anything else (including a bare
 string such as `--set topics=llm`, which would be read as single characters)

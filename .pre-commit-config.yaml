@@ -73,8 +73,7 @@ repos:
         name: Check for hardcoded secret patterns
         entry: python tools/check_secrets.py
         language: system
-        # Every text file. Tests, fixtures, signature packs and evaluation
-        # corpora hold synthetic credential-shaped strings on purpose; the
-        # script skips them itself (EXCLUDED), so CI's run over `git ls-files`
-        # applies the same list.
+        # Every text file, including tests, signatures and evaluation corpora.
+        # Only exact reviewed path/family/digest entries in the manifest are
+        # approved. The script also rejects stale approvals on partial runs.
         types: [text]

@@ -26,6 +26,7 @@ Offline input: n/a (path is the input).
 | `max_file_size` | bytes; an analyzable larger file is skipped with incomplete coverage unless oversize\_skip\_globs matches it (default 1,000,000 bytes) |
 | `oversize_skip_globs` | case-insensitive file name globs; a file over max\_file\_size matching one is skipped with a warning even under strict\_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts) |
 | `max_files` | stop after this many files and symbolic links (default 100000) |
+| `max_entries` | stop after this many filesystem entries inspected during directory enumeration, including directories, skipped entries and coverage probes (default 1000000); exhaustion is incomplete |
 | `max_notebook_size` | bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even when saved outputs make the file larger than max\_file\_size (default 20 MiB); outputs of such a notebook are not scanned for credentials |
 | `max_ast_nodes` | Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger file keeps its lexical evidence and is reported as partially analyzed: a warning under test paths, an error elsewhere |
 | `scan_timeout` | matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan\_timeout when higher |
@@ -68,6 +69,7 @@ Offline input: directory of cloned repositories.
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_files` | forwarded to the filesystem scanner (see code.filesystem) |
+| `max_entries` | forwarded to the filesystem scanner (see code.filesystem) |
 | `scan_secrets` | forwarded to the filesystem scanner (see code.filesystem) |
 | `clone_depth` | git clone depth (default 1) |
 | `clone_max_bytes` | provider size preflight and observed checkout size cap (default 268435456); strict disk limits require an OS quota |
@@ -102,6 +104,7 @@ Offline input: directory of cloned projects.
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_files` | forwarded to the filesystem scanner (see code.filesystem) |
+| `max_entries` | forwarded to the filesystem scanner (see code.filesystem) |
 | `scan_secrets` | forwarded to the filesystem scanner (see code.filesystem) |
 | `input` | offline: directory of cloned projects |
 

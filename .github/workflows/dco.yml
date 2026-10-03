@@ -1,6 +1,6 @@
 name: DCO
 
-# Checks that every non-merge commit in a pull request carries a
+# Checks that every commit in a pull request carries a
 # Signed-off-by trailer matching that commit's author or committer email, per
 # CONTRIBUTING.md's Developer Certificate of Origin section. Commits authored
 # by GitHub's Dependabot app carry GitHub's fixed sign-off instead, and only
@@ -68,10 +68,8 @@ jobs:
           missing=0
           while IFS= read -r sha; do
             [ -z "$sha" ] && continue
-            # Merge commits carry no new authorship of their own; skip them.
-            if [ "$(git rev-list --min-parents=2 --max-parents=2 -1 "$sha" 2>/dev/null || true)" = "$sha" ]; then
-              continue
-            fi
+            # A merge can introduce authored conflict resolutions or other
+            # content, so its author must certify it like every other commit.
             author_email="$(git show -s --format='%ae' "$sha" | tr '[:upper:]' '[:lower:]')"
             committer_email="$(git show -s --format='%ce' "$sha" | tr '[:upper:]' '[:lower:]')"
             ok=0
