@@ -198,6 +198,14 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+Supported Python and JavaScript/TypeScript tool registrations and model-selected
+dispatch establish execution capabilities. Unused or unrelated execution code
+remains zero-weight `metadata.contextual_capabilities`; unresolved registration is
+potential evidence. Only supported literal dead branches are excluded. This
+bounded attribution does not establish runtime reachability. Rescans can reduce
+candidate scores without source changes; see the [code guide](connectors/code.md)
+and [migration notes](production.md).
+
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
 agent findings. JSON/YAML descriptions are not executed or treated as source; low-code

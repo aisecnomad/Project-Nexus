@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,8 @@ from shadowscan.engine import Engine
 from shadowscan.errors import SetupError
 from shadowscan.reporters import FORMATS
 from shadowscan.signatures import SignatureIndex
+from shadowscan.signatures.loader import signature_from_dict
+from shadowscan.utils.redaction import credential_id
 
 KEY = hashlib.sha256(b"shadowscan test identity key").digest()
 OTHER_KEY = hashlib.sha256(b"another shadowscan test identity key").digest()
@@ -34,6 +37,112 @@ ROWS = [
     {"service": "svc-ops", "tenant_id": "tenant-a", "model": "gpt-4o"},
     {"user": "alice@example.com", "model": "claude-3-5-sonnet", "prompt_tokens": 12},
 ]
+
+
+def _credential_source(tmp_path, surface):
+    """Small low-entropy synthetic value, recognized by a local test signature."""
+    candidate = "copper-73-moon"
+    index = SignatureIndex(
+        [
+            signature_from_dict(
+                {
+                    "id": "provider.synthetic-credential",
+                    "name": "Synthetic provider",
+                    "category": "provider",
+                    "signals": [
+                        {"type": "env", "names": ["COPPER_API_KEY"]},
+                        {"type": "secret", "patterns": [candidate]},
+                    ],
+                }
+            )
+        ]
+    )
+    if surface == "code":
+        source = tmp_path / "repo"
+        source.mkdir()
+        (source / "agent.py").write_text(f"COPPER_API_KEY = '{candidate}'\n")
+        spec = ConnectorSpec("code.filesystem", {"path": str(source), "use_git": False})
+    else:
+        source = tmp_path / "cloud.json"
+        source.write_text(
+            json.dumps(
+                [
+                    {"_kind": "account", "account": "123456789012"},
+                    {
+                        "_kind": "lambda",
+                        "FunctionArn": "arn:aws:lambda:us-east-1:123456789012:function:worker",
+                        "FunctionName": "worker",
+                        "Environment": {"COPPER_API_KEY": candidate},
+                    },
+                ]
+            )
+        )
+        spec = ConnectorSpec("cloud.aws", {"input": str(source)})
+    return (
+        ScanConfig(connectors=[spec], incremental=True, state_dir=str(tmp_path / "state")),
+        index,
+        candidate,
+    )
+
+
+def _credential_ids(result):
+    return set(re.findall(r"credential:hmac-sha256:[a-f0-9]{64}", result.to_json()))
+
+
+@pytest.mark.parametrize("surface", ["code", "cloud"])
+def test_code_and_cloud_credentials_are_scan_local_without_a_stable_key(tmp_path, monkeypatch, surface):
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    config, index, candidate = _credential_source(tmp_path, surface)
+    outside = credential_id(candidate)
+    first, second = Engine(config, index).run(), Engine(config, index).run()
+    assert first.complete and second.complete
+    assert first.findings and second.findings
+    assert _credential_ids(first) and _credential_ids(second)
+    assert _credential_ids(first).isdisjoint(_credential_ids(second))
+    assert _credential_ids(first).isdisjoint({outside})
+    assert credential_id(candidate) == outside  # worker context did not leak to the caller
+    assert [f.id for f in first.findings] == [f.id for f in second.findings]
+    assert first.collection_scope["credential_identity_scope"] == "run"
+    assert not first.stats[0].cached and not second.stats[0].cached
+    assert not list((tmp_path / "state").glob("*.json"))
+    public = "credential:sha256:" + hashlib.sha256(candidate.encode()).hexdigest()
+    assert candidate not in first.to_json() and public not in first.to_json()
+
+
+@pytest.mark.parametrize("surface", ["code", "cloud"])
+def test_stable_credential_key_controls_cache_and_comparison_without_disclosure(
+    tmp_path, monkeypatch, caplog, surface
+):
+    config, index, candidate = _credential_source(tmp_path, surface)
+    monkeypatch.setenv(IDENTITY_KEY_ENV, KEY.hex())
+    first, second = Engine(config, index).run(), Engine(config, index).run()
+    assert first.complete and second.complete
+    assert _credential_ids(first) and _credential_ids(first) == _credential_ids(second)
+    assert second.stats[0].cached
+    assert first.collection_scope["credential_identity_scope"] == "keyed"
+    stored = "".join(path.read_text() for path in (tmp_path / "state").glob("*.json"))
+    assert stored and candidate not in stored
+    for form in _key_forms(KEY):
+        assert form not in first.to_json() and form not in stored and form not in caplog.text
+    monkeypatch.setenv(IDENTITY_KEY_ENV, OTHER_KEY.hex())
+    rotated = Engine(config, index).run()
+    assert rotated.complete and not rotated.stats[0].cached
+    assert _credential_ids(rotated).isdisjoint(_credential_ids(first))
+    assert rotated.collection_scope["fingerprint"] != first.collection_scope["fingerprint"]
+    comparison = compare_reports(first.to_dict(), rotated.to_dict())
+    assert not comparison["comparable"] and comparison["resolved"] == []
+
+
+def test_parallel_code_and_cloud_workers_share_one_private_credential_key(tmp_path, monkeypatch):
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    code_dir, cloud_dir = tmp_path / "code", tmp_path / "cloud"
+    code_dir.mkdir()
+    cloud_dir.mkdir()
+    code, index, _ = _credential_source(code_dir, "code")
+    cloud, _, _ = _credential_source(cloud_dir, "cloud")
+    result = Engine(ScanConfig(connectors=[*code.connectors, *cloud.connectors], parallel=2), index).run()
+    assert result.complete and len(result.findings) >= 2
+    assert len(_credential_ids(result)) == 1
 
 
 def _key_forms(key: bytes) -> list[str]:

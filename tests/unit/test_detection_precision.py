@@ -627,7 +627,9 @@ def test_vendor_neutral_heuristics_alone_are_not_an_agent(tmp_path: Path, run_co
     findings, _ = run_connector("code.filesystem", path=str(tmp_path))
     project = _project(findings)
     assert project is not None and project.kind == Kind.AGENT and "framework.langgraph" in project.frameworks
-    assert {"code-exec", "autonomous"} <= set(project.capabilities)
+    assert "autonomous" in project.capabilities and "code-exec" not in project.capabilities
+    assert "code-exec" in project.metadata["contextual_capabilities"]
+    assert "code-exec" in project.metadata["potential_capabilities"]
     assert any(
         e.signal == "code:heuristic.code-execution" and e.location.startswith("deploy.py:")
         for e in project.evidence
@@ -662,15 +664,17 @@ def test_heuristics_next_to_env_names_only_do_not_make_an_agent(tmp_path: Path, 
     assert assess(project, index).score < 50
 
     # An import anchors the provider, so the idioms are recorded again as
-    # supporting evidence with full weights. Vendor-neutral loops and
-    # subprocess calls still cannot confirm an agent on their own.
+    # supporting evidence. Unlinked shell helpers stay zero-weight context;
+    # vendor-neutral idioms cannot confirm an agent on their own.
     (tmp_path / "app.py").write_text("from openai import OpenAI\n")
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert not ctx.stats.errors
     project = _project(findings)
     assert project is not None and project.kind == Kind.FRAMEWORK_USAGE
     assert "env-names-only" not in project.tags and "confidence_cap" not in project.metadata
-    assert {"autonomous", "code-exec"} <= set(project.capabilities)
+    assert "autonomous" in project.capabilities and "code-exec" not in project.capabilities
+    assert "code-exec" in project.metadata["contextual_capabilities"]
+    assert "code-exec" in project.metadata["potential_capabilities"]
     assert project.metadata["agent_indicators"] == 0
     assert any(
         e.signal == "import:provider.openai" and e.location.startswith("app.py:") for e in project.evidence
@@ -706,8 +710,12 @@ def test_live_credential_is_not_an_env_name_only_anchor(tmp_path: Path, run_conn
         and "confidence_cap" not in project.metadata
     )
     assert any(e.signal == "secret:provider.openai" for e in project.evidence)
-    # Full weights and heuristic capabilities are kept, but generic idioms never confirm an agent.
-    assert project.kind == Kind.FRAMEWORK_USAGE and {"autonomous", "code-exec"} <= set(project.capabilities)
+    # The credential keeps its evidence weight; unlinked execution helpers are
+    # contextual and generic idioms never confirm an agent.
+    assert project.kind == Kind.FRAMEWORK_USAGE and "autonomous" in project.capabilities
+    assert "code-exec" not in project.capabilities
+    assert "code-exec" in project.metadata["contextual_capabilities"]
+    assert "code-exec" in project.metadata["potential_capabilities"]
     assert project.metadata["agent_indicators"] == 0
 
 

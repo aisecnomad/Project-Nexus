@@ -4,10 +4,13 @@ The versioned [ruleset policy](https://github.com/aisecnomad/Project-Nexus/blob/
 is a desired configuration, not evidence that GitHub is enforcing it. Both
 visible repository rulesets have been enabled and disabled several times since
 2026-09; the dated readbacks are under
-[merge gate and review status](../production.md#merge-gate-and-review-status),
-and the most recent one found both disabled. Separate classic branch protection
-was unavailable to the integration used for those reads. Check the live
-settings rather than treating any dated observation as permanent.
+[merge gate and review status](../production.md#merge-gate-and-review-status).
+On 2026-10-03 (19:06 UTC), both read back active, but the review/CI ruleset still
+omitted the aggregate gate, required-check application bindings, last-push
+approval and resolved-review-thread requirements. `Protect main` retained four
+bypass actors. Separate classic branch protection was unavailable to the
+integration used for those reads. Check the live settings rather than treating
+any dated observation as permanent.
 
 The policy retains the existing CodeQL, signature and status requirements and
 adds the aggregate `CI gate`. Required checks are bound to the GitHub Actions
@@ -62,6 +65,30 @@ eligible reviewer who did not author or produce the change approve that head.
 Any later push needs renewed review. Exercise the rule with an ordinary
 unapproved pull request: GitHub must refuse its merge. This check does not
 require weakening the rules or merging the probe.
+
+## Detect protection drift between commits
+
+The weekly [dependency and governance audit](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/audit.yml)
+has a separate read-only job that fetches both current rulesets and compares
+their repository identities and settings to the reviewed update payloads. It
+also runs on manual dispatch from `main`. A disabled rule, omitted bypass
+information, missing aggregate `CI gate`, wrong application binding, changed
+policy, malformed response or denied read fails the audit. Review any drift
+before intentionally updating the versioned policy, including stronger changes.
+
+The job uses only the workflow's read-only token and never applies settings or
+supplies an administrator credential. If GitHub withholds part of the response,
+an administrator must verify a full readback using the procedure above; the
+failed audit does not establish that protection is absent. The audit fails
+until administrator-applied settings match the reviewed policy and the API
+returns a complete snapshot. GitHub documents that `bypass_actors` is returned
+only to a caller with write access to the ruleset; the default read-only token
+may therefore leave this audit failed with unknown assurance even after
+settings are corrected. Obtain and verify an administrator readback in that
+case; do not equate a hidden bypass list with an empty one. See the
+[GitHub ruleset API documentation](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset).
+Adding this job does not enable protections or replace an independent human
+review.
 
 Repository administration and independent reviewer availability remain
 external prerequisites. Human-labeled holdouts and live tenant receipts are

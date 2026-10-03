@@ -74,10 +74,12 @@ _CALENDAR_DAY_RX = re.compile(r"(?:19|20)\d{6}")
 
 
 def redact(value: str, keep: int = 4) -> str:
-    """Return a stable opaque credential identity without retaining raw fragments.
+    """Return a keyed credential pseudonym without retaining raw fragments.
 
     ``keep`` remains accepted for compatibility with older call sites, but no
-    prefix or suffix is kept. New code should call ``credential_id`` directly.
+    prefix or suffix is kept. Engine scans share one private key; callers
+    wanting stability between scans supply SHADOWSCAN_IDENTITY_KEY. New code
+    should call ``credential_id`` directly.
     """
     del keep
     if not value:

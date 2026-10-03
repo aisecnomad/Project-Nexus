@@ -4,9 +4,9 @@ import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.gateway.logs import GatewayLogConnector, normalise
+from shadowscan.connectors.gateway.logs import _binding_credential_id as credential_id
 from shadowscan.correlation import correlate_runtime
 from shadowscan.models import Finding, Kind, Surface
-from shadowscan.utils.redaction import credential_id
 
 
 def static(resource="github:acme/agent", framework="framework.langchain"):
