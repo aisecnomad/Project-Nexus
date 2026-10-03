@@ -1394,10 +1394,12 @@ class FilesystemConnector(BaseConnector):
         self._gitlink_roots.add(root)
         self.ctx.check_deadline()
         remaining = self.ctx.deadline - time.monotonic() if self.ctx.deadline is not None else 10.0
-        paths = read_gitlink_paths(root, timeout=remaining)
+        diagnostics: list[str] = []
+        paths = read_gitlink_paths(root, timeout=remaining, diagnostics=diagnostics)
         self.ctx.check_deadline()
         if paths is None:
-            self._submodule_gap("could not inventory gitlinks safely; submodule coverage unknown")
+            reason = f" ({diagnostics[0]})" if diagnostics else ""
+            self._submodule_gap(f"could not inventory gitlinks safely; submodule coverage unknown{reason}")
             return
         self._check_submodule_paths(root, paths)
 

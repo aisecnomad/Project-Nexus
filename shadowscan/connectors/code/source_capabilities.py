@@ -27,6 +27,11 @@ CONFIGURED_FRAMEWORKS = frozenset(
         "framework.langgraph",
         "framework.langchain",
         "framework.genkit",
+        "framework.google-adk",
+        "framework.aws-strands",
+        "framework.autogen",
+        "framework.llamaindex",
+        "framework.semantic-kernel",
     }
 )
 
@@ -46,6 +51,8 @@ class CallCapabilities:
             observed = set(capabilities)
             if self.verified or option:
                 observed.difference_update({"tool-use", "multi-agent", "memory"})
+                if self.signature == "framework.llamaindex":
+                    observed.discard("rag")  # an agent/tool retriever need not retrieve documents
                 observed.update(self.configured)
             metadata["source_capabilities"] = sorted(observed)
             metadata["configured_call_span"] = self.span
@@ -68,10 +75,36 @@ _CONSTRUCTORS = {
     "framework.langgraph": frozenset(
         {"create_react_agent", "createReactAgent", "create_supervisor", "create_swarm", "StateGraph"}
     ),
+    "framework.google-adk": frozenset({"Agent", "LlmAgent", "SequentialAgent", "ParallelAgent", "LoopAgent"}),
+    "framework.aws-strands": frozenset({"Agent", "Swarm"}),
+    "framework.autogen": frozenset(
+        {
+            "AssistantAgent",
+            "ConversableAgent",
+            "UserProxyAgent",
+            "RoundRobinGroupChat",
+            "SelectorGroupChat",
+            "MagenticOneGroupChat",
+            "Swarm",
+        }
+    ),
+    "framework.llamaindex": frozenset(
+        {
+            "FunctionAgent",
+            "ReActAgent",
+            "FunctionCallingAgent",
+            "OpenAIAgent",
+            "CodeActAgent",
+            "AgentWorkflow",
+        }
+    ),
+    "framework.semantic-kernel": frozenset({"ChatCompletionAgent"}),
 }
 
 
 def _configured_constructor(signature: str, symbol: str) -> bool:
+    if signature == "framework.llamaindex" and symbol.endswith(".from_tools"):
+        symbol = symbol.removesuffix(".from_tools")
     if signature == "framework.langchain":
         return bool(
             re.fullmatch(
@@ -88,13 +121,63 @@ def _python_entry(value: ast.AST) -> bool:
     )
 
 
-def _python_collection(value: ast.AST | None) -> bool:
+def _python_collection(value: ast.AST | None, *, minimum: int = 1) -> bool:
     """Recognize explicit collection entries; empty and dynamic values stay unknown."""
     if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
-        return any(_python_entry(item) for item in value.elts)
+        return sum(_python_entry(item) for item in value.elts) >= minimum
     if isinstance(value, ast.Dict) and all(key is not None for key in value.keys):
-        return any(_python_entry(item) for item in value.values)
+        return sum(_python_entry(item) for item in value.values) >= minimum
     return False
+
+
+def _collection_options(signature: str, symbol: str) -> dict[str, tuple[str, ...]]:
+    """Known constructor option names, never options from an unrelated runner/model."""
+    if signature == "framework.google-adk":
+        return {
+            "multi-agent": ("sub_agents", "subAgents"),
+            **({"tool-use": ("tools",)} if symbol in {"Agent", "LlmAgent"} else {}),
+        }
+    if signature == "framework.aws-strands":
+        return {"tool-use": ("tools",)} if symbol == "Agent" else {"multi-agent": ("nodes",)}
+    if signature == "framework.autogen":
+        if symbol == "AssistantAgent":
+            return {"tool-use": ("tools",), "multi-agent": ("handoffs",)}
+        if symbol in {"ConversableAgent", "UserProxyAgent"}:
+            return {}
+        return {"multi-agent": ("participants",)}
+    if signature == "framework.llamaindex":
+        return {"multi-agent": ("agents",)} if symbol == "AgentWorkflow" else {"tool-use": ("tools",)}
+    if signature == "framework.semantic-kernel":
+        return {"tool-use": ("plugins",)}
+    return _COLLECTION_OPTIONS[signature]
+
+
+def _positional_collection(signature: str, symbol: str) -> tuple[str, int] | None:
+    if signature == "framework.langchain" and symbol == "initialize_agent":
+        return "tools", 0
+    if signature in {"framework.langchain", "framework.langgraph"} and symbol in {
+        "create_agent",
+        "create_react_agent",
+        "create_tool_calling_agent",
+    }:
+        return "tools", 1
+    if signature == "framework.aws-strands":
+        return ("tools", 2) if symbol == "Agent" else ("nodes", 0)
+    if signature == "framework.llamaindex":
+        if symbol.endswith(".from_tools"):
+            return "tools", 0
+        if symbol == "AgentWorkflow":
+            return "agents", 0
+        if symbol == "FunctionAgent":
+            return "tools", 3
+    if signature == "framework.autogen" and symbol in {
+        "RoundRobinGroupChat",
+        "SelectorGroupChat",
+        "MagenticOneGroupChat",
+        "Swarm",
+    }:
+        return "participants", 0
+    return None
 
 
 def _javascript_collection(raw: str, masked: str) -> bool:
@@ -132,6 +215,7 @@ def configured_capabilities(
     if signature not in CONFIGURED_FRAMEWORKS or not _configured_constructor(signature, symbol):
         return set()
     result = {"tool-use"} if verified_graph else set()
+    collections = _collection_options(signature, symbol)
     if node is not None:
         # **options may supply or conflict with any option. It cannot establish
         # additional configuration without resolving a separate data flow.
@@ -139,17 +223,16 @@ def configured_capabilities(
             return result
         values = {keyword.arg: keyword.value for keyword in node.keywords}
         # The documented positional tool argument of these Python factories.
-        position = (
-            0
-            if signature == "framework.langchain" and symbol == "initialize_agent"
-            else 1
-            if signature in {"framework.langchain", "framework.langgraph"}
-            and symbol in {"create_agent", "create_react_agent", "create_tool_calling_agent"}
-            else None
-        )
-        if "tools" not in values and position is not None and len(node.args) > position:
-            values["tools"] = node.args[position]
-        for capability, names in _COLLECTION_OPTIONS[signature].items():
+        positional = _positional_collection(signature, symbol)
+        if positional is not None:
+            name, position = positional
+            if (
+                name not in values
+                and len(node.args) > position
+                and not any(isinstance(argument, ast.Starred) for argument in node.args[: position + 1])
+            ):
+                values[name] = node.args[position]
+        for capability, names in collections.items():
             if signature == "framework.crewai" and (
                 capability == "multi-agent"
                 and symbol != "Crew"
@@ -157,8 +240,38 @@ def configured_capabilities(
                 and symbol != "Agent"
             ):
                 continue
-            if any(_python_collection(values.get(name)) for name in names):
+            if signature == "framework.semantic-kernel" and {
+                "function_choice_behavior",
+                "arguments",
+            }.intersection(values):
+                # An explicit behavior may disable invocation, or be overridden
+                # by KernelArguments. Do not guess an opaque behavior's contract.
+                continue
+            if any(
+                _python_collection(
+                    values.get(name),
+                    minimum=2
+                    if capability == "multi-agent"
+                    and name in {"participants", "agents", "nodes"}
+                    and signature in {"framework.autogen", "framework.llamaindex", "framework.aws-strands"}
+                    else 1,
+                )
+                for name in names
+            ):
                 result.add(capability)
+        if signature == "framework.autogen" and symbol in {
+            "AssistantAgent",
+            "ConversableAgent",
+            "UserProxyAgent",
+        }:
+            execution = values.get("code_execution_config")
+            # Legacy AG2/AutoGen explicitly enables execution with {}, while
+            # False disables it. An unknown expression establishes neither.
+            if isinstance(execution, ast.Dict) and all(key is not None for key in execution.keys):
+                result.add("code-exec")
+            mode = values.get("human_input_mode")
+            if isinstance(mode, ast.Constant) and mode.value == "NEVER":
+                result.add("autonomous")
         if signature == "framework.crewai" and symbol == "Agent":
             delegation = values.get("allow_delegation")
             if isinstance(delegation, ast.Constant) and delegation.value is True:
@@ -174,7 +287,7 @@ def configured_capabilities(
     options = _object(*inner) if inner is not None else None
     if options is None:
         return result
-    for capability, names in _COLLECTION_OPTIONS[signature].items():
+    for capability, names in collections.items():
         if any(name in options and _javascript_collection(*options[name]) for name in names):
             result.add(capability)
     if signature == "framework.langgraph" and any(

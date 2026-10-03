@@ -52,13 +52,16 @@ def test_supporting_heuristics_require_ai_evidence_and_repetition_is_grouped(tmp
     baseline = _scan(tmp_path, run_connector, source)
     project = next(f for f in baseline if f.resource_type == "project")
     assert project.kind == Kind.FRAMEWORK_USAGE
-    assert "autonomous" in project.capabilities
+    # A queue worker and planning vocabulary do not establish autonomous AI,
+    # even when the project declares an AI framework dependency.
+    assert "autonomous" not in project.capabilities
     for number in range(12):
         (tmp_path / f"worker_{number}.py").write_text(source)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     repeated = next(f for f in findings if f.resource_type == "project")
     assert not ctx.stats.incomplete
     assert repeated.kind == Kind.FRAMEWORK_USAGE
+    assert "autonomous" not in repeated.capabilities
     assert repeated.confidence == project.confidence
 
 

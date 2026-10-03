@@ -78,6 +78,36 @@ options do not establish those workload capabilities; unresolved dynamic
 configuration remains potential evidence. Review capability assertions as well
 as binary presence when validating a detection change.
 
+This option-aware handling includes Google ADK, Strands, AutoGen, LlamaIndex
+and Semantic Kernel constructors. Explicit tool/plugin lists establish tool-use;
+an SDK's feature list alone does not. Empty or unknown `sub_agents`, `handoffs`,
+team participants and tools do not establish their corresponding capabilities.
+ADK parent/sub-agent configuration needs an explicit child, while standalone
+Strands swarms, AutoGen teams and LlamaIndex workflows need at least two explicit
+participants to establish multi-agent configuration. String-only handoff targets
+remain potential evidence because the target may be a human. A tool retriever,
+workbench, directory loader or external kernel can provide tools dynamically;
+their unknown contents stay potential, and tool retrieval alone is not document
+RAG. A Semantic Kernel function-choice override also stays potential because it
+can disable invocation. These conservative checks do not resolve runtime options
+or object relationships across files. Independent tool/code execution evidence
+is retained even when another constructor has empty options.
+
+Legacy AutoGen `code_execution_config={}` explicitly enables default execution;
+`False` disables it. Planning vocabulary, a limit such as `max_steps`, or the
+option name `sub_agents` alone no longer adds autonomous capability. Supported
+model-selection/dispatch loops and explicit autonomous settings remain evidence.
+Contracts checked against the primary references:
+[ADK LlmAgent](https://github.com/google/adk-python/blob/main/src/google/adk/agents/llm_agent.py),
+[ADK BaseAgent](https://github.com/google/adk-python/blob/main/src/google/adk/agents/base_agent.py),
+[Strands Agent](https://strandsagents.com/docs/api/python/strands.agent.agent/),
+[Strands Swarm](https://strandsagents.com/docs/api/python/strands.multiagent.swarm/),
+[AutoGen AssistantAgent](https://microsoft.github.io/autogen/stable/_modules/autogen_agentchat/agents/_assistant_agent.html),
+[AutoGen ConversableAgent](https://microsoft.github.io/autogen/0.2/docs/reference/agentchat/conversable_agent/),
+[LlamaIndex agents](https://developers.llamaindex.ai/python/framework-api-reference/agent/),
+[LlamaIndex AgentWorkflow](https://github.com/run-llama/llama_index/blob/main/llama-index-core/llama_index/core/agent/workflow/multi_agent_workflow.py),
+and [Semantic Kernel ChatCompletionAgent](https://learn.microsoft.com/en-us/python/api/semantic-kernel/semantic_kernel.agents.chat_completion.chat_completion_agent.chatcompletionagent).
+
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
 agent findings. JSON/YAML descriptions are not executed or treated as source; low-code

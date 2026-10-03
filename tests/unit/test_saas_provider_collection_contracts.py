@@ -147,7 +147,10 @@ def test_github_apps_optional_billing_denial_preserves_installations_and_pat(run
 
     assert [f.resource for f in findings] == ["github:installation:101"]
     assert ctx.stats.incomplete and not ctx.stats.errors
-    assert any("copilot/billing" in warning and "HTTP 403" in warning for warning in ctx.stats.warnings)
+    assert any(
+        "https://api.github.com" in warning and "HTTP 403" in warning for warning in ctx.stats.warnings
+    )
+    assert all("copilot/billing" not in warning for warning in ctx.stats.warnings)
     assert len(responses.calls) == 3
 
 
