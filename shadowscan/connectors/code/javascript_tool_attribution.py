@@ -1,9 +1,10 @@
 """Connect literal JavaScript tool registrations to their local execution sites.
 
-Only supplied import-bound agent/MCP constructors and stable module-level
-definitions supply proof. Unknown collections, aliases, spreads and shadowed
-names remain opaque. This is static registration evidence, never execution
-attestation. Token and nesting limits share the source binder's bounded lexer.
+Only supplied import-bound agent/MCP constructors, supported tool factories and
+stable module-level definitions supply proof. Unknown collections, aliases,
+spreads and shadowed names remain opaque. This is static registration evidence,
+never execution attestation. Token and nesting limits share the source binder's
+bounded lexer.
 """
 
 from __future__ import annotations
@@ -27,6 +28,20 @@ from shadowscan.signatures.matcher import pattern_timeout
 _NAME = re.compile(r"[A-Za-z_$][\w$]*\Z")
 MAX_SELECTED_DEFINITIONS = 512
 MAX_TOOL_NESTING = 128
+_TOOL_FACTORIES = frozenset(
+    {
+        ("@openai/agents", "tool"),
+        ("@openai/agents-core", "tool"),
+        ("ai", "tool"),
+        ("@mastra/core/tools", "createTool"),
+        ("@voltagent/core", "createTool"),
+    }
+)
+
+
+def is_javascript_tool_factory(module: str, symbol: str) -> bool:
+    """Whether an import-bound call constructs a supported execute descriptor."""
+    return (module, symbol) in _TOOL_FACTORIES
 
 
 @dataclass(frozen=True)
@@ -38,7 +53,14 @@ class _Definition:
 
 
 class _Tools:
-    def __init__(self, text: str, masked: str, tokens: list[_Token]) -> None:
+    def __init__(
+        self,
+        text: str,
+        masked: str,
+        tokens: list[_Token],
+        tool_factory_spans: list[tuple[int, int]],
+        shadow_tokens: list[_Token],
+    ) -> None:
         self.text = text
         self.masked = masked
         self.tokens = tokens
@@ -53,6 +75,8 @@ class _Tools:
         self.depth = 0
         self.collection_references: set[int] = set()
         self.entry_references: set[int] = set()
+        self.tool_factory_spans = frozenset(tool_factory_spans)
+        self.opaque_bindings = self._opaque_binding_names(shadow_tokens, _Branches(text, shadow_tokens).pairs)
         self._definitions()
 
     def is_token(self, position: int, value: str) -> bool:
@@ -93,6 +117,12 @@ class _Tools:
         fields: dict[str, tuple[int, int]] = {}
         for first, last in self.parts(start + 1, end - 1) or []:
             key = self.name(first)
+            if key == "async" and self.is_token(first + 1, "execute") and self.is_token(first + 2, "("):
+                key = "execute"
+                if key in fields:
+                    return None
+                fields[key] = (first, last)
+                continue
             if key is None or key in fields:
                 return None
             if self.is_token(first + 1, ":"):
@@ -153,6 +183,61 @@ class _Tools:
             return (cursor + 1, end - 1) if self.pairs.get(cursor) == end - 1 else None
         return (cursor, end) if cursor < end else None
 
+    @staticmethod
+    def _opaque_binding_names(tokens: list[_Token], pairs: dict[int, int]) -> set[str]:
+        """Keep destructuring and nested parameter syntax from resolving outer helpers.
+
+        These names need not be precisely scoped: the resolver already treats
+        any same-spelled local binding as uncertainty. Balanced token ranges
+        cover nested defaults and patterns that flat parameter regexes miss.
+        """
+
+        def is_token(position: int, value: str) -> bool:
+            return position < len(tokens) and not tokens[position].literal and tokens[position].value == value
+
+        def name(position: int) -> str | None:
+            if position >= len(tokens) or tokens[position].literal:
+                return None
+            value = tokens[position].value
+            return value if _NAME.fullmatch(value) else None
+
+        names: set[str] = set()
+        controls = {"if", "while", "for", "switch", "with"}
+        for position, token in enumerate(tokens):
+            if not position % 256:
+                pattern_timeout()
+            if token.literal:
+                continue
+            opening: int | None = None
+            if token.value in {"const", "let", "var"} and (
+                is_token(position + 1, "[") or is_token(position + 1, "{")
+            ):
+                opening = position + 1
+            elif token.value == "function":
+                cursor = position + 1 + int(is_token(position + 1, "*"))
+                if name(cursor) is not None:
+                    cursor += 1
+                if is_token(cursor, "("):
+                    opening = cursor
+            elif token.value == "(" and position in pairs:
+                closing = pairs[position]
+                arrow = is_token(closing + 1, "=") and is_token(closing + 2, ">")
+                method = (
+                    position > 0
+                    and name(position - 1) is not None
+                    and tokens[position - 1].value not in controls
+                    and is_token(closing + 1, "{")
+                )
+                if arrow or method:
+                    opening = position
+            if opening is not None and (finish := pairs.get(opening)) is not None:
+                for cursor in range(opening + 1, finish):
+                    if not cursor % 256:
+                        pattern_timeout()
+                    if (value := name(cursor)) is not None:
+                        names.add(value)
+        return names
+
     def _definitions(self) -> None:
         depth = 0
         for position, token in enumerate(self.tokens):
@@ -207,7 +292,7 @@ class _Tools:
         collection: bool = False,
         descriptor: bool = False,
     ) -> bool:
-        if definition.name in self.duplicates:
+        if definition.name in self.duplicates or definition.name in self.opaque_bindings:
             return False
         key = definition.name + (
             ":server" if server else ":collection" if collection else ":descriptor" if descriptor else ""
@@ -353,7 +438,11 @@ class _Tools:
         if call is not None:
             self.bodies.add((self.tokens[start].start, self.tokens[call[0]].end))
             parts = self.parts(call[0] + 1, call[1])
-            fields = self.fields(*parts[0]) if parts and len(parts) == 1 else None
+            factory_start = start + int(self.is_token(start, "new"))
+            proven_factory = (self.tokens[factory_start].start, self.tokens[end - 1].end) in (
+                self.tool_factory_spans
+            )
+            fields = self.fields(*parts[0]) if proven_factory and parts and len(parts) == 1 else None
         else:
             fields = self.fields(start, end)
         if fields and "execute" in fields:
@@ -410,6 +499,8 @@ class _Tools:
             server = servers.get(token.value) if not token.literal else None
             if server is None or not self.is_token(position + 1, "."):
                 continue
+            if position and self.is_token(position - 1, "."):
+                continue  # a same-spelled member is not the imported server receiver
             if not (self.is_token(position + 2, "registerTool") or self.is_token(position + 2, "tool")):
                 continue
             opening = position + 3
@@ -432,6 +523,7 @@ def javascript_tool_regions(
     ignored: list[tuple[int, int]],
     constructor_spans: list[tuple[int, int]],
     mcp_constructor_spans: list[tuple[int, int]],
+    tool_factory_spans: list[tuple[int, int]] | None = None,
 ) -> ToolRegions:
     """Resolve narrowly registered tool entries and MCP callbacks in this file."""
     if not constructor_spans and not mcp_constructor_spans:
@@ -446,11 +538,12 @@ def javascript_tool_regions(
     dead = javascript_dead_ranges(text, masked, ignored)
     starts = [start for start, _ in dead]
     tokens = []
-    for token in _tokens(text, masked, ignored):
+    shadow_tokens = _tokens(text, masked, ignored)
+    for token in shadow_tokens:
         branch = bisect_right(starts, token.start) - 1
         if branch < 0 or token.start >= dead[branch][1]:
             tokens.append(token)
-    tools = _Tools(text, masked, tokens)
+    tools = _Tools(text, masked, tokens, tool_factory_spans or [], shadow_tokens)
     for span in constructor_spans:
         fields = tools.constructor_fields(span)
         if fields and "tools" in fields:

@@ -36,7 +36,10 @@ from shadowscan.connectors.code.javascript_reachability import (
     JavascriptReachabilityLimit,
     javascript_dead_ranges,
 )
-from shadowscan.connectors.code.javascript_tool_attribution import javascript_tool_regions
+from shadowscan.connectors.code.javascript_tool_attribution import (
+    is_javascript_tool_factory,
+    javascript_tool_regions,
+)
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
 from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
 from shadowscan.connectors.code.provider_tools import (
@@ -1431,6 +1434,7 @@ def bound_source_matches(
     registrations: list[tuple[ast.Call | None, int, bool]] = []
     javascript_constructors: list[tuple[int, int]] = []
     mcp_constructors: list[tuple[int, int]] = []
+    javascript_tool_factories: list[tuple[int, int]] = []
     for call in calls:
         signatures = {m.signature_id: m.signature for m in module_matches(call.binding)}
         requests.record(language, call, signatures, tree is not None)
@@ -1443,6 +1447,12 @@ def bound_source_matches(
             tool_literal_cache,
         )
         found.extend(evidence)
+        if (
+            language == "javascript"
+            and not call.partial
+            and is_javascript_tool_factory(call.binding.module, call.binding.symbol)
+        ):
+            javascript_tool_factories.append((call.start, call.end))
         if language == "javascript" and any(match.extra.get("verified_agent") for match in evidence):
             javascript_constructors.append((call.start, call.end))
         if (
@@ -1483,7 +1493,9 @@ def bound_source_matches(
             )
         else:
             try:
-                regions = javascript_tool_regions(text, ignored, javascript_constructors, mcp_constructors)
+                regions = javascript_tool_regions(
+                    text, ignored, javascript_constructors, mcp_constructors, javascript_tool_factories
+                )
             except JavascriptReachabilityLimit as exc:
                 raise SourceBudgetExceeded(str(exc)) from exc
         found[0].extra["registered_tool_regions"] = regions.bodies

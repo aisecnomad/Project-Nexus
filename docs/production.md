@@ -759,7 +759,11 @@ MCP/provider execution remain source observations. Dynamic implementations
 remain potential and require source review or independently attributed runtime
 evidence. Constant-dead JavaScript/TypeScript constructions may likewise become
 framework usage instead of agents. No field-accuracy or execution attestation
-is implied by these static corrections.
+is implied by these static corrections. Discarded callbacks supplied to unknown
+JavaScript factories, shadowed local helpers, unrelated MCP member receivers,
+unreachable Python statements and deferred lambdas in compound callees remain
+contextual. Supported import-bound async execute callbacks and directly invoked
+Python lambdas retain connected source evidence.
 
 These notes record behavior changes made while the 0.1.1 candidate was being
 hardened. Read them when you have baselines, reports or inventories produced

@@ -33,6 +33,12 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### October 3 source capability attribution
 
+- Follow-up attribution checks reject discarded callbacks passed to unknown
+  JavaScript factories, shadowed helpers and unrelated MCP member receivers.
+  Supported import-bound tool factories retain async execute callbacks. Python
+  tool regions omit statements after guaranteed exits and deferred lambdas in
+  compound callees while retaining directly invoked lambdas. Regression cases
+  cover positive registrations and contextual-only counterexamples.
 - Unregistered tools and unrelated execution helpers no longer grant a
   project's agent `tool-use` or `code-exec`, or raise its confidence. Their
   evidence remains visible with zero weight and a contextual attribution;

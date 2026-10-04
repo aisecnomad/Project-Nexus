@@ -54,6 +54,72 @@ def python_tool_regions(
     evaluation_scopes: dict[int, int] = {}
     live: set[int] = set()
     nodes: list[ast.AST] = []
+    outcomes: dict[int, frozenset[str]] = {}
+    control_steps = 0
+
+    def control_checkpoint() -> None:
+        nonlocal control_steps
+        control_steps += 1
+        if control_steps % 256 == 0:
+            pattern_timeout()
+
+    def block_outcomes(statements: list[ast.stmt]) -> set[str]:
+        result = {"next"}
+        for statement in statements:
+            control_checkpoint()
+            if "next" not in result:
+                break
+            result.remove("next")
+            result.update(statement_outcomes(statement))
+        return result
+
+    def statement_outcomes(statement: ast.stmt) -> frozenset[str]:
+        if id(statement) in outcomes:
+            return outcomes[id(statement)]
+        result: set[str] = {"next"}
+        if isinstance(statement, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+            result = {type(statement).__name__.lower()}
+        elif isinstance(statement, ast.If):
+            if isinstance(statement.test, ast.Constant):
+                result = block_outcomes(statement.body if statement.test.value else statement.orelse)
+            else:
+                result = block_outcomes(statement.body) | block_outcomes(statement.orelse)
+        elif isinstance(statement, (ast.With, ast.AsyncWith)):
+            result = block_outcomes(statement.body)
+            if "raise" in result:
+                result.add("next")  # A context manager can suppress an exception.
+        elif isinstance(statement, ast.Try):
+            result = block_outcomes(statement.body)
+            if "next" in result:
+                result.remove("next")
+                result.update(block_outcomes(statement.orelse))
+            # Implicit exceptions can enter any handler, even when the body
+            # has a return. Do not assume exception types or handler selection.
+            for handler in statement.handlers:
+                result.update(block_outcomes(handler.body))
+            final = block_outcomes(statement.finalbody)
+            result = (result if "next" in final else set()) | (final - {"next"})
+        outcomes[id(statement)] = frozenset(result)
+        return outcomes[id(statement)]
+
+    def unreachable_children(node: ast.AST) -> set[int]:
+        unreachable: set[int] = set()
+        for _, value in ast.iter_fields(node):
+            if (
+                not isinstance(value, list)
+                or not value
+                or not all(isinstance(part, ast.stmt) for part in value)
+            ):
+                continue
+            continuing = True
+            for statement in value:
+                control_checkpoint()
+                if not continuing:
+                    unreachable.add(id(statement))
+                else:
+                    continuing = "next" in statement_outcomes(statement)
+        return unreachable
+
     pending = [(tree, id(tree), True)]
     while pending:
         node, scope, active = pending.pop()
@@ -117,13 +183,14 @@ def python_tool_regions(
                 if node.returns is not None:
                     expressions.append(node.returns)
             evaluation_scopes.update((id(expression), scope) for expression in expressions)
+        unreachable = unreachable_children(node)
         for child in ast.iter_child_nodes(node):
-            child_active = active
+            child_active = active and id(child) not in unreachable
             if isinstance(node, ast.If) and isinstance(node.test, ast.Constant):
                 dead = node.orelse if node.test.value else node.body
-                child_active = active and child not in dead
+                child_active = child_active and child not in dead
             elif isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and not node.test.value:
-                child_active = active and child not in node.body
+                child_active = child_active and child not in node.body
             pending.append((child, child_scope, child_active))
 
     # A global/nonlocal write can replace an outer helper through a separate
@@ -161,6 +228,26 @@ def python_tool_regions(
             offset(node.end_lineno, node.end_col_offset),  # type: ignore[attr-defined]
         )
 
+    def callee_span(node: ast.AST) -> tuple[int, int] | None:
+        """Keep invoked names without enclosing deferred callback bodies."""
+        if isinstance(node, ast.Name):
+            return span(node)
+        if isinstance(node, ast.Attribute):
+            root: ast.AST = node
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                return span(node)
+            end = span(node)[1]
+            return end - len(node.attr), end
+        if isinstance(node, ast.Subscript):
+            return callee_span(node.value)
+        return None
+
+    def record_callee(node: ast.AST, regions: list[tuple[int, int]]) -> None:
+        if (region := callee_span(node)) is not None:
+            regions.append(region)
+
     selected: dict[int, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda] = {}
     configured_objects: list[tuple[int, int]] = []
 
@@ -170,7 +257,7 @@ def python_tool_regions(
                 selected[id(value)] = value
                 return value
         elif isinstance(value, ast.Call):
-            configured_objects.append(span(value.func))
+            record_callee(value.func, configured_objects)
         elif isinstance(value, ast.Name) and (resolved := binding_scope(value.id, scope)) is not None:
             function = definitions.get((resolved, value.id))
             if function is not None:
@@ -178,7 +265,7 @@ def python_tool_regions(
                     selected[id(function)] = function
                     return function
             elif (created := objects.get((resolved, value.id))) is not None:
-                configured_objects.append(span(created.func))
+                record_callee(created.func, configured_objects)
         return None
 
     literals = python_provider_tool_literals(
@@ -225,7 +312,7 @@ def python_tool_regions(
     queue: list[ast.AST] = list(selected.values())
     for node in nodes:
         if isinstance(node, ast.Call) and id(node) in dispatch_calls and id(node) in live:
-            configured_objects.append(span(node.func))
+            record_callee(node.func, configured_objects)
             if isinstance(node.func, ast.Name) and (chosen := select(node.func, scopes[id(node)])):
                 queue.append(chosen)
     visited: set[int] = set()
@@ -247,6 +334,8 @@ def python_tool_regions(
         while body:
             node = body.pop()
             pattern_timeout()
+            if id(node) not in live:
+                continue
             if isinstance(node, (*_FUNCTIONS, ast.Lambda)):
                 # Creating a deferred function still evaluates its defaults
                 # and decorators. Its uncalled body remains contextual.
@@ -277,8 +366,8 @@ def python_tool_regions(
             if isinstance(node, ast.Call):
                 # Keep only the invoked expression. A deferred lambda inside
                 # its arguments is not established as an executed callback.
-                bodies.append(span(node.func))
-                if isinstance(node.func, ast.Name):
+                record_callee(node.func, bodies)
+                if isinstance(node.func, (ast.Name, ast.Lambda)):
                     if chosen := select(node.func, scopes[id(node)]):
                         queue.append(chosen)
             body.extend(ast.iter_child_nodes(node))

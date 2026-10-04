@@ -6,7 +6,10 @@ import pytest
 
 from shadowscan.connectors.code import javascript_tool_attribution
 from shadowscan.connectors.code.javascript_reachability import JavascriptReachabilityLimit
-from shadowscan.connectors.code.javascript_tool_attribution import javascript_tool_regions
+from shadowscan.connectors.code.javascript_tool_attribution import (
+    is_javascript_tool_factory,
+    javascript_tool_regions,
+)
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.connectors.code.source_semantics import _javascript_bindings
 from shadowscan.models import Kind
@@ -24,7 +27,12 @@ def _regions(source: str):
     calls, _ = _javascript_bindings(source, ignored)
     agents = [(call.start, call.end) for call in calls if call.binding.symbol == "Agent"]
     servers = [(call.start, call.end) for call in calls if call.binding.symbol == "McpServer"]
-    return javascript_tool_regions(source, ignored, agents, servers)
+    factories = [
+        (call.start, call.end)
+        for call in calls
+        if not call.partial and is_javascript_tool_factory(call.binding.module, call.binding.symbol)
+    ]
+    return javascript_tool_regions(source, ignored, agents, servers, factories)
 
 
 def _connected(source: str, expression: str = SINK) -> bool:
@@ -119,6 +127,7 @@ def test_bound_builtin_alias_is_connected(tmp_path, run_connector):
         "execute: async ({cmd}) => { return sandbox.run_code(cmd); }",
         "execute: async function({cmd}) { return sandbox.run_code(cmd); }",
         "execute({cmd}) { return sandbox.run_code(cmd); }",
+        "async execute({cmd}) { return sandbox.run_code(cmd); }",
     ],
 )
 def test_supported_inline_callback_shapes_connect_only_invocations(execute):
@@ -245,6 +254,102 @@ def test_mcp_named_callback_can_resolve_a_stable_local_definition():
 def test_agent_tool_factory_arguments_do_not_register_deferred_lambda():
     source = AGENT_IMPORT + "const agent = new Agent({tools:[factory(()=>sandbox.run_code(cmd))]});\n"
     assert not _connected(source)
+
+
+def test_unknown_factory_descriptor_cannot_register_an_ignored_execute_callback(tmp_path, run_connector):
+    source = AGENT_IMPORT + (
+        "function discard(config) { return tool({name:'safe', execute:()=>1}); }\n"
+        "const agent = new Agent({tools:[discard({execute:()=>sandbox.run_code(cmd)})]});\n"
+    )
+    assert not _connected(source)
+    finding = _project(tmp_path, run_connector, source)
+    assert finding.capabilities == ["tool-use"]
+    assert "code-exec" in finding.metadata["contextual_capabilities"]
+
+
+@pytest.mark.parametrize(
+    "imports, expression",
+    [
+        ("import { Agent, tool as makeTool } from '@openai/agents';\n", "makeTool"),
+        ("import * as agents from '@openai/agents';\n", "agents.tool"),
+        (
+            "import { Agent } from '@openai/agents';\nimport { tool as makeTool } from 'ai';\n",
+            "makeTool",
+        ),
+        (
+            "import { Agent } from '@openai/agents';\nimport { createTool } from '@mastra/core/tools';\n",
+            "createTool",
+        ),
+    ],
+)
+def test_supported_import_bound_factory_aliases_preserve_execution(
+    tmp_path, run_connector, imports, expression
+):
+    constructor = "agents.Agent" if expression == "agents.tool" else "Agent"
+    source = imports + (
+        f"const agent = new {constructor}({{tools:[{expression}({{execute:()=>sandbox.run_code(cmd)}})]}});\n"
+    )
+    assert _connected(source)
+    assert "code-exec" in _project(tmp_path, run_connector, source).capabilities
+
+
+@pytest.mark.parametrize(
+    "execute",
+    [
+        "()=>{ let [shell]=[()=>1]; return shell(); }",
+        "()=>{ const [first,shell]=[1,()=>1]; return shell(); }",
+        "()=>{ const [first,[second],shell]=[1,[2],()=>1]; return shell(); }",
+        "()=>{ if(false){ var [first,[second],shell]=[1,[2],()=>1]; } return shell(); }",
+        "function(a=(1), shell) { return shell(); }",
+        "(a=(1), shell)=>{ return shell(); }",
+    ],
+)
+def test_destructured_or_nested_parameter_binding_cannot_resolve_an_outer_helper(
+    tmp_path, run_connector, execute
+):
+    source = AGENT_IMPORT + (
+        "function shell(cmd) { return sandbox.run_code(cmd); }\n"
+        f"const agent = new Agent({{tools:[tool({{execute:{execute}}})]}});\n"
+    )
+    assert not _connected(source)
+    finding = _project(tmp_path, run_connector, source)
+    assert finding.capabilities == ["tool-use"]
+    assert "code-exec" in finding.metadata["contextual_capabilities"]
+
+
+@pytest.mark.parametrize(
+    "execute",
+    [
+        "()=>{ const [first]=[cmd]; return shell(first); }",
+        "function(a=(1), neutral) { return shell(a); }",
+        "(a=(1), neutral)=>{ return shell(a); }",
+    ],
+)
+def test_unshadowed_outer_helper_survives_other_destructured_or_nested_parameters(
+    tmp_path, run_connector, execute
+):
+    source = AGENT_IMPORT + (
+        "function shell(cmd) { return sandbox.run_code(cmd); }\n"
+        f"const agent = new Agent({{tools:[tool({{execute:{execute}}})]}});\n"
+    )
+    assert _connected(source)
+    assert "code-exec" in _project(tmp_path, run_connector, source).capabilities
+
+
+@pytest.mark.parametrize("receiver", ["foreign.server", "server.fake.server", "foreign?.server"])
+def test_same_spelled_mcp_member_is_not_the_import_bound_server(tmp_path, run_connector, receiver):
+    source = MCP_IMPORT + SERVER + (f"{receiver}.registerTool('lookup', {{}}, ()=>sandbox.run_code(cmd));\n")
+    assert not _connected(source)
+    finding = _project(tmp_path, run_connector, source)
+    assert "code-exec" not in finding.capabilities
+    assert "code-exec" in finding.metadata["contextual_capabilities"]
+
+
+def test_import_bound_async_execute_method_retains_observed_execution(tmp_path, run_connector):
+    source = AGENT_IMPORT + (
+        "const agent = new Agent({tools:[tool({async execute(cmd) { return sandbox.run_code(cmd); }})]});\n"
+    )
+    assert {"tool-use", "code-exec"} <= set(_project(tmp_path, run_connector, source).capabilities)
 
 
 def test_deleted_tool_map_entry_cannot_preserve_execution_authority(tmp_path, run_connector):

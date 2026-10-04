@@ -54,6 +54,86 @@ def test_read_only_global_declaration_preserves_a_registered_helper(tmp_path, ru
     assert {"tool-use", "code-exec"} <= set(finding.capabilities)
 
 
+@pytest.mark.parametrize(
+    "exit_statement",
+    [
+        "return cmd",
+        "raise ValueError(cmd)",
+        "if True:\n        return cmd",
+        "if cmd:\n        return cmd\n    else:\n        raise ValueError(cmd)",
+        "try:\n        return cmd\n    finally:\n        pass",
+    ],
+)
+def test_sink_after_unconditional_tool_exit_remains_contextual(tmp_path, run_connector, exit_statement):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        "from agents import Agent\nimport subprocess\ndef tool(cmd):\n    "
+        + exit_statement
+        + '\n    subprocess.run(cmd, shell=True)\nagent = Agent(name="safe", tools=[tool])\n',
+    )
+    assert finding.capabilities == ["tool-use"]
+    assert "code-exec" in finding.metadata["contextual_capabilities"]
+
+
+def test_definition_after_unconditional_exit_cannot_supply_a_tool_helper(tmp_path, run_connector):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        "from agents import Agent\nimport subprocess\ndef tool(cmd):\n"
+        "    helper(cmd)\n    return cmd\n"
+        "    def helper(value):\n        return subprocess.run(value, shell=True)\n"
+        'agent = Agent(name="safe", tools=[tool])\n',
+    )
+    assert finding.capabilities == ["tool-use"]
+    assert "code-exec" in finding.metadata["contextual_capabilities"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return subprocess.run(cmd, shell=True)",
+        "if cmd:\n        return cmd\n    return subprocess.run(cmd, shell=True)",
+        "try:\n        return cmd\n    finally:\n        subprocess.run(cmd, shell=True)",
+        "try:\n        raise ValueError(cmd)\n    except ValueError:\n        pass\n"
+        "    subprocess.run(cmd, shell=True)",
+        "return (lambda: subprocess.run(cmd, shell=True))()",
+        "return (lambda value=subprocess.run(cmd, shell=True): value)()",
+    ],
+)
+def test_reachable_exit_expression_branch_finally_and_immediate_lambda_keep_execution(
+    tmp_path, run_connector, body
+):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        "from agents import Agent\nimport subprocess\ndef tool(cmd):\n    "
+        + body
+        + '\nagent = Agent(name="operator", tools=[tool])\n',
+    )
+    assert {"tool-use", "code-exec"} <= set(finding.capabilities)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "(lambda: lambda: subprocess.run(cmd, shell=True))()",
+        "(lambda fn=lambda: subprocess.run(cmd, shell=True): cmd)()",
+        "unknown_factory(lambda: subprocess.run(cmd, shell=True)).invoke()",
+    ],
+)
+def test_compound_callee_does_not_connect_deferred_callback_body(tmp_path, run_connector, expression):
+    finding = _scan(
+        tmp_path,
+        run_connector,
+        "from agents import Agent\nimport subprocess\ndef tool(cmd):\n    return "
+        + expression
+        + '\nagent = Agent(name="safe", tools=[tool])\n',
+    )
+    assert finding.capabilities == ["tool-use"]
+    assert "code-exec" in finding.metadata["contextual_capabilities"]
+
+
 def test_dead_local_assignment_still_shadows_an_outer_helper(tmp_path, run_connector):
     finding = _scan(
         tmp_path,
