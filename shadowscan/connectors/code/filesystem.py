@@ -109,6 +109,18 @@ from shadowscan.connectors.code.source_semantics import (
     SourceNotParsed,
     bound_source_matches,
 )
+from shadowscan.connectors.code.walk import (
+    DEFAULT_MAX_WALK_ENTRIES,
+    _holds_file,
+    _marks_project,
+    _nearest_root,
+    _project_root,
+    _report_name,
+    _walk_directories,
+    _WalkBudget,
+    _WalkCounters,
+    _WalkLimitError,
+)
 from shadowscan.connectors.common import (
     apply_matches,
     cap_confidence,
@@ -125,7 +137,7 @@ from shadowscan.signatures.matcher import (
     MatchTimeoutError,
     language_for_path,
 )
-from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
+from shadowscan.utils.files import open_confined_directory, read_policy_text
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
@@ -180,7 +192,6 @@ _MENTION_SIGNALS = frozenset({"env", "name"})
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
 DEFAULT_MAX_NOTEBOOK_SIZE = 20 * 1024 * 1024
-DEFAULT_MAX_WALK_ENTRIES = 1_000_000
 
 DEFAULT_EXCLUDES = {
     ".git",
@@ -253,8 +264,6 @@ DISCLOSED_DEFAULT_EXCLUDES = frozenset(
 # binary, so each would be a coverage gap): it stays excluded even when
 # `default_excludes` is false.
 VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
-# Entries inspected to decide whether a skipped directory holds any file.
-_EMPTY_DIRECTORY_PROBE_ENTRIES = 256
 
 # Non-regular entries named individually per root, before the rest are summarized.
 _MAX_NON_REGULAR_NOTES = 10
@@ -359,77 +368,6 @@ def _special_file_kind(mode: int) -> str:
         if test(mode):
             return kind
     return "special file"
-
-
-PROJECT_ROOT_MARKERS = {
-    "package.json",
-    "pyproject.toml",
-    "requirements.txt",
-    "setup.py",
-    "Pipfile",
-    "go.mod",
-    "Cargo.toml",
-    "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
-    "Gemfile",
-    "composer.json",
-    "environment.yml",
-}
-
-# `setup.py` is also an ordinary module name (a package's `tracing/setup.py`,
-# a web app's `controllers/setup.py`). It marks a project only when it builds
-# a package; anything that cannot be read keeps the historical marker.
-_SETUP_SCRIPT_MAX_BYTES = 256 * 1024
-_PACKAGING_SETUP = re.compile(rb"\b(?:setuptools|distutils|skbuild)\b|(?<!def )(?<![.\w])setup\s*\(")
-
-
-def _packaging_setup_script(path: Path) -> bool:
-    try:
-        with open_confined_file(path, label="setup.py") as (stream, _):
-            head = stream.read(_SETUP_SCRIPT_MAX_BYTES)
-    except (OSError, ValueError):
-        return True
-    return _PACKAGING_SETUP.search(head) is not None
-
-
-def _marks_project(directory: Path, names: Iterable[str]) -> bool:
-    """True when ``names`` in ``directory`` include a project manifest."""
-    return any(
-        name in PROJECT_ROOT_MARKERS and (name != "setup.py" or _packaging_setup_script(directory / name))
-        for name in names
-    )
-
-
-def _holds_file(directory: Path, budget: _WalkBudget | None = None) -> bool:
-    """Whether a skipped ``directory`` holds anything that is not a directory.
-
-    Probes at most ``_EMPTY_DIRECTORY_PROBE_ENTRIES`` entries without following
-    a link (a link in place of the directory is not listed at all). A tree the
-    probe cannot finish or cannot list counts as non-empty, so the omission is
-    disclosed rather than assumed to be nothing.
-    """
-    try:
-        if directory.is_symlink():
-            return False
-    except OSError:
-        return True
-    pending = [directory]
-    inspected = 0
-    budget = budget or _WalkBudget()
-    while pending:
-        budget.check()
-        try:
-            with os.scandir(pending.pop()) as entries:
-                for entry in entries:
-                    budget.count_entry()
-                    inspected += 1
-                    if inspected > _EMPTY_DIRECTORY_PROBE_ENTRIES or not entry.is_dir(follow_symlinks=False):
-                        return True
-                    pending.append(Path(entry.path))
-        except OSError:
-            return True
-    return False
 
 
 TEXT_CONFIG_EXTENSIONS = {
@@ -3373,6 +3311,37 @@ class FilesystemConnector(BaseConnector):
             f.metadata["risk_notes"] = sig.risk_notes
         return f
 
+    # Shared agent-manifest card scaffold per manifest kind: framework id,
+    # title prefix, whether the manifest name joins the title, evidence
+    # description and weight, and the capability declared by the format itself.
+    _CARD_KINDS: dict[str, tuple[str, str, bool, str, float, str | None]] = {
+        "a2a": ("protocol.a2a", "A2A agent card", True, "A2A Agent Card", 0.95, "multi-agent"),
+        "m365": (
+            "platform.m365-declarative-agent",
+            "M365 Copilot declarative agent",
+            True,
+            "Microsoft 365 declarative agent manifest",
+            0.95,
+            None,
+        ),
+        "langgraph": (
+            "framework.langgraph",
+            "LangGraph deployment manifest",
+            False,
+            "langgraph.json deployment manifest",
+            0.95,
+            None,
+        ),
+        "crewai": (
+            "framework.crewai",
+            "CrewAI agent definitions",
+            False,
+            "CrewAI agents.yaml",
+            0.9,
+            "multi-agent",
+        ),
+    }
+
     def _card_finding(self, label: str, root: Path, rel: str, text: str, kind: str) -> Finding | None:
         validation = parse_agent_manifest(rel, text, kind)
         if not validation.valid:
@@ -3382,6 +3351,18 @@ class FilesystemConnector(BaseConnector):
         # An opaque secret may also appear in a description, URL or dependency.
         data = sanitize(validation.data)
         f = self._base(label, root, rel, Kind.AGENT, "", "agent-manifest")
+        spec = self._CARD_KINDS.get(kind)
+        if spec:
+            fw, prefix, named, description, weight, capability = spec
+            f.title = f"{prefix}: {(data.get('name') or rel) if named else rel}"
+            f.add_framework(fw)
+            if capability:
+                f.add_capability(capability)
+            f.add_evidence(
+                Evidence(
+                    signal=f"file:{fw}", description=description, location=rel, weight=weight, signature=fw
+                )
+            )
         if kind == "a2a":
             self._describe_a2a_card(f, rel, data)
         elif kind == "m365":
@@ -3396,18 +3377,6 @@ class FilesystemConnector(BaseConnector):
         return f
 
     def _describe_a2a_card(self, f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.title = f"A2A agent card: {data.get('name') or rel}"
-        f.add_framework("protocol.a2a")
-        f.add_capability("multi-agent")
-        f.add_evidence(
-            Evidence(
-                signal="file:protocol.a2a",
-                description="A2A Agent Card",
-                location=rel,
-                weight=0.95,
-                signature="protocol.a2a",
-            )
-        )
         f.metadata["agent_card"] = {
             "name": data.get("name"),
             "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
@@ -3431,17 +3400,6 @@ class FilesystemConnector(BaseConnector):
 
     @staticmethod
     def _describe_m365_agent(f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.title = f"M365 Copilot declarative agent: {data.get('name') or rel}"
-        f.add_framework("platform.m365-declarative-agent")
-        f.add_evidence(
-            Evidence(
-                signal="file:platform.m365-declarative-agent",
-                description="Microsoft 365 declarative agent manifest",
-                location=rel,
-                weight=0.95,
-                signature="platform.m365-declarative-agent",
-            )
-        )
         f.metadata["declarative_agent"] = {
             "name": data.get("name"),
             "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
@@ -3459,17 +3417,6 @@ class FilesystemConnector(BaseConnector):
 
     @staticmethod
     def _describe_langgraph_manifest(f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.title = f"LangGraph deployment manifest: {rel}"
-        f.add_framework("framework.langgraph")
-        f.add_evidence(
-            Evidence(
-                signal="file:framework.langgraph",
-                description="langgraph.json deployment manifest",
-                location=rel,
-                weight=0.95,
-                signature="framework.langgraph",
-            )
-        )
         graphs = data.get("graphs", {}) or {}
         f.metadata["graphs"] = _clip(list(graphs.keys()) if isinstance(graphs, dict) else graphs)
         f.metadata["dependencies"] = _clip(data.get("dependencies"))
@@ -3480,18 +3427,6 @@ class FilesystemConnector(BaseConnector):
         f.add_capability("tool-use")
 
     def _describe_crewai_agents(self, f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.title = f"CrewAI agent definitions: {rel}"
-        f.add_framework("framework.crewai")
-        f.add_capability("multi-agent")
-        f.add_evidence(
-            Evidence(
-                signal="file:framework.crewai",
-                description="CrewAI agents.yaml",
-                location=rel,
-                weight=0.9,
-                signature="framework.crewai",
-            )
-        )
         f.metadata["agents"] = [
             {
                 "name": k,
@@ -3734,157 +3669,7 @@ def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int 
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-class _WalkLimitError(ValueError):
-    """A bounded enumeration stopped; retain findings and report incomplete coverage."""
-
-
-@dataclass
-class _WalkBudget:
-    """Bound retained directory names and all auxiliary listings within one source-tree scan."""
-
-    maximum: int = DEFAULT_MAX_WALK_ENTRIES
-    check_deadline: Callable[[], None] | None = None
-    entries: int = 0
-
-    def check(self) -> None:
-        if self.check_deadline is not None:
-            # Completion failures use the connector's single canonical error.
-            # Only entry exhaustion is recoverable inside the directory walk.
-            self.check_deadline()
-
-    def count_entry(self) -> None:
-        self.check()
-        self.entries += 1
-        if self.entries > self.maximum:
-            raise _WalkLimitError(f"max_entries ({self.maximum}) reached during directory enumeration")
-
-
-@dataclass
-class _WalkCounters:
-    """What one directory walk has examined so far, shared with its link checks."""
-
-    examined: int = 0  # files and links counted toward max_files
-    non_regular: int = 0  # entries named like analyzable content that are not regular files
-    stop_at: float | None = None  # monotonic time after which link checks stop (deadline minus margin)
-    # Directory (POSIX, relative to the root) -> project root of the files in
-    # it, so a directory holding many links lists its ancestors once.
-    project_roots: dict[str, str] = field(default_factory=dict)
-    budget: _WalkBudget = field(default_factory=_WalkBudget)
-
-
-def _project_root(
-    root: Path,
-    rel: str,
-    cache: dict[str, str] | None = None,
-    *,
-    budget: _WalkBudget | None = None,
-) -> str:
-    """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
-
-    That is the deepest ancestor directory below the scan root holding a
-    project marker, or ``"."``. Used for the symlink checks only; ``cache``
-    remembers the answer for every directory the lookup passed through, so a
-    tree planted with links costs one listing per directory, not per link.
-    """
-    directory = PurePosixPath(rel).parent.as_posix()
-    if cache is not None and directory in cache:
-        return cache[directory]
-    passed: list[str] = []
-    result = "."
-    budget = budget or _WalkBudget()
-    for parent in PurePosixPath(rel).parents:
-        ancestor = parent.as_posix()
-        if ancestor == ".":
-            break
-        passed.append(ancestor)
-        try:
-            budget.check()
-            names = []
-            with os.scandir(root / ancestor) as entries:
-                for entry in entries:
-                    budget.count_entry()
-                    names.append(entry.name)
-        except OSError:
-            continue
-        if _marks_project(root / ancestor, names):
-            result = ancestor
-            break
-    if cache is not None:
-        # Every directory between the file and its project root (or the scan
-        # root) shares the answer: no marker was found below the result.
-        for ancestor in passed:
-            cache.setdefault(ancestor, result)
-    return result
-
-
-def _walk_directories(
-    top: Path, onerror: Callable[[OSError], None], *, budget: _WalkBudget | None = None
-) -> Iterator[tuple[str, list[str], list[str]]]:
-    """Walk ``top`` top-down like ``os.walk(top, followlinks=False, onerror=onerror)``, without recursion.
-
-    ``os.walk`` recurses before Python 3.12, so a tree about a thousand directories
-    deep ends in a RecursionError that discards every finding. This keeps its
-    contract: a directory is yielded before its children, a link to a directory is
-    listed in ``dirnames`` but never entered, the caller may prune or reorder
-    ``dirnames`` in place, and a directory that cannot be listed is passed to
-    ``onerror`` and skipped. Every name is charged before retention, including
-    names the caller later excludes. The shared budget also checks cancellation
-    and deadlines, and bounds auxiliary coverage probes.
-    """
-    stack = [os.fspath(top)]
-    budget = budget or _WalkBudget()
-    while stack:
-        budget.check()
-        current = stack.pop()
-        dirs: list[str] = []
-        files: list[str] = []
-        try:
-            with os.scandir(current) as entries:
-                for entry in entries:
-                    budget.count_entry()
-                    try:
-                        is_dir = entry.is_dir()
-                    except OSError:
-                        is_dir = False
-                    (dirs if is_dir else files).append(entry.name)
-        except OSError as error:
-            onerror(error)
-            continue
-        yield current, dirs, files
-        for name in reversed(dirs):
-            budget.check()
-            child = os.path.join(current, name)
-            if not os.path.islink(child):
-                stack.append(child)
-
-
-def _report_name(name: str) -> str:
-    """A report-safe form of a path or path component read from disk.
-
-    ``os.walk`` returns the bytes of a name that is not UTF-8 as lone surrogates,
-    which no reporter can encode: each becomes a ``\\xNN`` escape. Valid names are
-    returned unchanged; I/O keeps using the ``Path`` that holds the on-disk name.
-    """
-    if name.isascii():
-        return name
-    try:
-        name.encode("utf-8")
-    except UnicodeEncodeError:
-        try:
-            raw = name.encode("utf-8", errors="surrogateescape")
-        except UnicodeEncodeError:
-            raw = name.encode("utf-8", errors="backslashreplace")
-        return raw.decode("utf-8", errors="backslashreplace")
-    return name
-
-
-def _nearest_root(rel_dir: str, roots: list[str]) -> str:
-    """Discard completed branches from the active root stack during the walk."""
-    while len(roots) > 1 and rel_dir != roots[-1] and not rel_dir.startswith(roots[-1] + "/"):
-        roots.pop()
-    return roots[-1]
-
-
+# IPython line and cell magics (%pip, %%time) and shell escapes (!pip), each
 # alone on its line, as IPython rewrites them before Python reads the cell.
 # "% name" continuing an expression is the modulo operator and stays.
 _IPYTHON_LINE = re.compile(r"^([ \t]*+)((?:%%?[A-Za-z_]|!)[^\n]*)", re.MULTILINE)

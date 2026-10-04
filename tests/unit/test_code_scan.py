@@ -15,10 +15,10 @@ from shadowscan.connectors.code.filesystem import (
     DEFAULT_EXCLUDES,
     DISCLOSED_DEFAULT_EXCLUDES,
     FilesystemConnector,
-    _nearest_root,
 )
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.connectors.code.walk import _nearest_root
 from shadowscan.models import Kind
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
