@@ -5,6 +5,25 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### Review remediation (2026-10-04)
+
+Fixes for the high- and medium-severity findings of the October 2026
+AI-assisted repository review. That review is not an independent human review.
+
+#### Redaction
+
+#### Registry and identity
+
+#### Connectors
+
+#### Code scan coverage
+
+#### Severity and classification
+
+#### Engine and exit codes
+
+#### Tooling and governance
+
 ### Security-review follow-ups
 
 - `SHADOWSCAN_IDENTITY_KEY` accepts explicit `hex:<value>` and
