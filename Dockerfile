@@ -27,6 +27,13 @@
 # (`use_git` history enrichment needs it), and the build fails on an older git.
 # Review Dependabot's proposed digest refreshes and keep both FROM lines equal.
 # The literal FROM cannot be substituted by a mutable build argument.
+# apk reads the live Wolfi repository at build time, so this image is not
+# byte-for-byte reproducible. Retain built images by immutable digest for
+# repeatable deployment; reproducible rebuilds additionally need an immutable
+# package-repository snapshot and a validated reproducible build process.
+# Both FROM lines and both
+# apk python-3.12 and python-3.12-base pins MUST stay identical across the build
+# and runtime stages.
 # To refresh by hand, run
 #   docker buildx imagetools inspect chainguard/wolfi-base:latest
 # and copy the top-level image index Digest into both FROM lines after

@@ -172,7 +172,7 @@ def test_declared_run_identity_key_is_shared_within_a_run_and_rotated_between_ru
 
 def test_operator_identity_key_is_shared_by_every_run(monkeypatch):
     key = bytes(range(32))
-    monkeypatch.setenv(IDENTITY_KEY_ENV, key.hex())
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{key.hex()}")
     connector, contexts = _recording_connector(uses_run_identity_key=True)
     engine = _run(monkeypatch, connector, [ConnectorSpec("platform.recorder")])
     assert engine.run().complete
@@ -182,7 +182,7 @@ def test_operator_identity_key_is_shared_by_every_run(monkeypatch):
 
 
 def test_undeclared_connector_receives_no_run_identity_key(monkeypatch):
-    monkeypatch.setenv(IDENTITY_KEY_ENV, bytes(range(32)).hex())
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{bytes(range(32)).hex()}")
     connector, contexts = _recording_connector()
     _run(monkeypatch, connector, [ConnectorSpec("platform.recorder")])
     assert [(ctx.gateway_identity_key, ctx.gateway_identity_key_stable) for ctx in contexts] == [

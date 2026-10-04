@@ -137,41 +137,61 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 
 ## Install
 
+### Deployment install (reviewed revision, hash-locked)
+
 Select the full 40-character commit SHA after reviewing its changes and CI
 results. Set `SHADOWSCAN_REVISION` to that SHA; do not use a moving branch or an
-unpublished tag in a deployment job. Install the core scanner **or** the cloud
-extra in a clean virtual environment:
+unpublished tag in a deployment job. From a clean checkout and virtual
+environment, install the checked-in runtime and build locks, then build and
+install the wheel:
+
+```bash
+SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
+git clone https://github.com/aisecnomad/Project-Nexus.git
+cd Project-Nexus
+git checkout --detach "$SHADOWSCAN_REVISION"
+test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
+python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
+```
+
+The checked-in runtime lock includes the core scanner and cloud dependencies.
+It is validated for Linux x86_64 with Python 3.11 to 3.13. Build and retain the
+wheel from this reviewed commit; see
+[locked installs and release evidence](docs/production.md#install-from-a-reviewed-revision)
+for validation and artifact-retention requirements.
+
+The distribution is named `project-nexus-shadowscan`; the command and Python
+imports remain `shadowscan`. The unrelated `shadowscan` package on PyPI is not
+this project. This package is unpublished; `0.1.1` is an unreleased candidate
+string, not evidence of a published or signed artifact. Python 3.11, 3.12, or
+3.13 is required and covered by CI; 3.14 is excluded until the CI matrix and
+hash-locked dependency sets cover it. Core dependencies include `click`, `rich`,
+`PyYAML`, `requests`, `urllib3`, `PyJWT[crypto]` and `regex`. Cloud SDKs are
+optional extras; every cloud connector also accepts an offline record dump.
+
+### Development install (non-reproducible)
+
+For development only, the VCS install resolves transitive dependencies at
+install time. It is not hash-locked or reproducible and must not be used for
+deployment or CI gating.
 
 ```bash
 SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
 python -m pip install "git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
 ```
 
-For cloud collection, install the extra from the same reviewed revision:
+For cloud development, install the extra from the same reviewed revision:
 
 ```bash
 SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
 python -m pip install "project-nexus-shadowscan[cloud] @ git+https://github.com/aisecnomad/Project-Nexus.git@${SHADOWSCAN_REVISION}"
 ```
 
-The distribution is named `project-nexus-shadowscan`; the command and Python
-imports remain `shadowscan`. The unrelated `shadowscan` package on PyPI is not
-this project. The new distribution name is not a claim of a published package
-or a reserved namespace: install the reviewed source or built wheel below.
-
-The current `0.1.1` source version is an unreleased candidate; the version
-string does not imply a published or signed artifact. These VCS installs resolve
-transitive dependencies at install time. For deployment, use the locked install
-below. Python 3.11, 3.12, or 3.13 is required and covered by CI; 3.14 is
-excluded until the CI matrix and the hash-locked dependency sets cover it. Core dependencies
-include `click`, `rich`, `PyYAML`, `requests`, `urllib3`,
-`PyJWT[crypto]` and `regex`. Cloud SDKs are optional extras; every cloud connector
-also accepts an offline record dump.
-
-For deployment on Linux x86_64 with Python 3.11 to 3.13, the checked-in
-`requirements.lock` pins and hashes the core and all cloud runtime dependencies.
-Build and retain a wheel from the selected commit; see
-[locked installs and release evidence](docs/production.md#install-from-a-reviewed-revision).
 The [consumer GitHub Action example](examples/github-action-code-scan.yml) requires
 the repository variable `SHADOWSCAN_REVISION` to hold that reviewed full SHA;
 it fails until the variable is set.

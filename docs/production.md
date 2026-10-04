@@ -29,9 +29,11 @@ scan produces different credential pseudonyms. Direct calls to the library's
 
 For stable credential correlation between scans, provide the existing
 `SHADOWSCAN_IDENTITY_KEY` through a private secret environment: at least 32
-random secret bytes, hex or base64 encoded. Use the same key for the scans being
-compared. The key also governs gateway pseudonyms, so rotating it changes
-gateway identities too. Keep the key out of configuration files, logs,
+random secret bytes, explicitly encoded as `hex:<value>` or `base64:<value>`.
+Ambiguous bare encodings, including ordinary 64-character hex keys, now fail
+before collection; prefix an existing hex key with `hex:` to preserve its bytes.
+Use the same key for the scans being compared. The key also governs gateway
+pseudonyms, so rotating it changes gateway identities too. Keep the key out of configuration files, logs,
 command-line arguments and shared reports. No key is generated into persistent
 storage automatically, and scan reports/export/cache files never contain it.
 
@@ -163,6 +165,12 @@ its literal digest; Python 3.12 and Git are Wolfi packages, and pip stays in
 the build stage. Both stages also pin Wolfi's `python-3.12` to one package
 revision for now; see
 [October 2 integration of #134](#october-2-integration-of-134-and-hygiene-review).
+Because apk reads the live Wolfi repository, this image is not byte-for-byte
+reproducible. Retain the built image by immutable digest for repeatable
+deployment. Reproducible rebuilds additionally require an immutable package
+repository snapshot and a validated reproducible build process; a rebuild
+cadence alone does not supply either. Keep both `FROM` digests and Python package
+pins identical across the build and runtime stages.
 The image build checks that Git is 2.45 or newer for history enrichment.
 Review that exact digest and any Dependabot refresh before deployment:
 
@@ -1685,8 +1693,10 @@ enforcing policy on the new output:
 - **Gateway identity.** Gateway finding IDs stay scan-local by default, and
   `diff` lists them under `not_comparable` (exit 3) instead of reporting them as
   new. To compare gateway callers across scans, inject the same
-  `SHADOWSCAN_IDENTITY_KEY` (at least 32 bytes, hex or base64, for example from
-  `openssl rand -hex 32`) from a secret store into every comparable scan.
+  `SHADOWSCAN_IDENTITY_KEY` (at least 32 bytes, explicitly `hex:<value>` or
+  `base64:<value>`, for example `hex:` followed by `openssl rand -hex 32`) from
+  a secret store into every comparable scan. Ambiguous unprefixed encodings
+  stop the scan and require one of those prefixes.
   Findings then carry `identity_scope: keyed` and keep their IDs, and gateway
   inputs join the collection scope through a keyed digest. Treat the key as a
   secret: anyone who holds it can link reports and test guesses of short labels

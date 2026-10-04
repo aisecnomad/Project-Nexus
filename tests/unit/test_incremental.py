@@ -347,7 +347,7 @@ def test_concurrent_cache_writers_publish_only_complete_matching_entries(tmp_pat
 
 
 def test_cache_is_private_sanitized_and_never_written_inside_repository(tmp_path, index, monkeypatch):
-    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", (b"a" * 32).hex())
+    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + (b"a" * 32).hex())
     cfg = config(tmp_path)
     secret = "sk-proj-" + "a" * 48
     (tmp_path / "repo" / "main.py").write_text(f'import langchain\napi_key = "{secret}"\n')
@@ -387,7 +387,7 @@ def test_live_cloud_and_temporal_connectors_are_never_cached(tmp_path, index):
 
 
 def test_static_cloud_exports_reused_and_updated(tmp_path, index, fixtures, monkeypatch):
-    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", (b"a" * 32).hex())
+    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + (b"a" * 32).hex())
     export = tmp_path / "aws.jsonl"
     export.write_bytes((fixtures / "cloud" / "aws_records.jsonl").read_bytes())
     cfg = config(tmp_path, connectors=[ConnectorSpec("cloud.aws", {"input": str(export)})])

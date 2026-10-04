@@ -5,6 +5,25 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### Security-review follow-ups
+
+- `SHADOWSCAN_IDENTITY_KEY` accepts explicit `hex:<value>` and
+  `base64:<value>` encodings. Bare values that are valid under both encodings
+  now fail with a credential-free `SetupError` asking for a prefix. This
+  intentionally breaks ambiguous bare keys, including ordinary 64-character
+  hex strings; prefix them with `hex:`. The README now leads with the reviewed
+  revision and hash-locked deployment install, and labels floating VCS installs
+  as development-only and non-reproducible.
+- Inventory approval warnings now include additional resource-shape probes and
+  flag near-universal patterns as advisory sampled evidence. Only star-only
+  globs are described as universal. The classifier retains the parsed pattern
+  semantics, including literal whitespace and question-mark minimum lengths.
+  Scope constraints, including observation discriminators, still limit approval.
+  The Dockerfile documents the
+  live-apk reproducibility trade-off and requires matching base-image and Python
+  package pins across stages; a repository consistency test enforces the digest
+  and pin synchronization.
+
 ### October 3 live merge-policy drift audit
 
 - The weekly dependency-audit workflow now independently checks both live main

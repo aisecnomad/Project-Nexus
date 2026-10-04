@@ -68,23 +68,52 @@ def _stable_identity_key() -> bytes | None:
     """Decode ``SHADOWSCAN_IDENTITY_KEY``, or None when it is not set.
 
     Gateway pseudonyms and finding IDs use a random key per scan unless the
-    operator supplies at least 32 secret bytes, hex or base64 encoded (hex is
-    tried first). The key must never reach a log, report, cache, record export
-    or diagnostic, and a set but unusable value stops the scan rather than
-    silently falling back to unlinkable per-scan identities.
+    operator supplies at least 32 secret bytes, encoded as ``hex:<value>`` or
+    ``base64:<value>``; prefix names are case-insensitive. Bare encodings are
+    accepted only when exactly one canonical encoding is valid; ambiguous
+    values require a prefix. The key must never reach a log, report, cache,
+    record export or diagnostic, and a set but unusable value stops the scan
+    rather than silently falling back to unlinkable per-scan identities.
     """
     value = os.environ.get(IDENTITY_KEY_ENV)
     if value is None:
         return None
     text = value.strip()
+    encoding: str | None = None
+    if text[:4].casefold() == "hex:":
+        encoding, text = "hex", text[4:]
+    elif text[:7].casefold() == "base64:":
+        encoding, text = "base64", text[7:]
+
     try:
-        key = bytes.fromhex(text) if _HEX_KEY.fullmatch(text) else base64.b64decode(text, validate=True)
+        hex_encoded = bool(_HEX_KEY.fullmatch(text))
+        base64_key: bytes | None = None
+        if encoding != "hex":
+            try:
+                base64_key = base64.b64decode(text, validate=True)
+                if base64.b64encode(base64_key).decode("ascii") != text:
+                    base64_key = None
+            except ValueError:  # binascii.Error, or text that is not ASCII
+                pass
+        if encoding is None and hex_encoded and base64_key is not None:
+            raise SetupError(
+                f"{IDENTITY_KEY_ENV} has an ambiguous encoding; "
+                "ambiguous bare values are no longer accepted. Use an explicit "
+                "hex:<value> or base64:<value> prefix"
+            )
+        if encoding == "hex" or (encoding is None and hex_encoded):
+            key = bytes.fromhex(text)
+        elif base64_key is not None:
+            key = base64_key
+        else:
+            key = b""
     except ValueError:  # binascii.Error, or text that is not ASCII
         key = b""
     if len(key) < _MIN_IDENTITY_KEY_BYTES:
         # SetupError text is printed verbatim: name the variable, never its value.
         raise SetupError(
-            f"{IDENTITY_KEY_ENV} must hold at least {_MIN_IDENTITY_KEY_BYTES} bytes, hex or base64 encoded"
+            f"{IDENTITY_KEY_ENV} must decode to at least {_MIN_IDENTITY_KEY_BYTES} bytes using "
+            "hex:<value> or base64:<value>"
         )
     return key
 
@@ -522,25 +551,41 @@ def _sanitize_diagnostics(st: ScanStats) -> None:
 
 
 _MAX_INVENTORY_WARNINGS = 20
-# Finding resources of very different shapes. An approval pattern that matches
-# all of them (`*`, `**`, `?*`, `*?`, ...) approves every finding in its scope.
+# Finding resources of very different shapes. Probe matches are advisory
+# evidence of broad scope, not proof that a pattern matches every resource.
 _RESOURCE_PROBES = (
     "a",
     "Z9",
+    "SHADOWSCAN",
+    "1234567890",
     "github:acme/agent",
     "arn:aws:iam::123456789012:role/agent",
+    "a/b[c]",
     "]",
     "[",
     "-",
     " ",
     "/",
+    "~",
+    "\x7f",
+    r"\resource",
+    "line\n\tbreak",
     "\u00e9",
+    "\U0001f600",
     "x" * 512,
+    "0" * 1024,
 )
 
 
-def _approves_every_resource(pattern: str) -> bool:
-    return all(fnmatch.fnmatchcase(probe, pattern) for probe in _RESOURCE_PROBES)
+def _resource_pattern_breadth(pattern: str) -> str | None:
+    """Distinguish proven universal globs from suspiciously broad probe matches."""
+    # Only a nonempty run of stars proves universal matching, including the
+    # empty string. Question marks impose a minimum length; surrounding spaces
+    # are literal glob data and must not be removed during classification.
+    if pattern and all(character == "*" for character in pattern):
+        return "universal"
+    matches = sum(fnmatch.fnmatchcase(probe, pattern) for probe in _RESOURCE_PROBES)
+    return "near-universal" if matches >= len(_RESOURCE_PROBES) - 1 else None
 
 
 def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
@@ -559,7 +604,7 @@ def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
 def _inventory_warnings(
     paths: list[str], inventory: Inventory | None, specs: list[ConnectorSpec]
 ) -> list[str]:
-    """Approvals that scanned content could change, or that approve every finding.
+    """Approvals that scanned content could change, or whose resource scope is broad.
 
     Advisory, not incomplete: ``shadowscan code . --inventory agent-card.yaml``
     is legitimate locally, but in CI a pull request can edit an inventory kept
@@ -581,14 +626,30 @@ def _inventory_warnings(
                     "scanned content could alter approvals"
                 )
     for entry in inventory.entries:
-        everything = next((pattern for pattern in entry.resources if _approves_every_resource(pattern)), None)
-        if everything is not None:
-            shown = "*" if not everything.strip("*") else everything[:60]
+        broad = next(
+            (
+                (pattern, breadth)
+                for pattern in entry.resources
+                if (breadth := _resource_pattern_breadth(pattern))
+            ),
+            None,
+        )
+        if broad is not None:
+            pattern, breadth = broad
+            shown = "*" if breadth == "universal" else pattern[:60]
             source = f" in {entry.source}" if entry.source else ""
-            scoped = entry.surfaces or entry.providers or entry.accounts or entry.regions
+            scoped = (
+                entry.surfaces or entry.providers or entry.accounts or entry.regions or entry.discriminators
+            )
+            effect = (
+                "approves every finding"
+                if breadth == "universal"
+                else "appears near-universal across sampled resource shapes; review approval scope"
+            )
             warnings.append(
                 f"inventory entry {entry.agent_id}{source} has resource pattern {shown!r},"
-                f" which approves every finding{' its scope constraints allow' if scoped else ''}"
+                f" which {effect}"
+                f"{' its scope constraints allow' if scoped and breadth == 'universal' else ''}"
             )
     warnings += [
         f"inventory {link}: symbolic link skipped (links are not followed)"

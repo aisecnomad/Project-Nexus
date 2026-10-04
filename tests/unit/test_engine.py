@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 from threading import Event
@@ -9,7 +10,7 @@ import pytest
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
 from shadowscan.connectors.common import unique_records
 from shadowscan.correlation import correlate
-from shadowscan.engine import Engine, _prune_runtime_links
+from shadowscan.engine import Engine, _prune_runtime_links, _resource_pattern_breadth
 from shadowscan.merge import merge
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
@@ -603,18 +604,69 @@ def test_wildcard_inventory_resource_is_reported_once_per_entry(tmp_path, index)
     assert result.findings and result.complete
 
 
-@pytest.mark.parametrize("pattern,approves_everything", [("?*", True), ("*?", True), ("github:*", False)])
-def test_any_pattern_that_matches_every_resource_is_reported(tmp_path, index, pattern, approves_everything):
+def test_universal_inventory_warning_preserves_observation_discriminator_scope(tmp_path, index):
+    repo = _repo(tmp_path)
+    card = tmp_path / "agents.yaml"
+    card.write_text(
+        "agents:\n  - {agent_id: only-project, owner: x, resources: ['*'], discriminators: [project]}\n"
+    )
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"path": str(repo)})], inventory=[str(card)]
+    )
+    result = Engine(config, index).run()
+    assert _inventory_warnings(result) == [
+        f"inventory entry only-project in {card} has resource pattern '*', which approves every finding"
+        " its scope constraints allow",
+    ]
+    project = next(finding for finding in result.findings if finding.resource_type == "project")
+    assert project.registry_match == "only-project" and result.complete
+    other_observation = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Other source observation",
+        resource=project.resource,
+        resource_type="coding-agent",
+    )
+    assert Inventory.load([str(card)]).match(other_observation) is None
+
+
+@pytest.mark.parametrize(
+    "pattern,breadth",
+    [
+        ("*", "universal"),
+        ("**", "universal"),
+        ("*?*", "near-universal"),
+        ("?*", "near-universal"),
+        ("*?", "near-universal"),
+        (r"[!\\]*", "near-universal"),
+        ("??", None),
+        ("github:acme/*", None),
+        ("arn:aws:iam::*:role/prod-*", None),
+    ],
+)
+def test_universal_and_near_universal_patterns_are_reported(tmp_path, index, pattern, breadth):
     repo = _repo(tmp_path)
     card = tmp_path / "agents.yaml"
     card.write_text(f"agents:\n  - {{agent_id: broad, owner: x, resources: ['{pattern}']}}\n")
     config = ScanConfig(
         connectors=[ConnectorSpec("code.filesystem", {"path": str(repo)})], inventory=[str(card)]
     )
-    expected = (
-        f"inventory entry broad in {card} has resource pattern '{pattern}', which approves every finding"
-    )
-    assert _inventory_warnings(Engine(config, index).run()) == ([expected] if approves_everything else [])
+    warnings = _inventory_warnings(Engine(config, index).run())
+    assert _resource_pattern_breadth(pattern) == breadth
+    if breadth == "universal":
+        assert len(warnings) == 1 and "approves every finding" in warnings[0]
+    elif breadth == "near-universal":
+        assert len(warnings) == 1 and "near-universal" in warnings[0]
+        assert "approves every finding" not in warnings[0]
+    else:
+        assert warnings == []
+
+
+def test_literal_whitespace_in_a_glob_is_not_treated_as_universal():
+    pattern = " *?* "
+    assert not fnmatch.fnmatchcase("github:acme/agent", pattern)
+    assert _resource_pattern_breadth(pattern) is None
 
 
 def test_cli_shows_in_tree_inventory_warning_without_changing_the_gate(tmp_path):
