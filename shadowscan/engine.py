@@ -31,6 +31,7 @@ from shadowscan.registry import Inventory
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
+from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
 from shadowscan.utils.http import (
     reset_allow_private_origin,
     reset_request_deadline,
@@ -371,6 +372,7 @@ class _ConnectorRunner:
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._config.allow_private_origin)
         limits_token = set_request_deadline(state.deadline, state.cancelled)
+        credential_token = set_credential_identity_key(self._run_identity_key)
         try:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
@@ -389,6 +391,7 @@ class _ConnectorRunner:
             st.errors.append(message)
             log.warning("connector failed; diagnostic recorded in incomplete scan stats")
         finally:
+            reset_credential_identity_key(credential_token)
             reset_request_deadline(limits_token)
             reset_allow_private_origin(origin_token)
         st.findings = len(fs)
@@ -1014,12 +1017,14 @@ class Engine:
         result.collection_scope = build_collection_scope(
             self.config, self.index, specs, identity_key=self._identity_key
         )
+        result.collection_scope["credential_identity_schema"] = "shadowscan.credential-identity/v1"
+        result.collection_scope["credential_identity_scope"] = "keyed" if self._identity_key else "run"
         not_run = self._not_run(jobs)
         if not_run:
             # Outside the fingerprint and comparability: operator intent only.
             result.collection_scope["not_run"] = not_run
         stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
-        cache = IncrementalCache(self.config, self.index)
+        cache = IncrementalCache(self.config, self.index, identity_key=self._identity_key)
         dump_records = self.config.dump_records
         dump_directory = prepare_private_directory(dump_records) if dump_records else None
         exports = _ExportLedger()

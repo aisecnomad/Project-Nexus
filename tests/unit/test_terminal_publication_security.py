@@ -11,6 +11,7 @@ from rich.console import Console
 
 from shadowscan.cli import _emit, main
 from shadowscan.models import Evidence, Finding, Kind, Risk, RiskFactor, ScanResult, ScanStats, Surface
+from shadowscan.reporters import render
 from shadowscan.reporters.table import print_table
 from shadowscan.utils.output import encodable_text, terminal_text, write_private_text
 
@@ -42,6 +43,28 @@ def test_terminal_text_exposes_characters_that_show_nothing():
     assert terminal_text("👩‍💻") == "👩\\u200d💻"
 
 
+@pytest.mark.parametrize("fmt", ["html", "csv", "markdown"])
+@pytest.mark.parametrize("control", ["\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\U000e0041"])
+def test_saved_reports_expose_invisible_untrusted_characters(fmt, control):
+    value = "before" + control + "after"
+    result = ScanResult(
+        findings=[
+            Finding(
+                surface=Surface.CODE,
+                connector="code.filesystem",
+                kind=Kind.AGENT,
+                title=value,
+                resource=value,
+                resource_type="repository",
+                evidence=[Evidence(signal="example", description=value, location=value)],
+            )
+        ],
+        stats=[ScanStats(connector="code.filesystem", started_at="now", warnings=[value])],
+    )
+    rendered = render(result, fmt)
+    assert control not in rendered and terminal_text(value) in rendered
+
+
 def _surrogate_result() -> ScanResult:
     finding = Finding(
         surface=Surface.CODE,
@@ -65,7 +88,7 @@ def test_lone_surrogates_do_not_stop_a_report_written_to_a_file(tmp_path, fmt, m
     text = destination.read_text(encoding="utf-8")  # valid UTF-8: nothing was dropped or garbled
     assert text
     if fmt in {"csv", "markdown", "html"}:
-        assert "x\\ud800y" in text
+        assert ("x\\\\ud800y" if fmt == "markdown" else "x\\ud800y") in text
 
 
 def test_a_lone_surrogate_is_written_as_a_visible_escape(tmp_path):
@@ -82,7 +105,7 @@ def test_lone_surrogates_do_not_stop_a_report_written_to_stdout(fmt, capsys):
     out = capsys.readouterr().out
     assert out
     if fmt in {"csv", "markdown", "html"}:
-        assert "x\\ud800y" in out
+        assert ("x\\\\ud800y" if fmt == "markdown" else "x\\ud800y") in out
 
 
 def test_table_neutralizes_controls_in_findings_and_connector_diagnostics():

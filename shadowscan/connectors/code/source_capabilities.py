@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -82,6 +83,19 @@ def _configured_constructor(signature: str, symbol: str) -> bool:
     return symbol in _CONSTRUCTORS.get(signature, ())
 
 
+def python_tool_argument_position(signature: str, symbol: str) -> int | None:
+    """Return the documented positional tools argument for supported factories."""
+    if signature == "framework.langchain" and symbol == "initialize_agent":
+        return 0
+    if signature in {"framework.langchain", "framework.langgraph"} and symbol in {
+        "create_agent",
+        "create_react_agent",
+        "create_tool_calling_agent",
+    }:
+        return 1
+    return None
+
+
 def _python_entry(value: ast.AST) -> bool:
     return isinstance(value, (ast.Name, ast.Attribute, ast.Call)) or (
         isinstance(value, ast.Dict) and bool(value.keys) and all(key is not None for key in value.keys)
@@ -127,6 +141,7 @@ def configured_capabilities(
     arguments: str,
     masked: str,
     verified_graph: bool = False,
+    python_literals: Mapping[str, ast.AST] | None = None,
 ) -> set[str]:
     """Return capabilities supported by literal options of a known SDK call."""
     if signature not in CONFIGURED_FRAMEWORKS or not _configured_constructor(signature, symbol):
@@ -138,17 +153,13 @@ def configured_capabilities(
         if any(keyword.arg is None for keyword in node.keywords):
             return result
         values = {keyword.arg: keyword.value for keyword in node.keywords}
+        if len(values) != len(node.keywords):
+            return result  # repeated options do not form a valid runtime call
         # The documented positional tool argument of these Python factories.
-        position = (
-            0
-            if signature == "framework.langchain" and symbol == "initialize_agent"
-            else 1
-            if signature in {"framework.langchain", "framework.langgraph"}
-            and symbol in {"create_agent", "create_react_agent", "create_tool_calling_agent"}
-            else None
-        )
+        position = python_tool_argument_position(signature, symbol)
         if "tools" not in values and position is not None and len(node.args) > position:
-            values["tools"] = node.args[position]
+            if not any(isinstance(argument, ast.Starred) for argument in node.args[: position + 1]):
+                values["tools"] = node.args[position]
         for capability, names in _COLLECTION_OPTIONS[signature].items():
             if signature == "framework.crewai" and (
                 capability == "multi-agent"
@@ -157,7 +168,13 @@ def configured_capabilities(
                 and symbol != "Agent"
             ):
                 continue
-            if any(_python_collection(values.get(name)) for name in names):
+            candidates: list[ast.AST | None] = [values.get(name) for name in names]
+            if python_literals:
+                candidates = [
+                    python_literals.get(value.id) if isinstance(value, ast.Name) else value
+                    for value in candidates
+                ]
+            if any(_python_collection(value) for value in candidates):
                 result.add(capability)
         if signature == "framework.crewai" and symbol == "Agent":
             delegation = values.get("allow_delegation")

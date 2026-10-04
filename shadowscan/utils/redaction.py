@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import datetime
 import decimal
-import hashlib
 import re
 import sys
 import types
@@ -40,6 +39,7 @@ from shadowscan.utils import (
     redaction_rules,
     redaction_statements,
 )
+from shadowscan.utils.credential_identity import keyed_credential_digest
 from shadowscan.utils.redaction_assignments import (
     _redact_connection_passwords,
     _redact_fallback_defaults,
@@ -151,11 +151,15 @@ def _plain(item: Any) -> Any:
 
 
 def credential_id(value: Any) -> str:
-    """Stable opaque identity for raw credentials; never retain prefix/suffix."""
+    """Keyed credential pseudonym, stable only within the active private-key scope.
+
+    Legacy public SHA-256 identifiers are rekeyed when passed here. Already
+    keyed identifiers remain idempotent so sanitized evidence can be replayed.
+    """
     s = str(value)
-    if _FINGERPRINT.fullmatch(s):
+    if s.startswith("credential:hmac-sha256:") and _FINGERPRINT.fullmatch(s):
         return s
-    return "credential:sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
+    return "credential:hmac-sha256:" + keyed_credential_digest(s)
 
 
 def sanitize_text(text: str) -> str:

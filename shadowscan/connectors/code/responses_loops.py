@@ -248,10 +248,12 @@ def _has_feedback(
     static: set[str],
     response_linked: bool,
     budget: _Budget,
+    dispatch_calls: set[int] | None = None,
 ) -> bool:
     handlers: set[str] = set()
     results: set[str] = set()
     outputs: set[str] = set()
+    selected_calls: dict[str, int] = {}
     raw_call = response_linked
     static = static.copy()
     for statement in path:
@@ -274,6 +276,7 @@ def _has_feedback(
             # A later assignment invalidates an earlier dispatch/result/output.
             handlers.discard(name)
             results.discard(name)
+            selected_calls.pop(name, None)
             outputs.discard(name)
             static.discard(name)
             call = _call(expression)
@@ -296,6 +299,7 @@ def _has_feedback(
                 )
             ):
                 results.add(name)
+                selected_calls[name] = id(call)
             elif _output(expression, item, results, budget):
                 outputs.add(name)
         if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
@@ -310,6 +314,8 @@ def _has_feedback(
                 (isinstance(call.args[0], ast.Name) and call.args[0].id in outputs)
                 or _output(call.args[0], item, results, budget)
             ) and raw_call:
+                if dispatch_calls is not None:
+                    dispatch_calls.update(selected_calls.values())
                 return True
         if _member(call.func, history, "extend") and len(call.args) == 1 and not call.keywords:
             sequence = call.args[0]
@@ -324,6 +330,8 @@ def _has_feedback(
                         and part.id in outputs
                         or _output(part, item, results, budget)
                     ):
+                        if dispatch_calls is not None:
+                            dispatch_calls.update(selected_calls.values())
                         return True
     return False
 
@@ -433,7 +441,9 @@ def _continuations(
     return paths
 
 
-def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[int]:
+def responses_tool_loop_lines(
+    tree: ast.AST, request_calls: set[int], *, dispatch_calls: set[int] | None = None
+) -> list[int]:
     """Return lines for linked, import-verified Responses calls in repeatable loops."""
     if not request_calls:
         return []
@@ -512,8 +522,8 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
                 # loop, nor can mutually exclusive branches supply its parts.
                 prefixes = _continuations(body[:selection_position], {}, budget)
                 if any(
-                    _has_feedback(path, item, history.id, static, response_linked, budget)
-                    and _continuations(body[selection_position + 1 :], facts, budget)
+                    _continuations(body[selection_position + 1 :], facts, budget)
+                    and _has_feedback(path, item, history.id, static, response_linked, budget, dispatch_calls)
                     for prefix_facts, continued in prefixes
                     if not continued
                     for path, facts in _paths(selection.body, item, budget, initial_facts=prefix_facts)
@@ -523,13 +533,16 @@ def responses_tool_loop_lines(tree: ast.AST, request_calls: set[int]) -> list[in
     return sorted(found)
 
 
-def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
+def _single_dispatch(
+    path: list[ast.stmt], item: str, budget: _Budget, dispatch_calls: set[int] | None = None
+) -> bool:
     """Prove selected-name dispatch, or argument dispatch with linked output.
 
     A single selected action is weaker than an iterative feedback loop. In
     particular, this does not confer autonomous/repeated-execution capability.
     """
     results: set[str] = set()
+    selected_calls: dict[str, int] = {}
     for statement in path:
         for node in _walk(statement, budget):
             if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) and isinstance(
@@ -546,6 +559,7 @@ def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
         if assignment:
             name, expression = assignment
             results.discard(name)
+            selected_calls.pop(name, None)
         elif isinstance(statement, (ast.Expr, ast.Return)) and statement.value is not None:
             # A registry dispatch need not keep its result: a bare call or a
             # returned call selects and runs the model's tool all the same.
@@ -556,6 +570,8 @@ def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
             for arg in [*call.args, *(keyword.value for keyword in call.keywords)]
         ):
             if isinstance(call.func, ast.Subscript) and _member(call.func.slice, item, "name"):
+                if dispatch_calls is not None:
+                    dispatch_calls.add(id(call))
                 return True
             if (
                 isinstance(call.func, ast.Call)
@@ -565,11 +581,14 @@ def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
                 and not call.func.keywords
                 and _member(call.func.args[0], item, "name")
             ):
+                if dispatch_calls is not None:
+                    dispatch_calls.add(id(call))
                 return True
             if isinstance(call.func, ast.Name) and name is not None:
                 # A fixed local handler needs result/call-id linkage too;
                 # logging or printing selected arguments is insufficient.
                 results.add(name)
+                selected_calls[name] = id(call)
                 continue
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
             call = statement.value
@@ -581,6 +600,8 @@ def _single_dispatch(path: list[ast.stmt], item: str, budget: _Budget) -> bool:
                 and not call.keywords
                 and _output(call.args[0], item, results, budget)
             ):
+                if dispatch_calls is not None:
+                    dispatch_calls.update(selected_calls.values())
                 return True
     return False
 
@@ -597,7 +618,9 @@ def _dispatch_paths(
     return [*live, *finished]
 
 
-def responses_dispatch_lines(tree: ast.AST, request_calls: set[int]) -> list[int]:
+def responses_dispatch_lines(
+    tree: ast.AST, request_calls: set[int], *, dispatch_calls: set[int] | None = None
+) -> list[int]:
     """Recognize one selected action in an import-bound, direct-scope flow.
 
     Support a request immediately followed by its response-output iteration
@@ -665,7 +688,7 @@ def responses_dispatch_lines(tree: ast.AST, request_calls: set[int]) -> list[int
             if not prefixes:
                 continue
             if any(
-                _single_dispatch(path, item, budget)
+                _single_dispatch(path, item, budget, dispatch_calls)
                 for facts, continued in prefixes
                 if not continued
                 for path, _ in _dispatch_paths(selection.body, item, budget, facts)

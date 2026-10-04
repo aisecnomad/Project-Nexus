@@ -167,14 +167,15 @@ def test_ambiguous_javascript_handoffs_remain_potential(tmp_path, run_connector,
     assert finding.kind == Kind.AGENT and "multi-agent" not in finding.capabilities
 
 
-def test_independent_tool_construction_keeps_its_specific_capability(tmp_path, run_connector):
+def test_unregistered_tool_construction_keeps_only_contextual_capability(tmp_path, run_connector):
     finding = _scan(
         tmp_path,
         run_connector,
         "from langchain.agents import create_agent\nfrom langchain.tools import ShellTool\n"
         "shell = ShellTool()\na = create_agent(model, tools=[])\n",
     )
-    assert "code-exec" in finding.capabilities
+    assert "code-exec" not in finding.capabilities
+    assert "code-exec" in finding.metadata["contextual_capabilities"]
     assert "tool-use" not in finding.capabilities
 
 

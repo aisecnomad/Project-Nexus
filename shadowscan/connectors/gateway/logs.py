@@ -63,7 +63,7 @@ from shadowscan.connectors.gateway.normalise import (  # noqa: F401
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError, SignatureIndex
-from shadowscan.utils.redaction import REDACTED, credential_id, sanitize
+from shadowscan.utils.redaction import REDACTED, sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, parse_timestamp, to_iso
 
@@ -72,6 +72,7 @@ _MAX_CACHED_USER_AGENT_CHARS = 1024
 _OPAQUE_SCOPE_PREFIX = "scope:hmac-sha256:"
 _LEGACY_SCOPE_PREFIX = "scope:sha256:"
 _PUBLIC_CREDENTIAL_ID = re.compile(r"credential:sha256:[0-9a-f]{64}\Z")
+_IMPORTED_CREDENTIAL_ID = re.compile(r"credential:(?:hmac-)?sha256:[0-9a-f]{64}\Z")
 _OPAQUE_CALLER_PREFIX = "caller:hmac-sha256:"
 _OPAQUE_LABEL_PREFIXES = ("credential:hmac-sha256:", _OPAQUE_CALLER_PREFIX)
 # Retained labels are bounded only after sanitization, so a report never
@@ -79,6 +80,18 @@ _OPAQUE_LABEL_PREFIXES = ("credential:hmac-sha256:", _OPAQUE_CALLER_PREFIX)
 _MAX_CALLER_LABEL_CHARS = 120
 _MAX_LABEL_CHARS = 160
 _MAX_SAMPLE_CHARS = 300
+
+
+def _binding_credential_id(value: str) -> str:
+    """Legacy exact binding only: never publish this enumerable digest.
+
+    Existing private gateway correlation mappings retain their SHA-256
+    spelling. Public gateway pseudonyms continue to use their own keyed,
+    domain-separated identities; code/cloud evidence uses credential_id().
+    """
+    if _PUBLIC_CREDENTIAL_ID.fullmatch(value):
+        return value
+    return "credential:sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def normalise(rec: dict[str, Any], schema: str) -> Event | None:
@@ -144,8 +157,8 @@ def _restore_scope(
     The random key belongs to this connector instance, never to a report. An
     unkeyed hash would disclose a short scope by offline dictionary search.
     Both current and legacy prefixes are reserved so raw labels cannot
-    impersonate an opaque label. credential_id() is unsuitable here: it is
-    idempotent and its public SHA-256 fingerprint is enumerable.
+    impersonate an opaque label. Scope identities use their own domain rather
+    than the code/cloud credential pseudonym domain.
     """
     result = {}
     redacted = False
@@ -227,7 +240,7 @@ def _conceal_api_key(
     if ev.caller_kind != "api-key":
         return None, None
     namespace, _, raw_key = ev.caller.partition(":")
-    ev.binding_caller = f"{namespace}:{credential_id(raw_key)}"
+    ev.binding_caller = f"{namespace}:{_binding_credential_id(raw_key)}"
     # No publicly enumerable digest of a caller-supplied API key or key ID
     # may appear in a report. Even provider key IDs can be guessable.
     material = json.dumps(["shadowscan.gateway.credential.v1", namespace, raw_key], separators=(",", ":"))
@@ -281,7 +294,7 @@ def normalise_with_record(
             {"api_key": raw_key} if raw_key is not None else {},
         )
     )
-    if raw_key is not None and _PUBLIC_CREDENTIAL_ID.fullmatch(raw_key):
+    if raw_key is not None and _IMPORTED_CREDENTIAL_ID.fullmatch(raw_key):
         clean_record, clean_fields, clean_scope = _withhold_public_credential_id(
             (clean_record, clean_fields, clean_scope),
             raw_key,

@@ -11,6 +11,7 @@ from shadowscan.reporters._publication import (
     related_finding_ids,
     without_connector_prefix,
 )
+from shadowscan.utils.output import terminal_text
 
 _LEVEL_ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
 _LEVEL_ORDER = ["critical", "high", "medium", "low", "info"]
@@ -31,26 +32,12 @@ _LINE_BREAKS = {
     "\u2028": r"\u2028",
     "\u2029": r"\u2029",
 }
+_LINE_BREAK_TRANSLATION = str.maketrans(_LINE_BREAKS)
 
 
 def _one_line(value: object) -> str:
     """Keep untrusted fields on a single Markdown line, visibly retaining breaks."""
-    out = []
-    for char in str(value):
-        code = ord(char)
-        if char in _LINE_BREAKS:
-            out.append(_LINE_BREAKS[char])
-        elif (
-            code < 32
-            or 0x7F <= code <= 0x9F
-            or 0x202A <= code <= 0x202E
-            or 0x2066 <= code <= 0x2069
-            or code in (0x061C, 0x200E, 0x200F)
-        ):
-            out.append(f"\\u{code:04x}")
-        else:
-            out.append(char)
-    return "".join(out)
+    return terminal_text(str(value).translate(_LINE_BREAK_TRANSLATION))
 
 
 def _text(value: object) -> str:
