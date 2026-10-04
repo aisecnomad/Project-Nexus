@@ -5,6 +5,17 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### Offline runtime inventory connectors
+
+- Added the `endpoint` surface, offline analyzers for MCP tool inventories,
+  OTLP GenAI spans, host/runtime records, local model metadata, and eBPF events,
+  plus offline Kubernetes/OpenShift workload analysis.
+- Added risk tags and OWASP/MITRE control references for selected runtime
+  indicators, and a CycloneDX 1.6 AI-BOM output format. New runtime tag
+  weights can change risk scores for findings that carry those tags.
+- Runtime collection is currently offline-only; live MCP, Ollama and Kubernetes
+  collection and confined local artifact discovery remain unsupported.
+
 ### Security-review follow-ups
 
 - `SHADOWSCAN_IDENTITY_KEY` accepts explicit `hex:<value>` and

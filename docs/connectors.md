@@ -29,6 +29,12 @@ Any skipped symlink or input-limit hit marks the connector incomplete, and so
 does any file in an offline input directory without one of the connector's
 export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
 `input` at the export file.
+
+Runtime inventory coverage is currently **offline-only**. See the
+[Kubernetes and OpenShift guide](connectors/kubernetes.md) for workload exports
+and the [endpoint and runtime guide](connectors/endpoint.md) for MCP, OTLP,
+Ollama, model-artifact metadata, and eBPF exports. These connectors do not
+perform live probes or local host filesystem discovery.
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and

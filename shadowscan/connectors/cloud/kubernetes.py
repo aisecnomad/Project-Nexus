@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Iterable
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import finalize
+from shadowscan.connectors.common import apply_matches, finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.redaction import sanitize_text
 
@@ -25,8 +27,8 @@ _AI_IMAGE_MARKERS = (
     "mcp/",
     "mcp-server",
     "kagent",
-    "agent",
 )
+_AI_RESOURCE_NAME = re.compile(r"(?:llm|model|agent|mcp|inference|ollama|vllm)", re.IGNORECASE)
 _ENV_MARKERS = ("API_KEY", "TOKEN", "BASE_URL", "ENDPOINT", "MODEL")
 _RECOGNIZED = {
     "Deployment",
@@ -54,6 +56,20 @@ _OPENSHIFT = {
     "DeploymentConfig",
     "Route",
     "ImageStream",
+    "DataScienceCluster",
+    "DSCInitialization",
+    "DataSciencePipelinesApplication",
+    "OdhDashboardConfig",
+}
+_AI_RESOURCE_KINDS = {
+    "InferenceService",
+    "ServingRuntime",
+    "RayService",
+    "Agent",
+    "ToolServer",
+    "ModelConfig",
+    "Notebook",
+    "LeaderWorkerSet",
     "DataScienceCluster",
     "DSCInitialization",
     "DataSciencePipelinesApplication",
@@ -98,9 +114,7 @@ def _workload_images(obj: dict[str, Any]) -> list[str]:
     return [
         image[:300]
         for container in containers[:100]
-        if isinstance(container, dict)
-        and isinstance((image := container.get("image")), str)
-        and image
+        if isinstance(container, dict) and isinstance((image := container.get("image")), str) and image
     ]
 
 
@@ -113,8 +127,6 @@ class KubernetesConnector(BaseConnector):
     config_keys: ClassVar[dict[str, str]] = {
         "cluster": "Required stable cluster label for offline resource identities.",
         "input": "Offline kubectl JSON / JSONL / YAML inventory export.",
-        "allow_instance_credentials": "Approval required before using in-cluster service-account credentials.",
-        "max_pages": "Maximum live list pages before coverage is incomplete.",
     }
 
     def __init__(self, ctx: ConnectorContext) -> None:
@@ -131,11 +143,13 @@ class KubernetesConnector(BaseConnector):
         if not isinstance(cluster, str) or not cluster.strip():
             raise ConnectorError("cloud.kubernetes: cluster is required for offline resource identity")
         accepted: list[dict[str, Any]] = []
-        policies: set[str] = set()
+        egress_policies: set[str] = set()
         for record in records:
             obj = record
             items = record.get("items")
             if isinstance(items, list):
+                if len(items) > 10000:
+                    self.ctx.warn("cloud.kubernetes: object limit reached")
                 for item in items[:10000]:
                     if isinstance(item, dict):
                         accepted.append(item)
@@ -146,7 +160,12 @@ class KubernetesConnector(BaseConnector):
             accepted = accepted[:10000]
         for obj in accepted:
             if _kind(obj) == "NetworkPolicy":
-                policies.add(_namespace(obj))
+                spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
+                policy_types = spec.get("policyTypes", []) if isinstance(spec, dict) else []
+                if isinstance(spec, dict) and (
+                    (isinstance(policy_types, list) and "Egress" in policy_types) or "egress" in spec
+                ):
+                    egress_policies.add(_namespace(obj))
         for obj in accepted:
             kind = _kind(obj)
             resource_name = _name(obj)
@@ -156,17 +175,23 @@ class KubernetesConnector(BaseConnector):
                 self.ctx.warn(f"{self.name}: object without metadata.name")
                 continue
             namespace = _namespace(obj)
-            spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
+            spec_value = obj.get("spec")
+            workload_spec = spec_value if isinstance(spec_value, dict) else {}
             images = _workload_images(obj)
-            selected = [image for image in images if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)]
+            selected = [
+                image for image in images if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
+            ]
             tags: list[str] = []
             capabilities: list[str] = []
             if selected:
                 tags.append("ai-workload")
-            pod_spec = spec.get("template", {}).get("spec", {}) if isinstance(spec.get("template"), dict) else {}
-            if not isinstance(pod_spec, dict):
-                pod_spec = {}
+            template = workload_spec.get("template")
+            pod_spec_value = template.get("spec", {}) if isinstance(template, dict) else {}
+            pod_spec = pod_spec_value if isinstance(pod_spec_value, dict) else {}
             if pod_spec.get("hostNetwork") is True:
+                tags.append("privileged-pod")
+            pod_security = pod_spec.get("securityContext")
+            if isinstance(pod_security, dict) and pod_security.get("privileged") is True:
                 tags.append("privileged-pod")
             containers = pod_spec.get("containers", [])
             if isinstance(containers, list):
@@ -181,7 +206,9 @@ class KubernetesConnector(BaseConnector):
                         for env in envs[:1000]:
                             if isinstance(env, dict):
                                 key = env.get("name")
-                                if isinstance(key, str) and any(marker in key.upper() for marker in _ENV_MARKERS):
+                                if isinstance(key, str) and any(
+                                    marker in key.upper() for marker in _ENV_MARKERS
+                                ):
                                     tags.append("provider-config-present")
                     resources = container.get("resources")
                     requests = resources.get("requests") if isinstance(resources, dict) else {}
@@ -193,13 +220,34 @@ class KubernetesConnector(BaseConnector):
             ):
                 tags.append("privileged-pod")
             if kind in {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"} and selected:
-                if namespace not in policies:
+                if namespace not in egress_policies:
                     tags.append("no-egress-policy")
             if kind == "Service":
-                svc_type = spec.get("type")
-                if svc_type in {"LoadBalancer", "NodePort"}:
+                svc_type = workload_spec.get("type")
+                metadata = obj.get("metadata")
+                labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
+                selector = workload_spec.get("selector", {})
+                service_context = " ".join(
+                    [
+                        resource_name,
+                        (json.dumps(labels, sort_keys=True, default=str) if isinstance(labels, dict) else ""),
+                        (
+                            json.dumps(selector, sort_keys=True, default=str)
+                            if isinstance(selector, dict)
+                            else ""
+                        ),
+                    ]
+                )
+                if svc_type in {"LoadBalancer", "NodePort"} and _AI_RESOURCE_NAME.search(service_context):
                     tags.append("exposed-llm-server")
-            if kind in {"Ingress", "Route"}:
+            exposure_context = " ".join(
+                (
+                    resource_name,
+                    str(workload_spec.get("backend", "")),
+                    str(workload_spec.get("to", "")),
+                )
+            )
+            if kind in {"Ingress", "Route"} and _AI_RESOURCE_NAME.search(exposure_context):
                 tags.append("exposed-llm-server")
             if kind in {"RoleBinding", "ClusterRoleBinding"}:
                 role_ref = obj.get("roleRef")
@@ -208,19 +256,22 @@ class KubernetesConnector(BaseConnector):
                     isinstance(role_ref, dict)
                     and role_ref.get("name") == "cluster-admin"
                     and isinstance(subjects, list)
-                    and any(isinstance(subject, dict) and subject.get("kind") == "ServiceAccount" for subject in subjects)
+                    and any(
+                        isinstance(subject, dict) and subject.get("kind") == "ServiceAccount"
+                        for subject in subjects
+                    )
                 ):
                     tags.append("cluster-admin")
             if kind in {"Agent", "ToolServer"}:
                 capabilities.append("tool-use")
-            if not tags and not selected and kind not in {"InferenceService", "ServingRuntime", "RayService"}:
+            if not tags and not selected and kind not in _AI_RESOURCE_KINDS:
                 self.ctx.examined()
                 continue
             resource = f"k8s:{cluster}/{namespace}/{kind}/{resource_name}"
             finding = Finding(
                 surface=Surface.CLOUD,
                 connector=self.name,
-                kind=Kind.AGENT if selected or kind in {"Agent", "InferenceService", "RayService"} else Kind.CLOUD_RESOURCE,
+                kind=Kind.AGENT if selected or kind in _AI_RESOURCE_KINDS else Kind.CLOUD_RESOURCE,
                 title=f"Kubernetes {kind} {resource_name}",
                 resource=resource,
                 resource_type=f"kubernetes/{kind}",
@@ -238,6 +289,8 @@ class KubernetesConnector(BaseConnector):
                     weight=0.75,
                 )
             )
+            image_matches = [match for image in selected for match in self.index.match_image(image)]
+            apply_matches(finding, image_matches, weight_scale=0.75)
             self.ctx.examined()
             yield finalize(finding, self.index)
 

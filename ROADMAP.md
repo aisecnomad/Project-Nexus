@@ -27,7 +27,10 @@ fail-closed trust model.
 
 ## Next
 
-- Additional connectors on the existing six surfaces, driven by
+- Add opt-in live Kubernetes and endpoint collection, confined host/config and
+  model-artifact discovery, MCP HTTP inventory probes, and stronger baseline
+  comparison for MCP tool-definition changes.
+- Additional connectors on existing surfaces, driven by
   [connector requests](https://github.com/aisecnomad/Project-Nexus/issues?q=label%3Aconnector-request).
 - Tighter Agent Card binding examples and inventory authoring guides.
 - Public docs screenshots of the HTML report and SARIF upload path.

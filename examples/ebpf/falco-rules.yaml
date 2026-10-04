@@ -1,0 +1,13 @@
+- rule: AI runtime process execution
+  desc: Observe process execution for operator-side AI runtime inventory.
+  condition: spawned_process
+  output: "AI runtime process execution (user=%user.name command=%proc.cmdline container=%container.name)"
+  priority: NOTICE
+  source: syscall
+
+- rule: AI service outbound connection
+  desc: Observe outbound connections for operator-side AI service correlation.
+  condition: evt.type=connect and fd.typechar=4 and fd.sip exists
+  output: "Outbound runtime connection (process=%proc.name destination=%fd.sip port=%fd.sport container=%container.name)"
+  priority: NOTICE
+  source: syscall

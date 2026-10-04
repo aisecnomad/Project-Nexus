@@ -28,6 +28,7 @@ from typing import Any
 from urllib.parse import quote
 
 from shadowscan import __version__
+from shadowscan.compliance import compliance_references
 from shadowscan.models import Finding, RiskLevel, ScanResult, Surface
 from shadowscan.reporters._publication import publication_stats
 
@@ -192,7 +193,9 @@ def _rule(f: Finding, rid: str) -> dict[str, Any]:
         "helpUri": _SEVERITY_GUIDE,
         "defaultConfiguration": {"level": _LEVEL[f.risk.level]},
         "properties": {
-            "tags": ["ai-agent", f.surface.value, f.kind.value],
+            "tags": list(
+                dict.fromkeys(["ai-agent", f.surface.value, f.kind.value, *compliance_references(f.tags)])
+            ),
             _HEURISTIC_RISK: f.risk.level.value,
             _SCORE_BASIS: "heuristic-not-cvss",
         },

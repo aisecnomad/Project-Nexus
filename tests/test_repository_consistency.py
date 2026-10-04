@@ -1047,7 +1047,7 @@ def test_documented_fixture_connector_count_matches_the_demo_configuration() -> 
 _DEMO_COMMAND = "$ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows "
 _DEMO_TOTALS = re.compile(r"(\d+) findings  •  (\d+) shadow \(inventory: (\d+) registered agents\)")
 _DEMO_LEVELS = re.compile(r"\b(critical|high|medium|low|info) (\d+)\b")
-_DEMO_SURFACES = re.compile(r"\b(cloud|code|gateway|identity|lowcode|saas) (\d+)\b")
+_DEMO_SURFACES = re.compile(r"\b(cloud|code|endpoint|gateway|identity|lowcode|saas) (\d+)\b")
 _DEMO_ROW = re.compile(r"^ ([A-Z]+) +(\d+)  (\S+) +(\S+) +(\S+) +(.+?)\s*$", re.MULTILINE)
 
 

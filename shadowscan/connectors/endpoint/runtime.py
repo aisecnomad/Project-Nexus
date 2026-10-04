@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext
+from shadowscan.connectors.base import BaseConnector
 from shadowscan.connectors.common import finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.redaction import sanitize_text
@@ -16,12 +18,15 @@ _MAX_LABEL = 160
 _MAX_TOOLS = 500
 _POISONING = re.compile(
     r"<\s*IMPORTANT\s*>|ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|"
-    r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)",
+    r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)|https?://",
     re.IGNORECASE,
 )
-_ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]")
+_ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff\U000e0000-\U000e007f]")
 _TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,63})", re.IGNORECASE)
-_HOST = re.compile(r"(?:https?://)?([a-z0-9.-]+\.(?:openai\.com|anthropic\.com|googleapis\.com))", re.I)
+_HOST = re.compile(
+    r"(?:https?://)?[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com|googleapis\.com)\b",
+    re.IGNORECASE,
+)
 
 
 def _text(value: object, limit: int = _MAX_LABEL) -> str:
@@ -30,14 +35,35 @@ def _text(value: object, limit: int = _MAX_LABEL) -> str:
     return sanitize_text(value)[:limit]
 
 
-def _attrs(value: object) -> dict[str, Any]:
+def _sensitive_attribute(key: str) -> bool:
+    normalized = key.casefold()
+    return (
+        normalized.startswith(("gen_ai.prompt", "gen_ai.completion", "llm.input", "llm.output"))
+        or normalized.endswith(".content")
+        or ".content." in normalized
+    )
+
+
+def _attrs(value: object, warn: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Convert OTLP attribute arrays or mappings into a small scalar mapping."""
     if isinstance(value, dict):
-        return {str(key): item for key, item in value.items() if isinstance(key, str)}
+        if len(value) > 1000 and warn is not None:
+            warn("gateway.otel: attribute limit reached")
+        return {
+            key: item
+            for key, item in list(value.items())[:1000]
+            if isinstance(key, str) and not _sensitive_attribute(key)
+        }
     if isinstance(value, list):
         out: dict[str, Any] = {}
+        if len(value) > 1000 and warn is not None:
+            warn("gateway.otel: attribute limit reached")
         for item in value[:1000]:
-            if not isinstance(item, dict) or not isinstance(item.get("key"), str):
+            if (
+                not isinstance(item, dict)
+                or not isinstance(item.get("key"), str)
+                or _sensitive_attribute(item["key"])
+            ):
                 continue
             raw = item.get("value")
             if isinstance(raw, dict):
@@ -47,23 +73,36 @@ def _attrs(value: object) -> dict[str, Any]:
     return {}
 
 
-def _records(records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+def _records(
+    records: Iterable[dict[str, Any]], warn: Callable[[str], None] | None = None
+) -> Iterator[dict[str, Any]]:
     """Yield bounded-enough dict records from standard nested telemetry envelopes."""
     for record in records:
         yield record
         spans = record.get("resourceSpans")
         if not isinstance(spans, list):
             continue
+        if len(spans) > 1000 and warn is not None:
+            warn("gateway.otel: resource span limit reached")
         for resource_span in spans[:1000]:
             if not isinstance(resource_span, dict):
                 continue
-            resource = _attrs(resource_span.get("resource", {}).get("attributes"))
+            raw_resource = resource_span.get("resource")
+            if not isinstance(raw_resource, dict):
+                if warn is not None:
+                    warn("gateway.otel: malformed resource attributes")
+                raw_resource = {}
+            resource = _attrs(raw_resource.get("attributes"), warn)
             scopes = resource_span.get("scopeSpans", [])
             if not isinstance(scopes, list):
                 continue
+            if len(scopes) > 1000 and warn is not None:
+                warn("gateway.otel: scope span limit reached")
             for scope in scopes[:1000]:
                 if not isinstance(scope, dict) or not isinstance(scope.get("spans"), list):
                     continue
+                if len(scope["spans"]) > 1000 and warn is not None:
+                    warn("gateway.otel: span limit reached")
                 for span in scope["spans"][:1000]:
                     if isinstance(span, dict):
                         yield {"resource": resource, **span}
@@ -146,13 +185,20 @@ class MCPInventoryConnector(_EndpointConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         names_by_server: dict[str, set[str]] = defaultdict(set)
+        server_auth: dict[str, str] = {}
+        server_tls: dict[str, bool] = {}
         staged: list[tuple[str, dict[str, Any]]] = []
         count = 0
+        limit_hit = False
         for record in records:
             server = _text(record.get("server") or record.get("name") or record.get("url"))
             if not server:
                 self.ctx.warn("endpoint.mcp: record has no server identifier")
                 continue
+            auth = record.get("auth") or record.get("auth_mode")
+            server_auth[server] = _text(auth).casefold() if isinstance(auth, str) else ""
+            endpoint = _text(record.get("url") or server).lower()
+            server_tls[server] = endpoint.startswith("https://")
             tools = record.get("tools", [])
             if not isinstance(tools, list):
                 self.ctx.warn("endpoint.mcp: malformed tools list")
@@ -164,21 +210,34 @@ class MCPInventoryConnector(_EndpointConnector):
                 if not isinstance(tool, dict):
                     self.ctx.warn("endpoint.mcp: malformed tool definition")
                     continue
-                count += 1
-                if count > _MAX_TOOLS:
+                if count >= _MAX_TOOLS:
                     self.ctx.warn("endpoint.mcp: aggregate tool limit reached")
+                    limit_hit = True
                     break
+                count += 1
                 name = _text(tool.get("name"))
                 if name:
                     names_by_server[server].add(name.casefold())
                 staged.append((server, tool))
+            if limit_hit:
+                break
 
         for server, tool in staged:
             name = _text(tool.get("name")) or "unnamed-tool"
             desc = _text(tool.get("description"), 4096)
             tags: list[str] = []
-            if _POISONING.search(desc) or _ZERO_WIDTH.search(desc) or _TOOL_REF.search(desc) or _HOST.search(desc):
+            if (
+                _POISONING.search(desc)
+                or _ZERO_WIDTH.search(desc)
+                or _TOOL_REF.search(desc)
+                or _HOST.search(desc)
+            ):
                 tags.append("tool-poisoning")
+            if any(name.casefold() in tools for other, tools in names_by_server.items() if other != server):
+                tags.append("tool-name-shadowing")
+            auth = _text(tool.get("auth") or tool.get("auth_mode")).casefold() or server_auth.get(server, "")
+            if auth in {"", "none", "unauthenticated"}:
+                tags.append("unauthenticated-mcp")
             words = set(re.findall(r"[a-z]+", name.casefold()))
             capabilities = []
             if words & {"exec", "execute", "shell", "command", "terminal"}:
@@ -196,7 +255,16 @@ class MCPInventoryConnector(_EndpointConnector):
                 kind=Kind.MCP_SERVER,
                 tags=tags,
                 capabilities=capabilities,
-                metadata={"server": server, "tool": name},
+                metadata={
+                    "server": server,
+                    "tool": name,
+                    "tool_definition_sha256": hashlib.sha256(
+                        json.dumps(tool, sort_keys=True, separators=(",", ":"), default=str).encode()
+                    ).hexdigest(),
+                    "tls": server_tls.get(
+                        server, _text(tool.get("url") or server).lower().startswith("https://")
+                    ),
+                },
                 weight=0.8 if tags else 0.65,
             )
 
@@ -211,11 +279,11 @@ class OtelConnector(_EndpointConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         groups: dict[tuple[str, str, str], dict[str, Any]] = {}
-        for record in _records(records):
-            attrs = _attrs(record.get("attributes"))
+        for record in _records(records, self.ctx.warn):
+            attrs = _attrs(record.get("attributes"), self.ctx.warn)
             resource = record.get("resource")
             if isinstance(resource, dict):
-                attrs = {**_attrs(resource.get("attributes")), **attrs}
+                attrs = {**_attrs(resource.get("attributes"), self.ctx.warn), **attrs}
             service = _text(attrs.get("service.name") or record.get("serviceName") or "unknown-service")
             agent = _text(attrs.get("gen_ai.agent.name") or attrs.get("agent.name") or service)
             model = _text(attrs.get("gen_ai.request.model") or attrs.get("llm.request.model"))
@@ -259,9 +327,11 @@ class OllamaConnector(_EndpointConnector):
                 else:
                     self.ctx.warn("endpoint.ollama: malformed model inventory")
                     continue
+            if len(models) > 500:
+                self.ctx.warn("endpoint.ollama: model limit reached")
             endpoint = _text(record.get("endpoint") or record.get("url") or "local Ollama")
             tags = ["local-llm-runtime"]
-            host = _text(record.get("host") or endpoint).lower()
+            host = _text(record.get("host") or record.get("endpoint") or record.get("url")).lower()
             if host and not any(x in host for x in ("localhost", "127.0.0.1", "::1")):
                 tags.append("exposed-llm-server")
             for model in models[:500]:
@@ -289,7 +359,6 @@ class ModelArtifactConnector(_EndpointConnector):
     description = "Analyze bounded metadata exports for local model artifacts."
     config_keys = {
         "input": "Offline artifact metadata JSON / JSONL; only GGUF header metadata should be exported.",
-        "hash_full": "Whether the trusted local collector computed a full-file SHA-256.",
     }
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:

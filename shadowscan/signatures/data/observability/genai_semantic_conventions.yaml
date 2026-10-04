@@ -1,0 +1,13 @@
+signatures:
+  - id: observability.opentelemetry-genai
+    name: OpenTelemetry GenAI semantic conventions
+    category: observability
+    vendor: OpenTelemetry
+    homepage: https://opentelemetry.io/docs/specs/semconv/gen-ai/
+    description: Instrumentation emitting GenAI operation, model, agent, or tool attributes.
+    signals:
+      - type: name
+        patterns:
+          - '\bgen_ai\.(?:system|request\.model|operation\.name|agent\.name|tool\.name)\b'
+          - '\b(?:llm\.provider|llm\.request\.model|llm\.operation\.name|openinference\.span\.kind)\b'
+        weight: 0.7

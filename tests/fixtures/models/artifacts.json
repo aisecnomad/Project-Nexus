@@ -1,0 +1,11 @@
+[
+  {
+    "path": "models/example.safetensors",
+    "size": 4096,
+    "metadata": {
+      "general.architecture": "example-architecture",
+      "general.license": "Apache-2.0"
+    }
+  },
+  {"path": "models/legacy.pt", "size": 128}
+]
