@@ -426,7 +426,11 @@ class EbpfConnector(_EndpointConnector):
                 continue
             pod = _text(record.get("pod") or record.get("pod_name"))
             ns = _text(record.get("namespace"))
-            binary = _text(record.get("binary") or record.get("process_name")) or "runtime-process"
+            process_binary = (
+                process.get("binary") or process.get("name") if isinstance(process, dict) else None
+            )
+            binary = _text(process_binary or record.get("binary") or record.get("process_name"))
+            binary = binary or "runtime-process"
             yield self._finding(
                 f"{ns}/{pod}/{binary}".strip("/"),
                 "runtime-process",
