@@ -365,7 +365,8 @@ class ModelArtifactConnector(_EndpointConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:
-            path = _text(record.get("path") or record.get("name"))
+            raw_path = record.get("path") or record.get("name")
+            path = sanitize_text(raw_path) if isinstance(raw_path, str) else ""
             if not path:
                 self.ctx.warn("endpoint.models: artifact record has no path")
                 continue
