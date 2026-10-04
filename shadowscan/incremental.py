@@ -9,6 +9,7 @@ again. Cache state is local to the scanning user and must stay outside all input
 from __future__ import annotations
 
 import hashlib
+import hmac
 import importlib
 import json
 import logging
@@ -51,7 +52,7 @@ except ImportError:  # pragma: no cover - absent only where the confined reader 
 
 
 log = logging.getLogger("shadowscan.incremental")
-_FORMAT = 3  # v2 finding identities: older entries require a full rescan
+_FORMAT = 4  # keyed credential identities: older entries require a full rescan
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 _MAX_CACHE_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_CACHE_ENTRIES = 256
@@ -456,9 +457,16 @@ def _valid_slot(value: str) -> bool:
 
 
 class IncrementalCache:
-    def __init__(self, config: ScanConfig, index: SignatureIndex):
+    def __init__(self, config: ScanConfig, index: SignatureIndex, *, identity_key: bytes | None = None):
         self.config = config
         self.index = index
+        # Persist only a domain-separated key commitment, never the secret
+        # key itself. Changing stable keys must not replay old pseudonyms.
+        self._credential_key_scope = (
+            hmac.digest(identity_key, b"shadowscan.incremental.credential-key.v1", "sha256").hex()
+            if identity_key is not None
+            else None
+        )
         default = _state_home() / "shadowscan"
         self.directory = Path(config.state_dir).expanduser() if config.state_dir else default
         self.directory = self.directory.absolute()
@@ -757,6 +765,7 @@ class IncrementalCache:
                         "id": spec.id,
                         "config": spec.config,
                         "inputs": inputs,
+                        "credential_key_scope": self._credential_key_scope,
                     }
                 )
             ).hexdigest()
@@ -924,6 +933,11 @@ class IncrementalCache:
             if check_deadline is not None:
                 check_deadline()
             payload = {"findings": [f.to_dict() for f in findings], "warnings": sanitize(stats.warnings)}
+            # Scan-local pseudonyms cannot be rekeyed from a sanitized cache.
+            # Leave clean scans cacheable, but rescan credential-bearing ones
+            # unless the operator supplied a stable private identity key.
+            if self._credential_key_scope is None and b"credential:hmac-sha256:" in _json(payload):
+                return
             data = _json(
                 {
                     "format": _FORMAT,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import datetime
+import hashlib
 import io
 import json
 import re
@@ -26,6 +27,7 @@ from shadowscan.reporters.table import print_table
 from shadowscan.signatures.loader import Signature
 from shadowscan.signatures.matcher import SignatureIndex
 from shadowscan.utils import redaction_formats
+from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize, sanitize_text
 
 SECRET = "opaque-synthetic-credential-value"
@@ -183,6 +185,31 @@ def test_credential_fingerprint_is_stable_nonsecret_and_survives_sanitization():
     assert sanitize({"api_key": identity, "caller": identity}) == {"api_key": identity, "caller": identity}
 
 
+def test_credential_pseudonym_uses_a_private_key_and_restores_nested_context():
+    candidate = "copper-73-moon"
+    public = "credential:sha256:" + hashlib.sha256(candidate.encode()).hexdigest()
+    token = set_credential_identity_key(b"a" * 32)
+    try:
+        first = credential_id(candidate)
+        assert first.startswith("credential:hmac-sha256:") and first != public
+        assert credential_id(first) == first and credential_id(public) != public
+        assert sanitize_text("--token " + first) == "--token " + first
+        nested = set_credential_identity_key(b"b" * 32)
+        try:
+            assert credential_id(candidate) != first
+        finally:
+            reset_credential_identity_key(nested)
+        assert credential_id(candidate) == first
+    finally:
+        reset_credential_identity_key(token)
+
+
+@pytest.mark.parametrize("key", [b"", b"short", "a" * 32, None])
+def test_credential_identity_context_rejects_unusable_keys(key):
+    with pytest.raises(ValueError, match="32 secret bytes"):
+        set_credential_identity_key(key)
+
+
 def test_finding_and_serialization_sanitize_sibling_evidence():
     f = _finding(
         title=f"Agent {PROVIDER_KEY}",
@@ -280,7 +307,7 @@ def test_generic_saas_does_not_copy_arbitrary_export_columns():
         ("\r=1+1", "'\r'=1+1"),
         ("\n=1+1", "'\n'=1+1"),
         ("  =1+1", "'  =1+1"),
-        ("\ufeff=1+1", "'\ufeff=1+1"),
+        ("\ufeff=1+1", "\\ufeff=1+1"),
     ],
 )
 def test_csv_formula_values_are_literal_text(formula, expected):

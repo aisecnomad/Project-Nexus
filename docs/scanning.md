@@ -483,6 +483,27 @@ timestamped framework execution for runtime correlation.
 
 ## Precision safeguards
 
+Constructing an agent and defining a tool in the same project does not prove
+that the agent can invoke that tool. Python and JavaScript source execution
+helpers and unused tool declarations remain zero-weight evidence with
+`capability_basis: contextual-unlinked-source`; their features appear in
+`metadata.contextual_capabilities` and unproven features in
+`metadata.potential_capabilities`. They do not raise confidence or risk.
+Supported literal tool registrations connect local Python tool bodies and
+direct unshadowed same-scope helpers; registered SDK execution tools and
+MCP sinks retain their connected capabilities. Rebinding, parameters that
+shadow helper names, mutable aliases and dynamic collections cannot establish
+that connection. Configured opaque tools can establish `tool-use`, while an
+unresolved implementation cannot establish its execution capability.
+Registration is source evidence, not proof that a deployed workload ran it.
+
+JavaScript/TypeScript binding skips only provably constant-dead literal
+`if`/`else` and `while` branches, including supported parentheses and negation,
+and preserves executed alternatives. Hoisted-name shadow uncertainty remains
+conservative. Dynamic guards, comparisons, compound expressions and ambiguous
+statement boundaries are outside this narrow recognition; the scanner does
+not claim complete control-flow or data-flow analysis.
+
 Responses API tool dispatch requires linked source evidence from the SDK client,
 request, returned output and function-call guard to the dispatch. A single
 verified dispatch establishes `tool-use`; `autonomous` requires a verified

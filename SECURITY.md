@@ -77,6 +77,15 @@ coverage, even when a response includes an empty collection field.
   copying provider fields. Provider data cannot replace these local provenance
   fields. Offline exports remain untrusted operator-supplied records and do not
   authenticate the declared collection scope.
+* Code/cloud credential evidence uses domain-separated HMAC pseudonyms under
+  one private key per Engine scan. `SHADOWSCAN_IDENTITY_KEY` supplies an optional
+  stable key (at least 32 random bytes, hex/base64); it is never exported or
+  cached. Direct library calls use an ephemeral process key. Without a stable
+  key, credential-bearing results are rescanned rather than replaying cached
+  pseudonyms. Key rotation invalidates cache reuse and collection comparability.
+  Resource finding IDs remain stable. Old public credential digests and private
+  legacy gateway binding mappings remain sensitive; see the
+  [credential evidence migration](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#credential-evidence-identity-migration).
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
   to a 120-second cooperative completion deadline. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /

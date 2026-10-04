@@ -78,7 +78,7 @@ _HEADER_VALUE = re.compile(
     r"(?P<secret>\S[^\r\n]*)"
 )
 _HEADER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
-_FINGERPRINT_LENGTH = len("credential:sha256:") + 64
+_FINGERPRINT_LENGTHS = frozenset({len("credential:sha256:") + 64, len("credential:hmac-sha256:") + 64})
 # '-p' is a password only after some commands: a registry or cloud 'login'
 # (docker, podman, helm registry, az, az acr, oc, cf...) and 'sshpass', and the
 # attached '-pVALUE' of MySQL clients ('mysql -p db' prompts and names a
@@ -216,7 +216,7 @@ class _ValueRuns:
     def kept(self, start: int, end: int) -> bool:
         """``_kept_value(text[start:end])``: a run holds no blank, marker, bracket or brace."""
         text = self.text
-        if end - start == _FINGERPRINT_LENGTH and _FINGERPRINT.fullmatch(text[start:end]):
+        if end - start in _FINGERPRINT_LENGTHS and _FINGERPRINT.fullmatch(text[start:end]):
             return True
         position = start
         while position < end:

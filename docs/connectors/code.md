@@ -35,6 +35,16 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+Python and JavaScript/TypeScript execution capabilities are attributed to supported
+registered tool bodies, direct local helpers, and recognized model-selected
+dispatch. Unused tools, unrelated helpers and turn-loop cleanup remain zero-weight
+context (`metadata.contextual_capabilities`); unresolved dynamic registration stays
+potential evidence. Literal dead branches are excluded only for supported source
+shapes. This bounded static analysis does not prove runtime reachability or follow
+tools across arbitrary aliases or files. Rescans can therefore lower a candidate's
+capabilities and score without a source change; see [scanning](../scanning.md) and
+[production migration notes](../production.md).
+
 A list of products is not use of them. A data or prose file (YAML, JSON, TOML, INI,
 XML, CSV, text, Markdown) that names four or more different products through
 domains or environment-variable names, and holds no import, dependency, code,

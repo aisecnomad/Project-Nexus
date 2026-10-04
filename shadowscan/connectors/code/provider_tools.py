@@ -39,7 +39,9 @@ class ProviderLiteralCache:
     tools: dict[int, bool] = field(default_factory=dict)
 
 
-def python_provider_tool_literals(tree: ast.AST, requests: set[int]) -> dict[int, dict[str, ast.AST]]:
+def python_provider_tool_literals(
+    tree: ast.AST, requests: set[int], positional_tools: Mapping[int, int] | None = None
+) -> dict[int, dict[str, ast.AST]]:
     """Index safe literal declarations once, without general variable data flow.
 
     Only direct declarations in a lexical scope qualify. A name must be bound
@@ -102,20 +104,32 @@ def python_provider_tool_literals(tree: ast.AST, requests: set[int]) -> dict[int
             )
         stack.extend((child, node, parent, scope) for child in ast.iter_child_nodes(node))
 
+    def tool_request(used: ast.Name, parent: ast.AST | None, grandparent: ast.AST | None) -> ast.Call | None:
+        if (
+            isinstance(parent, ast.keyword)
+            and parent.arg in (*_TOOL_OPTIONS, "toolConfig")
+            and isinstance(grandparent, ast.Call)
+            and id(grandparent) in requests
+        ):
+            return grandparent
+        if isinstance(parent, ast.Call) and id(parent) in requests and positional_tools:
+            position = positional_tools.get(id(parent))
+            if position is not None and len(parent.args) > position and parent.args[position] is used:
+                return parent
+        return None
+
     result: dict[int, dict[str, ast.AST]] = {}
     for name, (scope, value, declared) in literals.items():
         uses = loads.get(name, [])
         if stores[name] != 1 or any(
             used_scope != scope
             or (used.lineno, used.col_offset) <= declared
-            or not isinstance(parent, ast.keyword)
-            or parent.arg not in (*_TOOL_OPTIONS, "toolConfig")
-            or not isinstance(call, ast.Call)
-            or id(call) not in requested
+            or tool_request(used, parent, call) is None
             for used_scope, used, parent, call in uses
         ):
             continue
-        for _, _, _, call in uses:
+        for _, used, parent, outer in uses:
+            call = tool_request(used, parent, outer)
             if call is not None:
                 result.setdefault(id(call), {})[name] = value
     return result

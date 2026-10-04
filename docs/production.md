@@ -17,7 +17,57 @@ Dated change and migration notes for the unreleased candidate follow them under
 so those notes describe differences between candidate builds, not between
 releases.
 
+## Credential evidence identity migration
+
+Code and cloud credential evidence now carries `credential:hmac-sha256:`
+pseudonyms made with a domain-separated HMAC and a private key. A report reader
+cannot check guessed low-entropy credentials against a public hash. Each Engine
+scan supplies one random key shared by its workers, so identical credentials
+within that scan have identical pseudonyms. Without an operator key, another
+scan produces different credential pseudonyms. Direct calls to the library's
+`credential_id()` or `redact()` outside an Engine use an ephemeral process key.
+
+For stable credential correlation between scans, provide the existing
+`SHADOWSCAN_IDENTITY_KEY` through a private secret environment: at least 32
+random secret bytes, hex or base64 encoded. Use the same key for the scans being
+compared. The key also governs gateway pseudonyms, so rotating it changes
+gateway identities too. Keep the key out of configuration files, logs,
+command-line arguments and shared reports. No key is generated into persistent
+storage automatically, and scan reports/export/cache files never contain it.
+
+The report's `collection_scope.credential_identity_schema` is
+`shadowscan.credential-identity/v1`; `credential_identity_scope` is `run` or
+`keyed`. Resource-based finding IDs still identify the same source observation;
+the credential pseudonym in its evidence has the key's scope. Without a stable
+key, incremental scanning does not persist results containing credential
+pseudonyms, while clean inputs remain cacheable. With a stable key those
+results may be reused. Cache format 4 and private key commitments invalidate
+older entries or entries generated under a different key. Key rotation also
+changes the collection-scope fingerprint, so `diff` cannot claim resolution
+across that change; establish a fresh baseline.
+
+Regenerate reports and baselines made with previous candidate builds. Their
+`credential:sha256:` values cannot be converted to the new pseudonyms without
+rescanning the source credentials. Restrict or delete the old copies and
+rotate exposed low-entropy credentials if their digests were disclosed.
+Existing gateway correlation mappings using private `credential:sha256:` exact
+bindings remain compatible. Those legacy binding values are private and never
+enter gateway reports; gateway public identities retain their existing domain
+and behavior. Reports still contain sensitive audit evidence and business data.
+
+Synthetic code/cloud, cache, comparison, gateway-binding and publication
+regressions validate these behaviors. They do not establish independent human
+review or live tenant acceptance.
+
 ## Install from a reviewed revision
+
+The scheduled dependency and governance audit checks both live merge rulesets
+against the versioned desired policy. Its GitHub token is read-only: a green
+audit records a matching policy snapshot, while a failed or unavailable read
+does not establish protection. Repository administrators must apply the
+[reviewed ruleset updates](operations/merge-policy.md) and verify fresh API
+readback. The audit neither changes settings nor substitutes for independent
+human review or tenant acceptance.
 
 Check out an audited full commit SHA before installation. README and example
 workflow instructions require a full reviewed commit; a fixed example SHA would
@@ -485,6 +535,20 @@ At 19:08 UTC on 2026-10-02 both again read back as `enforcement: disabled`
 snapshots in
 [`.github/rulesets/observed/`](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets/observed)
 record the 04:28 UTC state.
+On 2026-10-03 (19:06 UTC), both rulesets read back active again. The review/CI
+ruleset still omitted `CI gate` and application bindings on its three required
+checks, and still had `require_last_push_approval` and
+`required_review_thread_resolution` disabled. `Protect main` retained four
+bypass actors. These observations do not meet the versioned desired policy;
+the weekly read-only audit will fail until matching administrator updates are
+applied and verified with a complete API response. If GitHub withholds bypass
+actors from the read-only workflow token, it will remain failed with unknown
+assurance and an administrator must obtain the full readback.
+On 2026-10-04, both rulesets read back as `enforcement: disabled` again,
+and the `main` branch response reported `protected: false`. The available
+GitHub connector exposes no administration-write operation; restoring the
+reviewed policy and verifying exact readback requires an administrator.
+
 Classic branch protection is not readable through the app
 integration. Read and retain the current configuration before changing it,
 and compare it against the [versioned merge policy](operations/merge-policy.md):
@@ -692,6 +756,25 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 3 source capability attribution migration
+
+Re-scan code with this candidate before comparing its risk to earlier reports.
+Unused tool declarations, unregistered SDK execution tools and unrelated shell
+helpers now remain zero-weight contextual evidence instead of granting an
+agent execution authority. Their features are retained as contextual/potential
+metadata. Existing findings may lose capabilities, confidence or risk without
+any repository change; that is a detection correction, not proof of remediation.
+Supported literal registrations, local unshadowed tool helpers and connected
+MCP/provider execution remain source observations. Dynamic implementations
+remain potential and require source review or independently attributed runtime
+evidence. Constant-dead JavaScript/TypeScript constructions may likewise become
+framework usage instead of agents. No field-accuracy or execution attestation
+is implied by these static corrections. Discarded callbacks supplied to unknown
+JavaScript factories, shadowed local helpers, unrelated MCP member receivers,
+unreachable Python statements and deferred lambdas in compound callees remain
+contextual. Supported import-bound async execute callbacks and directly invoked
+Python lambdas retain connected source evidence.
+
 ### October 3 review remediation
 
 HTTP retry warnings, errors and optional-request warnings now identify only
@@ -699,7 +782,9 @@ the HTTPS origin and status. Request paths, userinfo, queries and fragments are
 omitted; malformed URL diagnostics use fixed messages. Update any operational
 parsers that expected a path in an HTTP error. Treat historical logs as sensitive
 when reviewing or sharing them. Collection policy and incomplete-scan exit
-semantics remain unchanged.
+semantics remain unchanged. Transport and response-body errors also discard
+opaque upstream payloads, request/response objects and original exception
+chains; controlled TLS, connection and timeout categories remain available.
 
 Supported ADK, Strands, AutoGen, LlamaIndex and Semantic Kernel constructors now
 receive capability checks specific to their configuration. Empty or unresolved
@@ -710,7 +795,9 @@ Findings can retain the same identity while their capabilities, confidence or
 risk decrease. Rescan and inspect those differences before replacing an
 existing baseline; these changes do not establish that a deployed agent stopped
 using tools. See the [code connector guide](connectors/code.md) for the supported
-static patterns and remaining inference limits.
+static patterns and remaining inference limits. Strands literal tool names
+and file paths count as configured tools; literal participant or handoff
+strings do not establish another agent.
 
 Git submodule inventory preserves its fail-closed result and now reports a
 bounded category for preflight, subprocess or tree-parsing failure. Numeric OS
@@ -1132,15 +1219,12 @@ finish incomplete because the earlier result hid a gap.
   `[REDACTED]` markers (`ffmpeg -pass 1`, the text after `;` in `NAME=S;rest`,
   the scheme after `Authorization:`). Finding IDs built from sanitized
   resource fields can change where those fields held such values.
-- **Credential digest (open item).** Code and cloud findings (credentials in
-  source files, and in cloud environment variables and app settings) still
-  carry `credential:sha256:<digest>`, an unsalted SHA-256 of the raw credential
-  used for stable finding identity. Anyone holding a report can confirm a
-  candidate credential against it. Gateway reports carry only scan-local
-  `credential:hmac-sha256:` identifiers; the public digest appears only in the
-  operator's gateway binding configuration, which must stay private. Treat
-  reports as sensitive, and plan an operator-supplied keyed digest, which
-  changes finding identity and bindings, as a separate migration.
+- **Credential digest migration.** Previous candidate builds emitted public
+  `credential:sha256:` digests in code/cloud evidence. The October 3 change
+  replaces new credential evidence with private-key HMAC pseudonyms. Resource
+  finding IDs and private gateway exact bindings stay compatible; credential
+  evidence, incremental caches and comparison baselines need the migration
+  described in [Credential evidence identity migration](#credential-evidence-identity-migration).
 - **Lower risk for routine scope names.** OIDC `offline_access`, Salesforce
   `full`, `web` and `refresh_token`, GitLab `api`, GitHub `workflow` and Slack
   `admin` no longer match `policy.privileged-scopes`, because scopes are

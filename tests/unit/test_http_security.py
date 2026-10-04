@@ -12,11 +12,15 @@ import pytest
 import requests
 from requests.adapters import HTTPAdapter
 from rich.console import Console
+from urllib3.connectionpool import HTTPSConnectionPool
+from urllib3.exceptions import MaxRetryError
 
 from shadowscan.cli import _setup_logging
 from shadowscan.connectors import ConnectorContext
+from shadowscan.connectors.base import BaseConnector
 from shadowscan.connectors.code.github import GitHubConnector, repository_target
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.models import Finding, Kind, Surface
 from shadowscan.utils.http import (
     HttpClient,
     HttpError,
@@ -160,6 +164,107 @@ def test_redirect_error_and_retry_diagnostics_omit_request_paths(monkeypatch, st
     assert session.request.call_count == (3 if status == 500 else 2)
     if status == 500:
         assert "HTTP 500 from https://api.example.com; retrying" in output.getvalue()
+
+
+@pytest.mark.parametrize("source", ["initial", "redirect", "body"])
+@pytest.mark.parametrize(
+    "error_type, category",
+    [
+        (requests.exceptions.SSLError, "TLS failure"),
+        (requests.exceptions.ConnectTimeout, "connect timeout"),
+        (requests.exceptions.ReadTimeout, "read timeout"),
+        (requests.exceptions.Timeout, "timeout"),
+        (requests.exceptions.ConnectionError, "connection failure"),
+        (requests.exceptions.ChunkedEncodingError, "invalid response framing"),
+        (requests.exceptions.ContentDecodingError, "response decoding failure"),
+        (requests.exceptions.RequestException, "transport failure"),
+    ],
+)
+def test_http_transport_errors_retain_only_controlled_categories_and_origin(source, error_type, category):
+    opaque = "opaqueTransportValue2026"
+    url = f"https://api.example.com/{opaque}?custom={opaque}"
+    prepared = requests.Request("GET", url, headers={"X-Private": opaque}).prepare()
+    upstream = response(status=200)
+    upstream.url = url
+    raw_error = error_type(f"upstream rejected {opaque}", request=prepared, response=upstream)
+    if source == "redirect":
+        http, session = client(response(status=302, headers={"Location": url}), raw_error)
+    elif source == "body":
+
+        def broken_body(chunk_size):
+            yield b'{"items": ['
+            raise raw_error
+
+        upstream.iter_content = broken_body
+        upstream.close = Mock()
+        http, session = client(upstream)
+    else:
+        http, session = client(raw_error)
+    with pytest.raises(error_type) as caught:
+        http.get_json(url if source == "initial" else "/items")
+    error = caught.value
+    phase = "response" if source == "body" else "request"
+    assert str(error) == f"HTTP {phase} {category} for https://api.example.com"
+    assert opaque not in str(error) + repr(error.args) + repr(vars(error))
+    assert opaque not in "".join(traceback.format_exception(error))
+    assert error.__cause__ is None and error.__context__ is None
+    assert error.request is None and error.response is None
+    assert session.request.call_count == (2 if source == "redirect" else 1)
+    if source == "body":
+        upstream.close.assert_called_once()
+
+
+@pytest.mark.parametrize("source", ["initial", "redirect", "body"])
+def test_http_transport_failure_preserves_prior_findings_and_safe_incomplete_report(index, caplog, source):
+    opaque = "opaqueTransportValue2026"
+    url = f"https://api.example.com/{opaque}?custom={opaque}"
+    # A real urllib3 exception embeds the attempted URL inside requests' args.
+    raw_error = requests.exceptions.ConnectionError(
+        MaxRetryError(HTTPSConnectionPool("api.example.com"), url, "connection failed")
+    )
+    if source == "redirect":
+        http, _ = client(response(status=302, headers={"Location": url}), raw_error)
+    elif source == "body":
+        upstream = response(status=200)
+        upstream.url = url
+
+        def broken_body(chunk_size):
+            yield b'{"items": ['
+            raise raw_error
+
+        upstream.iter_content = broken_body
+        upstream.close = Mock()
+        http, _ = client(upstream)
+    else:
+        http, _ = client(raw_error)
+
+    class TransportProbe(BaseConnector):
+        name = "test.http"
+
+        def collect(self):
+            yield {"id": "already-collected"}
+            http.get_json(url if source == "initial" else "/items")
+
+        def analyze(self, records):
+            for record in records:
+                yield Finding(
+                    surface=Surface.CODE,
+                    connector=self.name,
+                    kind=Kind.AGENT,
+                    title=record["id"],
+                    resource="repo:test",
+                    resource_type="repository",
+                )
+
+    ctx = ConnectorContext(index=index)
+    findings = TransportProbe(ctx).run()
+    assert [finding.title for finding in findings] == ["already-collected"]
+    assert ctx.stats is not None and ctx.stats.incomplete
+    phase = "response" if source == "body" else "request"
+    assert ctx.stats.errors == [
+        f"test.http: ConnectionError: HTTP {phase} connection failure for https://api.example.com"
+    ]
+    assert opaque not in repr(ctx.stats.errors) + repr([record.__dict__ for record in caplog.records])
 
 
 @pytest.mark.parametrize(
@@ -639,6 +744,7 @@ def test_invalid_header_from_auth_handler_has_no_exposed_exception_chain():
     with pytest.raises(ValueError) as failure:
         client.get("/items")
     assert "opaque-secret-value" not in "".join(traceback.format_exception(failure.value))
+    assert failure.value.__cause__ is None and failure.value.__context__ is None
 
 
 def test_valid_byte_headers_and_request_header_removal_are_supported():

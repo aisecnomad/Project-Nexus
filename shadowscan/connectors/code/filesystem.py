@@ -747,6 +747,8 @@ class _ProjectEvidence:
             return False
         if self.in_tests(rel) and not self.test_only:
             return False
+        if match.extra.get("contextual_capabilities"):
+            return False
         if (
             match.signature.category == "framework"
             and match.extra.get("lexical_source")
@@ -2340,6 +2342,10 @@ class FilesystemConnector(BaseConnector):
             for m in bound
             if m.signature_id == "framework.genkit" and "configured_call_span" in m.extra
         }
+        tool_regions = [span for match in bound for span in match.extra.get("registered_tool_regions", ())]
+        tool_declarations = [
+            span for match in bound for span in match.extra.get("registered_tool_declarations", ())
+        ]
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
@@ -2349,6 +2355,17 @@ class FilesystemConnector(BaseConnector):
                 # corroborating library evidence at emit time.
                 m.extra["lexical_source"] = file.lang
             elif m.signature.category != "framework":
+                if m.signature_id in {
+                    "heuristic.tool-use",
+                    "heuristic.code-execution",
+                    "heuristic.llm-command-execution",
+                }:
+                    connected = _within(m.extra.get("start", -1), (*tool_regions, *tool_declarations))
+                    if not connected:
+                        # A helper/decorator elsewhere in the project does not
+                        # configure this agent. Keep it visible for review, but
+                        # it cannot add workload capabilities or confidence.
+                        m.extra["contextual_capabilities"] = m.capabilities()
                 if m.signature_id == "heuristic.tool-use" and any(
                     start <= m.extra.get("start", -1) < end for start, end in genkit_spans
                 ):
@@ -3046,6 +3063,10 @@ class FilesystemConnector(BaseConnector):
             applied = (
                 replace(m, signal=replace(m.signal, capabilities=observed)) if observed is not None else m
             )
+            contextual = bool(m.extra.get("contextual_capabilities"))
+            if contextual:
+                applied = replace(applied, weight=0.0)
+            before = len(f.evidence)
             apply_matches(
                 f,
                 [applied],
@@ -3056,8 +3077,19 @@ class FilesystemConnector(BaseConnector):
                 signature_capabilities=observed is None
                 and (evidence.verified_indicator(m) or m.signature.category != "framework"),
             )
+            if contextual:
+                for item in f.evidence[before:]:
+                    item.attributes["capability_basis"] = "contextual-unlinked-source"
         if "protocol.mcp" in f.frameworks and evidence.server_tools:
             self._apply_mcp_tools(f, evidence.server_tools)
+        contextual_capabilities = {
+            cap
+            for m, rel, _ in evidence.matches
+            if m.extra.get("contextual_capabilities") and not evidence.in_tests(rel)
+            for cap in m.extra["contextual_capabilities"]
+        }
+        if contextual_capabilities:
+            f.metadata["contextual_capabilities"] = sorted(contextual_capabilities)
         potential = {cap for m, _, _ in evidence.matches for cap in m.capabilities()} - set(f.capabilities)
         if potential:
             f.metadata["potential_capabilities"] = sorted(potential)

@@ -24,7 +24,17 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 from requests.adapters import HTTPAdapter
-from requests.exceptions import InvalidHeader
+from requests.exceptions import (
+    ChunkedEncodingError,
+    ConnectionError,
+    ConnectTimeout,
+    ContentDecodingError,
+    InvalidHeader,
+    ReadTimeout,
+    RequestException,
+    SSLError,
+    Timeout,
+)
 from requests.utils import check_header_validity
 from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
@@ -572,6 +582,28 @@ def diagnostic_url(url: str) -> str:
     return sanitize_text(urlunsplit(("https", authority, "", "", "")))
 
 
+def _transport_error(exc: RequestException, url: str, phase: str) -> RequestException:
+    """Keep useful transport categories without retaining untrusted error payloads.
+
+    requests/urllib3 exceptions can retain full URLs, echoed response text and
+    credential-bearing request objects. Construct only known exception types
+    with a fixed category and origin, preserving connectors' existing catches.
+    """
+    categories = (
+        (SSLError, "TLS failure"),
+        (ConnectTimeout, "connect timeout"),
+        (ReadTimeout, "read timeout"),
+        (Timeout, "timeout"),
+        (ConnectionError, "connection failure"),
+        (ChunkedEncodingError, "invalid response framing"),
+        (ContentDecodingError, "response decoding failure"),
+    )
+    for error_type, category in categories:
+        if isinstance(exc, error_type):
+            return error_type(f"HTTP {phase} {category} for {diagnostic_url(url)}")
+    return RequestException(f"HTTP {phase} transport failure for {diagnostic_url(url)}")
+
+
 class HttpError(RuntimeError):
     def __init__(self, status: int, url: str, body: str = ""):
         self.status = status
@@ -702,14 +734,21 @@ class HttpClient:
             if self.deadline is not None:
                 budget = min(budget, self.deadline - time.monotonic())
             deadline_token = _acquisition_deadline.set(time.monotonic() + budget)
+            request_failure: RequestException | ValueError | None = None
             try:
                 try:
                     resp = self.session.request(method, url, **kwargs)
                 except InvalidHeader:
                     # Auth handlers can add headers after our preflight validation.
-                    raise ValueError("HTTP header contains invalid characters or types") from None
+                    request_failure = ValueError("HTTP header contains invalid characters or types")
+                except RequestException as exc:
+                    request_failure = _transport_error(exc, url, "request")
             finally:
                 _acquisition_deadline.reset(deadline_token)
+            # Raise outside the handler so even __context__ cannot retain the
+            # original request, response or diagnostic payload.
+            if request_failure is not None:
+                raise request_failure from None
             if resp.status_code in {301, 302, 303, 307, 308}:
                 location = resp.headers.get("Location")
                 resp.close()
@@ -801,6 +840,7 @@ class HttpClient:
             deadline = time.monotonic() + budget
             watchdog = _read_watchdog(resp, budget, expired)
             body = bytearray()
+            transport_failure: RequestException | None = None
             try:
                 for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
                     if time.monotonic() >= deadline:
@@ -811,14 +851,19 @@ class HttpClient:
                     if len(body) + len(chunk) > limit:
                         raise ValueError("HTTP response exceeds the byte limit")
                     body.extend(chunk)
-            except Exception:  # re-raised unless the deadline shut the read down
+            except Exception as exc:  # re-raised unless the deadline shut the read down
                 # The watchdog's shutdown surfaces as a transport or framing
                 # error; report the deadline instead, without transport text.
                 if not expired.is_set():
-                    raise
+                    if isinstance(exc, RequestException):
+                        transport_failure = _transport_error(exc, resp.url, "response")
+                    else:
+                        raise
             if expired.is_set():
                 # A close-delimited body also ends cleanly after the shutdown.
                 raise ValueError("HTTP response exceeds the read deadline")
+            if transport_failure is not None:
+                raise transport_failure from None
             return bytes(body)
         finally:
             if watchdog is not None:

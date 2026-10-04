@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -115,16 +116,36 @@ def _configured_constructor(signature: str, symbol: str) -> bool:
     return symbol in _CONSTRUCTORS.get(signature, ())
 
 
-def _python_entry(value: ast.AST) -> bool:
-    return isinstance(value, (ast.Name, ast.Attribute, ast.Call)) or (
-        isinstance(value, ast.Dict) and bool(value.keys) and all(key is not None for key in value.keys)
+def python_tool_argument_position(signature: str, symbol: str) -> int | None:
+    """Return the documented positional tools argument for supported factories."""
+    if signature == "framework.langchain" and symbol == "initialize_agent":
+        return 0
+    if signature in {"framework.langchain", "framework.langgraph"} and symbol in {
+        "create_agent",
+        "create_react_agent",
+        "create_tool_calling_agent",
+    }:
+        return 1
+    return None
+
+
+def _python_entry(value: ast.AST, *, string_entry: bool = False) -> bool:
+    return (
+        isinstance(value, (ast.Name, ast.Attribute, ast.Call))
+        or (isinstance(value, ast.Dict) and bool(value.keys) and all(key is not None for key in value.keys))
+        or (
+            string_entry
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and bool(value.value.strip())
+        )
     )
 
 
-def _python_collection(value: ast.AST | None, *, minimum: int = 1) -> bool:
+def _python_collection(value: ast.AST | None, *, minimum: int = 1, string_entries: bool = False) -> bool:
     """Recognize explicit collection entries; empty and dynamic values stay unknown."""
     if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
-        return sum(_python_entry(item) for item in value.elts) >= minimum
+        return sum(_python_entry(item, string_entry=string_entries) for item in value.elts) >= minimum
     if isinstance(value, ast.Dict) and all(key is not None for key in value.keys):
         return sum(_python_entry(item) for item in value.values) >= minimum
     return False
@@ -153,14 +174,9 @@ def _collection_options(signature: str, symbol: str) -> dict[str, tuple[str, ...
 
 
 def _positional_collection(signature: str, symbol: str) -> tuple[str, int] | None:
-    if signature == "framework.langchain" and symbol == "initialize_agent":
-        return "tools", 0
-    if signature in {"framework.langchain", "framework.langgraph"} and symbol in {
-        "create_agent",
-        "create_react_agent",
-        "create_tool_calling_agent",
-    }:
-        return "tools", 1
+    position = python_tool_argument_position(signature, symbol)
+    if position is not None:
+        return "tools", position
     if signature == "framework.aws-strands":
         return ("tools", 2) if symbol == "Agent" else ("nodes", 0)
     if signature == "framework.llamaindex":
@@ -210,6 +226,7 @@ def configured_capabilities(
     arguments: str,
     masked: str,
     verified_graph: bool = False,
+    python_literals: Mapping[str, ast.AST] | None = None,
 ) -> set[str]:
     """Return capabilities supported by literal options of a known SDK call."""
     if signature not in CONFIGURED_FRAMEWORKS or not _configured_constructor(signature, symbol):
@@ -222,6 +239,8 @@ def configured_capabilities(
         if any(keyword.arg is None for keyword in node.keywords):
             return result
         values = {keyword.arg: keyword.value for keyword in node.keywords}
+        if len(values) != len(node.keywords):
+            return result  # repeated options do not form a valid runtime call
         # The documented positional tool argument of these Python factories.
         positional = _positional_collection(signature, symbol)
         if positional is not None:
@@ -247,16 +266,28 @@ def configured_capabilities(
                 # An explicit behavior may disable invocation, or be overridden
                 # by KernelArguments. Do not guess an opaque behavior's contract.
                 continue
+            candidates: list[tuple[str, ast.AST | None]] = [(name, values.get(name)) for name in names]
+            if python_literals:
+                candidates = [
+                    (name, python_literals.get(value.id) if isinstance(value, ast.Name) else value)
+                    for name, value in candidates
+                ]
             if any(
                 _python_collection(
-                    values.get(name),
+                    value,
+                    # Strands accepts tool names and file paths as strings.
+                    # String handoff targets or participant names are not
+                    # proof of another AI agent, and other SDKs need objects.
+                    string_entries=signature == "framework.aws-strands"
+                    and capability == "tool-use"
+                    and name == "tools",
                     minimum=2
                     if capability == "multi-agent"
                     and name in {"participants", "agents", "nodes"}
                     and signature in {"framework.autogen", "framework.llamaindex", "framework.aws-strands"}
                     else 1,
                 )
-                for name in names
+                for name, value in candidates
             ):
                 result.add(capability)
         if signature == "framework.autogen" and symbol in {

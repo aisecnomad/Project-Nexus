@@ -99,6 +99,38 @@ def test_enabled_constructor_options_preserve_supported_capabilities(
     assert set(finding.capabilities) == expected
 
 
+@pytest.mark.parametrize("tool", ['"retrieve"', '"./tools/lookup.py"'])
+@pytest.mark.parametrize("positional", [False, True])
+def test_strands_explicit_string_tool_names_and_paths_establish_tool_use(
+    tmp_path, run_connector, tool, positional
+):
+    options = f"None, None, [{tool}]" if positional else f"tools=[{tool}]"
+    finding = _scan(tmp_path, run_connector, f"from strands import Agent\na = Agent({options})\n")
+    assert set(finding.capabilities) == {"tool-use"}
+
+
+@pytest.mark.parametrize("tools", ['[""]', '[" "]', "[None]", "[False]", "[0]"])
+def test_strands_empty_or_inactive_literal_tool_entries_remain_potential(tmp_path, run_connector, tools):
+    finding = _scan(tmp_path, run_connector, f"from strands import Agent\na = Agent(tools={tools})\n")
+    assert not finding.capabilities
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'from google.adk.agents import LlmAgent\na = LlmAgent(name="chat", tools=["lookup"], sub_agents=["billing"])\n',
+        'from strands.multiagent import Swarm\na = Swarm(nodes=["billing", "support"])\n',
+        'from autogen_agentchat.teams import RoundRobinGroupChat\na = RoundRobinGroupChat(["billing", "support"])\n',
+        'from llama_index.core.agent.workflow import AgentWorkflow\na = AgentWorkflow(["billing", "support"])\n',
+    ],
+)
+def test_string_tool_support_does_not_establish_other_sdk_tools_or_participants(
+    tmp_path, run_connector, source
+):
+    finding = _scan(tmp_path, run_connector, source)
+    assert not finding.capabilities
+
+
 @pytest.mark.parametrize("participants", ["[]", "[billing]", "unknown"])
 @pytest.mark.parametrize(
     "source",
