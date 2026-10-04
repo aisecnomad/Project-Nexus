@@ -384,8 +384,8 @@ class ModelArtifactConnector(_EndpointConnector):
             size = record.get("size")
             if isinstance(size, int) and 0 <= size < 2**63:
                 metadata["size"] = size
-            digest = _text(record.get("sha256"), 64)
-            if re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+            digest = record.get("sha256")
+            if isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest):
                 metadata["sha256"] = digest.lower()
             yield self._finding(
                 path,
