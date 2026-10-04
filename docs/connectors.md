@@ -685,7 +685,7 @@ separately does not narrow a shared token's scope.
 ### `saas.atlassian`
 UPM user-installed apps for Jira and Confluence. Provider error envelopes make
 collection incomplete even when they include empty record arrays; valid
-observations from other products remain available. The same rule applies to
+observations from other pages and products remain available. The same rule applies to
 offline exports. Options: `site`
 (`https://<org>.atlassian.net`, env `ATLASSIAN_SITE`), a site admin `email` and
 `api_token` (env `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`), and `products`
