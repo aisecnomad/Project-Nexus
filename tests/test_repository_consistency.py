@@ -562,6 +562,42 @@ def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
         assert "mkdocs-material==" not in _read(workflow), f"{workflow.name} pins mkdocs outside the lock"
 
 
+def test_dockerfile_stages_keep_the_image_digest_and_python_pins_in_sync() -> None:
+    dockerfile = _read(ROOT / "Dockerfile")
+    from_lines = [line for line in dockerfile.splitlines() if re.match(r"^\s*FROM\s+", line, re.IGNORECASE)]
+    assert len(from_lines) == 2, f"Dockerfile FROM drift: expected 2 stages, found {len(from_lines)}"
+    images = [re.match(r"^\s*FROM\s+(\S+)", line, re.IGNORECASE).group(1) for line in from_lines]
+    assert all(re.search(r"@sha256:[0-9a-f]{64}$", image) for image in images), (
+        "Dockerfile base image drift: both FROM stages must use an image@sha256 digest"
+    )
+    assert images[0] == images[1], "Dockerfile base image digest drift between build and runtime stages"
+
+    stages = re.split(r"(?im)(?=^FROM\s+)", dockerfile)
+    stages = [stage for stage in stages if re.match(r"(?im)^FROM\s+", stage)]
+    pin_pattern = re.compile(r"\b(python-3\.12(?:-base)?)=([^\s\\]+)")
+    stage_pins: list[dict[str, set[str]]] = []
+    for stage in stages:
+        pins: dict[str, set[str]] = {}
+        for line in stage.splitlines():
+            if "apk add" not in line:
+                continue
+            for package, revision in pin_pattern.findall(line):
+                pins.setdefault(package, set()).add(revision)
+        stage_pins.append(pins)
+    for package in ("python-3.12", "python-3.12-base"):
+        build_revisions = stage_pins[0].get(package, set())
+        runtime_revisions = stage_pins[1].get(package, set())
+        assert build_revisions, f"Dockerfile {package} pin is missing from the build stage"
+        assert runtime_revisions, f"Dockerfile {package} pin is missing from the runtime stage"
+        assert len(build_revisions) == len(runtime_revisions) == 1, (
+            f"Dockerfile {package} pin drift: each stage must use exactly one revision"
+        )
+        assert build_revisions == runtime_revisions, (
+            f"Dockerfile {package} revision drift: build={sorted(build_revisions)}, "
+            f"runtime={sorted(runtime_revisions)}"
+        )
+
+
 @pytest.mark.parametrize(
     "left,right",
     tuple(

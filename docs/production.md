@@ -113,6 +113,10 @@ its literal digest; Python 3.12 and Git are Wolfi packages, and pip stays in
 the build stage. Both stages also pin Wolfi's `python-3.12` to one package
 revision for now; see
 [October 2 integration of #134](#october-2-integration-of-134-and-hygiene-review).
+Because apk reads the live Wolfi repository, this image is not byte-for-byte
+reproducible; operators requiring reproducible builds must vendor the image and
+rebuild on a fixed cadence, while keeping both `FROM` digests and Python package
+pins identical across the build and runtime stages.
 The image build checks that Git is 2.45 or newer for history enrichment.
 Review that exact digest and any Dependabot refresh before deployment:
 
@@ -1563,8 +1567,10 @@ enforcing policy on the new output:
 - **Gateway identity.** Gateway finding IDs stay scan-local by default, and
   `diff` lists them under `not_comparable` (exit 3) instead of reporting them as
   new. To compare gateway callers across scans, inject the same
-  `SHADOWSCAN_IDENTITY_KEY` (at least 32 bytes, hex or base64, for example from
-  `openssl rand -hex 32`) from a secret store into every comparable scan.
+  `SHADOWSCAN_IDENTITY_KEY` (at least 32 bytes, explicitly `hex:<value>` or
+  `base64:<value>`, for example `hex:` followed by `openssl rand -hex 32`) from
+  a secret store into every comparable scan. Ambiguous unprefixed encodings
+  stop the scan and require one of those prefixes.
   Findings then carry `identity_scope: keyed` and keep their IDs, and gateway
   inputs join the collection scope through a keyed digest. Treat the key as a
   secret: anyone who holds it can link reports and test guesses of short labels

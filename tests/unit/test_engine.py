@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 from threading import Event
@@ -9,7 +10,7 @@ import pytest
 from shadowscan.config import ConnectorSpec, ScanConfig, parse_set_options
 from shadowscan.connectors.common import unique_records
 from shadowscan.correlation import correlate
-from shadowscan.engine import Engine, _prune_runtime_links
+from shadowscan.engine import Engine, _approves_every_resource, _prune_runtime_links
 from shadowscan.merge import merge
 from shadowscan.models import Evidence, Finding, Kind, RiskLevel, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
@@ -603,18 +604,37 @@ def test_wildcard_inventory_resource_is_reported_once_per_entry(tmp_path, index)
     assert result.findings and result.complete
 
 
-@pytest.mark.parametrize("pattern,approves_everything", [("?*", True), ("*?", True), ("github:*", False)])
-def test_any_pattern_that_matches_every_resource_is_reported(tmp_path, index, pattern, approves_everything):
+@pytest.mark.parametrize(
+    "pattern,approves_everything",
+    [
+        ("*", True),
+        ("**", True),
+        ("*?*", True),
+        ("?*", True),
+        ("*?", True),
+        (r"[!\\]*", True),
+        ("github:acme/*", False),
+        ("arn:aws:iam::*:role/prod-*", False),
+    ],
+)
+def test_universal_and_near_universal_patterns_are_reported(tmp_path, index, pattern, approves_everything):
     repo = _repo(tmp_path)
     card = tmp_path / "agents.yaml"
     card.write_text(f"agents:\n  - {{agent_id: broad, owner: x, resources: ['{pattern}']}}\n")
     config = ScanConfig(
         connectors=[ConnectorSpec("code.filesystem", {"path": str(repo)})], inventory=[str(card)]
     )
-    expected = (
-        f"inventory entry broad in {card} has resource pattern '{pattern}', which approves every finding"
-    )
-    assert _inventory_warnings(Engine(config, index).run()) == ([expected] if approves_everything else [])
+    warnings = _inventory_warnings(Engine(config, index).run())
+    if approves_everything:
+        assert len(warnings) == 1 and "approves every finding" in warnings[0]
+    else:
+        assert warnings == []
+
+
+def test_wildcard_fast_path_strips_whitespace_only_for_classification():
+    pattern = " *?* "
+    assert not fnmatch.fnmatchcase("github:acme/agent", pattern)
+    assert _approves_every_resource(pattern)
 
 
 def test_cli_shows_in_tree_inventory_warning_without_changing_the_gate(tmp_path):

@@ -67,23 +67,52 @@ def _stable_identity_key() -> bytes | None:
     """Decode ``SHADOWSCAN_IDENTITY_KEY``, or None when it is not set.
 
     Gateway pseudonyms and finding IDs use a random key per scan unless the
-    operator supplies at least 32 secret bytes, hex or base64 encoded (hex is
-    tried first). The key must never reach a log, report, cache, record export
-    or diagnostic, and a set but unusable value stops the scan rather than
-    silently falling back to unlinkable per-scan identities.
+    operator supplies at least 32 secret bytes, encoded as ``hex:<value>`` or
+    ``base64:<value>``; prefix names are case-insensitive. Bare encodings are
+    accepted only when exactly one canonical encoding is valid; ambiguous
+    values require a prefix. The key must never reach a log, report, cache,
+    record export or diagnostic, and a set but unusable value stops the scan
+    rather than silently falling back to unlinkable per-scan identities.
     """
     value = os.environ.get(IDENTITY_KEY_ENV)
     if value is None:
         return None
     text = value.strip()
+    encoding: str | None = None
+    if text[:4].casefold() == "hex:":
+        encoding, text = "hex", text[4:]
+    elif text[:7].casefold() == "base64:":
+        encoding, text = "base64", text[7:]
+
     try:
-        key = bytes.fromhex(text) if _HEX_KEY.fullmatch(text) else base64.b64decode(text, validate=True)
+        hex_encoded = bool(_HEX_KEY.fullmatch(text))
+        base64_key: bytes | None = None
+        if encoding != "hex":
+            try:
+                base64_key = base64.b64decode(text, validate=True)
+                if base64.b64encode(base64_key).decode("ascii") != text:
+                    base64_key = None
+            except ValueError:  # binascii.Error, or text that is not ASCII
+                pass
+        if encoding is None and hex_encoded and base64_key is not None:
+            raise SetupError(
+                f"{IDENTITY_KEY_ENV} has an ambiguous encoding; "
+                "ambiguous bare values are no longer accepted. Use an explicit "
+                "hex:<value> or base64:<value> prefix"
+            )
+        if encoding == "hex" or (encoding is None and hex_encoded):
+            key = bytes.fromhex(text)
+        elif base64_key is not None:
+            key = base64_key
+        else:
+            key = b""
     except ValueError:  # binascii.Error, or text that is not ASCII
         key = b""
     if len(key) < _MIN_IDENTITY_KEY_BYTES:
         # SetupError text is printed verbatim: name the variable, never its value.
         raise SetupError(
-            f"{IDENTITY_KEY_ENV} must hold at least {_MIN_IDENTITY_KEY_BYTES} bytes, hex or base64 encoded"
+            f"{IDENTITY_KEY_ENV} must decode to at least {_MIN_IDENTITY_KEY_BYTES} bytes using "
+            "hex:<value> or base64:<value>"
         )
     return key
 
@@ -524,20 +553,34 @@ _MAX_INVENTORY_WARNINGS = 20
 _RESOURCE_PROBES = (
     "a",
     "Z9",
+    "SHADOWSCAN",
+    "1234567890",
     "github:acme/agent",
     "arn:aws:iam::123456789012:role/agent",
+    "a/b[c]",
     "]",
     "[",
     "-",
     " ",
     "/",
+    "~",
+    "\x7f",
+    r"\resource",
+    "line\n\tbreak",
     "\u00e9",
+    "\U0001f600",
     "x" * 512,
+    "0" * 1024,
 )
 
 
 def _approves_every_resource(pattern: str) -> bool:
-    return all(fnmatch.fnmatchcase(probe, pattern) for probe in _RESOURCE_PROBES)
+    # Conservative heuristic: over-flag rather than miss; never use this as an enforcement control.
+    stripped = pattern.strip()
+    if stripped and all(character in "*?" for character in stripped):
+        return True
+    matches = sum(fnmatch.fnmatchcase(probe, pattern) for probe in _RESOURCE_PROBES)
+    return matches >= len(_RESOURCE_PROBES) - 1
 
 
 def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
