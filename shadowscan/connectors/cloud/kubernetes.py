@@ -1,0 +1,248 @@
+"""Offline Kubernetes and OpenShift workload inventory analysis."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any, ClassVar
+
+from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.common import finalize
+from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.redaction import sanitize_text
+
+_AI_IMAGE_MARKERS = (
+    "ollama/ollama",
+    "vllm/vllm-openai",
+    "ggerganov/llama.cpp",
+    "text-generation-inference",
+    "localai",
+    "lmstudio",
+    "litellm",
+    "langgraph",
+    "flowise",
+    "dify",
+    "open-webui",
+    "mcp/",
+    "mcp-server",
+    "kagent",
+    "agent",
+)
+_ENV_MARKERS = ("API_KEY", "TOKEN", "BASE_URL", "ENDPOINT", "MODEL")
+_RECOGNIZED = {
+    "Deployment",
+    "StatefulSet",
+    "DaemonSet",
+    "Job",
+    "CronJob",
+    "Pod",
+    "Service",
+    "Ingress",
+    "ServiceAccount",
+    "RoleBinding",
+    "ClusterRoleBinding",
+    "NetworkPolicy",
+    "InferenceService",
+    "ServingRuntime",
+    "RayService",
+    "Agent",
+    "ToolServer",
+    "ModelConfig",
+    "Notebook",
+    "LeaderWorkerSet",
+}
+_OPENSHIFT = {
+    "DeploymentConfig",
+    "Route",
+    "ImageStream",
+    "DataScienceCluster",
+    "DSCInitialization",
+    "DataSciencePipelinesApplication",
+    "OdhDashboardConfig",
+}
+
+
+def _name(obj: dict[str, Any]) -> str:
+    metadata = obj.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    value = metadata.get("name")
+    return value[:160] if isinstance(value, str) else ""
+
+
+def _namespace(obj: dict[str, Any]) -> str:
+    metadata = obj.get("metadata")
+    if not isinstance(metadata, dict):
+        return "default"
+    value = metadata.get("namespace", "default")
+    return value[:160] if isinstance(value, str) else "default"
+
+
+def _kind(obj: dict[str, Any]) -> str:
+    value = obj.get("kind")
+    return value[:100] if isinstance(value, str) else ""
+
+
+def _workload_images(obj: dict[str, Any]) -> list[str]:
+    spec = obj.get("spec")
+    if not isinstance(spec, dict):
+        return []
+    template = spec.get("template", spec)
+    if not isinstance(template, dict):
+        return []
+    pod_spec = template.get("spec", template)
+    if not isinstance(pod_spec, dict):
+        return []
+    containers = pod_spec.get("containers", [])
+    if not isinstance(containers, list):
+        return []
+    return [
+        image[:300]
+        for container in containers[:100]
+        if isinstance(container, dict)
+        and isinstance((image := container.get("image")), str)
+        and image
+    ]
+
+
+class KubernetesConnector(BaseConnector):
+    name = "cloud.kubernetes"
+    surface = Surface.CLOUD
+    provider = "kubernetes"
+    description = "Analyze Kubernetes workload and control-plane inventory exports."
+    offline_formats = "kubectl get -o json List envelope / JSONL / YAML export"
+    config_keys: ClassVar[dict[str, str]] = {
+        "cluster": "Required stable cluster label for offline resource identities.",
+        "input": "Offline kubectl JSON / JSONL / YAML inventory export.",
+        "allow_instance_credentials": "Approval required before using in-cluster service-account credentials.",
+        "max_pages": "Maximum live list pages before coverage is incomplete.",
+    }
+
+    def __init__(self, ctx: ConnectorContext) -> None:
+        super().__init__(ctx)
+        self.cluster = ctx.get("cluster")
+
+    def collect(self) -> Iterable[dict[str, Any]]:
+        raise ConnectorError(
+            "cloud.kubernetes: live API collection is unavailable; provide an offline kubectl export"
+        )
+
+    def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        cluster = self.cluster
+        if not isinstance(cluster, str) or not cluster.strip():
+            raise ConnectorError("cloud.kubernetes: cluster is required for offline resource identity")
+        accepted: list[dict[str, Any]] = []
+        policies: set[str] = set()
+        for record in records:
+            obj = record
+            items = record.get("items")
+            if isinstance(items, list):
+                for item in items[:10000]:
+                    if isinstance(item, dict):
+                        accepted.append(item)
+                continue
+            accepted.append(obj)
+        if len(accepted) > 10000:
+            self.ctx.warn("cloud.kubernetes: object limit reached")
+            accepted = accepted[:10000]
+        for obj in accepted:
+            if _kind(obj) == "NetworkPolicy":
+                policies.add(_namespace(obj))
+        for obj in accepted:
+            kind = _kind(obj)
+            resource_name = _name(obj)
+            if kind not in _RECOGNIZED | (_OPENSHIFT if self.name == "cloud.openshift" else set()):
+                continue
+            if not resource_name:
+                self.ctx.warn(f"{self.name}: object without metadata.name")
+                continue
+            namespace = _namespace(obj)
+            spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
+            images = _workload_images(obj)
+            selected = [image for image in images if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)]
+            tags: list[str] = []
+            capabilities: list[str] = []
+            if selected:
+                tags.append("ai-workload")
+            pod_spec = spec.get("template", {}).get("spec", {}) if isinstance(spec.get("template"), dict) else {}
+            if not isinstance(pod_spec, dict):
+                pod_spec = {}
+            if pod_spec.get("hostNetwork") is True:
+                tags.append("privileged-pod")
+            containers = pod_spec.get("containers", [])
+            if isinstance(containers, list):
+                for container in containers[:100]:
+                    if not isinstance(container, dict):
+                        continue
+                    security = container.get("securityContext")
+                    if isinstance(security, dict) and security.get("privileged") is True:
+                        tags.append("privileged-pod")
+                    envs = container.get("env", [])
+                    if isinstance(envs, list):
+                        for env in envs[:1000]:
+                            if isinstance(env, dict):
+                                key = env.get("name")
+                                if isinstance(key, str) and any(marker in key.upper() for marker in _ENV_MARKERS):
+                                    tags.append("provider-config-present")
+                    resources = container.get("resources")
+                    requests = resources.get("requests") if isinstance(resources, dict) else {}
+                    if isinstance(requests, dict) and requests.get("nvidia.com/gpu"):
+                        tags.append("gpu-workload")
+            volumes = pod_spec.get("volumes", [])
+            if isinstance(volumes, list) and any(
+                isinstance(volume, dict) and "hostPath" in volume for volume in volumes[:100]
+            ):
+                tags.append("privileged-pod")
+            if kind in {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"} and selected:
+                if namespace not in policies:
+                    tags.append("no-egress-policy")
+            if kind == "Service":
+                svc_type = spec.get("type")
+                if svc_type in {"LoadBalancer", "NodePort"}:
+                    tags.append("exposed-llm-server")
+            if kind in {"Ingress", "Route"}:
+                tags.append("exposed-llm-server")
+            if kind in {"RoleBinding", "ClusterRoleBinding"}:
+                role_ref = obj.get("roleRef")
+                subjects = obj.get("subjects", [])
+                if (
+                    isinstance(role_ref, dict)
+                    and role_ref.get("name") == "cluster-admin"
+                    and isinstance(subjects, list)
+                    and any(isinstance(subject, dict) and subject.get("kind") == "ServiceAccount" for subject in subjects)
+                ):
+                    tags.append("cluster-admin")
+            if kind in {"Agent", "ToolServer"}:
+                capabilities.append("tool-use")
+            if not tags and not selected and kind not in {"InferenceService", "ServingRuntime", "RayService"}:
+                self.ctx.examined()
+                continue
+            resource = f"k8s:{cluster}/{namespace}/{kind}/{resource_name}"
+            finding = Finding(
+                surface=Surface.CLOUD,
+                connector=self.name,
+                kind=Kind.AGENT if selected or kind in {"Agent", "InferenceService", "RayService"} else Kind.CLOUD_RESOURCE,
+                title=f"Kubernetes {kind} {resource_name}",
+                resource=resource,
+                resource_type=f"kubernetes/{kind}",
+                provider="kubernetes",
+                account=sanitize_text(cluster)[:160],
+                confidence=0.8 if selected else 0.65,
+                tags=list(dict.fromkeys(tags)),
+                capabilities=capabilities,
+                metadata={"namespace": namespace, "images": selected[:20]},
+            )
+            finding.add_evidence(
+                Evidence(
+                    signal=f"kubernetes:{kind}",
+                    description=f"Exported Kubernetes {kind} resource",
+                    weight=0.75,
+                )
+            )
+            self.ctx.examined()
+            yield finalize(finding, self.index)
+
+
+class OpenShiftConnector(KubernetesConnector):
+    name = "cloud.openshift"
+    provider = "openshift"
+    description = "Analyze Kubernetes, OpenShift, and OpenShift AI inventory exports."

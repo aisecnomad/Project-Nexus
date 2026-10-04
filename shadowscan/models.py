@@ -146,6 +146,7 @@ class Surface(str, Enum):
     LOWCODE = "lowcode"
     SAAS = "saas"
     CLOUD = "cloud"
+    ENDPOINT = "endpoint"
 
 
 class Kind(str, Enum):
