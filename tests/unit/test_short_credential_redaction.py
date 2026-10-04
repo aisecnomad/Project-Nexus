@@ -8,7 +8,8 @@ import pytest
 from shadowscan.cli import _load_report
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.code.filesystem import _parse_mcp_servers, _redacted_source, _structured_context
+from shadowscan.connectors.code.filesystem import _redacted_source, _structured_context
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex
