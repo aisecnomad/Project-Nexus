@@ -11,8 +11,7 @@
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
 > **Project status**
-> - **Unreleased:** `0.1.1` is a candidate; no tag, published package or signed
->   artifact exists.
+> - **Unreleased:** `0.1.1` is an unreleased candidate.
 > - **Development:** One maintainer; apart from Dependabot, commits are
 >   maintainer-written or AI-generated and maintainer-reviewed.
 > - **Review:** No independent human review has been recorded; it is required before a tagged release.
@@ -111,7 +110,7 @@ Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the connector guide for the supported modes and provider scope.
 Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export.
 
-## Frameworks & products recognised
+## Frameworks & products recognized
 
 215 signatures / 1006 signals, YAML-defined with explicit opt-in overrides:
 
@@ -129,9 +128,8 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 
 ## Project status
 
-* **Unreleased.** `0.1.1` is a candidate version string: there is no tag, no
-  published package and no signed artifact. The package classifier is
-  `Development Status :: 3 - Alpha`.
+* **Release state.** There is no tag, published package or signed artifact. The
+  package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** One account merges every
   change. Apart from Dependabot updates, every commit was written by that
   maintainer or generated with an AI coding assistant, often in large batches,
@@ -226,7 +224,7 @@ shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
 shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
 # Read exports/manifest.json and use the exported filename for this instance:
-shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse later, offline
+shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # reanalyze later, offline
 
 # 5. Logs and tokens
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
@@ -393,8 +391,8 @@ a value, and after each `,`, `;`, tab, `|` or line break inside it, when the
 following text begins with `=`, `+`, `-` or `@` (also after whitespace or
 quotes), a tab or a carriage return; values beginning with a line feed are also
 marked. Other tabs and line breaks remain unchanged, and spreadsheet cells are
-read as text regardless of delimiter; strip markers for programmatic use or use
-`json`. See [output and inventory migration](docs/production.md#output-and-inventory-migration).
+read as text regardless of delimiter. Strip markers for programmatic use or use
+`json`; see [output and inventory migration](docs/production.md#output-and-inventory-migration).
 `markdown` output defangs links (`hxxps://`, `www[.]`) and writes `@` as `[@]`
 in untrusted text, so a report pasted into an issue or pull request creates no
 links, @-mentions or e-mail links; code spans keep identifiers verbatim.

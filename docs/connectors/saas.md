@@ -7,6 +7,10 @@ installations across collaboration and productivity platforms.
     SaaS connectors support live API collection and offline JSON/CSV export
     analysis (including CASB inventory exports via `saas.generic`).
 
+See the [shared connector entry guide](../connectors.md#connector-entry-guide)
+for the common modes, permissions, options, fail-closed and evidence-limit
+references.
+
 ## `saas.slack`
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
 (scopes, pending requests), `team.integrationLogs` (who installed what).

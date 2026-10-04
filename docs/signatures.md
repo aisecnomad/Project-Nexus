@@ -150,7 +150,7 @@ it replaces the complete signature, not individual fields. Custom packs can:
 
 * add an internal platform (`platform.acme-agent-runtime`) with its images, hosts and env vars;
 * raise the weight of a scope that is privileged in your tenant;
-* add your organisation's internal AI SaaS vendors to `identity-app.*`;
+* add your organization's internal AI SaaS vendors to `identity-app.*`;
 * tune `heuristic.*` patterns for your code base.
 
 Validate with `python -m shadowscan.signatures.validate DIR` and `make evaluate`
@@ -281,7 +281,7 @@ and tests, which call and test the products they detect.
   apps (`offline_access`, `refresh_token`, `web`, `api`, `full`, `admin`, `workflow`) are not listed as
   privileged; list the qualified permission instead (`admin:org`, `admin.users:write`, `okta.users.manage`).
 * `file` globs use `fnmatch` on the repository-relative POSIX path; `**/` prefixes match at any depth.
-* Dependency names are normalised PEP 503-style (`Foo_Bar` == `foo-bar`) for every ecosystem.
+* Dependency names are normalized PEP 503-style (`Foo_Bar` == `foo-bar`) for every ecosystem.
 * `secret` patterns must be specific enough not to match placeholders; matches are redacted before they reach any report.
   A prefix shared by several vendors (`sk-`) is only attributed when the rest of the key is vendor-specific
   (`sk-ant-`, `sk-or-v1-`, `sk-lf-`, `sk-litellm-`, OpenAI's `sk-proj-` / `T3BlbkFJ` marker); anything else is

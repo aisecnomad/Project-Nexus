@@ -300,6 +300,9 @@ coverage, even when a response includes an empty collection field.
   record outside the bounded sibling/flow rules above; a
   value split across concatenated strings; and sensitive
   business data.
+
+### Other implemented controls
+
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.
@@ -321,11 +324,10 @@ and [connector permissions](https://github.com/aisecnomad/Project-Nexus/blob/mai
 
 ## Supported versions
 
-No version has been released. There is no tag, published package or signed
-artifact; the `0.1.1` version string in `pyproject.toml` names an unreleased
-candidate. Only the current `main` branch receives fixes, and fixes land there
-without a backport. Report issues against the full commit SHA of `main` or of
-the pinned revision you deployed, not against a version number.
+No version has been released: there is no tag, published package or signed
+artifact, and `0.1.1` in `pyproject.toml` names an unreleased candidate. Only
+`main` receives fixes, with no backport. Report issues against the full commit
+SHA of `main` or the pinned revision you deployed, not a version number.
 
 ## Reporting
 
