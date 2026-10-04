@@ -66,6 +66,9 @@ coverage, even when a response includes an empty collection field.
   payloads or exception arguments. Bounded, sanitized diagnostic details remain
   in the scan report; treat reports as sensitive operational artifacts because
   arbitrary upstream text can contain data beyond recognized secret formats.
+  Shared HTTP retry warnings and HTTP errors retain only a validated HTTPS
+  origin and status. Paths, userinfo, queries and fragments are omitted;
+  malformed URL diagnostics use fixed messages rather than parser exception text.
   Opaque `api_token`, `foundry_token`, and `github_token` values, including the
   `GH_TOKEN` fallback, are sensitive.
   Diagnostic sanitization preserves credential context across errors, warnings

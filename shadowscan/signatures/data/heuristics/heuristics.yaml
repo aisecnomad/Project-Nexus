@@ -26,16 +26,17 @@ signatures:
     name: Agentic loop / planning idioms
     category: heuristic
     vendor: null
-    capabilities: [autonomous]
     signals:
       - type: code
         patterns: ['\bagent_loop\b', '\bagentLoop\b', '\b(?:plan_and_execute|planAndExecute)\b', '\breact_agent\b', '\bstop_reason\s*[!=]=\s*["'']tool_use["'']', '\bfinish_reason\s*[!=]=\s*["'']tool_calls["'']']
         weight: 0.35
         agent_indicator: true
+        capabilities: [autonomous]
       - type: code
         # Limits, loop counters and planning vocabulary are supporting evidence,
         # but also occur in ordinary applications. A bare while True is not an
-        # AI signal and must never turn a queue consumer into an agent.
+        # AI signal and must never turn a queue consumer into an agent. These
+        # names (including sub_agents=[]) do not establish autonomous behavior.
         patterns: ['\bmax_iterations\s*=', '\bmax_steps\s*=', '\bmaxSteps\s*:', '\bmax_turns\s*=', '\bmaxTurns\s*:', '\bmax_tool_calls\b', '\bReAct\b', '\bscratchpad\b', '\bthought\s*[:=]\s*', '(?i)\bchain[- ]of[- ]thought\b', '\bhandoff\b', '\bsubagent\b', '\bsub_agents?\b', '\bsupervisor\b']
         weight: 0.2
 

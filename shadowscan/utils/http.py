@@ -24,7 +24,17 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 from requests.adapters import HTTPAdapter
-from requests.exceptions import InvalidHeader
+from requests.exceptions import (
+    ChunkedEncodingError,
+    ConnectionError,
+    ConnectTimeout,
+    ContentDecodingError,
+    InvalidHeader,
+    ReadTimeout,
+    RequestException,
+    SSLError,
+    Timeout,
+)
 from requests.utils import check_header_validity
 from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
@@ -345,13 +355,21 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     # exactly as the transport will is refused, never silently cleaned up.
     if isinstance(url, str) and any(char.isspace() or not char.isprintable() for char in url):
         raise ValueError("API URL must not contain whitespace or control characters")
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port or 443
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("Invalid API URL") from None
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("API URL must use HTTPS without embedded credentials")
     if origin:
-        expected = urlsplit(origin)
-        actual_origin = (parsed.scheme, parsed.hostname, parsed.port or 443)
-        if actual_origin != (expected.scheme, expected.hostname, expected.port or 443):
+        try:
+            expected = urlsplit(origin)
+            expected_origin = (expected.scheme, expected.hostname, expected.port or 443)
+        except (TypeError, ValueError, UnicodeError):
+            raise ValueError("Invalid API origin") from None
+        actual_origin = (parsed.scheme, parsed.hostname, port)
+        if actual_origin != expected_origin:
             raise ValueError("Refusing API URL outside the configured credential origin")
     allow = _allow_private_origin.get() if allow_private is None else allow_private
     if not isinstance(allow, bool):
@@ -363,7 +381,7 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
         ipaddress.ip_address(host)
     except ValueError:
         try:
-            infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
         except socket.gaierror:
             infos = []
         for info in infos:
@@ -376,6 +394,14 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
                     "Refusing loopback, link-local, private, or cloud-metadata destination"
                 ) from None
     return url
+
+
+def _join_url(origin: str, path: str) -> str:
+    """Resolve a continuation without exposing malformed URL text in parser errors."""
+    try:
+        return urljoin(origin, path)
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("Invalid API URL") from None
 
 
 class _PublicHTTPSConnection(HTTPSConnection):
@@ -528,9 +554,54 @@ def _retry_delay(resp: requests.Response, attempt: int) -> float:
 
 
 def diagnostic_url(url: str) -> str:
-    """Drop query/fragment and userinfo before URLs enter errors or logs."""
-    parsed = urlsplit(url)
-    return sanitize_text(urlunsplit((parsed.scheme, parsed.netloc.rsplit("@", 1)[-1], parsed.path, "", "")))
+    """Keep only an HTTPS origin in diagnostics, never request-controlled URL fields.
+
+    Paths can contain opaque credentials just as queries and userinfo can.
+    Lexical redaction cannot identify an arbitrary value without its credential
+    context, so none of those components belongs in errors or retry logs.
+    Malformed input gets a fixed label; URL parser errors can echo its values.
+    """
+    invalid = "<invalid HTTPS origin>"
+    try:
+        parsed = urlsplit(url)
+        host, port = parsed.hostname, parsed.port
+        if parsed.scheme != "https" or not host or "%" in host:
+            return invalid
+        if ":" in host:
+            # Reconstruct the authority rather than copying malformed netloc text.
+            authority = f"[{ipaddress.IPv6Address(host)}]"
+        else:
+            host = host.encode("idna").decode("ascii")
+            if len(host) > 253 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.?", host):
+                return invalid
+            authority = host
+        if port is not None:
+            authority += f":{port}"
+    except (AttributeError, TypeError, ValueError, UnicodeError):
+        return invalid
+    return sanitize_text(urlunsplit(("https", authority, "", "", "")))
+
+
+def _transport_error(exc: RequestException, url: str, phase: str) -> RequestException:
+    """Keep useful transport categories without retaining untrusted error payloads.
+
+    requests/urllib3 exceptions can retain full URLs, echoed response text and
+    credential-bearing request objects. Construct only known exception types
+    with a fixed category and origin, preserving connectors' existing catches.
+    """
+    categories = (
+        (SSLError, "TLS failure"),
+        (ConnectTimeout, "connect timeout"),
+        (ReadTimeout, "read timeout"),
+        (Timeout, "timeout"),
+        (ConnectionError, "connection failure"),
+        (ChunkedEncodingError, "invalid response framing"),
+        (ContentDecodingError, "response decoding failure"),
+    )
+    for error_type, category in categories:
+        if isinstance(exc, error_type):
+            return error_type(f"HTTP {phase} {category} for {diagnostic_url(url)}")
+    return RequestException(f"HTTP {phase} transport failure for {diagnostic_url(url)}")
 
 
 class HttpError(RuntimeError):
@@ -610,8 +681,12 @@ class HttpClient:
         self.on_warning = on_warning
 
     def _url(self, path: str) -> str:
-        if urlsplit(path).scheme or path.startswith("//"):
-            url = urljoin(self.base_url, path)
+        try:
+            absolute = bool(urlsplit(path).scheme) or path.startswith("//")
+        except (TypeError, ValueError, UnicodeError):
+            raise ValueError("Invalid API URL") from None
+        if absolute:
+            url = _join_url(self.base_url, path)
         else:
             url = f"{self.base_url}/{path.lstrip('/')}"
         return validate_url(url, self.base_url or None, allow_private=self.allow_private_origin)
@@ -659,20 +734,27 @@ class HttpClient:
             if self.deadline is not None:
                 budget = min(budget, self.deadline - time.monotonic())
             deadline_token = _acquisition_deadline.set(time.monotonic() + budget)
+            request_failure: RequestException | ValueError | None = None
             try:
                 try:
                     resp = self.session.request(method, url, **kwargs)
                 except InvalidHeader:
                     # Auth handlers can add headers after our preflight validation.
-                    raise ValueError("HTTP header contains invalid characters or types") from None
+                    request_failure = ValueError("HTTP header contains invalid characters or types")
+                except RequestException as exc:
+                    request_failure = _transport_error(exc, url, "request")
             finally:
                 _acquisition_deadline.reset(deadline_token)
+            # Raise outside the handler so even __context__ cannot retain the
+            # original request, response or diagnostic payload.
+            if request_failure is not None:
+                raise request_failure from None
             if resp.status_code in {301, 302, 303, 307, 308}:
                 location = resp.headers.get("Location")
                 resp.close()
                 if not location or redirects >= 5:
                     raise HttpError(resp.status_code, url, "Invalid or excessive redirect")
-                url = validate_url(urljoin(url, location), origin, allow_private=self.allow_private_origin)
+                url = validate_url(_join_url(url, location), origin, allow_private=self.allow_private_origin)
                 redirects += 1
                 # Do not carry original query parameters onto a redirect target.
                 kwargs.pop("params", None)
@@ -758,6 +840,7 @@ class HttpClient:
             deadline = time.monotonic() + budget
             watchdog = _read_watchdog(resp, budget, expired)
             body = bytearray()
+            transport_failure: RequestException | None = None
             try:
                 for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
                     if time.monotonic() >= deadline:
@@ -768,14 +851,19 @@ class HttpClient:
                     if len(body) + len(chunk) > limit:
                         raise ValueError("HTTP response exceeds the byte limit")
                     body.extend(chunk)
-            except Exception:  # re-raised unless the deadline shut the read down
+            except Exception as exc:  # re-raised unless the deadline shut the read down
                 # The watchdog's shutdown surfaces as a transport or framing
                 # error; report the deadline instead, without transport text.
                 if not expired.is_set():
-                    raise
+                    if isinstance(exc, RequestException):
+                        transport_failure = _transport_error(exc, resp.url, "response")
+                    else:
+                        raise
             if expired.is_set():
                 # A close-delimited body also ends cleanly after the shutdown.
                 raise ValueError("HTTP response exceeds the read deadline")
+            if transport_failure is not None:
+                raise transport_failure from None
             return bytes(body)
         finally:
             if watchdog is not None:
@@ -843,7 +931,7 @@ class HttpClient:
             if exc.status in (ok_statuses or set()) and exc.status not in {401, 403}:
                 return default
             if self.on_warning and exc.status in {401, 403, 404, 405, 422}:
-                self.on_warning(f"Collection incomplete: HTTP {exc.status} for {urlsplit(exc.url).path}")
+                self.on_warning(f"Collection incomplete: HTTP {exc.status} for {exc.url}")
                 return default
             raise
 
@@ -890,7 +978,7 @@ class HttpClient:
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
-            url = validate_url(urljoin(origin, url), origin, allow_private=self.allow_private_origin)
+            url = validate_url(_join_url(origin, url), origin, allow_private=self.allow_private_origin)
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)
@@ -915,7 +1003,7 @@ class HttpClient:
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
-            url = validate_url(urljoin(origin, url), origin, allow_private=self.allow_private_origin)
+            url = validate_url(_join_url(origin, url), origin, allow_private=self.allow_private_origin)
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)

@@ -206,6 +206,12 @@ bounded attribution does not establish runtime reachability. Rescans can reduce
 candidate scores without source changes; see the [code guide](connectors/code.md)
 and [migration notes](production.md).
 
+Supported constructor options, including ADK, Strands, AutoGen, LlamaIndex and
+Semantic Kernel, separate configured capabilities from framework availability.
+Empty/unknown tool and delegation collections stay potential; planning vocabulary
+and limit names alone do not imply autonomy. See the [code connector guide](connectors/code.md)
+for supported options, primary SDK contracts and dynamic-configuration limits.
+
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
 agent findings. JSON/YAML descriptions are not executed or treated as source; low-code

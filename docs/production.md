@@ -544,6 +544,11 @@ the weekly read-only audit will fail until matching administrator updates are
 applied and verified with a complete API response. If GitHub withholds bypass
 actors from the read-only workflow token, it will remain failed with unknown
 assurance and an administrator must obtain the full readback.
+On 2026-10-04, both rulesets read back as `enforcement: disabled` again,
+and the `main` branch response reported `protected: false`. The available
+GitHub connector exposes no administration-write operation; restoring the
+reviewed policy and verifying exact readback requires an administrator.
+
 Classic branch protection is not readable through the app
 integration. Read and retain the current configuration before changing it,
 and compare it against the [versioned merge policy](operations/merge-policy.md):
@@ -622,7 +627,7 @@ The [two-ruleset payload helper](https://github.com/aisecnomad/Project-Nexus/tre
 additionally prepares `Protect main` and `Require CI and CodeQL` together,
 removing bypass actors from both. The observed snapshots and proposed PUT
 bodies are in [.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
-Both rulesets remained disabled during this implementation readback. Refresh
+The committed observed snapshots capture disabled rulesets. Refresh
 those observations and regenerate the bodies before applying them; the files
 are preparation, not evidence of active enforcement. After administrator PUTs,
 compare each fresh full API response against its exact approved body:
@@ -746,6 +751,11 @@ Until completed, describe deployment status as pending tenant and container acce
 
 ## Candidate change history
 
+These notes record behavior changes made while the 0.1.1 candidate was being
+hardened. Read them when you have baselines, reports or inventories produced
+by an earlier candidate build; a deployment that starts from a reviewed
+revision and a fresh baseline does not need them.
+
 ### October 3 source capability attribution migration
 
 Re-scan code with this candidate before comparing its risk to earlier reports.
@@ -765,10 +775,47 @@ unreachable Python statements and deferred lambdas in compound callees remain
 contextual. Supported import-bound async execute callbacks and directly invoked
 Python lambdas retain connected source evidence.
 
-These notes record behavior changes made while the 0.1.1 candidate was being
-hardened. Read them when you have baselines, reports or inventories produced
-by an earlier candidate build; a deployment that starts from a reviewed
-revision and a fresh baseline does not need them.
+### October 3 review remediation
+
+HTTP retry warnings, errors and optional-request warnings now identify only
+the HTTPS origin and status. Request paths, userinfo, queries and fragments are
+omitted; malformed URL diagnostics use fixed messages. Update any operational
+parsers that expected a path in an HTTP error. Treat historical logs as sensitive
+when reviewing or sharing them. Collection policy and incomplete-scan exit
+semantics remain unchanged. Transport and response-body errors also discard
+opaque upstream payloads, request/response objects and original exception
+chains; controlled TLS, connection and timeout categories remain available.
+
+Supported ADK, Strands, AutoGen, LlamaIndex and Semantic Kernel constructors now
+receive capability checks specific to their configuration. Empty or unresolved
+tool and participant collections no longer establish those capabilities solely
+because the SDK supports them. A dynamic tool retriever does not establish
+document RAG; weak planning vocabulary does not establish autonomous execution.
+Findings can retain the same identity while their capabilities, confidence or
+risk decrease. Rescan and inspect those differences before replacing an
+existing baseline; these changes do not establish that a deployed agent stopped
+using tools. See the [code connector guide](connectors/code.md) for the supported
+static patterns and remaining inference limits. Strands literal tool names
+and file paths count as configured tools; literal participant or handoff
+strings do not establish another agent.
+
+Git submodule inventory preserves its fail-closed result and now reports a
+bounded category for preflight, subprocess or tree-parsing failure. Numeric OS
+errors may be retained, but raw paths, arguments and subprocess stderr are not.
+The observed macOS/Python 3.11 test failure passed on an unchanged rerun at
+`c232e28c34571ea87b0ca2925a84e86fed0b3645`; its root cause remains unconfirmed. Additional
+diagnostic assertions and fast-exit subprocess tests aid investigation without
+relaxing confinement, Git version or deadline requirements. Require the full
+CI matrix to pass on the selected revision.
+
+The [merge-policy runbook](operations/merge-policy.md) now prepares both
+rulesets from fresh snapshots and verifies exact persisted readback. Conflicting
+check-provider bindings require administrator review instead of silent
+replacement. The available repository integration cannot apply administration
+writes; versioned payloads are not evidence of active enforcement. Human review,
+a fresh human-labeled holdout and scope-specific live tenant receipts remain
+required evidence. Existing [acceptance tooling](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+checks supplied evidence; synthetic regression results cannot replace it.
 
 ### October 2 integration of #134 and hygiene review
 
