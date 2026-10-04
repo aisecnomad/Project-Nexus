@@ -1,0 +1,4 @@
+[
+  {"kind": "Pod", "metadata": {"name": "research-ollama", "namespace": "ai"}, "spec": {"containers": [{"name": "ollama", "image": "ollama/ollama:latest", "args": ["--model", "/models/llama.gguf"]}] }},
+  {"kind": "Service", "metadata": {"name": "mcp-gateway", "namespace": "ai", "annotations": {"mcp": "true"}}, "spec": {"ports": [{"name": "mcp", "port": 8080}]}}
+]

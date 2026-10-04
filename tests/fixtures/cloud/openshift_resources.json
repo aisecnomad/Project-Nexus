@@ -1,0 +1,4 @@
+[
+  {"kind": "Route", "metadata": {"name": "ollama-route", "namespace": "rhoai"}, "spec": {"host": "ollama.apps.example.com"}},
+  {"kind": "InferenceService", "metadata": {"name": "contract-reviewer", "namespace": "rhoai"}, "spec": {"predictor": {"model": {"modelFormat": {"name": "gguf"}}}}}
+]

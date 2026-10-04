@@ -1,0 +1,4 @@
+[
+  {"process": "ollama", "domain": "api.openai.com", "namespace": "ai"},
+  {"process_exec": {"process": {"binary": "/usr/local/bin/llama-server", "pod": {"namespace": "models", "name": "gguf"}}}}
+]

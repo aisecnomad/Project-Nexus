@@ -1,0 +1,6 @@
+[
+  {"kind": "mcp-config", "name": ".mcp.json", "path": "/home/dev/.mcp.json"},
+  {"kind": "gguf", "name": "llama.gguf", "path": "/models/llama.gguf"},
+  {"kind": "coding-agent", "name": ".claude", "path": "/home/dev/.claude"},
+  {"kind": "ollama", "name": "Modelfile", "path": "/home/dev/Modelfile"}
+]
