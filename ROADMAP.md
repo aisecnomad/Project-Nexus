@@ -29,6 +29,12 @@ fail-closed trust model.
 
 - Additional connectors on the existing six surfaces, driven by
   [connector requests](https://github.com/aisecnomad/Project-Nexus/issues?q=label%3Aconnector-request).
+- Runtime surface gaps recorded in
+  [docs/gaps-runtime-surfaces.md](docs/gaps-runtime-surfaces.md): offline
+  Kubernetes and OpenShift workload inventory, GGUF / local-model artifact
+  signatures, and an opt-in endpoint config walker. eBPF stays an export
+  analyzer until a separate review; do not ship a kernel probe to close the gap
+  on paper.
 - Tighter Agent Card binding examples and inventory authoring guides.
 - Public docs screenshots of the HTML report and SARIF upload path.
 - Re-check the OpenSSF Scorecard badge after each `main` Scorecard run.
@@ -45,6 +51,9 @@ fail-closed trust model.
 - Optional package index publish from a reviewed tag.
 - Confirm availability of the `project-nexus-shadowscan` distribution name at
   publication time; source metadata does not reserve a package-index namespace.
+- Read-only live Kubernetes/OpenShift collection and an offline analyzer for
+  Tetragon, Hubble, or process-to-domain flow exports. Live collection must
+  fail closed on missing RBAC and must not mutate cluster state.
 
 ## Not planned
 
@@ -53,3 +62,5 @@ fail-closed trust model.
 - Treating heuristic confidence as a calibrated probability
 - Weakening redaction, plugin allowlists, or incomplete-scan semantics
   to look more complete
+- In-tree eBPF programs or privileged DaemonSets before an independent
+  security review of that trust boundary
