@@ -334,6 +334,8 @@ class OllamaConnector(_EndpointConnector):
             host = _text(record.get("host") or record.get("endpoint") or record.get("url")).lower()
             if host and not any(x in host for x in ("localhost", "127.0.0.1", "::1")):
                 tags.append("exposed-llm-server")
+            if len(models) > 500:
+                self.ctx.warn("endpoint.ollama: model limit reached")
             for model in models[:500]:
                 if not isinstance(model, dict):
                     self.ctx.warn("endpoint.ollama: malformed model entry")
