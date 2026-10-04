@@ -31,23 +31,26 @@ tagged `unrecognized-app` and capped at possible confidence. `workflows` or
 `actions` write access implies `code-exec`; contents and pull-request writes
 are SaaS write actions.
 
-## `saas.atlassian` · `saas.notion` · `saas.zoom`
-UPM user-installed apps (Jira/Confluence) and Notion bot users. Zoom's
-Marketplace list API returns approved public apps and account-created apps
+## `saas.atlassian`
+UPM user-installed apps for Jira and Confluence.
+
+## `saas.notion`
+Notion bot users. A missing or repeated pagination cursor, or reaching the live
+page cap (`max_pages`, at most 1000), makes the scan incomplete.
+
+## `saas.zoom`
+The Marketplace list API returns approved public apps and account-created apps
 (`type=public` and `type=account_created`), including app scopes when supplied.
 See [Zoom's Marketplace List apps API](https://developers.zoom.us/docs/api/marketplace/).
 Approval or account creation does not establish that any individual installed
-or used the app; for that question, obtain a separate tenant activity or
-installation export. Notion rejects a missing/repeated pagination cursor and
-caps live pages (`max_pages`, at most 1000); either condition makes the scan
-incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
+or used the app; obtain a separate tenant activity or installation export to
+check that. Denied, invalid, or truncated pages make the scan incomplete.
 
 ## `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
-and privileged/data scopes (`keep_all: true` to emit everything). Records
-without an app name are skipped and counted (fully blank rows are ignored), and an export where no record
-maps to a name makes the scan incomplete instead of looking empty.
-
+and privileged/data scopes (`keep_all: true` to emit everything). Records without an app name are skipped and counted (fully blank rows are
+ignored), and an export where no record maps to a name makes the scan incomplete
+instead of looking empty.
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

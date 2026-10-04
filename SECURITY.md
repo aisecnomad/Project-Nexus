@@ -149,7 +149,9 @@ coverage, even when a response includes an empty collection field.
   per-instance filenames. An export manifest records provenance/completion without
   raw connector configuration. JWT records are never exported. No `--dump-raw`
   option exists.
-* Report evidence is redacted before it is shortened. Redaction withholds
+### What is redacted
+
+- **By token shape:** Report evidence is redacted before it is shortened. Redaction withholds
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
   `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
   JWTs, private key blocks (PEM, PGP, SSH2 and PuTTY, an unterminated one to the
@@ -163,7 +165,8 @@ coverage, even when a response includes an empty collection field.
   stays. URL userinfo is withheld whole when the password holds a raw `/`, `?`
   or `#` (`postgres://u:example#pw@host`). A URL inside another URL's text
   (`redis://:pw@a,redis://:pw@b`, `?next=https://u:secret@b`) is read as a URL
-  as well. It also withholds values that their context names as credentials:
+  as well.
+- **By naming context:** It also withholds values that their context names as credentials:
   assignments, including annotated, multiline and R (`<-`) expressions and
   every operator that joins a name to a value, with the operator kept (`=>`,
   `:=`, `||=`, `+=`, `.=`, `?=`); a quoted word or an opaque value compared with a
@@ -206,7 +209,8 @@ coverage, even when a response includes an empty collection field.
   value="users"/>`, `cacheKey: users-by-id`) stay. It is also withheld from a
   lone unindented line after a sensitive key such as `token:`. Variable
   references (`$VAR`, `${{ secrets.X }}`), environment variable names and
-  placeholders stay visible. Structured name/value records that connectors
+  placeholders stay visible.
+- **Structured records:** Structured name/value records that connectors
   pass to the sanitizer read their name as a setting too, in either field
   order (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under
   `OpenAIKey`); an environment-style name there (`PAGE_TOKEN`) withholds only
@@ -245,7 +249,10 @@ coverage, even when a response includes an empty collection field.
   assignment names, an opaque identifier with at least three digit runs and
   only short letter fragments is also withheld; ordinary type names and
   `--key users` values remain visible.
-* Redaction cannot withhold a credential that nothing names or shapes as one,
+
+### What can remain
+
+- **Limitations:** Redaction cannot withhold a credential that nothing names or shapes as one,
   so treat reports as confidential. These forms can remain: an unprefixed
   literal passed to an ordinary function or nested in another call inside a
   credential constructor (`AzureKeyCredential(str("..."))`); a value assembled

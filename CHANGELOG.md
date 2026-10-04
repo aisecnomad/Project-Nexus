@@ -995,8 +995,6 @@ field precision. Behavior changes that affect an existing baseline are listed in
   connector page named. A consistency test now fails when a key reported by
   `shadowscan connectors --json` is undocumented.
 
-
-
 ### October 2 production review corrections
 
 - npm dependency aliases are attributed to their declared registry target,
