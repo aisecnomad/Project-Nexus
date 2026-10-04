@@ -422,12 +422,15 @@ Resolve the scope/credential overlap before interpreting a report comparison
 as evidence that a finding was resolved.
 
 To compare gateway callers across scans, set `SHADOWSCAN_IDENTITY_KEY` to at
-least 32 random bytes, hex or base64 encoded (for example the output of
-`openssl rand -hex 32`), in the environment of every scan that should be
-comparable. Hex is tried first. The engine then uses this key instead of a new
-key per scan: identical inputs and configuration give identical caller, scope
-and source pseudonyms and finding IDs, findings carry
-`metadata.identity_scope: keyed`, and the `collection_scope` fingerprint covers
+least 32 random bytes in the environment of every scan that should be
+comparable. Encode it explicitly as `hex:<value>` or `base64:<value>` (for
+example, prefix the output of `openssl rand -hex 32` with `hex:`). Bare
+encodings are accepted only when exactly one canonical encoding is valid;
+ambiguous bare values stop the scan and require one of these prefixes.
+Prefix names are case-insensitive. The engine then uses this key instead of a
+new key per scan: identical inputs and
+configuration give identical caller, scope and source pseudonyms and finding
+IDs, findings carry `metadata.identity_scope: keyed`, and the `collection_scope` fingerprint covers
 the gateway configuration through an HMAC under the key. The key is read only
 from the environment, never from a configuration file, and is never logged or
 written to reports, caches or record exports. A set value that does not decode

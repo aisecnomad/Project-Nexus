@@ -23,7 +23,7 @@ from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope, comp
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.gateway.logs import GatewayLogConnector
-from shadowscan.engine import Engine
+from shadowscan.engine import Engine, _stable_identity_key
 from shadowscan.errors import SetupError
 from shadowscan.reporters import FORMATS
 from shadowscan.signatures import SignatureIndex
@@ -114,7 +114,7 @@ def test_stable_credential_key_controls_cache_and_comparison_without_disclosure(
     tmp_path, monkeypatch, caplog, surface
 ):
     config, index, candidate = _credential_source(tmp_path, surface)
-    monkeypatch.setenv(IDENTITY_KEY_ENV, KEY.hex())
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{KEY.hex()}")
     first, second = Engine(config, index).run(), Engine(config, index).run()
     assert first.complete and second.complete
     assert _credential_ids(first) and _credential_ids(first) == _credential_ids(second)
@@ -124,7 +124,7 @@ def test_stable_credential_key_controls_cache_and_comparison_without_disclosure(
     assert stored and candidate not in stored
     for form in _key_forms(KEY):
         assert form not in first.to_json() and form not in stored and form not in caplog.text
-    monkeypatch.setenv(IDENTITY_KEY_ENV, OTHER_KEY.hex())
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{OTHER_KEY.hex()}")
     rotated = Engine(config, index).run()
     assert rotated.complete and not rotated.stats[0].cached
     assert _credential_ids(rotated).isdisjoint(_credential_ids(first))
@@ -180,7 +180,7 @@ def _ids(report: dict) -> list[str]:
 
 def test_stable_key_keeps_gateway_ids_comparable_across_scans(tmp_path, index, monkeypatch):
     export = _export(tmp_path)
-    monkeypatch.setenv(IDENTITY_KEY_ENV, KEY.hex())
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{KEY.hex()}")
     before = _scan(export, index)
     # The same key in its other accepted encoding is the same key.
     monkeypatch.setenv(IDENTITY_KEY_ENV, f" {base64.b64encode(KEY).decode()}\n")
@@ -196,7 +196,7 @@ def test_stable_key_keeps_gateway_ids_comparable_across_scans(tmp_path, index, m
 
 
 def test_caller_missing_under_the_same_key_and_scope_is_resolved(tmp_path, index, monkeypatch):
-    monkeypatch.setenv(IDENTITY_KEY_ENV, KEY.hex())
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{KEY.hex()}")
     before = _scan(_export(tmp_path), index)
     after = _scan(_export(tmp_path, ROWS[1:]), index)
     comparison = compare_reports(before, after)
@@ -206,9 +206,9 @@ def test_caller_missing_under_the_same_key_and_scope_is_resolved(tmp_path, index
 
 def test_a_different_key_never_resolves_earlier_findings(tmp_path, index, monkeypatch):
     export = _export(tmp_path)
-    monkeypatch.setenv(IDENTITY_KEY_ENV, KEY.hex())
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{KEY.hex()}")
     before = _scan(export, index)
-    monkeypatch.setenv(IDENTITY_KEY_ENV, OTHER_KEY.hex())
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{OTHER_KEY.hex()}")
     after = _scan(export, index)
     assert not set(_ids(before)) & set(_ids(after))
     comparison = compare_reports(before, after)
@@ -267,6 +267,7 @@ def test_direct_connector_scope_follows_the_context_key():
         "00" * 31,
         "0" * 63,
         base64.b64encode(bytes(31)).decode(),
+        f"hex:{bytes(31).hex()}",
         "z" * 32,
         "not a key at all, though long enough to be one",
         "é" * 64,
@@ -277,6 +278,7 @@ def test_direct_connector_scope_follows_the_context_key():
         "31-bytes-hex",
         "odd-hex",
         "31-bytes-base64",
+        "prefixed-31-bytes-hex",
         "24-bytes-base64",
         "text",
         "non-ascii",
@@ -294,6 +296,46 @@ def test_short_or_malformed_key_is_a_setup_error_before_scanning(tmp_path, monke
     assert result.exit_code == 1, result.output
     assert IDENTITY_KEY_ENV in result.output and "Traceback" not in result.output
     assert not value.strip() or value.strip() not in result.output
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (f"hex:{KEY.hex()}", KEY),
+        (f"HEX:{KEY.hex().upper()}", KEY),
+        (f"base64:{base64.b64encode(KEY).decode()}", KEY),
+        (f"BaSe64:{base64.b64encode(KEY).decode()}", KEY),
+        ("hex:" + "deadbeef" * 8, bytes.fromhex("deadbeef" * 8)),
+        ("base64:" + "deadbeef" * 8, base64.b64decode("deadbeef" * 8)),
+        ((KEY + b"x").hex(), KEY + b"x"),
+        (base64.b64encode(b"\xff" * 32).decode(), b"\xff" * 32),
+    ],
+    ids=[
+        "hex-prefix",
+        "uppercase-hex-prefix",
+        "base64-prefix",
+        "mixed-case-prefix",
+        "explicit-hex-disambiguates",
+        "explicit-base64-disambiguates",
+        "bare-hex",
+        "bare-base64",
+    ],
+)
+def test_identity_key_prefixes_and_unambiguous_bare_encodings(monkeypatch, value, expected):
+    monkeypatch.setenv(IDENTITY_KEY_ENV, value)
+    assert _stable_identity_key() == expected
+
+
+def test_ambiguous_bare_identity_key_requires_a_prefix_without_echoing_it(monkeypatch):
+    key_text = "deadbeef" * 8
+    monkeypatch.setenv(IDENTITY_KEY_ENV, key_text)
+    with pytest.raises(SetupError) as raised:
+        _stable_identity_key()
+    message = str(raised.value)
+    assert IDENTITY_KEY_ENV in message
+    assert "hex:<value>" in message and "base64:<value>" in message
+    assert "no longer accepted" in message
+    assert not any(key_text[index : index + 8] in message for index in range(len(key_text) - 7))
 
 
 def test_key_never_appears_in_reports_exports_caches_or_logs(tmp_path):

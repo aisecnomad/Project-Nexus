@@ -111,10 +111,15 @@ loads, lies inside a local path that the same run scans with `code.filesystem`
 (including `shadowscan code PATH`) or inside the offline clone directory
 (`input`) of a `code.github` or `code.gitlab` entry, the scan records the warning
 `inventory <name> is inside scanned path <path>; scanned content could alter approvals`.
-It also warns once per run for each entry whose resources include a pattern that
-matches every resource, such as `*`, `**`, `?*` or `*?`, which approves every
-finding its scope constraints allow. These
-warnings do not make a scan incomplete or change the exit code: a local
+It also warns once per run for each entry whose resources include a broad
+pattern. A nonempty run of stars, such as `*` or `**`, matches every resource
+string; approvals still respect surface, provider, account, region and observation
+discriminator constraints. Patterns such as `?*` and `*?` are reported as
+near-universal across sampled resource shapes, which is advisory evidence rather
+than proof of universal matching: `?` requires at least one character. Inventory
+list members are trimmed when loaded; the warning classifier does not further
+normalize the resulting glob. These warnings do not make a scan incomplete or
+change the exit code: a local
 `shadowscan code . --inventory agent-card.yaml` is legitimate. They appear under
 the `engine.inventory` entry of the report's `stats` (the table output always
 shows them), and a fixed-text log line points to them. In CI, keep the
