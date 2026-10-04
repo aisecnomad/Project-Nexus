@@ -33,6 +33,7 @@ from shadowscan.connectors.base import (
 )
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
+    InvalidPageTokenError,
     RecordDispatch,
     aggregate_caller_event,
     cloud_finding,
@@ -40,6 +41,7 @@ from shadowscan.connectors.cloud.common import (
     done,
     first_tag,
     name_hint,
+    next_page_token,
     scan_env,
     scan_iam_actions,
     string_list,
@@ -286,18 +288,14 @@ class GcpConnector(BaseConnector):
 
         An absent or empty token stops pagination silently (normal
         termination); ``warn`` is only logged for an invalid or
-        already-seen token. Shared by ``_pages`` and ``_collect_audit`` so a
-        fix to this token-handling logic is made once instead of by hand at
-        every paginated call site.
+        already-seen token. Shared by ``_pages`` and ``_collect_audit``; the
+        token contract itself lives in ``common.next_page_token``.
         """
-        token = data.get("nextPageToken")
-        if token is None or token == "":
-            return None
-        if not isinstance(token, str) or token in seen:
+        try:
+            return next_page_token(data.get("nextPageToken"), seen)
+        except InvalidPageTokenError:
             self.ctx.warn(warn)
             return None
-        seen.add(token)
-        return token
 
     def _pages(self, url: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
         token: str | None = None

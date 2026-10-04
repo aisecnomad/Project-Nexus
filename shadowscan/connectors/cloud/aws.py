@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatchcase
 from functools import partial
@@ -41,13 +41,17 @@ from shadowscan.connectors.base import (
 )
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
+    InvalidPageTokenError,
     RecordDispatch,
     aggregate_caller_event,
     cloud_finding,
     credential_name_matches,
     done,
     first_tag,
+    guarded_record,
     name_hint,
+    next_page_token,
+    resource_id,
     scan_blob,
     scan_env,
     scan_iam_actions,
@@ -236,9 +240,7 @@ def _is_account_id(value: Any) -> bool:
 
 def _resource_id(value: Any) -> str:
     """Reject malformed provider identifiers instead of inventing an identity."""
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("invalid AWS resource identifier")
-    return value
+    return resource_id(value, "AWS")
 
 
 def _optional_str(value: Any) -> str | None:
@@ -437,12 +439,12 @@ class AwsConnector(BaseConnector):
                 raise ValueError("invalid AWS list page")
             yield page
             token_key = "nextToken" if "nextToken" in page else "NextToken"
-            token = page.get(token_key)
-            if token is None or token == "":
+            try:
+                token = next_page_token(page.get(token_key), seen)
+            except InvalidPageTokenError:
+                raise ValueError("invalid or repeated AWS pagination token") from None
+            if token is None:
                 return
-            if not isinstance(token, str) or token in seen:
-                raise ValueError("invalid or repeated AWS pagination token")
-            seen.add(token)
             request[token_key] = token
         self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
 
@@ -493,23 +495,6 @@ class AwsConnector(BaseConnector):
                 self.ctx.warn(f"cloud.aws:{where} request failed ({detail})", incomplete=True)
             return None
 
-    def _guarded(self, kind: str, build: Callable[[], dict[str, Any] | None]) -> dict[str, Any] | None:
-        """Build one record from provider responses; a malformed response skips that record only.
-
-        Response fields are untrusted: a missing or mistyped field raises
-        inside the builder. The record is reported as a coverage gap and
-        collection continues with the next resource, service and region
-        instead of abandoning them all.
-        """
-        try:
-            return build()
-        except RECORD_ERRORS as exc:
-            self.ctx.warn(
-                f"cloud.aws: malformed {kind} record skipped ({type(exc).__name__}); coverage incomplete",
-                incomplete=True,
-            )
-            return None
-
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         # Explicit region lists do not create a client. Authenticate before
@@ -554,7 +539,7 @@ class AwsConnector(BaseConnector):
     def _collect_bedrock(self, region: str) -> Iterator[dict[str, Any]]:
         ba = self._client("bedrock-agent", region)
         for summary in self._list_items(ba, "list_agents", "agentSummaries"):
-            agent = self._guarded("Bedrock agent", partial(self._bedrock_agent, ba, summary, region))
+            agent = guarded_record(self, "Bedrock agent", partial(self._bedrock_agent, ba, summary, region))
             if agent is not None:
                 yield agent
         for kb in self._list_items(ba, "list_knowledge_bases", "knowledgeBaseSummaries"):
@@ -653,7 +638,9 @@ class AwsConnector(BaseConnector):
             rec["_region"] = region
             yield rec
         for gw in self._list_items(ac, "list_gateways", "items"):
-            gateway = self._guarded("AgentCore gateway", partial(self._agentcore_gateway, ac, gw, region))
+            gateway = guarded_record(
+                self, "AgentCore gateway", partial(self._agentcore_gateway, ac, gw, region)
+            )
             if gateway is not None:
                 yield gateway
         for mem in self._list_items(ac, "list_memories", "memories"):
@@ -687,7 +674,7 @@ class AwsConnector(BaseConnector):
             if n > self.max_lambda:
                 self.ctx.warn(f"cloud.aws: max_lambda reached in {region}", incomplete=True)
                 break
-            rec = self._guarded("Lambda function", partial(self._lambda_record, lam, fn, region))
+            rec = guarded_record(self, "Lambda function", partial(self._lambda_record, lam, fn, region))
             if rec is not None:
                 yield rec
 
@@ -740,7 +727,7 @@ class AwsConnector(BaseConnector):
     def _collect_sagemaker(self, region: str) -> Iterator[dict[str, Any]]:
         sm = self._client("sagemaker", region)
         for ep in self._list_items(sm, "list_endpoints", "Endpoints"):
-            rec = self._guarded("SageMaker endpoint", partial(self._sagemaker_record, sm, ep, region))
+            rec = guarded_record(self, "SageMaker endpoint", partial(self._sagemaker_record, sm, ep, region))
             if rec is not None:
                 yield rec
 
@@ -776,8 +763,8 @@ class AwsConnector(BaseConnector):
     def _collect_stepfunctions(self, region: str) -> Iterator[dict[str, Any]]:
         sfn = self._client("stepfunctions", region)
         for sm in self._list_items(sfn, "list_state_machines", "stateMachines"):
-            rec = self._guarded(
-                "Step Functions state machine", partial(self._state_machine_record, sfn, sm, region)
+            rec = guarded_record(
+                self, "Step Functions state machine", partial(self._state_machine_record, sfn, sm, region)
             )
             if rec is not None:
                 yield rec
@@ -852,7 +839,9 @@ class AwsConnector(BaseConnector):
                         policies[arn] = ver.get("Document") or {}
         for item in details:
             if item.get("_type") in {"RoleDetailList", "UserDetailList", "GroupDetailList"}:
-                rec = self._guarded("IAM principal", partial(self._iam_principal_record, item, policies))
+                rec = guarded_record(
+                    self, "IAM principal", partial(self._iam_principal_record, item, policies)
+                )
                 if rec is not None:
                     yield rec
 

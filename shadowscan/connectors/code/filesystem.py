@@ -75,9 +75,9 @@ from shadowscan.connectors.code.catalogs import (
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
 from shadowscan.connectors.code.manifests import (
-    MANIFEST_PATTERN_SECONDS,
     Artifact,
     Dep,
+    _pattern_timeout,
     is_manifest_name,
     manifest_comment_projection,
     parse_manifest,
@@ -123,7 +123,6 @@ from shadowscan.signatures.matcher import (
     SOURCE_EXTENSIONS,
     MatchTimeoutError,
     language_for_path,
-    pattern_timeout,
 )
 from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
 from shadowscan.utils.git import (
@@ -815,15 +814,6 @@ _IAC_MODEL_RE = re.compile(
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
 
 
-def _pattern_timeout() -> float:
-    """Per-call ceiling for the regexes this module runs outside the signature matcher.
-
-    Like the manifest parsers, well above the matcher's 100 ms so an ordinary large file does not
-    time out under CPU contention between parallel connectors; the file's scan budget still caps it.
-    """
-    return pattern_timeout(MANIFEST_PATTERN_SECONDS)
-
-
 def _exception_name(exc: Exception) -> str:
     return type(exc).__name__
 
@@ -1378,11 +1368,6 @@ class FilesystemConnector(BaseConnector):
         # File-name signatures can apply to the alias but not the real file.
         target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
         return alias_signals <= target_signals
-
-    def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
-        """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
-        for rel, path, proj, _ in self._iter_entries(root):
-            yield rel, path, proj
 
     def check_gitlink_coverage(self, root: Path) -> None:
         """Check committed gitlinks where Git is authorized: a clone or use_git=True.
@@ -4052,11 +4037,6 @@ def _redacted_source(text: str, structure: Any) -> str:
         raise
     except (ValueError, RecursionError, yaml.YAMLError):
         return sanitize_text(text)
-
-
-def _safe_source_text(rel: str, text: str) -> str:
-    """Use structured credential context while retaining source line positions."""
-    return _redacted_source(text, _structured_context(rel, text))
 
 
 # `Bearer $TOKEN`: Gemini CLI expands shell-style variables in env and headers.

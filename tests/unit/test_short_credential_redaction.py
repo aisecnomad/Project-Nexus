@@ -8,7 +8,7 @@ import pytest
 from shadowscan.cli import _load_report
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.code.filesystem import _parse_mcp_servers, _safe_source_text
+from shadowscan.connectors.code.filesystem import _parse_mcp_servers, _redacted_source, _structured_context
 from shadowscan.engine import Engine
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex
@@ -88,7 +88,7 @@ def test_one_character_secret_cannot_corrupt_source_and_mcp_parser_schema():
             }
         }
     )
-    assert _safe_source_text("config.json", source) == REDACTED
+    assert _redacted_source(source, _structured_context("config.json", source)) == REDACTED
     entries = _parse_mcp_servers("config.json", source)
     assert len(entries) == 1
     assert {"name", "transport", "command", "args", "url", "secrets_inline", "disabled"} <= entries[0].keys()
