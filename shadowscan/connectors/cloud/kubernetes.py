@@ -75,6 +75,8 @@ _AI_RESOURCE_KINDS = {
     "DataSciencePipelinesApplication",
     "OdhDashboardConfig",
 }
+_WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "DeploymentConfig"}
+_MAX_OBJECTS = 10_000
 
 
 def _name(obj: dict[str, Any]) -> str:
@@ -145,19 +147,26 @@ class KubernetesConnector(BaseConnector):
         accepted: list[dict[str, Any]] = []
         egress_policies: set[str] = set()
         for record in records:
-            obj = record
-            items = record.get("items")
-            if isinstance(items, list):
-                if len(items) > 10000:
-                    self.ctx.warn("cloud.kubernetes: object limit reached")
-                for item in items[:10000]:
-                    if isinstance(item, dict):
-                        accepted.append(item)
+            if "items" in record:
+                items = record["items"]
+                if not isinstance(items, list):
+                    self.ctx.warn("cloud.kubernetes: malformed object list")
+                    continue
+                for item in items:
+                    if len(accepted) >= _MAX_OBJECTS:
+                        self.ctx.warn("cloud.kubernetes: object limit reached")
+                        break
+                    if not isinstance(item, dict):
+                        self.ctx.warn("cloud.kubernetes: malformed object")
+                        continue
+                    accepted.append(item)
+                if len(accepted) >= _MAX_OBJECTS:
+                    break
                 continue
-            accepted.append(obj)
-        if len(accepted) > 10000:
-            self.ctx.warn("cloud.kubernetes: object limit reached")
-            accepted = accepted[:10000]
+            if len(accepted) >= _MAX_OBJECTS:
+                self.ctx.warn("cloud.kubernetes: object limit reached")
+                break
+            accepted.append(record)
         for obj in accepted:
             if _kind(obj) == "NetworkPolicy":
                 spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
@@ -168,15 +177,33 @@ class KubernetesConnector(BaseConnector):
                     egress_policies.add(_namespace(obj))
         for obj in accepted:
             kind = _kind(obj)
-            resource_name = _name(obj)
             if kind not in _RECOGNIZED | (_OPENSHIFT if self.name == "cloud.openshift" else set()):
                 continue
+            metadata_value = obj.get("metadata")
+            if not isinstance(metadata_value, dict):
+                self.ctx.warn(f"{self.name}: object has malformed metadata")
+                continue
+            resource_name = _name(obj)
             if not resource_name:
                 self.ctx.warn(f"{self.name}: object without metadata.name")
                 continue
             namespace = _namespace(obj)
             spec_value = obj.get("spec")
+            if spec_value is not None and not isinstance(spec_value, dict):
+                self.ctx.warn(f"{self.name}: object has malformed spec")
+                continue
             workload_spec = spec_value if isinstance(spec_value, dict) else {}
+            if kind in _WORKLOAD_KINDS and not isinstance(workload_spec.get("template"), dict):
+                self.ctx.warn(f"{self.name}: workload has malformed pod template")
+                continue
+            if kind in _WORKLOAD_KINDS:
+                pod_template = workload_spec["template"]
+                if not isinstance(pod_template.get("spec"), dict):
+                    self.ctx.warn(f"{self.name}: workload has malformed pod spec")
+                    continue
+            if kind == "Pod" and not isinstance(spec_value, dict):
+                self.ctx.warn(f"{self.name}: pod has malformed spec")
+                continue
             images = _workload_images(obj)
             selected = [
                 image for image in images if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
@@ -186,8 +213,20 @@ class KubernetesConnector(BaseConnector):
             if selected:
                 tags.append("ai-workload")
             template = workload_spec.get("template")
-            pod_spec_value = template.get("spec", {}) if isinstance(template, dict) else {}
+            pod_spec_value = (
+                template.get("spec", {})
+                if isinstance(template, dict)
+                else workload_spec
+                if kind == "Pod"
+                else {}
+            )
             pod_spec = pod_spec_value if isinstance(pod_spec_value, dict) else {}
+            if "containers" in pod_spec and not isinstance(pod_spec["containers"], list):
+                self.ctx.warn(f"{self.name}: workload has malformed containers")
+                continue
+            if "imagePullSecrets" in pod_spec and not isinstance(pod_spec["imagePullSecrets"], list):
+                self.ctx.warn(f"{self.name}: workload has malformed image pull secrets")
+                continue
             if pod_spec.get("hostNetwork") is True:
                 tags.append("privileged-pod")
             pod_security = pod_spec.get("securityContext")
@@ -195,29 +234,41 @@ class KubernetesConnector(BaseConnector):
                 tags.append("privileged-pod")
             containers = pod_spec.get("containers", [])
             if isinstance(containers, list):
+                if len(containers) > 100:
+                    self.ctx.warn(f"{self.name}: container limit reached")
                 for container in containers[:100]:
                     if not isinstance(container, dict):
+                        self.ctx.warn(f"{self.name}: malformed container")
                         continue
+                    if "image" in container and not isinstance(container["image"], str):
+                        self.ctx.warn(f"{self.name}: container has malformed image")
                     security = container.get("securityContext")
                     if isinstance(security, dict) and security.get("privileged") is True:
                         tags.append("privileged-pod")
                     envs = container.get("env", [])
-                    if isinstance(envs, list):
-                        for env in envs[:1000]:
-                            if isinstance(env, dict):
-                                key = env.get("name")
-                                if isinstance(key, str) and any(
-                                    marker in key.upper() for marker in _ENV_MARKERS
-                                ):
-                                    tags.append("provider-config-present")
+                    if not isinstance(envs, list):
+                        self.ctx.warn(f"{self.name}: workload has malformed environment")
+                        continue
+                    if len(envs) > 1000:
+                        self.ctx.warn(f"{self.name}: environment limit reached")
+                    for env in envs[:1000]:
+                        if not isinstance(env, dict):
+                            self.ctx.warn(f"{self.name}: workload has malformed environment entry")
+                            continue
+                        key = env.get("name")
+                        if isinstance(key, str) and any(marker in key.upper() for marker in _ENV_MARKERS):
+                            tags.append("provider-config-present")
                     resources = container.get("resources")
                     requests = resources.get("requests") if isinstance(resources, dict) else {}
                     if isinstance(requests, dict) and requests.get("nvidia.com/gpu"):
                         tags.append("gpu-workload")
             volumes = pod_spec.get("volumes", [])
-            if isinstance(volumes, list) and any(
-                isinstance(volume, dict) and "hostPath" in volume for volume in volumes[:100]
-            ):
+            if not isinstance(volumes, list):
+                self.ctx.warn(f"{self.name}: workload has malformed volumes")
+                continue
+            if len(volumes) > 100:
+                self.ctx.warn(f"{self.name}: volume limit reached")
+            if any(isinstance(volume, dict) and "hostPath" in volume for volume in volumes[:100]):
                 tags.append("privileged-pod")
             if kind in {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"} and selected:
                 if namespace not in egress_policies:
@@ -267,6 +318,8 @@ class KubernetesConnector(BaseConnector):
             if not tags and not selected and kind not in _AI_RESOURCE_KINDS:
                 self.ctx.examined()
                 continue
+            if len(selected) > 20:
+                self.ctx.warn(f"{self.name}: reported image limit reached")
             resource = f"k8s:{cluster}/{namespace}/{kind}/{resource_name}"
             finding = Finding(
                 surface=Surface.CLOUD,

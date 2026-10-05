@@ -15,6 +15,9 @@ summarizes each release for people who install and operate ShadowScan.
   weights can change risk scores for findings that carry those tags.
 - Runtime collection is currently offline-only; live MCP, Ollama and Kubernetes
   collection and confined local artifact discovery remain unsupported.
+- Model metadata is supplied by an offline exporter; ShadowScan does not parse
+  GGUF or safetensors files. MCP tool fingerprints have no rug-pull baseline, and
+  the new endpoint inventories do not provide cross-surface correlation.
 
 ### Security-review follow-ups
 
