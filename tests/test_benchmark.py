@@ -146,3 +146,40 @@ def test_last_json_line_skips_log_lines() -> None:
 def test_mcp_scanner_log_names_the_enumerated_server() -> None:
     line = "ERROR - Unexpected error scanning server 'github' from /h/.cursor/mcp.json: Timeout connecting\n"
     assert adapters._MCP_SCANNER_SERVER.findall(line) == [("github", "/h/.cursor/mcp.json")]
+
+
+def test_report_renders_tables_and_paired_tests(tmp_path: Path) -> None:
+    from tools.benchmark import report
+
+    cases = [c for c in generate.generate(seed=8, per_surface=10) if c.surface == "repo"]
+    for tool, hit in (("shadowscan", lambda c: c.positive), ("agent-bom", lambda c: c.label == "agent")):
+        rows = [
+            {
+                "case": c.case_id,
+                "surface": c.surface,
+                "family": c.family,
+                "label": c.label,
+                "difficulty": c.difficulty,
+                "status": "ok",
+                "detected": hit(c),
+                "items": int(hit(c)),
+                "agentic": None,
+                "seconds": 1.0,
+                "note": "",
+            }
+            for c in cases
+        ]
+        (tmp_path / f"{tool}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    manifest = {
+        "cases_run": len(cases),
+        "corpus_sha256": "0" * 64,
+        "corpus_metadata": {"seed": 8},
+        "python": "3.13",
+        "platform": "test",
+        "runs": [],
+    }
+    (tmp_path / "run-manifest.json").write_text(json.dumps(manifest))
+    text = report.render(tmp_path)
+    assert "## Surface: repo" in text
+    assert "Paired comparison with ShadowScan" in text
+    assert "None: every supported case completed" in text
