@@ -1,0 +1,132 @@
+# Signatures added from the SAB-0.1 file holdout (corpus100 and corpus-v2).
+# These close measured false negatives. Weights stay below a live import so a
+# manifest or instruction file is inventory evidence, not proof of execution.
+signatures:
+  - id: coding-agent.openclaw
+    name: OpenClaw / Moltbot gateway
+    category: coding-agent
+    vendor: OpenClaw
+    homepage: https://openclaw.ai
+    capabilities: [code-exec, tool-use, autonomous]
+    agent_indicator: true
+    description: Local OpenClaw/Moltbot gateway config, including the default port 18789.
+    signals:
+      - type: file
+        globs: ["openclaw.json", "**/openclaw.json", "moltbot.json", "**/moltbot.json", "clawdbot.json", "**/clawdbot.json", ".openclaw/**", "**/.openclaw/**"]
+        weight: 0.95
+      - type: code
+        patterns: ['"gateway"\s*:\s*\{[^}]{0,200}"port"\s*:\s*18789', 'openclaw', 'moltbot', 'clawdbot']
+        weight: 0.8
+      - type: code
+        patterns: ['0\.0\.0\.0']
+        weight: 0.4
+        description: Gateway bind-all is exposure context, not by itself an agent.
+
+  - id: coding-agent.holdout-dialects
+    name: Coding-agent config dialects missed by filename globs
+    category: coding-agent
+    vendor: null
+    agent_indicator: true
+    description: Filename variants seen in the holdout that the existing globs did not cover.
+    signals:
+      - type: file
+        globs:
+          - "goose_config.yaml"
+          - "**/goose_config.yaml"
+          - "aider.conf.yml"
+          - "**/aider.conf.yml"
+          - "opencode.json"
+          - "**/opencode.json"
+          - "SKILL.md"
+          - "**/SKILL.md"
+          - "hooks.json"
+          - "**/hooks.json"
+          - ".vscode/mcp.json"
+          - "**/.vscode/mcp.json"
+        weight: 0.85
+
+  - id: platform.flowise
+    name: Flowise export
+    category: platform
+    vendor: Flowise
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["*flowise*.json", "**/*flowise*.json"]
+        weight: 0.7
+      - type: code
+        patterns: ['Conversational Agent', '"flowise"']
+        weight: 0.8
+
+  - id: platform.dify
+    name: Dify app export
+    category: platform
+    vendor: LangGenius
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["*dify*.yml", "*dify*.yaml", "**/*dify*.yml"]
+        weight: 0.7
+      - type: code
+        patterns: ['mode:\s*agent-chat', 'mode:\s*agent']
+        weight: 0.75
+
+  - id: protocol.a2a-card
+    name: A2A agent card
+    category: protocol
+    vendor: null
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["*a2a*card*.json", "**/*a2a*card*.json", "agent-card.json", "**/agent-card.json"]
+        weight: 0.8
+      - type: code
+        patterns: ['"capabilities"\s*:\s*\{[^}]*"streaming"', '"skills"\s*:\s*\[']
+        weight: 0.7
+
+  - id: cloud.azure-foundry-bicep
+    name: Azure AI Foundry agent Bicep
+    category: cloud
+    vendor: Microsoft
+    agent_indicator: true
+    signals:
+      - type: file
+        globs: ["*.bicep", "**/*.bicep"]
+        weight: 0.3
+      - type: code
+        patterns: ['Microsoft.CognitiveServices/accounts/projects/agents', 'Microsoft.MachineLearningServices/workspaces']
+        weight: 0.9
+
+  - id: framework.dynamic-import
+    name: Dynamic agent-framework import
+    category: framework
+    vendor: null
+    agent_indicator: true
+    description: Medium-confidence only. A string mention is not an import.
+    signals:
+      - type: code
+        languages: [python]
+        patterns:
+          - '__import__\([\'"](?:crewai|langchain|langgraph|autogen|smolagents)[\'"]\)'
+          - 'importlib\.import_module\([\'"](?:crewai|langchain|langgraph|autogen)[\'"]\)'
+        weight: 0.7
+
+  - id: dependency.agent-manifests
+    name: Agent framework declared in a manifest
+    category: framework
+    vendor: null
+    agent_indicator: false
+    description: Weaker than an import. Do not treat a lockfile entry as a running agent.
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [langchain, langgraph, crewai, autogen, smolagents, pydantic-ai, openai, anthropic]
+        weight: 0.55
+      - type: dependency
+        ecosystem: npm
+        names: ["@langchain/core", "@langchain/openai", "ai", "@ai-sdk/openai", "@modelcontextprotocol/sdk"]
+        weight: 0.55
+      - type: dependency
+        ecosystem: go
+        names: ["github.com/tmc/langchaingo"]
+        weight: 0.55

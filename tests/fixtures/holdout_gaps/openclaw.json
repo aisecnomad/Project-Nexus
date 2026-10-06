@@ -1,0 +1,4 @@
+{
+  "gateway": {"port": 18789, "bind": "127.0.0.1"},
+  "agent": {"model": "anthropic/claude-sonnet"}
+}
