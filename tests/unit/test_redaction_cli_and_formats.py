@@ -398,7 +398,11 @@ def test_inline_headers_after_an_escaped_line_break_are_redacted(text, kept):
         ("secret:provider.openai", "secret:provider.openai"),
         ("jwt:service-account", "jwt:service-account"),
         # Opaque identities written by the shared fingerprint and the gateway.
-        ("api-key:" + credential_id("k"), "api-key:" + credential_id("k")),
+        # The fingerprint key is random per process, so the id is fixed here:
+        # pytest-xdist requires every worker to collect the same test ids.
+        pytest.param(
+            "api-key:" + credential_id("k"), "api-key:" + credential_id("k"), id="api-key-credential-id"
+        ),
         ("api-key:credential:hmac-sha256:" + "a" * 64, "api-key:credential:hmac-sha256:" + "a" * 64),
     ],
 )

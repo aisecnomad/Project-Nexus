@@ -38,6 +38,9 @@ summarizes each release for people who install and operate ShadowScan.
 - The default evaluation corpus gains OpenClaw and Moltbot state-file cases, a
   short-key positive (which fails on the previous signatures) and a look-alike
   negative: SSH algorithm names, a spinner class and a ticket branch.
+- A redaction test's parameter ID embedded a per-process HMAC, so pytest-xdist
+  workers collected different test IDs and `make test-parallel` stopped at
+  collection. The case now has a fixed ID.
 
 ### October 6 head-to-head benchmark follow-ups
 
