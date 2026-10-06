@@ -8,6 +8,10 @@ and specific framework user-agent strings.
     The gateway connector is inherently offline — it reads log files and
     exports from LLM proxies. It does not call any live API.
 
+See the [shared connector entry guide](../connectors.md#connector-entry-guide)
+for the common modes, permissions, options, fail-closed and evidence-limit
+references.
+
 ## `gateway.logs`
 Auto-detects the schema per record: `litellm`, `portkey`, `kong`, `cloudflare`,
 `helicone`, `langfuse`, `bedrock` (model invocation logs, CloudWatch export or
@@ -58,7 +62,7 @@ also marks the scan incomplete, so a forged record cannot offset real usage.
 Hour-of-day and weekday statistics (`night_share`, `weekend_share`,
 `always-on`) are computed in UTC and the connector has no timezone option. A
 single-timezone team sharing one unattributed key can look round-the-clock, so
-read `always-on` against the organisation's local working hours.
+read `always-on` against the organization's local working hours.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

@@ -235,6 +235,21 @@ Offline input: JSONL / JSON / CSV / text access logs.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
+### `gateway.otel`
+
+Aggregate OpenTelemetry GenAI span exports without retaining prompt content.
+
+Offline input: JSON / JSONL / YAML export.
+
+| Key | Description |
+| --- | --- |
+| `input` | Offline OTLP JSON / JSONL span export. |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `label`.
+
 ## Low-code
 
 ### `lowcode.make`
@@ -572,6 +587,22 @@ Offline input: JSONL dump of records.
 
 Also accepted: `label`.
 
+### `cloud.kubernetes`
+
+Analyze Kubernetes workload and control-plane inventory exports.
+
+Offline input: kubectl get -o json List envelope / JSONL / YAML export.
+
+| Key | Description |
+| --- | --- |
+| `cluster` | Required stable cluster label for offline resource identities. |
+| `input` | Offline kubectl JSON / JSONL / YAML inventory export. |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `label`.
+
 ### `cloud.oci`
 
 OCI Generative AI Agents, Digital Assistant, GenAI endpoints/clusters, Data Science deployments, Functions, Container Instances, IAM policies and Vault secret names.
@@ -590,6 +621,99 @@ Requires: `oci`. Offline input: JSONL dump of records.
 | `compartments` | compartment OCIDs (default: all active compartments in the tenancy) |
 | `max_pages` | maximum pages per paginated list call, capped at 1000 (default 1000) |
 | `input` | offline: JSONL dump of records |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `label`.
+
+### `cloud.openshift`
+
+Analyze Kubernetes, OpenShift, and OpenShift AI inventory exports.
+
+Offline input: kubectl get -o json List envelope / JSONL / YAML export.
+
+| Key | Description |
+| --- | --- |
+| `cluster` | Required stable cluster label for offline resource identities. |
+| `input` | Offline kubectl JSON / JSONL / YAML inventory export. |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `label`.
+
+## Endpoint
+
+### `endpoint.ebpf`
+
+Correlate offline eBPF runtime events with known AI hosts and local model ports.
+
+Offline input: JSON / JSONL / YAML export.
+
+| Key | Description |
+| --- | --- |
+| `input` | Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export. |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `label`.
+
+### `endpoint.host`
+
+Offline host inventory of local AI agents, MCP clients, and model runtimes.
+
+Offline input: JSON / JSONL / YAML export.
+
+| Key | Description |
+| --- | --- |
+| `input` | Offline host inventory JSON, JSONL, or YAML export. |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `label`.
+
+### `endpoint.mcp`
+
+Analyze offline MCP server tool, resource, and prompt inventory exports.
+
+Offline input: JSON / JSONL / YAML export.
+
+| Key | Description |
+| --- | --- |
+| `input` | Offline MCP list-responses JSON / JSONL export; live probes require explicit opt-in. |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `label`.
+
+### `endpoint.models`
+
+Analyze bounded metadata exports for local model artifacts.
+
+Offline input: JSON / JSONL / YAML export.
+
+| Key | Description |
+| --- | --- |
+| `input` | Offline artifact metadata JSON / JSONL; only GGUF header metadata should be exported. |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `label`.
+
+### `endpoint.ollama`
+
+Inventory local LLM server and model exports.
+
+Offline input: JSON / JSONL / YAML export.
+
+| Key | Description |
+| --- | --- |
+| `input` | Offline /api/version, /api/tags, /api/ps JSON export. |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |

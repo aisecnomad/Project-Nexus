@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 
 from shadowscan.connectors.base import BaseConnector
-from shadowscan.connectors.code.filesystem import _NO_STRUCTURE, _parse_mcp_servers, _structured_context
+from shadowscan.connectors.code.filesystem import _NO_STRUCTURE, _structured_context
 from shadowscan.connectors.code.manifests import parse_manifest
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.connectors.code.semantic_config import parse_agent_manifest, structured_code_matches
 from shadowscan.models import Kind
 from shadowscan.risk import assess

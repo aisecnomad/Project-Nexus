@@ -146,6 +146,7 @@ class Surface(str, Enum):
     LOWCODE = "lowcode"
     SAAS = "saas"
     CLOUD = "cloud"
+    ENDPOINT = "endpoint"
 
 
 class Kind(str, Enum):
@@ -487,6 +488,11 @@ class Finding:
         d = asdict(self)
         # Verified-clean markers are process-local state, never report content.
         d.pop("_clean_digest", None)
+        from shadowscan.compliance import compliance_references
+
+        references = compliance_references(self.tags)
+        if references:
+            d["metadata"]["compliance"] = references
         for item in d["evidence"]:
             item.pop("_clean_digest", None)
         d["surface"] = self.surface.value
