@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import _emit, main
-from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now_iso
+from shadowscan.models import ScanResult, ScanStats, now_iso
 from shadowscan.reporters.csv_ import COLUMNS, render_csv
 from shadowscan.reporters.html import render_html
 
@@ -21,19 +21,6 @@ def _stats(**overrides) -> ScanStats:
     fields = dict(connector="code.filesystem", started_at=now_iso(), finished_at=now_iso())
     fields.update(overrides)
     return ScanStats(**fields)
-
-
-def _finding(**overrides) -> Finding:
-    fields = dict(
-        surface=Surface.CODE,
-        connector="code.filesystem",
-        kind=Kind.AGENT,
-        title="Agent",
-        resource="repository",
-        resource_type="project",
-    )
-    fields.update(overrides)
-    return Finding(**fields)
 
 
 def _rows(text: str) -> list[dict[str, str]]:
@@ -62,9 +49,9 @@ def test_incomplete_csv_is_not_identical_to_a_complete_empty_csv():
     assert rows[0]["risk_level"] == "" and rows[0]["risk_score"] == ""
 
 
-def test_incomplete_csv_with_findings_keeps_findings_after_the_status_row():
+def test_incomplete_csv_with_findings_keeps_findings_after_the_status_row(make_finding):
     result = ScanResult(
-        findings=[_finding(title="Kept")],
+        findings=[make_finding(title="Kept")],
         stats=[
             _stats(),
             _stats(connector="identity.okta", incomplete=True, errors=["identity.okta: denied"]),
@@ -79,8 +66,8 @@ def test_incomplete_csv_with_findings_keeps_findings_after_the_status_row():
     assert rows[0]["connector"] == "identity.okta"
 
 
-def test_complete_csv_has_no_status_row():
-    rows = _rows(render_csv(ScanResult(findings=[_finding()], stats=[_stats()])))
+def test_complete_csv_has_no_status_row(make_finding):
+    rows = _rows(render_csv(ScanResult(findings=[make_finding()], stats=[_stats()])))
     assert [row["kind"] for row in rows] == ["agent"]
 
 
@@ -91,9 +78,9 @@ def test_incomplete_status_row_never_echoes_diagnostics():
 
 
 @pytest.mark.parametrize("render", [render_csv, render_html])
-def test_saved_report_neutralizes_terminal_controls(render):
+def test_saved_report_neutralizes_terminal_controls(make_finding, render):
     result = ScanResult(
-        findings=[_finding(title=CONTROLS, owner=CONTROLS, resource=CONTROLS)],
+        findings=[make_finding(title=CONTROLS, owner=CONTROLS, resource=CONTROLS)],
         stats=[_stats(incomplete=True, errors=[CONTROLS])],
     )
 
@@ -104,15 +91,15 @@ def test_saved_report_neutralizes_terminal_controls(render):
     assert "\\u001b" in text and "\\u0007" in text and "\\u202e" in text
 
 
-def test_csv_keeps_tab_and_newline_cells_as_before():
+def test_csv_keeps_tab_and_newline_cells_as_before(make_finding):
     # Whitespace is data, not a terminal command; formula guards depend on it.
-    rows = _rows(render_csv(ScanResult(findings=[_finding(title="a\tb\nc")], stats=[_stats()])))
+    rows = _rows(render_csv(ScanResult(findings=[make_finding(title="a\tb\nc")], stats=[_stats()])))
     assert rows[0]["title"] == "a\tb\nc"
 
 
 @pytest.mark.parametrize("fmt", ["csv", "html"])
-def test_file_and_stdout_outputs_both_hide_controls(fmt: str, tmp_path: Path, monkeypatch):
-    result = ScanResult(findings=[_finding(title=CONTROLS)], stats=[_stats()])
+def test_file_and_stdout_outputs_both_hide_controls(make_finding, fmt: str, tmp_path: Path, monkeypatch):
+    result = ScanResult(findings=[make_finding(title=CONTROLS)], stats=[_stats()])
     emitted: list[str] = []
     monkeypatch.setattr("shadowscan.cli.click.echo", emitted.append)
     _emit(result, fmt, None, verbose=False, max_rows=None)

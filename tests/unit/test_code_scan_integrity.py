@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from shadowscan.connectors.code.filesystem import _parse_mcp_servers
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.models import Kind
 from shadowscan.utils.text import host_of, read_text
 

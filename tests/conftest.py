@@ -16,6 +16,7 @@ import pytest
 import shadowscan.engine as engine_module
 import shadowscan.signatures.matcher as matcher
 from shadowscan.connectors import ConnectorContext, get_connector_class
+from shadowscan.models import Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex, get_index, schema
 from shadowscan.signatures.loader import signature_source_digest
 from shadowscan.utils import http
@@ -230,6 +231,25 @@ def generous_signature_budgets(request: pytest.FixtureRequest, monkeypatch: pyte
 
 
 # --- Shared fixtures -------------------------------------------------------------
+
+
+@pytest.fixture
+def make_finding():
+    """A Finding factory with the common code-connector defaults; tests override per call."""
+
+    def _make(**overrides: Any) -> Finding:
+        fields: dict[str, Any] = {
+            "surface": Surface.CODE,
+            "connector": "code.filesystem",
+            "kind": Kind.AGENT,
+            "title": "Agent",
+            "resource": "repository",
+            "resource_type": "project",
+        }
+        fields.update(overrides)
+        return Finding(**fields)
+
+    return _make
 
 
 @pytest.fixture(scope="session")
