@@ -130,18 +130,26 @@ summarizes each release for people who install and operate ShadowScan.
   file that holds the servers, and the lock links a running Chromium browser
   keeps in its user-data directory no longer make every scan incomplete.
 - `runtime.processes`: an export row whose pid is a non-ASCII digit no longer
-  fails the export, and a live `/proc` scan in a container PID namespace or
-  under `hidepid` is marked incomplete because it cannot see every process.
+  fails the export (64-bit ids such as CrowdStrike's `TargetProcessId` are
+  kept). A live scan of a container's own `/proc`, identified by the PID
+  namespace's inode, is marked incomplete because it cannot see the host's
+  processes; so is one under a `hidepid` setting that hides processes from
+  the scanning account. `subset=pid`, and root under the default `hidepid`
+  group, hide nothing and stay complete.
 - Lifecycle links also match by tool id, so Claude Desktop, Kiro and
   LM Studio configurations, which have no signature, link to their running
   processes.
-- LLM triage withholds owner, account, resource, device, home and file values
-  from the title and evidence text it sends; an API key that is not a valid
-  header value, or any other triage failure, is a warning on the triage
-  entry and never echoes the key.
-- MCP servers reached through `ws://` or an upper-case `HTTP://` scheme gain
-  the `mcp-plain-http` factor (+10), so every server tagged
-  `mcp-insecure-transport` is scored.
+- LLM triage withholds owner, account, resource, device, home, file and
+  network client values from the title and evidence text it sends (one- and
+  two-character values as whole words), while product names stay readable. A
+  malformed reply is `unparseable`; an API key that is not a valid header
+  value, or any other triage failure, is a warning on the triage entry that
+  never echoes the key, and the scan keeps its report.
+- MCP servers reached through `ws://`, an upper-case `HTTP://` scheme, or a
+  URL that MCP clients' parsers read as plaintext despite embedded tabs,
+  newlines or leading control characters gain the `mcp-plain-http` factor
+  (+10): the factor parses the scheme as the `mcp-insecure-transport` tag
+  does, so every tagged server is scored.
 - A coding agent's own configuration file belongs to that agent's signature
   alone: `main`'s `platform.openclaw` no longer adds a second framework-usage
   finding for files in an OpenClaw state directory.

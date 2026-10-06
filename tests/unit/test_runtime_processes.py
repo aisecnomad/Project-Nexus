@@ -108,8 +108,37 @@ def test_osquery_defender_and_generic_rows(run_connector, tmp_path):
     assert ollama.model_providers == ["provider.ollama"] and ollama.account == "WIN-22.corp.example"
 
 
+ROOT_STATUS = "Gid:\t0\t0\t0\t0\nGroups:\t\n"
+HOST_GIDS = "         0          0 4294967295\n"
+
+
+def _proc_self(
+    proc,
+    monkeypatch,
+    *,
+    initial=True,
+    options="rw",
+    status=ROOT_STATUS,
+    gid_map=HOST_GIDS,
+    mountinfo=None,
+):
+    """The parts of /proc/self that the restricted-view check reads, for a fake /proc tree."""
+    (proc / "self" / "ns").mkdir(parents=True, exist_ok=True)
+    link = proc / "self" / "ns" / "pid"
+    link.write_text("pid")
+    if initial:
+        # Stands in for the initial PID namespace's fixed inode number.
+        monkeypatch.setattr(runtime_processes, "_INIT_PID_NS_INO", link.stat().st_ino)
+    if mountinfo is None:
+        mountinfo = f"22 1 0:21 / /proc rw,nosuid,nodev,noexec,relatime - proc proc {options}\n"
+    (proc / "self" / "mountinfo").write_text(mountinfo)
+    (proc / "self" / "status").write_text(status)
+    (proc / "self" / "gid_map").write_text(gid_map)
+
+
 def test_live_mode_reads_proc(run_connector, monkeypatch, tmp_path):
     proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
     for pid, argv in {"10": [b"/usr/bin/bash"], "11": [b"claude", b"-p", b"x"], "x": [b"no"]}.items():
         (proc / pid).mkdir(parents=True)
         (proc / pid / "cmdline").write_bytes(b"\0".join(argv) + b"\0")
@@ -174,7 +203,10 @@ def test_lifecycle_links_endpoint_configuration_to_running_processes(index, tmp_
         ("²", None),
         (True, None),
         (-1, None),
-        ("1" * 11, None),
+        ("4419516131012", 4419516131012),  # CrowdStrike's TargetProcessId is a 64-bit id
+        (2**64 - 1, 2**64 - 1),
+        (2**64, None),
+        ("1" * 21, None),
         (None, None),
     ],
 )
@@ -193,30 +225,79 @@ def test_non_decimal_pid_does_not_lose_the_export(run_connector, tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("status", "mountinfo", "restricted"),
+    ("setup", "reason"),
     [
-        ("NSpid:\t41\n", "22 1 0:21 / /proc rw,nosuid - proc proc rw\n", False),
-        ("NSpid:\t41\t7\n", "", True),
-        ("NSpid:\t41\n", "22 1 0:21 / /proc rw,nosuid - proc proc rw,hidepid=invisible\n", True),
-        ("NSpid:\t41\n", "22 1 0:21 / /proc rw,nosuid - proc proc rw,subset=pid\n", True),
-        ("NSpid:\t41\n", "22 1 0:21 / /proc rw,nosuid - proc proc rw,hidepid=0\n", False),
+        ({}, None),
+        # A container's own /proc shows a single NSpid entry, as the host's does; the inode tells them apart.
+        ({"initial": False}, "separate PID namespace"),
+        ({"options": "rw,subset=pid"}, None),  # hides only entries that are not processes
+        ({"options": "rw,hidepid=off"}, None),
+        ({"options": "rw,hidepid=invisible"}, None),  # root is in the default gid=0 group
+        ({"options": "rw,hidepid=2"}, None),  # older kernels print the number
+        ({"options": "rw,hidepid=invisible,gid=1000"}, "hidepid=invisible"),
+        (
+            {
+                "options": "rw,hidepid=invisible,gid=1000",
+                "status": "Gid:\t1000\t1000\t1000\t1000\nGroups:\t27\n",
+            },
+            None,
+        ),
+        (
+            {"options": "rw,hidepid=noaccess", "status": "Gid:\t1000\t1000\t1000\t1000\nGroups:\t\n"},
+            "noaccess",
+        ),
+        (
+            {"options": "rw,hidepid=ptraceable"},
+            "hidepid=ptraceable",
+        ),  # hides untraceable processes from root too
+        ({"options": "rw,hidepid=invisible", "gid_map": "0 100000 65536\n"}, "hidepid=invisible"),
+        ({"options": "rw,hidepid=invisible,gid=1000", "status": "Gid:\t0\t0\t0\t0\nGroups:\t1000\n"}, None),
+        (
+            {
+                "mountinfo": (
+                    "22 1 0:21 / /proc rw - proc proc rw,hidepid=invisible,gid=1000\n"
+                    "40 22 0:35 / /proc rw - proc proc rw\n"
+                )
+            },
+            None,  # the last mount on /proc is the one that is read
+        ),
+        ({"mountinfo": "22 1 0:21 / /sys rw - sysfs sysfs rw\n"}, "mount options of /proc"),
     ],
 )
-def test_restricted_proc_view_marks_live_scan_incomplete(
-    run_connector, monkeypatch, tmp_path, status, mountinfo, restricted
-):
+def test_restricted_proc_view(monkeypatch, tmp_path, setup, reason):
     proc = tmp_path / "proc"
-    (proc / "self").mkdir(parents=True)
-    (proc / "self" / "status").write_text(status)
-    (proc / "self" / "mountinfo").write_text(mountinfo)
+    _proc_self(proc, monkeypatch, **setup)
+    found = runtime_processes._restricted_view(proc)
+    assert (found is None) if reason is None else (reason in found)
+
+
+def test_proc_namespace_is_read_from_pid_one_when_visible(monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch, initial=False)
+    (proc / "1" / "ns").mkdir(parents=True)
+    init = proc / "1" / "ns" / "pid"
+    init.write_text("pid")
+    # /proc/1 is the init of the namespace this procfs belongs to; it decides over /proc/self.
+    monkeypatch.setattr(runtime_processes, "_INIT_PID_NS_INO", init.stat().st_ino)
+    assert runtime_processes._restricted_view(proc) is None
+    monkeypatch.setattr(runtime_processes, "_INIT_PID_NS_INO", 0xEFFFFFFC)
+    assert "separate PID namespace" in runtime_processes._restricted_view(proc)
+    init.unlink()
+    (proc / "self" / "ns" / "pid").unlink()
+    assert "could not be determined" in runtime_processes._restricted_view(proc)
+
+
+def test_live_scan_in_a_container_is_incomplete_not_empty(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch, initial=False)
     (proc / "11").mkdir()
     (proc / "11" / "cmdline").write_bytes(b"claude\0")
     monkeypatch.setattr(runtime_processes, "_PROC", proc)
     monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
     findings, ctx = run_connector("runtime.processes", label="box")
     assert len(findings) == 1
-    assert ctx.stats.incomplete is restricted
-    assert any("not every process is visible" in w for w in ctx.stats.warnings) is restricted
+    assert ctx.stats.incomplete
+    assert any("not every process is visible" in w and "PID namespace" in w for w in ctx.stats.warnings)
 
 
 def test_lifecycle_links_tools_without_a_signature_by_tool_id(index, tmp_path):

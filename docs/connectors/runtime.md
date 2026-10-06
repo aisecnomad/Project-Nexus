@@ -37,10 +37,15 @@ MCP package name are kept.
 - **Live** (no `input`, Linux only): reads `/proc/<pid>/cmdline` without
   following the `exe` link. Processes of other users are visible only to an
   account allowed to read them; unreadable processes are reported and make the
-  scan incomplete. Inside a container's PID namespace, or where `/proc` is
-  mounted with `hidepid` or `subset=pid`, other processes are not listed at
-  all, so the scan is marked incomplete with a warning that says why.
-  Elsewhere, export osquery results instead.
+  scan incomplete. Some views do not list other processes at all, and then
+  the scan is marked incomplete with a warning that says why: a `/proc` that
+  belongs to a container's own PID namespace (detected from the namespace's
+  inode, not from `NSpid`, which shows one entry inside a container as on the
+  host); `hidepid=invisible` or `noaccess`, unless the scanning account is in
+  the mount's `gid=` group (group 0 by default, so root sees everything); and
+  `hidepid=ptraceable`, which hides processes the account may not trace even
+  from root. `subset=pid` hides no process. Elsewhere, export osquery results
+  instead.
 
 Options: `label` (host name for records that carry none; default the host
 name), `max_processes` (live mode bound, default 100,000; reaching it makes

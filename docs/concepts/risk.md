@@ -111,9 +111,9 @@ a zero weight add no factor. Some factors depend on finding metadata:
 10,000) and `blast-radius` (5 from 10 users or installations, 10 from 100).
 The `mcp-auto-approve` and `mcp-insecure-transport` tags label servers that
 those metadata factors already score, so they carry no weight of their own.
-The factors are broader: `mcp-plain-http` scores any `http://` or `ws://`
-server URL, loopback included, while the tag marks only plaintext URLs to
-another host, and both factors also count servers marked disabled, which the
+The factors are broader: `mcp-plain-http` scores any server URL whose scheme
+(parsed as the tag parses it) is `http` or `ws`, loopback included, while the
+tag marks only plaintext URLs to another host, and both factors also count servers marked disabled, which the
 tags skip.
 Posture and MCP-risk evidence has weight 0: it changes risk, not confidence.
 `options.risk_weights` overrides weights; see the README's risk policy. Its

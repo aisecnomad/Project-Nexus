@@ -28,8 +28,9 @@ technology and model-provider names, capabilities, tags, heuristic risk
 level, confidence, shadow status, and up to twelve evidence signals with their
 descriptions. **Resource ids, owners, accounts, file locations and code
 snippets are not sent as fields**, and their values (with the host, user,
-path and file names a connector records) are replaced by `[withheld]`
-wherever they appear in the title or an evidence description. Every value has
+path, file and network client names a connector records) are replaced by
+`[withheld]` wherever they appear in the title or an evidence description; a
+one- or two-character value is replaced where it stands as a whole word. Every value has
 passed the report sanitizer, so credentials ShadowScan redacted stay
 redacted. Other free text can still name a product, repository or app; do not
 enable triage for scans whose findings must not leave your environment, or

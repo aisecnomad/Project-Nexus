@@ -230,6 +230,8 @@ def test_identifiers_are_withheld_from_free_text(index):
     f.account = "dev-laptop-07"
     f.owner = "dana"
     f.metadata["files"] = ["~/.claude/settings.json"]
+    # endpoint.inventory records the product name here; it identifies no one and stays.
+    f.metadata["client"] = "Claude Code"
     f.evidence.append(
         Evidence(
             signal="endpoint:agent-config",
@@ -273,3 +275,63 @@ def test_engine_keeps_the_report_when_triage_fails_unexpectedly(monkeypatch, ind
     assert result.findings and result.complete
     entry = next(s for s in result.stats if s.connector == "engine.llm-triage")
     assert entry.warnings == ["llm triage failed (OSError)"]
+
+
+def test_network_client_addresses_and_short_names_are_withheld(index):
+    contact = _finding("ss-net", 70, RiskLevel.HIGH)
+    contact.surface = Surface.NETWORK
+    contact.title = "AI service contacted: OpenAI (api.openai.com) from 10.20.30.40"
+    contact.metadata["client"] = "10.20.30.40"
+    assert "10.20.30.40" not in json.dumps(finding_summary(contact, index))
+
+    short = _finding("ss-short", 70, RiskLevel.HIGH)
+    short.surface = Surface.ENDPOINT
+    short.title = "Claude Code configured on db (~jo) via mongodb"
+    short.account, short.owner = "db", "jo"
+    title = finding_summary(short, index)["title"]
+    # One- and two-character values are withheld as whole words only.
+    assert title == "Claude Code configured on [withheld] (~[withheld]) via mongodb"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"content": 5},
+        {"content": True},
+        {"content": "a string"},
+        _anthropic('{"verdict": ' + "1" * 5000 + "}"),  # json.loads refuses the integer with ValueError
+    ],
+)
+def test_malformed_replies_are_unparseable_not_fatal(monkeypatch, reply):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    findings = [_finding("a", 80, RiskLevel.HIGH), _finding("b", 70, RiskLevel.HIGH)]
+    settings = TriageSettings.from_options({"enabled": True, "model": "m"})
+    client = FakeClient([reply, _anthropic('{"verdict": "likely-benign"}')])
+    warnings = Triage(settings, client=client).run(findings)
+    assert findings[0].metadata["llm_triage"] == {"status": "unparseable", "advisory": True}
+    assert findings[1].metadata["llm_triage"]["verdict"] == "likely-benign"
+    assert warnings == ["llm triage: 1 finding(s) without a usable verdict"]
+
+
+def test_any_triage_exception_keeps_the_report(monkeypatch, index, tmp_path):
+    class Broken:
+        def __init__(self, settings, index=None, **kwargs):
+            pass
+
+        def run(self, findings):
+            raise TypeError("'int' object is not iterable")
+
+    import shadowscan.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "Triage", Broken)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("langgraph==0.2.0\n")
+    spec = {
+        "connectors": [{"name": "code.filesystem", "path": str(repo), "use_git": False}],
+        "options": {"llm_triage": {"enabled": True, "model": "m"}},
+    }
+    result = Engine(ScanConfig.from_dict(spec), index).run()
+    assert result.findings and result.complete
+    entry = next(s for s in result.stats if s.connector == "engine.llm-triage")
+    assert entry.warnings == ["llm triage failed (TypeError)"]

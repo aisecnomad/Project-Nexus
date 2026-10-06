@@ -13,7 +13,8 @@ confidence, shadow status and up to twelve evidence signals with their
 descriptions. Resource ids, owners, accounts, locations and code snippets are
 not sent as fields, and their values (with the host, user, path and file
 names a connector records) are replaced by ``[withheld]`` wherever they appear
-in the title or an evidence description. Other free text can still name a
+in the title or an evidence description (a one- or two-character value
+wherever it stands as a whole word). Other free text can still name a
 product, repository or app. Every value has already passed the report
 sanitizer, so redacted credentials stay redacted.
 
@@ -36,7 +37,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from shadowscan.models import Finding, RiskLevel
+from shadowscan.models import Finding, RiskLevel, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.redaction import sanitize
@@ -150,8 +151,11 @@ def _text(value: Any, limit: int = _MAX_TEXT) -> str:
     return " ".join(str(value).split())[:limit]
 
 
-_IDENTIFYING_METADATA = ("path", "host", "user", "client", "device", "home", "caller", "network", "files")
+_IDENTIFYING_METADATA = ("path", "host", "user", "device", "home", "caller", "network", "files")
 _WITHHELD = "[withheld]"
+# A value this short is withheld only where it stands as a whole word, so that
+# a two-letter user or host name cannot erase part of an ordinary word.
+_SHORT_VALUE = 3
 
 
 def _identifiers(f: Finding) -> list[str]:
@@ -160,7 +164,10 @@ def _identifiers(f: Finding) -> list[str]:
     for value in (f.owner, f.account, f.resource, f.region):
         if isinstance(value, str):
             values.add(value)
-    for key in _IDENTIFYING_METADATA:
+    # network.logs keeps the client address under "client"; endpoint and code
+    # findings keep the AI client's product name there, which identifies no one.
+    keys = _IDENTIFYING_METADATA + (("client",) if f.surface == Surface.NETWORK else ())
+    for key in keys:
         value = f.metadata.get(key)
         items = value if isinstance(value, list) else [value]
         values.update(v for v in items if isinstance(v, str))
@@ -168,15 +175,17 @@ def _identifiers(f: Finding) -> list[str]:
         if isinstance(e.location, str) and e.location:
             values.add(e.location)
             values.add(e.location.rsplit(":", 1)[0])
-    # Very short values (a one-letter host label) would erase ordinary words.
-    return sorted((v for v in values if len(v.strip()) >= 3), key=len, reverse=True)
+    return sorted((v for v in values if v.strip()), key=len, reverse=True)
 
 
 def _scrub(value: Any, withheld: list[str]) -> str:
     """``value`` as summary text, identifiers withheld before it is shortened."""
     text = "" if value is None else str(value)
     for item in withheld:
-        text = text.replace(item, _WITHHELD)
+        if len(item.strip()) >= _SHORT_VALUE:
+            text = text.replace(item, _WITHHELD)
+        else:
+            text = re.sub(rf"(?<![\w.-]){re.escape(item)}(?![\w.-])", _WITHHELD, text)
     return _text(text)
 
 
@@ -224,7 +233,7 @@ def parse_reply(text: str) -> dict[str, str] | None:
         return None
     try:
         data = json.loads(match.group(0))
-    except (json.JSONDecodeError, RecursionError):
+    except (ValueError, RecursionError):  # ValueError also covers an over-long integer
         return None
     if not isinstance(data, dict) or data.get("verdict") not in VERDICTS:
         return None
@@ -296,10 +305,10 @@ class Triage:
             return ""
         if self.settings.provider == "anthropic":
             blocks = data.get("content")
+            if not isinstance(blocks, list):
+                return ""  # the reply is untrusted: anything but a list of blocks is unparseable
             return "".join(
-                b.get("text", "")
-                for b in blocks or []
-                if isinstance(b, dict) and isinstance(b.get("text"), str)
+                b["text"] for b in blocks if isinstance(b, dict) and isinstance(b.get("text"), str)
             )
         choices = data.get("choices")
         if isinstance(choices, list) and choices and isinstance(choices[0], dict):

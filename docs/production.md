@@ -799,9 +799,11 @@ coding agent's own configuration file now belongs to that agent's signature
 alone: `platform.openclaw` still matches a bare `openclaw.json`,
 `clawdbot.json` or `moltbot.json` and OpenClaw code, but no longer adds a
 second framework-usage finding for a file in the state directory.
-An MCP server reached through `ws://` or an upper-case `HTTP://` scheme now
-gains the `mcp-plain-http` factor (+10), as `http://` servers already did, so
-every server tagged `mcp-insecure-transport` is scored.
+An MCP server reached through `ws://`, an upper-case `HTTP://` scheme, or a
+URL that client parsers read as plaintext despite embedded tabs, newlines or
+leading control characters now gains the `mcp-plain-http` factor (+10), as
+`http://` servers already did: the factor parses the scheme as the
+`mcp-insecure-transport` tag does, so every tagged server is scored.
 
 The new `endpoint.inventory` connector reports findings on the `endpoint`
 surface with new kinds (`ai-app` and `local-model` at base weight 5, plus
@@ -838,9 +840,10 @@ tool on the same device gain `metadata.lifecycle` and the tag
 configuration, through a running server's package. Neither changes risk. Keep
 endpoint `label` values equal to the host names that process exports report,
 or the two will not link. A process list is a point in time: absence does not
-show that a tool is unused. A live `/proc` scan inside a container's PID
-namespace or under `hidepid` cannot see every process, and is marked
-incomplete.
+show that a tool is unused. A live `/proc` scan of a container's own `/proc`,
+or under a `hidepid` setting that hides processes from the scanning account,
+cannot see every process and is marked incomplete (see the runtime guide for
+which settings do).
 
 `--format cyclonedx` replaces the earlier candidate's CycloneDX exporter with
 a different document: agents, configurations, apps, callers and processes are

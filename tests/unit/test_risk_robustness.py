@@ -15,6 +15,7 @@ import random
 import re
 from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from click.testing import CliRunner
@@ -381,8 +382,7 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
         if any(
-            s.get("url") and str(s.get("url")).strip().lower().startswith(("http://", "ws://"))
-            for s in servers
+            s.get("url") and urlsplit(str(s.get("url")).strip()).scheme in {"http", "ws"} for s in servers
         ):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
     if finding.kind == Kind.AGENT_CONFIG and finding.metadata.get("agent_definitions"):

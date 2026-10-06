@@ -410,35 +410,90 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
 
 
 def _pid(value: Any) -> int | None:
-    """A process id from an export: a non-negative integer of at most ten ASCII digits."""
+    """A process id from an export: a non-negative integer below 2**64, as an int or ASCII digits.
+
+    The bound is a width, not a typical pid range: CrowdStrike's TargetProcessId
+    is a 64-bit id.
+    """
     if isinstance(value, bool):
         return None
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 20:
+        value = int(value)
     if isinstance(value, int):
-        return value if 0 <= value < 10**10 else None
-    if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 10:
-        return int(value)
+        return value if 0 <= value < 2**64 else None
     return None
+
+
+# include/linux/proc_ns.h: PROC_PID_INIT_INO, the inode of the initial PID namespace.
+_INIT_PID_NS_INO = 0xEFFFFFFC
+# hidepid values (older kernels print numbers) that the mount's gid= group is exempt
+# from; ptraceable hides every process the account may not trace, from root too.
+_HIDEPID_OFF = {"0", "off"}
+_HIDEPID_GROUP_EXEMPT = {"1", "2", "noaccess", "invisible"}
 
 
 def _restricted_view(proc: Path) -> str | None:
-    """Why this /proc may not list every process, or None when it lists all of them."""
-    try:
-        status = (proc / "self" / "status").read_text(encoding="ascii", errors="replace")
-    except OSError:
-        status = ""
-    for line in status.splitlines():
-        if line.startswith("NSpid:") and len(line.split()) > 2:
-            return "this process runs in a separate PID namespace (a container)"
+    """Why this /proc may not list every process on the host, or None when it lists all of them."""
+    # /proc/1 is the init of the PID namespace this procfs belongs to; when it
+    # is hidden, this process's own namespace stands in. NSpid cannot answer
+    # this: it starts at the procfs's namespace, so a container's own /proc
+    # shows a single entry, as the host's does.
+    for link in (proc / "1" / "ns" / "pid", proc / "self" / "ns" / "pid"):
+        try:
+            inode = os.stat(link).st_ino
+        except OSError:
+            continue
+        if inode != _INIT_PID_NS_INO:
+            return (
+                "/proc belongs to a separate PID namespace (a container); processes outside it are not listed"
+            )
+        break
+    else:
+        return "the PID namespace of /proc could not be determined"
+    options = _proc_mount_options(proc)
+    if options is None:
+        return "the mount options of /proc could not be read"
+    hidepid = options.get("hidepid", "off")
+    if hidepid in _HIDEPID_OFF:
+        return None  # subset=pid hides only entries that are not processes
+    if hidepid in _HIDEPID_GROUP_EXEMPT and options.get("gid", "0") in _own_groups(proc):
+        return None  # the mount's gid= group (root's group 0 by default) sees every process
+    return f"/proc is mounted with hidepid={hidepid}, so processes this account may not trace are hidden"
+
+
+def _proc_mount_options(proc: Path) -> dict[str, str] | None:
+    """The superblock options of the procfs mounted on /proc; the last mount there is the visible one."""
     try:
         mounts = (proc / "self" / "mountinfo").read_text(encoding="ascii", errors="replace")
     except OSError:
-        mounts = ""
+        return None
+    found: str | None = None
     for line in mounts.splitlines():
         fields = line.split()
-        if len(fields) > 4 and fields[4] == "/proc" and ("hidepid=" in line or "subset=pid" in line):
-            if "hidepid=0" not in line and "hidepid=off" not in line:
-                return "/proc is mounted with hidepid, so other users' processes are hidden"
-    return None
+        if len(fields) > 4 and fields[4] == "/proc":
+            found = fields[-1]
+    if found is None:
+        return None
+    return {name: value for name, _, value in (option.partition("=") for option in found.split(","))}
+
+
+def _own_groups(proc: Path) -> set[str]:
+    """This process's filesystem gid and supplementary groups, when its gids are the host's."""
+    try:
+        gid_map = (proc / "self" / "gid_map").read_text(encoding="ascii", errors="replace").split()
+        status = (proc / "self" / "status").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return set()
+    if gid_map != ["0", "0", "4294967295"]:
+        return set()  # inside a user namespace, a gid need not be the mount's gid
+    groups: set[str] = set()
+    for line in status.splitlines():
+        parts = line.split()
+        if parts[:1] == ["Gid:"] and len(parts) > 4:
+            groups.add(parts[4])  # the filesystem gid, which the kernel's in_group_p() checks
+        elif parts[:1] == ["Groups:"]:
+            groups.update(parts[1:])
+    return groups
 
 
 def _user_name(uid: int) -> str:

@@ -166,7 +166,16 @@ def test_code_connector_tags_risky_servers_and_skips_disabled(run_connector, tmp
 
 
 @pytest.mark.parametrize(
-    "url", ["ws://mcp.example.com/ws", "HTTP://mcp.example.com/mcp", "http://mcp.example.com/mcp"]
+    "url",
+    [
+        "ws://mcp.example.com/ws",
+        "HTTP://mcp.example.com/mcp",
+        "http://mcp.example.com/mcp",
+        # URL parsers drop tabs and newlines and leading control characters; so must the factor.
+        "ht\ttp://mcp.example.com/mcp",
+        "http:\n//mcp.example.com/mcp",
+        "\x01http://mcp.example.com/mcp",
+    ],
 )
 def test_every_insecure_transport_label_is_scored(url):
     from shadowscan.connectors.mcp_risk import record_server_risks

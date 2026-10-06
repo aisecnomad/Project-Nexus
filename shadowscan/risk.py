@@ -24,6 +24,7 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any
+from urllib.parse import urlsplit
 
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
 from shadowscan.signatures import SignatureIndex
@@ -327,6 +328,18 @@ def _strings(values: Any) -> list[str]:
     return []
 
 
+def _plaintext_scheme(url: str) -> bool:
+    """Whether ``url`` uses http or ws, parsed as the mcp-insecure-transport tag parses it.
+
+    ``urlsplit`` drops tabs and newlines and leading control characters, as the
+    WHATWG URL parsers in MCP clients do, so a prefix test alone can be evaded.
+    """
+    try:
+        return urlsplit(url.strip()).scheme.lower() in {"http", "ws"}
+    except ValueError:
+        return url.strip().lower().startswith(("http://", "ws://"))
+
+
 def _mcp_server_urls(server: dict[str, Any]) -> list[str]:
     """Return every projected MCP endpoint, retaining legacy single-URL reports."""
     urls = _strings(server.get("urls"))
@@ -473,11 +486,7 @@ def _metadata_factors(finding: Finding) -> list[RiskFactor]:
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
         # Every plaintext scheme, loopback included, so each server the zero-weight
         # mcp-insecure-transport tag labels (http or ws to another host) is scored here.
-        if any(
-            url.strip().lower().startswith(("http://", "ws://"))
-            for server in servers
-            for url in _mcp_server_urls(server)
-        ):
+        if any(_plaintext_scheme(url) for server in servers for url in _mcp_server_urls(server)):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
     if finding.kind == Kind.AGENT_CONFIG:
         definitions = metadata.get("agent_definitions")
