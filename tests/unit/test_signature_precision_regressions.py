@@ -111,6 +111,21 @@ def test_claude_code_oauth_token_in_source_is_reported_without_the_secret(tmp_pa
     assert token not in json.dumps([f.to_dict() for f in findings], default=str)
 
 
+def test_generic_inline_credential_has_file_line_identity_and_is_redacted(tmp_path: Path, run_connector):
+    secret = "R4nd0m9Qx2Vb7Lp6"
+    findings = _scan(
+        tmp_path,
+        run_connector,
+        {"credentials.env": f"comment=example\nCUSTOM_API_KEY={secret}\n"},
+    )
+    finding = next(f for f in findings if f.kind.value == "secret")
+    serialized = json.dumps(finding.to_dict())
+    assert finding.resource_type == "file"
+    assert finding.identity_schema == "shadowscan.finding-identity/v2"
+    assert [e.location for e in finding.evidence] == ["credentials.env:2"]
+    assert secret not in serialized
+
+
 # ------------------------------------------------------------ model-id shapes
 @pytest.mark.parametrize(
     "model",

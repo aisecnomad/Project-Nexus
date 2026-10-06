@@ -165,7 +165,7 @@ signatures:
         values: ["*.services.ai.azure.com", "*.api.azureml.ms", "ai.azure.com"]
         weight: 0.85
       - type: iac
-        values: [azurerm_ai_foundry, azurerm_ai_foundry_project, azurerm_machine_learning_workspace, "Microsoft.MachineLearningServices/workspaces", "Microsoft.CognitiveServices/accounts/projects", "Microsoft.CognitiveServices/accounts/projects/connections", "Microsoft.CognitiveServices/accounts/capabilityHosts", "Microsoft.CognitiveServices/accounts/projects/capabilityHosts"]
+        values: [azurerm_ai_foundry, azurerm_ai_foundry_project, azurerm_machine_learning_workspace, "Microsoft.MachineLearningServices/workspaces", "Microsoft.CognitiveServices/accounts/projects", "Microsoft.CognitiveServices/accounts/projects/agents", "Microsoft.CognitiveServices/accounts/projects/connections", "Microsoft.CognitiveServices/accounts/capabilityHosts", "Microsoft.CognitiveServices/accounts/projects/capabilityHosts"]
         weight: 0.85
       - type: scope
         values: ["Azure AI Developer", "Azure AI Project Manager", "Azure AI Account Owner", "Azure AI Administrator", "64702f94-c99e-4e88-8e0b-ba3389c66a89", "eadc314b-1a2d-4efa-be10-5d325db5065e", "e503ece1-11d0-4e8e-8e2c-7a6c3bf38815", "b78c5d69-af96-48a3-bf8d-a8b4d589de94"]
