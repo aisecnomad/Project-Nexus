@@ -1,65 +1,33 @@
 # Deployment and migration
 
-This is the rollout guide for the unreleased 0.1.1 candidate. It combines the
-previous input, transport, identity and collection fixes with explicit credential
-boundaries, connector deadlines, serialized incremental state and reproducible
-runtime dependency installs. The package version is 0.1.1; a version string does
-not establish that a tag, signed artifact or production acceptance exists.
+This is the rollout guide for the unreleased 0.1.1 candidate. It covers reviewed
+revisions, installation, validation, rollout, operation and migration.
 
 Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
-The operator sections come first: installing a reviewed revision, the explicit
-security, Git and resource policies, release verification and rollout acceptance.
-Dated change and migration notes for the unreleased candidate follow them under
-[Candidate change history](#candidate-change-history). Nothing has been published,
-so those notes describe differences between candidate builds, not between
-releases.
+Use this operator sequence; dated candidate notes remain under
+[Candidate change history](#candidate-change-history) and describe differences
+between candidate builds, not between releases.
 
-## Credential evidence identity migration
+## Review before deployment
 
-Code and cloud credential evidence now carries `credential:hmac-sha256:`
-pseudonyms made with a domain-separated HMAC and a private key. A report reader
-cannot check guessed low-entropy credentials against a public hash. Each Engine
-scan supplies one random key shared by its workers, so identical credentials
-within that scan have identical pseudonyms. Without an operator key, another
-scan produces different credential pseudonyms. Direct calls to the library's
-`credential_id()` or `redact()` outside an Engine use an ephemeral process key.
+Before selecting a revision, verify its final-head review record and the live
+merge rules. A versioned policy, merged pull request or passing CI does not
+establish independent human review. The [merge gate and review status](#merge-gate-and-review-status)
+section records the available evidence and commands for checking current
+enforcement. Independent human review is required before any tagged release.
 
-For stable credential correlation between scans, provide the existing
-`SHADOWSCAN_IDENTITY_KEY` through a private secret environment: at least 32
-random secret bytes, explicitly encoded as `hex:<value>` or `base64:<value>`.
-Ambiguous bare encodings, including ordinary 64-character hex keys, now fail
-before collection; prefix an existing hex key with `hex:` to preserve its bytes.
-Use the same key for the scans being compared. The key also governs gateway
-pseudonyms, so rotating it changes gateway identities too. Keep the key out of configuration files, logs,
-command-line arguments and shared reports. No key is generated into persistent
-storage automatically, and scan reports/export/cache files never contain it.
+## Contents
 
-The report's `collection_scope.credential_identity_schema` is
-`shadowscan.credential-identity/v1`; `credential_identity_scope` is `run` or
-`keyed`. Resource-based finding IDs still identify the same source observation;
-the credential pseudonym in its evidence has the key's scope. Without a stable
-key, incremental scanning does not persist results containing credential
-pseudonyms, while clean inputs remain cacheable. With a stable key those
-results may be reused. Cache format 4 and private key commitments invalidate
-older entries or entries generated under a different key. Key rotation also
-changes the collection-scope fingerprint, so `diff` cannot claim resolution
-across that change; establish a fresh baseline.
-
-Regenerate reports and baselines made with previous candidate builds. Their
-`credential:sha256:` values cannot be converted to the new pseudonyms without
-rescanning the source credentials. Restrict or delete the old copies and
-rotate exposed low-entropy credentials if their digests were disclosed.
-Existing gateway correlation mappings using private `credential:sha256:` exact
-bindings remain compatible. Those legacy binding values are private and never
-enter gateway reports; gateway public identities retain their existing domain
-and behavior. Reports still contain sensitive audit evidence and business data.
-
-Synthetic code/cloud, cache, comparison, gateway-binding and publication
-regressions validate these behaviors. They do not establish independent human
-review or live tenant acceptance.
+1. [Review before deployment](#review-before-deployment)
+2. [Pin and install a reviewed revision](#install-from-a-reviewed-revision)
+3. [Validate security policy, Git metadata and resource limits](#explicit-security-policy)
+4. [Roll out with tenant acceptance evidence](#rollout-acceptance)
+5. [Operate within collection and resource limits](#resource-limits-and-incomplete-scans)
+6. [Upgrade and migrate identities](#credential-evidence-identity-migration)
+7. [Candidate change history](#candidate-change-history)
 
 ## Install from a reviewed revision
 
@@ -757,6 +725,51 @@ the concrete status, denominator, control and reviewer artifacts:
 These checks require operator-specific tenant access and operational decisions.
 Until completed, describe deployment status as pending tenant and container acceptance.
 
+## Credential evidence identity migration
+
+Code and cloud credential evidence now carries `credential:hmac-sha256:`
+pseudonyms made with a domain-separated HMAC and a private key. A report reader
+cannot check guessed low-entropy credentials against a public hash. Each Engine
+scan supplies one random key shared by its workers, so identical credentials
+within that scan have identical pseudonyms. Without an operator key, another
+scan produces different credential pseudonyms. Direct calls to the library's
+`credential_id()` or `redact()` outside an Engine use an ephemeral process key.
+
+For stable credential correlation between scans, provide the existing
+`SHADOWSCAN_IDENTITY_KEY` through a private secret environment: at least 32
+random secret bytes, explicitly encoded as `hex:<value>` or `base64:<value>`.
+Ambiguous bare encodings, including ordinary 64-character hex keys, now fail
+before collection; prefix an existing hex key with `hex:` to preserve its bytes.
+Use the same key for the scans being compared. The key also governs gateway
+pseudonyms, so rotating it changes gateway identities too. Keep the key out of
+configuration files, logs, command-line arguments and shared reports. No key is
+generated into persistent storage automatically, and scan reports/export/cache
+files never contain it.
+
+The report's `collection_scope.credential_identity_schema` is
+`shadowscan.credential-identity/v1`; `credential_identity_scope` is `run` or
+`keyed`. Resource-based finding IDs still identify the same source observation;
+the credential pseudonym in its evidence has the key's scope. Without a stable
+key, incremental scanning does not persist results containing credential
+pseudonyms, while clean inputs remain cacheable. With a stable key those
+results may be reused. Cache format 4 and private key commitments invalidate
+older entries or entries generated under a different key. Key rotation also
+changes the collection-scope fingerprint, so `diff` cannot claim resolution
+across that change; establish a fresh baseline.
+
+Regenerate reports and baselines made with previous candidate builds. Their
+`credential:sha256:` values cannot be converted to the new pseudonyms without
+rescanning the source credentials. Restrict or delete the old copies and
+rotate exposed low-entropy credentials if their digests were disclosed.
+Existing gateway correlation mappings using private `credential:sha256:` exact
+bindings remain compatible. Those legacy binding values are private and never
+enter gateway reports; gateway public identities retain their existing domain
+and behavior. Reports still contain sensitive audit evidence and business data.
+
+Synthetic code/cloud, cache, comparison, gateway-binding and publication
+regressions validate these behaviors. They do not establish independent human
+review or live tenant acceptance.
+
 ## Candidate change history
 
 These notes record behavior changes made while the 0.1.1 candidate was being
@@ -783,7 +796,7 @@ previously fell under a generic instruction-file signature may change their
 framework list; finding IDs depend on the resource and discriminator, and the
 discriminator of a coding-agent configuration includes its signature id.
 
-The new `endpoint.inventory` connector reports findings on a new `endpoint`
+The new `endpoint.inventory` connector reports findings on the `endpoint`
 surface with new kinds (`ai-app` and `local-model` at base weight 5, plus
 `agent-config` and `mcp-server`). Reports, dashboards and `--surface` filters
 that enumerate surfaces or kinds should add them; `network-contact` (5) and
@@ -823,6 +836,22 @@ by default. Enabling it sends finding summaries to a third-party or
 self-hosted model endpoint, so treat it as a data-egress decision: review
 `docs/operations/llm-triage.md`, prefer a `base_url` you operate, and do not
 enable it for scans whose finding titles must stay in your environment.
+
+### Offline endpoint and runtime inventory limits
+
+The `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and
+`endpoint.ebpf` connectors and `gateway.otel` currently analyze offline exports
+only. They do not make live API calls, probe endpoint URLs, discover host
+configuration files, or read model directories (`endpoint.inventory` reads its
+fixed list of local locations). Kubernetes and OpenShift inventories are also
+offline-only; do not provide kubeconfig material, Secret values, service-account
+tokens, environment values, or image pull credentials in an export.
+
+`endpoint.models` consumes metadata produced elsewhere; it does not parse GGUF or
+safetensors files. MCP tool fingerprints are not compared with a saved baseline,
+so rug-pull detection is not implemented. These new inventories do not correlate
+findings across surfaces. Treat their output as bounded inventory evidence, not
+live execution or deployment attestation.
 
 ### October 3 source capability attribution migration
 

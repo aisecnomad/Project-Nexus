@@ -72,6 +72,54 @@ class RecordDispatch:
         self.connector.ctx.warn(f"{self.connector.name}: record has invalid {fields}")
 
 
+class InvalidPageTokenError(ValueError):
+    """A continuation token that is malformed or was already followed."""
+
+
+def next_page_token(token: Any, seen: set[str]) -> str | None:
+    """Validate and record one provider continuation token.
+
+    Every cloud listing follows the same token contract: an absent or empty
+    token ends pagination normally, while a non-string or repeated token
+    would loop forever and raises :class:`InvalidPageTokenError` instead.
+    Shared by the provider pagination loops so a fix to this token-handling
+    logic is made once instead of by hand at every paginated call site.
+    """
+    if token is None or token == "":
+        return None
+    if not isinstance(token, str) or token in seen:
+        raise InvalidPageTokenError("invalid or repeated pagination token")
+    seen.add(token)
+    return token
+
+
+def guarded_record(
+    connector: BaseConnector, kind: str, build: Callable[[], dict[str, Any] | None]
+) -> dict[str, Any] | None:
+    """Build one record from provider responses; a malformed response skips that record only.
+
+    Response fields are untrusted: a missing or mistyped field raises
+    inside the builder. The record is reported as a coverage gap and
+    collection continues with the next resource, service and region
+    instead of abandoning them all.
+    """
+    try:
+        return build()
+    except RECORD_ERRORS as exc:
+        connector.ctx.warn(
+            f"{connector.name}: malformed {kind} record skipped ({type(exc).__name__}); coverage incomplete",
+            incomplete=True,
+        )
+        return None
+
+
+def resource_id(value: Any, provider: str) -> str:
+    """Reject malformed provider identifiers instead of inventing an identity."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"invalid {provider} resource identifier")
+    return value
+
+
 def aggregate_caller_event(
     callers: dict[K, dict[str, Any]],
     key: K,

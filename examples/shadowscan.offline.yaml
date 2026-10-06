@@ -1,6 +1,6 @@
-# Demo configuration: runs every connector that ships an offline fixture (28 of
-# 30; code.github and code.gitlab need a directory of cloned repositories)
-# against the fixtures in the repository. No credentials needed.
+# Demo configuration: runs the fixture-backed connectors against the fixtures
+# in the repository; code.github and code.gitlab need a directory of cloned
+# repositories. No credentials needed.
 #   shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 inventory:
   - ../agent-card.yaml
@@ -86,6 +86,24 @@ connectors:
     input: ../tests/fixtures/cloud/azure_records.jsonl
   - name: cloud.oci
     input: ../tests/fixtures/cloud/oci_records.jsonl
+  - name: cloud.kubernetes
+    cluster: example-cluster
+    input: ../tests/fixtures/kubernetes/workloads.json
+  - name: cloud.openshift
+    cluster: example-openshift
+    input: ../tests/fixtures/openshift/workloads.json
+  - name: gateway.otel
+    input: ../tests/fixtures/otel/genai_spans.json
+  - name: endpoint.host
+    input: ../tests/fixtures/endpoint/host_inventory.json
+  - name: endpoint.mcp
+    input: ../tests/fixtures/mcp/tool_inventory.json
+  - name: endpoint.ollama
+    input: ../tests/fixtures/ollama/models.json
+  - name: endpoint.models
+    input: ../tests/fixtures/models/artifacts.json
+  - name: endpoint.ebpf
+    input: ../tests/fixtures/ebpf/events.json
   - name: endpoint.inventory
     input: ../tests/fixtures/endpoint/inventory.jsonl
   - name: network.logs

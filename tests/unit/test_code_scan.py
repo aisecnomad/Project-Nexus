@@ -15,10 +15,10 @@ from shadowscan.connectors.code.filesystem import (
     DEFAULT_EXCLUDES,
     DISCLOSED_DEFAULT_EXCLUDES,
     FilesystemConnector,
-    _nearest_root,
 )
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.connectors.code.walk import _nearest_root
 from shadowscan.models import Kind
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
@@ -154,10 +154,10 @@ def test_project_root_walk_uses_active_ancestors_for_nested_and_wide_repos(tmp_p
         project.mkdir(parents=True, exist_ok=True)
         (project / "pyproject.toml").write_text("[project]\nname='example'\n")
         (project / "bot.py").write_text("from langchain import agents\n")
-    files = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))._iter_files(
+    files = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))._iter_entries(
         tmp_path
     )
-    assigned = {rel: project for rel, _, project in files if rel.endswith("bot.py")}
+    assigned = {rel: project for rel, _, project, _ in files if rel.endswith("bot.py")}
     assert assigned == {
         "first/bot.py": "first",
         "first/nested/bot.py": "first/nested",

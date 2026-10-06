@@ -41,7 +41,7 @@ describes.
 - Confidence counts correlated evidence once, so repeated matches of one
   signal no longer inflate it; some non-code findings report lower
   confidence.
-- 216 signatures and 1,010 signals cover current agent SDKs, including Vercel
+- 220 signatures and 1,017 signals cover current agent SDKs, including Vercel
   AI SDK tool loops (AI SDK 7's `isStepCount`). Custom-pack framework patterns
   apply in every language, and detection-rule files (ShadowScan signature
   packs, Semgrep, Sigma, gitleaks) are treated as data.

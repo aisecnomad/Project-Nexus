@@ -146,9 +146,9 @@ class Surface(str, Enum):
     LOWCODE = "lowcode"
     SAAS = "saas"
     CLOUD = "cloud"
-    ENDPOINT = "endpoint"  # developer workstations: AI apps, extensions, local models, agent configs
+    ENDPOINT = "endpoint"  # workstations and hosts: agent configs, extensions, local models, host inventories
     NETWORK = "network"  # DNS, TLS SNI and flow records
-    RUNTIME = "runtime"  # process-to-connection observations
+    RUNTIME = "runtime"  # AI tools seen running in process inventories
 
 
 class Kind(str, Enum):
@@ -494,6 +494,11 @@ class Finding:
         d = asdict(self)
         # Verified-clean markers are process-local state, never report content.
         d.pop("_clean_digest", None)
+        from shadowscan.compliance import compliance_references
+
+        references = compliance_references(self.tags)
+        if references:
+            d["metadata"]["compliance"] = references
         for item in d["evidence"]:
             item.pop("_clean_digest", None)
         d["surface"] = self.surface.value

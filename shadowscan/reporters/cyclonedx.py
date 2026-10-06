@@ -1,9 +1,15 @@
 """CycloneDX 1.6 JSON output: the scan as an AI bill of materials.
 
-Each discovered agent, MCP configuration, AI app, caller, model store or
-network contact becomes an ``application`` component whose ``bom-ref`` is the
-finding id. What it is built with or talks to becomes a shared entry that the
-component depends on:
+Each finding becomes one entry whose ``bom-ref`` is the finding id:
+
+* an MCP configuration or inventory, or a local model server
+  (``endpoint.mcp``, ``endpoint.ollama``), is a ``service``;
+* a model artifact or model store is a ``machine-learning-model`` component;
+* everything else (agents, agent configurations, AI apps, callers, network
+  contacts, running processes) is an ``application`` component.
+
+What a finding is built with or talks to becomes a shared entry that it
+depends on:
 
 * agent frameworks, coding agents and protocols are ``framework`` components;
 * model providers are ``services``;
@@ -40,6 +46,15 @@ _EXCLUDED_KINDS = {Kind.SECRET, Kind.TOKEN}
 _MAX_MCP_SERVERS = 50
 _MAX_MODELS = 20
 _SERIAL_NAMESPACE = uuid.UUID("6f1c3c56-2a52-5b8e-9a0e-5c7d4f1e2b10")
+_SERVICE_CONNECTORS = {"endpoint.mcp", "endpoint.ollama"}
+_MODEL_CONNECTORS = {"endpoint.models"}
+
+
+def finding_ref(f: Finding) -> str:
+    """The finding id, or a stable digest of the finding when it has none (direct connector use)."""
+    if f.id:
+        return f.id
+    return _ref("finding", json.dumps(f.to_dict(), sort_keys=True, default=str))
 
 
 def _timestamp(value: object) -> str | None:
@@ -78,6 +93,7 @@ class _Bom:
     def __init__(self, index: SignatureIndex) -> None:
         self.index = index
         self.components: dict[str, dict[str, Any]] = {}
+        self.finding_services: dict[str, dict[str, Any]] = {}
         self.services: dict[str, dict[str, Any]] = {}
         self.dependencies: dict[str, set[str]] = {}
 
@@ -157,17 +173,24 @@ class _Bom:
         return ref
 
     def add(self, f: Finding) -> None:
-        ref = f.id
-        component: dict[str, Any] = {
-            "type": "application",
+        ref = finding_ref(f)
+        entry: dict[str, Any] = {
             "bom-ref": ref,
-            "name": f.title,
+            "name": f.title or f.resource or "discovered AI component",
             "group": f.surface.value,
             "description": f"{f.kind.value} discovered by {f.connector}",
         }
-        if f.owner:
-            component["authors"] = [{"name": f.owner}]
-        component["properties"] = _properties(
+        is_service = f.kind == Kind.MCP_SERVER or f.connector in _SERVICE_CONNECTORS
+        if not is_service:
+            is_model = (
+                f.kind == Kind.LOCAL_MODEL
+                or f.connector in _MODEL_CONNECTORS
+                or f.resource_type == "local-model"
+            )
+            entry = {"type": "machine-learning-model" if is_model else "application", **entry}
+            if f.owner:
+                entry["authors"] = [{"name": f.owner}]
+        entry["properties"] = _properties(
             [
                 ("shadowscan:finding-id", f.id),
                 ("shadowscan:surface", f.surface.value),
@@ -191,7 +214,10 @@ class _Bom:
                 ("shadowscan:last-seen", _timestamp(f.last_seen)),
             ]
         )
-        self.components[ref] = component
+        if is_service:
+            self.finding_services[ref] = entry
+        else:
+            self.components[ref] = entry
         needs = self.dependencies.setdefault(ref, set())
         for sid in f.frameworks:
             needs.add(self.signature_component(sid))
@@ -213,12 +239,12 @@ def render_cyclonedx(result: ScanResult, index: SignatureIndex | None = None) ->
         finding.sanitize()
     bom = _Bom(index or get_index())
     included = [f for f in result.findings if f.kind not in _EXCLUDED_KINDS]
-    for f in sorted(included, key=lambda x: x.id):
+    for f in sorted(included, key=finding_ref):
         bom.add(f)
     excluded = len(result.findings) - len(included)
     stats = publication_stats(result)
     complete = result.complete
-    seed = json.dumps([result.started_at, sorted(f.id for f in result.findings)])
+    seed = json.dumps([result.started_at, sorted(finding_ref(f) for f in result.findings)])
     serial = uuid.uuid5(_SERIAL_NAMESPACE, seed)
     timestamp = _timestamp(result.finished_at) or _timestamp(result.started_at)
     metadata: dict[str, Any] = {
@@ -259,14 +285,16 @@ def render_cyclonedx(result: ScanResult, index: SignatureIndex | None = None) ->
         "version": 1,
         "metadata": metadata,
         "components": [bom.components[k] for k in sorted(bom.components)],
-        "services": [bom.services[k] for k in sorted(bom.services)],
+        # Findings that are services first, then the providers and servers they use.
+        "services": [bom.finding_services[k] for k in sorted(bom.finding_services)]
+        + [bom.services[k] for k in sorted(bom.services)],
         "dependencies": [
             {"ref": ref, "dependsOn": sorted(needs)} for ref, needs in sorted(bom.dependencies.items())
         ],
         "compositions": [
             {
                 "aggregate": "unknown" if complete else "incomplete",
-                "assemblies": sorted(bom.components),
+                "assemblies": sorted(bom.components) + sorted(bom.finding_services),
             }
         ],
     }

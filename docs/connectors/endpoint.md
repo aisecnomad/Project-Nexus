@@ -1,15 +1,21 @@
-# Endpoint connector
+# Endpoint and runtime inventories
 
-The endpoint connector inventories AI tools on developer workstations: the
-clients and coding agents a person has configured, their MCP servers, AI
-editor and browser extensions, local model stores and, when enabled, AI
-command-line tools named in shell history. It finds tools that never touch a
-repository, an identity provider or a gateway, such as a Claude Desktop MCP
-server or an Ollama model pulled onto a laptop.
+Endpoint connectors inventory AI tools on workstations and hosts. Two kinds
+are available:
 
-!!! info "Local or fleet"
-    Run it on a workstation against one or more home directories, or point
-    `input` at osquery results collected across a fleet. It calls no API.
+- `endpoint.inventory` reads a fixed list of documented user-scope locations
+  in home directories (or osquery extension exports) and reports the clients
+  and coding agents a person has configured, their MCP servers, AI editor and
+  browser extensions, local model stores and, when enabled, AI command-line
+  tools named in shell history. It finds tools that never touch a repository,
+  an identity provider or a gateway, such as a Claude Desktop MCP server or an
+  Ollama model pulled onto a laptop.
+- `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and
+  `endpoint.ebpf` consume bounded offline exports from host, MDM, MCP, model
+  and eBPF collectors (see [offline inventories](#offline-host-mcp-model-and-ebpf-inventories)).
+
+Running processes are reported by [`runtime.processes`](runtime.md), which
+links them to `endpoint.inventory` findings for the same tool and device.
 
 ## `endpoint.inventory`
 
@@ -86,5 +92,41 @@ Findings are owned by the home directory name and scoped to the device, so
 `owner` and `account` identify whose workstation a finding came from. An
 endpoint inventory shows that a tool is installed or configured, not that it
 ran; shell history is evidence of use on that account only.
+
+## Offline host, MCP, model and eBPF inventories
+
+The `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`,
+`endpoint.ebpf` and `gateway.otel` connectors consume bounded offline JSON,
+JSONL, or YAML exports. They do not probe network services, discover local
+configuration files, or traverse model directories in the current version
+(`endpoint.inventory` above reads its fixed list of local locations). Supply
+only synthetic or appropriately sanitized exports.
+
+These offline inventories are not correlated with other surfaces. In
+particular, MCP tool fingerprints are not compared with a rug-pull baseline.
+
+| Connector | Offline input |
+|---|---|
+| `endpoint.host` | Host/MDM inventory records with a runtime or configuration name |
+| `endpoint.mcp` | Server records containing MCP tool-list responses |
+| `endpoint.ollama` | Ollama-compatible model inventory, including an `endpoint` and `models` list |
+| `endpoint.models` | Artifact metadata records; do not serialize model contents |
+| `endpoint.ebpf` | Tetragon, Falco, Tracee, or Hubble event records |
+| `gateway.otel` | OTLP span records with GenAI semantic-convention attributes |
+
+MCP tool definitions are analyzed for risky capability names, prompt-injection
+or exfiltration indicators, missing declared authentication, and duplicate
+tool names across servers. Tool definitions are fingerprinted for downstream
+comparison, but baseline/rug-pull detection is not yet implemented. No tool is
+invoked.
+
+OTLP analysis selects only service, agent, provider, model, and operation
+attributes; prompt and completion content is not copied into findings.
+`endpoint.models` consumes metadata supplied by an offline collector. It does
+not parse GGUF/safetensors headers or hash files. Unsafe pickle-based extensions
+are tagged and are never unpickled.
+
+eBPF event correlation is heuristic and offline-only. ShadowScan does not load
+eBPF programs; example operator policies are under `examples/ebpf/`.
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

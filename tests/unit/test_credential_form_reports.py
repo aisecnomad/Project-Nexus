@@ -444,7 +444,7 @@ def test_credential_forms_never_reach_any_report(tmp_path, index, case):
     assert result.complete, [error for stats in result.stats for error in stats.errors]
     assert result.findings
     outputs = _outputs(result)
-    assert set(outputs) == {"json", "sarif", "csv", "markdown", "html", "cyclonedx", "table"}
+    assert set(outputs) == {"json", "sarif", "csv", "cyclonedx", "markdown", "html", "table"}
     for name, output in outputs.items():
         for secret in secrets:
             assert secret not in output, name

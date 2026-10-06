@@ -7,6 +7,7 @@ import hashlib
 import html
 import json
 
+from shadowscan.compliance import compliance_references
 from shadowscan.models import ScanResult
 from shadowscan.reporters._publication import publication_stats, related_finding_ids, visible_controls
 
@@ -210,6 +211,9 @@ def render_html(result: ScanResult) -> str:
             parts.append("<div><b>Capabilities</b> " + _tags(f.capabilities) + "</div>")
         if f.tags:
             parts.append("<div><b>Tags</b> " + _tags(f.tags) + "</div>")
+        compliance = compliance_references(f.tags)
+        if compliance:
+            parts.append("<div><b>Compliance</b> " + _tags(compliance) + "</div>")
         if f.models:
             parts.append(f"<div><b>Models</b> {_e(', '.join(f.models[:8]))}</div>")
         if f.permissions:

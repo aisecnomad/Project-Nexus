@@ -115,6 +115,9 @@ module = [
     "botocore.*",
     "oci",
     "oci.*",
+    "google.auth",
+    "google.auth.*",
+    "azure.identity",
 ]
 ignore_missing_imports = true
 

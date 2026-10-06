@@ -58,13 +58,13 @@ review record.
 
 ## What not to trust
 
-- Severity labels or `shadow: true` as proof of unauthorized execution
-- Confidence as a calibrated probability
-- Author-written evaluation corpora as field precision or recall
-- `archive/reviews/` as an external audit
-- The `0.1.1` version string as a published release
-- GitHub Pages at <https://aisecnomad.github.io/Project-Nexus/> as the MkDocs
-  site until Pages is switched to the Docs workflow artifact
+- Treat severity labels or `shadow: true` as proof of unauthorized execution.
+- Treat confidence as a calibrated probability.
+- Treat author-written evaluation corpora as field precision or recall.
+- Treat `archive/reviews/` as an external audit.
+- Treat the `0.1.1` version string as a published release.
+- Treat GitHub Pages at <https://aisecnomad.github.io/Project-Nexus/> as the
+  MkDocs site until Pages is switched to the Docs workflow artifact.
 
 ## Suggested review slices
 
@@ -109,6 +109,12 @@ For the October 2 review corrections, also check:
 Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be
 effective on `main`; their presence in workflow files alone is insufficient.
+
+## Suggested deliverable
+
+A concise review record could list the SHA reviewed, commands run, review slices
+covered, findings and remaining limitations. This is a suggested record, not a
+certification of independence or release approval.
 
 ## How to record a review
 

@@ -239,7 +239,7 @@ signatures:
     agent_indicator: true
     signals:
       - type: file
-        globs: [".goosehints", "**/.goosehints", ".goose/**", "**/.goose/**", "goose.yaml"]
+        globs: [".goosehints", "**/.goosehints", ".goose/**", "**/.goose/**", "goose.yaml", "**/goose.yaml", "goose_config.yaml", "**/goose_config.yaml"]
         weight: 0.9
       - type: file
         # The user configuration Goose writes on first run: XDG on Linux and
@@ -284,7 +284,7 @@ signatures:
         names: [aider-chat, aider-install]
         weight: 0.95
       - type: file
-        globs: [".aider.conf.yml", "**/.aider.conf.yml", ".aider.model.settings.yml", ".aider.model.metadata.json", ".aiderignore", ".aider.chat.history.md", "**/.aider.chat.history.md"]
+        globs: [".aider.conf.yml", "**/.aider.conf.yml", "aider.conf.yml", "**/aider.conf.yml", ".aider.model.settings.yml", ".aider.model.metadata.json", ".aiderignore", ".aider.chat.history.md", "**/.aider.chat.history.md"]
         weight: 0.9
       - type: user_agent
         patterns: ['(?i)\baider\b']

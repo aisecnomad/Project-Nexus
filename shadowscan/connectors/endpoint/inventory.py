@@ -44,7 +44,7 @@ from typing import Any, ClassVar
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.code.filesystem import _parse_mcp_servers
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.connectors.common import config_boolean, finalize
 from shadowscan.connectors.endpoint.catalog import (
     AI_EXTENSION_NAME,
