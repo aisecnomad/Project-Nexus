@@ -39,6 +39,9 @@ Runtime inventory coverage is currently **offline-only**. See the
 and the [endpoint and runtime guide](connectors/endpoint.md) for MCP, OTLP,
 Ollama, model-artifact metadata, and eBPF exports. These connectors do not
 perform live probes or local host filesystem discovery.
+Model metadata is not parsed from GGUF/safetensors files; MCP fingerprints have
+no rug-pull baseline, and the new inventories do not provide cross-surface
+correlation.
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and

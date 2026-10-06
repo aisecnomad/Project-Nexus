@@ -7,6 +7,7 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
+from itertools import islice
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector
@@ -16,6 +17,7 @@ from shadowscan.utils.redaction import sanitize_text
 
 _MAX_LABEL = 160
 _MAX_TOOLS = 500
+_MAX_OTEL_SPANS = 100_000
 _POISONING = re.compile(
     r"<\s*IMPORTANT\s*>|ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|"
     r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)|https?://",
@@ -49,27 +51,33 @@ def _attrs(value: object, warn: Callable[[str], None] | None = None) -> dict[str
     if isinstance(value, dict):
         if len(value) > 1000 and warn is not None:
             warn("gateway.otel: attribute limit reached")
-        return {
-            key: item
-            for key, item in list(value.items())[:1000]
-            if isinstance(key, str) and not _sensitive_attribute(key)
-        }
+        mapping_out: dict[str, Any] = {}
+        for key, item in islice(value.items(), 1000):
+            if not isinstance(key, str):
+                if warn is not None:
+                    warn("gateway.otel: malformed attribute key")
+                continue
+            if not _sensitive_attribute(key):
+                mapping_out[key] = item
+        return mapping_out
     if isinstance(value, list):
-        out: dict[str, Any] = {}
+        list_out: dict[str, Any] = {}
         if len(value) > 1000 and warn is not None:
             warn("gateway.otel: attribute limit reached")
         for item in value[:1000]:
-            if (
-                not isinstance(item, dict)
-                or not isinstance(item.get("key"), str)
-                or _sensitive_attribute(item["key"])
-            ):
+            if not isinstance(item, dict) or not isinstance(item.get("key"), str):
+                if warn is not None:
+                    warn("gateway.otel: malformed attribute")
+                continue
+            if _sensitive_attribute(item["key"]):
                 continue
             raw = item.get("value")
             if isinstance(raw, dict):
                 raw = next(iter(raw.values()), None)
-            out[item["key"]] = raw
-        return out
+            list_out[item["key"]] = raw
+        return list_out
+    if value is not None and warn is not None:
+        warn("gateway.otel: malformed attributes")
     return {}
 
 
@@ -77,35 +85,54 @@ def _records(
     records: Iterable[dict[str, Any]], warn: Callable[[str], None] | None = None
 ) -> Iterator[dict[str, Any]]:
     """Yield bounded-enough dict records from standard nested telemetry envelopes."""
+    span_count = 0
     for record in records:
         yield record
         spans = record.get("resourceSpans")
+        if "resourceSpans" not in record:
+            continue
         if not isinstance(spans, list):
+            if warn is not None:
+                warn("gateway.otel: malformed resource spans")
             continue
         if len(spans) > 1000 and warn is not None:
             warn("gateway.otel: resource span limit reached")
         for resource_span in spans[:1000]:
             if not isinstance(resource_span, dict):
+                if warn is not None:
+                    warn("gateway.otel: malformed resource span")
                 continue
             raw_resource = resource_span.get("resource")
             if not isinstance(raw_resource, dict):
-                if warn is not None:
+                if "resource" in resource_span and warn is not None:
                     warn("gateway.otel: malformed resource attributes")
                 raw_resource = {}
             resource = _attrs(raw_resource.get("attributes"), warn)
-            scopes = resource_span.get("scopeSpans", [])
+            scopes = resource_span.get("scopeSpans")
             if not isinstance(scopes, list):
+                if warn is not None:
+                    warn("gateway.otel: malformed scope spans")
                 continue
             if len(scopes) > 1000 and warn is not None:
                 warn("gateway.otel: scope span limit reached")
             for scope in scopes[:1000]:
                 if not isinstance(scope, dict) or not isinstance(scope.get("spans"), list):
+                    if warn is not None:
+                        warn("gateway.otel: malformed span collection")
                     continue
                 if len(scope["spans"]) > 1000 and warn is not None:
                     warn("gateway.otel: span limit reached")
                 for span in scope["spans"][:1000]:
-                    if isinstance(span, dict):
-                        yield {"resource": resource, **span}
+                    if not isinstance(span, dict):
+                        if warn is not None:
+                            warn("gateway.otel: malformed span")
+                        continue
+                    if span_count >= _MAX_OTEL_SPANS:
+                        if warn is not None:
+                            warn("gateway.otel: aggregate span limit reached")
+                        return
+                    span_count += 1
+                    yield {"resource": resource, **span}
 
 
 class _EndpointConnector(BaseConnector):
@@ -216,6 +243,9 @@ class MCPInventoryConnector(_EndpointConnector):
                     break
                 count += 1
                 name = _text(tool.get("name"))
+                if not name:
+                    self.ctx.warn("endpoint.mcp: tool has no valid name")
+                    continue
                 if name:
                     names_by_server[server].add(name.casefold())
                 staged.append((server, tool))
@@ -322,7 +352,10 @@ class OllamaConnector(_EndpointConnector):
         for record in records:
             models = record.get("models")
             if not isinstance(models, list):
-                if any(key in record for key in ("version", "models", "processes")):
+                if "models" in record:
+                    self.ctx.warn("endpoint.ollama: malformed model inventory")
+                    continue
+                if any(key in record for key in ("version", "processes")):
                     models = []
                 else:
                     self.ctx.warn("endpoint.ollama: malformed model inventory")
@@ -334,8 +367,6 @@ class OllamaConnector(_EndpointConnector):
             host = _text(record.get("host") or record.get("endpoint") or record.get("url")).lower()
             if host and not any(x in host for x in ("localhost", "127.0.0.1", "::1")):
                 tags.append("exposed-llm-server")
-            if len(models) > 500:
-                self.ctx.warn("endpoint.ollama: model limit reached")
             for model in models[:500]:
                 if not isinstance(model, dict):
                     self.ctx.warn("endpoint.ollama: malformed model entry")
@@ -349,7 +380,7 @@ class OllamaConnector(_EndpointConnector):
                     f"Local LLM model {model_name}",
                     provider="ollama",
                     tags=tags,
-                    metadata={"size": model.get("size")} if isinstance(model.get("size"), int) else {},
+                    metadata={"size": model["size"]} if type(model.get("size")) is int else {},
                     weight=0.75,
                 )
             self.ctx.examined()
@@ -384,12 +415,18 @@ class ModelArtifactConnector(_EndpointConnector):
                         if isinstance(meta.get(key), str)
                     }
                 )
+            elif meta is not None:
+                self.ctx.warn("endpoint.models: malformed artifact metadata")
             size = record.get("size")
-            if isinstance(size, int) and 0 <= size < 2**63:
+            if type(size) is int and 0 <= size < 2**63:
                 metadata["size"] = size
+            elif size is not None:
+                self.ctx.warn("endpoint.models: malformed artifact size")
             digest = record.get("sha256")
             if isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest):
                 metadata["sha256"] = digest.lower()
+            elif digest is not None:
+                self.ctx.warn("endpoint.models: malformed artifact digest")
             yield self._finding(
                 path,
                 "model-artifact",
@@ -416,6 +453,8 @@ class EbpfConnector(_EndpointConnector):
             if isinstance(process, dict):
                 serialized += " " + _text(process.get("binary") or process.get("name"))
             else:
+                if process is not None:
+                    self.ctx.warn("endpoint.ebpf: malformed process")
                 serialized += " " + _text(record.get("binary") or record.get("process_name"))
             lower = serialized.lower()
             port = str(record.get("port") or record.get("destination_port") or "")

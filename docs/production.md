@@ -777,6 +777,20 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### Offline endpoint and runtime inventory limits
+
+The `endpoint` surface and `gateway.otel` currently analyze offline exports only.
+They do not make live API calls, probe endpoint URLs, discover host configuration
+files, or read model directories. Kubernetes and OpenShift inventories are also
+offline-only; do not provide kubeconfig material, Secret values, service-account
+tokens, environment values, or image pull credentials in an export.
+
+`endpoint.models` consumes metadata produced elsewhere; it does not parse GGUF or
+safetensors files. MCP tool fingerprints are not compared with a saved baseline,
+so rug-pull detection is not implemented. These new inventories do not correlate
+findings across surfaces. Treat their output as bounded inventory evidence, not
+live execution or deployment attestation.
+
 ### October 3 source capability attribution migration
 
 Re-scan code with this candidate before comparing its risk to earlier reports.

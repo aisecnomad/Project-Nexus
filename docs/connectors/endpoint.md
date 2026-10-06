@@ -5,6 +5,9 @@ JSONL, or YAML exports. They do not probe network services, discover local
 configuration files, or traverse model directories in the current version.
 Supply only synthetic or appropriately sanitized exports.
 
+These offline inventories do not provide cross-surface correlation. In
+particular, MCP tool fingerprints are not compared with a rug-pull baseline.
+
 | Connector | Offline input |
 |---|---|
 | `endpoint.host` | Host/MDM inventory records with a runtime or configuration name |
