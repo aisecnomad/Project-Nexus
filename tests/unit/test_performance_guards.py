@@ -26,6 +26,7 @@ from shadowscan.engine import Engine
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import (
     _HOST_TOKEN_RX,
+    keep_secret_matches,
     language_for_path,
     plain_host_hints,
     required_literal,
@@ -479,6 +480,10 @@ def _reference_regex_matches(
                     break
             if hits >= max_per_signal:
                 break
+    if signal_type == "secret":
+        # match_secrets applies the same deterministic post-filter after the regex pass.
+        keep = keep_secret_matches([(sig_id, value, line) for sig_id, _, value, _, line in out])
+        out = [item for item, kept in zip(out, keep, strict=True) if kept]
     return out
 
 

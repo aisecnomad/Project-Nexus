@@ -141,17 +141,32 @@ def _budgeted_search(rx: Any, text: str, context: str, timeout: float) -> Any:
     return _search(rx, text, context)
 
 
-_ASSIGNED_CREDENTIAL = re.compile(r"\b[A-Za-z_][A-Za-z0-9_.-]*[ \t]*[=:][ \t]*[\"']?([^\"'\s,;]+)")
+GENERIC_CREDENTIAL = "heuristic.inline-credential"
+_VALUE_END = frozenset("\"',;")
+
+
+def _assigned_value(value: str) -> str:
+    """The value of a ``NAME = value`` or ``NAME: value`` match, or the whole text when it is no assignment.
+
+    Plain string scanning, so the cost stays linear in the match length.
+    """
+    positions = [i for i in (value.find("="), value.find(":")) if i >= 0]
+    if not positions:
+        return value
+    rest = value[min(positions) + 1 :].lstrip(" \t").lstrip("\"'")
+    for i, char in enumerate(rest):
+        if char in _VALUE_END or char.isspace():
+            return rest[:i]
+    return rest
 
 
 def _high_entropy_credential(value: str) -> bool:
     """Require a generic assigned credential to be long and sufficiently diverse."""
-    match = _ASSIGNED_CREDENTIAL.search(value)
-    candidate = match.group(1) if match else value
+    candidate = _assigned_value(value)
     if len(candidate) < 16:
         return False
     body = re.sub(r"[^A-Za-z0-9]", "", candidate)
-    if len(set(body)) <= 2:
+    if len(body) < 2 or len(set(body)) <= 2:
         return False
     adjacent = sum(abs(ord(left) - ord(right)) <= 1 for left, right in zip(body, body[1:], strict=False))
     if adjacent / (len(body) - 1) >= 0.5:
@@ -159,6 +174,28 @@ def _high_entropy_credential(value: str) -> bool:
     counts = Counter(candidate)
     entropy = -sum((count / len(candidate)) * math.log2(count / len(candidate)) for count in counts.values())
     return entropy >= 3.0
+
+
+def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[bool]:
+    """Which ``(signature id, value, line)`` secret matches to keep.
+
+    A generic assigned-credential match is kept only when its value looks
+    random and no specific credential pattern matched the same value on the
+    same line: ``OPENAI_API_KEY=sk-...`` is one OpenAI key, not two findings.
+    """
+    specific: dict[int | None, list[str]] = {}
+    for signature_id, value, line in matches:
+        if signature_id != GENERIC_CREDENTIAL:
+            specific.setdefault(line, []).append(value)
+    keep = []
+    for signature_id, value, line in matches:
+        if signature_id != GENERIC_CREDENTIAL:
+            keep.append(True)
+            continue
+        candidate = _assigned_value(value)
+        repeated = any(other in value or candidate in other for other in specific.get(line, ()))
+        keep.append(not repeated and _high_entropy_credential(value))
+    return keep
 
 
 # ------------------------------------------------------- domain prefilters
@@ -1067,11 +1104,8 @@ class SignatureIndex:
 
     def match_secrets(self, text: str) -> list[Match]:
         matches = self._match_regex_signals("secret", text, None, max_per_signal=5)
-        return [
-            match
-            for match in matches
-            if match.signature_id != "heuristic.inline-credential" or _high_entropy_credential(match.value)
-        ]
+        keep = keep_secret_matches([(m.signature_id, m.value, m.line) for m in matches])
+        return [match for match, kept in zip(matches, keep, strict=True) if kept]
 
     def match_user_agent(self, ua: str) -> list[Match]:
         if not ua:
