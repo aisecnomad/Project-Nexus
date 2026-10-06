@@ -17,6 +17,20 @@ summarizes each release for people who install and operate ShadowScan.
   Windsurf), so an install without `cline_mcp_settings.json` is found.
 - `review_corpus.json` gains both cases and two look-alike negatives; the
   positives fail on the previous signatures.
+- MCP configuration findings report static server risks: a package or image
+  fetched without an exact version or digest (`mcp-unpinned-package`), a
+  filesystem server rooted at `/` or a home directory
+  (`mcp-broad-filesystem`), a shell-wrapped launch (`mcp-shell-command`),
+  plaintext remote transport and auto-approved tools. The checks read the
+  sanitized server record only; nothing is started or fetched.
+- Coding-agent configuration findings report posture from the agent's own
+  settings: Claude Code `bypassPermissions` and unrestricted `Bash` allow
+  rules, Codex `approval_policy = "never"` and `danger-full-access`, Goose
+  `GOOSE_MODE: auto`, and an OpenClaw gateway exposed beyond loopback or
+  without an auth token. Only enumerated setting values are reported.
+- A `coding-agent.openclaw` signature recognizes OpenClaw state directories.
+- New default risk weights for these tags; see `docs/concepts/risk.md` and the
+  October 6 migration note in `docs/production.md`.
 
 ### Security-review follow-ups
 

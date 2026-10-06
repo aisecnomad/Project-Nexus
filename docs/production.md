@@ -764,6 +764,25 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 6 benchmark follow-ups
+
+Re-scan before comparing risk with earlier reports. MCP configuration
+findings gain `mcp-unpinned-package` (+10), `mcp-broad-filesystem` (+10) and
+`mcp-shell-command` (+5), and coding-agent configuration findings gain posture
+tags read from the agent's own settings: `posture-permissions-bypassed` (+15),
+`posture-unrestricted-shell` (+10), `posture-unsandboxed` (+10),
+`posture-exposed-gateway` (+15) and `posture-unauthenticated-gateway` (+15).
+Each server record in `metadata.servers` lists its `risks`, and
+`metadata.posture` names the client, setting, enumerated value and file. A
+finding can therefore rise a level without any repository change. Override a
+weight with `options.risk_weights.tags` if your policy differs. The new
+evidence has weight 0, so confidence and finding identity are unchanged.
+OpenClaw state directories (`.openclaw/openclaw.json` and workspace files)
+are now attributed to a new `coding-agent.openclaw` signature, so findings that
+previously fell under a generic instruction-file signature may change their
+framework list; finding IDs depend on the resource and discriminator, and the
+discriminator of a coding-agent configuration includes its signature id.
+
 ### October 3 source capability attribution migration
 
 Re-scan code with this candidate before comparing its risk to earlier reports.

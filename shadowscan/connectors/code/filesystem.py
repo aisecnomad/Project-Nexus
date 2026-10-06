@@ -116,6 +116,9 @@ from shadowscan.connectors.common import (
     looks_like_placeholder,
     placeholder_reason,
 )
+from shadowscan.connectors.mcp_risk import assess_server
+from shadowscan.connectors.posture import CLIENT_SIGNATURES, POSTURE_DESCRIPTIONS
+from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -589,6 +592,8 @@ class _Project:
     # Data files that declare what a deployment or a job runs with: never catalogs.
     configuration_files: set[str] = field(default_factory=set)
     mcp_tools_limited: bool = False
+    # Coding-agent signature id -> posture issues read from its settings files.
+    posture: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -2004,6 +2009,13 @@ class FilesystemConnector(BaseConnector):
                 continue
             m.extra["verified_agent"] = file.card_valid
             self._record(file.proj, m, file.rel, None)
+        issues = assess_posture(file.rel, file.text)
+        if issues:
+            for issue in issues:
+                sig_id = CLIENT_SIGNATURES[issue.client]
+                entry = {**issue.as_dict(), "file": file.rel}
+                if entry not in file.proj.posture.setdefault(sig_id, []):
+                    file.proj.posture[sig_id].append(entry)
 
     def _detect_secrets(self, scan: _ScanState, file: _SourceFile) -> None:
         """Collect provider credentials from the file text and a notebook's raw document.
@@ -3183,6 +3195,9 @@ class FilesystemConnector(BaseConnector):
         for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
             apply_matches(f, [m], location=rel, snippet=snip)
         f.metadata["files"] = sorted(files)
+        posture = proj.posture.get(sig_id, [])
+        if posture:
+            _apply_posture(f, posture)
         defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
         if defs:
             f.metadata["agent_definitions"] = defs
@@ -3365,6 +3380,7 @@ class FilesystemConnector(BaseConnector):
                         weight=0.3,
                     )
                 )
+            _apply_mcp_risks(f, s, rel)
             cmd = " ".join([str(s.get("command") or "")] + [str(a) for a in s.get("args", [])]).lower()
             for capability, keywords in _MCP_CAPABILITY_KEYWORDS:
                 if any(k in cmd for k in keywords):
@@ -3897,6 +3913,42 @@ def _nearest_root(rel_dir: str, roots: list[str]) -> str:
     while len(roots) > 1 and rel_dir != roots[-1] and not rel_dir.startswith(roots[-1] + "/"):
         roots.pop()
     return roots[-1]
+
+
+def _apply_mcp_risks(f: Finding, server: dict[str, Any], rel: str) -> None:
+    """Record a configured server's static risks as tags and zero-weight evidence."""
+    risks = [] if server.get("disabled") else assess_server(server)
+    server["risks"] = [risk.id for risk in risks]
+    for risk in risks:
+        f.add_tag(risk.id)
+        f.add_evidence(
+            Evidence(
+                signal=f"mcp-risk:{risk.id}",
+                description=f"MCP server '{server.get('name')}' {risk.description} ({risk.detail})",
+                location=rel,
+                weight=0.0,
+            )
+        )
+
+
+def _apply_posture(f: Finding, posture: list[dict[str, str]]) -> None:
+    """Record settings that remove an agent safeguard as tags and zero-weight evidence."""
+    f.metadata["posture"] = posture
+    for issue in posture:
+        f.add_tag(issue["id"])
+        if issue["id"] == "posture-permissions-bypassed":
+            f.add_capability("autonomous")
+        f.add_evidence(
+            Evidence(
+                signal=f"posture:{issue['id']}",
+                description=(
+                    f"{issue['client']} {POSTURE_DESCRIPTIONS[issue['id']]} "
+                    f"({issue['setting']} = {issue['value']})"
+                ),
+                location=issue["file"],
+                weight=0.0,
+            )
+        )
 
 
 def _mcp_client_for(rel: str) -> str:

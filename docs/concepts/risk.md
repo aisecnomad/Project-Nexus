@@ -78,6 +78,14 @@ include:
 | `tag:public-network` | Public network access enabled | 5 |
 | `tag:public-ingress` | Publicly reachable ingress | 10 |
 | `tag:public-principal` | Granted to `allUsers` / `allAuthenticatedUsers` | 20 |
+| `tag:mcp-unpinned-package` | An MCP server is fetched by `npx`, `uvx`, `pipx run`, `docker run` and similar without an exact version or image digest | 10 |
+| `tag:mcp-broad-filesystem` | An MCP filesystem server is given `/`, a drive root or a home directory | 10 |
+| `tag:mcp-shell-command` | An MCP server is started through `sh -c`, `cmd /c` or `powershell -Command` | 5 |
+| `tag:posture-permissions-bypassed` | An agent's settings run tool calls without approval (Claude Code `bypassPermissions`, Codex `approval_policy = "never"`, Goose `GOOSE_MODE: auto`) | 15 |
+| `tag:posture-unrestricted-shell` | An agent may run any shell command (a bare `Bash` or `Bash(*)` allow rule, OpenClaw shell access) | 10 |
+| `tag:posture-unsandboxed` | Codex `sandbox_mode = "danger-full-access"` | 10 |
+| `tag:posture-exposed-gateway` | An OpenClaw gateway listens beyond loopback | 15 |
+| `tag:posture-unauthenticated-gateway` | That exposed gateway has no auth token | 15 |
 | `capability:code-exec` | Can execute arbitrary code | 15 |
 | `capability:autonomous` | Operates without human approval | 10 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
@@ -94,6 +102,9 @@ a zero weight add no factor. Some factors depend on finding metadata:
 `mcp-stdio` (5), `mcp-auto-approve` (10), `mcp-plain-http` (10), `sub-agents`
 (3 per definition, at most 10), `volume` (5 from 1,000 gateway events, 10 from
 10,000) and `blast-radius` (5 from 10 users or installations, 10 from 100).
+The `mcp-auto-approve` and `mcp-insecure-transport` tags label the servers
+those metadata factors already score, so they carry no weight of their own.
+Posture and MCP-risk evidence has weight 0: it changes risk, not confidence.
 `options.risk_weights` overrides weights; see the README's risk policy. Its
 keys are checked, so a typo cannot silently change nothing: unknown groups,
 `kinds` and `governance` keys are rejected, `capabilities` keys must be one of
