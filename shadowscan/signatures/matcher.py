@@ -176,6 +176,16 @@ def _high_entropy_credential(value: str) -> bool:
     return entropy >= 3.0
 
 
+def keep_file_matches(signatures: Sequence[Signature]) -> list[bool]:
+    """Which of one file's signature matches to keep.
+
+    A coding agent's own configuration file belongs to that agent: a broader
+    signature from the same vendor matching the same file would count it twice.
+    """
+    agents = {s.vendor for s in signatures if s.category == "coding-agent" and s.vendor}
+    return [s.category == "coding-agent" or s.vendor not in agents for s in signatures]
+
+
 def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[bool]:
     """Which ``(signature id, value, line)`` secret matches to keep.
 
@@ -1140,16 +1150,8 @@ class SignatureIndex:
                 if whole.match(key) or whole.match(base) or (tail is not None and tail.match(key)):
                     out.append(Match(sig, s, rel, s.weight))
                     break
-        # A coding agent's own configuration file belongs to that agent: a broader
-        # signature from the same vendor matching the file would count it twice.
-        agents = {
-            m.signature.vendor for m in out if m.signature.category == "coding-agent" and m.signature.vendor
-        }
-        if agents:
-            out = [
-                m for m in out if m.signature.category == "coding-agent" or m.signature.vendor not in agents
-            ]
-        return out
+        keep = keep_file_matches([m.signature for m in out])
+        return [m for m, kept in zip(out, keep, strict=True) if kept]
 
     def match_env(self, name: str) -> list[Match]:
         out: list[Match] = []

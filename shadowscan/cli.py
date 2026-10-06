@@ -234,7 +234,9 @@ def _run_and_emit_with_deadline(
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
     try:
-        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows, index=engine.index)
+        # The scan's own index names custom-pack signatures in the CycloneDX output.
+        index = getattr(engine, "index", None)
+        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows, index=index)
     except Exception:  # any emission failure must still release an abandoned CLI worker
         if engine.abandoned_workers:
             _exit_abandoned_workers(
