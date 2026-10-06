@@ -109,6 +109,17 @@ def test_plan_refuses_wrong_identity_or_scope_and_missing_existing_controls(fiel
         prepare_payload(source, ruleset_id=23913372)
 
 
+@pytest.mark.parametrize("ruleset_id", RULESETS)
+def test_readback_names_a_withheld_bypass_list_instead_of_a_wrong_identity(ruleset_id: int) -> None:
+    # The read-only audit token is not shown bypass_actors: unknown assurance, not an empty list.
+    expected = json.loads((ROOT / ".github/rulesets" / f"{ruleset_id}.update.json").read_text())
+    readback = _readback(expected, ruleset_id)
+    del readback["bypass_actors"]
+    with pytest.raises(ValueError, match="omits bypass_actors") as refused:
+        verify_readback(readback, expected, ruleset_id=ruleset_id)
+    assert "expected repository" not in str(refused.value)
+
+
 @pytest.mark.parametrize("count", [True, -1, 1.5, "1", None])
 def test_plan_refuses_ambiguous_approval_counts(count: Any) -> None:
     source = _snapshot()

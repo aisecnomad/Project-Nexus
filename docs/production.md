@@ -524,6 +524,18 @@ On 2026-10-04, both rulesets read back as `enforcement: disabled` again,
 and the `main` branch response reported `protected: false`. The available
 GitHub connector exposes no administration-write operation; restoring the
 reviewed policy and verifying exact readback requires an administrator.
+On 2026-10-06 (23:50 UTC; both last updated at 20:16 UTC), both rulesets
+read back `enforcement: active` in complete responses that included
+`bypass_actors`, the `main` branch response reported `protected: true`, and
+the classic branch-protection endpoint answered HTTP 404 `Branch not
+protected`. `Require CI and CodeQL` requires one approving review with stale
+reviews dismissed, the strict checks `test (3.11)`, `test (3.12)` and
+`analyze`, CodeQL and code-quality gating and signed commits, and lists no
+bypass actors; it still omits `CI gate`, the checks' application binding,
+last-push approval and review-thread resolution. `Protect main` requires no
+approval, adds linear history and deletion protection, and still lists the
+administrator role and three integrations as `always` bypass actors. The
+weekly audit keeps failing until the reviewed payloads are applied.
 
 Classic branch protection is not readable through the app
 integration. Read and retain the current configuration before changing it,

@@ -11,8 +11,10 @@ approval and resolved-review-thread requirements. `Protect main` retained four
 bypass actors. Separate classic branch protection was unavailable to the
 integration used for those reads. Check the live settings rather than treating
 any dated observation as permanent. On 2026-10-04, both rulesets read back
-disabled. The available GitHub connector has no administration-write operation;
-an administrator must restore the reviewed settings and verify exact readback.
+disabled. On 2026-10-06 both read back active again with the same gaps as on
+2026-10-03, and `Protect main` still listed four bypass actors. The available
+GitHub connector has no administration-write operation; an administrator must
+restore the reviewed settings and verify exact readback.
 
 The policy retains the existing CodeQL, signature and status requirements and
 adds the aggregate `CI gate`. Required checks are bound to the GitHub Actions
@@ -110,7 +112,10 @@ has a separate read-only job that fetches both current rulesets and compares
 their repository identities and settings to the reviewed update payloads. It
 also runs on manual dispatch from `main`. A disabled rule, omitted bypass
 information, missing aggregate `CI gate`, wrong application binding, changed
-policy, malformed response or denied read fails the audit. Review any drift
+policy, malformed response or denied read fails the audit. The error names
+omitted fields (`ruleset response omits bypass_actors`) separately from
+settings that differ (`readback differs from reviewed payload: …`), so a
+withheld bypass list is not mistaken for drift. Review any drift
 before intentionally updating the versioned policy, including stronger changes.
 
 The job uses only the workflow's read-only token and never applies settings or

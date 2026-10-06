@@ -42,6 +42,20 @@ summarizes each release for people who install and operate ShadowScan.
   workers collected different test IDs and `make test-parallel` stopped at
   collection. The case now has a fixed ID.
 
+### October 6 merge-policy audit diagnostics
+
+- The first scheduled merge-policy audit failed with "ruleset response does
+  not match the expected repository and ruleset". A response missing a managed
+  field produced the same message as a wrong repository or ruleset, and GitHub
+  returns `bypass_actors` only to a caller with write access to the ruleset,
+  which the read-only workflow token lacks. The verifier now names omitted
+  fields separately. The job still fails until an administrator applies the
+  reviewed payloads and a complete readback matches them; a complete readback
+  taken on 2026-10-06 reports `readback differs from reviewed payload:
+  bypass_actors, rules`.
+- `docs/production.md` and `docs/operations/merge-policy.md` record that
+  readback: both rulesets active again, with the gaps observed on 2026-10-03.
+
 ### October 6 head-to-head benchmark follow-ups
 
 - The Goose signature matches the user configuration Goose writes on first
