@@ -10,12 +10,25 @@
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
+> **Project status**
+> - **Unreleased:** `0.1.1` is an unreleased candidate.
+> - **Development:** One maintainer; apart from Dependabot, commits are
+>   maintainer-written or AI-generated and maintainer-reviewed.
+> - **Review:** No independent human review has been recorded; it is required before a tagged release.
+> - **Deployment:** Review the exact revision and pin its full 40-character SHA.
+>
+> See [project status](#project-status) and the
+> [merge gate and review status](docs/production.md#merge-gate-and-review-status).
+
+> **What a finding does and does not establish:** Static code signals identify
+> candidates; trusted runtime evidence is needed to establish execution. Counts
+> and severity labels need analyst review before they drive enforcement.
+
 It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
 agent registry of
-[Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
-Counts and severity labels need an analyst review before they drive enforcement.
+[Agent Cards](agent-card.yaml).
 
 Example output, abridged to the first columns (totals vary as signatures evolve;
 `--max-rows 5` shows the five highest-risk rows of the bundled offline demo):
@@ -52,33 +65,33 @@ registered in the agent registry supplied for this scan?*
 | Gateway event | The supplied log contains a request or tool-use signal. | Verify the log's origin, caller binding, and observation window before attributing it to a deployed agent. |
 | `shadow: true` | No single explicit binding in the **supplied** inventory matched the finding. | Confirm the inventory's scope and freshness; an unmatched finding alone does not prove unauthorized use. |
 
-Confidence is a heuristic evidence score, not a measured probability. Detection
-quality depends on the repositories, providers, tenant permissions, and log
-provenance in your environment. The bundled evaluation corpora are
-author-written regression cases, including multi-file cases with documented
-misses, not a field precision or recall estimate. See
-[evaluation](docs/evaluation.md) and
-[rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
-threshold as a production gate.
+### Evidence and assurance limits
 
-The [assurance results](docs/assurance-results.md) preserve the baseline and
-subsequent results on a frozen corpus of 42 public files (30 negatives) that
-two AI reviewers labeled before evaluation. The labelers share model
-capabilities, so the labels are not independent human ground truth, and the
-corpus has since informed the implementation; only the baseline is out of
-sample. [Read-only AWS and Slack canaries](docs/canaries.md)
-validate named tenant controls when approved credentials are supplied; offline
-replay does not establish live tenant acceptance.
-
-Deployment evidence can be checked with the offline
-[acceptance verifier](tools/acceptance/README.md). It requires current source and
-signature identities, declared human-reviewed holdout evidence, and live tenant
-receipts for supported live deployment scopes. It validates supplied evidence;
-it cannot authenticate reviewer independence or manufacture tenant acceptance.
-The [release-evidence workflow](.github/workflows/release.yml) builds a candidate
-wheel and retains hashes, a runtime dependency SBOM, and provenance after the
-selected commit passes CI and CodeQL. Artifact provenance does not establish deployment
-acceptance, and the workflow does not publish a release.
+- **Evaluation corpora:** These are author-written regression cases, including
+  multi-file cases with documented misses; they do not estimate field precision
+  or recall. Confidence is a heuristic evidence score, not a measured probability,
+  and detection quality depends on repositories, providers, tenant permissions
+  and log provenance. See [evaluation](docs/evaluation.md) and
+  [rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
+  threshold as a production gate.
+- **Assurance results:** The baseline and later results use a frozen corpus of
+  42 public files (30 negatives), labeled by two AI reviewers before evaluation.
+  The labelers share model capabilities, so these are not independent human
+  ground truth; the corpus has since informed implementation, and only the
+  baseline is out of sample.
+- **Canaries:** [Read-only AWS and Slack canaries](docs/canaries.md) validate
+  named tenant controls when approved credentials are supplied; offline replay
+  does not establish live tenant acceptance.
+- **Acceptance verifier:** The offline
+  [verifier](tools/acceptance/README.md) requires current source and signature
+  identities, declared human-reviewed holdout evidence, and live tenant receipts
+  for supported live deployment scopes. It validates supplied evidence but
+  cannot authenticate reviewer independence or manufacture tenant acceptance.
+- **Release-evidence workflow:** The
+  [workflow](.github/workflows/release.yml) builds a candidate wheel and retains
+  hashes, a runtime dependency SBOM and provenance after the selected commit
+  passes CI and CodeQL. This does not establish deployment acceptance, and the
+  workflow does not publish a release.
 
 ## Surfaces & connectors
 
@@ -97,7 +110,7 @@ Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the connector guide for the supported modes and provider scope.
 Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export.
 
-## Frameworks & products recognised
+## Frameworks & products recognized
 
 215 signatures / 1006 signals, YAML-defined with explicit opt-in overrides:
 
@@ -115,9 +128,8 @@ tells you what a package, host, user agent, model id, scope or file path maps to
 
 ## Project status
 
-* **Unreleased.** `0.1.1` is a candidate version string: there is no tag, no
-  published package and no signed artifact. The package classifier is
-  `Development Status :: 3 - Alpha`.
+* **Release state.** There is no tag, published package or signed artifact. The
+  package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** One account merges every
   change. Apart from Dependabot updates, every commit was written by that
   maintainer or generated with an AI coding assistant, often in large batches,
@@ -212,7 +224,7 @@ shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif
 shadowscan run identity.entra --set tenant_id=$AZURE_TENANT_ID
 shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
 # Read exports/manifest.json and use the exported filename for this instance:
-shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse later, offline
+shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # reanalyze later, offline
 
 # 5. Logs and tokens
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
@@ -268,56 +280,63 @@ connectors:
     cloudtrail_days: 7
 ```
 
-`shadowscan connectors` lists every connector with its configuration keys and
-required extras; `shadowscan connectors --json` also includes each connector's
-offline export formats. Every entry also accepts `enabled` (default true) and
-`label` (a distinct id when a connector runs more than once). See
-[docs/connectors.md](docs/connectors.md) for entry keys, credentials, and
-least-privilege scopes per connector. Run repository scans in
-a separate job/configuration from live tenant collection. Mixing these credential
-boundaries requires an explicit `allow_credential_mixing` exception; keep the
-separation for untrusted repositories. Cloud instance-metadata credentials require
-`allow_instance_credentials: true`; use an explicit audit identity by default.
+#### Credential boundaries
 
-Use `--incremental` to reuse completed scans of unchanged local checkouts and
-static cloud exports. Live APIs and gateway logs are refreshed on every run.
-Configure `gateway.logs.correlation_bindings` to link a code resource to a
-specific gateway caller and scope; matching timestamped framework fingerprints
-then appear in `metadata.runtime_activity`, including the observation window
-and any production label claimed in the logs. Treat caller and environment
-fields according to the export's provenance; ShadowScan does not authenticate
-the source of an imported log. See [scan state and runtime correlation](docs/scanning.md)
-for configuration, limitations, and migration guidance.
+`shadowscan connectors` lists each connector's configuration keys and required
+extras; `shadowscan connectors --json` also lists offline export formats. Entries
+accept `enabled` (default `true`) and `label` (a distinct ID when a connector runs
+more than once). See [connector keys and least-privilege scopes](docs/connectors.md).
+Run repository scans separately from live tenant collection. Mixing these
+credential boundaries requires the explicit `allow_credential_mixing` exception;
+keep them separate for untrusted repositories. Cloud instance-metadata credentials
+require `allow_instance_credentials: true`; use an explicit audit identity by default.
 
-Oversize files that the scanner would inspect and symbolic links that leave the
-scan root make coverage incomplete (exit 3) by default. `--strict-coverage`
-(`strict_coverage: true`) records them as errors instead of warnings; explicitly
-declared `oversize_skip_globs` remain warnings. An in-root link stays complete
-when its own name is never read (a lockfile or an image) or when it is a source
+#### Coverage and exit codes
+
+Oversize files the scanner would inspect and symbolic links that leave the scan
+root make coverage incomplete (exit 3) by default. `--strict-coverage`
+(`strict_coverage: true`) records them as errors instead of warnings;
+`oversize_skip_globs` remain declared warnings. An in-root link is complete when
+its name is never read (for example, a lockfile or image), or when it is a source
 file whose target is analyzed in the same project with the same test
-classification; directory links are incomplete because their alias paths are
-not scanned. A file the scanner analyzes by name but cannot read as text (a NUL
-byte outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) is a gap
-too. A non-empty `bin/`, `build/`, `dist/`, `vendor/` or similar directory that
-the walk skips by default is listed in a warning; `--no-default-excludes` scans
-those directories. Evidence found only in test or fixture code cannot establish
-an agent unless `--include-tests` is set.
+classification. Directory links are incomplete because their alias paths are
+not scanned. A file analyzed by name but unreadable as text (a NUL byte outside
+UTF-8, UTF-16 or UTF-32 with a byte-order mark) is also a gap. Non-empty
+`bin/`, `build/`, `dist/`, `vendor/` and similar directories skipped by default
+are listed in a warning; `--no-default-excludes` scans them. Evidence found only
+in test or fixture code cannot establish an agent unless `--include-tests` is set.
+See [scan semantics](docs/scanning.md) for the full coverage policy.
 
-The CLI exits **3** for incomplete scans, **2** for a completed scan that reaches
-`--fail-on`, **1** when the command produced no scan result (an invalid option,
-value, path or configuration, or a setup or output error), and **0** for a
-completed scan that passes. `shadowscan diff` exits **3** when the two reports
-are not comparable. Gate CI on any non-zero exit. SARIF records incomplete
-scans as unsuccessful, while preserving findings from successfully assessed inputs.
-Enable `--fail-on` only after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
+| Exit | Meaning |
+|---|---|
+| **3** | Scan incomplete. `shadowscan diff` also returns 3 when reports are incomparable. |
+| **2** | Scan completed but reached `--fail-on`. |
+| **1** | No scan result: invalid option, value, path or configuration, or setup/output error. |
+| **0** | Scan completed and passed. |
+
+Gate CI on any non-zero exit. SARIF marks incomplete scans unsuccessful while
+preserving findings from successfully assessed inputs. Enable `--fail-on` only
+after a [frozen, independently adjudicated holdout](docs/evaluation.md#gate-a-frozen-holdout)
 and [read-only tenant canary](docs/evaluation.md#read-only-tenant-canary-procedure)
 establish an acceptable threshold for that environment. A complete static scan
-does not prove that an agent executed or that every eligible resource was collected.
-The CLI normally exits promptly after a connector deadline even when a blocked
-worker cannot be joined. A filesystem publication already in progress can still
-delay timeout handling; enforce a host job timeout for hard limits.
-Confidence thresholds must be finite numbers from 0 to 1; invalid CLI or YAML
-values stop the scan before the risk gate runs.
+does not prove agent execution or collection of every eligible resource. The CLI
+normally exits promptly after a connector deadline even if a blocked worker
+cannot be joined; filesystem publication already in progress can delay timeout
+handling, so enforce a host job timeout for hard limits. Confidence thresholds
+must be finite numbers from 0 to 1; invalid CLI or YAML values stop the scan
+before the risk gate runs.
+
+#### Incremental and runtime correlation
+
+Use `--incremental` to reuse completed scans of unchanged local checkouts and
+static cloud exports. Live APIs and gateway logs are refreshed on each run.
+Configure `gateway.logs.correlation_bindings` to link a code resource to a
+specific gateway caller and scope. Matching timestamped framework fingerprints
+then appear in `metadata.runtime_activity`, including the observation window and
+any production label claimed in the logs. Treat caller and environment fields
+according to export provenance; ShadowScan does not authenticate an imported
+log's source. See [scan state and runtime correlation](docs/scanning.md) for
+configuration and limitations.
 
 Git history enrichment is disabled by default. Set connector `use_git: true`
 only for a reviewed local checkout when author/history metadata is needed;
@@ -325,10 +344,12 @@ metadata commands cannot fetch missing objects. Every explicit `--only` selector
 must match an enabled connector name or label. Unsupported records and saved API
 error responses cannot establish an empty, successful inventory.
 
+#### Upgrading baselines
+
 After upgrading from reports without the v2 finding-identity schema, regenerate
-your comparison baseline. Findings now keep their identity when inferred classification changes;
-legacy baselines cannot establish resolution under the new identity schema.
-See [deployment and migration](docs/production.md) for the rollout checks.
+your comparison baseline. Findings retain identity when inferred classification
+changes; legacy baselines cannot establish resolution under the new schema. See
+[deployment and migration](docs/production.md) for rollout checks.
 
 ## What a finding looks like
 
@@ -365,14 +386,13 @@ Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations; results are warnings or notes with the
 heuristic risk level, never a CVSS `security-severity`, see
 [severity](docs/severity.md)), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down). In `csv` output a literal `'` is
-inserted at the start of a value, and after each `,`, `;`, tab, `|` or line
-break inside it, where the text that follows begins with `=`, `+`, `-` or `@`
-(also after whitespace or quotes) or with a tab or carriage return.
-Spreadsheets then read such cells as text (common for `@team` owners)
-whichever delimiter they split on. A value that begins with a line feed is
-marked too; other tabs and line breaks inside a value are left alone. Strip
-those markers when consuming the file programmatically, or use `json`.
+filterable, with evidence drill-down). CSV inserts a literal `'` at the start of
+a value, and after each `,`, `;`, tab, `|` or line break inside it, when the
+following text begins with `=`, `+`, `-` or `@` (also after whitespace or
+quotes), a tab or a carriage return; values beginning with a line feed are also
+marked. Other tabs and line breaks remain unchanged, and spreadsheet cells are
+read as text regardless of delimiter. Strip markers for programmatic use or use
+`json`; see [output and inventory migration](docs/production.md#output-and-inventory-migration).
 `markdown` output defangs links (`hxxps://`, `www[.]`) and writes `@` as `[@]`
 in untrusted text, so a report pasted into an issue or pull request creates no
 links, @-mentions or e-mail links; code spans keep identifiers verbatim.

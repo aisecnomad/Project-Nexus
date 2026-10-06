@@ -14,6 +14,10 @@ All cloud connectors need the matching extra (`aws`, `gcp`, `azure` or `oci`)
 for live mode, or a JSONL record dump for offline mode. They use read-only
 list/describe/get calls only.
 
+See the [shared connector entry guide](../connectors.md#connector-entry-guide)
+for the common modes, permissions, options, fail-closed and evidence-limit
+references.
+
 ## `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
 guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
