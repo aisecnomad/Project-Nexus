@@ -30,8 +30,11 @@ fail-closed trust model.
 - Add opt-in live Kubernetes and endpoint collection, confined host/config and
   model-artifact discovery, MCP HTTP inventory probes, and stronger baseline
   comparison for MCP tool-definition changes.
-- Additional connectors on existing surfaces, driven by
+- Additional connectors on the existing surfaces, driven by
   [connector requests](https://github.com/aisecnomad/Project-Nexus/issues?q=label%3Aconnector-request).
+- Field validation of the endpoint, network and runtime connectors on real
+  osquery, Zeek, VPC and EDR exports, and a measured evaluation of LLM triage
+  verdicts before anyone relies on them.
 - Tighter Agent Card binding examples and inventory authoring guides.
 - Public docs screenshots of the HTML report and SARIF upload path.
 - Re-check the OpenSSF Scorecard badge after each `main` Scorecard run.

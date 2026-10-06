@@ -675,6 +675,24 @@ Offline input: JSON / JSONL / YAML export.
 
 Also accepted: `label`.
 
+### `endpoint.inventory`
+
+AI clients, agent configurations, MCP servers, editor and browser extensions and local models in home directories (or osquery exports).
+
+Offline input: JSON / JSONL (exported endpoint records or osquery results).
+
+| Key | Description |
+| --- | --- |
+| `path` | home directory to inventory (default: the home directory of the user running the scan) |
+| `paths` | list of home directories to inventory instead of `path` |
+| `label` | device label used in resource ids and titles (default: the host name) |
+| `shell_history` | read shell history for AI command-line tools; only tool names and counts are kept (default false) |
+| `max_entries` | maximum directory entries examined per home directory (default 50,000) |
+| `input` | offline: records exported with --dump-records, or osquery results from the vscode\_extensions, chrome\_extensions and firefox\_addons tables |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
 ### `endpoint.mcp`
 
 Analyze offline MCP server tool, resource, and prompt inventory exports.
@@ -719,3 +737,38 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
 Also accepted: `label`.
+
+## Network
+
+### `network.logs`
+
+AI services contacted per client address, from DNS, TLS SNI and flow logs (Zeek, Route 53 Resolver, VPC Flow Logs, generic exports).
+
+Offline input: Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON / CSV.
+
+| Key | Description |
+| --- | --- |
+| `input` | log file or directory: Zeek dns/ssl/conn logs (TSV or JSON), Route 53 Resolver query logs, VPC Flow Logs or generic JSON/CSV DNS and SNI records |
+| `format` | force the input format: zeek\|route53\|vpc-flow\|generic (default auto, per record) |
+| `label` | network or sensor name used in resource ids and as the finding account (default: network) |
+| `max_records` | stop after N records (default 10,000,000) |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+## Runtime
+
+### `runtime.processes`
+
+AI agents, desktop apps, MCP servers and model servers running on hosts, from process inventories (osquery, EDR exports) or the local /proc.
+
+Offline input: JSON / JSONL / CSV process inventories (osquery, Defender, CrowdStrike).
+
+| Key | Description |
+| --- | --- |
+| `label` | host name used when records carry none (default: the host name) |
+| `max_processes` | maximum processes read from /proc in live mode (default 100,000) |
+| `input` | offline: osquery processes results, Defender DeviceProcessEvents, CrowdStrike process events or JSON/CSV with a command line or executable |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |

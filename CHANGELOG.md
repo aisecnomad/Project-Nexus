@@ -5,6 +5,155 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 6 head-to-head benchmark follow-ups
+
+- The Goose signature matches the user configuration Goose writes on first
+  run (`~/.config/goose/config.yaml`, and
+  `%APPDATA%\Block\goose\config\config.yaml` on Windows). The benchmark
+  missed all six Goose homes because only `.goose/`, `.goosehints` and
+  `goose.yaml` were recognized.
+- The Cline signature matches the installed extension directory
+  (`saoudrizwan.claude-dev-*` under VS Code, VS Code Server, Cursor or
+  Windsurf), so an install without `cline_mcp_settings.json` is found.
+- `review_corpus.json` gains both cases and two look-alike negatives; the
+  positives fail on the previous signatures.
+- MCP configuration findings report static server risks: a package or image
+  fetched without an exact version or digest (`mcp-unpinned-package`), a
+  filesystem server rooted at `/` or a home directory
+  (`mcp-broad-filesystem`), a shell-wrapped launch (`mcp-shell-command`),
+  plaintext remote transport and auto-approved tools. The checks read the
+  sanitized server record only; nothing is started or fetched.
+- Coding-agent configuration findings report posture from the agent's own
+  settings: Claude Code `bypassPermissions` and unrestricted `Bash` allow
+  rules, Codex `approval_policy = "never"` and `danger-full-access`, Goose
+  `GOOSE_MODE: auto`, and an OpenClaw gateway exposed beyond loopback or
+  without an auth token. Only enumerated setting values are reported.
+- A `coding-agent.openclaw` signature recognizes OpenClaw state directories.
+- New default risk weights for these tags; see `docs/concepts/risk.md` and the
+  October 6 migration note in `docs/production.md`.
+- New `endpoint.inventory` connector on the `endpoint` surface. It reads a
+  fixed list of documented user-scope locations below home directories: AI client
+  and coding-agent configurations with their MCP servers, server risks and
+  posture; AI editor and browser extensions; local model stores; and, with
+  `shell_history: true`, AI command-line tool names and counts. Offline it
+  replays exported records or osquery `vscode_extensions`,
+  `chrome_extensions` and `firefox_addons` results. Symbolic links are never
+  followed, and links, unreadable locations, oversized files or an exhausted
+  `max_entries` budget make the scan incomplete.
+- New finding kinds `ai-app`, `local-model`, `network-contact` and
+  `runtime-process`, and surfaces `network` and `runtime`.
+  `KIND_BASE` gives the first three 5 and `runtime-process` 10.
+- MCP risk and posture recording moved to shared helpers
+  (`record_server_risks`, `record_posture`) used by the code and endpoint
+  connectors.
+- The offline demo runs `endpoint.inventory`.
+- `gateway.logs` classifies agentic callers from request metadata when logs
+  carry no request bodies: hosted agent runtime operations
+  (`agent-runtime-api`), MCP endpoints (`mcp-client`) and agent-loop cadence
+  from programmatic callers (`agent-loop`). The indicators live in
+  `shadowscan/connectors/agent_behavior.py` for reuse by other log sources.
+- Fixed: every gateway caller to `*.openai.com` or `*.anthropic.com`, and any
+  caller named after those vendors, was titled "Agentic caller" because the
+  ChatGPT and Claude SaaS app signatures carry an agent indicator for OAuth
+  grants. Gateway callers no longer take agent indicators from
+  `identity-app` signatures; the golden replays record the corrected titles.
+- Fixed: a user or key alias that matched a product name (a person called
+  Jules) and browsing `chatgpt.com` (also listed by the ChatGPT plugin
+  protocol signature) made gateway callers agentic. Name matches are hints,
+  and a host counts only through the service it belongs to. Found by the
+  post-change benchmark run; regression tests added.
+- `framework.autogen` gains a user-agent signal (`autogen/…`, `ag2/…`).
+- New `network.logs` connector and `network` surface. It reads Zeek
+  `dns.log`, `ssl.log` and `conn.log` (TSV or JSON), Route 53 Resolver query
+  logs, VPC Flow Logs and generic DNS/SNI exports, and reports one
+  `network-contact` finding per client address and AI service. Host names
+  match exactly or by a declared wildcard, and only AI host names are kept.
+  Flows are attributed by Zeek `uid` to a TLS server name or through DNS
+  answers in the same input; addresses shared with another service's host
+  attribute nothing. The offline demo runs it.
+- New `runtime.processes` connector and `runtime` surface: coding-agent CLIs,
+  AI desktop apps, MCP servers, local model servers and agent dev servers seen
+  running, from osquery `processes`, Defender `DeviceProcessEvents`,
+  CrowdStrike process events, generic exports or `/proc` on Linux. Command
+  lines never enter a finding, and the connector's records are excluded from
+  `--dump-records` because command lines can carry credentials. The offline
+  demo runs it.
+- Lifecycle corroboration: the engine links endpoint findings (configured,
+  installed) to running-process findings for the same tool on the same
+  device, recording `metadata.lifecycle` and the tag `observed-running` with
+  zero-weight evidence. MCP configurations link only through the same server
+  package. Scores do not change.
+- The CycloneDX 1.6 AI-BOM output (`--format cyclonedx`) models agents and
+  other findings as application components, model artifacts and stores as
+  machine-learning-model components, MCP and model-server inventories as
+  services, and frameworks, models, providers and MCP servers as shared
+  entries with dependencies.
+  Credential findings are excluded, and `compositions` declares the inventory
+  `incomplete` whenever the scan was. See `docs/operations/ai-bom.md`.
+- Opt-in LLM triage (`options.llm_triage`, off by default): a redacted summary
+  of the highest-risk findings goes to a model the operator names, through the
+  scanner's HTTPS client, and the reply is stored as advisory
+  `metadata.llm_triage`. Resource ids, owners, accounts, locations and
+  snippets are not sent as fields, and their values are withheld from titles
+  and evidence text; keys come only from an environment variable; replies
+  never change scores or completeness. See `docs/operations/llm-triage.md`.
+- `endpoint.inventory` coexists with the `endpoint.*` offline inventories:
+  it reads local locations or osquery exports, they read collector exports.
+  Their findings carry no device name, so lifecycle links do not apply to
+  them.
+- The CycloneDX output replaces the earlier candidate's exporter: findings
+  other than models, MCP and Ollama inventories are `application` components
+  instead of `machine-learning-model` components, risk is published as
+  `shadowscan:heuristic-risk` (the earlier `shadowscan:risk_level` lookup never
+  matched), per-tag `shadowscan:tag:<tag>` properties are one
+  `shadowscan:tags` list, and credential findings are excluded. Regenerate
+  BOMs and update their consumers.
+
+#### Fixes from a review of the merged branch
+
+- CycloneDX: MCP server risks were never emitted (the reporter expected
+  objects, the records hold ids); `endpoint.ollama` model findings are
+  `machine-learning-model` components again; each entry is sanitized on its
+  own, so scans of about a thousand findings or more render; entries capped
+  at 50 MCP servers or 20 models are recorded as `incomplete`; same-named
+  servers and empty or repeated finding ids get distinct refs; providers carry
+  no `trustZone`; names and vendors come from the scan's signature index,
+  custom packs included.
+- `endpoint.inventory`: a symbolically linked directory on the way to a
+  location (Linux reports it as "not a directory") was treated as absent; it
+  is now a gap. Unparseable agent settings, whose posture is therefore
+  unknown, and a shell history longer than the read limit are gaps too.
+  Malformed server, posture or model entries in replayed records are dropped
+  with a warning (incomplete) instead of failing the connector or, through
+  the lifecycle pass, the whole scan. Project servers in `~/.claude.json` that
+  reuse a user-scope name are kept (`name#2`), MCP risk evidence cites the
+  file that holds the servers, and the lock links a running Chromium browser
+  keeps in its user-data directory no longer make every scan incomplete.
+- `runtime.processes`: an export row whose pid is a non-ASCII digit no longer
+  fails the export (64-bit ids such as CrowdStrike's `TargetProcessId` are
+  kept). A live scan of a container's own `/proc`, identified by the PID
+  namespace's inode, is marked incomplete because it cannot see the host's
+  processes; so is one under a `hidepid` setting that hides processes from
+  the scanning account. `subset=pid`, and root under the default `hidepid`
+  group, hide nothing and stay complete.
+- Lifecycle links also match by tool id, so Claude Desktop, Kiro and
+  LM Studio configurations, which have no signature, link to their running
+  processes.
+- LLM triage withholds owner, account, resource, device, home, file and
+  network client values from the title and evidence text it sends (one- and
+  two-character values as whole words), while product names stay readable. A
+  malformed reply is `unparseable`; an API key that is not a valid header
+  value, or any other triage failure, is a warning on the triage entry that
+  never echoes the key, and the scan keeps its report.
+- MCP servers reached through `ws://`, an upper-case `HTTP://` scheme, or a
+  URL that MCP clients' parsers read as plaintext despite embedded tabs,
+  newlines or leading control characters gain the `mcp-plain-http` factor
+  (+10): the factor parses the scheme as the `mcp-insecure-transport` tag
+  does, so every tagged server is scored.
+- A coding agent's own configuration file belongs to that agent's signature
+  alone: `main`'s `platform.openclaw` no longer adds a second framework-usage
+  finding for files in an OpenClaw state directory.
+
 ### Offline runtime inventory connectors
 
 - Added the `endpoint` surface, offline analyzers for MCP tool inventories,
@@ -13,11 +162,15 @@ summarizes each release for people who install and operate ShadowScan.
 - Added risk tags and OWASP/MITRE control references for selected runtime
   indicators, and a CycloneDX 1.6 AI-BOM output format. New runtime tag
   weights can change risk scores for findings that carry those tags.
-- Runtime collection is currently offline-only; live MCP, Ollama and Kubernetes
-  collection and confined local artifact discovery remain unsupported.
+- These offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
+  `endpoint.models`, `endpoint.ebpf`, `gateway.otel`, Kubernetes/OpenShift)
+  remain offline-only; live MCP, Ollama and Kubernetes collection is
+  unsupported. (`endpoint.inventory` and `runtime.processes`, above, read local
+  state when no `input` is set.)
 - Model metadata is supplied by an offline exporter; ShadowScan does not parse
   GGUF or safetensors files. MCP tool fingerprints have no rug-pull baseline, and
-  the new endpoint inventories do not provide cross-surface correlation.
+  findings from these inventories carry no device name, so lifecycle links do
+  not apply to them.
 
 ### Security-review follow-ups
 

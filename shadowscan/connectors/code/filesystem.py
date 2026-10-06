@@ -129,6 +129,9 @@ from shadowscan.connectors.common import (
     looks_like_placeholder,
     placeholder_reason,
 )
+from shadowscan.connectors.mcp_risk import record_server_risks
+from shadowscan.connectors.posture import CLIENT_SIGNATURES, record_posture
+from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -527,6 +530,8 @@ class _Project:
     # Data files that declare what a deployment or a job runs with: never catalogs.
     configuration_files: set[str] = field(default_factory=set)
     mcp_tools_limited: bool = False
+    # Coding-agent signature id -> posture issues read from its settings files.
+    posture: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -1928,6 +1933,13 @@ class FilesystemConnector(BaseConnector):
                 continue
             m.extra["verified_agent"] = file.card_valid
             self._record(file.proj, m, file.rel, None)
+        issues = assess_posture(file.rel, file.text)
+        if issues:
+            for issue in issues:
+                sig_id = CLIENT_SIGNATURES[issue.client]
+                entry = {**issue.as_dict(), "file": file.rel}
+                if entry not in file.proj.posture.setdefault(sig_id, []):
+                    file.proj.posture[sig_id].append(entry)
 
     def _detect_secrets(self, scan: _ScanState, file: _SourceFile) -> None:
         """Collect provider credentials from the file text and a notebook's raw document.
@@ -3107,6 +3119,9 @@ class FilesystemConnector(BaseConnector):
         for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
             apply_matches(f, [m], location=rel, snippet=snip)
         f.metadata["files"] = sorted(files)
+        posture = proj.posture.get(sig_id, [])
+        if posture:
+            record_posture(f, posture)
         defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
         if defs:
             f.metadata["agent_definitions"] = defs
@@ -3289,6 +3304,7 @@ class FilesystemConnector(BaseConnector):
                         weight=0.3,
                     )
                 )
+            record_server_risks(f, s, rel)
             cmd = " ".join([str(s.get("command") or "")] + [str(a) for a in s.get("args", [])]).lower()
             for capability, keywords in _MCP_CAPABILITY_KEYWORDS:
                 if any(k in cmd for k in keywords):

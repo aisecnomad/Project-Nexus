@@ -99,6 +99,8 @@ nav:
       - Cloud: connectors/cloud.md
       - Kubernetes: connectors/kubernetes.md
       - Endpoint and runtime: connectors/endpoint.md
+      - Network: connectors/network.md
+      - Runtime processes: connectors/runtime.md
       - Configuration reference: connectors/reference.md
   - Concepts:
       - Architecture: architecture.md
@@ -113,6 +115,8 @@ nav:
       - Assurance results (2026-09-24): assurance-results.md
       - Tenant canaries: canaries.md
       - CI integration: operations/ci.md
+      - AI bill of materials: operations/ai-bom.md
+      - LLM triage: operations/llm-triage.md
       - Merge policy enforcement: operations/merge-policy.md
       - External reviewer packet: operations/reviewer-packet.md
   - Community: community.md

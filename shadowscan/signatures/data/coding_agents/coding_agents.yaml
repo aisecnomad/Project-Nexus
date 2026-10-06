@@ -114,6 +114,12 @@ signatures:
       - type: file
         globs: [".clinerules", "**/.clinerules", ".clinerules/**", "**/.clinerules/**", ".clineignore", "cline_mcp_settings.json", "**/cline_mcp_settings.json", ".cline/**"]
         weight: 0.9
+      - type: file
+        # The installed extension (publisher saoudrizwan, id claude-dev) in a
+        # VS Code, VS Code Server, Cursor or Windsurf extensions directory.
+        globs: [".vscode*/extensions/saoudrizwan.claude-dev-*/package.json", "**/.vscode*/extensions/saoudrizwan.claude-dev-*/package.json", ".cursor/extensions/saoudrizwan.claude-dev-*/package.json", "**/.cursor/extensions/saoudrizwan.claude-dev-*/package.json", ".windsurf/extensions/saoudrizwan.claude-dev-*/package.json", "**/.windsurf/extensions/saoudrizwan.claude-dev-*/package.json"]
+        weight: 0.9
+        description: Cline extension installed in an editor
       # The Cline display name is owned by identity-app.coding-assistants-saas.
 
   - id: coding-agent.roo-code
@@ -235,6 +241,12 @@ signatures:
       - type: file
         globs: [".goosehints", "**/.goosehints", ".goose/**", "**/.goose/**", "goose.yaml", "**/goose.yaml", "goose_config.yaml", "**/goose_config.yaml"]
         weight: 0.9
+      - type: file
+        # The user configuration Goose writes on first run: XDG on Linux and
+        # macOS, %APPDATA%\Block\goose\config on Windows.
+        globs: [".config/goose/config.yaml", "**/.config/goose/config.yaml", "AppData/Roaming/Block/goose/config/config.yaml", "**/AppData/Roaming/Block/goose/config/config.yaml"]
+        weight: 0.9
+        description: Goose user configuration
       - type: dependency
         ecosystem: pypi
         names: [goose-ai]
@@ -245,6 +257,20 @@ signatures:
       - type: user_agent
         patterns: ['(?i)\bgoose/\d']
         weight: 0.8
+
+  - id: coding-agent.openclaw
+    name: OpenClaw
+    category: coding-agent
+    vendor: OpenClaw
+    capabilities: [code-exec, tool-use, saas-actions]
+    agent_indicator: true
+    signals:
+      - type: file
+        # The personal agent's state directory: its gateway configuration and
+        # the workspace instructions and skills it runs with.
+        globs: [".openclaw/openclaw.json", "**/.openclaw/openclaw.json", ".openclaw/workspace/AGENTS.md", "**/.openclaw/workspace/AGENTS.md", ".openclaw/workspace/skills/*/SKILL.md", "**/.openclaw/workspace/skills/*/SKILL.md", ".clawdbot/clawdbot.json", "**/.clawdbot/clawdbot.json"]
+        weight: 0.9
+        description: OpenClaw personal agent configuration
 
   - id: coding-agent.aider
     name: Aider

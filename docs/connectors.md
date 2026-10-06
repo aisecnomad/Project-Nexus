@@ -34,14 +34,20 @@ does any file in an offline input directory without one of the connector's
 export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
 `input` at the export file.
 
-Runtime inventory coverage is currently **offline-only**. See the
+The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
+`endpoint.models`, `endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes` and
+`cloud.openshift`) are **offline-only**. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md) for workload exports
-and the [endpoint and runtime guide](connectors/endpoint.md) for MCP, OTLP,
-Ollama, model-artifact metadata, and eBPF exports. These connectors do not
-perform live probes or local host filesystem discovery.
-Model metadata is not parsed from GGUF/safetensors files; MCP fingerprints have
-no rug-pull baseline, and the new inventories do not provide cross-surface
-correlation.
+and the [endpoint guide](connectors/endpoint.md) for MCP, OTLP, Ollama,
+model-artifact metadata, and eBPF exports. These connectors do not perform live
+probes or local host filesystem discovery, and their findings carry no device
+name, so lifecycle links do not apply to them.
+Model metadata is not parsed from GGUF/safetensors files, and MCP fingerprints
+have no rug-pull baseline. When no `input` is set, `endpoint.inventory` reads a
+fixed list of local user-scope locations and `runtime.processes` reads `/proc`
+on Linux; the engine links the two for the same tool on the same device (see
+the [endpoint](connectors/endpoint.md) and [runtime](connectors/runtime.md)
+guides).
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and
@@ -564,6 +570,26 @@ not individual timestamped transaction events. Log fields for environment
 and caller identity are evidence from the supplied export; assess the
 producer and delivery chain before treating them as verified production facts.
 
+A caller is titled **Agentic caller** when at least one agent indicator
+holds: requests carried tool definitions or responses invoked tools; a user
+agent belongs to a coding agent or agent framework; requests invoked a hosted
+agent runtime (Bedrock `InvokeAgent` or AgentCore runtimes, the Assistants
+API, Vertex AI Agent Engine, Dialogflow CX sessions; tag `agent-runtime-api`);
+requests reached an MCP endpoint (`/mcp`, or `/sse` and `/messages` on a
+host a signature identifies as an MCP server; tag `mcp-client`); a
+programmatic caller made runs of three or more model calls at distinct times
+at most 30 seconds apart (tag `agent-loop`; simultaneous calls count once); or corroborated round-the-clock activity. The last
+two are heuristics read from request times alone: a batch script or a chat
+front end that makes several calls per message has the same cadence, so read
+`metadata.agent_behaviour` before acting on the label. A caller whose
+requests mostly carry a browser user agent is never counted as a loop.
+Calling a model API is LLM use: the domains
+and names of AI SaaS apps (`*.openai.com`, `*.anthropic.com`) do not make a
+caller agentic. A product name matched in a key alias or a user name is a
+hint, never an agent indicator, and a host counts only through the one
+service it belongs to (its highest-weight signature), so browsing
+`chatgpt.com` is AI use while traffic to `api2.cursor.sh` is a coding agent.
+
 Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
 `correlation_bindings`, and `label` (or `gateway_name` when the entry has no
 label), which names the gateway on findings: it becomes the provider and the
@@ -873,6 +899,67 @@ SDK objects become records through `oci.util.to_dict`, or through the model's
 declared fields when the SDK cannot be imported; an object that cannot be
 converted is skipped with a warning and makes the scan incomplete.
 
+## Endpoint
+
+### `endpoint.inventory`
+Inventories AI tools on developer workstations from a fixed list of
+documented user-scope locations below each home directory: client and
+coding-agent configurations with their MCP servers (Claude Desktop, Claude
+Code, Cursor, VS Code, Windsurf, Gemini CLI, Codex, Kiro, Amazon Q, LM
+Studio, Continue, Goose, Cline, Roo Code, Aider, OpenClaw, Copilot CLI), AI
+editor extensions, AI browser extensions (matched by product name), local
+model stores (Ollama, LM Studio, Hugging Face, GPT4All, Jan) and, with
+`shell_history: true`, AI command-line tools named in shell history (tool
+names and counts only). MCP server findings carry the static server risks
+and agent configurations carry the posture checks described in
+[risk](concepts/risk.md). Every location is opened without following
+symbolic links; a link, an unreadable location, an oversized file or an
+exhausted `max_entries` budget makes the scan incomplete.
+
+Options: `path` or `paths` (home directories; default the scanning
+account's home), `label` (device name; default the host name),
+`shell_history`, `max_entries`. Offline, `input` replays exported records or
+reads osquery `vscode_extensions`, `chrome_extensions` and `firefox_addons`
+results. See the [endpoint guide](connectors/endpoint.md).
+
+## Network
+
+### `network.logs`
+Reports, per client address, the AI services contacted in DNS, TLS and flow
+telemetry: Zeek `dns.log`, `ssl.log` and `conn.log` (TSV or JSON), Route 53
+Resolver query logs, VPC Flow Logs, and generic JSON or CSV DNS and SNI
+records. Host names match a signature's exact domain or declared wildcard,
+never a substring, and only AI host names are kept. A flow is attributed only
+by its Zeek `uid` to an AI TLS server name, or through DNS answers in the
+same input; an address that also resolved to another service's host is
+shared and attributes nothing. Coding-agent, MCP and hosted-agent services
+are tagged `agent-service`; runs of connections to a model API seconds apart
+are tagged `agent-loop`. Malformed or unrecognized records make the scan
+incomplete.
+
+Options: `format` (`zeek`, `route53`, `vpc-flow`, `generic`; default auto),
+`label` (network name; default `network`), `max_records`. See the
+[network guide](connectors/network.md).
+
+## Runtime
+
+### `runtime.processes`
+Reports AI tools seen running, per host, user and tool: coding-agent CLIs
+(also as npm packages or Python modules), AI desktop apps matched by
+executable and install path, MCP servers launched through `npx`, `uvx`,
+`uv tool run`, `pipx run` or `node`, local model servers and agent dev
+servers. Command lines never enter a finding or a `--dump-records` export:
+only the tool, the executable's base name and an MCP package name are kept.
+Offline, `input` reads osquery `processes` results, Defender
+`DeviceProcessEvents`, CrowdStrike process events or any JSON/CSV with a
+command line or executable; live mode reads `/proc` on Linux. The engine
+links these findings to endpoint findings for the same tool on the same
+device (`metadata.lifecycle`, tag `observed-running`) without changing
+scores.
+
+Options: `label` (host name for records without one), `max_processes` (live
+mode bound). See the [runtime guide](connectors/runtime.md).
+
 ## Least privilege
 
 All connectors are read-only. Prefer dedicated audit credentials:
@@ -894,6 +981,9 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs) |
 | Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
 | OCI | policy `Allow group audit to read all-resources in tenancy` |
+| Endpoint | read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written |
+| Network | read access to the exported logs; the connector needs no sensor or cloud credentials |
+| Runtime | offline: read access to the process export; live: an account that can read `/proc/<pid>/cmdline` of the processes to inventory. Nothing is written |
 
 The Azure app-settings permission exposes security-sensitive configuration;
 only grant it for the app resources being audited. Do not grant Website

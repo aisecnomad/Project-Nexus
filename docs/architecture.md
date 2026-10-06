@@ -19,7 +19,7 @@
                                    │                    │  reconcile with Inventory (shadow?) → Risk → sort
                                    └─────────┬──────────┘
                                              ▼
-                        table · json · sarif · csv · markdown · html   (reporters)
+              table · json · sarif · csv · markdown · html · cyclonedx   (reporters)
 ```
 
 ## Modules

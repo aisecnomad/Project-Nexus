@@ -36,6 +36,10 @@ connectors:
   # ... see docs/connectors.md for all connector keys
 ```
 
+`llm_triage` is off unless `enabled: true`; it sends a redacted summary of
+the highest-risk findings to a model you name and stores an advisory verdict.
+See [LLM triage](../operations/llm-triage.md) for its keys and what is sent.
+
 `plugin_execution: process` (or `--plugin-execution process`) runs each
 allowlisted third-party connector in its own spawned worker that the scanner
 can terminate at the connector deadline. Built-in connectors always use the

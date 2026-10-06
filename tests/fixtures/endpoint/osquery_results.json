@@ -1,0 +1,56 @@
+[
+  {
+    "name": "copilot",
+    "publisher": "GitHub",
+    "uuid": "23c4aeee-f844-43cd-b53e-1113e483f1a6",
+    "version": "1.388.0",
+    "path": "/home/sam/.vscode/extensions/github.copilot-1.388.0",
+    "uid": "1001",
+    "vscode_edition": "vscode"
+  },
+  {
+    "name": "python",
+    "publisher": "Microsoft",
+    "uuid": "f1f59ae4-9318-4f3c-a9b5-81b2eaa5f8a5",
+    "version": "2025.14.0",
+    "path": "/home/sam/.vscode/extensions/ms-python.python-2025.14.0",
+    "uid": "1001",
+    "vscode_edition": "vscode"
+  },
+  {
+    "browser_type": "chrome",
+    "uid": "1001",
+    "name": "Monica - Your ChatGPT AI Assistant",
+    "profile": "Default",
+    "identifier": "ofpnmcalabcbjgholdjcjblkibolbppb",
+    "version": "7.6.0",
+    "path": "/home/sam/.config/google-chrome/Default/Extensions/ofpnmcalabcbjgholdjcjblkibolbppb/7.6.0_0"
+  },
+  {
+    "browser_type": "chrome",
+    "uid": "1001",
+    "name": "uBlock Origin",
+    "profile": "Default",
+    "identifier": "cjpalhdlnbpafiamejdnhcphjbkeiagm",
+    "version": "1.66.0",
+    "path": "/home/sam/.config/google-chrome/Default/Extensions/cjpalhdlnbpafiamejdnhcphjbkeiagm/1.66.0_0"
+  },
+  {
+    "uid": "1001",
+    "name": "Perplexity - AI Companion",
+    "identifier": "companion@perplexity.ai",
+    "creator": "Perplexity",
+    "type": "extension",
+    "version": "2.1.0",
+    "path": "/home/sam/.mozilla/firefox/abc.default/extensions/companion@perplexity.ai.xpi"
+  },
+  {
+    "uid": "1001",
+    "name": "Dark Reader",
+    "identifier": "addon@darkreader.org",
+    "creator": "Dark Reader Ltd",
+    "type": "extension",
+    "version": "4.9.110",
+    "path": "/home/sam/.mozilla/firefox/abc.default/extensions/addon@darkreader.org.xpi"
+  }
+]

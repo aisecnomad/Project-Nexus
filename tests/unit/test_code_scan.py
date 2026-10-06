@@ -69,10 +69,13 @@ def test_sample_repo_scan(run_connector, fixtures):
     assert claude.metadata["agent_definitions"][0]["name"] == "code-reviewer"
     assert "autonomous" in claude.capabilities  # bypassPermissions / Bash(*)
 
-    secrets = kinds[Kind.SECRET]
-    assert len(secrets) == 1 and secrets[0].metadata["path"] == "services/research-agent/app/config.py"
-    assert {"provider.openai", "provider.anthropic"} <= set(secrets[0].model_providers)
-    for e in secrets[0].evidence:
+    by_path = {f.metadata["path"]: f for f in kinds[Kind.SECRET]}
+    # The inline GitHub token in .mcp.json is a hard-coded credential too (token-prefix rule).
+    assert set(by_path) == {"services/research-agent/app/config.py", ".mcp.json"}
+    assert [e.signal for e in by_path[".mcp.json"].evidence] == ["secret:heuristic.inline-credential"]
+    config_secret = by_path["services/research-agent/app/config.py"]
+    assert {"provider.openai", "provider.anthropic"} <= set(config_secret.model_providers)
+    for e in config_secret.evidence:
         assert "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0" not in (
             e.description + (e.snippet or "")
         ), "secret must be redacted"

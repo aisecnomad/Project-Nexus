@@ -22,7 +22,7 @@ from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
-from shadowscan.correlation import correlate, correlate_runtime
+from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
 from shadowscan.errors import SetupError
 from shadowscan.incremental import IncrementalCache
 from shadowscan.merge import merge
@@ -31,6 +31,7 @@ from shadowscan.registry import Inventory
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
+from shadowscan.triage import Triage, TriageConfigError
 from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
 from shadowscan.utils.http import (
     reset_allow_private_origin,
@@ -1032,6 +1033,7 @@ class Engine:
             correlate_runtime(findings)
         except SanitizationLimitError:
             errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
+        correlate_lifecycle(findings)
         self._reconcile_and_score(findings)
         findings, omitted_after_scoring = _retain_sanitizable(findings)
         omitted += omitted_after_scoring
@@ -1066,6 +1068,22 @@ class Engine:
             )
 
     # ------------------------------------------------------------------ run
+    def _triage(self, findings: list[Finding], started_at: str) -> ScanStats:
+        """Opt-in advisory LLM triage; its failures are warnings, never discovery gaps."""
+        entry = ScanStats(connector="engine.llm-triage", started_at=started_at)
+        try:
+            triage = Triage(
+                self.config.llm_triage, self.index, allow_private_origin=self.config.allow_private_origin
+            )
+            entry.warnings.extend(triage.run(findings))
+        except TriageConfigError as exc:
+            entry.warnings.append(str(exc))
+        except Exception as exc:  # noqa: BLE001 - advisory: a triage failure never costs the scan its report
+            # Only the type name is kept: the text of an exception can echo a reply or a key.
+            entry.warnings.append(f"llm triage failed ({type(exc).__name__})")
+        entry.finished_at = now_iso()
+        return entry
+
     def run(self, only: list[str] | None = None) -> ScanResult:
         self._prepare_run()
         result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
@@ -1113,13 +1131,28 @@ class Engine:
             findings = [f for f in findings if f.confidence >= self.config.min_confidence]
             _prune_related(findings)
             _prune_runtime_links(findings)
+            _prune_lifecycle_links(findings)
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
+        if self.config.llm_triage.enabled:
+            stats.append(self._triage(findings, result.started_at))
         if dump_directory:
             self._write_manifest(dump_directory, export_entries, result.started_at, stats)
         result.findings = findings
         result.stats = sorted(stats, key=lambda s: s.connector)
         result.finished_at = now_iso()
         return result
+
+
+def _prune_lifecycle_links(findings: list[Finding]) -> None:
+    """Drop ``metadata['lifecycle']['related']`` identifiers of findings absent from ``findings``."""
+    retained = {f.id for f in findings}
+    for f in findings:
+        lifecycle = f.metadata.get("lifecycle")
+        if not isinstance(lifecycle, dict):
+            continue
+        related = lifecycle.get("related")
+        if isinstance(related, list):
+            lifecycle["related"] = [link for link in related if link in retained]
 
 
 def _prune_related(findings: list[Finding]) -> None:

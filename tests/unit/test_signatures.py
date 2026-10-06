@@ -187,6 +187,10 @@ def test_sab_holdout_file_dialects_are_inventory_only(index: SignatureIndex):
         matches = index.match_file(filename)
         assert expected in _ids(matches), filename
     assert not index.get("platform.openclaw").agent_indicator
+    # The personal agent's state directory belongs to the coding-agent signature alone.
+    for state_file in (".openclaw/openclaw.json", "home/.clawdbot/clawdbot.json"):
+        assert _ids(index.match_file(state_file)) >= {"coding-agent.openclaw"}
+        assert "platform.openclaw" not in _ids(index.match_file(state_file))
     assert not index.get("coding-agent.agent-skills").agent_indicator
     assert "platform.openclaw" in _ids(index.match_code("gateway.port: 18789"))
     assert "platform.flowise" in _ids(index.match_code('{"category":"Agents","name":"toolAgent"}'))

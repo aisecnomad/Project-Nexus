@@ -10,8 +10,9 @@
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
-It inspects seven surfaces: code repositories, identity providers, LLM gateway logs,
-low-code platforms, SaaS apps, cloud accounts, and offline host/runtime inventories. It fingerprints frameworks and
+It inspects nine surfaces: code repositories, identity providers, LLM gateway logs,
+low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and
+host/runtime inventories), network logs, and running processes. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
 agent registry of
 [Agent Cards](agent-card.yaml).
@@ -23,14 +24,14 @@ Example output, abridged to the first columns (totals vary as signatures evolve;
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
-│ 112 findings  •  108 shadow (inventory: 3 registered agents)                │
-│ critical 11  high 58  medium 43  •  cloud 30 endpoint 9 identity 19 …       │
+│ 133 findings  •  129 shadow (inventory: 3 registered agents)               │
+│ critical 16  high 62  medium 55  •  cloud 30 identity 19 endpoint 18 …     │
 ╰────────────────────────────────────────────────────────────────────────────╯
+ CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
- CRITICAL  95  SHADOW  code      mcp-server   MCP configuration: .mcp.json
+ CRITICAL  98  SHADOW  code      agent-config Claude Code configured in repository root
+ CRITICAL  91  SHADOW  endpoint  agent-config OpenClaw configured on dev-laptop-07 (~dana)
  CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
- CRITICAL  87  SHADOW  endpoint  mcp-server   MCP tool run_command on https://mcp.example.invalid
- CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
 ```
 
 ## The Why
@@ -81,7 +82,7 @@ registered in the agent registry supplied for this scan?*
 
 ## Surfaces & connectors
 
-ShadowScan ships **35 connectors** across the seven surfaces below.
+ShadowScan ships **38 connectors** across the nine surfaces below.
 
 | Surface | Connectors | What is discovered |
 |---|---|---|
@@ -91,17 +92,22 @@ ShadowScan ships **35 connectors** across the seven surfaces below.
 | **Low-code** | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | Copilot Studio agents & topics, Power Automate/Apps using AI connectors, Agentforce planners/topics/actions, Einstein bots, prompt templates, Now Assist AI agents/tools/triggers, automation workflows with AI or agent steps |
 | **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom approved and account-created Marketplace apps (approval does not prove installation), any CSV/JSON app inventory (CASB exports) |
 | **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci`, `cloud.kubernetes`, `cloud.openshift` | Managed cloud AI and IAM inventories, plus offline Kubernetes/OpenShift workload exports (images, exposure, GPU, privilege, and egress-policy indicators) |
-| **Endpoint** | `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | Offline host/runtime, MCP tool-list, local model metadata, and eBPF event exports; live endpoint probes and local filesystem discovery are not yet available |
+| **Endpoint** | `endpoint.inventory`, `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | AI clients and coding agents configured in home directories with their MCP servers and posture (Claude Desktop/Code, Cursor, VS Code, Windsurf, Gemini CLI, Codex, Goose, Cline, Roo, OpenClaw…), AI editor and browser extensions, local model stores (Ollama, LM Studio, Hugging Face, GPT4All, Jan), opt-in shell-history tool counts; osquery fleet exports; offline host/runtime, MCP tool-list, local model metadata, and eBPF event exports through the `endpoint.*` inventories, which do not probe endpoints live |
+| **Network** | `network.logs` | AI services contacted per client address from Zeek DNS/TLS/connection logs, Route 53 Resolver query logs, VPC Flow Logs or generic DNS/SNI exports; strict host matching, DNS-attributed flows that refuse shared CDN addresses, agent-service and agent-loop indicators |
+| **Runtime** | `runtime.processes` | Coding-agent CLIs, AI desktop apps, MCP servers, local model servers and agent dev servers seen running, from osquery, Defender or CrowdStrike process exports or `/proc`; command lines are never kept; linked to the endpoint findings for the same tool on the same device (`observed-running`) |
 
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the connector guide for the supported modes and provider scope.
 Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export.
-Runtime connectors currently implement offline inventory analysis only; they do not
-probe MCP/Ollama endpoints, access a Kubernetes API, or scan local model files.
+The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`,
+`endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes`, `cloud.openshift`) analyze exports only; they do
+not probe MCP/Ollama endpoints, access a Kubernetes API, or parse model files. When no `input` is set,
+`endpoint.inventory` reads a fixed list of local user-scope locations (model stores are listed by file
+name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 
 ## Frameworks & products recognized
 
-216 signatures / 1007 signals, YAML-defined with explicit opt-in overrides:
+220 signatures / 1017 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -203,7 +209,7 @@ it fails until the variable is set.
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
 shadowscan code . --inventory agent-card.yaml
 
-# 2. Try every fixture-backed connector offline (demo; 33 of 35 connectors ship fixtures)
+# 2. Try every fixture-backed connector offline (demo; 36 of 38 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
@@ -375,7 +381,10 @@ Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations; results are warnings or notes with the
 heuristic risk level, never a CVSS `security-severity`, see
 [severity](docs/severity.md)), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down), and `cyclonedx` (CycloneDX 1.6 AI-BOM).
+filterable, with evidence drill-down), and `cyclonedx` (a CycloneDX 1.6 AI bill
+of materials, see [AI-BOM](docs/operations/ai-bom.md)). Opt-in
+[LLM triage](docs/operations/llm-triage.md) adds an advisory model verdict to
+the highest-risk findings; it is off by default and never changes scores.
 CSV inserts a literal `'` at the start of
 a value, and after each `,`, `;`, tab, `|` or line break inside it, when the
 following text begins with `=`, `+`, `-` or `@` (also after whitespace or

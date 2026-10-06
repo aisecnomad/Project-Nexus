@@ -41,7 +41,7 @@ describes.
 - Confidence counts correlated evidence once, so repeated matches of one
   signal no longer inflate it; some non-code findings report lower
   confidence.
-- 216 signatures and 1,007 signals cover current agent SDKs, including Vercel
+- 220 signatures and 1,017 signals cover current agent SDKs, including Vercel
   AI SDK tool loops (AI SDK 7's `isStepCount`). Custom-pack framework patterns
   apply in every language, and detection-rule files (ShadowScan signature
   packs, Semgrep, Sigma, gitleaks) are treated as data.
@@ -55,6 +55,27 @@ describes.
   rates ShadowScan alerts as security severities; the
   [severity guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/severity.md)
   explains why.
+- Three new connectors and surfaces: `endpoint.inventory` (AI clients,
+  coding agents, MCP servers, editor and browser extensions and local models
+  in home directories, or osquery exports), `network.logs` (AI services
+  contacted, from Zeek, Route 53 Resolver, VPC Flow Logs or DNS/SNI exports)
+  and `runtime.processes` (AI tools seen running). Endpoint findings for a
+  tool that is also seen running are tagged `observed-running`; scores do not
+  change. Dashboards that enumerate surfaces or kinds should add `endpoint`,
+  `network`, `runtime`, `ai-app`, `local-model`, `network-contact` and
+  `runtime-process`.
+- MCP configuration findings report static server risks (unpinned packages,
+  filesystem servers rooted at `/` or a home directory, shell-wrapped
+  launches), and coding-agent configurations report posture (permission
+  bypass, unrestricted shell, unsandboxed Codex, an exposed or
+  unauthenticated OpenClaw gateway). New risk weights apply; see the October 6
+  note in the deployment guide.
+- Gateway callers are titled "Agentic caller" from hosted agent runtime
+  operations, MCP endpoints or agent-loop cadence, and no longer merely for
+  calling `api.openai.com` or `api.anthropic.com`. Counts of agentic callers
+  change on re-scan.
+- `--format cyclonedx` writes a CycloneDX 1.6 AI bill of materials. Its
+  composition is `incomplete` whenever the scan was.
 
 ### Security and safety
 
@@ -71,6 +92,14 @@ describes.
 - Third-party connectors run only when named in `options.plugins`, and
   repository scans stay separate from live tenant collection unless
   `allow_credential_mixing` is set.
+
+- Opt-in LLM triage (`options.llm_triage`) is off by default. When enabled
+  it sends redacted finding summaries (no resource ids, owners, locations or
+  snippets) to the model endpoint you configure over HTTPS, reads the key from
+  an environment variable, and stores an advisory verdict that never changes
+  scores or completeness.
+- `runtime.processes` never keeps command lines, and its records are excluded
+  from `--dump-records`, because command lines can carry credentials.
 
 ### Known limitations
 

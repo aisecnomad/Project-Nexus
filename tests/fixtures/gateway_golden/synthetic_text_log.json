@@ -262,7 +262,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'OpenAI/Python 1.51.0' (user-agent): 2 requests via ChatGPT / OpenAI",
+   "title": "LLM caller 'OpenAI/Python 1.51.0' (user-agent): 2 requests via ChatGPT / OpenAI",
    "resource": "access:OpenAI/Python 1.51.0",
    "resource_type": "caller/user-agent",
    "provider": "access-log",
@@ -366,7 +366,7 @@
    "first_seen": "2025-09-01T21:00:00+00:00",
    "last_seen": "2025-09-01T21:07:00+00:00",
    "metadata": {
-    "agent_indicators": 2,
+    "agent_indicators": 0,
     "caller_kind": "user-agent",
     "caller": "OpenAI/Python 1.51.0",
     "events": 2,
@@ -559,7 +559,7 @@
    "first_seen": "2025-09-01T21:01:00+00:00",
    "last_seen": "2025-09-01T21:01:00+00:00",
    "metadata": {
-    "agent_indicators": 2,
+    "agent_indicators": 1,
     "caller_kind": "user",
     "caller": "alice",
     "events": 1,
@@ -785,7 +785,7 @@
    "first_seen": "2025-09-01T21:02:00+00:00",
    "last_seen": "2025-09-01T21:02:00+00:00",
    "metadata": {
-    "agent_indicators": 3,
+    "agent_indicators": 1,
     "caller_kind": "user-agent",
     "caller": "claude-code/1.0.5",
     "events": 1,
@@ -888,7 +888,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'langchain/0.3' (user-agent): 1 requests via ChatGPT / OpenAI, LangChain",
+   "title": "LLM caller 'langchain/0.3' (user-agent): 1 requests via ChatGPT / OpenAI, LangChain",
    "resource": "access:langchain/0.3",
    "resource_type": "caller/user-agent",
    "provider": "access-log",
@@ -983,7 +983,7 @@
    "first_seen": "2025-09-01T21:05:00+00:00",
    "last_seen": "2025-09-01T21:05:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "user-agent",
     "caller": "langchain/0.3",
     "events": 1,

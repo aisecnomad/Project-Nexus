@@ -26,6 +26,8 @@ from shadowscan.engine import Engine
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import (
     _HOST_TOKEN_RX,
+    keep_file_matches,
+    keep_secret_matches,
     language_for_path,
     plain_host_hints,
     required_literal,
@@ -479,6 +481,10 @@ def _reference_regex_matches(
                     break
             if hits >= max_per_signal:
                 break
+    if signal_type == "secret":
+        # match_secrets applies the same deterministic post-filter after the regex pass.
+        keep = keep_secret_matches([(sig_id, value, line) for sig_id, _, value, _, line in out])
+        out = [item for item, kept in zip(out, keep, strict=True) if kept]
     return out
 
 
@@ -594,9 +600,10 @@ def _reference_file_matches(index: SignatureIndex, relpath: str) -> list[tuple[s
                 or fnmatch.fnmatch(base, g)
                 or (g.startswith("**/") and fnmatch.fnmatch(rel, g[3:]))
             ):
-                out.append((sig.id, sig.signals.index(s)))
+                out.append((sig, sig.signals.index(s)))
                 break
-    return out
+    keep = keep_file_matches([sig for sig, _ in out])
+    return [(sig.id, position) for (sig, position), kept in zip(out, keep, strict=True) if kept]
 
 
 def test_precompiled_file_globs_equal_fnmatch(index):

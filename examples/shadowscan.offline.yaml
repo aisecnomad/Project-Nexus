@@ -1,6 +1,6 @@
-# Demo configuration: runs fixture-backed connectors; code.github and
-# code.gitlab need a directory of cloned repositories.
-# against the fixtures in the repository. No credentials needed.
+# Demo configuration: runs the fixture-backed connectors against the fixtures
+# in the repository; code.github and code.gitlab need a directory of cloned
+# repositories. No credentials needed.
 #   shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 inventory:
   - ../agent-card.yaml
@@ -104,3 +104,10 @@ connectors:
     input: ../tests/fixtures/models/artifacts.json
   - name: endpoint.ebpf
     input: ../tests/fixtures/ebpf/events.json
+  - name: endpoint.inventory
+    input: ../tests/fixtures/endpoint/inventory.jsonl
+  - name: network.logs
+    label: hq-zeek
+    input: ../tests/fixtures/network/zeek
+  - name: runtime.processes
+    input: ../tests/fixtures/runtime/osquery_processes.jsonl

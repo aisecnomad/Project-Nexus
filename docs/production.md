@@ -777,18 +777,104 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 6 benchmark follow-ups
+
+Re-scan before comparing risk with earlier reports. MCP configuration
+findings gain `mcp-unpinned-package` (+10), `mcp-broad-filesystem` (+10) and
+`mcp-shell-command` (+5), and coding-agent configuration findings gain posture
+tags read from the agent's own settings: `posture-permissions-bypassed` (+15),
+`posture-unrestricted-shell` (+10), `posture-unsandboxed` (+10),
+`posture-exposed-gateway` (+15) and `posture-unauthenticated-gateway` (+15).
+Each server record in `metadata.servers` lists its `risks`, and
+`metadata.posture` names the client, setting, enumerated value and file. A
+finding can therefore rise a level without any repository change. Override a
+weight with `options.risk_weights.tags` if your policy differs. The new
+evidence has weight 0, so confidence and finding identity are unchanged.
+OpenClaw state directories (`.openclaw/openclaw.json` and workspace files)
+are now attributed to a new `coding-agent.openclaw` signature, so findings that
+previously fell under a generic instruction-file signature may change their
+framework list; finding IDs depend on the resource and discriminator, and the
+discriminator of a coding-agent configuration includes its signature id. A
+coding agent's own configuration file now belongs to that agent's signature
+alone: `platform.openclaw` still matches a bare `openclaw.json`,
+`clawdbot.json` or `moltbot.json` and OpenClaw code, but no longer adds a
+second framework-usage finding for a file in the state directory.
+An MCP server reached through `ws://`, an upper-case `HTTP://` scheme, or a
+URL that client parsers read as plaintext despite embedded tabs, newlines or
+leading control characters now gains the `mcp-plain-http` factor (+10), as
+`http://` servers already did: the factor parses the scheme as the
+`mcp-insecure-transport` tag does, so every tagged server is scored.
+
+The new `endpoint.inventory` connector reports findings on the `endpoint`
+surface with new kinds (`ai-app` and `local-model` at base weight 5, plus
+`agent-config` and `mcp-server`). Reports, dashboards and `--surface` filters
+that enumerate surfaces or kinds should add them; `network-contact` (5) and
+`runtime-process` (10) are reserved for the network and runtime connectors.
+Endpoint resource ids have the form
+`endpoint:<device>:<home>:<category>:<key>`, so a finding keeps its identity
+across scans of the same device and home. The connector reads home
+directories of the account running it; on a shared host, scope `paths` to the
+homes you are authorized to inventory, and leave `shell_history` off unless
+your policy allows it (only tool names and counts are kept).
+
+Gateway caller titles change on re-scan. Callers whose only agent indicator
+was the domain or name of an AI SaaS app (any `api.openai.com` or
+`api.anthropic.com` caller, or a key named after the vendor) are now
+"LLM caller" instead of "Agentic caller". Callers that invoke hosted agent
+runtimes, reach MCP endpoints or show agent-loop cadence gain the tags
+`agent-runtime-api`, `mcp-client` or `agent-loop` and
+`metadata.agent_behaviour`. Finding IDs are unchanged; dashboards that count
+agentic callers by title will see a different number.
+
+The new `network.logs` connector reports `network-contact` findings on the
+`network` surface, with resource ids `network:<label>:<client>:<signature>`.
+A client address names a device or a NAT gateway; give each sensor or VPC a
+distinct `label` so the same private address in two networks stays two
+findings, and join findings to DHCP or VPN records before assigning owners.
+
+`runtime.processes` reports `runtime-process` findings with resource ids
+`runtime:<host>:<user>:<tool>`, and `endpoint.inventory` findings for the same
+tool on the same device gain `metadata.lifecycle` and the tag
+`observed-running`. A tool links through its signature, through its tool id
+(Claude Desktop, Kiro and LM Studio have no signature), or, for an MCP
+configuration, through a running server's package. Neither changes risk. Keep
+endpoint `label` values equal to the host names that process exports report,
+or the two will not link. A process list is a point in time: absence does not
+show that a tool is unused. A live `/proc` scan of a container's own `/proc`,
+or under a `hidepid` setting that hides processes from the scanning account,
+cannot see every process and is marked incomplete (see the runtime guide for
+which settings do).
+
+`--format cyclonedx` replaces the earlier candidate's CycloneDX exporter with
+a different document: agents, configurations, apps, callers and processes are
+`application` components instead of `machine-learning-model` components (MCP
+and Ollama inventories stay `services`, model stores stay models), the new
+`shadowscan:heuristic-risk` properties carry the risk the earlier exporter
+never published, the per-tag `shadowscan:tag:<tag>` properties are one
+`shadowscan:tags` list, and `secret` and `token` findings are no longer
+components. Regenerate BOMs and update
+their consumers; `docs/operations/ai-bom.md` lists the changes. Its
+composition is `incomplete` for an incomplete scan, and the exit code is
+unchanged. `options.llm_triage` is off
+by default. Enabling it sends finding summaries to a third-party or
+self-hosted model endpoint, so treat it as a data-egress decision: review
+`docs/operations/llm-triage.md`, prefer a `base_url` you operate, and do not
+enable it for scans whose finding titles must stay in your environment.
+
 ### Offline endpoint and runtime inventory limits
 
-The `endpoint` surface and `gateway.otel` currently analyze offline exports only.
-They do not make live API calls, probe endpoint URLs, discover host configuration
-files, or read model directories. Kubernetes and OpenShift inventories are also
+The `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and
+`endpoint.ebpf` connectors and `gateway.otel` currently analyze offline exports
+only. They do not make live API calls, probe endpoint URLs, discover host
+configuration files, or read model directories (`endpoint.inventory` reads its
+fixed list of local locations). Kubernetes and OpenShift inventories are also
 offline-only; do not provide kubeconfig material, Secret values, service-account
 tokens, environment values, or image pull credentials in an export.
 
 `endpoint.models` consumes metadata produced elsewhere; it does not parse GGUF or
 safetensors files. MCP tool fingerprints are not compared with a saved baseline,
-so rug-pull detection is not implemented. These new inventories do not correlate
-findings across surfaces. Treat their output as bounded inventory evidence, not
+so rug-pull detection is not implemented. Findings from these offline inventories
+carry no device name, so lifecycle links do not apply to them. Treat their output as bounded inventory evidence, not
 live execution or deployment attestation.
 
 ### October 3 source capability attribution migration

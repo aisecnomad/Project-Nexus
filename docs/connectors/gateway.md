@@ -52,6 +52,26 @@ test, and an inference operation with a static suffix
 endpoint) is not a static asset. Static files under an inference-like prefix
 (`/agents/app.js`, `/v1/images/logo.png`) still are.
 
+A caller is titled **Agentic caller** when at least one agent indicator
+holds: requests carried tool definitions or responses invoked tools; a user
+agent belongs to a coding agent or agent framework; requests invoked a hosted
+agent runtime (Bedrock `InvokeAgent` or AgentCore runtimes, the Assistants
+API, Vertex AI Agent Engine, Dialogflow CX sessions; tag `agent-runtime-api`);
+requests reached an MCP endpoint (`/mcp`, or `/sse` and `/messages` on a
+host a signature identifies as an MCP server; tag `mcp-client`); a
+programmatic caller made runs of three or more model calls at distinct times
+at most 30 seconds apart (tag `agent-loop`; simultaneous calls count once); or corroborated round-the-clock activity. The last
+two are heuristics read from request times alone: a batch script or a chat
+front end that makes several calls per message has the same cadence, so read
+`metadata.agent_behaviour` before acting on the label. A caller whose
+requests mostly carry a browser user agent is never counted as a loop.
+Calling a model API is LLM use: the domains
+and names of AI SaaS apps (`*.openai.com`, `*.anthropic.com`) do not make a
+caller agentic. A product name matched in a key alias or a user name is a
+hint, never an agent indicator, and a host counts only through the one
+service it belongs to (its highest-weight signature), so browsing
+`chatgpt.com` is AI use while traffic to `api2.cursor.sh` is a coding agent.
+
 Directory inputs read files with a supported suffix (`.json`, `.jsonl`,
 `.ndjson`, `.csv`, `.log`, `.txt`, `.gz`). Other files, such as rotated logs
 (`access.log.1`, `access.log-20250901`) or `.zst` and `.bak` copies, are not
