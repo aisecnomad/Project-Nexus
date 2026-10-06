@@ -24,12 +24,15 @@ import regex
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
+    InvalidPageTokenError,
     RecordDispatch,
     cloud_finding,
     credential_name_matches,
     done,
     first_tag,
     name_hint,
+    next_page_token,
+    resource_id,
     scan_env,
     string_list,
 )
@@ -78,9 +81,7 @@ _AI_WORKLOAD_RULES = (
 
 
 def _resource_id(value: Any) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("invalid OCI resource identifier")
-    return value
+    return resource_id(value, "OCI")
 
 
 def _policy_grant(statement: Any) -> tuple[str, str] | None:
@@ -294,11 +295,13 @@ class OciConnector(BaseConnector):
                 records.extend(items)
                 if not getattr(response, "has_next_page", False):
                     return records
-                token = getattr(response, "next_page", None)
-                if not isinstance(token, str) or not token or token in seen:
+                try:
+                    token = next_page_token(getattr(response, "next_page", None), seen)
+                except InvalidPageTokenError:
+                    token = None
+                if token is None:
                     self.ctx.warn(f"cloud.oci: invalid or repeated pagination token for {operation}")
                     return records
-                seen.add(token)
                 kwargs["page"] = token
             except Exception as exc:  # noqa: BLE001 - SDK errors must not erase successful pages
                 status = getattr(exc, "status", None)

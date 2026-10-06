@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from shadowscan.connectors.code.filesystem import _parse_mcp_servers
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.models import Kind
 
 

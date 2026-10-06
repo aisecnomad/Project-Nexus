@@ -19,7 +19,8 @@ from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code import filesystem as filesystem_module
 from shadowscan.connectors.code import manifests
-from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt, _parse_mcp_servers
+from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt
+from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.models import Kind
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.text import BINARY_CONTENT_ERROR, read_text

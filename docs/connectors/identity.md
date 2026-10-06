@@ -7,6 +7,10 @@ managed identities, and JWT tokens related to AI services and agent frameworks.
     Identity connectors support live API collection and offline JSON export
     analysis. JWT analysis is always offline (supplied tokens).
 
+See the [shared connector entry guide](../connectors.md#connector-entry-guide)
+for the common modes, permissions, options, fail-closed and evidence-limit
+references.
+
 ## `identity.okta`
 `/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OAuth apps that
 match AI SaaS signatures or hold privileged scopes, and service apps

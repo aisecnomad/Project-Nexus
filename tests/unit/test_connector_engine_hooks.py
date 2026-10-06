@@ -85,12 +85,17 @@ def test_base_connector_hooks_describe_an_ordinary_connector():
 
 def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_code():
     classes = {name: get_connector_class(name) for name in builtin_connector_names()}
-    assert {name for name, cls in classes.items() if cls.uses_run_identity_key} == {"gateway.logs"}
+    assert {name for name, cls in classes.items() if cls.uses_run_identity_key} == {
+        "gateway.logs",
+        "gateway.otel",
+    }
     assert {name for name, cls in classes.items() if cls.inherits_instance_credentials_approval()} == {
         "cloud.aws",
         "cloud.azure",
         "cloud.gcp",
+        "cloud.kubernetes",
         "cloud.oci",
+        "cloud.openshift",
     }
     # The cloud surface covers every name the engine used to match by prefix.
     assert {name for name, cls in classes.items() if cls.surface == Surface.CLOUD} == {

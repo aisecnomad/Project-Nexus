@@ -1,0 +1,5 @@
+{
+  "endpoint": "localhost:11434",
+  "version": "0.0.0-example",
+  "models": [{"name": "example-model:latest", "size": 1024}]
+}

@@ -8,9 +8,10 @@ import pytest
 
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code import filesystem as filesystem_module
-from shadowscan.connectors.code.filesystem import FilesystemConnector, _WalkBudget, _WalkLimitError
+from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.connectors.code.walk import _WalkBudget, _WalkLimitError
 
 
 def test_listing_limit_stops_before_retaining_excess_names(tmp_path, monkeypatch):

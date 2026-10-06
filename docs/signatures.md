@@ -73,6 +73,31 @@ signatures:
         names: ["fb8d773d-7ef8-4ec0-a117-179f88add510"]
 ```
 
+### Schema reference
+
+| Field | Type | Required | Meaning |
+|---|---|---:|---|
+| Signature `id` | string | Yes | `namespace.slug`; the namespace determines the category for built-in namespaces. |
+| Signature `category` | string | Yes | Signature category; it must match the ID namespace where one is defined. |
+| Signature `signals` | nonempty list | Yes | Evidence matchers; each entry has a supported `type`. |
+| Signature `name` | string | No | Display name. |
+| Signature `vendor`, `homepage`, `description` | string or null | No | Optional vendor, URL and description metadata. |
+| Signature `tags`, `capabilities`, `risk_notes`, `references` | list of strings | No | Supplemental tags, scored capabilities, report notes and references. Capability values use the closed vocabulary below. |
+| Signature `agent_indicator` | boolean | No | Marks a signature whose presence alone indicates an agent rather than only LLM use. |
+| Signal `type` | string | Yes | Matcher type: `dependency`, `import`, `code`, `file`, `env`, `domain`, `user_agent`, `image`, `iac`, `name`, `scope`, `model`, `secret` or `client_id`. |
+| Signal `weight` | finite number in `(0, 1]` | No | Evidence weight; it controls confidence, not severity. |
+| Signal `capabilities` | list of strings | No | Capabilities implied by this signal. |
+| Signal `agent_indicator` | boolean | No | Signal-level agent indicator. |
+| Signal `description` | string | No | Optional signal description. |
+| `dependency` matcher | fields vary by type | No | `ecosystem`, `names`, `prefixes`, `exclude_names`, `exclude_prefixes`. |
+| `import` matcher | fields vary by type | No | `languages`, `patterns`. |
+| `code` matcher | fields vary by type | No | `languages`, `patterns`, `ambiguous`. |
+| `file` matcher | fields vary by type | No | `globs`. |
+| `env` matcher | fields vary by type | No | `names`, `patterns`. |
+| `domain`, `iac`, `scope` matchers | fields vary by type | No | `values`. |
+| `user_agent`, `image`, `name`, `model`, `secret` matchers | fields vary by type | No | `patterns`. |
+| `client_id` matcher | fields vary by type | No | `names`, `patterns`. |
+
 ### Categories
 
 | category | meaning | goes to |
@@ -125,10 +150,11 @@ it replaces the complete signature, not individual fields. Custom packs can:
 
 * add an internal platform (`platform.acme-agent-runtime`) with its images, hosts and env vars;
 * raise the weight of a scope that is privileged in your tenant;
-* add your organisation's internal AI SaaS vendors to `identity-app.*`;
+* add your organization's internal AI SaaS vendors to `identity-app.*`;
 * tune `heuristic.*` patterns for your code base.
 
-Validate with `python -m shadowscan.signatures.validate DIR` before committing.
+Validate with `python -m shadowscan.signatures.validate DIR` and `make evaluate`
+before committing.
 This checks built-ins plus the supplied directory; use `--no-builtin DIR` to
 validate an isolated custom pack. CI runs the same validator on every push and
 pull request. `shadowscan signatures test` exercises representative inputs.
@@ -255,7 +281,7 @@ and tests, which call and test the products they detect.
   apps (`offline_access`, `refresh_token`, `web`, `api`, `full`, `admin`, `workflow`) are not listed as
   privileged; list the qualified permission instead (`admin:org`, `admin.users:write`, `okta.users.manage`).
 * `file` globs use `fnmatch` on the repository-relative POSIX path; `**/` prefixes match at any depth.
-* Dependency names are normalised PEP 503-style (`Foo_Bar` == `foo-bar`) for every ecosystem.
+* Dependency names are normalized PEP 503-style (`Foo_Bar` == `foo-bar`) for every ecosystem.
 * `secret` patterns must be specific enough not to match placeholders; matches are redacted before they reach any report.
   A prefix shared by several vendors (`sk-`) is only attributed when the rest of the key is vendor-specific
   (`sk-ant-`, `sk-or-v1-`, `sk-lf-`, `sk-litellm-`, OpenAI's `sk-proj-` / `T3BlbkFJ` marker); anything else is

@@ -78,6 +78,12 @@ include:
 | `tag:public-network` | Public network access enabled | 5 |
 | `tag:public-ingress` | Publicly reachable ingress | 10 |
 | `tag:public-principal` | Granted to `allUsers` / `allAuthenticatedUsers` | 20 |
+| `tag:exposed-llm-server` | LLM inference service is reachable beyond loopback or cluster scope | 15 |
+| `tag:tool-poisoning` | MCP tool description contains prompt-injection or exfiltration indicators | 15 |
+| `tag:unsafe-serialization` | Model artifact uses an unsafe serialization format | 15 |
+| `tag:cluster-admin` | Workload service account is bound to cluster-admin | 20 |
+| `tag:privileged-pod` | Workload requests privileged host access | 15 |
+| `tag:no-egress-policy` | AI workload namespace has no NetworkPolicy egress controls | 10 |
 | `capability:code-exec` | Can execute arbitrary code | 15 |
 | `capability:autonomous` | Operates without human approval | 10 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
