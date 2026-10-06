@@ -1,5 +1,5 @@
 # Hash-locked core and development test environment for CPython 3.11-3.13.
-# Generated universally with uv 0.12.18 from pyproject.toml
+# Generated universally with uv 0.11.32 from pyproject.toml
 # [project.dependencies] + [dev], constrained by requirements-ci-constraints.txt,
 # requirements.lock and requirements-build.lock. Hashes cover published
 # artifacts so the same lock can be verified on Linux and macOS CI runners.
@@ -539,9 +539,9 @@ distlib==0.4.3 \
 execnet==2.1.2 \
     --hash=sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd \
     --hash=sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec
-filelock==4.0.6 \
-    --hash=sha256:323fab3b2fb22d889b29fa83774f60029addddb4b6a1bcfa1e73066eabffb5f2 \
-    --hash=sha256:9b139fb93b2ac5807f7feaf63aa4546fbd74074a2d3f554c040f40a4694d7b9f
+filelock==4.0.9 \
+    --hash=sha256:635e7d67fa92654eed444e75e9ca18426d34e77ad9c469bf4373f75a932f7b22 \
+    --hash=sha256:9287fd61b99a806e5202be29a83034c0808a1b9830e820537c2f5773981f7eeb
 hypothesis==6.168.3 \
     --hash=sha256:01768a03a30dc54df7fe457c0b34016c84d598fa00d5965ededab93ba4eb3408 \
     --hash=sha256:0369f5df055f96e117ab12e5f249668ff144731ab5280bc7a205fdf81f990b89 \
@@ -1420,9 +1420,9 @@ typing-extensions==4.16.0 \
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
     --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
-virtualenv==21.14.0 \
-    --hash=sha256:c345b0b744c70e7df7e33be20ea1ba5309db1cca3c98eacc10afb0276cf99356 \
-    --hash=sha256:c3c0dbdf7259316edbb993020206ee7f7664a33063292dcc4a618e4c04cdf450
+virtualenv==21.14.3 \
+    --hash=sha256:4acc848a57a3bdb2ae0873d0689664bccad2230784de3753f57128eb126d3934 \
+    --hash=sha256:cb5cd3a87f12a6cfdc0cef6bc8bead6138221767f7718e0c00fee5fb907f9858
 wheel==0.48.0 \
     --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab \
     --hash=sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322
