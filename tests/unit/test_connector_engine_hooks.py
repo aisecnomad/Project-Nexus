@@ -107,7 +107,7 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
         for name, cls in classes.items()
         if any("scanned_local_paths" in vars(klass) for klass in cls.__mro__ if klass is not BaseConnector)
     }
-    assert scanning_local_trees == {"code.filesystem", "code.github", "code.gitlab"}
+    assert scanning_local_trees == {"code.filesystem", "code.github", "code.gitlab", "endpoint.inventory"}
 
 
 @pytest.mark.parametrize(

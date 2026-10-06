@@ -31,6 +31,7 @@ from typing import Any
 
 import yaml
 
+from shadowscan.models import Evidence, Finding
 from shadowscan.utils.jsonc import load_json_lenient
 from shadowscan.utils.safe_yaml import strict_bounded_safe_load
 
@@ -66,6 +67,30 @@ class PostureIssue:
 
     def as_dict(self) -> dict[str, str]:
         return {"id": self.id, "client": self.client, "setting": self.setting, "value": self.value}
+
+
+def record_posture(finding: Finding, posture: list[dict[str, str]]) -> None:
+    """Record posture issues (``PostureIssue.as_dict()`` plus ``file``) on ``finding``.
+
+    Each issue becomes a tag and zero-weight evidence; bypassed approval also
+    adds the ``autonomous`` capability. ``metadata.posture`` keeps the list.
+    """
+    finding.metadata["posture"] = posture
+    for issue in posture:
+        finding.add_tag(issue["id"])
+        if issue["id"] == "posture-permissions-bypassed":
+            finding.add_capability("autonomous")
+        finding.add_evidence(
+            Evidence(
+                signal=f"posture:{issue['id']}",
+                description=(
+                    f"{issue['client']} {POSTURE_DESCRIPTIONS[issue['id']]} "
+                    f"({issue['setting']} = {issue['value']})"
+                ),
+                location=issue.get("file"),
+                weight=0.0,
+            )
+        )
 
 
 def posture_client(rel: str) -> str | None:

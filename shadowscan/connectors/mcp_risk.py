@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from shadowscan.models import Evidence, Finding
+
 RISK_DESCRIPTIONS: dict[str, str] = {
     "mcp-unpinned-package": "fetches its package or image without an exact version",
     "mcp-insecure-transport": "is reached over plaintext HTTP",
@@ -105,6 +107,27 @@ def assess_server(server: dict[str, Any]) -> list[McpRisk]:
         detail = "all tools" if approve is True or "*" in approve else f"{len(approve)} tool(s)"
         risks.append(McpRisk("mcp-auto-approve", detail))
     return _unique(risks)
+
+
+def record_server_risks(finding: Finding, server: dict[str, Any], location: str) -> None:
+    """Assess one server record and record its risks on ``finding``.
+
+    Sets ``server["risks"]`` to the risk ids, adds each id as a tag, and adds
+    zero-weight evidence, so risk changes but confidence does not. A server
+    that declares itself disabled is not assessed.
+    """
+    risks = [] if server.get("disabled") else assess_server(server)
+    server["risks"] = [risk.id for risk in risks]
+    for risk in risks:
+        finding.add_tag(risk.id)
+        finding.add_evidence(
+            Evidence(
+                signal=f"mcp-risk:{risk.id}",
+                description=f"MCP server '{server.get('name')}' {risk.description} ({risk.detail})",
+                location=location,
+                weight=0.0,
+            )
+        )
 
 
 def _launcher_risks(argv: list[str]) -> list[McpRisk]:

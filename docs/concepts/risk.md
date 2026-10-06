@@ -92,8 +92,9 @@ include:
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
 10 for `agent-config`, `workflow`, `bot-app`, `oauth-grant`,
-`service-identity`, `iam-grant`, `gateway-caller` and `infra`; and 5 for
-`framework-usage`, `cloud-resource` and `token`.
+`service-identity`, `iam-grant`, `gateway-caller`, `infra` and
+`runtime-process`; and 5 for `framework-usage`, `cloud-resource`, `token`,
+`ai-app`, `local-model` and `network-contact`.
 
 The complete tables are `KIND_BASE`, `CAPABILITY_WEIGHTS`, `TAG_WEIGHTS`,
 `PROVIDER_WEIGHTS` and `GOVERNANCE_WEIGHTS` in `shadowscan/risk.py`; tags with

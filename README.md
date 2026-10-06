@@ -10,8 +10,8 @@
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
-It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
-low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
+It inspects eight surfaces: code repositories, identity providers, LLM gateway logs,
+low-code platforms, SaaS apps, cloud accounts, developer endpoints, and network logs. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
 agent registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
@@ -24,14 +24,14 @@ Example output, abridged to the first columns (totals vary as signatures evolve;
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
-│ 99 findings  •  95 shadow (inventory: 3 registered agents)                 │
-│ critical 12  high 52  medium 35  •  cloud 27 identity 19 saas 17 …         │
+│ 115 findings  •  111 shadow (inventory: 3 registered agents)               │
+│ critical 15  high 56  medium 44  •  cloud 27 identity 19 saas 17 …         │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
  CRITICAL  98  SHADOW  code      agent-config Claude Code configured in repository root
+ CRITICAL  91  SHADOW  endpoint  agent-config OpenClaw configured on dev-laptop-07 (~dana)
  CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
- CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
 ```
 
 ## The Why
@@ -82,7 +82,7 @@ acceptance, and the workflow does not publish a release.
 
 ## Surfaces & connectors
 
-ShadowScan ships **27 connectors** across the six surfaces below.
+ShadowScan ships **29 connectors** across the eight surfaces below.
 
 | Surface | Connectors | What is discovered |
 |---|---|---|
@@ -92,6 +92,8 @@ ShadowScan ships **27 connectors** across the six surfaces below.
 | **Low-code** | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | Copilot Studio agents & topics, Power Automate/Apps using AI connectors, Agentforce planners/topics/actions, Einstein bots, prompt templates, Now Assist AI agents/tools/triggers, automation workflows with AI or agent steps |
 | **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom approved and account-created Marketplace apps (approval does not prove installation), any CSV/JSON app inventory (CASB exports) |
 | **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci` | Bedrock Agents / AgentCore / Flows / Q Business / Lex, Lambda/ECS/SageMaker/Step Functions with LLM signals, Vertex AI Agent Engine, Dialogflow CX, Agentspace, Cloud Run/Functions, Azure OpenAI deployments, AI Foundry agents, Bot Service, Logic Apps, Function/Container apps, OCI Generative AI Agents, Digital Assistant, GenAI endpoints, IAM roles/bindings/policies granting LLM access, secret *names*, API keys, CloudTrail / audit-log LLM callers |
+| **Endpoint** | `endpoint.inventory` | AI clients and coding agents configured in home directories with their MCP servers and posture (Claude Desktop/Code, Cursor, VS Code, Windsurf, Gemini CLI, Codex, Goose, Cline, Roo, OpenClaw…), AI editor and browser extensions, local model stores (Ollama, LM Studio, Hugging Face, GPT4All, Jan), opt-in shell-history tool counts; osquery fleet exports |
+| **Network** | `network.logs` | AI services contacted per client address from Zeek DNS/TLS/connection logs, Route 53 Resolver query logs, VPC Flow Logs or generic DNS/SNI exports; strict host matching, DNS-attributed flows that refuse shared CDN addresses, agent-service and agent-loop indicators |
 
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the connector guide for the supported modes and provider scope.
@@ -99,7 +101,7 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 
 ## Frameworks & products recognised
 
-216 signatures / 1009 signals, YAML-defined with explicit opt-in overrides:
+216 signatures / 1010 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -202,7 +204,7 @@ it fails until the variable is set.
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
 shadowscan code . --inventory agent-card.yaml
 
-# 2. Try every fixture-backed connector offline (demo; 25 of 27 connectors ship fixtures)
+# 2. Try every fixture-backed connector offline (demo; 27 of 29 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment

@@ -58,6 +58,10 @@ _BUILTIN: dict[str, str] = {
     "cloud.gcp": "shadowscan.connectors.cloud.gcp:GcpConnector",
     "cloud.azure": "shadowscan.connectors.cloud.azure:AzureConnector",
     "cloud.oci": "shadowscan.connectors.cloud.oci:OciConnector",
+    # endpoint
+    "endpoint.inventory": "shadowscan.connectors.endpoint.inventory:EndpointInventoryConnector",
+    # network
+    "network.logs": "shadowscan.connectors.network.logs:NetworkLogConnector",
 }
 
 # Bare namespace ids ("cloud", "saas", ...) are reserved alongside built-in names.

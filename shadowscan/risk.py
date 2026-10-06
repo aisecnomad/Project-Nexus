@@ -46,6 +46,10 @@ KIND_BASE: dict[Kind, int] = {
     Kind.SECRET: 30,
     Kind.TOKEN: 5,
     Kind.INFRA: 10,
+    Kind.AI_APP: 5,
+    Kind.LOCAL_MODEL: 5,
+    Kind.NETWORK_CONTACT: 5,
+    Kind.RUNTIME_PROCESS: 10,
 }
 
 CAPABILITY_WEIGHTS: dict[str, tuple[int, str]] = {

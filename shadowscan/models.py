@@ -146,6 +146,9 @@ class Surface(str, Enum):
     LOWCODE = "lowcode"
     SAAS = "saas"
     CLOUD = "cloud"
+    ENDPOINT = "endpoint"  # developer workstations: AI apps, extensions, local models, agent configs
+    NETWORK = "network"  # DNS, TLS SNI and flow records
+    RUNTIME = "runtime"  # process-to-connection observations
 
 
 class Kind(str, Enum):
@@ -165,6 +168,10 @@ class Kind(str, Enum):
     IAM_GRANT = "iam-grant"  # IAM role / policy enabling LLM or agent access
     SECRET = "secret"  # credential for an LLM provider found in code / config
     INFRA = "infra"  # IaC or container definitions provisioning AI agents
+    AI_APP = "ai-app"  # AI assistant application or editor/browser extension installed on an endpoint
+    LOCAL_MODEL = "local-model"  # model weights stored for a local runtime (Ollama, LM Studio...)
+    NETWORK_CONTACT = "network-contact"  # a host resolved or connected to an AI service
+    RUNTIME_PROCESS = "runtime-process"  # a running process observed connecting to an AI service
 
 
 class Likelihood(str, Enum):

@@ -1,0 +1,17 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	ssl
+#open	2026-09-29-08-00-00
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	version	cipher	curve	server_name	resumed	last_alert	next_protocol	established	ssl_history
+#types	time	string	addr	port	addr	port	string	string	string	string	bool	string	string	bool	string
+1759132810.000000	Ca0	10.1.4.21	51515	160.79.104.10	443	TLSv13	TLS_AES_128_GCM_SHA256	x25519	api.anthropic.com	F	-	h2	T	CsiI
+1759132813.000000	Ca1	10.1.4.21	51515	160.79.104.10	443	TLSv13	TLS_AES_128_GCM_SHA256	x25519	api.anthropic.com	F	-	h2	T	CsiI
+1759132816.000000	Ca2	10.1.4.21	51515	160.79.104.10	443	TLSv13	TLS_AES_128_GCM_SHA256	x25519	api.anthropic.com	F	-	h2	T	CsiI
+1759132819.000000	Ca3	10.1.4.21	51515	160.79.104.10	443	TLSv13	TLS_AES_128_GCM_SHA256	x25519	api.anthropic.com	F	-	h2	T	CsiI
+1759132822.000000	Ca4	10.1.4.21	51515	160.79.104.10	443	TLSv13	TLS_AES_128_GCM_SHA256	x25519	api.anthropic.com	F	-	h2	T	CsiI
+1759132840.000000	Cm1	10.1.4.40	51515	34.120.1.1	443	TLSv13	TLS_AES_128_GCM_SHA256	x25519	mcp.linear.app	F	-	h2	T	CsiI
+1759132841.000000	Cg1	10.1.4.50	51515	104.18.6.110	443	TLSv13	TLS_AES_128_GCM_SHA256	x25519	api.gemini.com	F	-	h2	T	CsiI
+1759132842.000000	Cn1	10.1.4.33	51515	23.1.1.1	443	TLSv13	TLS_AES_128_GCM_SHA256	x25519	-	F	-	h2	T	CsiI
+#close	2026-09-29-09-00-00

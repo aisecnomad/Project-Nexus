@@ -1,5 +1,5 @@
-# Demo configuration: runs every connector that ships an offline fixture (25 of
-# 27; code.github and code.gitlab need a directory of cloned repositories)
+# Demo configuration: runs every connector that ships an offline fixture (27 of
+# 29; code.github and code.gitlab need a directory of cloned repositories)
 # against the fixtures in the repository. No credentials needed.
 #   shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 inventory:
@@ -86,3 +86,8 @@ connectors:
     input: ../tests/fixtures/cloud/azure_records.jsonl
   - name: cloud.oci
     input: ../tests/fixtures/cloud/oci_records.jsonl
+  - name: endpoint.inventory
+    input: ../tests/fixtures/endpoint/inventory.jsonl
+  - name: network.logs
+    label: hq-zeek
+    input: ../tests/fixtures/network/zeek

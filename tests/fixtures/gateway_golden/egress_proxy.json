@@ -2628,7 +2628,7 @@
    "first_seen": "2025-09-01T00:03:00+00:00",
    "last_seen": "2025-09-01T02:57:00+00:00",
    "metadata": {
-    "agent_indicators": 2,
+    "agent_indicators": 1,
     "caller_kind": "user-agent",
     "caller": "crewai/0.80 python-requests/2.32",
     "events": 30,

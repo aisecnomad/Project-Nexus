@@ -31,6 +31,43 @@ summarizes each release for people who install and operate ShadowScan.
 - A `coding-agent.openclaw` signature recognizes OpenClaw state directories.
 - New default risk weights for these tags; see `docs/concepts/risk.md` and the
   October 6 migration note in `docs/production.md`.
+- New `endpoint.inventory` connector and `endpoint` surface. It reads a fixed
+  list of documented user-scope locations below home directories: AI client
+  and coding-agent configurations with their MCP servers, server risks and
+  posture; AI editor and browser extensions; local model stores; and, with
+  `shell_history: true`, AI command-line tool names and counts. Offline it
+  replays exported records or osquery `vscode_extensions`,
+  `chrome_extensions` and `firefox_addons` results. Symbolic links are never
+  followed, and links, unreadable locations, oversized files or an exhausted
+  `max_entries` budget make the scan incomplete.
+- New finding kinds `ai-app`, `local-model`, `network-contact` and
+  `runtime-process`, and surfaces `endpoint`, `network` and `runtime`.
+  `KIND_BASE` gives the first three 5 and `runtime-process` 10.
+- MCP risk and posture recording moved to shared helpers
+  (`record_server_risks`, `record_posture`) used by the code and endpoint
+  connectors.
+- The offline demo runs `endpoint.inventory` (26 of 28 connectors ship
+  fixtures).
+- `gateway.logs` classifies agentic callers from request metadata when logs
+  carry no request bodies: hosted agent runtime operations
+  (`agent-runtime-api`), MCP endpoints (`mcp-client`) and agent-loop cadence
+  from programmatic callers (`agent-loop`). The indicators live in
+  `shadowscan/connectors/agent_behavior.py` for reuse by other log sources.
+- Fixed: every gateway caller to `*.openai.com` or `*.anthropic.com`, and any
+  caller named after those vendors, was titled "Agentic caller" because the
+  ChatGPT and Claude SaaS app signatures carry an agent indicator for OAuth
+  grants. Gateway callers no longer take agent indicators from
+  `identity-app` signatures; the golden replays record the corrected titles.
+- `framework.autogen` gains a user-agent signal (`autogen/…`, `ag2/…`).
+- New `network.logs` connector and `network` surface. It reads Zeek
+  `dns.log`, `ssl.log` and `conn.log` (TSV or JSON), Route 53 Resolver query
+  logs, VPC Flow Logs and generic DNS/SNI exports, and reports one
+  `network-contact` finding per client address and AI service. Host names
+  match exactly or by a declared wildcard, and only AI host names are kept.
+  Flows are attributed by Zeek `uid` to a TLS server name or through DNS
+  answers in the same input; addresses shared with another service's host
+  attribute nothing. The offline demo runs it (27 of 29 connectors ship
+  fixtures).
 
 ### Security-review follow-ups
 

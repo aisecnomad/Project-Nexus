@@ -1,0 +1,90 @@
+# Endpoint connector
+
+The endpoint connector inventories AI tools on developer workstations: the
+clients and coding agents a person has configured, their MCP servers, AI
+editor and browser extensions, local model stores and, when enabled, AI
+command-line tools named in shell history. It finds tools that never touch a
+repository, an identity provider or a gateway, such as a Claude Desktop MCP
+server or an Ollama model pulled onto a laptop.
+
+!!! info "Local or fleet"
+    Run it on a workstation against one or more home directories, or point
+    `input` at osquery results collected across a fleet. It calls no API.
+
+## `endpoint.inventory`
+
+The connector reads a fixed list of documented user-scope locations below
+each home directory, on Linux, macOS and Windows (`AppData`) layouts. It does
+not walk the home directory, so unrelated personal files are never opened.
+
+| Category | Locations | Finding |
+|---|---|---|
+| Client and agent configuration | Claude Desktop, Claude Code (`~/.claude.json`, `~/.claude/settings*.json`, `agents/`, `skills/`, `commands/`), Cursor, VS Code `mcp.json`, Windsurf, Gemini CLI, Codex `config.toml` and `AGENTS.md`, Kiro, Amazon Q, LM Studio, Continue, Goose, Cline and Roo Code global storage, Aider, OpenClaw, Copilot CLI | `agent-config` for a product with a coding-agent signature, else `ai-app`; plus an `mcp-server` finding per client listing its servers |
+| Editor extensions | VS Code, VS Code Insiders, VS Code Server, VSCodium, Cursor and Windsurf extension directories | `agent-config` for an agentic extension (Cline, Roo Code, Copilot Chat, Claude Code, Codex, Amazon Q…), else `ai-app` |
+| Browser extensions | Chrome, Chromium, Edge and Brave profiles; Firefox `extensions.json` | `ai-app`, only when the extension name matches an AI product |
+| Local models | Ollama manifests, LM Studio, the Hugging Face hub cache, GPT4All, Jan | `local-model` listing up to 50 model names |
+| Shell history (opt-in) | bash, zsh, fish and PowerShell history | evidence on the tool's configuration finding, or an `ai-app` finding when the tool has none |
+
+MCP server findings carry the same static server risks as the code
+connector (`mcp-unpinned-package`, `mcp-broad-filesystem`,
+`mcp-shell-command`, plaintext transport, auto-approved tools), and agent
+configuration findings carry the same posture checks
+(`posture-permissions-bypassed`, `posture-unrestricted-shell`,
+`posture-unsandboxed`, `posture-exposed-gateway`,
+`posture-unauthenticated-gateway`). See [risk](../concepts/risk.md).
+
+Options:
+
+- `path`: the home directory to inventory. The default is the home directory
+  of the account running the scan.
+- `paths`: a list of home directories, for example every directory under
+  `/home` on a shared build host. Set `path` or `paths`, not both.
+- `label`: the device name used in resource ids, titles and the finding's
+  `account`. The default is the host name.
+- `shell_history`: `true` to read shell history. Only the AI tool name and a
+  run count are kept; command lines, arguments and timestamps are not. The
+  default is `false`.
+- `max_entries`: the number of directory entries examined per home directory
+  (default 50,000). Reaching it makes the scan incomplete.
+- `input`: offline records exported with `--dump-records`, or osquery
+  results.
+
+### Offline fleet inventory with osquery
+
+`input` accepts the JSON output of these osquery queries, as an array of rows
+or as osquery logger lines that carry `columns` and `hostIdentifier`:
+
+```sql
+SELECT u.username, e.* FROM users u CROSS JOIN vscode_extensions e USING (uid);
+SELECT u.username, e.* FROM users u CROSS JOIN chrome_extensions e USING (uid);
+SELECT u.username, a.* FROM users u CROSS JOIN firefox_addons a USING (uid);
+```
+
+Rows for extensions that are not AI products are ignored. The device comes
+from `hostIdentifier` (or `label`), and the home from `username`, then the
+user directory in the extension path, then `uid-<uid>`. Records exported with `--dump-records` replay unchanged, so a
+collection on each laptop can be analysed centrally.
+
+### Safety and completeness
+
+- Every file and directory is opened without following a symbolic link in
+  any path component. A link, an unreadable location, an oversized file or an
+  exhausted entry budget is a coverage gap: a warning names the location and
+  the scan is incomplete. A location that does not exist is not a gap.
+- File contents never enter a record. MCP server entries are the sanitized
+  projection the code connector uses (environment variable and header names,
+  never values), browser extensions are kept only when their name matches an
+  AI product, and posture records hold enumerated setting values, never a
+  token.
+- Malformed configuration (invalid JSON, YAML or TOML) still produces the
+  configuration finding, records a warning and makes the scan incomplete,
+  because its MCP servers could not be listed.
+- A malformed offline record is ignored with a warning, and the scan is
+  incomplete.
+
+Findings are owned by the home directory name and scoped to the device, so
+`owner` and `account` identify whose workstation a finding came from. An
+endpoint inventory shows that a tool is installed or configured, not that it
+ran; shell history is evidence of use on that account only.
+
+See the [main connector reference](../connectors.md) for shared options and offline safety limits.

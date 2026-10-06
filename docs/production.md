@@ -783,6 +783,33 @@ previously fell under a generic instruction-file signature may change their
 framework list; finding IDs depend on the resource and discriminator, and the
 discriminator of a coding-agent configuration includes its signature id.
 
+The new `endpoint.inventory` connector reports findings on a new `endpoint`
+surface with new kinds (`ai-app` and `local-model` at base weight 5, plus
+`agent-config` and `mcp-server`). Reports, dashboards and `--surface` filters
+that enumerate surfaces or kinds should add them; `network-contact` (5) and
+`runtime-process` (10) are reserved for the network and runtime connectors.
+Endpoint resource ids have the form
+`endpoint:<device>:<home>:<category>:<key>`, so a finding keeps its identity
+across scans of the same device and home. The connector reads home
+directories of the account running it; on a shared host, scope `paths` to the
+homes you are authorized to inventory, and leave `shell_history` off unless
+your policy allows it (only tool names and counts are kept).
+
+Gateway caller titles change on re-scan. Callers whose only agent indicator
+was the domain or name of an AI SaaS app (any `api.openai.com` or
+`api.anthropic.com` caller, or a key named after the vendor) are now
+"LLM caller" instead of "Agentic caller". Callers that invoke hosted agent
+runtimes, reach MCP endpoints or show agent-loop cadence gain the tags
+`agent-runtime-api`, `mcp-client` or `agent-loop` and
+`metadata.agent_behaviour`. Finding IDs are unchanged; dashboards that count
+agentic callers by title will see a different number.
+
+The new `network.logs` connector reports `network-contact` findings on the
+`network` surface, with resource ids `network:<label>:<client>:<signature>`.
+A client address names a device or a NAT gateway; give each sensor or VPC a
+distinct `label` so the same private address in two networks stays two
+findings, and join findings to DHCP or VPN records before assigning owners.
+
 ### October 3 source capability attribution migration
 
 Re-scan code with this candidate before comparing its risk to earlier reports.
