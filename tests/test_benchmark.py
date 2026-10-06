@@ -127,3 +127,22 @@ def test_missing_tool_is_an_error_not_a_negative(tmp_path: Path) -> None:
     outcome = adapters.AgentSonar().run(case, tmp_path, env)
     assert outcome.status == "error"
     assert not outcome.detected
+
+
+def test_urls_omit_default_ports_like_proxy_logs() -> None:
+    flow = {"scheme": "https", "host": "api.openai.com", "port": 443, "path": "/v1/responses"}
+    assert adapters._url(flow) == "https://api.openai.com/v1/responses"
+    local = {"scheme": "http", "host": "127.0.0.1", "port": 11434, "path": "/api/chat"}
+    assert adapters._url(local) == "http://127.0.0.1:11434/api/chat"
+
+
+def test_last_json_line_skips_log_lines() -> None:
+    text = '2026-10-06 [info] catalog_loaded total=106\n{"events": []}\n'
+    assert adapters._last_json_line(text) == {"events": []}
+    with pytest.raises(ValueError):
+        adapters._last_json_line("no json here\n")
+
+
+def test_mcp_scanner_log_names_the_enumerated_server() -> None:
+    line = "ERROR - Unexpected error scanning server 'github' from /h/.cursor/mcp.json: Timeout connecting\n"
+    assert adapters._MCP_SCANNER_SERVER.findall(line) == [("github", "/h/.cursor/mcp.json")]

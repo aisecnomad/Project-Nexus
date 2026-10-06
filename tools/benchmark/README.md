@@ -96,16 +96,53 @@ configured with an allowlist, a known-agent list or an inventory.
 | Tool | Upstream commit | Surfaces scored | Run as | "Detected" when |
 |---|---|---|---|---|
 | ShadowScan | this checkout | repo, endpoint, network | `code.filesystem` on the tree; `gateway.logs` on the access log | the report has any finding and the scan is complete (exit 3 or an incomplete status counts as an error) |
-| Cisco AI BOM | `8d7bec0` | repo, endpoint | `cisco-aibom analyze`; the required LLM endpoint is unreachable, so Tier 3 degrades to deterministic candidates | the BOM lists any component |
-| agent-bom | `26ed7c1` | repo, endpoint | `agent-bom scan --no-scan --offline`; endpoint cases rely on auto-discovery with `HOME` set to the case | any agent, MCP server, skill or AI component |
-| AgentDiscover Scanner | `a3756cd` | repo, endpoint | `agentdiscover scan --format sarif` (Layer 1 only; Layers 2–5 need live hosts, clusters or cloud accounts) | any SARIF result |
-| Snyk Agent Scan | `69ce32c` | repo, endpoint | `snyk-agent-scan inspect --json` (no analysis upload, no network) | any MCP server or skill listed |
-| Cisco MCP Scanner | `f817899` | endpoint | `mcp-scanner --scan-known-configs --analyzers yara`, `HOME` set to the case | any server entry in the output |
+| Cisco AI BOM | `8d7bec0` | repo, endpoint | `cisco-aibom analyze`; the required LLM endpoint is unreachable, so Tier 3 degrades to deterministic candidates, which the report keeps as `unreviewed` | the report's `total_components` is above zero |
+| agent-bom | `26ed7c1` | repo, endpoint | `agent-bom scan --no-scan --offline`; repos with an empty `HOME`, endpoints by auto-discovery with `HOME` set to the case | a client agent or MCP server absent from an empty-home baseline, or a project entry on the `ai-inventory` surface or bound to a model |
+| AgentDiscover Scanner | `a3756cd` | repo, endpoint | `agentdiscover scan --format sarif` plus `agentdiscover audit --skip-layers 2,3,4,5` (Layers 2–5 need live hosts, clusters or cloud accounts) | any SARIF result, inventoried agent or MCP server |
+| Snyk Agent Scan | `69ce32c` | endpoint | `snyk-agent-scan inspect --json` with `HOME` set to the case (no analysis upload) | any MCP server or skill listed |
+| Cisco MCP Scanner | `f817899` | endpoint | `mcp-scanner --scan-known-configs --analyzers yara`, `HOME` set to the case | any server it scanned or enumerated from a config under the case home |
 | Open Shadow AI | `715044e` | network | the project's squid parser and catalog matcher, in-process (the full product needs PostgreSQL and ClickHouse) | any record matches a catalog item |
 | AgentSonar | `8658b67` | network | `agentsonar classify` on replayed TLS and streaming events | any process–domain pair scores > 0.3 (the cut-off in the project's own examples) or matches a known agent |
 | Shadow AI Detector | `f2bd5ab` | network | the project's `assessEvent()` with an empty sanctioned list | any event matches the endpoint catalog |
-| Claw-Hunter | `4125c4f` | endpoint | `claw-hunter.sh --json`, `HOME` set to the case | the report says OpenClaw is installed |
+| Claw-Hunter | `4125c4f` | endpoint | `claw-hunter.sh --json`, `HOME` set to the case | the report shows an OpenClaw CLI, config, workspace, running gateway, launch agent or app |
 | AI-Detector | `fa673ef` | endpoint | `detect-shadow-ai.sh` as an unprivileged user, JSON report, network module off, `HOME` set to the case | any finding that does not also appear with an empty home (host noise) |
+
+Every tool runs in fresh network and PID namespaces with a minimal
+environment, so it sees no network, no host processes and no credentials.
+
+### Calibration changes
+
+The seed-1 calibration corpus (10, then 40 cases per surface) exposed these
+problems. Each fix is limited to running the tool or reading its report; no
+detection rule was relaxed after scored results were seen.
+
+- **All tools:** a fresh PID namespace was added. AI-Detector listed the
+  benchmark host's own processes, which are not case evidence.
+- **Cisco AI BOM:** the report stores components as a mapping, so the count
+  now comes from `summary.total_components`. Flags that fail the unreachable
+  LLM fast were added; they keep the same deterministic candidates.
+- **agent-bom:** the report always contains a pseudo-agent for the scanned
+  project, whose "servers" are its package manifests, and an `mcp-cli`
+  installed on the host. Both are excluded. Host entries are removed with an
+  empty-home baseline, as for AI-Detector.
+- **AgentDiscover:** MCP and inventory detection live in `audit`, not `scan`,
+  so both run. `scan` writes no SARIF for a tree without Python or JavaScript
+  files and says so; that is a clean result, not an error.
+- **Snyk Agent Scan:** given a directory, `inspect` does not enumerate project
+  configs. It finds them only from client-recorded workspaces or an explicit
+  file path, which would not be discovery. Repository cases are therefore not
+  scored for it.
+- **Cisco MCP Scanner:** `--stdio-timeout` crashes this build
+  (`UnboundLocalError`), so the timeout goes through
+  `MCP_SCANNER_STDIO_TIMEOUT`. With no network every server fails to start
+  and is left out of the JSON, so the servers named in its log as scanned
+  from a case config count as found.
+- **Open Shadow AI:** its logger writes to stdout before the result, so the
+  last JSON line is read.
+- **Network renderers:** URLs omit default ports, as proxy logs do.
+- **Claw-Hunter and AI-Detector:** the JSON follows a banner. The script is
+  copied where the unprivileged user can read it, and PIDs are ignored when
+  comparing findings with the baseline.
 
 The upstream checkouts were taken on 2026-10-06.
 [`install_tools.sh`](install_tools.sh) installs each tool at its pinned commit

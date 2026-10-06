@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -59,8 +60,12 @@ Run = tuple[int, str, str, float]
 
 
 def _isolated(cmd: list[str], *, env: dict[str, str], cwd: Path, stdin: str | None = None) -> Run:
-    """Run ``cmd`` without network access; returns (code, stdout, stderr, seconds)."""
-    full = ["unshare", "-n", "--", *cmd]
+    """Run ``cmd`` without network access; returns (code, stdout, stderr, seconds).
+
+    A fresh PID namespace hides the host's processes, so a tool that lists
+    running processes sees only its own and cannot report the benchmark host.
+    """
+    full = ["unshare", "--net", "--pid", "--fork", "--mount-proc", "--", *cmd]
     started = time.monotonic()
     try:
         proc = subprocess.run(
@@ -78,13 +83,39 @@ def _isolated(cmd: list[str], *, env: dict[str, str], cwd: Path, stdin: str | No
     return proc.returncode, proc.stdout, proc.stderr, time.monotonic() - started
 
 
-def _base_env(home: Path, extra_path: str = "") -> dict[str, str]:
-    path = ":".join(p for p in (extra_path, "/usr/local/bin:/usr/bin:/bin") if p)
-    return {"HOME": str(home), "PATH": path, "LANG": "C.UTF-8", "TMPDIR": str(home.parent / "tmp")}
+def _base_env(home: Path, work: Path) -> dict[str, str]:
+    """A minimal environment: no proxies, credentials or host ``HOME``."""
+    return {
+        "HOME": str(home),
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "TMPDIR": str(work / "tmp"),
+    }
 
 
 def _tail(text: str, n: int = 300) -> str:
     return text.strip().replace("\n", " | ")[-n:]
+
+
+def _empty_home(work: Path) -> Path:
+    home = work / "emptyhome"
+    home.mkdir(exist_ok=True)
+    return home
+
+
+def _last_json_line(text: str) -> Any:
+    """Parse the last line that is a JSON document (tools may log to stdout first)."""
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line.startswith(("{", "[")):
+            return json.loads(line)
+    raise ValueError("no JSON line in output")
+
+
+def _url(f: dict[str, Any]) -> str:
+    default = {"https": 443, "http": 80}[f["scheme"]]
+    port = "" if f["port"] == default else f":{f['port']}"
+    return f"{f['scheme']}://{f['host']}{port}{f['path']}"
 
 
 class Adapter:
@@ -154,7 +185,10 @@ class ShadowScan(Adapter):
         out = work / "report.json"
         code, stdout, stderr, secs = _isolated(
             [env.python, "-m", "shadowscan", "scan", "-c", str(cfg), "-f", "json", "-o", str(out)],
-            env={**_base_env(work), "PYTHONPATH": str(Path(__file__).resolve().parents[2])},
+            env={
+                **_base_env(_empty_home(work), work),
+                "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
+            },
             cwd=work,
         )
         if not out.exists():
@@ -236,18 +270,26 @@ class CiscoAIBOM(Adapter):
             # the deterministic candidates, which the report marks `unreviewed`.
             "--llm-provider", "openai", "--llm-model", "gpt-4o",
             "--llm-api-base", "http://127.0.0.1:9/v1", "--llm-api-key", "unused",
+            # Fail the unreachable classifier fast; degraded candidates are kept either way.
+            "--agentic-timeout", "5", "--agentic-max-retry-seconds", "1",
+            "--agentic-max-consecutive-failures", "1",
         ]  # fmt: skip
-        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(work), cwd=work)
+        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(_empty_home(work), work), cwd=work)
         if not out.exists():
             return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
         text = out.read_text(encoding="utf-8")
-        doc = json.loads(text)
-        comps = _json_items(doc, ("components", "ai_components"))
-        types = {str(c.get("type") or c.get("component_type")) for c in comps if isinstance(c, dict)}
+        analysis = json.loads(text)["aibom_analysis"]
+        if analysis["metadata"].get("status") != "completed" or analysis["metadata"].get(
+            "sources_with_errors"
+        ):
+            return Outcome("error", seconds=secs, note=f"status {analysis['metadata'].get('status')}", raw={})
+        summary = analysis["summary"]
+        types = set(summary.get("component_types") or {})
+        total = int(summary.get("total_components") or 0)
         return Outcome(
             "ok",
-            detected=bool(comps),
-            items=len(comps),
+            detected=total > 0,
+            items=total,
             agentic=bool(types & {"agent", "agent_proxy", "mcp_server", "mcp_client", "tool", "skill"}),
             seconds=secs,
             note=",".join(sorted(types))[:200],
@@ -266,50 +308,88 @@ class CiscoAIBOM(Adapter):
 
 
 class AgentBom(Adapter):
+    """Calibrated: the report always lists a pseudo-agent for the scanned project
+    (``source: project``) whose "servers" are its package manifests, and host-wide
+    CLIs it finds on PATH. Neither is evidence about the case. AI evidence is a
+    client agent or MCP server not present with an empty home, or a project
+    server on the ``ai-inventory`` surface or bound to a model."""
+
     name = "agent-bom"
     display = "agent-bom"
     source = "msaad00/agent-bom"
     surfaces = {
-        "repo": "scan <checkout> --no-scan (inventory only)",
-        "endpoint": "scan with HOME=<case> (client auto-discovery) --no-scan",
+        "repo": "scan <checkout> --no-scan --offline (inventory only), empty HOME",
+        "endpoint": "scan --no-scan --offline with HOME=<case> (client auto-discovery)",
     }
+    _baseline: frozenset[tuple[str, str, str]] | None = None
 
     def unavailable(self, env: ToolEnv) -> str | None:
         exe = env.venv_bin("agentbom", "agent-bom")
         return None if exe.exists() else str(exe)
 
-    def _scan(self, args: list[str], home: Path, work: Path, env: ToolEnv) -> Outcome:
-        out = work / "agent-bom.json"
+    def _report(self, args: list[str], home: Path, work: Path, env: ToolEnv) -> tuple[Any, str, str, float]:
+        out = work / f"agent-bom-{home.name}.json"
         cmd = [str(env.venv_bin("agentbom", "agent-bom")), "scan", *args, "--no-scan", "--offline"]
         cmd += ["-f", "json", "-o", str(out)]
-        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(home), cwd=work)
+        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(home, work), cwd=work)
         if not out.exists():
-            return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
+            return None, "", f"exit {code}: {_tail(stderr or stdout)}", secs
         text = out.read_text(encoding="utf-8")
-        doc = json.loads(text)
-        agents = _json_items(doc, ("agents",))
-        servers = _json_items(doc, ("mcp_servers", "servers"))
-        ai = _json_items(doc, ("ai_components", "ai_inventory", "ai_findings", "skills"))
-        items = len(agents) + len(servers) + len(ai)
+        return json.loads(text), text, "", secs
+
+    @staticmethod
+    def _agent_key(agent: dict[str, Any]) -> tuple[str, str, str]:
+        return (str(agent.get("name")), str(agent.get("agent_type")), str(agent.get("status")))
+
+    def _baseline_agents(self, work: Path, env: ToolEnv) -> frozenset[tuple[str, str, str]]:
+        if self._baseline is None:
+            doc, _, err, _ = self._report([], _empty_home(work), work, env)
+            if doc is None:
+                raise RuntimeError(f"agent-bom baseline failed: {err}")
+            self._baseline = frozenset(self._agent_key(a) for a in doc.get("agents", []))
+        return self._baseline
+
+    def _outcome(
+        self, doc: Any, text: str, secs: float, baseline: frozenset[tuple[str, str, str]]
+    ) -> Outcome:
+        clients, servers, ai = [], [], []
+        for agent in doc.get("agents", []):
+            is_project = (agent.get("discovery_provenance") or {}).get("source") == "project"
+            if is_project:
+                for server in agent.get("mcp_servers", []):
+                    if server.get("surface") == "ai-inventory" or server.get("command") not in (
+                        "project",
+                        None,
+                    ):
+                        ai.append(server.get("name"))
+            elif self._agent_key(agent) not in baseline:
+                clients.append(agent.get("name"))
+                servers += [s.get("name") for s in agent.get("mcp_servers", [])]
+        items = len(clients) + len(servers) + len(ai)
         return Outcome(
             "ok",
             detected=items > 0,
             items=items,
-            agentic=bool(agents or servers),
+            agentic=bool(clients or servers),
             seconds=secs,
-            note=f"agents={len(agents)} servers={len(servers)} ai={len(ai)}",
+            note=f"clients={clients} servers={len(servers)} ai={ai}"[:200],
             raw={"agent-bom.json": text},
         )
 
     def run_repo(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
+        baseline = self._baseline_agents(work, env)
         root = self.tree(case, work, "repo")
-        empty_home = work / "emptyhome"
-        empty_home.mkdir()
-        return self._scan([str(root)], empty_home, work, env)
+        doc, text, err, secs = self._report([str(root)], _empty_home(work), work, env)
+        if doc is None:
+            return Outcome("error", seconds=secs, note=err)
+        return self._outcome(doc, text, secs, baseline)
 
     def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
-        home = self.tree(case, work, "home")
-        return self._scan([], home, work, env)
+        baseline = self._baseline_agents(work, env)
+        doc, text, err, secs = self._report([], self.tree(case, work, "home"), work, env)
+        if doc is None:
+            return Outcome("error", seconds=secs, note=err)
+        return self._outcome(doc, text, secs, baseline)
 
 
 # ----------------------------------------------------------------------------
@@ -317,42 +397,73 @@ class AgentBom(Adapter):
 
 
 class AgentDiscover(Adapter):
+    """Calibrated: ``scan`` holds the Layer 1 code findings (SARIF) and ``audit``
+    adds MCP configuration detection and the agent inventory, so both run and
+    either counts. ``scan`` writes no SARIF when a tree has no Python or
+    JavaScript file and says so; that is a clean "nothing found"."""
+
     name = "agentdiscover"
     display = "AgentDiscover Scanner"
     source = "Defend-AI-Tech-Inc/agent-discover-scanner"
     surfaces = {
-        "repo": "scan <checkout> --format sarif (Layer 1 source analysis)",
-        "endpoint": "scan <home directory> --format sarif (Layer 1 source analysis)",
+        "repo": "scan --format sarif + audit --skip-layers 2,3,4,5, empty HOME",
+        "endpoint": "scan + audit --skip-layers 2,3,4,5 on the home, HOME=<case>",
     }
+    _NO_FILES = "No Python or JavaScript files found"
 
     def unavailable(self, env: ToolEnv) -> str | None:
         exe = env.venv_bin("agentdiscover", "agentdiscover")
         return None if exe.exists() else str(exe)
 
-    def _scan(self, root: Path, work: Path, env: ToolEnv) -> Outcome:
-        out = work / "results.sarif"
-        cmd = [str(env.venv_bin("agentdiscover", "agentdiscover")), "scan", str(root)]
-        cmd += ["--format", "sarif", "--output", str(out)]
-        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(work), cwd=work)
-        if not out.exists():
-            return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
-        text = out.read_text(encoding="utf-8")
-        results = _json_items(json.loads(text), ("results",))
-        rules = {str(r.get("ruleId")) for r in results if isinstance(r, dict)}
+    def _run(self, root: Path, home: Path, work: Path, env: ToolEnv) -> Outcome:
+        exe = str(env.venv_bin("agentdiscover", "agentdiscover"))
+        sarif = work / "results.sarif"
+        code, stdout, stderr, secs = _isolated(
+            [exe, "scan", str(root), "--format", "sarif", "--output", str(sarif)],
+            env=_base_env(home, work),
+            cwd=work,
+        )
+        results: list[Any] = []
+        raw: dict[str, str] = {}
+        if sarif.exists():
+            raw["results.sarif"] = sarif.read_text(encoding="utf-8")
+            results = _json_items(json.loads(raw["results.sarif"]), ("results",))
+        elif not (code == 0 and self._NO_FILES in stdout):
+            return Outcome("error", seconds=secs, note=f"scan exit {code}: {_tail(stderr or stdout)}")
+        bundle = work / "audit"
+        code2, stdout2, stderr2, secs2 = _isolated(
+            [exe, "audit", str(root), "--output", str(bundle), "--skip-layers", "2,3,4,5", "--duration", "1"],
+            env=_base_env(home, work),
+            cwd=work,
+        )
+        inventory_path = bundle / "raw" / "agent_inventory.json"
+        mcp_path = bundle / "mcp-report.md"
+        if code2 != 0 or not inventory_path.exists() or not mcp_path.exists():
+            return Outcome(
+                "error", seconds=secs + secs2, note=f"audit exit {code2}: {_tail(stderr2 or stdout2)}"
+            )
+        raw["agent_inventory.json"] = inventory_path.read_text(encoding="utf-8")
+        raw["mcp-report.md"] = mcp_path.read_text(encoding="utf-8")
+        agents = int(json.loads(raw["agent_inventory.json"])["summary"].get("total_agents") or 0)
+        mcp = [line[3:].strip() for line in raw["mcp-report.md"].splitlines() if line.startswith("## ")]
+        rules = sorted({str(r.get("ruleId")) for r in results if isinstance(r, dict)})
+        items = len(results) + agents + len(mcp)
         return Outcome(
             "ok",
-            detected=bool(results),
-            items=len(results),
-            seconds=secs,
-            note=",".join(sorted(rules))[:200],
-            raw={"results.sarif": text},
+            detected=items > 0,
+            items=items,
+            agentic=bool(mcp or agents),
+            seconds=secs + secs2,
+            note=f"rules={','.join(rules)} agents={agents} mcp={mcp}"[:200],
+            raw=raw,
         )
 
     def run_repo(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
-        return self._scan(self.tree(case, work, "repo"), work, env)
+        return self._run(self.tree(case, work, "repo"), _empty_home(work), work, env)
 
     def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
-        return self._scan(self.tree(case, work, "home"), work, env)
+        home = self.tree(case, work, "home")
+        return self._run(home, home, work, env)
 
 
 # ----------------------------------------------------------------------------
@@ -360,22 +471,24 @@ class AgentDiscover(Adapter):
 
 
 class SnykAgentScan(Adapter):
+    """Calibrated: ``inspect <directory>`` does not enumerate project configs (it
+    finds them only from client-recorded workspaces or an explicit file path),
+    so the tool is scored on machine discovery only."""
+
     name = "snyk-agent-scan"
     display = "Snyk Agent Scan"
     source = "snyk/agent-scan"
-    surfaces = {
-        "repo": "inspect <checkout> --json (project-scope configs; no analysis upload)",
-        "endpoint": "inspect --json with HOME=<case> (machine discovery; no analysis upload)",
-    }
+    surfaces = {"endpoint": "inspect --json with HOME=<case> (machine discovery; no analysis upload)"}
 
     def unavailable(self, env: ToolEnv) -> str | None:
         exe = env.venv_bin("snyk", "snyk-agent-scan")
         return None if exe.exists() else str(exe)
 
-    def _inspect(self, args: list[str], home: Path, work: Path, env: ToolEnv) -> Outcome:
-        cmd = [str(env.venv_bin("snyk", "snyk-agent-scan")), "inspect", *args, "--json"]
+    def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
+        home = self.tree(case, work, "home")
+        cmd = [str(env.venv_bin("snyk", "snyk-agent-scan")), "inspect", "--json"]
         cmd += ["--storage-file", str(work / "agent-scan-state"), "--server-timeout", "2"]
-        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(home), cwd=work)
+        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(home, work), cwd=work)
         try:
             doc = json.loads(stdout)
         except json.JSONDecodeError:
@@ -393,21 +506,19 @@ class SnykAgentScan(Adapter):
             raw={"inspect.json": stdout},
         )
 
-    def run_repo(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
-        root = self.tree(case, work, "repo")
-        empty_home = work / "emptyhome"
-        empty_home.mkdir()
-        return self._inspect([str(root)], empty_home, work, env)
-
-    def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
-        return self._inspect([], self.tree(case, work, "home"), work, env)
-
 
 # ----------------------------------------------------------------------------
 # Cisco MCP Scanner
 
+_MCP_SCANNER_SERVER = re.compile(r"server '([^']+)' from (\S+?):?\s")
+
 
 class CiscoMCPScanner(Adapter):
+    """Calibrated: ``--stdio-timeout`` crashes this build (UnboundLocalError), so the
+    timeout goes through ``MCP_SCANNER_STDIO_TIMEOUT``. Offline, every server it
+    tries fails to connect and is left out of the JSON; the log still names each
+    server and config file it enumerated, which is its discovery evidence."""
+
     name = "cisco-mcp-scanner"
     display = "Cisco MCP Scanner"
     source = "cisco-ai-defense/mcp-scanner"
@@ -420,27 +531,29 @@ class CiscoMCPScanner(Adapter):
     def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         home = self.tree(case, work, "home")
         cmd = [str(env.venv_bin("mcpscanner", "mcp-scanner")), "--scan-known-configs", "--analyzers", "yara"]
-        cmd += ["--format", "raw", "--stdio-timeout", "2"]
-        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(home), cwd=work)
-        start = stdout.find("{") if "{" in stdout else stdout.find("[")
+        cmd += ["--format", "raw"]
+        environ = {**_base_env(home, work), "MCP_SCANNER_STDIO_TIMEOUT": "2"}
+        code, stdout, stderr, secs = _isolated(cmd, env=environ, cwd=work)
+        start = stdout.find("{")
         try:
             doc = json.loads(stdout[start:]) if start >= 0 else None
         except json.JSONDecodeError:
             doc = None
-        if doc is None:
-            if code == 0 and not stdout.strip():
-                return Outcome("ok", seconds=secs, note="no output", raw={"stdout.txt": stdout})
+        if code != 0 or not isinstance(doc, dict):
             return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
-        entries = doc if isinstance(doc, list) else _json_items(doc, ("results", "servers", "scan_results"))
-        if isinstance(doc, dict) and not entries:
-            entries = [v for v in doc.values() if isinstance(v, (list, dict)) and v]
+        scanned = {str(r.get("server_name") or r.get("name")) for r in doc.get("scan_results") or []}
+        enumerated = {
+            name for name, path in _MCP_SCANNER_SERVER.findall(stderr) if path.startswith(str(home))
+        }
+        servers = scanned | enumerated
         return Outcome(
             "ok",
-            detected=bool(entries),
-            items=len(entries),
-            agentic=bool(entries),
+            detected=bool(servers),
+            items=len(servers),
+            agentic=bool(servers),
             seconds=secs,
-            raw={"stdout.json": stdout},
+            note=",".join(sorted(servers))[:200],
+            raw={"stdout.json": stdout, "stderr.log": stderr[-20000:]},
         )
 
 
@@ -452,7 +565,7 @@ def squid_lines(case: Case) -> list[str]:
     lines = []
     for f in case.flows:
         epoch = datetime.fromisoformat(f["ts"].replace("Z", "+00:00")).timestamp()
-        url = f"{f['scheme']}://{f['host']}:{f['port']}{f['path']}"
+        url = _url(f)
         lines.append(
             f"{epoch:.3f} {f['duration_ms']} {f['src_ip']} TCP_MISS/{f['status']} {f['bytes_in']} "
             f"{f['method']} {url} {f['user']} DIRECT/{f['dst_ip']} application/json"
@@ -476,11 +589,14 @@ class OpenShadowAI(Adapter):
         helper = Path(__file__).with_name("helpers") / "open_shadow_ai_match.py"
         catalog = env.checkout("alebgl77_open-shadow-ai") / "catalog"
         cmd = [str(env.venv_bin("openshadowai", "python")), "-I", str(helper), str(catalog), str(log)]
-        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(work), cwd=work)
+        code, stdout, stderr, secs = _isolated(cmd, env=_base_env(_empty_home(work), work), cwd=work)
         try:
-            doc = json.loads(stdout)
-        except json.JSONDecodeError:
+            # The project's logger writes info lines to stdout before the result.
+            doc = _last_json_line(stdout)
+        except ValueError:
             return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
+        if code != 0 or len(doc["events"]) != len(case.flows):
+            return Outcome("error", seconds=secs, note=f"exit {code}: {len(doc['events'])} events")
         matches = [m for m in doc["events"] if m.get("match")]
         return Outcome(
             "ok",
@@ -488,7 +604,7 @@ class OpenShadowAI(Adapter):
             items=len(matches),
             seconds=secs,
             note=",".join(sorted({m["match"] for m in matches}))[:200],
-            raw={"matches.json": stdout},
+            raw={"matches.json": json.dumps(doc)},
         )
 
 
@@ -537,7 +653,10 @@ class AgentSonar(Adapter):
     def run_network(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         stdin = "".join(json.dumps(e) + "\n" for e in agentsonar_events(case))
         code, stdout, stderr, secs = _isolated(
-            [str(env.root / "bin" / "agentsonar"), "classify"], env=_base_env(work), cwd=work, stdin=stdin
+            [str(env.root / "bin" / "agentsonar"), "classify"],
+            env=_base_env(_empty_home(work), work),
+            cwd=work,
+            stdin=stdin,
         )
         if code != 0:
             return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr)}")
@@ -571,7 +690,7 @@ def traffic_events(case: Case) -> list[dict[str, Any]]:
         {
             "eventId": f"{case.case_id}-{i}",
             "timestamp": f["ts"],
-            "url": f"{f['scheme']}://{f['host']}:{f['port']}{f['path']}",
+            "url": _url(f),
             "method": f["method"],
             "payloadSnippet": "",
             "user": f"{f['user']}@corp.example",
@@ -602,7 +721,7 @@ class ShadowAIDetector(Adapter):
         node = shutil.which("node") or "node"
         code, stdout, stderr, secs = _isolated(
             [node, str(helper), str(dist), str(events)],
-            env={**_base_env(work), "PATH": f"{Path(node).parent}:/usr/bin:/bin"},
+            env={**_base_env(_empty_home(work), work), "PATH": f"{Path(node).parent}:/usr/bin:/bin"},
             cwd=work,
         )
         try:
@@ -629,6 +748,11 @@ class ClawHunter(Adapter):
     display = "Claw-Hunter (Backslash)"
     source = "backslash-security/claw-hunter"
     surfaces = {"endpoint": "claw-hunter.sh --json with HOME=<case>"}
+    # Report fields that say an OpenClaw install or state is present (from calibration).
+    SIGNALS = (
+        "cli_installed", "config_exists", "workspace_exists", "gateway_running",
+        "launchagent_installed", "macos_app_installed",
+    )  # fmt: skip
 
     def unavailable(self, env: ToolEnv) -> str | None:
         script = env.checkout("backslash-security_claw-hunter") / "claw-hunter.sh"
@@ -637,21 +761,25 @@ class ClawHunter(Adapter):
     def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         home = self.tree(case, work, "home")
         script = env.checkout("backslash-security_claw-hunter") / "claw-hunter.sh"
-        code, stdout, stderr, secs = _isolated(["bash", str(script), "--json"], env=_base_env(home), cwd=work)
-        start = stdout.find("{")
+        code, stdout, stderr, secs = _isolated(
+            ["bash", str(script), "--json"], env=_base_env(home, work), cwd=work
+        )
+        marker = stdout.find("JSON OUTPUT")
+        start = stdout.find("{", marker if marker >= 0 else 0)
         try:
             doc = json.loads(stdout[start:]) if start >= 0 else None
         except json.JSONDecodeError:
             doc = None
         if not isinstance(doc, dict):
             return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
-        installed = bool(doc.get("installed") or doc.get("openclaw_installed") or doc.get("detected"))
+        signals = [k for k in self.SIGNALS if doc.get(k) is True]
         return Outcome(
             "ok",
-            detected=installed,
-            items=int(installed),
-            agentic=installed,
+            detected=bool(signals),
+            items=len(signals),
+            agentic=bool(signals),
             seconds=secs,
+            note=",".join(signals),
             raw={"claw-hunter.json": stdout[start:]},
         )
 
@@ -672,12 +800,13 @@ class AIDetector(Adapter):
     def _findings(
         self, home: Path, work: Path, env: ToolEnv
     ) -> tuple[int, list[dict[str, Any]] | None, str, float]:
-        script = env.checkout("shamo0_AI-Detector") / "detect-shadow-ai.sh"
+        script = work / "detect-shadow-ai.sh"
+        shutil.copyfile(env.checkout("shamo0_AI-Detector") / "detect-shadow-ai.sh", script)
         for p in (work, *work.rglob("*")):
             os.chmod(p, 0o755 if p.is_dir() else 0o644)
         os.chmod(work.parent, 0o755)
         cmd = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", "bash", str(script)]
-        environ = {**_base_env(home), "SHADOW_AI_REPORT": "json", "SHADOW_AI_NETWORK": "false"}
+        environ = {**_base_env(home, work), "SHADOW_AI_REPORT": "json", "SHADOW_AI_NETWORK": "false"}
         code, stdout, stderr, secs = _isolated(cmd, env=environ, cwd=work)
         start = stdout.find("{")
         try:
@@ -691,7 +820,8 @@ class AIDetector(Adapter):
 
     @staticmethod
     def _key(item: dict[str, Any], home: Path) -> str:
-        return f"{item.get('category')}|{str(item.get('detail')).replace(str(home), '~')}"
+        detail = re.sub(r"PID \d+", "PID", str(item.get("detail")).replace(str(home), "~"))
+        return f"{item.get('category')}|{detail}"
 
     def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         if self._baseline is None:
