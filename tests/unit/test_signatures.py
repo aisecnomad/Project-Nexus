@@ -169,6 +169,46 @@ def test_file_env_scope_iac_and_names(index: SignatureIndex):
     assert "platform.n8n" in {m.signature_id for m in index.match_image("n8nio/n8n:1.60")}
 
 
+def test_sab_holdout_file_dialects_are_inventory_only(index: SignatureIndex):
+    cases = {
+        "openclaw.json": "platform.openclaw",
+        "clawdbot.json": "platform.openclaw",
+        "moltbot.json": "platform.openclaw",
+        "opencode.json": "coding-agent.misc-rules",
+        "goose_config.yaml": "coding-agent.goose",
+        "aider.conf.yml": "coding-agent.aider",
+        "flowise.json": "platform.flowise",
+        "dify.yml": "platform.dify",
+        "SKILL.md": "coding-agent.agent-skills",
+        "AGENTS.md": "coding-agent.agents-md",
+        "agent-card.json": "protocol.a2a",
+    }
+    for filename, expected in cases.items():
+        matches = index.match_file(filename)
+        assert expected in _ids(matches), filename
+    assert not index.get("platform.openclaw").agent_indicator
+    assert not index.get("coding-agent.agent-skills").agent_indicator
+    assert "platform.openclaw" in _ids(index.match_code("gateway.port: 18789"))
+    assert "platform.flowise" in _ids(index.match_code('{"category":"Agents","name":"toolAgent"}'))
+    assert "cloud.azure-ai-foundry-agents" in _ids(
+        index.match_iac("Microsoft.CognitiveServices/accounts/projects/agents")
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "${VAR}", "changeme", "your-key-here", "a" * 32, "abcdefghijklmnop"],
+)
+def test_empty_placeholder_and_low_entropy_credentials_do_not_match(index: SignatureIndex, value: str):
+    assert index.match_secrets(f"OPENAI_API_KEY={value}") == []
+
+
+def test_high_entropy_assigned_credential_is_matched(index: SignatureIndex):
+    value = "R4nd0m9Qx2Vb7Lp6"
+    matches = index.match_secrets(f"OPENAI_API_KEY={value}")
+    assert [match.signature_id for match in matches] == ["heuristic.inline-credential"]
+
+
 def test_signature_categories_cover_all_surfaces(index: SignatureIndex):
     counts = Counter(s.category for s in index.signatures.values())
     for cat in (

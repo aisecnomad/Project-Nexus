@@ -5,11 +5,13 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import re
 import threading
 import time
 from bisect import bisect_left, bisect_right
+from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -137,6 +139,26 @@ def _plain_search(rx: Any, text: str, context: str, timeout: float) -> Any:
 def _budgeted_search(rx: Any, text: str, context: str, timeout: float) -> Any:
     """Full per-call bookkeeping for hosts supplied by connectors rather than the tokenizer."""
     return _search(rx, text, context)
+
+
+_ASSIGNED_CREDENTIAL = re.compile(r"\b[A-Za-z_][A-Za-z0-9_.-]*[ \t]*[=:][ \t]*[\"']?([^\"'\s,;]+)")
+
+
+def _high_entropy_credential(value: str) -> bool:
+    """Require a generic assigned credential to be long and sufficiently diverse."""
+    match = _ASSIGNED_CREDENTIAL.search(value)
+    candidate = match.group(1) if match else value
+    if len(candidate) < 16:
+        return False
+    body = re.sub(r"[^A-Za-z0-9]", "", candidate)
+    if len(set(body)) <= 2:
+        return False
+    adjacent = sum(abs(ord(left) - ord(right)) <= 1 for left, right in zip(body, body[1:], strict=False))
+    if adjacent / (len(body) - 1) >= 0.5:
+        return False
+    counts = Counter(candidate)
+    entropy = -sum((count / len(candidate)) * math.log2(count / len(candidate)) for count in counts.values())
+    return entropy >= 3.0
 
 
 # ------------------------------------------------------- domain prefilters
@@ -1044,7 +1066,12 @@ class SignatureIndex:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
 
     def match_secrets(self, text: str) -> list[Match]:
-        return self._match_regex_signals("secret", text, None, max_per_signal=5)
+        matches = self._match_regex_signals("secret", text, None, max_per_signal=5)
+        return [
+            match
+            for match in matches
+            if match.signature_id != "heuristic.inline-credential" or _high_entropy_credential(match.value)
+        ]
 
     def match_user_agent(self, ua: str) -> list[Match]:
         if not ua:
