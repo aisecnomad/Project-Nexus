@@ -33,7 +33,7 @@ import math
 import re
 import secrets
 from collections import Counter, OrderedDict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +43,7 @@ from shadowscan.connectors.agent_behavior import (
     LOOP_MAX_GAP_SECONDS,
     LOOP_MIN_CALLS,
     agent_operations,
+    host_service,
     is_browser_user_agent,
     is_generation,
     is_mcp_request,
@@ -909,9 +910,20 @@ def _caller_indicator(match: Match) -> bool:
     AI SaaS app signatures (``identity-app``) mark an OAuth grant to ChatGPT or
     Claude as agentic, and their domains (``*.openai.com``, ``*.anthropic.com``)
     also cover the model APIs. Calling a model API, or naming a key after the
-    vendor, is LLM use: it does not make the caller an agent.
+    vendor, is LLM use: it does not make the caller an agent. A product name
+    matched in a key alias or a user name is a hint, not behaviour: a person
+    called Jules is not Google's Jules agent.
     """
-    return match.signature.category != "identity-app"
+    return match.signature.category != "identity-app" and match.signal.type != "name"
+
+
+def _service_indicator(owner: str | None) -> Callable[[Match], bool]:
+    """Count a host's agent indicator only from the service that owns the host."""
+
+    def accept(match: Match) -> bool:
+        return match.signature.id == owner and _caller_indicator(match)
+
+    return accept
 
 
 def _tool_use_evidence(f: Finding, c: _Caller) -> None:
@@ -1848,7 +1860,15 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         for m in top_models:
             apply_matches(f, self.index.match_model(m), weight_scale=0.5, indicator_filter=_caller_indicator)
         for h, _ in c.hosts.most_common(10):
-            apply_matches(f, self.index.match_domain(h), weight_scale=0.6, indicator_filter=_caller_indicator)
+            host_matches = self.index.match_domain(h)
+            # A host is evidence of the one service it belongs to.
+            service = host_service(host_matches)
+            apply_matches(
+                f,
+                host_matches,
+                weight_scale=0.6,
+                indicator_filter=_service_indicator(service.signature.id if service is not None else None),
+            )
         framework_user_agent = False
         for ua, _ in c.user_agents.most_common(10):
             ua_matches = self.index.match_user_agent(ua)

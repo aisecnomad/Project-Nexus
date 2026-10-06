@@ -32,7 +32,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
-from shadowscan.connectors.agent_behavior import LOOP_MAX_GAP_SECONDS, LOOP_MIN_CALLS, loop_cadence
+from shadowscan.connectors.agent_behavior import (
+    LOOP_MAX_GAP_SECONDS,
+    LOOP_MIN_CALLS,
+    host_service,
+    loop_cadence,
+)
 from shadowscan.connectors.base import (
     BaseConnector,
     ConnectorContext,
@@ -50,15 +55,6 @@ _FORMATS = {None, "auto", "zeek", "route53", "vpc-flow", "generic"}
 _SUFFIXES = {".json", ".jsonl", ".ndjson", ".csv", ".log", ".txt", ".gz"}
 # Domain signals below this weight are hints (a vendor's marketing site), not service use.
 _MIN_HOST_WEIGHT = 0.3
-# Which signature names a host's service when several match it with the same weight.
-_CATEGORY_ORDER = {
-    "coding-agent": 0,
-    "protocol": 1,
-    "platform": 2,
-    "framework": 3,
-    "provider": 4,
-    "identity-app": 5,
-}
 _MAX_CLIENTS = 50_000
 _MAX_PAIRS = 500_000
 _MAX_HOSTS_PER_FINDING = 20
@@ -375,12 +371,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         """The signature that names a host's AI service, or None."""
         if host in self._host_cache:
             return self._host_cache[host]
-        matches = [m for m in self.index.match_domain(host) if m.weight >= _MIN_HOST_WEIGHT]
-        best = min(
-            matches,
-            key=lambda m: (-m.weight, _CATEGORY_ORDER.get(m.signature.category, 9), m.signature.id),
-            default=None,
-        )
+        best = host_service(m for m in self.index.match_domain(host) if m.weight >= _MIN_HOST_WEIGHT)
         if len(self._host_cache) < 100_000:
             self._host_cache[host] = best
         return best

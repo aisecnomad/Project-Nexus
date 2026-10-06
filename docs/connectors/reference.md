@@ -633,3 +633,20 @@ Offline input: Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+## Runtime
+
+### `runtime.processes`
+
+AI agents, desktop apps, MCP servers and model servers running on hosts, from process inventories (osquery, EDR exports) or the local /proc.
+
+Offline input: JSON / JSONL / CSV process inventories (osquery, Defender, CrowdStrike).
+
+| Key | Description |
+| --- | --- |
+| `label` | host name used when records carry none (default: the host name) |
+| `max_processes` | maximum processes read from /proc in live mode (default 100,000) |
+| `input` | offline: osquery processes results, Defender DeviceProcessEvents, CrowdStrike process events or JSON/CSV with a command line or executable |
+| `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
+| `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
+| `max_input_files` | offline: maximum files read from a directory input (default 10,000) |

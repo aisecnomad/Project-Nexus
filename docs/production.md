@@ -810,6 +810,20 @@ A client address names a device or a NAT gateway; give each sensor or VPC a
 distinct `label` so the same private address in two networks stays two
 findings, and join findings to DHCP or VPN records before assigning owners.
 
+`runtime.processes` reports `runtime-process` findings with resource ids
+`runtime:<host>:<user>:<tool>`, and endpoint findings for the same tool on the
+same device gain `metadata.lifecycle` and the tag `observed-running`. Neither
+changes risk. Keep endpoint `label` values equal to the host names that
+process exports report, or the two will not link. A process list is a point
+in time: absence does not show that a tool is unused.
+
+`--format cyclonedx` is a new output; its composition is `incomplete` for an
+incomplete scan, and the exit code is unchanged. `options.llm_triage` is off
+by default. Enabling it sends finding summaries to a third-party or
+self-hosted model endpoint, so treat it as a data-egress decision: review
+`docs/operations/llm-triage.md`, prefer a `base_url` you operate, and do not
+enable it for scans whose finding titles must stay in your environment.
+
 ### October 3 source capability attribution migration
 
 Re-scan code with this candidate before comparing its risk to earlier reports.

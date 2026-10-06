@@ -227,6 +227,95 @@ class ShadowScan(Adapter):
         return self._scan({"name": "gateway.logs", "input": str(log)}, work, env)
 
 
+def network_log_records(case: Case) -> list[dict[str, Any]]:
+    """Render flows as the TLS and flow records a network sensor keeps (no paths or user agents)."""
+    records: list[dict[str, Any]] = []
+    for f in case.flows:
+        record = {
+            "ts": f["ts"],
+            "client": f["src_ip"],
+            "dst_ip": f["dst_ip"],
+            "dst_port": f["port"],
+            "bytes_out": f["bytes_out"],
+            "bytes_in": f["bytes_in"],
+        }
+        host = str(f["host"])
+        if f["scheme"] == "https" and not host.replace(".", "").isdigit():
+            record["sni"] = host
+        records.append(record)
+    return records
+
+
+class ShadowScanDedicated(ShadowScan):
+    """ShadowScan with the endpoint and network connectors added after the first run.
+
+    Written by the same author as the corpus, after reading its results: a
+    regression check of those changes, not independent evidence.
+    """
+
+    name = "shadowscan-dedicated"
+    display = "Project Nexus ShadowScan (dedicated connectors)"
+    surfaces = {
+        "repo": "code.filesystem on the checkout",
+        "endpoint": "endpoint.inventory on the home directory",
+        "network": "gateway.logs on a JSON access log + network.logs on TLS/flow records",
+    }
+
+    def _scan_all(self, connectors: list[dict[str, Any]], work: Path, env: ToolEnv) -> Outcome:
+        cfg = work / "shadowscan.yaml"
+        cfg.write_text(json.dumps({"connectors": connectors}), encoding="utf-8")
+        out = work / "report.json"
+        code, stdout, stderr, secs = _isolated(
+            [env.python, "-m", "shadowscan", "scan", "-c", str(cfg), "-f", "json", "-o", str(out)],
+            env={
+                **_base_env(_empty_home(work), work),
+                "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
+            },
+            cwd=work,
+        )
+        if not out.exists():
+            return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr)}")
+        text = out.read_text(encoding="utf-8")
+        report = json.loads(text)
+        findings = report.get("findings", [])
+        raw = {"report.json": text}
+        if code == 3 or not report.get("summary", {}).get("complete", False):
+            return Outcome("error", seconds=secs, note=f"incomplete scan (exit {code})", raw=raw)
+        if code != 0:
+            return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr)}", raw=raw)
+        kinds = {f.get("kind") for f in findings}
+        # Callers and contacts carry their agent classification in metadata, not in the kind.
+        indicated = any((f.get("metadata") or {}).get("agent_indicators", 0) > 0 for f in findings)
+        return Outcome(
+            "ok",
+            detected=bool(findings),
+            items=len(findings),
+            agentic=bool(kinds & AGENTIC_KINDS) or indicated,
+            seconds=secs,
+            note=",".join(sorted(k for k in kinds if k)),
+            raw=raw,
+        )
+
+    def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
+        root = self.tree(case, work, "home")
+        connector = {"name": "endpoint.inventory", "path": str(root), "label": "bench"}
+        return self._scan_all([connector], work, env)
+
+    def run_network(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
+        access = work / "access.jsonl"
+        access.write_text("".join(json.dumps(r) + "\n" for r in access_log_records(case)), encoding="utf-8")
+        sensor = work / "sensor.jsonl"
+        sensor.write_text("".join(json.dumps(r) + "\n" for r in network_log_records(case)), encoding="utf-8")
+        return self._scan_all(
+            [
+                {"name": "gateway.logs", "input": str(access)},
+                {"name": "network.logs", "input": str(sensor), "label": "bench"},
+            ],
+            work,
+            env,
+        )
+
+
 # ----------------------------------------------------------------------------
 # Cisco AI BOM
 
@@ -850,6 +939,7 @@ class AIDetector(Adapter):
 
 ADAPTERS: tuple[Adapter, ...] = (
     ShadowScan(),
+    ShadowScanDedicated(),
     CiscoAIBOM(),
     AgentBom(),
     AgentDiscover(),

@@ -24,6 +24,8 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from shadowscan.signatures import Match
+
 # (label, framework signature id or None, compiled pattern over the path without its query string)
 _AGENT_OPERATIONS: tuple[tuple[str, str | None, re.Pattern[str]], ...] = (
     (
@@ -68,8 +70,32 @@ _AUTOMATION = re.compile(
     r"bot\b|crawler|spider|headless|python|curl|node|axios|okhttp|go-http", re.IGNORECASE
 )
 
+# Which signature names a host's service when several match it with the same weight.
+_SERVICE_ORDER = {
+    "coding-agent": 0,
+    "protocol": 1,
+    "platform": 2,
+    "framework": 3,
+    "provider": 4,
+    "identity-app": 5,
+}
+
 LOOP_MAX_GAP_SECONDS = 30.0
 LOOP_MIN_CALLS = 3
+
+
+def host_service(matches: Iterable[Match]) -> Match | None:
+    """The signature a host belongs to: its highest-weight domain match.
+
+    ``api.openai.com`` is OpenAI's model API (the ChatGPT app's ``*.openai.com``
+    wildcard ties and loses to the provider); ``chatgpt.com`` is the ChatGPT
+    app, not the lower-weight plugin protocol that also lists it.
+    """
+    return min(
+        matches,
+        key=lambda m: (-m.weight, _SERVICE_ORDER.get(m.signature.category, 9), m.signature.id),
+        default=None,
+    )
 
 
 @dataclass(frozen=True, slots=True)

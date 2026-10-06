@@ -5,7 +5,8 @@ names.  ``correlate_runtime`` conservatively attributes gateway telemetry to
 static framework findings using only operator-configured exact caller/scope
 bindings.  Gateway user agents are observations, not attestations: an
 ``observed`` result means the linked gateway recorded a timestamped request
-bearing that framework fingerprint.
+bearing that framework fingerprint. ``correlate_lifecycle`` links endpoint
+findings to running-process findings for the same tool on the same device.
 """
 
 from __future__ import annotations
@@ -278,3 +279,114 @@ def _observed_activity(code: Finding, matches: list[dict[str, Any]]) -> dict[str
         )
     )
     return activity
+
+
+# --------------------------------------------------------------------------
+# Lifecycle corroboration: configured / installed → running
+
+_LIFECYCLE_STATES: dict[tuple[Surface, Kind], str] = {
+    (Surface.ENDPOINT, Kind.AGENT_CONFIG): "configured",
+    (Surface.ENDPOINT, Kind.MCP_SERVER): "configured",
+    (Surface.ENDPOINT, Kind.AI_APP): "installed",
+    (Surface.ENDPOINT, Kind.LOCAL_MODEL): "installed",
+    (Surface.RUNTIME, Kind.RUNTIME_PROCESS): "running",
+}
+_LIFECYCLE_ORDER = ("configured", "installed", "running")
+_PACKAGE_VERSION = re.compile(r"(?<=.)@[^/@]*$")
+
+
+def _device_key(value: str | None) -> str | None:
+    """A host name compared case-insensitively and without its DNS domain."""
+    if not value or not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    if not text or REDACTED in text:
+        return None
+    if re.fullmatch(r"[\d.]+|[0-9a-f:]+", text):
+        return text
+    return text.split(".", 1)[0]
+
+
+def _package_key(value: object) -> str | None:
+    if not isinstance(value, str) or not value or value.startswith("-"):
+        return None
+    return _PACKAGE_VERSION.sub("", value.strip().lower()) or None
+
+
+def _lifecycle_keys(f: Finding, device: str) -> set[tuple[str, str]]:
+    """What a finding is about on its device: signature ids, and MCP server packages for MCP."""
+    keys = {(device, sid) for sid in f.frameworks + f.model_providers if sid != "protocol.mcp"}
+    if f.kind == Kind.RUNTIME_PROCESS:
+        packages = f.metadata.get("mcp_packages")
+        for name in packages if isinstance(packages, dict) else ():
+            if (key := _package_key(name)) is not None:
+                keys.add((device, f"mcp-package:{key}"))
+    elif f.kind == Kind.MCP_SERVER:
+        servers = f.metadata.get("servers")
+        for server in servers if isinstance(servers, list) else ():
+            if not isinstance(server, dict) or server.get("disabled"):
+                continue
+            for arg in server.get("args") or []:
+                if (key := _package_key(arg)) is not None:
+                    keys.add((device, f"mcp-package:{key}"))
+    return keys
+
+
+def correlate_lifecycle(findings: list[Finding]) -> None:
+    """Link endpoint findings to processes of the same tool on the same device.
+
+    A configured or installed tool with a running process on the same device
+    is ``observed-running``. The link is recorded in ``metadata['lifecycle']``
+    and as zero-weight evidence: corroboration changes neither confidence nor
+    risk. Devices match by host name without its DNS domain; MCP
+    configurations match a running MCP server only through the same package.
+    """
+    groups: dict[tuple[str, str], list[Finding]] = {}
+    for f in findings:
+        # Repeated calls replace earlier results.
+        f.metadata.pop("lifecycle", None)
+        f.evidence[:] = [ev for ev in f.evidence if ev.signal != "lifecycle:observed-running"]
+        if _LIFECYCLE_STATES.get((f.surface, f.kind)) is None:
+            continue
+        device = _device_key(f.account)
+        if device is None:
+            continue
+        for key in _lifecycle_keys(f, device):
+            groups.setdefault(key, []).append(f)
+    linked: dict[str, dict[str, Any]] = {}
+    for (_, subject), members in groups.items():
+        states = {_LIFECYCLE_STATES[(f.surface, f.kind)] for f in members}
+        if "running" not in states or len(states) < 2 or len(members) > 50:
+            continue
+        running = [f for f in members if f.kind == Kind.RUNTIME_PROCESS]
+        for f in members:
+            entry = linked.setdefault(
+                f.id, {"finding": f, "states": set(), "subjects": set(), "related": set()}
+            )
+            entry["states"].update(states)
+            entry["subjects"].add(subject)
+            entry["related"].update(o.id for o in members if o.id != f.id)
+            if f.kind != Kind.RUNTIME_PROCESS:
+                entry.setdefault("running", set()).update((o.owner or "", o.id) for o in running)
+    for entry in linked.values():
+        f = entry["finding"]
+        lifecycle: dict[str, Any] = {
+            "states": [s for s in _LIFECYCLE_ORDER if s in entry["states"]],
+            "subjects": sorted(entry["subjects"]),
+            "related": sorted(entry["related"])[:20],
+        }
+        if "running" in entry:
+            same_user = sorted({fid for owner, fid in entry["running"] if owner and owner == f.owner})
+            lifecycle["same_user"] = bool(same_user)
+            f.add_tag("observed-running")
+            f.add_evidence(
+                Evidence(
+                    signal="lifecycle:observed-running",
+                    description=(
+                        f"{len(entry['running'])} running-process finding(s) for the same tool on this device"
+                        + (" and account" if same_user else "")
+                    ),
+                    weight=0.0,
+                )
+            )
+        f.metadata["lifecycle"] = lifecycle

@@ -56,6 +56,7 @@ import yaml
 
 from shadowscan.errors import SetupError, yaml_error_position
 from shadowscan.risk import RiskPolicy
+from shadowscan.triage import TriageConfigError, TriageSettings
 from shadowscan.utils.files import read_policy_text, require_no_symlinks
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
@@ -96,6 +97,7 @@ _OPTION_FIELDS = {
     "risk_basis",
     "risk_weights",
     "job_deadline_seconds",
+    "llm_triage",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
@@ -377,6 +379,7 @@ class ScanConfig:
     job_deadline_seconds: float | None = None  # CLI process deadline; embedding callers own supervision
     risk_basis: str = "combined"
     risk_weights: dict[str, Any] | None = field(default_factory=dict)
+    llm_triage: TriageSettings = field(default_factory=TriageSettings)
     source: str | None = None
     # Constructor-only compatibility: never retain stale alias state that could
     # overwrite a later CLI or library update to the canonical setting.
@@ -418,6 +421,10 @@ class ScanConfig:
         ):
             raise ConfigValidationError("options.fail_on must be critical, high, medium, low, info, or null")
         self.parallel = _positive_integer(self.parallel, "options.parallel")
+        triage: object = self.llm_triage
+        if not isinstance(triage, TriageSettings):
+            # Library callers may pass the YAML mapping itself.
+            self.llm_triage = _triage_settings(triage)
         if self.risk_weights is None:
             self.risk_weights = {}
         try:
@@ -568,6 +575,7 @@ class ScanConfig:
             job_deadline_seconds=validate_job_deadline_seconds(opts.get("job_deadline_seconds")),
             risk_basis=opts.get("risk_basis", "combined"),
             risk_weights=opts.get("risk_weights", {}),
+            llm_triage=_triage_settings(opts.get("llm_triage")),
             source=source,
         )
 
@@ -620,6 +628,13 @@ def _strict_boolean(value: Any, location: str) -> bool:
         if normalized == "false":
             return False
     raise ConfigValidationError(f"{location} must be a boolean (true or false)")
+
+
+def _triage_settings(value: Any) -> TriageSettings:
+    try:
+        return TriageSettings.from_options(value)
+    except TriageConfigError as exc:
+        raise ConfigValidationError(f"options.{exc}") from None
 
 
 def _boolean_option(value: Any, name: str) -> bool:

@@ -546,7 +546,10 @@ front end that makes several calls per message has the same cadence, so read
 requests mostly carry a browser user agent is never counted as a loop.
 Calling a model API is LLM use: the domains
 and names of AI SaaS apps (`*.openai.com`, `*.anthropic.com`) do not make a
-caller agentic.
+caller agentic. A product name matched in a key alias or a user name is a
+hint, never an agent indicator, and a host counts only through the one
+service it belongs to (its highest-weight signature), so browsing
+`chatgpt.com` is AI use while traffic to `api2.cursor.sh` is a coding agent.
 
 Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
 `correlation_bindings`, and `label` (or `gateway_name` when the entry has no
@@ -882,6 +885,25 @@ Options: `format` (`zeek`, `route53`, `vpc-flow`, `generic`; default auto),
 `label` (network name; default `network`), `max_records`. See the
 [network guide](connectors/network.md).
 
+## Runtime
+
+### `runtime.processes`
+Reports AI tools seen running, per host, user and tool: coding-agent CLIs
+(also as npm packages or Python modules), AI desktop apps matched by
+executable and install path, MCP servers launched through `npx`, `uvx`,
+`uv tool run`, `pipx run` or `node`, local model servers and agent dev
+servers. Command lines never enter a finding or a `--dump-records` export:
+only the tool, the executable's base name and an MCP package name are kept.
+Offline, `input` reads osquery `processes` results, Defender
+`DeviceProcessEvents`, CrowdStrike process events or any JSON/CSV with a
+command line or executable; live mode reads `/proc` on Linux. The engine
+links these findings to endpoint findings for the same tool on the same
+device (`metadata.lifecycle`, tag `observed-running`) without changing
+scores.
+
+Options: `label` (host name for records without one), `max_processes` (live
+mode bound). See the [runtime guide](connectors/runtime.md).
+
 ## Least privilege
 
 All connectors are read-only. Prefer dedicated audit credentials:
@@ -905,6 +927,7 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | OCI | policy `Allow group audit to read all-resources in tenancy` |
 | Endpoint | read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written |
 | Network | read access to the exported logs; the connector needs no sensor or cloud credentials |
+| Runtime | offline: read access to the process export; live: an account that can read `/proc/<pid>/cmdline` of the processes to inventory. Nothing is written |
 
 The Azure app-settings permission exposes security-sensitive configuration;
 only grant it for the app resources being audited. Do not grant Website

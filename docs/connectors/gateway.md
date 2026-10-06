@@ -63,7 +63,10 @@ front end that makes several calls per message has the same cadence, so read
 requests mostly carry a browser user agent is never counted as a loop.
 Calling a model API is LLM use: the domains
 and names of AI SaaS apps (`*.openai.com`, `*.anthropic.com`) do not make a
-caller agentic.
+caller agentic. A product name matched in a key alias or a user name is a
+hint, never an agent indicator, and a host counts only through the one
+service it belongs to (its highest-weight signature), so browsing
+`chatgpt.com` is AI use while traffic to `api2.cursor.sh` is a coding agent.
 
 Directory inputs read files with a supported suffix (`.json`, `.jsonl`,
 `.ndjson`, `.csv`, `.log`, `.txt`, `.gz`). Other files, such as rotated logs

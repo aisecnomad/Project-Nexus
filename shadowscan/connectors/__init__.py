@@ -62,6 +62,8 @@ _BUILTIN: dict[str, str] = {
     "endpoint.inventory": "shadowscan.connectors.endpoint.inventory:EndpointInventoryConnector",
     # network
     "network.logs": "shadowscan.connectors.network.logs:NetworkLogConnector",
+    # runtime
+    "runtime.processes": "shadowscan.connectors.runtime.processes:RuntimeProcessConnector",
 }
 
 # Bare namespace ids ("cloud", "saas", ...) are reserved alongside built-in names.

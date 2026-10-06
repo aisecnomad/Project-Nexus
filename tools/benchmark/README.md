@@ -175,6 +175,16 @@ python -m tools.benchmark.score --results /tmp/bench/results --output /tmp/bench
 - An `error` (crash, timeout, incomplete scan) counts as "not detected" and is
   also reported separately.
 
+## Post-change rerun
+
+After the first run, the follow-up fixes added `endpoint.inventory` and
+`network.logs` and changed gateway agent classification. The
+`shadowscan-dedicated` adapter runs those connectors; `compare.py` renders a
+before/after table and re-scores the first run's stored reports with the same
+agent rule. Results are in [`results-post-change/`](results-post-change/README.md).
+They are a regression check by the same author on the same corpus, not
+independent evidence, and the other tools were not rerun.
+
 ## Limits
 
 - **Synthetic, author-written corpus.** Real repositories, laptops and logs

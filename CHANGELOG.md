@@ -58,6 +58,11 @@ summarizes each release for people who install and operate ShadowScan.
   ChatGPT and Claude SaaS app signatures carry an agent indicator for OAuth
   grants. Gateway callers no longer take agent indicators from
   `identity-app` signatures; the golden replays record the corrected titles.
+- Fixed: a user or key alias that matched a product name (a person called
+  Jules) and browsing `chatgpt.com` (also listed by the ChatGPT plugin
+  protocol signature) made gateway callers agentic. Name matches are hints,
+  and a host counts only through the service it belongs to. Found by the
+  post-change benchmark run; regression tests added.
 - `framework.autogen` gains a user-agent signal (`autogen/…`, `ag2/…`).
 - New `network.logs` connector and `network` surface. It reads Zeek
   `dns.log`, `ssl.log` and `conn.log` (TSV or JSON), Route 53 Resolver query
@@ -68,6 +73,29 @@ summarizes each release for people who install and operate ShadowScan.
   answers in the same input; addresses shared with another service's host
   attribute nothing. The offline demo runs it (27 of 29 connectors ship
   fixtures).
+- New `runtime.processes` connector and `runtime` surface: coding-agent CLIs,
+  AI desktop apps, MCP servers, local model servers and agent dev servers seen
+  running, from osquery `processes`, Defender `DeviceProcessEvents`,
+  CrowdStrike process events, generic exports or `/proc` on Linux. Command
+  lines never enter a finding, and the connector's records are excluded from
+  `--dump-records` because command lines can carry credentials. The offline
+  demo runs it (28 of 30 connectors ship fixtures).
+- Lifecycle corroboration: the engine links endpoint findings (configured,
+  installed) to running-process findings for the same tool on the same
+  device, recording `metadata.lifecycle` and the tag `observed-running` with
+  zero-weight evidence. MCP configurations link only through the same server
+  package. Scores do not change.
+- `--format cyclonedx` writes a CycloneDX 1.6 AI bill of materials:
+  findings as application components, frameworks and models as shared
+  components, providers and MCP servers as services, with dependencies.
+  Credential findings are excluded, and `compositions` declares the inventory
+  `incomplete` whenever the scan was. See `docs/operations/ai-bom.md`.
+- Opt-in LLM triage (`options.llm_triage`, off by default): a redacted summary
+  of the highest-risk findings goes to a model the operator names, through the
+  scanner's HTTPS client, and the reply is stored as advisory
+  `metadata.llm_triage`. Resource ids, owners, locations and snippets are never
+  sent; keys come only from an environment variable; replies never change
+  scores or completeness. See `docs/operations/llm-triage.md`.
 
 ### Security-review follow-ups
 

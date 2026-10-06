@@ -10,8 +10,9 @@
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
-It inspects eight surfaces: code repositories, identity providers, LLM gateway logs,
-low-code platforms, SaaS apps, cloud accounts, developer endpoints, and network logs. It fingerprints frameworks and
+It inspects nine surfaces: code repositories, identity providers, LLM gateway logs,
+low-code platforms, SaaS apps, cloud accounts, developer endpoints, network logs, and
+running processes. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
 agent registry of
 [Agent Cards](agent-card.yaml). Static code signals identify candidates; trusted runtime evidence is needed to establish execution.
@@ -24,8 +25,8 @@ Example output, abridged to the first columns (totals vary as signatures evolve;
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
-│ 115 findings  •  111 shadow (inventory: 3 registered agents)               │
-│ critical 15  high 56  medium 44  •  cloud 27 identity 19 saas 17 …         │
+│ 119 findings  •  115 shadow (inventory: 3 registered agents)               │
+│ critical 15  high 57  medium 47  •  cloud 27 identity 19 saas 17 …         │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
@@ -82,7 +83,7 @@ acceptance, and the workflow does not publish a release.
 
 ## Surfaces & connectors
 
-ShadowScan ships **29 connectors** across the eight surfaces below.
+ShadowScan ships **30 connectors** across the nine surfaces below.
 
 | Surface | Connectors | What is discovered |
 |---|---|---|
@@ -94,6 +95,7 @@ ShadowScan ships **29 connectors** across the eight surfaces below.
 | **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci` | Bedrock Agents / AgentCore / Flows / Q Business / Lex, Lambda/ECS/SageMaker/Step Functions with LLM signals, Vertex AI Agent Engine, Dialogflow CX, Agentspace, Cloud Run/Functions, Azure OpenAI deployments, AI Foundry agents, Bot Service, Logic Apps, Function/Container apps, OCI Generative AI Agents, Digital Assistant, GenAI endpoints, IAM roles/bindings/policies granting LLM access, secret *names*, API keys, CloudTrail / audit-log LLM callers |
 | **Endpoint** | `endpoint.inventory` | AI clients and coding agents configured in home directories with their MCP servers and posture (Claude Desktop/Code, Cursor, VS Code, Windsurf, Gemini CLI, Codex, Goose, Cline, Roo, OpenClaw…), AI editor and browser extensions, local model stores (Ollama, LM Studio, Hugging Face, GPT4All, Jan), opt-in shell-history tool counts; osquery fleet exports |
 | **Network** | `network.logs` | AI services contacted per client address from Zeek DNS/TLS/connection logs, Route 53 Resolver query logs, VPC Flow Logs or generic DNS/SNI exports; strict host matching, DNS-attributed flows that refuse shared CDN addresses, agent-service and agent-loop indicators |
+| **Runtime** | `runtime.processes` | Coding-agent CLIs, AI desktop apps, MCP servers, local model servers and agent dev servers seen running, from osquery, Defender or CrowdStrike process exports or `/proc`; command lines are never kept; linked to the endpoint findings for the same tool on the same device (`observed-running`) |
 
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the connector guide for the supported modes and provider scope.
@@ -204,7 +206,7 @@ it fails until the variable is set.
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
 shadowscan code . --inventory agent-card.yaml
 
-# 2. Try every fixture-backed connector offline (demo; 27 of 29 connectors ship fixtures)
+# 2. Try every fixture-backed connector offline (demo; 28 of 30 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
@@ -367,7 +369,10 @@ Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations; results are warnings or notes with the
 heuristic risk level, never a CVSS `security-severity`, see
 [severity](docs/severity.md)), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down). In `csv` output a literal `'` is
+filterable, with evidence drill-down), `cyclonedx` (a CycloneDX 1.6 AI bill of
+materials, see [AI-BOM](docs/operations/ai-bom.md)). Opt-in
+[LLM triage](docs/operations/llm-triage.md) adds an advisory model verdict to
+the highest-risk findings; it is off by default and never changes scores. In `csv` output a literal `'` is
 inserted at the start of a value, and after each `,`, `;`, tab, `|` or line
 break inside it, where the text that follows begins with `=`, `+`, `-` or `@`
 (also after whitespace or quotes) or with a tab or carriage return.
