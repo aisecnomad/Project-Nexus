@@ -5,6 +5,40 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### Incomplete A2A cards, OpenClaw state files and short sk- keys
+
+- An A2A card that fails validation but still names its agent and declares an
+  endpoint, skills or capabilities gets its own `protocol.a2a` framework-usage
+  finding ("Incomplete A2A agent card: …", tagged `incomplete-agent-card`,
+  errors in `metadata.card_errors`) instead of disappearing from the report.
+  It never becomes or joins an agent finding, so a valid card beside it keeps
+  its single agent finding, and its validation errors still make the scan
+  incomplete. An empty or unrelated object under a card file name is still
+  not reported. Once the card is complete, the same finding ID reports the
+  agent.
+- `config.json` in an OpenClaw state directory (`.openclaw/`, `.clawdbot/`,
+  `.moltbot/`) and `.moltbot/moltbot.json` belong to `coding-agent.openclaw`,
+  so a state directory is one agent configuration finding. #155 placed the
+  new paths under `platform.openclaw`; that signature covers configuration
+  formats outside a state directory, which already belongs to the
+  coding-agent signature alone.
+- `heuristic.unattributed-api-key` has a second signal for `sk-` keys of 20 to
+  31 characters after the prefix (LiteLLM proxy virtual keys have 22). A value
+  is kept when it mixes letters and digits, has at most two separators, passes
+  the generic credential's diversity and entropy test and is not already
+  covered by a kept generic assigned-credential match, so an `*_API_KEY=`
+  assignment keeps its finding and weight. OpenSSH security-key algorithm
+  names (`sk-ssh-…`, `sk-ecdsa-…`) never match. Such keys were missed in SDK
+  calls, JSON and YAML configuration and `Authorization` headers. A separate
+  signal keeps rejected look-alikes from using the longer keys' match budget.
+- `examples/inventory/sanctioned.yaml` shows the bare-list inventory form. The
+  comment #155 gave it said the `agents:` mapping is not accepted; it is, and a
+  test now loads both examples and checks that a name alone only suggests a
+  match.
+- The default evaluation corpus gains OpenClaw and Moltbot state-file cases, a
+  short-key positive (which fails on the previous signatures) and a look-alike
+  negative: SSH algorithm names, a spinner class and a ticket branch.
+
 ### October 6 head-to-head benchmark follow-ups
 
 - The Goose signature matches the user configuration Goose writes on first

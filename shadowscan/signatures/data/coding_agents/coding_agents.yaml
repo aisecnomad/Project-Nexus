@@ -266,9 +266,10 @@ signatures:
     agent_indicator: true
     signals:
       - type: file
-        # The personal agent's state directory: its gateway configuration and
-        # the workspace instructions and skills it runs with.
-        globs: [".openclaw/openclaw.json", "**/.openclaw/openclaw.json", ".openclaw/workspace/AGENTS.md", "**/.openclaw/workspace/AGENTS.md", ".openclaw/workspace/skills/*/SKILL.md", "**/.openclaw/workspace/skills/*/SKILL.md", ".clawdbot/clawdbot.json", "**/.clawdbot/clawdbot.json"]
+        # The personal agent's state directory under each of its names
+        # (Clawdbot, Moltbot, OpenClaw): its gateway configuration and the
+        # workspace instructions and skills it runs with.
+        globs: [".openclaw/openclaw.json", "**/.openclaw/openclaw.json", ".openclaw/config.json", "**/.openclaw/config.json", ".openclaw/workspace/AGENTS.md", "**/.openclaw/workspace/AGENTS.md", ".openclaw/workspace/skills/*/SKILL.md", "**/.openclaw/workspace/skills/*/SKILL.md", ".clawdbot/clawdbot.json", "**/.clawdbot/clawdbot.json", ".clawdbot/config.json", "**/.clawdbot/config.json", ".moltbot/moltbot.json", "**/.moltbot/moltbot.json", ".moltbot/config.json", "**/.moltbot/config.json"]
         weight: 0.9
         description: OpenClaw personal agent configuration
 

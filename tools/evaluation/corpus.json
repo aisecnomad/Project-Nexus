@@ -1176,6 +1176,71 @@
       "assertions": {
         "max_agent_findings": 0
       }
+    },
+    {
+      "id": "openclaw-state-config-json",
+      "family": "agent-config",
+      "description": "A config.json in OpenClaw's state directory is the personal agent's configuration, not a running agent",
+      "files": {
+        ".openclaw/config.json": "{\"gateway\":{\"port\":18789}}"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.openclaw"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "moltbot-state-config-json",
+      "family": "agent-config",
+      "description": "A config.json in the state directory of OpenClaw's Moltbot name is the same personal agent's configuration",
+      "files": {
+        ".moltbot/config.json": "{\"gateway\":{\"port\":18789}}"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.openclaw"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "short-unattributed-sk-key",
+      "family": "secret",
+      "description": "A synthetic random sk- key shorter than 32 characters passed to an SDK client is a secret of an unknown vendor",
+      "files": {
+        "client.py": "from openai import OpenAI\n\nclient = OpenAI(base_url=\"https://llm.example.test/v1\", api_key=\"sk-LGI5sRX8AIIAZ6LrZmP93dKb\")\n"
+      },
+      "target": {
+        "kind": "secret"
+      },
+      "present": true,
+      "assertions": {
+        "max_secret_findings": 1,
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "short-sk-lookalikes",
+      "family": "secret",
+      "description": "OpenSSH security-key algorithm names, a spinner class and a ticket branch share the sk- prefix but are not credentials",
+      "files": {
+        "sshd_config": "PubkeyAcceptedAlgorithms sk-ecdsa-sha2-nistp256-cert-v01@openssh.com,sk-ssh-ed25519@openssh.com\n",
+        "spinner.css": ".sk-folding-cube-spinner-wrap { margin: 0 auto; }\n",
+        "release.sh": "git checkout -b sk-1234-fix-the-login-page\n"
+      },
+      "target": {
+        "kind": "secret"
+      },
+      "present": false,
+      "assertions": {
+        "max_secret_findings": 0
+      }
     }
   ]
 }

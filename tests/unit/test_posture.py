@@ -175,3 +175,21 @@ def test_code_connector_reports_posture_on_the_agent_config(run_connector, tmp_p
     assert not [f for f in findings if "platform.openclaw" in f.frameworks]
     evidence = [e for e in claude.evidence if e.signal.startswith("posture:")]
     assert evidence and evidence[0].weight == 0.0
+
+
+def test_openclaw_state_files_under_every_name_are_one_agent_config(run_connector, tmp_path):
+    state = json.dumps({"gateway": {"port": 18789}})
+    files = [
+        ".openclaw/openclaw.json",
+        ".openclaw/config.json",
+        ".clawdbot/config.json",
+        ".moltbot/moltbot.json",
+        ".moltbot/config.json",
+    ]
+    for rel in files:
+        write(tmp_path, rel, state)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), label="home", use_git=False)
+    assert not ctx.stats.errors
+    [config] = findings
+    assert config.kind == Kind.AGENT_CONFIG and config.frameworks == ["coding-agent.openclaw"]
+    assert sorted({e.location for e in config.evidence}) == sorted(files)

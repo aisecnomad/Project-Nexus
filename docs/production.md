@@ -861,6 +861,34 @@ self-hosted model endpoint, so treat it as a data-egress decision: review
 `docs/operations/llm-triage.md`, prefer a `base_url` you operate, and do not
 enable it for scans whose finding titles must stay in your environment.
 
+### Incomplete A2A cards, OpenClaw state files and short `sk-` keys
+
+Re-scan before comparing finding counts with earlier reports; these changes
+add findings and evidence that earlier candidate builds did not report. Exit
+codes and existing finding IDs are unchanged, except as noted for Moltbot
+state files.
+
+- An A2A card that names its agent and declares an endpoint, skills or
+  capabilities, but misses other required fields, gets its own
+  `protocol.a2a` framework-usage finding tagged `incomplete-agent-card`, with
+  the errors in `metadata.card_errors`. It never becomes an agent finding,
+  and its validation errors still mark the scan incomplete (exit 3); the
+  report now also shows which file holds the card. Completing the card turns
+  the same finding ID into the agent finding.
+- `config.json` in an OpenClaw state directory (`.openclaw/`, `.clawdbot/` or
+  `.moltbot/`) and `.moltbot/moltbot.json` join the `coding-agent.openclaw`
+  configuration finding with the other state files. A `.moltbot/moltbot.json`
+  previously produced a separate `platform.openclaw` framework-usage finding;
+  `diff` against an older baseline reports that finding removed and the agent
+  configuration added.
+- `heuristic.unattributed-api-key` reports `sk-` keys of 20 to 31 characters
+  after the prefix when they look random (see the
+  [signature conventions](signatures.md#conventions)), at its usual weight 0.4.
+  Such keys were missed in SDK calls, JSON and YAML configuration and
+  `Authorization` headers, so `--fail-on` gates may now fail on a repository
+  that holds one. A key that the generic credential rule already reported
+  (an `*_API_KEY=` assignment) keeps that finding and its weight.
+
 ### Offline endpoint and runtime inventory limits
 
 The `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and

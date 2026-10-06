@@ -124,7 +124,12 @@ and [Semantic Kernel ChatCompletionAgent](https://learn.microsoft.com/en-us/pyth
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
-agent findings. JSON/YAML descriptions are not executed or treated as source; low-code
+agent findings. An A2A card that names its agent and declares an endpoint,
+skills or capabilities but misses other required fields still gets its own
+`protocol.a2a` framework-usage finding, tagged `incomplete-agent-card` with
+the errors in `metadata.card_errors`, never an agent finding; the errors also
+keep the scan incomplete. JSON/YAML descriptions are not
+executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history
