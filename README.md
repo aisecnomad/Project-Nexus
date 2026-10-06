@@ -10,20 +10,6 @@
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
-> **Project status**
-> - **Unreleased:** `0.1.1` is an unreleased candidate.
-> - **Development:** One maintainer; apart from Dependabot, commits are
->   maintainer-written or AI-generated and maintainer-reviewed.
-> - **Review:** No independent human review has been recorded; it is required before a tagged release.
-> - **Deployment:** Review the exact revision and pin its full 40-character SHA.
->
-> See [project status](#project-status) and the
-> [merge gate and review status](docs/production.md#merge-gate-and-review-status).
-
-> **What a finding does and does not establish:** Static code signals identify
-> candidates; trusted runtime evidence is needed to establish execution. Counts
-> and severity labels need analyst review before they drive enforcement.
-
 It inspects nine surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and
 host/runtime inventories), network logs, and running processes. It fingerprints frameworks and
