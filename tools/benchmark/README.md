@@ -107,10 +107,20 @@ configured with an allowlist, a known-agent list or an inventory.
 | Claw-Hunter | `4125c4f` | endpoint | `claw-hunter.sh --json`, `HOME` set to the case | the report says OpenClaw is installed |
 | AI-Detector | `fa673ef` | endpoint | `detect-shadow-ai.sh` as an unprivileged user, JSON report, network module off, `HOME` set to the case | any finding that does not also appear with an empty home (host noise) |
 
-The upstream checkouts were taken on 2026-10-06. Install each one in its own
-virtual environment or build directory under `--tool-root`, laid out as
-`adapters.py` expects (`venvs/<name>/bin/...`, `third_party/<owner>_<repo>`,
-`bin/agentsonar`).
+The upstream checkouts were taken on 2026-10-06.
+[`install_tools.sh`](install_tools.sh) installs each tool at its pinned commit
+in its own virtual environment or build directory under a tool root, in the
+layout `adapters.py` expects. AgentSonar's Linux build also needs libpcap
+headers. The script downloads and installs third-party code, so review it and
+run it in a disposable machine or container.
+
+```bash
+python -m tools.benchmark.generate --output /tmp/bench/corpus.json   # check the SHA-256 above
+bash tools/benchmark/install_tools.sh /tmp/bench/tools
+python -m tools.benchmark.run --corpus /tmp/bench/corpus.json \
+  --tool-root /tmp/bench/tools --results /tmp/bench/results --workers 4
+python -m tools.benchmark.score --results /tmp/bench/results --output /tmp/bench/summary.json
+```
 
 ## Metrics
 
