@@ -139,6 +139,31 @@ def render(results: Path) -> str:
         for cut, x in agentsonar_sweep(results, (0.3, 0.5, 0.6, 0.7, 0.8, 0.9)):
             w(f"| > {cut:.1f} | {_ci(x['recall'])} | {_ci(x['specificity'])} | {x['f1']:.2f} |")
         w("")
+    aibom = results / "cisco-aibom.jsonl"
+    if aibom.exists():
+        w("## Supplementary (post hoc): Cisco AI BOM without dataset and training-run components\n")
+        w(
+            "Every Cisco AI BOM false alarm comes from `dataset` or `training_run` components (CSV files, "
+            "scikit-learn training). An AI bill of materials inventories those by design, while this corpus "
+            "labels classical ML and data files as no AI. These rows drop detections that consist only of "
+            "those two types. They were not pre-registered.\n"
+        )
+        w("| Surface | Rule | Recall | Specificity | F1 | MCC |")
+        w("|---|---|---|---|---|---|")
+        rows = [json.loads(line) for line in aibom.read_text(encoding="utf-8").splitlines()]
+        for sur in ("repo", "endpoint"):
+            base = [r for r in rows if r["surface"] == sur and r["status"] != "n/a"]
+            alt = [
+                {**r, "detected": bool(set(filter(None, r["note"].split(","))) - {"dataset", "training_run"})}
+                for r in base
+            ]
+            for rule, data in (("pre-registered", base), ("without dataset/training_run", alt)):
+                x = confusion(data)
+                w(
+                    f"| {sur} | {rule} | {_ci(x['recall'])} | {_ci(x['specificity'])} "
+                    f"| {x['f1']:.2f} | {x['mcc']:.2f} |"
+                )
+        w("")
     w("## Errors\n")
     for t in tools:
         rows = [json.loads(line) for line in (results / f"{t}.jsonl").read_text().splitlines()]
