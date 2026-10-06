@@ -1,0 +1,4 @@
+[
+  {"name": "Claude Desktop", "type": "mcp-client", "source": "mdm-export"},
+  {"name": "Ollama", "type": "local-llm-runtime", "source": "osquery"}
+]

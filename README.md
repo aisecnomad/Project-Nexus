@@ -24,8 +24,8 @@
 > candidates; trusted runtime evidence is needed to establish execution. Counts
 > and severity labels need analyst review before they drive enforcement.
 
-It inspects six surfaces: code repositories, identity providers, LLM gateway logs,
-low-code platforms, SaaS apps, and cloud accounts. It fingerprints frameworks and
+It inspects seven surfaces: code repositories, identity providers, LLM gateway logs,
+low-code platforms, SaaS apps, cloud accounts, and offline host/runtime inventories. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
 agent registry of
 [Agent Cards](agent-card.yaml).
@@ -37,14 +37,14 @@ Example output, abridged to the first columns (totals vary as signatures evolve;
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
-│ 99 findings  •  95 shadow (inventory: 3 registered agents)                  │
-│ critical 10  high 54  medium 35  •  cloud 27 identity 19 saas 17 …          │
+│ 112 findings  •  108 shadow (inventory: 3 registered agents)                │
+│ critical 11  high 58  medium 43  •  cloud 30 endpoint 9 identity 19 …       │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
  CRITICAL  95  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
+ CRITICAL  87  SHADOW  endpoint  mcp-server   MCP tool run_command on https://mcp.example.invalid
  CRITICAL  83  SHADOW  cloud     mcp-server   AgentCore Gateway (MCP): tools-gateway
- CRITICAL  82  SHADOW  cloud     agent        Azure AI Foundry agent: contract-reviewer
 ```
 
 ## The Why
@@ -95,24 +95,27 @@ registered in the agent registry supplied for this scan?*
 
 ## Surfaces & connectors
 
-ShadowScan ships **27 connectors** across the six surfaces below.
+ShadowScan ships **35 connectors** across the seven surfaces below.
 
 | Surface | Connectors | What is discovered |
 |---|---|---|
 | **Code** | `code.filesystem`, `code.github`, `code.gitlab` | Agent frameworks & LLM SDKs (deps, imports, idioms), MCP client/server configs, coding-agent configs (Claude Code sub-agents, Copilot custom agents, Cursor/Codex/Gemini CLI…), A2A agent cards, M365 declarative agents, CrewAI/LangGraph manifests, exported n8n/Flowise/Langflow/Dify flows, IaC provisioning Bedrock/Vertex/Foundry/OCI agents, container images, CI secret names, hard-coded provider keys (redacted) |
 | **Identity** | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | OAuth apps & consent grants to AI SaaS, service apps / service principals / managed identities with LLM or data permissions, app registrations that look like agents, JWT classification (human/service / workload / delegated-agent) with privilege and hygiene analysis |
-| **Gateway** | `gateway.logs` | Callers reconstructed from LiteLLM, Portkey, Kong AI, Cloudflare AI Gateway, Helicone, Langfuse, Bedrock invocation logs, Azure OpenAI diagnostics, Vertex audit logs, OpenAI/Anthropic usage exports, nginx/envoy/ALB access logs or any JSON: models, frameworks (from user agents), tool-use ratio, 24x7 activity, volume, cost |
+| **Gateway** | `gateway.logs`, `gateway.otel` | Callers reconstructed from gateway logs or offline OpenTelemetry GenAI spans; span prompt/completion content is not retained |
 | **Low-code** | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | Copilot Studio agents & topics, Power Automate/Apps using AI connectors, Agentforce planners/topics/actions, Einstein bots, prompt templates, Now Assist AI agents/tools/triggers, automation workflows with AI or agent steps |
 | **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom approved and account-created Marketplace apps (approval does not prove installation), any CSV/JSON app inventory (CASB exports) |
-| **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci` | Bedrock Agents / AgentCore / Flows / Q Business / Lex, Lambda/ECS/SageMaker/Step Functions with LLM signals, Vertex AI Agent Engine, Dialogflow CX, Agentspace, Cloud Run/Functions, Azure OpenAI deployments, AI Foundry agents, Bot Service, Logic Apps, Function/Container apps, OCI Generative AI Agents, Digital Assistant, GenAI endpoints, IAM roles/bindings/policies granting LLM access, secret *names*, API keys, CloudTrail / audit-log LLM callers |
+| **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci`, `cloud.kubernetes`, `cloud.openshift` | Managed cloud AI and IAM inventories, plus offline Kubernetes/OpenShift workload exports (images, exposure, GPU, privilege, and egress-policy indicators) |
+| **Endpoint** | `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | Offline host/runtime, MCP tool-list, local model metadata, and eBPF event exports; live endpoint probes and local filesystem discovery are not yet available |
 
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the connector guide for the supported modes and provider scope.
 Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export.
+Runtime connectors currently implement offline inventory analysis only; they do not
+probe MCP/Ollama endpoints, access a Kubernetes API, or scan local model files.
 
 ## Frameworks & products recognized
 
-215 signatures / 1006 signals, YAML-defined with explicit opt-in overrides:
+216 signatures / 1007 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -214,7 +217,7 @@ it fails until the variable is set.
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
 shadowscan code . --inventory agent-card.yaml
 
-# 2. Try every fixture-backed connector offline (demo; 25 of 27 connectors ship fixtures)
+# 2. Try every fixture-backed connector offline (demo; 33 of 35 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Real estate: one config, live connectors, secrets from the environment
@@ -386,7 +389,8 @@ Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations; results are warnings or notes with the
 heuristic risk level, never a CVSS `security-severity`, see
 [severity](docs/severity.md)), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down). CSV inserts a literal `'` at the start of
+filterable, with evidence drill-down), and `cyclonedx` (CycloneDX 1.6 AI-BOM).
+CSV inserts a literal `'` at the start of
 a value, and after each `,`, `;`, tab, `|` or line break inside it, when the
 following text begins with `=`, `+`, `-` or `@` (also after whitespace or
 quotes), a tab or a carriage return; values beginning with a line feed are also

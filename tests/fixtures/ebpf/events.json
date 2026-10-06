@@ -1,0 +1,10 @@
+[
+  {
+    "process_name": "example-agent",
+    "destination": "api.openai.com",
+    "destination_port": 443,
+    "namespace": "ai",
+    "pod": "agent-0"
+  },
+  {"binary": "ollama", "destination_port": 11434, "namespace": "ai", "pod": "model-0"}
+]

@@ -97,6 +97,8 @@ nav:
       - Low-code: connectors/lowcode.md
       - SaaS: connectors/saas.md
       - Cloud: connectors/cloud.md
+      - Kubernetes: connectors/kubernetes.md
+      - Endpoint and runtime: connectors/endpoint.md
       - Configuration reference: connectors/reference.md
   - Concepts:
       - Architecture: architecture.md
