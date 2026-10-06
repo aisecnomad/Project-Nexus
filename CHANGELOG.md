@@ -5,6 +5,19 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 6 head-to-head benchmark follow-ups
+
+- The Goose signature matches the user configuration Goose writes on first
+  run (`~/.config/goose/config.yaml`, and
+  `%APPDATA%\Block\goose\config\config.yaml` on Windows). The benchmark
+  missed all six Goose homes because only `.goose/`, `.goosehints` and
+  `goose.yaml` were recognized.
+- The Cline signature matches the installed extension directory
+  (`saoudrizwan.claude-dev-*` under VS Code, VS Code Server, Cursor or
+  Windsurf), so an install without `cline_mcp_settings.json` is found.
+- `review_corpus.json` gains both cases and two look-alike negatives; the
+  positives fail on the previous signatures.
+
 ### Security-review follow-ups
 
 - `SHADOWSCAN_IDENTITY_KEY` accepts explicit `hex:<value>` and
