@@ -10,10 +10,6 @@
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
-> **What a finding does and does not establish:** Static code signals identify
-> candidates; trusted runtime evidence is needed to establish execution. Counts
-> and severity labels need analyst review before they drive enforcement.
-
 It inspects seven surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, cloud accounts, and offline host/runtime inventories. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
