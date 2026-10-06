@@ -6,7 +6,7 @@ signatures:
     description: Local agent gateway and configuration formats; a file or port match is inventory evidence, not proof that an agent is running.
     signals:
       - type: file
-        globs: [openclaw.json, "**/openclaw.json", clawdbot.json, "**/clawdbot.json", moltbot.json, "**/moltbot.json"]
+        globs: [openclaw.json, "**/openclaw.json", clawdbot.json, "**/clawdbot.json", moltbot.json, "**/moltbot.json", ".openclaw/config.json", "**/.openclaw/config.json", ".openclaw/openclaw.json", "**/.openclaw/openclaw.json", ".moltbot/config.json", "**/.moltbot/config.json"]
         weight: 0.9
       - type: code
         patterns: ['(?i)\b(?:openclaw|clawdbot|moltbot)\b', ':\s*18789\b']

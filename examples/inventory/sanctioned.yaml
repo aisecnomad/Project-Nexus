@@ -1,0 +1,7 @@
+# Simple sanctioned inventory. `shadowscan code --inventory` accepts this shape.
+# A capability card (metadata.agent_id) is also accepted; a wrapped `agents:` list is not.
+- id: sanctioned-copilot
+  name: GitHub Copilot
+  owner: platform
+  frameworks: []
+  providers: []
