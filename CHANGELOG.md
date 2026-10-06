@@ -102,10 +102,12 @@ summarizes each release for people who install and operate ShadowScan.
   Their findings carry no device name, so lifecycle links do not apply to
   them.
 - The CycloneDX output replaces the earlier candidate's exporter: findings
-  are no longer all `machine-learning-model` components, `shadowscan:risk_level`
-  is now `shadowscan:heuristic-risk`, per-tag `shadowscan:tag:<tag>`
-  properties are one `shadowscan:tags` list, and credential findings are
-  excluded. Regenerate BOMs and update their consumers.
+  other than models, MCP and Ollama inventories are `application` components
+  instead of `machine-learning-model` components, risk is published as
+  `shadowscan:heuristic-risk` (the earlier `shadowscan:risk_level` lookup never
+  matched), per-tag `shadowscan:tag:<tag>` properties are one
+  `shadowscan:tags` list, and credential findings are excluded. Regenerate
+  BOMs and update their consumers.
 
 #### Fixes from a review of the merged branch
 

@@ -47,11 +47,14 @@ A BOM never reads as more complete than the scan behind it:
   was skipped or stopped early, and `unknown` otherwise. A complete scan
   still covers only the configured sources, so ShadowScan never declares the
   inventory `complete`.
-- A finding keeps at most 50 MCP servers and 20 model ids. A finding that
-  lists more carries `shadowscan:mcp:servers-omitted` or
-  `shadowscan:models-omitted`, is named in a further `incomplete`
+- A finding keeps at most 50 MCP servers and 20 model ids, and a server at
+  most 5 HTTP endpoints. A finding that lists more, or a malformed server
+  entry, carries `shadowscan:mcp:servers-omitted` or
+  `shadowscan:models-omitted` (a capped server carries
+  `shadowscan:mcp:endpoints-omitted`), is named in a further `incomplete`
   composition, and `metadata.properties` counts such findings in
-  `shadowscan:bom:truncated-findings`.
+  `shadowscan:bom:truncated-findings`. A server listed under an empty name is
+  published as `(unnamed MCP server #<n>)`, never dropped.
 - `metadata.properties` carries `shadowscan:scan:status` and the connectors
   that were incomplete.
 - The exit code is 3 for an incomplete scan whatever the output format.
@@ -70,12 +73,17 @@ cannot be published and a large scan stays within the sanitizer's bounds.
 An earlier candidate build on `main` shipped a first CycloneDX exporter.
 Consumers of that output need updating:
 
-- Findings were all `machine-learning-model` components. They are now
-  `application` components, `services` or `machine-learning-model`
-  components as above.
-- `shadowscan:risk_level` is now `shadowscan:heuristic-risk` (with
-  `shadowscan:heuristic-risk-score`), and the per-tag `shadowscan:tag:<tag>`
-  properties are one `shadowscan:tags` list.
+- MCP configurations, `endpoint.mcp` findings and the non-model
+  `endpoint.ollama` findings were already `services`, and model stores were
+  `machine-learning-model` components; both stay so. Every other finding was
+  also a `machine-learning-model` component. Those (agents, configurations,
+  apps, callers, network contacts, processes) are now `application`
+  components.
+- The earlier exporter published no risk property: its
+  `shadowscan:risk_level` lookup never matched a finding field.
+  `shadowscan:heuristic-risk` and `shadowscan:heuristic-risk-score` are new,
+  and the per-tag `shadowscan:tag:<tag>` properties are now one
+  `shadowscan:tags` list.
 - `secret` and `token` findings are no longer components.
 - Shared framework, provider, model and MCP-server entries, `dependencies`
   and `compositions` are new.

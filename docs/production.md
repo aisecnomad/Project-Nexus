@@ -843,11 +843,13 @@ namespace or under `hidepid` cannot see every process, and is marked
 incomplete.
 
 `--format cyclonedx` replaces the earlier candidate's CycloneDX exporter with
-a different document: findings are `application` components, `services` or
-`machine-learning-model` components rather than all ML models,
-`shadowscan:risk_level` is now `shadowscan:heuristic-risk`, the per-tag
-`shadowscan:tag:<tag>` properties are one `shadowscan:tags` list, and `secret`
-and `token` findings are no longer components. Regenerate BOMs and update
+a different document: agents, configurations, apps, callers and processes are
+`application` components instead of `machine-learning-model` components (MCP
+and Ollama inventories stay `services`, model stores stay models), the new
+`shadowscan:heuristic-risk` properties carry the risk the earlier exporter
+never published, the per-tag `shadowscan:tag:<tag>` properties are one
+`shadowscan:tags` list, and `secret` and `token` findings are no longer
+components. Regenerate BOMs and update
 their consumers; `docs/operations/ai-bom.md` lists the changes. Its
 composition is `incomplete` for an incomplete scan, and the exit code is
 unchanged. `options.llm_triage` is off

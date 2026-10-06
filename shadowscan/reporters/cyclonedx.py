@@ -25,8 +25,9 @@ ShadowScan's heuristic risk, confidence and shadow status are recorded as
 A BOM never reads as more complete than the scan: ``compositions`` declares
 the inventory ``incomplete`` when any connector failed or stopped early, and
 ``unknown`` otherwise, because a complete scan still covers only the
-configured sources. A finding whose MCP servers or models exceed the per-entry
-bound is named in a further ``incomplete`` composition. The output is
+configured sources. A finding whose MCP servers, models or server endpoints
+exceed the per-entry bounds, or that lists a malformed server entry, is named
+in a further ``incomplete`` composition. The output is
 deterministic for a given result, and every ``bom-ref`` is unique.
 """
 
@@ -37,6 +38,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from shadowscan import __version__
 from shadowscan.models import Finding, Kind, ScanResult
@@ -48,6 +50,7 @@ _PROJECT_URI = "https://github.com/aisecnomad/Project-Nexus"
 _EXCLUDED_KINDS = {Kind.SECRET, Kind.TOKEN}
 _MAX_MCP_SERVERS = 50
 _MAX_MODELS = 20
+_MAX_ENDPOINTS = 5
 _SERIAL_NAMESPACE = uuid.UUID("6f1c3c56-2a52-5b8e-9a0e-5c7d4f1e2b10")
 _SERVICE_CONNECTORS = {"endpoint.mcp", "endpoint.ollama"}
 _MODEL_CONNECTORS = {"endpoint.models"}
@@ -87,6 +90,16 @@ def _properties(pairs: list[tuple[str, object]]) -> list[dict[str, str]]:
             value = "true" if value else "false"
         out.append({"name": name, "value": str(value)})
     return out
+
+
+def _http_url(value: object) -> bool:
+    """An http or https URL; the scheme is compared case-insensitively."""
+    if not isinstance(value, str):
+        return False
+    try:
+        return urlsplit(value.strip()).scheme.lower() in {"http", "https"}
+    except ValueError:
+        return False
 
 
 def _text(record: dict[str, Any], key: str) -> str | None:
@@ -177,18 +190,21 @@ class _Bom:
             self.components[ref] = {"type": "machine-learning-model", "bom-ref": ref, "name": model}
         return ref
 
-    def mcp_service(self, owner_ref: str, position: int, server: dict[str, Any]) -> str | None:
+    def mcp_service(self, owner_ref: str, position: int, server: dict[str, Any]) -> tuple[str, bool]:
+        """The service ref for one listed server, and whether its endpoints were capped."""
         name = server.get("name")
         if not isinstance(name, str) or not name:
-            return None
+            # A configuration can key a server by an empty name; it is still a server.
+            name = f"(unnamed MCP server #{position + 1})"
         # The position keeps same-named servers from two files apart.
         ref = f"{_SHARED}mcp:{_digest(json.dumps([owner_ref, position, name]))}"
         service: dict[str, Any] = {"bom-ref": ref, "name": name, "group": "mcp-server"}
         urls = server.get("urls")
         urls = urls if isinstance(urls, list) else [server.get("url")]
-        endpoints = [u for u in urls if isinstance(u, str) and u.startswith(("https://", "http://"))]
+        endpoints = [u.strip() for u in urls if _http_url(u)]
+        endpoints_omitted = max(0, len(endpoints) - _MAX_ENDPOINTS)
         if endpoints:
-            service["endpoints"] = endpoints[:5]
+            service["endpoints"] = endpoints[:_MAX_ENDPOINTS]
         risks = server.get("risks")
         risk_ids = [
             r if isinstance(r, str) else r.get("id")
@@ -203,10 +219,11 @@ class _Bom:
                 ("shadowscan:mcp:file", _text(server, "location")),
                 ("shadowscan:mcp:disabled", disabled if isinstance(disabled, bool) else None),
                 ("shadowscan:mcp:risks", [r for r in risk_ids if isinstance(r, str)]),
+                ("shadowscan:mcp:endpoints-omitted", endpoints_omitted or None),
             ]
         )
         self.services[ref] = service
-        return ref
+        return ref, bool(endpoints_omitted)
 
     def add(self, f: Finding) -> None:
         ref = self.finding_ref(f)
@@ -227,7 +244,9 @@ class _Bom:
         servers = f.metadata.get("servers") if f.kind == Kind.MCP_SERVER else None
         servers = servers if isinstance(servers, list) else []
         models = [m for m in f.models if isinstance(m, str) and m]
-        servers_omitted = max(0, len(servers) - _MAX_MCP_SERVERS)
+        kept = servers[:_MAX_MCP_SERVERS]
+        # Entries past the bound, and malformed entries within it, are not published.
+        servers_omitted = len(servers) - len(kept) + sum(not isinstance(s, dict) for s in kept)
         models_omitted = max(0, len(models) - _MAX_MODELS)
         entry["properties"] = _properties(
             [
@@ -259,8 +278,6 @@ class _Bom:
             self.finding_services[ref] = entry
         else:
             self.components[ref] = entry
-        if servers_omitted or models_omitted:
-            self.truncated.append(ref)
         needs = self.dependencies.setdefault(ref, set())
         for sid in f.frameworks:
             needs.add(self.signature_component(f, sid))
@@ -268,9 +285,14 @@ class _Bom:
             needs.add(self.provider_service(f, sid))
         for model in models[:_MAX_MODELS]:
             needs.add(self.model_component(model))
-        for position, server in enumerate(servers[:_MAX_MCP_SERVERS]):
-            if isinstance(server, dict) and (service := self.mcp_service(ref, position, server)):
+        endpoints_capped = False
+        for position, server in enumerate(kept):
+            if isinstance(server, dict):
+                service, capped = self.mcp_service(ref, position, server)
                 needs.add(service)
+                endpoints_capped = endpoints_capped or capped
+        if servers_omitted or models_omitted or endpoints_capped:
+            self.truncated.append(ref)
 
 
 def render_cyclonedx(result: ScanResult, index: SignatureIndex | None = None) -> str:

@@ -576,7 +576,8 @@ class EndpointInventoryConnector(BaseConnector):
 
     def _normalize(self, raw: dict[str, Any]) -> dict[str, Any] | None:
         """Our own records pass through; osquery rows become records; anything else is None."""
-        if raw.get("record_type") in _RECORD_TYPES:
+        # Type checks come first: an unhashable value from an export must not raise.
+        if isinstance(raw.get("record_type"), str) and raw["record_type"] in _RECORD_TYPES:
             if not self._record_fields_valid(
                 raw,
                 strings=_OWN_STRINGS,
@@ -596,7 +597,8 @@ class EndpointInventoryConnector(BaseConnector):
                 p
                 for p in posture
                 if isinstance(p, dict)
-                and p.get("id") in POSTURE_DESCRIPTIONS
+                and isinstance(p.get("id"), str)
+                and p["id"] in POSTURE_DESCRIPTIONS
                 and all(isinstance(p.get(k), str) for k in ("client", "setting", "value"))
             ]
             rec["models"] = [m for m in models if isinstance(m, str)]

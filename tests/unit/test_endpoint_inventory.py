@@ -469,7 +469,7 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
             "product": "Cursor",
             "location": "~/.cursor/mcp.json",
             "mcp_servers": [{"name": "a", "urls": 5}, {"name": "b", "args": 5}, "junk", {"name": "ok"}],
-            "posture": ["junk"],
+            "posture": ["junk", {"id": ["unhashable"], "client": "cursor", "setting": "s", "value": "v"}],
         },
         {
             "device": "lap",
@@ -478,12 +478,14 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
             "client": "codex",
             "product": "Codex",
         },
+        # An unhashable record type is skipped like any unknown record, not a crash.
+        {"device": "lap", "home": "dana", "record_type": ["agent_config"], "client": "goose"},
     ]
     path = tmp_path / "records.jsonl"
     path.write_text("\n".join(json.dumps(r) for r in records))
     findings, ctx = run_connector("endpoint.inventory", input=str(path))
     assert not ctx.stats.errors and ctx.stats.incomplete
-    assert any("dropped 4 malformed server, posture or model entries" in w for w in ctx.stats.warnings)
+    assert any("dropped 5 malformed server, posture or model entries" in w for w in ctx.stats.warnings)
     titles = {f.title for f in findings}
     assert "Codex configured on lap (~dana)" in titles
     mcp = next(f for f in findings if f.kind == Kind.MCP_SERVER)

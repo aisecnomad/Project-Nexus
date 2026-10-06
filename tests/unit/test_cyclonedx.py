@@ -97,7 +97,8 @@ def test_components_services_models_and_dependencies():
     # No trust zone: a provider id can name a local runtime as well as a hosted API.
     assert "trustZone" not in services["shadowscan:provider:provider.openai"]
     mcp_services = [s for s in doc["services"] if s.get("group") == "mcp-server"]
-    assert sorted(s["name"] for s in mcp_services) == ["docs", "github"]
+    # An unnamed server is published under a placeholder; the non-object entry is counted as omitted.
+    assert sorted(s["name"] for s in mcp_services) == ["(unnamed MCP server #3)", "docs", "github"]
     docs = next(s for s in mcp_services if s["name"] == "docs")
     assert docs["endpoints"] == ["https://mcp.example.com/mcp"]
     github = {
@@ -112,7 +113,10 @@ def test_components_services_models_and_dependencies():
         "shadowscan:provider:provider.openai",
         model["bom-ref"],
     }
-    assert len(deps["ss-mcp"]) == 2
+    assert len(deps["ss-mcp"]) == 3
+    mcp_entry = next(s for s in doc["services"] if s["bom-ref"] == "ss-mcp")
+    assert {"name": "shadowscan:mcp:servers-omitted", "value": "1"} in mcp_entry["properties"]
+    assert {"aggregate": "incomplete", "dependencies": ["ss-mcp"]} in doc["compositions"]
     meta = {p["name"]: p["value"] for p in doc["metadata"]["properties"]}
     assert meta["shadowscan:scan:credential-findings-excluded"] == "1"
     assert doc["metadata"]["timestamp"] == "2026-10-06T10:00:05Z"
@@ -270,3 +274,26 @@ def test_render_uses_the_scan_index_for_custom_packs():
     framework = next(c for c in doc["components"] if c["type"] == "framework")
     assert (framework["name"], framework["publisher"]) == ("ACME Agents", "ACME")
     assert framework["externalReferences"] == [{"type": "website", "url": "https://acme.example/agents"}]
+
+
+def test_unnamed_servers_and_endpoint_bounds_are_never_silent(tmp_path):
+    from shadowscan.connectors.mcp_risk import record_server_risks
+
+    servers = [
+        {"name": "", "command": "npx", "args": ["-y", "some-unpinned-pkg"]},
+        {"name": "upper", "transport": "http", "url": "HTTP://mcp.example.com/mcp"},
+        {"name": "many", "transport": "http", "urls": [f"https://r{i}.example/mcp" for i in range(7)]},
+    ]
+    f = _finding("ss-cfg", Kind.MCP_SERVER, metadata={"servers": servers})
+    for server in f.metadata["servers"]:
+        record_server_risks(f, server, ".mcp.json")
+    doc = json.loads(render_cyclonedx(_result([f])))
+    _resolves(doc)
+    by_name = {s["name"]: s for s in doc["services"] if s.get("group") == "mcp-server"}
+    unnamed = {p["name"]: p["value"] for p in by_name["(unnamed MCP server #1)"]["properties"]}
+    assert unnamed["shadowscan:mcp:risks"] == "mcp-unpinned-package"
+    assert by_name["upper"]["endpoints"] == ["HTTP://mcp.example.com/mcp"]
+    many = by_name["many"]
+    assert len(many["endpoints"]) == 5
+    assert {"name": "shadowscan:mcp:endpoints-omitted", "value": "2"} in many["properties"]
+    assert {"aggregate": "incomplete", "dependencies": ["ss-cfg"]} in doc["compositions"]
