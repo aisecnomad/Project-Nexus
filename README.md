@@ -442,7 +442,7 @@ connectors. See [CONTRIBUTING.md](CONTRIBUTING.md#getting-started).
 * **Release state.** There is no tag, published package, or signed artifact. The
   package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
-  by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, etc.). The logs under
+  by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](archive/reviews/) are AI-assisted, not third-party reviews.
 * **What is independently reviewed: nothing yet.** Every pull request runs CI
   and CodeQL, but no merged pull request currently carries an approval from a second
