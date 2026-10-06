@@ -4,14 +4,14 @@ The runtime connector reports AI tools seen **running**: coding-agent CLIs,
 AI desktop apps, MCP servers launched by a client, local model servers and
 agent frameworks' development servers. A configured tool might never run; a
 running process shows that it does. The engine links these findings to the
-endpoint findings for the same tool on the same device.
+`endpoint.inventory` findings for the same tool on the same device.
 
 ## `runtime.processes`
 
 | Matched | Examples |
 |---|---|
 | Coding-agent CLIs | `claude`, `codex`, `gemini`, `aider`, `goose`, `openclaw`, `opencode`, `cursor-agent`, and the same tools run as npm packages (`node …/@anthropic-ai/claude-code/cli.js`) or Python modules (`python -m aider`) |
-| AI desktop apps | Claude Desktop, ChatGPT desktop, Cursor, Windsurf, LM Studio, Ollama, matched by executable name *and* the vendor's install path |
+| AI desktop apps | Claude Desktop, ChatGPT desktop and Ollama.app, matched by executable name *and* the vendor's app bundle or package path; Cursor, Windsurf and LM Studio, matched by executable name alone, so another program with the same name is reported as that app |
 | MCP servers | packages launched through `npx`, `uvx`, `uv tool run`, `pipx run`, `bunx` or `node` whose names follow MCP conventions (`@modelcontextprotocol/server-*`, `mcp-server-*`, `*-mcp`), and `github-mcp-server` |
 | Model servers | `ollama serve` / `run`, `llama-server`, `lms`, `python -m vllm.entrypoints…` |
 | Frameworks and gateways | `crewai`, `langgraph` dev servers, Open WebUI, the LiteLLM proxy |
@@ -37,7 +37,10 @@ MCP package name are kept.
 - **Live** (no `input`, Linux only): reads `/proc/<pid>/cmdline` without
   following the `exe` link. Processes of other users are visible only to an
   account allowed to read them; unreadable processes are reported and make the
-  scan incomplete. Elsewhere, export osquery results instead.
+  scan incomplete. Inside a container's PID namespace, or where `/proc` is
+  mounted with `hidepid` or `subset=pid`, other processes are not listed at
+  all, so the scan is marked incomplete with a warning that says why.
+  Elsewhere, export osquery results instead.
 
 Options: `label` (host name for records that carry none; default the host
 name), `max_processes` (live mode bound, default 100,000; reaching it makes
@@ -46,10 +49,13 @@ executable makes the scan incomplete.
 
 ### Lifecycle corroboration
 
-After all connectors finish, the engine links endpoint findings
+After all connectors finish, the engine links `endpoint.inventory` findings
 (`configured` agent and MCP configurations, `installed` apps, extensions and
 model stores) to `running` process findings for the same tool on the same
-device. Devices match by host name without its DNS domain
+device. The same tool means the same signature or, for a client configuration,
+the same tool id, so Claude Desktop, Kiro and LM Studio, which have no
+signature, link too. Code findings and the offline `endpoint.*` inventories
+are not linked. Devices match by host name without its DNS domain
 (`dev-laptop-07.corp.example` is `dev-laptop-07`). An MCP configuration links
 to a running MCP server only when one of its server's arguments names the
 same package.

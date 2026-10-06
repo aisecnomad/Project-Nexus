@@ -36,6 +36,7 @@ import json
 import os
 import re
 import socket
+import stat
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -63,6 +64,7 @@ from shadowscan.connectors.endpoint.catalog import (
 from shadowscan.connectors.mcp_risk import record_server_risks
 from shadowscan.connectors.posture import POSTURE_DESCRIPTIONS, record_posture
 from shadowscan.connectors.posture import assess as assess_posture
+from shadowscan.connectors.posture import parseable as posture_parseable
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.files import NotRegularFileError, open_confined_directory, open_confined_file
 from shadowscan.utils.jsonc import load_json_lenient
@@ -112,6 +114,14 @@ class _Group:
     """Records for one finding before it is built."""
 
     records: list[dict[str, Any]] = field(default_factory=list)
+
+
+# Links a running Chromium browser keeps in its user-data directory (the
+# process-singleton lock, cookie and socket, and the macOS running-version
+# marker). They are never followed and hold no profile or extension.
+_CHROMIUM_OWN_LINKS = frozenset(
+    {"SingletonLock", "SingletonCookie", "SingletonSocket", "RunningChromeVersion"}
+)
 
 
 class EndpointInventoryConnector(BaseConnector):
@@ -236,14 +246,40 @@ class EndpointInventoryConnector(BaseConnector):
         except OSError as exc:
             if owned:
                 os.close(current)
-            if exc.errno == errno.ENOTDIR:
+            if exc.errno == errno.ENOTDIR and not self._link_in_path(home, rel):
                 return None
-            self._gap(home, rel, _reason(exc))
+            self._gap(home, rel, "symbolic link not followed" if exc.errno == errno.ENOTDIR else _reason(exc))
             return None
         return current if owned else os.dup(current)
 
-    def _list(self, home: _Home, rel: str) -> list[tuple[str, str]] | None:
-        """``(name, kind)`` entries of a directory, kind ``dir``, ``file`` or ``other``; links are skipped."""
+    @staticmethod
+    def _link_in_path(home: _Home, rel: str) -> bool:
+        """Whether a component of ``rel`` is a symbolic link (Linux reports such a component as ENOTDIR).
+
+        Each prefix is examined without following its last component, and only
+        after every shorter prefix was found to be a real directory, so no link
+        is ever traversed.
+        """
+        parts = PurePosixPath(rel).parts
+        for i in range(1, len(parts) + 1):
+            try:
+                st = os.stat(str(PurePosixPath(*parts[:i])), dir_fd=home.fd, follow_symlinks=False)
+            except OSError:
+                return False
+            if stat.S_ISLNK(st.st_mode):
+                return True
+            if not stat.S_ISDIR(st.st_mode):
+                return False
+        return False
+
+    def _list(
+        self, home: _Home, rel: str, ignore_links: frozenset[str] = frozenset()
+    ) -> list[tuple[str, str]] | None:
+        """``(name, kind)`` entries of a directory, kind ``dir``, ``file`` or ``other``; links are skipped.
+
+        A skipped link is a coverage gap unless its name is in ``ignore_links``:
+        links an application keeps for itself that hold no inventory data.
+        """
         fd = self._open_dir(home, rel)
         if fd is None:
             return None
@@ -258,7 +294,7 @@ class EndpointInventoryConnector(BaseConnector):
                     home.entries += 1
                     self.ctx.examined()
                     if entry.is_symlink():
-                        links += 1
+                        links += entry.name not in ignore_links
                         continue
                     kind = (
                         "dir"
@@ -296,11 +332,15 @@ class EndpointInventoryConnector(BaseConnector):
             self._gap(home, rel, str(exc))
             return None
         except (OSError, ValueError) as exc:
-            if isinstance(exc, OSError) and exc.errno == errno.ENOTDIR:
+            not_dir = isinstance(exc, OSError) and exc.errno == errno.ENOTDIR
+            if not_dir and not self._link_in_path(home, rel):
                 return None
-            self._gap(home, rel, _reason(exc))
+            self._gap(home, rel, "symbolic link not followed" if not_dir else _reason(exc))
             return None
         self.ctx.examined()
+        if tail and st.st_size > limit:
+            # Tools used only in the older part of the history are not counted.
+            self._gap(home, rel, f"only the last {limit:,} bytes read")
         return data[:limit].decode("utf-8", errors="replace")
 
     # -------------------------------------------------------- config locations
@@ -327,6 +367,9 @@ class EndpointInventoryConnector(BaseConnector):
             record["mcp_servers"] = _mcp_servers(loc, text, errors)
             if errors:
                 self._gap(home, loc.path, f"MCP configuration problem: {errors[0]}")
+        elif not posture_parseable(loc.path, text):
+            # The agent's settings could not be read, so their posture is unknown.
+            self._gap(home, loc.path, "invalid configuration syntax")
         issues = assess_posture(loc.path, text)
         if issues:
             record["posture"] = [{**issue.as_dict(), "file": f"~/{loc.path}"} for issue in issues]
@@ -352,7 +395,7 @@ class EndpointInventoryConnector(BaseConnector):
     # ------------------------------------------------------ browser extensions
     def _browser_extensions(self, home: _Home) -> Iterator[dict[str, Any]]:
         for user_data, browser in CHROMIUM_USER_DATA.items():
-            for profile, kind in self._list(home, user_data) or []:
+            for profile, kind in self._list(home, user_data, _CHROMIUM_OWN_LINKS) or []:
                 if kind != "dir":
                     continue
                 ext_root = f"{user_data}/{profile}/Extensions"
@@ -545,15 +588,31 @@ class EndpointInventoryConnector(BaseConnector):
             rec = dict(raw)
             rec.setdefault("device", self.label)
             rec.setdefault("home", "unknown")
-            rec["mcp_servers"] = [s for s in rec.get("mcp_servers") or [] if isinstance(s, dict)]
+            servers = list(rec.get("mcp_servers") or [])
+            posture = list(rec.get("posture") or [])
+            models = list(rec.get("models") or [])
+            rec["mcp_servers"] = [s for s in servers if _valid_server(s)]
             rec["posture"] = [
                 p
-                for p in rec.get("posture") or []
+                for p in posture
                 if isinstance(p, dict)
                 and p.get("id") in POSTURE_DESCRIPTIONS
                 and all(isinstance(p.get(k), str) for k in ("client", "setting", "value"))
             ]
-            rec["models"] = [m for m in rec.get("models") or [] if isinstance(m, str)]
+            rec["models"] = [m for m in models if isinstance(m, str)]
+            dropped = (
+                len(servers)
+                - len(rec["mcp_servers"])
+                + len(posture)
+                - len(rec["posture"])
+                + len(models)
+                - len(rec["models"])
+            )
+            if dropped:
+                self.ctx.warn(
+                    f"endpoint.inventory: dropped {dropped} malformed server, posture or model "
+                    f"entr{'y' if dropped == 1 else 'ies'} from a {rec['record_type']} record"
+                )
             return rec
         nested = raw.get("columns")
         columns: dict[str, Any] = nested if isinstance(nested, dict) else raw
@@ -655,7 +714,13 @@ class EndpointInventoryConnector(BaseConnector):
             record_posture(f, posture)
         f.kind = kind
         out.append(finalize(f, self.index))
-        servers = [s for r in records for s in r.get("mcp_servers") or [] if isinstance(s, dict)]
+        # Each server keeps the file it came from, so its risks cite that file.
+        servers = [
+            {**s, "location": str(s.get("location") or r.get("location") or "")}
+            for r in records
+            for s in r.get("mcp_servers") or []
+            if isinstance(s, dict)
+        ]
         if servers:
             out.append(self._mcp_finding(first, client, product, servers, locations))
         return out
@@ -671,7 +736,8 @@ class EndpointInventoryConnector(BaseConnector):
         f = self._finding(Kind.MCP_SERVER, rec, "mcp-config", client, f"MCP servers configured for {product}")
         f.add_framework("protocol.mcp")
         f.add_capability("tool-use")
-        location = locations[0]
+        # The file that holds the servers, not the client's first location (an instructions file).
+        location = next((str(s["location"]) for s in servers if s.get("location")), locations[0])
         f.add_evidence(
             Evidence(
                 signal="endpoint:mcp-config",
@@ -683,8 +749,9 @@ class EndpointInventoryConnector(BaseConnector):
         )
         remote: list[str] = []
         for server in servers:
-            record_server_risks(f, server, location)
-            for url in server.get("urls") or ([server["url"]] if server.get("url") else []):
+            record_server_risks(f, server, str(server.get("location") or location))
+            urls = server.get("urls") if isinstance(server.get("urls"), list) else []
+            for url in urls or ([server["url"]] if isinstance(server.get("url"), str) else []):
                 if isinstance(url, str) and url not in remote:
                     remote.append(url)
         enabled = [s for s in servers if not s.get("disabled")]
@@ -867,6 +934,25 @@ def _json_object(text: str | None) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+_SERVER_STRINGS = ("name", "transport", "command", "url", "location")
+_SERVER_STRING_LISTS = ("args", "urls", "env_names", "headers", "risks", "secret_locations")
+
+
+def _valid_server(server: Any) -> bool:
+    """A replayed MCP server record has the field types the parser produces."""
+    if not isinstance(server, dict) or not isinstance(server.get("name"), str):
+        return False
+    if any(server.get(k) is not None and not isinstance(server[k], str) for k in _SERVER_STRINGS):
+        return False
+    if any(
+        server.get(k) is not None
+        and not (isinstance(server[k], list) and all(isinstance(v, str) for v in server[k]))
+        for k in _SERVER_STRING_LISTS
+    ):
+        return False
+    return all(server.get(k) is None or isinstance(server[k], bool) for k in ("disabled", "secrets_inline"))
+
+
 def _mcp_servers(loc: ConfigLocation, text: str, errors: list[str]) -> list[dict[str, Any]]:
     """Parse a client configuration's MCP servers into the code connector's sanitized records."""
     if loc.path == ".claude.json":
@@ -882,7 +968,13 @@ def _mcp_servers(loc: ConfigLocation, text: str, errors: list[str]) -> list[dict
         for table in tables:
             if isinstance(table, dict):
                 for name, cfg in table.items():
-                    merged.setdefault(str(name), cfg)
+                    # A project-scoped server that reuses a user-scope name is a
+                    # separate configuration; keep it under a numbered name.
+                    key, n = str(name), 1
+                    while key in merged and merged[key] != cfg:
+                        n += 1
+                        key = f"{name}#{n}"
+                    merged.setdefault(key, cfg)
         return _parse_mcp_servers("claude.json", json.dumps({"mcpServers": merged}), errors) if merged else []
     if loc.client == "goose":
         return _goose_servers(text, errors)

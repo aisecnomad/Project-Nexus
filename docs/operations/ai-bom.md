@@ -10,20 +10,30 @@ shadowscan scan -c shadowscan.yaml --format cyclonedx -o ai-bom.cdx.json
 
 ## What is in the document
 
+Each finding becomes one entry. Its `bom-ref` is the finding id, or a stable
+`shadowscan:finding:<digest>` when the id is empty, repeated or starts with
+`shadowscan:`, and `group` is the surface.
+
 | ShadowScan | CycloneDX |
 |---|---|
-| A finding (agent, MCP configuration, AI app, caller, model store, network contact, running process…) | `components[]` of type `application`; `bom-ref` is the finding id, `group` the surface |
-| Agent frameworks, coding agents, protocols and platforms the finding uses | `components[]` of type `framework`, shared across findings |
-| Model providers | `services[]` with `trustZone: external` |
-| Concrete model ids | `components[]` of type `machine-learning-model` |
-| MCP servers listed by an MCP configuration | `services[]` in group `mcp-server`, with HTTP endpoints and `shadowscan:mcp:risks` |
+| A model artifact or model store (`local-model` findings, `endpoint.models`, the models `endpoint.ollama` lists) | `components[]` of type `machine-learning-model` |
+| An MCP configuration or inventory (`mcp-server` findings, `endpoint.mcp`) and the other `endpoint.ollama` findings | `services[]` |
+| Every other finding (agents, agent configurations, AI apps, callers, network contacts, running processes) | `components[]` of type `application` |
+| Agent frameworks, coding agents, protocols and platforms a finding uses | `components[]` of type `framework`, shared across findings (`shadowscan:framework:<signature>`) |
+| Model providers | `services[]`, shared (`shadowscan:provider:<signature>`); no `trustZone`, because a provider id names local runtimes as well as hosted APIs |
+| Concrete model ids | `components[]` of type `machine-learning-model`, shared (`shadowscan:model:<digest>`) |
+| MCP servers listed by an MCP configuration | `services[]` in group `mcp-server` (`shadowscan:mcp:<digest>`), with HTTP endpoints and the `shadowscan:mcp:transport`, `command`, `file`, `disabled` and `risks` properties |
 | What a finding uses | `dependencies[]` from the finding to the shared entries |
 
-ShadowScan's own judgements are `shadowscan:*` properties on each component:
+Framework and provider names, vendors and categories come from the signature
+index the scan used, custom packs included.
+
+ShadowScan's own judgements are `shadowscan:*` properties on each entry:
 heuristic risk level and score, confidence, likelihood, shadow status,
-registry match, capabilities, tags, owner and first and last seen. They are
-not CycloneDX vulnerabilities or ratings: the risk score is a discovery
-heuristic, not a vulnerability severity (see [severity](../severity.md)).
+registry match, capabilities, tags (one comma-separated `shadowscan:tags`),
+owner and first and last seen. They are not CycloneDX vulnerabilities or
+ratings: the risk score is a discovery heuristic, not a vulnerability
+severity (see [severity](../severity.md)).
 
 Credential findings (`secret`, `token`) are left out; a BOM is an inventory.
 `metadata.properties` records how many were excluded. Use the JSON or SARIF
@@ -37,6 +47,11 @@ A BOM never reads as more complete than the scan behind it:
   was skipped or stopped early, and `unknown` otherwise. A complete scan
   still covers only the configured sources, so ShadowScan never declares the
   inventory `complete`.
+- A finding keeps at most 50 MCP servers and 20 model ids. A finding that
+  lists more carries `shadowscan:mcp:servers-omitted` or
+  `shadowscan:models-omitted`, is named in a further `incomplete`
+  composition, and `metadata.properties` counts such findings in
+  `shadowscan:bom:truncated-findings`.
 - `metadata.properties` carries `shadowscan:scan:status` and the connectors
   that were incomplete.
 - The exit code is 3 for an incomplete scan whatever the output format.
@@ -44,7 +59,23 @@ A BOM never reads as more complete than the scan behind it:
 ## Determinism and safety
 
 The document is deterministic for a given scan result: components, services
-and dependencies are sorted, and `serialNumber` is a UUID derived from the
-scan start time and the finding ids. Findings are sanitized before rendering,
-and the assembled document is sanitized again as a whole, so a credential
-split across fields cannot be published.
+and dependencies are sorted, every `bom-ref` is unique, and `serialNumber`
+is a UUID derived from the scan start time and the entry refs. Findings are
+sanitized before rendering, and each entry is sanitized again as a whole
+before it is published, so a credential split across one entry's fields
+cannot be published and a large scan stays within the sanitizer's bounds.
+
+## Changes from the earlier candidate exporter
+
+An earlier candidate build on `main` shipped a first CycloneDX exporter.
+Consumers of that output need updating:
+
+- Findings were all `machine-learning-model` components. They are now
+  `application` components, `services` or `machine-learning-model`
+  components as above.
+- `shadowscan:risk_level` is now `shadowscan:heuristic-risk` (with
+  `shadowscan:heuristic-risk-score`), and the per-tag `shadowscan:tag:<tag>`
+  properties are one `shadowscan:tags` list.
+- `secret` and `token` findings are no longer components.
+- Shared framework, provider, model and MCP-server entries, `dependencies`
+  and `compositions` are new.

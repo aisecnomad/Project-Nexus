@@ -27,11 +27,13 @@ For each selected finding: its title, surface, kind, connector, resource type,
 technology and model-provider names, capabilities, tags, heuristic risk
 level, confidence, shadow status, and up to twelve evidence signals with their
 descriptions. **Resource ids, owners, accounts, file locations and code
-snippets are never sent.** Every value has passed the report sanitizer, so
-credentials ShadowScan redacted stay redacted. Titles can still name
-repositories, devices or apps; do not enable triage for scans whose findings
-must not leave your environment, or point `base_url` at a model endpoint you
-operate.
+snippets are not sent as fields**, and their values (with the host, user,
+path and file names a connector records) are replaced by `[withheld]`
+wherever they appear in the title or an evidence description. Every value has
+passed the report sanitizer, so credentials ShadowScan redacted stay
+redacted. Other free text can still name a product, repository or app; do not
+enable triage for scans whose findings must not leave your environment, or
+point `base_url` at a model endpoint you operate.
 
 The request goes through the scanner's HTTP client: HTTPS only, no redirect
 to another origin, and private or loopback endpoints refused unless the scan
@@ -57,7 +59,9 @@ recorded as `status: unparseable`. Free text is truncated (rationale 500
 characters, suggested action 200) and sanitized before it is stored.
 
 A failed request is recorded as `status: failed` on the finding and as a
-warning on the `engine.llm-triage` entry of the scan statistics. A triage
+warning on the `engine.llm-triage` entry of the scan statistics. An API key
+that is not a valid header value, or any other triage failure, is a warning
+on that entry too; the key is never echoed. A triage
 failure is not a discovery gap, so it does not make the scan incomplete.
 
 Model verdicts are not measured: no evaluation of triage accuracy is

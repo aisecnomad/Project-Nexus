@@ -94,7 +94,14 @@ def _setup_logging(verbose: int, quiet: bool) -> None:
     logging.getLogger("botocore").setLevel(logging.WARNING)
 
 
-def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_rows: int | None) -> None:
+def _emit(
+    result: ScanResult,
+    fmt: str,
+    output: str | None,
+    verbose: bool,
+    max_rows: int | None,
+    index: SignatureIndex | None = None,
+) -> None:
     if fmt == "table" and not output:
         try:
             print_table(result, console=console, verbose=verbose, max_rows=max_rows)
@@ -102,7 +109,7 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
             raise click.ClickException("could not render report; result data is invalid") from None
         return
     try:
-        text = render(result, "json" if fmt == "table" else fmt)
+        text = render(result, "json" if fmt == "table" else fmt, index)
     except (OverflowError, RecursionError, TypeError, ValueError):
         # Reporter exceptions can contain attacker-controlled values. Invalid
         # plugin output (including NaN/Infinity) must fail before stdout or an
@@ -227,7 +234,7 @@ def _run_and_emit_with_deadline(
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
     try:
-        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows)
+        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows, index=engine.index)
     except Exception:  # any emission failure must still release an abandoned CLI worker
         if engine.abandoned_workers:
             _exit_abandoned_workers(

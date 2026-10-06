@@ -11,8 +11,11 @@ What leaves the machine, per finding: title, surface, kind, connector,
 resource type, technology names, capabilities, tags, heuristic risk level,
 confidence, shadow status and up to twelve evidence signals with their
 descriptions. Resource ids, owners, accounts, locations and code snippets are
-never sent. Every value has already passed the report sanitizer, so redacted
-credentials stay redacted.
+not sent as fields, and their values (with the host, user, path and file
+names a connector records) are replaced by ``[withheld]`` wherever they appear
+in the title or an evidence description. Other free text can still name a
+product, repository or app. Every value has already passed the report
+sanitizer, so redacted credentials stay redacted.
 
 Finding text comes from scanned repositories and remote APIs and is
 untrusted. The system prompt tells the model to treat it as data, and the
@@ -147,6 +150,36 @@ def _text(value: Any, limit: int = _MAX_TEXT) -> str:
     return " ".join(str(value).split())[:limit]
 
 
+_IDENTIFYING_METADATA = ("path", "host", "user", "client", "device", "home", "caller", "network", "files")
+_WITHHELD = "[withheld]"
+
+
+def _identifiers(f: Finding) -> list[str]:
+    """Values that identify the finding's resource, owner or location; longest first."""
+    values: set[str] = set()
+    for value in (f.owner, f.account, f.resource, f.region):
+        if isinstance(value, str):
+            values.add(value)
+    for key in _IDENTIFYING_METADATA:
+        value = f.metadata.get(key)
+        items = value if isinstance(value, list) else [value]
+        values.update(v for v in items if isinstance(v, str))
+    for e in f.evidence:
+        if isinstance(e.location, str) and e.location:
+            values.add(e.location)
+            values.add(e.location.rsplit(":", 1)[0])
+    # Very short values (a one-letter host label) would erase ordinary words.
+    return sorted((v for v in values if len(v.strip()) >= 3), key=len, reverse=True)
+
+
+def _scrub(value: Any, withheld: list[str]) -> str:
+    """``value`` as summary text, identifiers withheld before it is shortened."""
+    text = "" if value is None else str(value)
+    for item in withheld:
+        text = text.replace(item, _WITHHELD)
+    return _text(text)
+
+
 def finding_summary(f: Finding, index: SignatureIndex | None = None) -> dict[str, Any]:
     """The redacted view of a finding that triage sends; see the module docstring."""
 
@@ -154,8 +187,9 @@ def finding_summary(f: Finding, index: SignatureIndex | None = None) -> dict[str
         sig = index.get(sid) if index is not None else None
         return sig.name if sig is not None else sid
 
+    withheld = _identifiers(f)
     summary = {
-        "title": _text(f.title),
+        "title": _scrub(f.title, withheld),
         "surface": f.surface.value,
         "kind": f.kind.value,
         "connector": f.connector,
@@ -168,7 +202,7 @@ def finding_summary(f: Finding, index: SignatureIndex | None = None) -> dict[str
         "confidence": round(f.confidence, 2),
         "shadow": f.shadow,
         "evidence": [
-            {"signal": _text(e.signal, 120), "description": _text(e.description)}
+            {"signal": _text(e.signal, 120), "description": _scrub(e.description, withheld)}
             for e in f.evidence[:_MAX_EVIDENCE]
         ],
     }
@@ -227,14 +261,20 @@ class Triage:
             headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
         else:
             headers = {"Authorization": f"Bearer {key}"}
-        self.client = client or HttpClient(
-            base_url=base,
-            headers=headers,
-            timeout=settings.timeout_seconds,
-            max_retries=2,
-            allow_private_origin=allow_private_origin,
-            max_response_bytes=256 * 1024,
-        )
+        try:
+            self.client = client or HttpClient(
+                base_url=base,
+                headers=headers,
+                timeout=settings.timeout_seconds,
+                max_retries=2,
+                allow_private_origin=allow_private_origin,
+                max_response_bytes=256 * 1024,
+            )
+        except (ValueError, TypeError) as exc:
+            # Never echo the key: the header value is what failed validation.
+            raise TriageConfigError(
+                f"llm_triage: the API key in {settings.api_key_env} is not a valid header value"
+            ) from exc
 
     def _payload(self, summary: dict[str, Any]) -> dict[str, Any]:
         content = json.dumps(summary, sort_keys=True)

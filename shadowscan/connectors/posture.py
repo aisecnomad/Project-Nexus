@@ -125,6 +125,17 @@ def assess(rel: str, text: str) -> list[PostureIssue] | None:
     return _CHECKS[client](data)
 
 
+def parseable(rel: str, text: str) -> bool:
+    """Whether a known settings file parses to a mapping; True for files posture does not read."""
+    client = posture_client(rel)
+    if client is None:
+        return True
+    try:
+        return isinstance(_load(client, text), dict)
+    except (ValueError, RecursionError, yaml.YAMLError, tomllib.TOMLDecodeError):
+        return False
+
+
 def _load(client: str, text: str) -> Any:
     if client == "codex":
         return tomllib.loads(text)

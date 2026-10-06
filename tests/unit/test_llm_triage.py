@@ -221,3 +221,55 @@ def test_engine_runs_triage_only_when_enabled(monkeypatch, index, tmp_path):
     assert all(f.metadata["llm_triage"]["advisory"] for f in triaged.findings)
     entry = next(s for s in triaged.stats if s.connector == "engine.llm-triage")
     assert entry.warnings and not entry.incomplete
+
+
+def test_identifiers_are_withheld_from_free_text(index):
+    f = _finding("ss-2", 70, RiskLevel.HIGH)
+    f.surface = Surface.ENDPOINT
+    f.title = "Claude Code configured on dev-laptop-07 (~dana) in github:acme/ss-2"
+    f.account = "dev-laptop-07"
+    f.owner = "dana"
+    f.metadata["files"] = ["~/.claude/settings.json"]
+    f.evidence.append(
+        Evidence(
+            signal="endpoint:agent-config",
+            description="settings at ~/.claude/settings.json and src/agent.py:12 for dana",
+            location="~/.claude/settings.json",
+            weight=0.9,
+        )
+    )
+    text = json.dumps(finding_summary(f, index))
+    for value in ("dev-laptop-07", "github:acme/ss-2", "~/.claude/settings.json", "src/agent.py", "dana"):
+        assert value not in text
+    assert "[withheld]" in text and "Claude Code configured on" in text
+
+
+def test_invalid_api_key_value_is_a_config_error_that_never_echoes_it(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "line1\nsecret-value")
+    with pytest.raises(TriageConfigError, match="ANTHROPIC_API_KEY") as caught:
+        Triage(TriageSettings.from_options({"enabled": True, "model": "m"}))
+    assert "secret-value" not in str(caught.value)
+
+
+def test_engine_keeps_the_report_when_triage_fails_unexpectedly(monkeypatch, index, tmp_path):
+    class Broken:
+        def __init__(self, settings, index=None, **kwargs):
+            pass
+
+        def run(self, findings):
+            raise OSError("socket closed")
+
+    import shadowscan.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "Triage", Broken)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("langgraph==0.2.0\n")
+    spec = {
+        "connectors": [{"name": "code.filesystem", "path": str(repo), "use_git": False}],
+        "options": {"llm_triage": {"enabled": True, "model": "m"}},
+    }
+    result = Engine(ScanConfig.from_dict(spec), index).run()
+    assert result.findings and result.complete
+    entry = next(s for s in result.stats if s.connector == "engine.llm-triage")
+    assert entry.warnings == ["llm triage failed (OSError)"]

@@ -93,13 +93,56 @@ summarizes each release for people who install and operate ShadowScan.
 - Opt-in LLM triage (`options.llm_triage`, off by default): a redacted summary
   of the highest-risk findings goes to a model the operator names, through the
   scanner's HTTPS client, and the reply is stored as advisory
-  `metadata.llm_triage`. Resource ids, owners, locations and snippets are never
-  sent; keys come only from an environment variable; replies never change
-  scores or completeness. See `docs/operations/llm-triage.md`.
+  `metadata.llm_triage`. Resource ids, owners, accounts, locations and
+  snippets are not sent as fields, and their values are withheld from titles
+  and evidence text; keys come only from an environment variable; replies
+  never change scores or completeness. See `docs/operations/llm-triage.md`.
 - `endpoint.inventory` coexists with the `endpoint.*` offline inventories:
   it reads local locations or osquery exports, they read collector exports.
   Their findings carry no device name, so lifecycle links do not apply to
   them.
+- The CycloneDX output replaces the earlier candidate's exporter: findings
+  are no longer all `machine-learning-model` components, `shadowscan:risk_level`
+  is now `shadowscan:heuristic-risk`, per-tag `shadowscan:tag:<tag>`
+  properties are one `shadowscan:tags` list, and credential findings are
+  excluded. Regenerate BOMs and update their consumers.
+
+#### Fixes from a review of the merged branch
+
+- CycloneDX: MCP server risks were never emitted (the reporter expected
+  objects, the records hold ids); `endpoint.ollama` model findings are
+  `machine-learning-model` components again; each entry is sanitized on its
+  own, so scans of about a thousand findings or more render; entries capped
+  at 50 MCP servers or 20 models are recorded as `incomplete`; same-named
+  servers and empty or repeated finding ids get distinct refs; providers carry
+  no `trustZone`; names and vendors come from the scan's signature index,
+  custom packs included.
+- `endpoint.inventory`: a symbolically linked directory on the way to a
+  location (Linux reports it as "not a directory") was treated as absent; it
+  is now a gap. Unparseable agent settings, whose posture is therefore
+  unknown, and a shell history longer than the read limit are gaps too.
+  Malformed server, posture or model entries in replayed records are dropped
+  with a warning (incomplete) instead of failing the connector or, through
+  the lifecycle pass, the whole scan. Project servers in `~/.claude.json` that
+  reuse a user-scope name are kept (`name#2`), MCP risk evidence cites the
+  file that holds the servers, and the lock links a running Chromium browser
+  keeps in its user-data directory no longer make every scan incomplete.
+- `runtime.processes`: an export row whose pid is a non-ASCII digit no longer
+  fails the export, and a live `/proc` scan in a container PID namespace or
+  under `hidepid` is marked incomplete because it cannot see every process.
+- Lifecycle links also match by tool id, so Claude Desktop, Kiro and
+  LM Studio configurations, which have no signature, link to their running
+  processes.
+- LLM triage withholds owner, account, resource, device, home and file values
+  from the title and evidence text it sends; an API key that is not a valid
+  header value, or any other triage failure, is a warning on the triage
+  entry and never echoes the key.
+- MCP servers reached through `ws://` or an upper-case `HTTP://` scheme gain
+  the `mcp-plain-http` factor (+10), so every server tagged
+  `mcp-insecure-transport` is scored.
+- A coding agent's own configuration file belongs to that agent's signature
+  alone: `main`'s `platform.openclaw` no longer adds a second framework-usage
+  finding for files in an OpenClaw state directory.
 
 ### Offline runtime inventory connectors
 
@@ -109,11 +152,15 @@ summarizes each release for people who install and operate ShadowScan.
 - Added risk tags and OWASP/MITRE control references for selected runtime
   indicators, and a CycloneDX 1.6 AI-BOM output format. New runtime tag
   weights can change risk scores for findings that carry those tags.
-- Runtime collection is currently offline-only; live MCP, Ollama and Kubernetes
-  collection and confined local artifact discovery remain unsupported.
+- These offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
+  `endpoint.models`, `endpoint.ebpf`, `gateway.otel`, Kubernetes/OpenShift)
+  remain offline-only; live MCP, Ollama and Kubernetes collection is
+  unsupported. (`endpoint.inventory` and `runtime.processes`, above, read local
+  state when no `input` is set.)
 - Model metadata is supplied by an offline exporter; ShadowScan does not parse
   GGUF or safetensors files. MCP tool fingerprints have no rug-pull baseline, and
-  the new endpoint inventories do not provide cross-surface correlation.
+  findings from these inventories carry no device name, so lifecycle links do
+  not apply to them.
 
 ### Security-review follow-ups
 

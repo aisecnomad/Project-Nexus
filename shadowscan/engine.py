@@ -1078,6 +1078,9 @@ class Engine:
             entry.warnings.extend(triage.run(findings))
         except TriageConfigError as exc:
             entry.warnings.append(str(exc))
+        except (OSError, ValueError) as exc:
+            # Advisory only: a triage failure never costs the scan its report.
+            entry.warnings.append(f"llm triage failed ({type(exc).__name__})")
         entry.finished_at = now_iso()
         return entry
 

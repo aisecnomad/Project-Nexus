@@ -2,9 +2,10 @@
 
 Each finding becomes one entry whose ``bom-ref`` is the finding id:
 
-* an MCP configuration or inventory, or a local model server
-  (``endpoint.mcp``, ``endpoint.ollama``), is a ``service``;
-* a model artifact or model store is a ``machine-learning-model`` component;
+* a model artifact or model store (``local-model`` findings, ``endpoint.models``,
+  the models ``endpoint.ollama`` lists) is a ``machine-learning-model`` component;
+* an MCP configuration or inventory (``mcp-server`` findings, ``endpoint.mcp``)
+  or another ``endpoint.ollama`` finding is a ``service``;
 * everything else (agents, agent configurations, AI apps, callers, network
   contacts, running processes) is an ``application`` component.
 
@@ -24,7 +25,9 @@ ShadowScan's heuristic risk, confidence and shadow status are recorded as
 A BOM never reads as more complete than the scan: ``compositions`` declares
 the inventory ``incomplete`` when any connector failed or stopped early, and
 ``unknown`` otherwise, because a complete scan still covers only the
-configured sources. The output is deterministic for a given result.
+configured sources. A finding whose MCP servers or models exceed the per-entry
+bound is named in a further ``incomplete`` composition. The output is
+deterministic for a given result, and every ``bom-ref`` is unique.
 """
 
 from __future__ import annotations
@@ -48,13 +51,16 @@ _MAX_MODELS = 20
 _SERIAL_NAMESPACE = uuid.UUID("6f1c3c56-2a52-5b8e-9a0e-5c7d4f1e2b10")
 _SERVICE_CONNECTORS = {"endpoint.mcp", "endpoint.ollama"}
 _MODEL_CONNECTORS = {"endpoint.models"}
+# Shared entries live under this prefix; a finding id that takes it gets a digest ref instead.
+_SHARED = "shadowscan:"
 
 
-def finding_ref(f: Finding) -> str:
-    """The finding id, or a stable digest of the finding when it has none (direct connector use)."""
-    if f.id:
-        return f.id
-    return _ref("finding", json.dumps(f.to_dict(), sort_keys=True, default=str))
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
+
+
+def _finding_digest(f: Finding) -> str:
+    return _digest(json.dumps(f.to_dict(), sort_keys=True, default=str))
 
 
 def _timestamp(value: object) -> str | None:
@@ -83,10 +89,20 @@ def _properties(pairs: list[tuple[str, object]]) -> list[dict[str, str]]:
     return out
 
 
-def _ref(prefix: str, value: str) -> str:
-    """A stable bom-ref for a shared entry, safe for any identifier text."""
-    digest = hashlib.sha256(value.encode()).hexdigest()[:16]
-    return f"{prefix}:{digest}"
+def _text(record: dict[str, Any], key: str) -> str | None:
+    value = record.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _published(entry: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize one entry on its own (a whole BOM can exceed the sanitizer's node bound).
+
+    The ``bom-ref`` is generated here or is an already sanitized finding id, and
+    must stay byte-identical so dependencies and compositions still resolve.
+    """
+    ref = entry.get("bom-ref")
+    body = sanitize({k: v for k, v in entry.items() if k != "bom-ref"})
+    return {"bom-ref": ref, **body} if ref is not None else dict(body)
 
 
 class _Bom:
@@ -96,42 +112,59 @@ class _Bom:
         self.finding_services: dict[str, dict[str, Any]] = {}
         self.services: dict[str, dict[str, Any]] = {}
         self.dependencies: dict[str, set[str]] = {}
+        self.truncated: list[str] = []
+        self.used: set[str] = set()
 
-    def signature_component(self, sid: str) -> str:
-        ref = f"signature:{sid}"
+    def finding_ref(self, f: Finding) -> str:
+        """The finding id when it is usable and unique, else a stable digest ref."""
+        ref = f.id if isinstance(f.id, str) and f.id and not f.id.startswith(_SHARED) else ""
+        if not ref or ref in self.used:
+            base = f"{_SHARED}finding:{_finding_digest(f)}"
+            ref, n = base, 1
+            while ref in self.used:
+                n += 1
+                ref = f"{base}-{n}"
+        self.used.add(ref)
+        return ref
+
+    def _technology(self, f: Finding, sid: str) -> dict[str, str]:
+        """Name, vendor and category as the scan's own index recorded them (custom packs included)."""
+        recorded = f.metadata.get("technologies")
+        for tech in recorded if isinstance(recorded, list) else []:
+            if isinstance(tech, dict) and tech.get("id") == sid:
+                return {k: str(v) for k, v in tech.items() if isinstance(v, str) and v}
+        sig = self.index.get(sid)
+        if sig is None:
+            return {"id": sid, "name": sid}
+        return {"id": sid, "name": sig.name, "category": sig.category, "vendor": sig.vendor or ""}
+
+    def signature_component(self, f: Finding, sid: str) -> str:
+        ref = f"{_SHARED}framework:{sid}"
         if ref not in self.components:
+            tech = self._technology(f, sid)
             sig = self.index.get(sid)
-            component: dict[str, Any] = {
-                "type": "framework",
-                "bom-ref": ref,
-                "name": sig.name if sig else sid,
-            }
-            if sig is not None:
-                if sig.vendor:
-                    component["publisher"] = sig.vendor
-                if sig.description:
-                    component["description"] = sig.description
-                if sig.homepage:
-                    component["externalReferences"] = [{"type": "website", "url": sig.homepage}]
-                component["properties"] = _properties(
-                    [("shadowscan:signature", sid), ("shadowscan:category", sig.category)]
-                )
-            else:
-                component["properties"] = _properties([("shadowscan:signature", sid)])
+            component: dict[str, Any] = {"type": "framework", "bom-ref": ref, "name": tech.get("name", sid)}
+            if tech.get("vendor"):
+                component["publisher"] = tech["vendor"]
+            if sig is not None and sig.description:
+                component["description"] = sig.description
+            if sig is not None and sig.homepage:
+                component["externalReferences"] = [{"type": "website", "url": sig.homepage}]
+            component["properties"] = _properties(
+                [("shadowscan:signature", sid), ("shadowscan:category", tech.get("category"))]
+            )
             self.components[ref] = component
         return ref
 
-    def provider_service(self, sid: str) -> str:
-        ref = f"signature:{sid}"
+    def provider_service(self, f: Finding, sid: str) -> str:
+        ref = f"{_SHARED}provider:{sid}"
         if ref not in self.services:
+            tech = self._technology(f, sid)
             sig = self.index.get(sid)
-            service: dict[str, Any] = {
-                "bom-ref": ref,
-                "name": sig.name if sig else sid,
-                "trustZone": "external",
-            }
-            if sig is not None and sig.vendor:
-                service["provider"] = {"name": sig.vendor}
+            # No trust zone: a provider id names hosted APIs and local runtimes alike.
+            service: dict[str, Any] = {"bom-ref": ref, "name": tech.get("name", sid)}
+            if tech.get("vendor"):
+                service["provider"] = {"name": tech["vendor"]}
             if sig is not None and sig.homepage:
                 service["externalReferences"] = [{"type": "website", "url": sig.homepage}]
             service["properties"] = _properties([("shadowscan:signature", sid)])
@@ -139,57 +172,63 @@ class _Bom:
         return ref
 
     def model_component(self, model: str) -> str:
-        ref = _ref("model", model)
+        ref = f"{_SHARED}model:{_digest(model)}"
         if ref not in self.components:
             self.components[ref] = {"type": "machine-learning-model", "bom-ref": ref, "name": model}
         return ref
 
-    def mcp_service(self, finding: Finding, server: dict[str, Any]) -> str | None:
+    def mcp_service(self, owner_ref: str, position: int, server: dict[str, Any]) -> str | None:
         name = server.get("name")
         if not isinstance(name, str) or not name:
             return None
-        ref = _ref("mcp", f"{finding.id}\0{name}")
+        # The position keeps same-named servers from two files apart.
+        ref = f"{_SHARED}mcp:{_digest(json.dumps([owner_ref, position, name]))}"
         service: dict[str, Any] = {"bom-ref": ref, "name": name, "group": "mcp-server"}
-        urls = [u for u in server.get("urls") or [server.get("url")] if isinstance(u, str) and u]
-        endpoints = [u for u in urls if u.startswith(("https://", "http://"))]
+        urls = server.get("urls")
+        urls = urls if isinstance(urls, list) else [server.get("url")]
+        endpoints = [u for u in urls if isinstance(u, str) and u.startswith(("https://", "http://"))]
         if endpoints:
             service["endpoints"] = endpoints[:5]
-        risks = [r.get("id") for r in server.get("risks") or [] if isinstance(r, dict)]
+        risks = server.get("risks")
+        risk_ids = [
+            r if isinstance(r, str) else r.get("id")
+            for r in (risks if isinstance(risks, list) else [])
+            if isinstance(r, (str, dict))
+        ]
+        disabled = server.get("disabled")
         service["properties"] = _properties(
             [
-                ("shadowscan:mcp:transport", server.get("transport")),
-                (
-                    "shadowscan:mcp:command",
-                    server.get("command") if isinstance(server.get("command"), str) else None,
-                ),
-                (
-                    "shadowscan:mcp:disabled",
-                    server.get("disabled") if isinstance(server.get("disabled"), bool) else None,
-                ),
-                ("shadowscan:mcp:risks", [r for r in risks if isinstance(r, str)]),
+                ("shadowscan:mcp:transport", _text(server, "transport")),
+                ("shadowscan:mcp:command", _text(server, "command")),
+                ("shadowscan:mcp:file", _text(server, "location")),
+                ("shadowscan:mcp:disabled", disabled if isinstance(disabled, bool) else None),
+                ("shadowscan:mcp:risks", [r for r in risk_ids if isinstance(r, str)]),
             ]
         )
         self.services[ref] = service
         return ref
 
     def add(self, f: Finding) -> None:
-        ref = finding_ref(f)
+        ref = self.finding_ref(f)
         entry: dict[str, Any] = {
             "bom-ref": ref,
             "name": f.title or f.resource or "discovered AI component",
             "group": f.surface.value,
             "description": f"{f.kind.value} discovered by {f.connector}",
         }
-        is_service = f.kind == Kind.MCP_SERVER or f.connector in _SERVICE_CONNECTORS
+        is_model = (
+            f.kind == Kind.LOCAL_MODEL or f.connector in _MODEL_CONNECTORS or f.resource_type == "local-model"
+        )
+        is_service = not is_model and (f.kind == Kind.MCP_SERVER or f.connector in _SERVICE_CONNECTORS)
         if not is_service:
-            is_model = (
-                f.kind == Kind.LOCAL_MODEL
-                or f.connector in _MODEL_CONNECTORS
-                or f.resource_type == "local-model"
-            )
             entry = {"type": "machine-learning-model" if is_model else "application", **entry}
             if f.owner:
                 entry["authors"] = [{"name": f.owner}]
+        servers = f.metadata.get("servers") if f.kind == Kind.MCP_SERVER else None
+        servers = servers if isinstance(servers, list) else []
+        models = [m for m in f.models if isinstance(m, str) and m]
+        servers_omitted = max(0, len(servers) - _MAX_MCP_SERVERS)
+        models_omitted = max(0, len(models) - _MAX_MODELS)
         entry["properties"] = _properties(
             [
                 ("shadowscan:finding-id", f.id),
@@ -212,25 +251,26 @@ class _Bom:
                 ("shadowscan:tags", f.tags),
                 ("shadowscan:first-seen", _timestamp(f.first_seen)),
                 ("shadowscan:last-seen", _timestamp(f.last_seen)),
+                ("shadowscan:mcp:servers-omitted", servers_omitted or None),
+                ("shadowscan:models-omitted", models_omitted or None),
             ]
         )
         if is_service:
             self.finding_services[ref] = entry
         else:
             self.components[ref] = entry
+        if servers_omitted or models_omitted:
+            self.truncated.append(ref)
         needs = self.dependencies.setdefault(ref, set())
         for sid in f.frameworks:
-            needs.add(self.signature_component(sid))
+            needs.add(self.signature_component(f, sid))
         for sid in f.model_providers:
-            needs.add(self.provider_service(sid))
-        for model in f.models[:_MAX_MODELS]:
-            if isinstance(model, str) and model:
-                needs.add(self.model_component(model))
-        if f.kind == Kind.MCP_SERVER:
-            servers = f.metadata.get("servers")
-            for server in servers[:_MAX_MCP_SERVERS] if isinstance(servers, list) else []:
-                if isinstance(server, dict) and (service := self.mcp_service(f, server)):
-                    needs.add(service)
+            needs.add(self.provider_service(f, sid))
+        for model in models[:_MAX_MODELS]:
+            needs.add(self.model_component(model))
+        for position, server in enumerate(servers[:_MAX_MCP_SERVERS]):
+            if isinstance(server, dict) and (service := self.mcp_service(ref, position, server)):
+                needs.add(service)
 
 
 def render_cyclonedx(result: ScanResult, index: SignatureIndex | None = None) -> str:
@@ -239,12 +279,12 @@ def render_cyclonedx(result: ScanResult, index: SignatureIndex | None = None) ->
         finding.sanitize()
     bom = _Bom(index or get_index())
     included = [f for f in result.findings if f.kind not in _EXCLUDED_KINDS]
-    for f in sorted(included, key=finding_ref):
+    for f in sorted(included, key=lambda x: (x.id or "", _finding_digest(x))):
         bom.add(f)
     excluded = len(result.findings) - len(included)
     stats = publication_stats(result)
     complete = result.complete
-    seed = json.dumps([result.started_at, sorted(finding_ref(f) for f in result.findings)])
+    seed = json.dumps([result.started_at, sorted(sorted(bom.used), key=str)])
     serial = uuid.uuid5(_SERIAL_NAMESPACE, seed)
     timestamp = _timestamp(result.finished_at) or _timestamp(result.started_at)
     metadata: dict[str, Any] = {
@@ -273,33 +313,41 @@ def render_cyclonedx(result: ScanResult, index: SignatureIndex | None = None) ->
                     ],
                 ),
                 ("shadowscan:scan:inventory-size", result.inventory_size),
+                ("shadowscan:bom:truncated-findings", len(bom.truncated) or None),
             ]
         ),
     }
     if timestamp:
         metadata["timestamp"] = timestamp
+    compositions: list[dict[str, Any]] = [
+        {
+            "aggregate": "unknown" if complete else "incomplete",
+            "assemblies": sorted(bom.components) + sorted(bom.finding_services),
+        }
+    ]
+    if bom.truncated:
+        compositions.append({"aggregate": "incomplete", "dependencies": sorted(bom.truncated)})
+    services = [bom.finding_services[k] for k in sorted(bom.finding_services)] + [
+        bom.services[k] for k in sorted(bom.services)
+    ]
     document: dict[str, Any] = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
         "serialNumber": f"urn:uuid:{serial}",
         "version": 1,
-        "metadata": metadata,
-        "components": [bom.components[k] for k in sorted(bom.components)],
+        "metadata": _published(metadata),
+        "components": [_published(bom.components[k]) for k in sorted(bom.components)],
         # Findings that are services first, then the providers and servers they use.
-        "services": [bom.finding_services[k] for k in sorted(bom.finding_services)]
-        + [bom.services[k] for k in sorted(bom.services)],
+        "services": [_published(s) for s in services],
         "dependencies": [
             {"ref": ref, "dependsOn": sorted(needs)} for ref, needs in sorted(bom.dependencies.items())
         ],
-        "compositions": [
-            {
-                "aggregate": "unknown" if complete else "incomplete",
-                "assemblies": sorted(bom.components) + sorted(bom.finding_services),
-            }
-        ],
+        "compositions": compositions,
     }
     if not document["services"]:
         del document["services"]
-    # Findings were sanitized above; sanitize the assembled document as a whole
-    # too, so a credential split across fields cannot survive publication.
-    return json.dumps(sanitize(document), indent=2, allow_nan=False)
+    refs = [e["bom-ref"] for e in document["components"] + document.get("services", [])]
+    # Guarded by finding_ref; fail closed if that ever breaks.
+    if len(refs) != len(set(refs)):  # pragma: no cover
+        raise ValueError("CycloneDX bom-refs are not unique")
+    return json.dumps(document, indent=2, allow_nan=False)

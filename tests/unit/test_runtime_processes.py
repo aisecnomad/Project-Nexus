@@ -12,7 +12,7 @@ from shadowscan.connectors.runtime import processes as runtime_processes
 from shadowscan.connectors.runtime.processes import RuntimeProcessConnector, _split, classify
 from shadowscan.correlation import correlate_lifecycle
 from shadowscan.engine import Engine
-from shadowscan.models import Kind, Surface
+from shadowscan.models import Finding, Kind, Surface
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -163,3 +163,125 @@ def test_lifecycle_links_endpoint_configuration_to_running_processes(index, tmp_
     # Idempotent: a second pass replaces, never duplicates.
     correlate_lifecycle(result.findings)
     assert sum(e.signal == "lifecycle:observed-running" for e in claude.evidence) == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "pid"),
+    [
+        (4242, 4242),
+        ("4242", 4242),
+        ("٤٢", None),
+        ("²", None),
+        (True, None),
+        (-1, None),
+        ("1" * 11, None),
+        (None, None),
+    ],
+)
+def test_export_pids_are_plain_decimal(value, pid):
+    assert runtime_processes._pid(value) == pid
+
+
+def test_non_decimal_pid_does_not_lose_the_export(run_connector, tmp_path):
+    rows = [
+        {"host": "box", "user": "dana", "pid": "²", "cmdline": "claude -p hi"},
+        {"host": "box", "user": "dana", "pid": "7", "cmdline": "codex exec fix"},
+    ]
+    findings, ctx = run_connector("runtime.processes", input=str(_rows(tmp_path, rows)))
+    assert not ctx.stats.errors
+    assert sorted(f.title.split(" running on ")[0] for f in findings) == ["Claude Code", "OpenAI Codex CLI"]
+
+
+@pytest.mark.parametrize(
+    ("status", "mountinfo", "restricted"),
+    [
+        ("NSpid:\t41\n", "22 1 0:21 / /proc rw,nosuid - proc proc rw\n", False),
+        ("NSpid:\t41\t7\n", "", True),
+        ("NSpid:\t41\n", "22 1 0:21 / /proc rw,nosuid - proc proc rw,hidepid=invisible\n", True),
+        ("NSpid:\t41\n", "22 1 0:21 / /proc rw,nosuid - proc proc rw,subset=pid\n", True),
+        ("NSpid:\t41\n", "22 1 0:21 / /proc rw,nosuid - proc proc rw,hidepid=0\n", False),
+    ],
+)
+def test_restricted_proc_view_marks_live_scan_incomplete(
+    run_connector, monkeypatch, tmp_path, status, mountinfo, restricted
+):
+    proc = tmp_path / "proc"
+    (proc / "self").mkdir(parents=True)
+    (proc / "self" / "status").write_text(status)
+    (proc / "self" / "mountinfo").write_text(mountinfo)
+    (proc / "11").mkdir()
+    (proc / "11" / "cmdline").write_bytes(b"claude\0")
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert len(findings) == 1
+    assert ctx.stats.incomplete is restricted
+    assert any("not every process is visible" in w for w in ctx.stats.warnings) is restricted
+
+
+def test_lifecycle_links_tools_without_a_signature_by_tool_id(index, tmp_path):
+    home = tmp_path / "dana"
+    (home / ".config" / "Claude").mkdir(parents=True)
+    (home / ".config" / "Claude" / "claude_desktop_config.json").write_text(
+        json.dumps({"mcpServers": {"fetch": {"command": "uvx", "args": ["mcp-server-fetch"]}}})
+    )
+    (home / ".kiro" / "settings").mkdir(parents=True)
+    (home / ".kiro" / "settings" / "mcp.json").write_text(json.dumps({"mcpServers": {}}))
+    rows = [
+        {"host": "lap", "user": "dana", "path": "/Applications/Claude.app/Contents/MacOS/Claude"},
+        {"host": "lap", "user": "dana", "cmdline": "kiro-cli chat"},
+    ]
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec("endpoint.inventory", {"path": str(home), "label": "lap"}),
+            ConnectorSpec("runtime.processes", {"input": str(_rows(tmp_path, rows))}),
+        ]
+    )
+    result = Engine(config, index).run()
+    configured = {f.title: f for f in result.findings if f.resource_type == "agent-config"}
+    claude = next(f for t, f in configured.items() if t.startswith("Claude Desktop configured"))
+    assert (
+        "observed-running" in claude.tags
+        and "tool:claude-desktop" in claude.metadata["lifecycle"]["subjects"]
+    )
+    kiro = next(f for t, f in configured.items() if t.startswith("Kiro configured"))
+    assert "observed-running" in kiro.tags
+
+
+def test_lifecycle_ignores_malformed_server_args(index, tmp_path):
+    record = {
+        "device": "lap",
+        "home": "dana",
+        "record_type": "agent_config",
+        "client": "cursor",
+        "product": "Cursor",
+        "signature": "coding-agent.cursor",
+        "mcp_servers": [{"name": "github", "command": "npx", "args": 5}],
+    }
+    records = tmp_path / "records.jsonl"
+    records.write_text(json.dumps(record))
+    rows = [{"host": "lap", "user": "dana", "cmdline": "npx -y @modelcontextprotocol/server-github"}]
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec("endpoint.inventory", {"input": str(records)}),
+            ConnectorSpec("runtime.processes", {"input": str(_rows(tmp_path, rows))}),
+        ]
+    )
+    result = Engine(config, index).run()
+    assert not result.complete
+    assert not any(s.errors for s in result.stats)
+    # The malformed server is dropped with a warning; the rest of the record is kept.
+    assert any(f.title.startswith("Cursor configured") for f in result.findings)
+    # The engine's lifecycle pass also tolerates such a server if one ever reaches it.
+    rogue = Finding(
+        surface=Surface.ENDPOINT,
+        connector="endpoint.inventory",
+        kind=Kind.MCP_SERVER,
+        title="MCP servers configured for Cursor on lap (~dana)",
+        resource="endpoint:lap:dana:mcp-config:cursor",
+        resource_type="mcp-config",
+        account="lap",
+        metadata={"servers": [{"name": "github", "args": 5}, {"name": "x", "args": ["@scope/pkg"]}]},
+    )
+    correlate_lifecycle([rogue, *result.findings])
+    assert "lifecycle" not in rogue.metadata

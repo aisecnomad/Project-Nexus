@@ -113,8 +113,11 @@ ShadowScan ships **38 connectors** across the nine surfaces below.
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the connector guide for the supported modes and provider scope.
 Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export.
-Runtime connectors currently implement offline inventory analysis only; they do not
-probe MCP/Ollama endpoints, access a Kubernetes API, or scan local model files.
+The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`,
+`endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes`, `cloud.openshift`) analyze exports only; they do
+not probe MCP/Ollama endpoints, access a Kubernetes API, or parse model files. When no `input` is set,
+`endpoint.inventory` reads a fixed list of local user-scope locations (model stores are listed by file
+name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 
 ## Frameworks & products recognized
 

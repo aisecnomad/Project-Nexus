@@ -34,14 +34,20 @@ does any file in an offline input directory without one of the connector's
 export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
 `input` at the export file.
 
-Runtime inventory coverage is currently **offline-only**. See the
+The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
+`endpoint.models`, `endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes` and
+`cloud.openshift`) are **offline-only**. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md) for workload exports
-and the [endpoint and runtime guide](connectors/endpoint.md) for MCP, OTLP,
-Ollama, model-artifact metadata, and eBPF exports. These connectors do not
-perform live probes or local host filesystem discovery.
-Model metadata is not parsed from GGUF/safetensors files; MCP fingerprints have
-no rug-pull baseline, and the new inventories do not provide cross-surface
-correlation.
+and the [endpoint guide](connectors/endpoint.md) for MCP, OTLP, Ollama,
+model-artifact metadata, and eBPF exports. These connectors do not perform live
+probes or local host filesystem discovery, and their findings carry no device
+name, so lifecycle links do not apply to them.
+Model metadata is not parsed from GGUF/safetensors files, and MCP fingerprints
+have no rug-pull baseline. When no `input` is set, `endpoint.inventory` reads a
+fixed list of local user-scope locations and `runtime.processes` reads `/proc`
+on Linux; the engine links the two for the same tool on the same device (see
+the [endpoint](connectors/endpoint.md) and [runtime](connectors/runtime.md)
+guides).
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and

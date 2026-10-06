@@ -65,7 +65,8 @@ def test_components_services_models_and_dependencies():
                     "name": "github",
                     "transport": "stdio",
                     "command": "npx",
-                    "risks": [{"id": "mcp-unpinned-package"}],
+                    "risks": ["mcp-unpinned-package"],
+                    "location": ".mcp.json",
                 },
                 {
                     "name": "docs",
@@ -87,13 +88,14 @@ def test_components_services_models_and_dependencies():
     assert app["type"] == "application" and app["group"] == "code" and app["authors"] == [{"name": "team-a"}]
     props = {p["name"]: p["value"] for p in app["properties"]}
     assert props["shadowscan:heuristic-risk"] == "high" and props["shadowscan:capabilities"] == "tool-use"
-    framework = refs["signature:framework.langgraph"]
+    framework = refs["shadowscan:framework:framework.langgraph"]
     assert framework["type"] == "framework" and framework["name"] == "LangGraph"
     model = next(c for c in doc["components"] if c["type"] == "machine-learning-model")
     assert model["name"] == "gpt-4o"
 
     services = {s["bom-ref"]: s for s in doc["services"]}
-    assert services["signature:provider.openai"]["trustZone"] == "external"
+    # No trust zone: a provider id can name a local runtime as well as a hosted API.
+    assert "trustZone" not in services["shadowscan:provider:provider.openai"]
     mcp_services = [s for s in doc["services"] if s.get("group") == "mcp-server"]
     assert sorted(s["name"] for s in mcp_services) == ["docs", "github"]
     docs = next(s for s in mcp_services if s["name"] == "docs")
@@ -102,11 +104,12 @@ def test_components_services_models_and_dependencies():
         p["name"]: p["value"] for p in next(s for s in mcp_services if s["name"] == "github")["properties"]
     }
     assert github["shadowscan:mcp:risks"] == "mcp-unpinned-package"
+    assert github["shadowscan:mcp:file"] == ".mcp.json"
 
     deps = {d["ref"]: d["dependsOn"] for d in doc["dependencies"]}
     assert set(deps["ss-agent"]) == {
-        "signature:framework.langgraph",
-        "signature:provider.openai",
+        "shadowscan:framework:framework.langgraph",
+        "shadowscan:provider:provider.openai",
         model["bom-ref"],
     }
     assert len(deps["ss-mcp"]) == 2
@@ -146,3 +149,124 @@ def test_offline_demo_renders(index):
         assert dep["ref"] in refs and set(dep["dependsOn"]) <= refs
     assert set(doc["compositions"][0]["assemblies"]) <= refs
     assert len({c["bom-ref"] for c in doc["components"]}) == len(doc["components"])
+
+
+def _refs(doc: dict) -> list[str]:
+    return [e["bom-ref"] for e in doc["components"] + doc.get("services", [])]
+
+
+def _resolves(doc: dict) -> None:
+    refs = _refs(doc)
+    assert len(refs) == len(set(refs))
+    for dep in doc["dependencies"]:
+        assert dep["ref"] in refs and set(dep["dependsOn"]) <= set(refs)
+    for composition in doc["compositions"]:
+        assert set(composition.get("assemblies", []) + composition.get("dependencies", [])) <= set(refs)
+
+
+def test_ollama_models_are_model_components_and_the_runtime_is_a_service():
+    model = _finding("ss-llama", Kind.LOCAL_MODEL, surface=Surface.ENDPOINT, title="llama3:8b")
+    model.connector = "endpoint.ollama"
+    model.resource_type = "local-model"
+    runtime = _finding("ss-ollama", Kind.AGENT, surface=Surface.ENDPOINT, title="Ollama")
+    runtime.connector = "endpoint.ollama"
+    doc = json.loads(render_cyclonedx(_result([model, runtime])))
+    components = {c["bom-ref"]: c for c in doc["components"]}
+    assert components["ss-llama"]["type"] == "machine-learning-model"
+    assert "ss-ollama" not in components
+    assert [s["bom-ref"] for s in doc["services"]] == ["ss-ollama"]
+    _resolves(doc)
+
+
+def test_empty_duplicate_and_reserved_ids_get_unique_refs():
+    findings = [_finding(""), _finding("ss-dup", title="one"), _finding("ss-dup", title="two")]
+    findings.append(_finding("shadowscan:framework:framework.langgraph", frameworks=["framework.langgraph"]))
+    doc = json.loads(render_cyclonedx(_result(findings)))
+    _resolves(doc)
+    apps = [c for c in doc["components"] if c["type"] == "application"]
+    assert len(apps) == 4
+    assert sum(c["bom-ref"] == "ss-dup" for c in apps) == 1
+    assert sum(c["bom-ref"].startswith("shadowscan:finding:") for c in apps) == 3
+    framework = next(c for c in doc["components"] if c["type"] == "framework")
+    assert framework["bom-ref"] == "shadowscan:framework:framework.langgraph"
+    assert render_cyclonedx(_result(list(reversed(findings)))) == render_cyclonedx(_result(findings))
+
+
+def test_same_named_servers_in_two_configurations_stay_apart():
+    first = _finding(
+        "ss-a", Kind.MCP_SERVER, metadata={"servers": [{"name": "github", "location": "a/.mcp.json"}]}
+    )
+    second = _finding(
+        "ss-b", Kind.MCP_SERVER, metadata={"servers": [{"name": "github", "location": "b/.mcp.json"}]}
+    )
+    doc = json.loads(render_cyclonedx(_result([first, second])))
+    _resolves(doc)
+    servers = [s for s in doc["services"] if s.get("group") == "mcp-server"]
+    assert len(servers) == 2 and len({s["bom-ref"] for s in servers}) == 2
+    files = sorted(p["value"] for s in servers for p in s["properties"] if p["name"] == "shadowscan:mcp:file")
+    assert files == ["a/.mcp.json", "b/.mcp.json"]
+
+
+def test_bounded_entries_are_recorded_as_incomplete():
+    servers = [{"name": f"server-{i}"} for i in range(60)]
+    f = _finding(
+        "ss-many", Kind.MCP_SERVER, metadata={"servers": servers}, models=[f"model-{i}" for i in range(25)]
+    )
+    doc = json.loads(render_cyclonedx(_result([f])))
+    _resolves(doc)
+    entry = next(s for s in doc["services"] if s["bom-ref"] == "ss-many")
+    props = {p["name"]: p["value"] for p in entry["properties"]}
+    assert props["shadowscan:mcp:servers-omitted"] == "10" and props["shadowscan:models-omitted"] == "5"
+    assert {"aggregate": "incomplete", "dependencies": ["ss-many"]} in doc["compositions"]
+    meta = {p["name"]: p["value"] for p in doc["metadata"]["properties"]}
+    assert meta["shadowscan:bom:truncated-findings"] == "1"
+
+
+def test_custom_technologies_use_the_names_the_scan_recorded():
+    f = _finding(
+        "ss-custom",
+        frameworks=["custom.inhouse-agent"],
+        metadata={
+            "technologies": [
+                {
+                    "id": "custom.inhouse-agent",
+                    "name": "In-house agent",
+                    "category": "agent",
+                    "vendor": "Acme",
+                }
+            ]
+        },
+    )
+    doc = json.loads(render_cyclonedx(_result([f])))
+    framework = next(c for c in doc["components"] if c["type"] == "framework")
+    assert framework["name"] == "In-house agent" and framework["publisher"] == "Acme"
+
+
+def test_large_scans_render_without_hitting_the_sanitizer_bound(monkeypatch):
+    # Each entry is sanitized on its own, so the bound applies per entry, not to the whole BOM.
+    monkeypatch.setattr("shadowscan.utils.redaction._MAX_SANITIZATION_NODES", 500)
+    findings = [
+        _finding(f"ss-{i:04d}", frameworks=["framework.langgraph"], capabilities=["tool-use"], tags=["t"])
+        for i in range(40)
+    ]
+    doc = json.loads(render_cyclonedx(_result(findings)))
+    assert len([c for c in doc["components"] if c["type"] == "application"]) == 40
+    _resolves(doc)
+
+
+def test_render_uses_the_scan_index_for_custom_packs():
+    from types import SimpleNamespace
+
+    acme = SimpleNamespace(
+        name="ACME Agents",
+        category="framework",
+        vendor="ACME",
+        description="In-house agents",
+        homepage="https://acme.example/agents",
+    )
+    index = SimpleNamespace(get=lambda sid: acme if sid == "framework.acme-agents" else None)
+    f = _finding("ss-acme", frameworks=["framework.acme-agents"])
+    doc = json.loads(render(_result([f]), "cyclonedx", index))
+    framework = next(c for c in doc["components"] if c["type"] == "framework")
+    assert (framework["name"], framework["publisher"]) == ("ACME Agents", "ACME")
+    assert framework["externalReferences"] == [{"type": "website", "url": "https://acme.example/agents"}]

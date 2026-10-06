@@ -14,8 +14,10 @@ are available:
   `endpoint.ebpf` consume bounded offline exports from host, MDM, MCP, model
   and eBPF collectors (see [offline inventories](#offline-host-mcp-model-and-ebpf-inventories)).
 
-Running processes are reported by [`runtime.processes`](runtime.md), which
-links them to `endpoint.inventory` findings for the same tool and device.
+Running processes are reported by [`runtime.processes`](runtime.md); the
+engine links them to `endpoint.inventory` findings for the same tool and
+device, through the tool's signature or tool id, or, for an MCP
+configuration, the running server's package.
 
 ## `endpoint.inventory`
 
@@ -74,9 +76,17 @@ collection on each laptop can be analysed centrally.
 ### Safety and completeness
 
 - Every file and directory is opened without following a symbolic link in
-  any path component. A link, an unreadable location, an oversized file or an
-  exhausted entry budget is a coverage gap: a warning names the location and
-  the scan is incomplete. A location that does not exist is not a gap.
+  any path component. A link (a linked file, or a linked directory on the way
+  to a location), an unreadable location, an oversized file or an exhausted
+  entry budget is a coverage gap: a warning names the location and the scan
+  is incomplete. A location that does not exist is not a gap. The one
+  exception is the lock links a running Chromium browser (Chrome, Chromium,
+  Edge, Brave) keeps in its user-data directory (`SingletonLock`,
+  `SingletonCookie`, `SingletonSocket`, `RunningChromeVersion`): they hold no
+  profile or extension, so they are skipped without a gap, and never
+  followed.
+- Shell history is read from its end, up to 8 MiB per file. A longer history
+  is a gap, because tools used only in the older part are not counted.
 - File contents never enter a record. MCP server entries are the sanitized
   projection the code connector uses (environment variable and header names,
   never values), browser extensions are kept only when their name matches an
@@ -84,9 +94,13 @@ collection on each laptop can be analysed centrally.
   token.
 - Malformed configuration (invalid JSON, YAML or TOML) still produces the
   configuration finding, records a warning and makes the scan incomplete,
-  because its MCP servers could not be listed.
+  because its MCP servers or its posture could not be read. Comments and
+  trailing commas are accepted in JSON files; OpenClaw's other JSON5 forms
+  (unquoted keys, single-quoted strings) are not, so such a file is a gap.
 - A malformed offline record is ignored with a warning, and the scan is
-  incomplete.
+  incomplete. So are malformed MCP server, posture or model entries inside an
+  otherwise valid record: they are dropped, and the rest of the record is
+  kept.
 
 Findings are owned by the home directory name and scoped to the device, so
 `owner` and `account` identify whose workstation a finding came from. An

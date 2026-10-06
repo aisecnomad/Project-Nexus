@@ -380,7 +380,10 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
             )
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
-        if any(s.get("url") and str(s.get("url")).startswith("http://") for s in servers):
+        if any(
+            s.get("url") and str(s.get("url")).strip().lower().startswith(("http://", "ws://"))
+            for s in servers
+        ):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
     if finding.kind == Kind.AGENT_CONFIG and finding.metadata.get("agent_definitions"):
         n = len(finding.metadata["agent_definitions"])

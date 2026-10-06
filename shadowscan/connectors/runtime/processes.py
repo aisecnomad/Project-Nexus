@@ -4,8 +4,9 @@
 user, the AI tools that were running: coding-agent CLIs, AI desktop apps, MCP
 servers launched by a client, local model servers and agent frameworks'
 development servers. A running process is the strongest local evidence that a
-configured tool is in use; the engine links these findings to the endpoint
-and code findings for the same tool (see ``shadowscan.correlation``).
+configured tool is in use; the engine links these findings to the
+``endpoint.inventory`` findings for the same tool on the same device (see
+``shadowscan.correlation``).
 
 Offline, ``input`` reads osquery ``processes`` results (an array of rows or
 logger lines with ``columns`` and ``hostIdentifier``), Microsoft Defender
@@ -243,6 +244,10 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 "runtime.processes: live mode reads /proc on Linux; elsewhere export osquery processes and "
                 "set 'input'"
             )
+        restricted = _restricted_view(proc)
+        if restricted:
+            # Processes this view cannot list are invisible, not merely unreadable.
+            self.ctx.warn(f"runtime.processes: not every process is visible: {restricted}")
         seen = 0
         unreadable = 0
         users: dict[int, str] = {}
@@ -341,7 +346,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             "user": str(user or "unknown")[:120],
             "argv": argv[:64],
             "exe": exe,
-            "pid": int(pid) if isinstance(pid, (int, str)) and str(pid).isdigit() else None,
+            "pid": _pid(pid),
             "started": started.isoformat() if started else None,
         }
 
@@ -402,6 +407,38 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             }
         )
         return finalize(f, self.index)
+
+
+def _pid(value: Any) -> int | None:
+    """A process id from an export: a non-negative integer of at most ten ASCII digits."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 0 <= value < 10**10 else None
+    if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 10:
+        return int(value)
+    return None
+
+
+def _restricted_view(proc: Path) -> str | None:
+    """Why this /proc may not list every process, or None when it lists all of them."""
+    try:
+        status = (proc / "self" / "status").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        status = ""
+    for line in status.splitlines():
+        if line.startswith("NSpid:") and len(line.split()) > 2:
+            return "this process runs in a separate PID namespace (a container)"
+    try:
+        mounts = (proc / "self" / "mountinfo").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        mounts = ""
+    for line in mounts.splitlines():
+        fields = line.split()
+        if len(fields) > 4 and fields[4] == "/proc" and ("hidepid=" in line or "subset=pid" in line):
+            if "hidepid=0" not in line and "hidepid=off" not in line:
+                return "/proc is mounted with hidepid, so other users' processes are hidden"
+    return None
 
 
 def _user_name(uid: int) -> str:

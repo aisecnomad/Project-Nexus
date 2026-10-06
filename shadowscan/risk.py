@@ -73,7 +73,8 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "plaintext-credential": (25, "plaintext credential in environment / configuration"),
     "inline-secrets": (15, "secrets inline in MCP configuration"),
     "mcp-unpinned-package": (10, "MCP server package or image is not pinned to an exact version"),
-    # Scored by the mcp-plain-http and mcp-auto-approve metadata factors; the tags only label servers.
+    # Every server these tags label is scored by the mcp-plain-http and mcp-auto-approve
+    # metadata factors (which also count loopback URLs and disabled servers).
     "mcp-insecure-transport": (0, "MCP server reached over plaintext HTTP"),
     "mcp-auto-approve": (0, "MCP tools run without per-call approval"),
     "mcp-broad-filesystem": (10, "MCP filesystem server is given the whole disk or a home directory"),
@@ -470,7 +471,13 @@ def _metadata_factors(finding: Finding) -> list[RiskFactor]:
             )
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
-        if any(url.startswith("http://") for server in servers for url in _mcp_server_urls(server)):
+        # Every plaintext scheme, loopback included, so each server the zero-weight
+        # mcp-insecure-transport tag labels (http or ws to another host) is scored here.
+        if any(
+            url.strip().lower().startswith(("http://", "ws://"))
+            for server in servers
+            for url in _mcp_server_urls(server)
+        ):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
     if finding.kind == Kind.AGENT_CONFIG:
         definitions = metadata.get("agent_definitions")

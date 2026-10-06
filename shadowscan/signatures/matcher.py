@@ -1140,6 +1140,15 @@ class SignatureIndex:
                 if whole.match(key) or whole.match(base) or (tail is not None and tail.match(key)):
                     out.append(Match(sig, s, rel, s.weight))
                     break
+        # A coding agent's own configuration file belongs to that agent: a broader
+        # signature from the same vendor matching the file would count it twice.
+        agents = {
+            m.signature.vendor for m in out if m.signature.category == "coding-agent" and m.signature.vendor
+        }
+        if agents:
+            out = [
+                m for m in out if m.signature.category == "coding-agent" or m.signature.vendor not in agents
+            ]
         return out
 
     def match_env(self, name: str) -> list[Match]:

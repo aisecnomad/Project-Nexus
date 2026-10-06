@@ -313,9 +313,28 @@ def _package_key(value: object) -> str | None:
     return _PACKAGE_VERSION.sub("", value.strip().lower()) or None
 
 
+# Runtime tool ids that name the same product as an endpoint client id.
+_TOOL_ALIASES = {"kiro-cli": "kiro"}
+
+
+def _tool_key(f: Finding) -> str | None:
+    """The tool id of a client configuration or a running process (tools without a signature need it)."""
+    if f.kind == Kind.RUNTIME_PROCESS:
+        tool = f.metadata.get("tool")
+    elif f.connector == "endpoint.inventory" and f.resource_type == "agent-config" and f.resource:
+        tool = f.resource.rsplit(":", 1)[-1]
+    else:
+        return None
+    if not isinstance(tool, str) or not tool:
+        return None
+    return _TOOL_ALIASES.get(tool, tool)
+
+
 def _lifecycle_keys(f: Finding, device: str) -> set[tuple[str, str]]:
-    """What a finding is about on its device: signature ids, and MCP server packages for MCP."""
+    """What a finding is about on its device: signature ids, the tool id, and MCP server packages."""
     keys = {(device, sid) for sid in f.frameworks + f.model_providers if sid != "protocol.mcp"}
+    if (tool := _tool_key(f)) is not None:
+        keys.add((device, f"tool:{tool}"))
     if f.kind == Kind.RUNTIME_PROCESS:
         packages = f.metadata.get("mcp_packages")
         for name in packages if isinstance(packages, dict) else ():
@@ -326,7 +345,8 @@ def _lifecycle_keys(f: Finding, device: str) -> set[tuple[str, str]]:
         for server in servers if isinstance(servers, list) else ():
             if not isinstance(server, dict) or server.get("disabled"):
                 continue
-            for arg in server.get("args") or []:
+            args = server.get("args")
+            for arg in args if isinstance(args, list) else []:
                 if (key := _package_key(arg)) is not None:
                     keys.add((device, f"mcp-package:{key}"))
     return keys

@@ -163,3 +163,25 @@ def test_code_connector_tags_risky_servers_and_skips_disabled(run_connector, tmp
     risk_evidence = [e for e in mcp.evidence if e.signal.startswith("mcp-risk:")]
     assert risk_evidence and all(e.weight == 0.0 for e in risk_evidence)
     assert any(f.id == "tag:mcp-unpinned-package" for f in assess(mcp).factors)
+
+
+@pytest.mark.parametrize(
+    "url", ["ws://mcp.example.com/ws", "HTTP://mcp.example.com/mcp", "http://mcp.example.com/mcp"]
+)
+def test_every_insecure_transport_label_is_scored(url):
+    from shadowscan.connectors.mcp_risk import record_server_risks
+    from shadowscan.models import Finding, Surface
+
+    server = {"name": "remote", "transport": "http", "url": url}
+    f = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.MCP_SERVER,
+        title="MCP server",
+        resource="repo:x",
+        resource_type="mcp-config",
+        metadata={"servers": [server]},
+    )
+    record_server_risks(f, server, ".mcp.json")
+    assert "mcp-insecure-transport" in f.tags
+    assert "mcp-plain-http" in {factor.id for factor in assess(f).factors}

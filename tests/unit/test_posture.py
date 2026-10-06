@@ -171,5 +171,7 @@ def test_code_connector_reports_posture_on_the_agent_config(run_connector, tmp_p
         configs["coding-agent.openclaw"].tags
     )
     assert "posture" not in configs["coding-agent.goose"].metadata
+    # main's platform.openclaw file signature no longer counts the state directory a second time.
+    assert not [f for f in findings if "platform.openclaw" in f.frameworks]
     evidence = [e for e in claude.evidence if e.signal.startswith("posture:")]
     assert evidence and evidence[0].weight == 0.0

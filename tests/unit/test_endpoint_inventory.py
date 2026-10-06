@@ -376,3 +376,115 @@ def test_small_helpers():
     )
     assert _osquery_extension_id({"publisher": "GitHub", "name": "copilot"}) == "github.copilot"
     assert _version_key("1.10.0_0") > _version_key("1.9.3_0")
+
+
+@needs_symlinks
+def test_chromium_own_links_are_not_gaps_but_other_links_are(run_connector, tmp_path):
+    h = tmp_path / "home"
+    root = h / ".config" / "google-chrome"
+    write(root, "Default/Preferences", "{}")
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        (root / name).symlink_to(tmp_path / "elsewhere")
+    found, stats = scan(run_connector, h)
+    assert not stats.incomplete and not stats.warnings
+    (root / "Profile 9").symlink_to(tmp_path / "elsewhere")
+    found, stats = scan(run_connector, h)
+    assert stats.incomplete
+    assert any("1 symbolic link(s) not followed" in w for w in stats.warnings)
+
+
+@needs_symlinks
+def test_symlinked_directory_component_is_a_gap_not_absent(run_connector, tmp_path):
+    write(tmp_path, "dotfiles/cursor/mcp.json", json.dumps({"mcpServers": {"fs": {"command": "npx"}}}))
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / ".cursor").symlink_to(tmp_path / "dotfiles" / "cursor")
+    found, stats = scan(run_connector, tmp_path / "home")
+    assert found == {}
+    assert stats.incomplete
+    assert any(".cursor/mcp.json" in w and "symbolic link not followed" in w for w in stats.warnings)
+
+
+def test_unparseable_agent_settings_are_a_gap(run_connector, tmp_path):
+    write(tmp_path, ".claude/settings.json", '{"permissions": {"defaultMode": ')
+    found, stats = scan(run_connector, tmp_path)
+    assert "Claude Code configured" in found
+    assert stats.incomplete
+    assert any("invalid configuration syntax" in w for w in stats.warnings)
+
+
+def test_long_shell_history_reports_the_unread_part(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr("shadowscan.connectors.endpoint.inventory.MAX_HISTORY_BYTES", 64)
+    write(tmp_path, ".bash_history", "aider old.py\n" + "ls -la\n" * 40 + "codex exec fix\n")
+    found, stats = scan(run_connector, tmp_path, shell_history=True)
+    assert "AI command-line tool used: OpenAI Codex CLI" in found
+    assert "AI command-line tool used: Aider" not in found
+    assert stats.incomplete
+    assert any("only the last 64 bytes read" in w for w in stats.warnings)
+
+
+def test_claude_json_keeps_project_servers_that_reuse_a_user_scope_name(run_connector, tmp_path):
+    write(
+        tmp_path,
+        ".claude.json",
+        json.dumps(
+            {
+                "mcpServers": {"db": {"command": "uvx", "args": ["mcp-server-sqlite"]}},
+                "projects": {
+                    "/home/dana/app": {"mcpServers": {"db": {"url": "http://db.internal:9000/mcp"}}},
+                    "/home/dana/other": {
+                        "mcpServers": {"db": {"command": "uvx", "args": ["mcp-server-sqlite"]}}
+                    },
+                },
+            }
+        ),
+    )
+    found, _ = scan(run_connector, tmp_path)
+    servers = found["MCP servers configured for Claude Code"].metadata["servers"]
+    assert sorted(s["name"] for s in servers) == ["db", "db#2"]
+    assert "mcp-insecure-transport" in found["MCP servers configured for Claude Code"].tags
+
+
+def test_mcp_risks_cite_the_file_that_holds_the_servers(run_connector, tmp_path):
+    write(tmp_path, ".codex/AGENTS.md", "Be careful.\n")
+    write(
+        tmp_path,
+        ".codex/config.toml",
+        '[mcp_servers.fs]\ncommand = "npx"\nargs = ["-y", "@modelcontextprotocol/server-filesystem", "/"]\n',
+    )
+    found, _ = scan(run_connector, tmp_path)
+    mcp = found["MCP servers configured for OpenAI Codex CLI"]
+    locations = {
+        e.location for e in mcp.evidence if e.signal.startswith(("mcp-risk:", "endpoint:mcp-config"))
+    }
+    assert locations == {"~/.codex/config.toml"}
+
+
+def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tmp_path):
+    records = [
+        {
+            "device": "lap",
+            "home": "dana",
+            "record_type": "agent_config",
+            "client": "cursor",
+            "product": "Cursor",
+            "location": "~/.cursor/mcp.json",
+            "mcp_servers": [{"name": "a", "urls": 5}, {"name": "b", "args": 5}, "junk", {"name": "ok"}],
+            "posture": ["junk"],
+        },
+        {
+            "device": "lap",
+            "home": "dana",
+            "record_type": "agent_config",
+            "client": "codex",
+            "product": "Codex",
+        },
+    ]
+    path = tmp_path / "records.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records))
+    findings, ctx = run_connector("endpoint.inventory", input=str(path))
+    assert not ctx.stats.errors and ctx.stats.incomplete
+    assert any("dropped 4 malformed server, posture or model entries" in w for w in ctx.stats.warnings)
+    titles = {f.title for f in findings}
+    assert "Codex configured on lap (~dana)" in titles
+    mcp = next(f for f in findings if f.kind == Kind.MCP_SERVER)
+    assert [s["name"] for s in mcp.metadata["servers"]] == ["ok"]
