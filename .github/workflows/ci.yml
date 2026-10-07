@@ -182,10 +182,10 @@ jobs:
         run: |
           python -m venv "$RUNNER_TEMP/shadowscan-wheel"
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip install --no-deps dist/project_nexus_shadowscan-*.whl
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip install --no-deps dist/nexusshadowscan-*.whl
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m pip check
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -c 'from importlib.metadata import distribution; import shadowscan; package = distribution("project-nexus-shadowscan"); assert package.version == shadowscan.__version__; assert any(ep.name == "shadowscan" and ep.value == "shadowscan.cli:main" for ep in package.entry_points)'
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -c 'from importlib.metadata import distribution; import shadowscan; package = distribution("NexusShadowScan"); assert package.version == shadowscan.__version__; assert any(ep.name == "shadowscan" and ep.value == "shadowscan.cli:main" for ep in package.entry_points)'
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.signatures.validate
           "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
       - name: Self-scan (demo, offline)

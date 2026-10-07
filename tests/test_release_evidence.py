@@ -269,7 +269,7 @@ def test_release_cli_rejects_ambiguous_or_nonfinite_api_json(tmp_path: Path, bod
 
 @pytest.fixture
 def candidate(tmp_path: Path) -> Path:
-    (tmp_path / "project_nexus_shadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel bytes")
+    (tmp_path / "nexusshadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel bytes")
     (tmp_path / "requirements.lock").write_text("click==8.1\n", encoding="utf-8")
     (tmp_path / "requirements-build.lock").write_text("setuptools==84.0.0\n", encoding="utf-8")
     (tmp_path / "requirements-ci.lock").write_text(
@@ -505,7 +505,7 @@ def test_release_workflow_limits_signing_to_artifacts_without_executing_source()
     assert publication["permissions"] == {}
     assert not any("checkout" in step.get("uses", "") for step in publication["steps"])
     publication_text = yaml.safe_dump(publication)
-    assert "project_nexus_shadowscan-*.whl" in publication_text
+    assert "nexusshadowscan-*.whl" in publication_text
     assert "sha256sum --check SHA256SUMS" in publication_text
     build_text = "\n".join(step.get("run", "") for step in build["steps"])
     assert "--untracked-files=all --ignored=matching" in build_text

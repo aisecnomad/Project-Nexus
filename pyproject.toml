@@ -3,7 +3,7 @@ requires = ["setuptools==84.0.0", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "project-nexus-shadowscan"
+name = "NexusShadowScan"
 version = "0.1.1"
 description = "ShadowScan: discover shadow AI agents across code, identity providers, LLM gateways, low-code platforms, SaaS, cloud accounts, endpoints, network logs, and running processes."
 readme = "README.md"
@@ -44,7 +44,7 @@ oci = ["oci>=2.187.0"]
 cloud = ["boto3>=1.43.99", "google-auth>=2.58.0", "azure-identity>=1.25.3", "oci>=2.187.0"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "pytest-xdist>=3.5", "hypothesis>=6.100", "ruff>=0.16.8", "mypy>=1.10", "types-PyYAML", "types-requests", "responses>=0.25", "pip-audit>=2.9", "jsonschema>=4.18", "pre-commit>=4.6.2", "setuptools>=84.0.0", "wheel>=0.48.0"]
 docs = ["mkdocs-material>=9.7.7", "mkdocstrings[python]>=1.0.6"]
-all = ["project-nexus-shadowscan[cloud,dev,docs]"]
+all = ["NexusShadowScan[cloud,dev,docs]"]
 
 [project.scripts]
 shadowscan = "shadowscan.cli:main"
@@ -57,6 +57,8 @@ Homepage = "https://github.com/aisecnomad/Project-Nexus"
 Documentation = "https://github.com/aisecnomad/Project-Nexus/tree/main/docs"
 Repository = "https://github.com/aisecnomad/Project-Nexus"
 Changelog = "https://github.com/aisecnomad/Project-Nexus/blob/main/CHANGELOG.md"
+"Release notes" = "https://github.com/aisecnomad/Project-Nexus/blob/main/RELEASE_NOTES.md"
+Security = "https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md"
 Issues = "https://github.com/aisecnomad/Project-Nexus/issues"
 
 [tool.setuptools.packages.find]

@@ -15,9 +15,11 @@ describes.
 
 ### Before you upgrade
 
-- Install the `project-nexus-shadowscan` distribution into a fresh virtual
-  environment. The command and Python imports stay `shadowscan`; the unrelated
-  `shadowscan` package on PyPI is not this project.
+- Install the `NexusShadowScan` distribution (`pip install NexusShadowScan`
+  once this release is published) into a fresh virtual environment. The
+  command and Python imports stay `shadowscan`; the unrelated `shadowscan`
+  package on PyPI is not this project. Earlier candidate builds were named
+  `project-nexus-shadowscan`; do not install both.
 - Rebuild comparison baselines. Finding IDs follow the v2 identity schema
   (sanitized resource fields, independent of `kind`), so older reports cannot
   resolve findings.

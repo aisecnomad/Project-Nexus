@@ -36,8 +36,10 @@ with publish rights, and a release is a separate manual maintainer action.
       was inspected, what was run and what remains unverified, as the review
       policy requires
 - [ ] Read the release-candidate evidence procedure in
-      [Production deployment](production.md#release-verification); nothing in
-      it publishes a package or a release
+      [Production deployment](production.md#release-verification) and the
+      [publishing runbook](operations/publishing.md); only the maintainer's
+      dispatch with `publish` set, approved in a protected environment, uploads
+      a package
 
 ## Responsibilities by role
 
