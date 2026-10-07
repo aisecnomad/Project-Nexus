@@ -42,6 +42,18 @@ summarizes each release for people who install and operate ShadowScan.
   workers collected different test IDs and `make test-parallel` stopped at
   collection. The case now has a fixed ID.
 
+### README command checks
+
+- A README edit on `main` dropped the space in two copy-paste commands
+  (`python -m pip wheel. …` and `shadowscan code. …`, both of which fail),
+  misquoted the package classifier as `Development Status:: 3 - Alpha`, and
+  indented the `Project status` heading so it rendered inside the preceding
+  bullet. These are fixed; the edit's wording and section order are kept.
+- A repository test now checks that every `shadowscan` and `pip` command in a
+  shell block of a Markdown page names a real subcommand, and that the
+  classifier the README quotes is one `pyproject.toml` declares. Both checks
+  fail on the edit as committed.
+
 ### October 6 merge-policy audit diagnostics
 
 - The first scheduled merge-policy audit failed with "ruleset response does

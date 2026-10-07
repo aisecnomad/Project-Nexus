@@ -125,6 +125,28 @@ def _prose_lines(text: str) -> Iterator[tuple[int, str]]:
             yield number, line
 
 
+_SHELL_INFO = frozenset({"", "bash", "sh", "shell", "console"})
+
+
+def _shell_lines(text: str) -> Iterator[tuple[int, str]]:
+    """Yield ``(line_number, command)`` for each line of a shell or unlabeled fenced block."""
+    fence: str | None = None
+    shell = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+        match = _FENCE.match(stripped)
+        if match is not None:
+            marker = match.group(1)[0]
+            if fence is None:
+                fence, shell = marker, stripped[len(match.group(1)) :].strip().lower() in _SHELL_INFO
+                continue
+            if marker == fence:
+                fence = None
+                continue
+        if fence is not None and shell:
+            yield number, stripped.removeprefix("$ ")
+
+
 _INLINE_LINK = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 _REFERENCE_LINK = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)")
 _INLINE_CODE = re.compile(r"`[^`]*`")
@@ -1089,6 +1111,65 @@ def test_readme_demo_output_matches_the_offline_demo(index) -> None:
     ]
     shown = [(lvl, int(score), *rest) for lvl, score, *rest in _DEMO_ROW.findall(table)]
     assert shown == expected, "README demo rows are stale; rerun the command it shows"
+
+
+_PIP_COMMANDS = frozenset(
+    {
+        "cache", "check", "completion", "config", "debug", "download", "freeze", "hash", "help",
+        "index", "inspect", "install", "list", "lock", "search", "show", "uninstall", "wheel",
+    }
+)  # fmt: skip
+_COMMAND_START = frozenset({"&&", "||", "|", ";", "then", "do", "time", "exec"})
+
+
+def _invocations(words: list[str], tool: str) -> Iterator[list[str]]:
+    """The arguments after each place ``tool`` starts a command in one shell line."""
+    for position, word in enumerate(words):
+        if (word == tool or word.endswith("/" + tool)) and (
+            position == 0
+            or words[position - 1] in _COMMAND_START
+            or "=" in words[position - 1]
+            or (tool == "pip" and words[position - 1] == "-m")
+        ):
+            yield [arg for arg in words[position + 1 :] if not arg.startswith("-")]
+
+
+def test_documented_commands_name_real_subcommands() -> None:
+    """A command copied from a shell block reaches a real ShadowScan or pip subcommand.
+
+    A lost space (``shadowscan code.`` or ``pip wheel.``) still reads as a
+    command but fails for everyone who copies it.
+    """
+    import click
+
+    from shadowscan.cli import main
+
+    groups = {
+        name: set(command.commands) if isinstance(command, click.Group) else None
+        for name, command in main.commands.items()
+    }
+    problems = []
+    for path in _markdown_files():
+        for number, line in _shell_lines(_read(path)):
+            words = [word.strip("\"'") for word in line.split()]
+            for args in _invocations(words, "shadowscan"):
+                if not args:
+                    continue
+                subcommands = groups.get(args[0], set())
+                if args[0] not in groups or (
+                    subcommands and len(args) > 1 and args[1][:1].isalpha() and args[1] not in subcommands
+                ):
+                    problems.append(f"{_relative(path)}:{number}: {line}")
+            for args in _invocations(words, "pip"):
+                if args and args[0] not in _PIP_COMMANDS:
+                    problems.append(f"{_relative(path)}:{number}: {line}")
+    assert not problems, "documented commands with no such subcommand:\n" + "\n".join(problems)
+
+
+def test_readme_quotes_a_declared_classifier() -> None:
+    quoted = re.findall(r"package classifier is `([^`]+)`", _read(ROOT / "README.md"))
+    assert quoted, "README should name the package classifier"
+    assert set(quoted) <= set(_pyproject()["project"]["classifiers"]), quoted
 
 
 def test_connector_configuration_reference_is_current() -> None:

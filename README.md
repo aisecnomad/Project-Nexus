@@ -114,7 +114,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
-python -m pip wheel. --no-deps --no-build-isolation --wheel-dir dist
+python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
 ```
 
@@ -159,7 +159,7 @@ it fails until the variable is set.
 
 ```bash
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
-shadowscan code. --inventory agent-card.yaml
+shadowscan code . --inventory agent-card.yaml
 
 # 2. Try every fixture-backed connector offline (demo; 36 of 38 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
@@ -414,7 +414,7 @@ connectors. See [CONTRIBUTING.md](CONTRIBUTING.md#getting-started).
 - **Evaluation corpora:** These are author-written regression cases, including
   multi-file cases with documented misses; they do not estimate field precision
   or recall. Confidence is a heuristic evidence score, not a measured probability,
-  and detection quality depends on repositories, providers, tenant permissions, 
+  and detection quality depends on repositories, providers, tenant permissions,
   and log provenance. See [evaluation](docs/evaluation.md) and
   [rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
   threshold as a production gate.
@@ -437,13 +437,12 @@ connectors. See [CONTRIBUTING.md](CONTRIBUTING.md#getting-started).
   passes CI and CodeQL. This does not establish deployment acceptance, and the
   workflow does not publish a release.
 
-
-  ## Project status
+## Project status
 
 * **Release state.** There is no tag, published package, or signed artifact. The
-  package classifier is `Development Status:: 3 - Alpha`.
+  package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
-  by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, etc.) The logs under
+  by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, etc.). The logs under
   [archive/reviews/](archive/reviews/) are AI-assisted, not third-party reviews.
 * **What is independently reviewed: nothing yet.** Every pull request runs CI
   and CodeQL, but no merged pull request currently carries an approval from a second
