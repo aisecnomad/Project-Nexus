@@ -52,34 +52,6 @@ registered in the agent registry supplied for this scan?*
 | Gateway event | The supplied log contains a request or tool-use signal. | Verify the log's origin, caller binding, and observation window before attributing it to a deployed agent. |
 | `shadow: true` | No single explicit binding in the **supplied** inventory matched the finding. | Confirm the inventory's scope and freshness; an unmatched finding alone does not prove unauthorized use. |
 
-### Evidence and assurance limits
-
-- **Evaluation corpora:** These are author-written regression cases, including
-  multi-file cases with documented misses; they do not estimate field precision
-  or recall. Confidence is a heuristic evidence score, not a measured probability,
-  and detection quality depends on repositories, providers, tenant permissions
-  and log provenance. See [evaluation](docs/evaluation.md) and
-  [rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
-  threshold as a production gate.
-- **Assurance results:** The baseline and later results use a frozen corpus of
-  42 public files (30 negatives), labeled by two AI reviewers before evaluation.
-  The labelers share model capabilities, so these are not independent human
-  ground truth; the corpus has since informed implementation, and only the
-  baseline is out of sample.
-- **Canaries:** [Read-only AWS and Slack canaries](docs/canaries.md) validate
-  named tenant controls when approved credentials are supplied; offline replay
-  does not establish live tenant acceptance.
-- **Acceptance verifier:** The offline
-  [verifier](tools/acceptance/README.md) requires current source and signature
-  identities, declared human-reviewed holdout evidence, and live tenant receipts
-  for supported live deployment scopes. It validates supplied evidence but
-  cannot authenticate reviewer independence or manufacture tenant acceptance.
-- **Release-evidence workflow:** The
-  [workflow](.github/workflows/release.yml) builds a candidate wheel and retains
-  hashes, a runtime dependency SBOM and provenance after the selected commit
-  passes CI and CodeQL. This does not establish deployment acceptance, and the
-  workflow does not publish a release.
-
 ## Surfaces & connectors
 
 ShadowScan ships **38 connectors** across the nine surfaces below.
@@ -87,7 +59,7 @@ ShadowScan ships **38 connectors** across the nine surfaces below.
 | Surface | Connectors | What is discovered |
 |---|---|---|
 | **Code** | `code.filesystem`, `code.github`, `code.gitlab` | Agent frameworks & LLM SDKs (deps, imports, idioms), MCP client/server configs, coding-agent configs (Claude Code sub-agents, Copilot custom agents, Cursor/Codex/Gemini CLI…), A2A agent cards, M365 declarative agents, CrewAI/LangGraph manifests, exported n8n/Flowise/Langflow/Dify flows, IaC provisioning Bedrock/Vertex/Foundry/OCI agents, container images, CI secret names, hard-coded provider keys (redacted) |
-| **Identity** | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | OAuth apps & consent grants to AI SaaS, service apps / service principals / managed identities with LLM or data permissions, app registrations that look like agents, JWT classification (human/service / workload / delegated-agent) with privilege and hygiene analysis |
+| **Identity** | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | OAuth apps & consent grants to AI SaaS, service apps/service principals / managed identities with LLM or data permissions, app registrations that look like agents, JWT classification (human/service/workload / delegated-agent) with privilege and hygiene analysis |
 | **Gateway** | `gateway.logs`, `gateway.otel` | Callers reconstructed from gateway logs or offline OpenTelemetry GenAI spans; span prompt/completion content is not retained |
 | **Low-code** | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | Copilot Studio agents & topics, Power Automate/Apps using AI connectors, Agentforce planners/topics/actions, Einstein bots, prompt templates, Now Assist AI agents/tools/triggers, automation workflows with AI or agent steps |
 | **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, pending install requests, Teams apps with bots / Copilot agents, GitHub Apps (AI reviewers, coding agents) and their permissions, Rovo/Marketplace apps, Notion integrations, Zoom approved and account-created Marketplace apps (approval does not prove installation), any CSV/JSON app inventory (CASB exports) |
@@ -119,27 +91,7 @@ name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 * **Permission policies** – privileged, data-access and LLM-access scope classes across Graph, Google, Okta, Slack, GitHub, GitLab, Salesforce, Atlassian, Zoom, Notion, HubSpot, AWS IAM, Azure RBAC, GCP IAM, OCI
 
 `shadowscan signatures list` shows everything; `shadowscan signatures test <value>`
-tells you what a package, host, user agent, model id, scope or file path maps to.
-
-## Project status
-
-* **Release state.** There is no tag, published package or signed artifact. The
-  package classifier is `Development Status :: 3 - Alpha`.
-* **Single maintainer, AI-assisted development.** One account merges every
-  change. Apart from Dependabot updates, every commit was written by that
-  maintainer or generated with an AI coding assistant, often in large batches,
-  and reviewed by that same maintainer. The logs under
-  [archive/reviews/](archive/reviews/) are AI-assisted, not third-party reviews.
-* **What is independently reviewed: nothing yet.** Every pull request runs CI
-  and CodeQL, but no merged pull request carries an approval from a second
-  person. Independent human review is required before any tagged release; see
-  the [review and merge policy](CONTRIBUTING.md#review-and-merge-policy). The
-  intended branch ruleset is versioned in
-  [.github/rulesets/require-ci-and-review.json](.github/rulesets/require-ci-and-review.json).
-* **Recommendation.** Review the revision yourself or have it reviewed, then
-  pin that full commit SHA as shown below. Review state cannot be established
-  from a checkout; verify it with the commands in
-  [merge gate and review status](docs/production.md#merge-gate-and-review-status).
+tells you what a package, host, user agent, model ID, scope, or file path maps to.
 
 
 ## Install
@@ -162,7 +114,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
-python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+python -m pip wheel. --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
 ```
 
@@ -207,7 +159,7 @@ it fails until the variable is set.
 
 ```bash
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
-shadowscan code . --inventory agent-card.yaml
+shadowscan code. --inventory agent-card.yaml
 
 # 2. Try every fixture-backed connector offline (demo; 36 of 38 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
@@ -456,6 +408,54 @@ Install the `cloud` extra for the same connector coverage as CI. Tests that
 require missing optional SDKs can be skipped, so a core-only run does not validate all
 connectors. See [CONTRIBUTING.md](CONTRIBUTING.md#getting-started).
 
+
+### Evidence and assurance limits
+
+- **Evaluation corpora:** These are author-written regression cases, including
+  multi-file cases with documented misses; they do not estimate field precision
+  or recall. Confidence is a heuristic evidence score, not a measured probability,
+  and detection quality depends on repositories, providers, tenant permissions, 
+  and log provenance. See [evaluation](docs/evaluation.md) and
+  [rollout acceptance](docs/production.md#rollout-acceptance) before using a risk
+  threshold as a production gate.
+- **Assurance results:** The baseline and later results use a frozen corpus of
+  42 public files (30 negatives), labeled by two AI reviewers before evaluation.
+  The labelers share model capabilities, so these are not independent human
+  ground truth; the corpus has since informed implementation, and only the
+  baseline is out of sample.
+- **Canaries:** [Read-only AWS and Slack canaries](docs/canaries.md) validate
+  named tenant controls when approved credentials are supplied; offline replay
+  does not establish live tenant acceptance.
+- **Acceptance verifier:** The offline
+  [verifier](tools/acceptance/README.md) requires current source and signature
+  identities, declared human-reviewed holdout evidence, and live tenant receipts
+  for supported live deployment scopes. It validates supplied evidence but
+  cannot authenticate reviewer independence or manufacture tenant acceptance.
+- **Release-evidence workflow:** The
+  [workflow](.github/workflows/release.yml) builds a candidate wheel and retains
+  hashes, a runtime dependency SBOM and provenance after the selected commit
+  passes CI and CodeQL. This does not establish deployment acceptance, and the
+  workflow does not publish a release.
+
+
+  ## Project status
+
+* **Release state.** There is no tag, published package, or signed artifact. The
+  package classifier is `Development Status:: 3 - Alpha`.
+* **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
+  by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, etc.) The logs under
+  [archive/reviews/](archive/reviews/) are AI-assisted, not third-party reviews.
+* **What is independently reviewed: nothing yet.** Every pull request runs CI
+  and CodeQL, but no merged pull request currently carries an approval from a second
+  person. Independent human review is required before any tagged release; see
+  the [review and merge policy](CONTRIBUTING.md#review-and-merge-policy). The
+  intended branch ruleset is versioned in
+  [.github/rulesets/require-ci-and-review.json](.github/rulesets/require-ci-and-review.json).
+* **Recommendation.** Review the revision yourself or have it reviewed, then
+  pin that full commit SHA as shown below. Review state cannot be established
+  from a checkout; verify it with the commands in
+  [merge gate and review status](docs/production.md#merge-gate-and-review-status).
+
 ## Community and contributing
 
 Contributions are welcome from developers, security practitioners, technical
@@ -465,8 +465,8 @@ A small documentation fix or a reproducible false-positive report is useful.
 | I want to… | Start here |
 |---|---|
 | Learn, ask a question or troubleshoot a scan | [Support guide](SUPPORT.md) |
-| Report a bug, request a feature or a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
-| Report a false positive, a missed framework or a wrong score | [Detection quality report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml) |
+| Report a bug, request a feature, or request a connector | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
+| Report a false positive, a missed framework, or a wrong score | [Detection quality report](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml) |
 | Make a first contribution | [Contributor guide](CONTRIBUTING.md) and the [`good first issue`](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label |
 | Understand decisions, review and release requirements | [Governance](GOVERNANCE.md), [Maintainers](MAINTAINERS.md), [Roadmap](ROADMAP.md) |
 | Report a vulnerability privately | [Security policy](SECURITY.md#reporting) |
