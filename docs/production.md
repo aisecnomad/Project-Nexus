@@ -79,7 +79,7 @@ From the reviewed checkout, in a clean virtual environment:
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
+python -m pip install --no-deps dist/nexusshadowscan-0.1.1-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
 shadowscan --help
@@ -776,6 +776,26 @@ These notes record behavior changes made while the 0.1.1 candidate was being
 hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 7 distribution rename and PyPI publication
+
+The distribution is renamed from `project-nexus-shadowscan` to
+`NexusShadowScan`, the name it is published under on PyPI; the wheel file is
+`nexusshadowscan-<version>-py3-none-any.whl`. The CLI, Python imports,
+connector entry-point group and report schemas keep the `shadowscan` name, so
+configurations, reports and baselines need no change. Install into a fresh
+virtual environment rather than over an earlier `project-nexus-shadowscan` or
+`shadowscan` distribution, because they share the import package and command.
+Update any pipeline that globs the old wheel name, and any container inventory
+check that looks for `pkg:pypi/project-nexus-shadowscan`; it is now
+`pkg:pypi/nexusshadowscan`.
+
+The release-evidence workflow gains a `publish` input (default `none`); the
+[publishing runbook](operations/publishing.md) describes the upload path and
+its gates. The workflow's wheel-count checks also
+now fail when an artifact holds more than one wheel; before, `set -e` ignored
+the failed count in an `a && b` list and only the file check could stop the
+job.
 
 ### October 6 benchmark follow-ups
 
@@ -1520,9 +1540,10 @@ corpora, replays and mocked transports do not meet these live requirements.
 After independent review, merge and successful exact-commit CI and CodeQL,
 exercise the manual release-evidence workflow described below. Retain its
 candidate, attestation and `release-publication-input-<SHA>` artifacts together.
-The latter contains the exact attested wheel bytes and is an input to a possible
-future OIDC trusted-publishing job; it does not publish anything or approve a
-release. Evidence from an earlier main commit does not cover these source or
+The latter contains the exact attested wheel bytes, which the workflow's
+publish job uploads to PyPI only when the maintainer dispatches it with
+`publish` set and approves its protected environment; retaining it approves
+nothing. Evidence from an earlier main commit does not cover these source or
 package changes, and local wheel checks do not establish GitHub-hosted provenance.
 
 ### September 25 migration and acceptance
@@ -1593,9 +1614,10 @@ requires successful main-branch CI and CodeQL runs for the exact selected commit
 It rejects modified, untracked and ignored checkout files, builds from a clean
 `git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
 and produces GitHub artifact provenance. It then assembles the candidate and
-attestation bundles without rebuilding the wheel. It does not publish to PyPI,
-create a release, or declare tenant acceptance. Review and retain its artifacts
-before a separate maintainer publication decision.
+attestation bundles without rebuilding the wheel. With the default
+`publish: none` it uploads nothing; it never creates a GitHub release or
+declares tenant acceptance. Review and retain its artifacts before a separate
+maintainer publication decision.
 
 After merge and successful push CI, dispatch **Release candidate evidence** on
 `main` with `expected_commit` set to the full current main SHA, `ci_run_id`
@@ -1604,11 +1626,14 @@ successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
 failed checks and other workflows. Retain `release-candidate-<SHA>`,
 `release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
 hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
-attestations before publication. A future publisher must use the wheel in that
-publication-input artifact, not rebuild from a tag. Configure an environment-
-protected PyPI trusted publisher and grant `id-token: write` only in that future,
-isolated publication job. The current workflow deliberately has no package-index
-permission or upload action.
+attestations before publication. Publication uploads the wheel in that
+publication-input artifact and never rebuilds from a tag: the isolated
+`publish` job holds `id-token: write` as its only permission, waits for approval
+in the protected `testpypi` or `pypi` environment, checks out nothing, and uses
+PyPI trusted publishing, so no package-index token exists to leak. A `pypi`
+upload also requires the maintainer's tag `v<version>` on the reviewed commit.
+The one-time setup and per-release steps are in the
+[publishing runbook](operations/publishing.md).
 
 The runtime SBOM covers locked Python core/cloud dependencies. It is not a
 container or operating-system SBOM and does not cover the base image, Git,

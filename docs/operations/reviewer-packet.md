@@ -76,7 +76,7 @@ Pick one. Reading every connector is a multi-day job.
 | HTTP / origin controls | connector HTTP helpers, [security policy](../security.md) | SSRF, body budget, private-address default |
 | Inventory binding | `shadowscan/registry.py`, [inventory](../inventory.md) | When is `shadow: true` wrong? |
 | One live connector | `cloud.aws` or `identity.entra` plus its fixtures | Fail-closed on malformed pages? |
-| Release path | `.github/workflows/release.yml`, [production](../production.md) | Does anything publish a tag or package? |
+| Release path | `.github/workflows/release.yml`, [publishing runbook](publishing.md), [production](../production.md) | Can anything other than the approval-gated `publish` job upload a package, or upload anything but the attested wheel? Does anything push a tag? |
 
 For the October 1 discovery corrections, include these paired checks:
 
