@@ -23,6 +23,12 @@ on:
         description: Successful push CodeQL run ID for that exact main commit
         required: true
         type: string
+      ruleset_readback:
+        description: >-
+          Administrator readback of merge ruleset 23913372, the output of
+          `gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` run as an administrator
+        required: true
+        type: string
       publish:
         description: >-
           Upload the attested wheel: none (evidence only), testpypi (rehearsal)
@@ -96,14 +102,24 @@ jobs:
       - name: Verify current enforced merge-rule settings
         env:
           GH_TOKEN: ${{ github.token }}
+          RULESET_READBACK: ${{ inputs.ruleset_readback }}
         run: |
           set -euo pipefail
-          # Missing bypass_actors cannot prove no bypass. Keep this identity
-          # read-only; never add an administrator credential to the build job.
+          # Missing bypass_actors cannot prove no bypass, and GitHub withholds
+          # it from this token. Keep this identity read-only; never add an
+          # administrator credential to the build job. The dispatcher supplies
+          # an administrator readback instead, which must match this job's own
+          # read in every field the read returns, updated_at included.
+          if [ -z "$RULESET_READBACK" ]; then
+            echo "ruleset_readback is empty; pass an administrator readback of ruleset 23913372" >&2
+            exit 1
+          fi
           default_branch="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch')"
           gh api "repos/$GITHUB_REPOSITORY/rulesets/23913372" > "$RUNNER_TEMP/merge-rules.json"
+          printf '%s' "$RULESET_READBACK" > "$RUNNER_TEMP/merge-rules-readback.json"
           python -m tools.release.rules verify \
-            --input "$RUNNER_TEMP/merge-rules.json" \
+            --input "$RUNNER_TEMP/merge-rules-readback.json" \
+            --live "$RUNNER_TEMP/merge-rules.json" \
             --output "$CANDIDATE_DIR/merge-rule-verification.json" \
             --repository "$GITHUB_REPOSITORY" --default-branch "$default_branch" --ruleset-id 23913372
       - name: Install pinned build tools and locked runtime

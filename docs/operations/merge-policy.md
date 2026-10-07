@@ -124,11 +124,16 @@ an administrator must verify a full readback using the procedure above; the
 failed audit does not establish that protection is absent. The audit fails
 until administrator-applied settings match the reviewed policy and the API
 returns a complete snapshot. GitHub documents that `bypass_actors` is returned
-only to a caller with write access to the ruleset; the default read-only token
-may therefore leave this audit failed with unknown assurance even after
-settings are corrected. Obtain and verify an administrator readback in that
-case; do not equate a hidden bypass list with an empty one. See the
+only to a caller with write access to the ruleset, so the default read-only
+token leaves this audit failed with unknown assurance even after settings are
+corrected: a dispatched run on 2026-10-07 reported `ruleset response omits
+bypass_actors`. Obtain and verify an administrator readback in that case; do
+not equate a hidden bypass list with an empty one. See the
 [GitHub ruleset API documentation](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset).
+The release-evidence workflow reads the ruleset with the same kind of token, so
+its dispatch takes an administrator readback that must match the token's own
+read in every other field; see the
+[publishing runbook](publishing.md).
 Adding this job does not enable protections or replace an independent human
 review.
 

@@ -5,6 +5,28 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 7 release merge-rule check with an administrator readback
+
+- Fixed: the release-evidence workflow could never pass its merge-rule step.
+  GitHub returns a ruleset's `bypass_actors` only to a caller with write
+  access to it, the build job reads with its read-only token, and the verifier
+  rightly refuses a response without the field. A dispatch of the governance
+  audit, which reads the same way, confirmed the omission. The workflow had
+  never been run, so nothing had shown the failure.
+- The workflow takes a required `ruleset_readback` input: an administrator's
+  `gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` output.
+  `python -m tools.release.rules verify --live` accepts it only when it equals
+  the job's own read in every field that read returned, `updated_at`
+  included, so a stale or edited readback fails and the readback can supply
+  only the withheld `bypass_actors`. The full policy check then runs on the
+  readback. The build job still holds no administrator credential.
+- The merge-rule receipt records `bypass_actors_source` and
+  `observed_updated_at`; `verify_receipt` and the evidence manifest validate
+  both. Receipts without them still verify.
+- Field names from a mismatching readback appear in the error only when they
+  are plain lowercase names, so a crafted key cannot inject log lines or
+  workflow commands.
+
 ### October 7 PyPI distribution and publishing
 
 - The distribution is renamed from `project-nexus-shadowscan` to

@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 from tools.release.evidence import verify_ci_run, verify_codeql_run, write_manifest
-from tools.release.rules import MAIN_RULESET_ID, verify_ruleset
+from tools.release.rules import MAIN_RULESET_ID, verify_against_live, verify_ruleset
 
 SHA = "a" * 40
 REPOSITORY = "aisecnomad/Project-Nexus"
@@ -401,6 +401,18 @@ def test_release_evidence_refuses_mismatched_merge_rule_receipt(
     assert not (candidate / "SHA256SUMS").exists()
 
 
+def test_release_manifest_keeps_merge_rule_provenance(candidate: Path) -> None:
+    saved_path = candidate / "merge-rule-verification.json"
+    readback = _merge_rules()["ruleset"] | {"updated_at": "2026-10-07T06:09:59.254+01:00"}
+    live = {key: value for key, value in readback.items() if key != "bypass_actors"}
+    receipt = verify_against_live(readback, live, repository=REPOSITORY, default_branch="main")
+    saved_path.write_text(json.dumps(receipt), encoding="utf-8")
+    _manifest(candidate)
+    merge_rules = json.loads((candidate / "build-evidence.json").read_text())["merge_rules"]
+    assert merge_rules["bypass_actors_source"].startswith("an administrator readback supplied at dispatch")
+    assert merge_rules["observed_updated_at"] == "2026-10-07T06:09:59.254+01:00"
+
+
 @pytest.mark.parametrize(
     "field,value,error",
     [
@@ -478,6 +490,7 @@ def test_release_workflow_limits_signing_to_artifacts_without_executing_source()
     triggers = workflow.get("on", workflow.get(True))
     assert set(triggers) == {"workflow_dispatch"}
     assert triggers["workflow_dispatch"]["inputs"]["codeql_run_id"]["required"] is True
+    assert triggers["workflow_dispatch"]["inputs"]["ruleset_readback"]["required"] is True
     assert workflow["permissions"] == {}
     build = workflow["jobs"]["build"]
     attest = workflow["jobs"]["attest"]
@@ -496,7 +509,13 @@ def test_release_workflow_limits_signing_to_artifacts_without_executing_source()
     assert "gh api \"repos/$GITHUB_REPOSITORY\" --jq '.default_branch'" in rules_gate["run"]
     assert "python -m tools.release.rules verify" in rules_gate["run"]
     assert '"$CANDIDATE_DIR/merge-rule-verification.json"' in rules_gate["run"]
-    assert rules_gate["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    # The read-only token's own read binds the administrator readback.
+    assert '--input "$RUNNER_TEMP/merge-rules-readback.json"' in rules_gate["run"]
+    assert '--live "$RUNNER_TEMP/merge-rules.json"' in rules_gate["run"]
+    assert rules_gate["env"] == {
+        "GH_TOKEN": "${{ github.token }}",
+        "RULESET_READBACK": "${{ inputs.ruleset_readback }}",
+    }
     assert attest["needs"] == "build"
     assert attest["permissions"] == {"contents": "read", "id-token": "write", "attestations": "write"}
     assert not any("checkout" in step.get("uses", "") for step in attest["steps"])

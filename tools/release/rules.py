@@ -1,10 +1,14 @@
 """Verify supplied merge rules and prepare an additive administrator PUT body.
 
 This module is offline: it never calls GitHub or changes repository settings.
-Use a full ruleset GET response. GitHub may omit bypass_actors for callers
-without write access to the ruleset; an omitted field cannot prove no bypass.
-Verification establishes the supplied current settings only, not historical
-enforcement, a completed human review, or a release authorization.
+Use a full ruleset GET response. GitHub omits bypass_actors for callers
+without write access to the ruleset, such as a workflow's read-only token; an
+omitted field cannot prove no bypass. With --live, --input is an administrator
+readback that must match the workflow's own read in every field that read
+returned, updated_at included, so the readback can only add the withheld
+bypass_actors. Verification establishes the supplied current settings only,
+not historical enforcement, a completed human review, or a release
+authorization.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import argparse
 import copy
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +33,23 @@ _SCOPE = (
     "Supplied current merge-rule settings only; not evidence of historical enforcement, "
     "completed independent human review, or authorization to publish."
 )
+# GitHub shapes these per caller: bypass_actors only for a caller with write
+# access to the ruleset, current_user_can_bypass about the caller itself.
+_CALLER_FIELDS = frozenset({"bypass_actors", "current_user_can_bypass"})
+_LIVE_SOURCE = "the workflow's own read of the ruleset"
+_READBACK_SOURCE = (
+    "an administrator readback supplied at dispatch; every other field matched "
+    "the workflow's own read of the ruleset"
+)
+_PROVENANCE_FIELDS = frozenset({"bypass_actors_source", "observed_updated_at"})
+# Ruleset timestamps carry a UTC offset that can differ between callers, so
+# they compare as instants. Six fractional digits at most: fromisoformat
+# would silently truncate more.
+_TIMESTAMP_FIELDS = frozenset({"created_at", "updated_at"})
+_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})")
+# Field names from a dispatcher-supplied readback are reported only when plain,
+# so a crafted key cannot start a new log line or a workflow command.
+_REPORTABLE_FIELD = re.compile(r"[a-z_]{1,40}")
 
 
 def _load_json(path: Path) -> Any:
@@ -186,8 +208,65 @@ def verify_ruleset(
     }
 
 
+def _instant(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not _TIMESTAMP.fullmatch(value):
+        return None
+    return datetime.fromisoformat(value)
+
+
+def _same_field(name: str, first: Any, second: Any) -> bool:
+    """Equal as JSON, types included, so true never matches 1; timestamps as instants."""
+    if name in _TIMESTAMP_FIELDS:
+        moment = _instant(first)
+        return moment is not None and moment == _instant(second)
+    return json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+
+
+def verify_against_live(
+    readback: Any,
+    live: Any,
+    *,
+    repository: str,
+    default_branch: str,
+    ruleset_id: int = MAIN_RULESET_ID,
+) -> dict[str, Any]:
+    """Verify an administrator readback that agrees with the workflow's own read.
+
+    The live read comes from a read-only token, which GitHub denies
+    bypass_actors. Every field it did return, updated_at included, must equal
+    the readback's, so a stale or edited readback fails and the readback can
+    only supply the withheld field. The receipt records where bypass_actors came
+    from.
+    """
+    if not isinstance(readback, dict) or not isinstance(live, dict):
+        raise ValueError("ruleset readback and live response must be objects")
+    if _instant(live.get("updated_at")) is None:
+        raise ValueError("live ruleset response must carry its updated_at timestamp")
+    # A live read that does show bypass_actors must agree with the readback.
+    ignored = _CALLER_FIELDS - ({"bypass_actors"} if "bypass_actors" in live else set())
+    differing = sorted(
+        key
+        for key in (set(readback) | set(live)) - ignored
+        if key not in readback or key not in live or not _same_field(key, readback[key], live[key])
+    )
+    if differing:
+        named = [key for key in differing if _REPORTABLE_FIELD.fullmatch(key)]
+        unnamed = len(differing) - len(named)
+        raise ValueError(
+            "ruleset readback does not match the live ruleset in "
+            + ", ".join(named + ([f"{unnamed} other field(s)"] if unnamed else []))
+            + "; take a fresh administrator readback"
+        )
+    receipt = verify_ruleset(
+        readback, repository=repository, default_branch=default_branch, ruleset_id=ruleset_id
+    )
+    receipt["bypass_actors_source"] = _LIVE_SOURCE if "bypass_actors" in live else _READBACK_SOURCE
+    receipt["observed_updated_at"] = live["updated_at"]
+    return receipt
+
+
 def verify_receipt(receipt: Any, *, repository: str, ruleset_id: int = MAIN_RULESET_ID) -> dict[str, Any]:
-    """Revalidate the snapshot and its repository/ruleset identity."""
+    """Revalidate the snapshot, its repository/ruleset identity and any provenance."""
     if (
         not isinstance(receipt, dict)
         or type(receipt.get("schema_version")) is not int
@@ -198,12 +277,21 @@ def verify_receipt(receipt: Any, *, repository: str, ruleset_id: int = MAIN_RULE
         or receipt["ruleset_id"] != ruleset_id
     ):
         raise ValueError("saved merge-rule evidence does not match the release source or ruleset")
+    provenance = {key: receipt[key] for key in _PROVENANCE_FIELDS if key in receipt}
+    if provenance and (
+        set(provenance) != _PROVENANCE_FIELDS
+        or provenance["bypass_actors_source"] not in (_LIVE_SOURCE, _READBACK_SOURCE)
+        or not isinstance(provenance["observed_updated_at"], str)
+        or not _TIMESTAMP.fullmatch(provenance["observed_updated_at"])
+    ):
+        raise ValueError("saved merge-rule evidence has malformed provenance")
+    settings = {key: value for key, value in receipt.items() if key not in _PROVENANCE_FIELDS}
     verified = verify_ruleset(
-        receipt.get("ruleset"), repository=repository, ruleset_id=ruleset_id, default_branch="main"
+        settings.get("ruleset"), repository=repository, ruleset_id=ruleset_id, default_branch="main"
     )
-    if receipt != verified:
+    if settings != verified:
         raise ValueError("saved merge-rule evidence differs from its verified settings")
-    return verified
+    return verified | provenance
 
 
 def prepare_update(
@@ -259,15 +347,30 @@ def main() -> None:
             "--default-branch", required=True, help="Repository default branch from readback"
         )
         command.add_argument("--ruleset-id", type=int, default=MAIN_RULESET_ID)
+        if name == "verify":
+            command.add_argument(
+                "--live",
+                type=Path,
+                help="The workflow's own ruleset read; --input is then an administrator readback",
+            )
     args = parser.parse_args()
     try:
-        action = verify_ruleset if args.command == "verify" else prepare_update
-        result = action(
-            _load_json(args.input),
-            repository=args.repository,
-            default_branch=args.default_branch,
-            ruleset_id=args.ruleset_id,
-        )
+        if args.command == "verify" and args.live is not None:
+            result = verify_against_live(
+                _load_json(args.input),
+                _load_json(args.live),
+                repository=args.repository,
+                default_branch=args.default_branch,
+                ruleset_id=args.ruleset_id,
+            )
+        else:
+            action = verify_ruleset if args.command == "verify" else prepare_update
+            result = action(
+                _load_json(args.input),
+                repository=args.repository,
+                default_branch=args.default_branch,
+                ruleset_id=args.ruleset_id,
+            )
         args.output.write_text(
             json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8"
         )
