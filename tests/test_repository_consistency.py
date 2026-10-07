@@ -1192,11 +1192,12 @@ _PIP_COMMANDS = frozenset(
         "index", "inspect", "install", "list", "lock", "search", "show", "uninstall", "wheel",
     }
 )  # fmt: skip
-_COMMAND_START = frozenset({"&&", "||", "|", ";", "then", "do", "time", "exec"})
+_COMMAND_SEPARATORS = frozenset({"&&", "||", "|", ";"})
+_COMMAND_START = _COMMAND_SEPARATORS | {"then", "do", "time", "exec"}
 
 
 def _invocations(words: list[str], tool: str) -> Iterator[list[str]]:
-    """The arguments after each place ``tool`` starts a command in one shell line."""
+    """The arguments of each command ``tool`` starts in one shell line, up to the next command."""
     for position, word in enumerate(words):
         if (word == tool or word.endswith("/" + tool)) and (
             position == 0
@@ -1204,7 +1205,16 @@ def _invocations(words: list[str], tool: str) -> Iterator[list[str]]:
             or "=" in words[position - 1]
             or (tool == "pip" and words[position - 1] == "-m")
         ):
-            yield [arg for arg in words[position + 1 :] if not arg.startswith("-")]
+            rest = itertools.takewhile(lambda arg: arg not in _COMMAND_SEPARATORS, words[position + 1 :])
+            yield [arg for arg in rest if not arg.startswith("-")]
+
+
+def test_documented_command_arguments_stop_at_the_next_command() -> None:
+    line = "shadowscan --help && python -m shadowscan.signatures.validate"
+    assert list(_invocations(line.split(), "shadowscan")) == [[]]
+    line = "python -m pip wheel . && shadowscan code . | tee out"
+    assert list(_invocations(line.split(), "pip")) == [["wheel", "."]]
+    assert list(_invocations(line.split(), "shadowscan")) == [["code", "."]]
 
 
 def test_documented_commands_name_real_subcommands() -> None:
