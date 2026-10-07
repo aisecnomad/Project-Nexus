@@ -53,6 +53,8 @@ summarizes each release for people who install and operate ShadowScan.
   shell block of a Markdown page names a real subcommand, and that the
   classifier the README quotes is one `pyproject.toml` declares. Both checks
   fail on the edit as committed.
+- `CITATION.cff`'s abstract named six of the nine discovery surfaces; it now
+  names all nine, as the README does.
 
 ### October 6 merge-policy audit diagnostics
 
