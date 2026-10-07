@@ -64,7 +64,7 @@ jobs:
             -r "$scanner_dir/requirements.lock"
           python -m pip wheel --no-deps --no-build-isolation \
             --wheel-dir "$RUNNER_TEMP" "$scanner_dir"
-          python -m pip install --no-deps "$RUNNER_TEMP"/project_nexus_shadowscan-*.whl
+          python -m pip install --no-deps "$RUNNER_TEMP"/nexusshadowscan-*.whl
           python -m pip check
           python -m shadowscan.signatures.validate
       - name: Scan checkout

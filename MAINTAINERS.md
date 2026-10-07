@@ -15,7 +15,8 @@ changes when a second maintainer joins.
 - Triage issues and security advisories
 - Review pull requests against the quality gates in [CONTRIBUTING.md](CONTRIBUTING.md)
 - Keep credential handling fail-closed
-- Cut release-candidate evidence; tagging a release is a separate manual step
+- Cut release-candidate evidence; tagging and publishing a release are separate manual steps
+  ([publishing runbook](docs/operations/publishing.md))
 - Enforce the [code of conduct](CODE_OF_CONDUCT.md)
 
 ## Becoming a reviewer or maintainer

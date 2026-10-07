@@ -46,11 +46,10 @@ fail-closed trust model.
 
 ## Later, after independent review
 
-- First tagged release and signed artifacts. Nothing publishes
-  automatically.
-- Optional package index publish from a reviewed tag.
-- Confirm availability of the `project-nexus-shadowscan` distribution name at
-  publication time; source metadata does not reserve a package-index namespace.
+- First tagged release, published to PyPI as `NexusShadowScan` through the
+  approval-gated trusted-publishing job. Nothing publishes automatically.
+- Register the PyPI trusted publisher shortly before the first upload; a
+  pending publisher does not reserve the `NexusShadowScan` name.
 
 ## Not planned
 

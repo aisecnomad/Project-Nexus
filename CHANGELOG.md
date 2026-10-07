@@ -5,6 +5,40 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 7 PyPI distribution and publishing
+
+- The distribution is renamed from `project-nexus-shadowscan` to
+  `NexusShadowScan`, so `pip install NexusShadowScan` installs the scanner once
+  a release is published. The wheel is
+  `nexusshadowscan-<version>-py3-none-any.whl` and the container inventory
+  check looks for `pkg:pypi/nexusshadowscan`. The command, imports, connector
+  entry-point group and report schemas keep the `shadowscan` name.
+- The release-evidence workflow gains a `publish` input (`none` by default,
+  `testpypi` or `pypi`). A `publication-gate` job requires exactly one wheel
+  with matching digests, a public release version and, for `pypi`, the tag
+  `v<version>` on the reviewed commit. A `publish` job, whose only permission
+  is `id-token: write`, waits for approval in the protected environment of the
+  same name, checks out nothing, and uploads that attested wheel with the
+  SHA-pinned `pypa/gh-action-pypi-publish` v1.14.2 through trusted publishing,
+  which adds PEP 740 attestations. No package-index token is stored.
+- The repository policy tests allow that one upload step and no other. They
+  pin each gate, and mutation tests show that removing a gate, uploading from
+  another job, rebuilding in the publish job or adding a write scope fails.
+- Fixed: the workflow's exactly-one-wheel checks were written
+  `[ "${#wheels[@]}" -eq 1 ] && [ -f "${wheels[0]}" ]`. `set -e` ignores a
+  failure of the first command of an `&&` list, so an artifact with two
+  wheels passed. They now fail in an explicit `if`, and tests run the
+  committed scripts with one and two wheels.
+- README links are absolute repository URLs, because README is also the PyPI
+  project description, where relative links resolve against pypi.org. A test
+  keeps README free of relative links, and a new test resolves every absolute
+  `blob/main` and `tree/main` link in the Markdown files, anchors included,
+  against the checkout.
+- Fixed a missing space in the README deployment install
+  (`pip wheel. --no-deps`), which made the command fail.
+- New maintainer runbook, `docs/operations/publishing.md`, for the one-time
+  PyPI and environment setup and the per-release steps.
+
 ### October 6 head-to-head benchmark follow-ups
 
 - The Goose signature matches the user configuration Goose writes on first

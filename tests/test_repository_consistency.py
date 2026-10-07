@@ -207,6 +207,39 @@ def test_relative_markdown_links_and_anchors_resolve(markdown: Path) -> None:
     assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
 
 
+_REPOSITORY_LINK = re.compile(
+    r"https://github\.com/aisecnomad/Project-Nexus/(blob|tree)/main/([^#?]+)(?:#(.+))?"
+)
+
+
+@pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
+def test_absolute_repository_links_resolve_in_this_checkout(markdown: Path) -> None:
+    """Links that must stay absolute (README on PyPI, the changelog on the docs site) still cannot rot."""
+    problems: list[str] = []
+    for number, target in _link_targets(_read(markdown)):
+        match = _REPOSITORY_LINK.fullmatch(target)
+        if match is None:
+            continue
+        kind, path, anchor = match.groups()
+        resolved = ROOT / unquote(path)
+        if not resolved.exists() or (kind == "tree") != resolved.is_dir():
+            problems.append(f"line {number}: {target} -> no {kind} {path} in this checkout")
+        elif anchor and resolved.suffix == ".md" and anchor.lower() not in _anchors(resolved):
+            problems.append(f"line {number}: {target} -> no heading produces #{anchor}")
+    assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
+
+
+def test_readme_links_work_on_the_package_index() -> None:
+    """README.md is the PyPI project description, where a relative link resolves against pypi.org."""
+    relative = [
+        f"line {number}: {target}"
+        for number, target in _link_targets(_read(ROOT / "README.md"))
+        if not _is_external(target) and not target.startswith("#")
+    ]
+    assert not relative, "link the repository URL instead:\n  " + "\n  ".join(relative)
+    assert _pyproject()["project"]["readme"] == "README.md"
+
+
 def test_issue_form_links_reference_forms_that_exist() -> None:
     forms = {path.name for path in FORMS}
     for markdown in _markdown_files():
@@ -342,7 +375,7 @@ def test_ci_matrix_covers_every_classified_python_version() -> None:
 
 def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
     project = _pyproject()["project"]
-    assert project["name"] == "project-nexus-shadowscan"
+    assert project["name"] == "NexusShadowScan"
     assert project["scripts"] == {"shadowscan": "shadowscan.cli:main"}
     assert "shadowscan.connectors" in project["entry-points"]
     assert project["optional-dependencies"]["all"] == [f"{project['name']}[cloud,dev,docs]"]
@@ -354,7 +387,7 @@ def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
         GITHUB / "workflows/release.yml",
     ):
         text = _read(path)
-        assert "project_nexus_shadowscan-*.whl" in text
+        assert "nexusshadowscan-*.whl" in text
         assert "/shadowscan-*.whl" not in text
 
 
@@ -381,7 +414,7 @@ def test_make_validation_uses_private_temporary_paths_and_always_cleans_up(
     source.mkdir()
     shutil.copyfile(ROOT / "Makefile", source / "Makefile")
     (source / "dist").mkdir()
-    (source / "dist/project_nexus_shadowscan-0.1.1-py3-none-any.whl").touch()
+    (source / "dist/nexusshadowscan-0.1.1-py3-none-any.whl").touch()
     scratch = tmp_path / "temporary files"
     scratch.mkdir()
     # Another run's directory must remain untouched, even when validation fails.
@@ -445,7 +478,7 @@ def test_make_wheel_validation_rejects_stale_multiple_wheels(tmp_path: Path) -> 
     wheels = tmp_path / "dist"
     wheels.mkdir()
     for version in ("0.1.0", "0.1.1"):
-        (wheels / f"project_nexus_shadowscan-{version}-py3-none-any.whl").touch()
+        (wheels / f"nexusshadowscan-{version}-py3-none-any.whl").touch()
     result = subprocess.run(
         [make, "--no-print-directory", "-o", "build", "wheel-validate"],
         cwd=tmp_path,

@@ -118,6 +118,7 @@ nav:
       - AI bill of materials: operations/ai-bom.md
       - LLM triage: operations/llm-triage.md
       - Merge policy enforcement: operations/merge-policy.md
+      - Publishing a release: operations/publishing.md
       - External reviewer packet: operations/reviewer-packet.md
   - Community: community.md
   - Development:

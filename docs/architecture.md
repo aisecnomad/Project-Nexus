@@ -196,18 +196,17 @@ not constrain code that a loaded plugin runs.
 
 ### Packaging a plugin
 
-The distribution is named `project-nexus-shadowscan`; its import package,
-CLI command and connector entry-point group remain `shadowscan`, `shadowscan`
-and `shadowscan.connectors`. The candidate is not published to PyPI, and the
-name is not reserved by changing this metadata. Do not declare `shadowscan` as
-a dependency: that PyPI name belongs to an unrelated project.
+The distribution is named `NexusShadowScan`; its import package, CLI command
+and connector entry-point group remain `shadowscan`, `shadowscan` and
+`shadowscan.connectors`. Do not declare `shadowscan` as a dependency: that PyPI
+name belongs to an unrelated project.
 
-For now, depend on a reviewed full git revision, as the README install
-instructions do, for example
-`project-nexus-shadowscan @ git+https://github.com/aisecnomad/Project-Nexus.git@<40-character-sha>`.
-PyPI rejects direct URL requirements, so a plugin published on PyPI should leave
-the scanner out of its `dependencies` and document the reviewed-checkout install
-step. Use a fresh virtual environment when moving from an earlier Project Nexus
-distribution named `shadowscan`; installing both distributions together can
-overwrite their shared import package and command. After a reviewed release is
-published under the new name, plugin dependencies can use that distribution.
+Once a release is published, a plugin declares the scanner as an ordinary
+dependency with a lower bound on the reviewed release, for example
+`NexusShadowScan>=0.1.1`. Before then, depend on a reviewed full git revision,
+as the README install instructions do, for example
+`NexusShadowScan @ git+https://github.com/aisecnomad/Project-Nexus.git@<40-character-sha>`.
+PyPI rejects direct URL requirements, so a plugin published on PyPI cannot use
+that form. Use a fresh virtual environment when moving from an earlier Project
+Nexus distribution named `shadowscan` or `project-nexus-shadowscan`; installing
+two of them together can overwrite their shared import package and command.

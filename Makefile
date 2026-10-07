@@ -99,7 +99,7 @@ build: ## Build distributable wheel
 .PHONY: wheel-validate
 wheel-validate: build ## Validate the wheel installs and works outside checkout
 	@set -euo pipefail; \
-		set -- dist/project_nexus_shadowscan-*.whl; \
+		set -- dist/nexusshadowscan-*.whl; \
 		if [ "$$#" -ne 1 ] || [ ! -f "$$1" ]; then \
 			echo "wheel-validate requires exactly one scanner wheel in dist; remove stale build artifacts" >&2; \
 			exit 1; \
