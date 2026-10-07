@@ -183,3 +183,5 @@ def test_report_renders_tables_and_paired_tests(tmp_path: Path) -> None:
     assert "## Surface: repo" in text
     assert "Paired comparison with ShadowScan" in text
     assert "None: every supported case completed" in text
+    # One final newline, as pre-commit's end-of-file-fixer leaves the committed REPORT.md.
+    assert text.endswith("tool.\n")

@@ -56,7 +56,7 @@ summarizes each release for people who install and operate ShadowScan.
 - `CITATION.cff`'s abstract named six of the nine discovery surfaces; it now
   names all nine, as the README does.
 
-### Surface descriptions
+### Surface descriptions and pre-commit hooks
 
 - The package summary in `pyproject.toml`, `shadowscan --help`, the HTML
   report's subtitle and the connector base docstring also named six of the
@@ -64,6 +64,14 @@ summarizes each release for people who install and operate ShadowScan.
   and cloud findings group repeated matches of one signal; every surface
   except code does. A repository test now checks that each one-line scope
   description names every `Surface`.
+- `pre-commit run --all-files` failed on `main`. The benchmark report writer
+  ended `REPORT.md` with a blank line, which `end-of-file-fixer` removes, and
+  the mypy hook, which runs with `--ignore-missing-imports`, reported the Open
+  Shadow AI helper's `import-not-found` ignores as unused. The writer now ends
+  the report with one newline, `REPORT.md` is regenerated (the only change is
+  that line), and the helper's ignores also allow `unused-ignore`, so CI's
+  mypy and the hook both pass. The benchmark README's regeneration command
+  wrote `REPORT.md` to the working directory; it names the committed path.
 
 ### October 6 merge-policy audit diagnostics
 
