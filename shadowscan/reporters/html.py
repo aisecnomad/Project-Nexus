@@ -122,7 +122,7 @@ def render_html(result: ScanResult) -> str:
         f"<header><h1>ShadowScan report <span>v{_e(result.version)} · "
         f"{_e(result.finished_at or result.started_at)}</span></h1>"
         "<div class='muted'>Shadow AI agent discovery across code, identity, gateways, low-code,"
-        " SaaS and cloud.</div></header>"
+        " SaaS, cloud, endpoints, network logs and running processes.</div></header>"
     )
     if not result.complete:
         parts.append(

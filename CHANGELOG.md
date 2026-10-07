@@ -56,6 +56,15 @@ summarizes each release for people who install and operate ShadowScan.
 - `CITATION.cff`'s abstract named six of the nine discovery surfaces; it now
   names all nine, as the README does.
 
+### Surface descriptions
+
+- The package summary in `pyproject.toml`, `shadowscan --help`, the HTML
+  report's subtitle and the connector base docstring also named six of the
+  nine surfaces, and the README said only identity, gateway, low-code, SaaS
+  and cloud findings group repeated matches of one signal; every surface
+  except code does. A repository test now checks that each one-line scope
+  description names every `Surface`.
+
 ### October 6 merge-policy audit diagnostics
 
 - The first scheduled merge-policy audit failed with "ruleset response does

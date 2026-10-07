@@ -1,7 +1,8 @@
 """Connector base classes.
 
-A connector scans one *surface* (code, identity, gateway, lowcode, saas, cloud)
-for one provider / data source and yields :class:`Finding` objects.
+A connector scans one *surface* (code, identity, gateway, lowcode, saas, cloud,
+endpoint, network, runtime) for one provider / data source and yields
+:class:`Finding` objects.
 
 Every connector supports two execution modes:
 

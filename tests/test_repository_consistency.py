@@ -321,6 +321,46 @@ def test_citation_matches_the_package_metadata() -> None:
     assert citation["url"] == project["urls"]["Documentation"]
 
 
+# The word each one-line scope description uses for a discovery surface; a
+# plural or a longer phrase ("LLM gateway logs", "running processes") matches.
+SURFACE_WORDS = {
+    "code": "code",
+    "identity": "identity",
+    "gateway": "gateway",
+    "lowcode": "low-code",
+    "saas": "saas",
+    "cloud": "cloud",
+    "endpoint": "endpoint",
+    "network": "network",
+    "runtime": "process",
+}
+
+
+def test_scope_descriptions_name_every_discovery_surface() -> None:
+    from shadowscan import cli
+    from shadowscan.connectors import base
+    from shadowscan.models import ScanResult, Surface
+    from shadowscan.reporters.html import render_html
+
+    assert set(SURFACE_WORDS) == {surface.value for surface in Surface}, "name the new surface here"
+    intro = re.search(r"It inspects \w+ surfaces: (.+?)\.\s", _read(ROOT / "README.md"), re.S)
+    assert intro, "README should list the surfaces it inspects"
+    header = re.search(r"<header>.*?</header>", render_html(ScanResult()), re.S)
+    assert header
+    descriptions = {
+        "pyproject.toml description": _pyproject()["project"]["description"],
+        "CITATION.cff abstract": _load_yaml(ROOT / "CITATION.cff")["abstract"],
+        "README introduction": intro.group(1),
+        "shadowscan --help": cli.main.help or "",
+        "HTML report header": header.group(0),
+    }
+    for where, text in descriptions.items():
+        missing = [w for w in SURFACE_WORDS.values() if not re.search(rf"(?<![\w-]){w}", text, re.I)]
+        assert not missing, f"{where} omits {missing}"
+    missing = [s.value for s in Surface if not re.search(rf"\b{s.value}\b", base.__doc__ or "")]
+    assert not missing, f"shadowscan/connectors/base.py docstring omits {missing}"
+
+
 def test_codeowners_paths_exist() -> None:
     for line in _read(ROOT / "CODEOWNERS").splitlines():
         line = line.strip()
