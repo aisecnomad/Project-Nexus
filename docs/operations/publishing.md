@@ -20,7 +20,7 @@ environment through OpenID Connect (trusted publishing).
 
 | Job | What it enforces | Permissions |
 |---|---|---|
-| `build` | Runs on `main` only. The commit must equal `expected_commit` and have successful push CI and CodeQL runs. Checks the live merge ruleset, builds the wheel from a clean `git archive`, installs it outside the checkout, smoke-scans, and records the SBOM and `SHA256SUMS`. | read |
+| `build` | Runs on `main` only. The commit must equal `expected_commit` and have successful push CI and CodeQL runs. Checks the live merge ruleset against the administrator readback passed at dispatch (see below), builds the wheel from a clean `git archive`, installs it outside the checkout, smoke-scans, and records the SBOM and `SHA256SUMS`. | read |
 | `attest` | GitHub provenance and SBOM attestations for the candidate files. No checkout. | `id-token`, `attestations` |
 | `publication-input` | Reassembles the attested bytes and checks for exactly one wheel. | none |
 | `publication-gate` | Runs only when `publish` is `testpypi` or `pypi`. Requires one wheel whose digest matches, a public release version (no `.dev`, `.post` or local part), and, for `pypi`, the tag `v<version>` on the reviewed commit. | `contents: read` |
@@ -74,8 +74,24 @@ package.
    [release process](https://github.com/aisecnomad/Project-Nexus/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.
 3. **Rehearse on TestPyPI.** Dispatch **Release candidate evidence** on `main`
-   with `expected_commit`, `ci_run_id` and `codeql_run_id` for the reviewed
-   commit and `publish: testpypi`, then approve the `testpypi` deployment.
+   from an administrator-authenticated GitHub CLI, then approve the
+   `testpypi` deployment:
+
+   ```bash
+   gh workflow run release.yml --repo aisecnomad/Project-Nexus --ref main \
+     -f expected_commit=<reviewed-40-character-sha> \
+     -f ci_run_id=<its successful push CI run> \
+     -f codeql_run_id=<its successful push CodeQL run> \
+     -f ruleset_readback="$(gh api repos/aisecnomad/Project-Nexus/rulesets/23913372)" \
+     -f publish=testpypi
+   ```
+
+   GitHub withholds the ruleset's `bypass_actors` from the workflow's
+   read-only token, and an omitted field cannot prove that nobody can bypass
+   the rules. `ruleset_readback` supplies it from your administrator read. The
+   build job accepts the readback only if it matches the job's own read in
+   every other field, `updated_at` included, so take it just before you
+   dispatch, and the evidence records where `bypass_actors` came from.
    Check the project page renders, then install in a throwaway environment.
    Use `--no-deps`, so that TestPyPI, where anyone can register names, never
    supplies a dependency:
@@ -94,8 +110,9 @@ package.
    git push origin v0.1.1
    ```
 
-5. **Publish.** Dispatch the workflow again with the same inputs and
-   `publish: pypi`, then approve the `pypi` deployment. The gate rejects the
+5. **Publish.** Dispatch the workflow again with the same inputs, a fresh
+   `ruleset_readback`, and `publish: pypi`, then approve the `pypi`
+   deployment. The gate rejects the
    run unless `v<version>` points at `expected_commit`.
 6. **Verify what was published:**
 

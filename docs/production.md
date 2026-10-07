@@ -1661,9 +1661,14 @@ maintainer publication decision.
 
 After merge and successful push CI, dispatch **Release candidate evidence** on
 `main` with `expected_commit` set to the full current main SHA, `ci_run_id`
-set to that commit's successful CI run ID, and `codeql_run_id` set to its
-successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
-failed checks and other workflows. Retain `release-candidate-<SHA>`,
+set to that commit's successful CI run ID, `codeql_run_id` set to its
+successful CodeQL run ID, and `ruleset_readback` set to an administrator's
+`gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` output taken just
+before dispatch. The workflow rejects stale commits, PR-only runs, failed
+checks and other workflows. GitHub withholds `bypass_actors` from the
+workflow's read-only token, so the build job accepts the readback only when it
+matches the job's own read in every other field, `updated_at` included, and
+records in the evidence that `bypass_actors` came from that readback. Retain `release-candidate-<SHA>`,
 `release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
 hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
 attestations before publication. Publication uploads the wheel in that
