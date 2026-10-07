@@ -176,7 +176,6 @@ def render(results: Path) -> str:
         for r in map(json.loads, (results / f"{t}.jsonl").read_text().splitlines())
     ):
         w("- None: every supported case completed for every tool.")
-    w("")
     return "\n".join(out) + "\n"
 
 

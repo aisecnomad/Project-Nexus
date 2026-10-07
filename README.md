@@ -24,7 +24,7 @@ Example output, abridged to the first columns (totals vary as signatures evolve;
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
-│ 133 findings  •  129 shadow (inventory: 3 registered agents)               │
+│ 133 findings  •  129 shadow (inventory: 4 registered agents)               │
 │ critical 16  high 62  medium 55  •  cloud 30 identity 19 endpoint 18 …     │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
@@ -79,7 +79,7 @@ name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 
 ## Frameworks & products recognized
 
-220 signatures / 1017 signals, YAML-defined with explicit opt-in overrides:
+220 signatures / 1018 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -182,7 +182,7 @@ it fails until the variable is set.
 
 ```bash
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
-shadowscan code. --inventory agent-card.yaml
+shadowscan code . --inventory agent-card.yaml
 
 # 2. Try every fixture-backed connector offline (demo; 36 of 38 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
@@ -345,7 +345,7 @@ changes; legacy baselines cannot establish resolution under the new schema. See
 }
 ```
 
-* **confidence** combines evidence weights with noisy-OR after grouping correlated evidence, so each group counts once at its strongest weight. A code project groups its matches by technology; on identity, gateway, low-code, SaaS and cloud surfaces, repeated matches of one signal form one group. A single-file code finding (a workflow export, IaC, agent configuration) still counts each distinct matched pattern. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **confidence** combines evidence weights with noisy-OR after grouping correlated evidence, so each group counts once at its strongest weight. A code project groups its matches by technology; on every other surface, repeated matches of one signal form one group. A single-file code finding (a workflow export, IaC, agent configuration) still counts each distinct matched pattern. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
 * **potential_capabilities** in static finding metadata records framework features supported only by availability evidence, such as an import or dependency. These are excluded from capability risk factors until stronger source evidence supports them.
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence. The listed factors always add up to `score`; confidence scaling and the 0–100 bounds appear as factors.
 * **danger_score** is the same model without the governance factors (inventory registration and ownership): what the agent can do, independent of whether anyone approved it. Set `options.risk_basis: danger` to base `level` and `--fail-on` on it, and `options.risk_weights` to tune weights (see [Risk policy](#risk-policy)).
@@ -437,7 +437,7 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
 - **Evaluation corpora:** These are author-written regression cases, including
   multi-file cases with documented misses; they do not estimate field precision
   or recall. Confidence is a heuristic evidence score, not a measured probability,
-  and detection quality depends on repositories, providers, tenant permissions, 
+  and detection quality depends on repositories, providers, tenant permissions,
   and log provenance. See [evaluation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/evaluation.md) and
   [rollout acceptance](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#rollout-acceptance) before using a risk
   threshold as a production gate.
@@ -461,13 +461,12 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
   uploads to PyPI only when the maintainer dispatches it with `publish` set and
   approves the protected environment; it never creates a GitHub release.
 
-
-  ## Project status
+## Project status
 
 * **Release state.** There is no tag, published package, or signed artifact yet.
   The package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
-  by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, etc.) The logs under
+  by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Project-Nexus/tree/main/archive/reviews) are AI-assisted, not third-party reviews.
 * **What is independently reviewed: nothing yet.** Every pull request runs CI
   and CodeQL, but no merged pull request currently carries an approval from a second

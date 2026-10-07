@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "NexusShadowScan"
 version = "0.1.1"
-description = "ShadowScan: discover shadow AI agents across code, identity providers, LLM gateways, low-code platforms, SaaS, and cloud accounts."
+description = "ShadowScan: discover shadow AI agents across code, identity providers, LLM gateways, low-code platforms, SaaS, cloud accounts, endpoints, network logs, and running processes."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]

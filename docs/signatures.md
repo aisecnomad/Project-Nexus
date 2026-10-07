@@ -285,7 +285,11 @@ and tests, which call and test the products they detect.
 * `secret` patterns must be specific enough not to match placeholders; matches are redacted before they reach any report.
   A prefix shared by several vendors (`sk-`) is only attributed when the rest of the key is vendor-specific
   (`sk-ant-`, `sk-or-v1-`, `sk-lf-`, `sk-litellm-`, OpenAI's `sk-proj-` / `T3BlbkFJ` marker); anything else is
-  reported by `heuristic.unattributed-api-key` at low weight. Anthropic API (`sk-ant-api03-`), admin
+  reported by `heuristic.unattributed-api-key` at low weight. A value of 20 to 31 characters after `sk-`
+  (LiteLLM proxy virtual keys have 22) is reported only when it mixes letters and digits, has at most two
+  `-` or `_` separators and passes the generic credential's diversity and entropy test, so hyphenated
+  names and ticket branches are not keys; OpenSSH security-key algorithm names (`sk-ssh-…`, `sk-ecdsa-…`)
+  never match. Shorter values are not reported. Anthropic API (`sk-ant-api03-`), admin
   (`sk-ant-admin01-`) and Claude Code OAuth (`sk-ant-oat01-`) tokens are attributed to `provider.anthropic`;
   other `sk-ant-` shapes match nothing, because the fallback deliberately excludes the prefix.
 * `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,

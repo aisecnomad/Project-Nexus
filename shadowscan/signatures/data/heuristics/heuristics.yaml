@@ -177,6 +177,15 @@ signatures:
         patterns: ['\bsk-(?!ant-|or-|lf-|litellm-|proj-|svcacct-|admin-)(?![A-Za-z0-9]{20}T3BlbkFJ)[A-Za-z0-9_-]{32,}\b']
         weight: 0.4
         description: sk- style API key (vendor unknown)
+      - type: secret
+        # Shorter keys (LiteLLM proxy virtual keys carry 22 characters) are their
+        # own signal, so rejected look-alikes never use the longer keys' match
+        # budget. keep_secret_matches keeps only values that look random; the
+        # lookahead also excludes OpenSSH security-key algorithm names
+        # (sk-ssh-ed25519@openssh.com, sk-ecdsa-sha2-nistp256-cert-v01@...).
+        patterns: ['\bsk-(?!ant-|or-|lf-|litellm-|proj-|svcacct-|admin-|ssh-|ecdsa-)[A-Za-z0-9_-]{20,31}(?![A-Za-z0-9_-])']
+        weight: 0.4
+        description: short sk- style API key (vendor unknown)
 
   - id: heuristic.agent-construction
     name: Agent object construction

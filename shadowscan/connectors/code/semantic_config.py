@@ -37,6 +37,9 @@ class AgentManifestResult:
     data: dict[str, Any] | None = None
     errors: list[str] = field(default_factory=list)
     valid: bool = False
+    # Recognizably a card of its kind that misses required declarations: it is
+    # still reported, unverified, while its errors keep the scan incomplete.
+    incomplete: bool = False
 
 
 _TEMPLATE_MARKER_RX = re.compile(r"\{\{-?\s*[.$a-zA-Z_\"']|\{%-?\s*[a-z]")
@@ -176,6 +179,7 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
                 not isinstance(data[key], list) or not all(_nonempty(mode) for mode in data[key])
             ):
                 errors.append(f"A2A {key} must be an array of strings")
+        result.incomplete = bool(errors) and _a2a_card_shape(data, interfaces)
     elif kind == "m365":
         for key in ("name", "version", "description", "instructions"):
             if not _nonempty(data.get(key)):
@@ -195,6 +199,21 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
         errors.append("unsupported agent manifest kind")
     result.valid = not errors
     return result
+
+
+def _a2a_card_shape(data: dict[str, Any], interfaces: Any) -> bool:
+    """Whether a card names its agent and declares an endpoint, skills or capabilities.
+
+    An empty object or unrelated JSON under a card file name has no such shape
+    and is not reported as a card.
+    """
+    skills = data.get("skills")
+    return _nonempty(data.get("name")) and (
+        _service_endpoint(data.get("url"), data.get("preferredTransport"))
+        or any(_nonempty(item.get("url")) for item in _objects(interfaces))
+        or (_list_of_objects(skills) and bool(skills))
+        or isinstance(data.get("capabilities"), dict)
+    )
 
 
 def _graph_entrypoint(value: Any) -> bool:

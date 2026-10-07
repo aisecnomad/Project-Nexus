@@ -253,6 +253,62 @@ def test_empty_manifest_does_not_emit_agent(tmp_path, run_connector, filename):
     assert any("manifest" in error or "card" in error for error in ctx.stats.errors)
 
 
+_INCOMPLETE_CARD = {
+    "name": "catalog-agent",
+    "url": "https://agent.example.test/a2a",
+    "skills": [{"id": "lookup", "name": "Lookup"}],
+}
+
+
+@pytest.mark.parametrize(
+    ("card", "incomplete"),
+    [
+        (_INCOMPLETE_CARD, True),
+        ({"name": "catalog-agent", "capabilities": {}}, True),
+        ({"name": "catalog-agent", "supportedInterfaces": [{"url": "https://agent.example.test"}]}, True),
+        ({**_INCOMPLETE_CARD, "version": "1.0", "capabilities": {}}, False),  # valid
+        ({}, False),
+        ({"name": "invalid", "skills": 42}, False),
+        ({"url": "https://agent.example.test/a2a", "skills": [{"id": "x", "name": "X"}]}, False),
+    ],
+)
+def test_incomplete_a2a_card_is_recognized_only_when_card_shaped(card, incomplete):
+    result = parse_agent_manifest("agent-card.json", json.dumps(card), "a2a")
+    assert result.incomplete is incomplete
+    assert result.valid is (not result.errors)
+
+
+def test_incomplete_a2a_card_is_reported_unverified_and_keeps_the_scan_incomplete(tmp_path, run_connector):
+    (tmp_path / "agent-card.json").write_text(json.dumps(_INCOMPLETE_CARD))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    [card] = findings
+    assert card.kind == Kind.FRAMEWORK_USAGE and card.frameworks == ["protocol.a2a"]
+    assert card.title == "Incomplete A2A agent card: catalog-agent"
+    assert "incomplete-agent-card" in card.tags and not card.capabilities
+    assert [e.location for e in card.evidence] == ["agent-card.json"]
+    assert card.metadata["card_errors"] == [
+        "A2A card requires a nonempty version",
+        "A2A card requires a capabilities object",
+    ]
+    # The validation errors keep the scan incomplete, each recorded once.
+    errors = [error for error in ctx.stats.errors if "agent-card.json" in error]
+    assert len(errors) == 2 and len(set(errors)) == 2
+
+
+def test_incomplete_card_beside_a_valid_card_never_joins_an_agent_finding(tmp_path, run_connector):
+    (tmp_path / ".well-known").mkdir()
+    (tmp_path / "other").mkdir()
+    valid = {**_INCOMPLETE_CARD, "name": "travel-agent", "version": "1.0", "capabilities": {}}
+    (tmp_path / ".well-known" / "agent-card.json").write_text(json.dumps(valid))
+    (tmp_path / "other" / "agent-card.json").write_text(json.dumps(_INCOMPLETE_CARD))
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    by_kind = sorted((f.kind.value, f.title, sorted({e.location for e in f.evidence})) for f in findings)
+    assert by_kind == [
+        ("agent", "A2A agent card: travel-agent", [".well-known/agent-card.json"]),
+        ("framework-usage", "Incomplete A2A agent card: catalog-agent", ["other/agent-card.json"]),
+    ]
+
+
 @pytest.mark.parametrize("filename", ["metadata.json", "metadata.yaml"])
 def test_prose_config_cannot_promote_agent_in_end_to_end_scan(tmp_path, run_connector, filename):
     (tmp_path / filename).write_text(json.dumps({"description": "Example: create_react_agent(model, tools)"}))

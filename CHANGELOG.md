@@ -39,6 +39,90 @@ summarizes each release for people who install and operate ShadowScan.
 - New maintainer runbook, `docs/operations/publishing.md`, for the one-time
   PyPI and environment setup and the per-release steps.
 
+### Incomplete A2A cards, OpenClaw state files and short sk- keys
+
+- An A2A card that fails validation but still names its agent and declares an
+  endpoint, skills or capabilities gets its own `protocol.a2a` framework-usage
+  finding ("Incomplete A2A agent card: …", tagged `incomplete-agent-card`,
+  errors in `metadata.card_errors`) instead of disappearing from the report.
+  It never becomes or joins an agent finding, so a valid card beside it keeps
+  its single agent finding, and its validation errors still make the scan
+  incomplete. An empty or unrelated object under a card file name is still
+  not reported. Once the card is complete, the same finding ID reports the
+  agent.
+- `config.json` in an OpenClaw state directory (`.openclaw/`, `.clawdbot/`,
+  `.moltbot/`) and `.moltbot/moltbot.json` belong to `coding-agent.openclaw`,
+  so a state directory is one agent configuration finding. #155 placed the
+  new paths under `platform.openclaw`; that signature covers configuration
+  formats outside a state directory, which already belongs to the
+  coding-agent signature alone.
+- `heuristic.unattributed-api-key` has a second signal for `sk-` keys of 20 to
+  31 characters after the prefix (LiteLLM proxy virtual keys have 22). A value
+  is kept when it mixes letters and digits, has at most two separators, passes
+  the generic credential's diversity and entropy test and is not already
+  covered by a kept generic assigned-credential match, so an `*_API_KEY=`
+  assignment keeps its finding and weight. OpenSSH security-key algorithm
+  names (`sk-ssh-…`, `sk-ecdsa-…`) never match. Such keys were missed in SDK
+  calls, JSON and YAML configuration and `Authorization` headers. A separate
+  signal keeps rejected look-alikes from using the longer keys' match budget.
+- `examples/inventory/sanctioned.yaml` shows the bare-list inventory form. The
+  comment #155 gave it said the `agents:` mapping is not accepted; it is, and a
+  test now loads both examples and checks that a name alone only suggests a
+  match.
+- The default evaluation corpus gains OpenClaw and Moltbot state-file cases, a
+  short-key positive (which fails on the previous signatures) and a look-alike
+  negative: SSH algorithm names, a spinner class and a ticket branch.
+- A redaction test's parameter ID embedded a per-process HMAC, so pytest-xdist
+  workers collected different test IDs and `make test-parallel` stopped at
+  collection. The case now has a fixed ID.
+
+### README command checks
+
+- A README edit on `main` dropped the space in two copy-paste commands
+  (`python -m pip wheel. …` and `shadowscan code. …`, both of which fail),
+  misquoted the package classifier as `Development Status:: 3 - Alpha`, and
+  indented the `Project status` heading so it rendered inside the preceding
+  bullet. The PyPI publishing change fixed the `pip wheel` command and the
+  classifier; the rest is fixed here, and the edit's wording and section
+  order are kept.
+- A repository test now checks that every `shadowscan` and `pip` command in a
+  shell block of a Markdown page names a real subcommand, and that the
+  classifier the README quotes is one `pyproject.toml` declares. Both checks
+  fail on the edit as committed.
+- `CITATION.cff`'s abstract named six of the nine discovery surfaces; it now
+  names all nine, as the README does.
+
+### Surface descriptions and pre-commit hooks
+
+- The package summary in `pyproject.toml`, `shadowscan --help`, the HTML
+  report's subtitle and the connector base docstring also named six of the
+  nine surfaces, and the README said only identity, gateway, low-code, SaaS
+  and cloud findings group repeated matches of one signal; every surface
+  except code does. A repository test now checks that each one-line scope
+  description names every `Surface`.
+- `pre-commit run --all-files` failed on `main`. The benchmark report writer
+  ended `REPORT.md` with a blank line, which `end-of-file-fixer` removes, and
+  the mypy hook, which runs with `--ignore-missing-imports`, reported the Open
+  Shadow AI helper's `import-not-found` ignores as unused. The writer now ends
+  the report with one newline, `REPORT.md` is regenerated (the only change is
+  that line), and the helper's ignores also allow `unused-ignore`, so CI's
+  mypy and the hook both pass. The benchmark README's regeneration command
+  wrote `REPORT.md` to the working directory; it names the committed path.
+
+### October 6 merge-policy audit diagnostics
+
+- The first scheduled merge-policy audit failed with "ruleset response does
+  not match the expected repository and ruleset". A response missing a managed
+  field produced the same message as a wrong repository or ruleset, and GitHub
+  returns `bypass_actors` only to a caller with write access to the ruleset,
+  which the read-only workflow token lacks. The verifier now names omitted
+  fields separately. The job still fails until an administrator applies the
+  reviewed payloads and a complete readback matches them; a complete readback
+  taken on 2026-10-06 reports `readback differs from reviewed payload:
+  bypass_actors, rules`.
+- `docs/production.md` and `docs/operations/merge-policy.md` record that
+  readback: both rulesets active again, with the gaps observed on 2026-10-03.
+
 ### October 6 head-to-head benchmark follow-ups
 
 - The Goose signature matches the user configuration Goose writes on first

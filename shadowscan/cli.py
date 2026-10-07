@@ -544,7 +544,9 @@ class _MainGroup(click.Group):
 @click.option("-v", "--verbose", count=True, help="-v info, -vv debug")
 @click.option("-q", "--quiet", is_flag=True, help="errors only")
 def main(verbose: int, quiet: bool) -> None:
-    """ShadowScan — discover shadow AI agents across code, identity, gateways, low-code, SaaS and cloud."""
+    """ShadowScan — discover shadow AI agents across code, identity, gateways, low-code, SaaS,
+    cloud, endpoints, network logs and running processes.
+    """
     # Click answers --help and --version before this callback runs, so those
     # still work everywhere; every command fails closed on a host that cannot
     # enforce the documented path confinement (Windows, no O_NOFOLLOW).

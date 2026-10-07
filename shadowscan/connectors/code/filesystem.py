@@ -592,6 +592,7 @@ class _SourceFile:
     safe_lines: list[str] | None = None  # redacted lines, produced when an excerpt first needs them
     card_kind: str | None = None  # agent manifest kind suggested by the path
     card_valid: bool = False
+    card_incomplete: bool = False  # a recognizable card that misses required declarations
     is_mcp: bool = False
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
@@ -1923,12 +1924,14 @@ class FilesystemConnector(BaseConnector):
             validation = parse_agent_manifest(file.rel, file.text, file.card_kind)
             self._file_errors(file.rel, validation.errors)
             file.card_valid = validation.valid
+            file.card_incomplete = validation.incomplete
         for m in file.file_matches:
             if m.signature_id == "protocol.mcp":
                 continue
             # A suggestive filename establishes neither a valid
             # manifest nor an agent. Keep coding-agent file evidence
-            # and validated product schemas; do not invent agents.
+            # and validated product schemas; do not invent agents. An
+            # incomplete card gets its own unverified finding instead.
             if file.card_kind and not file.card_valid:
                 continue
             m.extra["verified_agent"] = file.card_valid
@@ -2420,7 +2423,7 @@ class FilesystemConnector(BaseConnector):
         rel = file.rel
         if file.mcp_active:
             scan.mcp_files.append((rel, file.mcp_servers))
-        if file.card_kind and file.card_valid:
+        if file.card_kind and (file.card_valid or file.card_incomplete):
             if len(scan.card_files) >= _MAX_CARD_FILES:
                 self.ctx.error(
                     f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; "
@@ -3360,7 +3363,7 @@ class FilesystemConnector(BaseConnector):
 
     def _card_finding(self, label: str, root: Path, rel: str, text: str, kind: str) -> Finding | None:
         validation = parse_agent_manifest(rel, text, kind)
-        if not validation.valid:
+        if not validation.valid and not validation.incomplete:
             self._file_errors(rel, validation.errors)
             return None
         # Retain sibling credential context before projecting descriptive fields.
@@ -3370,9 +3373,11 @@ class FilesystemConnector(BaseConnector):
         spec = self._CARD_KINDS.get(kind)
         if spec:
             fw, prefix, named, description, weight, capability = spec
+            if validation.incomplete:
+                prefix = f"Incomplete {prefix}"
             f.title = f"{prefix}: {(data.get('name') or rel) if named else rel}"
             f.add_framework(fw)
-            if capability:
+            if capability and validation.valid:
                 f.add_capability(capability)
             f.add_evidence(
                 Evidence(
@@ -3389,7 +3394,14 @@ class FilesystemConnector(BaseConnector):
             self._describe_crewai_agents(f, rel, data)
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
-        f.kind = Kind.AGENT
+        if validation.incomplete:
+            # Evidence of the protocol, never of an agent. Its validation
+            # errors were recorded when the file was read.
+            f.kind = Kind.FRAMEWORK_USAGE
+            f.add_tag("incomplete-agent-card")
+            f.metadata["card_errors"] = list(validation.errors)
+        else:
+            f.kind = Kind.AGENT
         return f
 
     def _describe_a2a_card(self, f: Finding, rel: str, data: dict[str, Any]) -> None:

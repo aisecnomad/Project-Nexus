@@ -142,6 +142,9 @@ def _budgeted_search(rx: Any, text: str, context: str, timeout: float) -> Any:
 
 
 GENERIC_CREDENTIAL = "heuristic.inline-credential"
+UNATTRIBUTED_KEY = "heuristic.unattributed-api-key"
+# An unattributed sk- value shorter than this after the prefix must look random.
+_SHORT_KEY_BODY = 32
 _VALUE_END = frozenset("\"',;")
 
 
@@ -176,6 +179,20 @@ def _high_entropy_credential(value: str) -> bool:
     return entropy >= 3.0
 
 
+def _random_key_body(body: str) -> bool:
+    """Require a short sk- key body to mix letters and digits and look random.
+
+    Hyphenated words (``sk-folding-cube-spinner-wrap``) and ticket branches
+    (``sk-1234-fix-the-login-page``) have the shape but not the randomness.
+    """
+    return (
+        any(char.isdigit() for char in body)
+        and any(char.isalpha() for char in body)
+        and sum(char in "-_" for char in body) <= 2
+        and _high_entropy_credential(body)
+    )
+
+
 def keep_file_matches(signatures: Sequence[Signature]) -> list[bool]:
     """Which of one file's signature matches to keep.
 
@@ -192,12 +209,19 @@ def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[
     A generic assigned-credential match is kept only when its value looks
     random and no specific credential pattern matched the same value on the
     same line: ``OPENAI_API_KEY=sk-...`` is one OpenAI key, not two findings.
+    A short unattributed ``sk-`` value only adds keys nothing else reports: it
+    is kept when it looks random and no kept generic match covers it.
     """
+    short = [
+        signature_id == UNATTRIBUTED_KEY and len(value) - len("sk-") < _SHORT_KEY_BODY
+        for signature_id, value, _ in matches
+    ]
     specific: dict[int | None, list[str]] = {}
-    for signature_id, value, line in matches:
-        if signature_id != GENERIC_CREDENTIAL:
+    for (signature_id, value, line), is_short in zip(matches, short, strict=True):
+        if signature_id != GENERIC_CREDENTIAL and not is_short:
             specific.setdefault(line, []).append(value)
     keep = []
+    generic: dict[int | None, list[str]] = {}
     for signature_id, value, line in matches:
         if signature_id != GENERIC_CREDENTIAL:
             keep.append(True)
@@ -205,6 +229,12 @@ def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[
         candidate = _assigned_value(value)
         repeated = any(other in value or candidate in other for other in specific.get(line, ()))
         keep.append(not repeated and _high_entropy_credential(value))
+        if keep[-1]:
+            generic.setdefault(line, []).append(value)
+    for position, ((_, value, line), is_short) in enumerate(zip(matches, short, strict=True)):
+        if is_short:
+            covered = any(value in other for other in generic.get(line, ()))
+            keep[position] = not covered and _random_key_body(value[len("sk-") :])
     return keep
 
 

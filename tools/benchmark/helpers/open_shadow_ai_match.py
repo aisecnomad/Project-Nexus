@@ -11,12 +11,14 @@ import json
 import sys
 from pathlib import Path
 
-from shadai.engine.catalog_loader import (  # type: ignore[import-not-found]
+# shadai is installed only in Open Shadow AI's environment. The pre-commit mypy
+# hook runs with --ignore-missing-imports, where these ignores are unused.
+from shadai.engine.catalog_loader import (  # type: ignore[import-not-found, unused-ignore]
     build_catalog_index,
     load_catalog_from_yaml,
 )
-from shadai.engine.matcher import CatalogMatcher  # type: ignore[import-not-found]
-from shadai.parsers.proxy.squid import SquidAccessLogParser  # type: ignore[import-not-found]
+from shadai.engine.matcher import CatalogMatcher  # type: ignore[import-not-found, unused-ignore]
+from shadai.parsers.proxy.squid import SquidAccessLogParser  # type: ignore[import-not-found, unused-ignore]
 
 
 def main(argv: list[str]) -> int:
