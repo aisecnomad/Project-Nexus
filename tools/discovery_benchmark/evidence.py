@@ -67,6 +67,12 @@ BINARY_SUFFIXES = frozenset(
     }
 )  # fmt: skip
 PY_IMPORT = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import\b|import\s+([\w.]+(?:\s*,\s*[\w.]+)*))", re.M)
+PY_AGENTS_IMPORT = re.compile(r"^\s*from\s+agents\s+import\s+\(?([^\n)]+)", re.M)
+OPENAI_AGENTS_NAMES = frozenset(
+    {"Agent", "Runner", "function_tool", "handoff", "RunConfig", "ModelSettings", "WebSearchTool", "trace",
+     "AgentHooks", "RunContextWrapper", "ItemHelpers", "set_default_openai_key", "FileSearchTool",
+     "ComputerTool", "InputGuardrail", "OutputGuardrail", "GuardrailFunctionOutput", "SQLiteSession"}
+)  # fmt: skip
 NB_PIP = re.compile(r"^\s*[!%]\s*(?:pip3?|uv pip)\s+install\s+(.+)$", re.M)
 JS_IMPORT = re.compile(
     r"""(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"]([^'"\n]+)['"]""",
@@ -560,6 +566,11 @@ def _import_pairs(rel: PurePosixPath, text: str) -> list[tuple[str, str, int]]:
     pairs: list[tuple[str, str, int]] = []
     lines = _Lines(text)
     if suffix in {".py", ".pyi"}:
+        for match in PY_AGENTS_IMPORT.finditer(text):
+            names = {part.strip().split(" as ")[0] for part in match.group(1).split(",")}
+            if names & OPENAI_AGENTS_NAMES:
+                pairs.append(("pyimport", "openai_agents_sdk_marker", lines.at(match.start())))
+                break
         for match in PY_IMPORT.finditer(text):
             line = lines.at(match.start())
             if match.group(1):

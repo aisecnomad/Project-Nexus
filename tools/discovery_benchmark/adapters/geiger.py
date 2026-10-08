@@ -26,7 +26,6 @@ SPEC = ToolSpec(
 _KIND_FACTS = {
     "skill": "agent-config:skills",
     "subagent": "agent-config:claude-dir",
-    "hook": "agent-config:claude-dir",
     "plugin": "agent-config:claude-dir",
 }
 

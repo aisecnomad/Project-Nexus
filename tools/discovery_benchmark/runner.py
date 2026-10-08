@@ -286,3 +286,40 @@ def run_matrix(
     manifest["results"] = [r.to_dict() for r in results]
     (out_root / "runs.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     return manifest
+
+
+def renormalize(out_root: Path, adapters: list[Adapter]) -> dict[str, Any]:
+    """Re-read stored tool output with the current adapters and rewrite ``runs.json``.
+
+    Lets a mapping fix be applied without re-running the tools; command results,
+    timings and statuses are kept from the original run.
+    """
+    manifest_path = out_root / "runs.json"
+    manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_id = {a.spec.id: a for a in adapters}
+    results: list[dict[str, Any]] = []
+    for item in manifest.get("results") or []:
+        adapter = by_id.get(str(item.get("tool")))
+        out_dir = out_root / str(item.get("tool")) / str(item.get("repo"))
+        if adapter is None or item.get("status") in {"skipped", "error"} or not out_dir.exists():
+            results.append(item)
+            continue
+        normalized = adapter.normalize(out_dir)
+        item["facts"] = sorted(normalized.facts)
+        item["raw_count"] = normalized.raw_count
+        item["detail"] = normalized.detail
+        item["error"] = normalized.error
+        if normalized.error and item.get("status") == "ok":
+            item["status"] = "failed"
+        elif (
+            not normalized.error
+            and item.get("status") == "failed"
+            and all(c.get("ok") for c in item.get("commands") or [])
+        ):
+            item["status"] = "ok"
+        (out_dir / "result.json").write_text(json.dumps(item, indent=1), encoding="utf-8")
+        results.append(item)
+    manifest["results"] = results
+    manifest["renormalized"] = datetime.now(UTC).isoformat(timespec="seconds")
+    manifest_path.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    return manifest

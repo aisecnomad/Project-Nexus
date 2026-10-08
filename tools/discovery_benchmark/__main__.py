@@ -11,7 +11,7 @@ from tools.discovery_benchmark import evidence, fetch, report, score
 from tools.discovery_benchmark.adapters import ToolConfig
 from tools.discovery_benchmark.adapters.registry import adapters_by_id, all_adapters
 from tools.discovery_benchmark.corpus import CorpusError, load_corpus
-from tools.discovery_benchmark.runner import RunPolicy, run_matrix
+from tools.discovery_benchmark.runner import RunPolicy, renormalize, run_matrix
 
 
 def cmd_fetch(args: argparse.Namespace) -> int:
@@ -70,6 +70,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_renormalize(args: argparse.Namespace) -> int:
+    manifest = renormalize(Path(args.out), all_adapters())
+    statuses: dict[str, int] = {}
+    for result in manifest["results"]:
+        statuses[result["status"]] = statuses.get(result["status"], 0) + 1
+    print(json.dumps({"runs": len(manifest["results"]), "statuses": statuses}))
+    return 0
+
+
 def cmd_score(args: argparse.Namespace) -> int:
     corpus = load_corpus(Path(args.corpus))
     manifest = json.loads(Path(args.runs).read_text(encoding="utf-8"))
@@ -122,6 +131,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repos", help="comma-separated repo ids")
     p.add_argument("--keep-network", action="store_true", help="do not point tools at a dead proxy")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("renormalize", help="re-map stored tool output with the current adapters")
+    p.add_argument("--out", required=True, help="run directory holding runs.json")
+    p.set_defaults(func=cmd_renormalize)
 
     p = sub.add_parser("score", help="score runs.json against the corpus")
     p.add_argument("--corpus", required=True)

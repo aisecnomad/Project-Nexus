@@ -75,7 +75,10 @@ class AgentDiscoverAdapter:
             if "Scanning dependencies" in text:
                 deps_text = text
         for line in deps_text.splitlines():
-            if re.search(r"(No dependency files|Looked for|Dependencies are managed|Tip:|could mean)", line):
+            if re.search(
+                r"(No dependency files|Looked for|Dependencies are managed|Tip:|could mean|Risk|Total|Summ)",
+                line,
+            ):
                 continue
             line_facts = taxonomy.facts_from_name(line)
             if line_facts:

@@ -66,6 +66,7 @@ SHA = "0" * 40
         ("pyimport", "google.adk.agents", {"framework:google-adk"}),
         ("csimport", "Microsoft.Extensions.AI", {"framework:microsoft-extensions-ai"}),
         ("rsimport", "rmcp::ServerHandler", {"mcp:sdk"}),
+        ("pypi", "ag-ui-protocol", {"framework:copilotkit"}),
     ],
 )
 def test_facts_for(ecosystem: str, name: str, expected: set[str]) -> None:
@@ -97,6 +98,21 @@ def test_fact_validation_and_hosts() -> None:
         "provider:anthropic"
     }
     assert taxonomy.facts_in_text("idiom", "client = boto3.client('bedrock-runtime')") == {"provider:bedrock"}
+    assert taxonomy.facts_in_text("idiom", 'model = "vertex_ai/claude-3-5-haiku"') == {
+        "provider:vertex-ai",
+        "provider:anthropic",
+    }
+    assert taxonomy.facts_in_text("idiom", "key = os.environ['MISTRAL_API_KEY']") == {"provider:mistral"}
+    assert taxonomy.facts_in_text("idiom", "AnthropicVertex(region='us')") == {
+        "provider:vertex-ai",
+        "provider:anthropic",
+    }
+    assert taxonomy.facts_in_text("idiom", "id = 'anthropic.claude-3-5-sonnet-20241022-v2:0'") == {
+        "provider:bedrock",
+        "provider:anthropic",
+    }
+    assert taxonomy.facts_in_text("idiom", "from pathlib import Path") == frozenset()
+    assert taxonomy.facts_from_name("High Risk (Agent Frameworks)") == frozenset()
     assert all(taxonomy.is_fact(f) for f in taxonomy.all_known_facts())
 
 
@@ -164,6 +180,10 @@ def test_evidence_extraction_labels_a_synthetic_repo(tmp_path: Path) -> None:
             }
         ),
     )
+    _write(
+        tmp_path, "oa.py", "from agents import Agent, Runner\n\nagent = Agent(name='x', model='gpt-4.1')\n"
+    )
+    _write(tmp_path, "other.py", "from agents import load_registry\n")
 
     ev = evidence.extract(tmp_path)
     facts = set(ev.facts)
@@ -172,6 +192,8 @@ def test_evidence_extraction_labels_a_synthetic_repo(tmp_path: Path) -> None:
     assert {"mcp-client-config:cursor", "mcp-client-config:generic", "agent-config:claude-md"} <= facts
     assert {"iac:bedrock", "lowcode:n8n", "lowcode:dify", "a2a:agent-card", "provider:mistral"} <= facts
     assert "framework:smolagents" in facts
+    assert "framework:openai-agents" in facts and "provider:openai" in facts
+    assert all("other.py" not in h.location for h in ev.facts["framework:openai-agents"])
     assert "framework:crewai" not in facts and "framework:crewai" in ev.tolerated
     assert "provider:ollama" not in facts and "provider:ollama" in ev.tolerated  # test fixture only
     assert evidence.is_test_path("pkg/server_test.go") and not evidence.is_test_path("pkg/server.go")
