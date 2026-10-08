@@ -100,8 +100,8 @@ public code on one day; it says nothing about production precision or recall.
 | `agentdiscover` | DefendAI AgentDiscover | `scan` (SARIF), `deps`, `export-mcpfw-policy` | framework, provider, mcp, mcp-client-config |
 | `agentic_radar` | SplxAI Agentic Radar | `scan <framework> --export-graph-json` for each of its five frameworks | framework, mcp, lowcode |
 | `xbom` | SafeDep xbom | `xbom generate --bom` | framework, provider, mcp, a2a |
-| `vet` | SafeDep vet | `vet ai discover --scope project` | mcp-client-config, agent-config, mcp |
-| `geiger` | Atomburst Geiger | `geiger --path <repo> --home <empty>` | mcp-client-config, agent-config, mcp |
+| `vet` | SafeDep vet | `vet ai discover --scope project` | mcp-client-config, agent-config |
+| `geiger` | Atomburst Geiger | `geiger --path <repo> --home <empty>` | mcp-client-config, agent-config |
 | `cdxgen` | CycloneDX cdxgen | `--technique manifest-analysis --no-install-deps`; a plain dependency SBOM mapped through the alias tables, used as the baseline | framework, provider, mcp, a2a |
 | `cisco_aibom` | Cisco AI BOM | skipped: the tool refuses to run without an LLM credential | framework, provider, mcp, a2a, iac |
 
@@ -173,6 +173,58 @@ python -m tools.discovery_benchmark report --corpus benchmarks/shadow-ai-discove
 The unprivileged account needs traverse access to the checkouts and the tool
 installations; `tools.json` maps adapter ids to binaries. Checkouts are never
 committed to this repository.
+
+## Results: run of 2026-10-08
+
+`results/2026-10-08/` holds the scrubbed run manifest (`runs.json`, with every
+tool's normalized facts and mapped evidence per repository), `metrics.json`,
+`tools.json` and the generated `REPORT.md`. Headline, in-scope value-level
+precision / recall / F1, repository-level detection and negatives flagged:
+
+| Tool | Categories scored | P / R / F1 | Positives detected | Controls / near-misses flagged |
+|---|---|---|---|---|
+| ShadowScan 0.1.2 | all eight | 97% / 86% / 91% | 65/65 | 0/10 and 1/12 |
+| NuGuard 0.9.15 | six | 96% / 62% / 75% | 59/65 | 0/10 and 0/12 |
+| Trusera ai-bom 3.6.0 | seven | 79% / 47% / 59% | 61/65 | 3/10 and 1/12 |
+| SafeDep vet 1.20.0 | two | 92% / 43% / 59% | 30/65 | 0/10 and 0/12 |
+| cdxgen 12.8.5 (SBOM baseline) | four | 100% / 35% / 51% | 50/65 | 0/10 and 0/12 |
+| AgentDiscover 2.9.5 | four | 96% / 27% / 42% | 56/65 | 0/10 and 3/12 |
+| SafeDep xbom 0.0.3 | four | 99% / 10% / 19% | 35/65 | 0/10 and 0/12 |
+| Agentic Radar 0.14.1 | three | 71% / 6% / 10% | 12/65 | 0/10 and 0/12 |
+| Geiger 0.4.0 | two | 100% / 2% / 3% | 2/65 | 0/10 and 0/12 |
+
+How to read this honestly:
+
+* ShadowScan is the only tool that declares every category, so its all-category
+  F1 (91%) and its in-scope F1 coincide; the other tools' all-category figures
+  (NuGuard 69%, Trusera 54%, cdxgen 45%) show how much of the problem each one
+  addresses at all. Within the categories a tool declares, NuGuard's precision
+  is as high as ShadowScan's; its gap is recall on providers and MCP.
+* The same session wrote the taxonomy, labeled the corpus and maintains
+  ShadowScan. The evidence rules are objective (manifests, imports, committed
+  paths, hostnames, model identifiers) and were extended twice after auditing
+  false positives of *other* tools, but a labeler who knows ShadowScan's
+  signatures is not an independent labeler.
+* `mcp:server` is the fact every tool misses most, including ShadowScan
+  (20 of 57): nobody distinguishes an MCP server implementation from an MCP
+  SDK dependency. Provider recall is the second gap, mostly LiteLLM-style
+  model routes and model identifiers in configuration.
+* Tools built for the workstation (vet, Geiger) only read the project root in
+  project mode: Geiger credits two repositories and ignores `.mcp.json`;
+  vet finds root-level `CLAUDE.md`, `.cursor/rules`, skills and `.mcp.json`
+  but no framework or provider.
+* Trusera's regex scanners report CrewAI in Newtonsoft.Json, Flask and
+  Gymnasium and Together AI in Cobra; AgentDiscover reads the Minecraft
+  Bedrock protocol library as Amazon Bedrock and labels unrelated npm packages
+  as the Vercel AI SDK; Agentic Radar reports the OpenAI Agents SDK in
+  repositories that do not use it; ShadowScan reports Hugging Face in a
+  user-agent parser whose data lists it.
+* Four of 870 runs did not finish: cdxgen timed out on langchain4j-examples
+  (its Java resolver) and crashed on pydantic; NuGuard timed out on
+  pydantic-ai and crashed on awslabs/mcp. They count as misses.
+* Timings were taken with six parallel workers on four CPUs and are
+  indicative only; ShadowScan's slowest run was 1062 s on the Mastra
+  monorepo and NuGuard hit the 1500 s limit twice.
 
 ## Limits
 

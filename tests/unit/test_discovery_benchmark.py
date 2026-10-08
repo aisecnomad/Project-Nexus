@@ -503,6 +503,19 @@ def test_geiger_vet_agentdiscover_radar_nuguard_normalize(tmp_path: Path) -> Non
         "agent-config:claude-md",
         "mcp-client-config:vscode",
     }
+    (tmp_path / "vet.json").write_text(
+        json.dumps(
+            [
+                {
+                    "Name": "academy-guide",
+                    "App": "openclaw",
+                    "ConfigPath": "/r/skills/academy-guide",
+                    "Metadata": {"skill.description": "x"},
+                }
+            ]
+        )
+    )
+    assert VetAdapter().normalize(tmp_path).facts == {"agent-config:skills"}
     (tmp_path / "vet.json").write_text("")
     assert VetAdapter().normalize(tmp_path).error is None
     sarif = {

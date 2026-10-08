@@ -19,7 +19,7 @@ SPEC = ToolSpec(
     id="vet",
     name="SafeDep vet (ai discover)",
     vendor="SafeDep",
-    categories=frozenset({"mcp-client-config", "agent-config", "mcp"}),
+    categories=frozenset({"mcp-client-config", "agent-config"}),
     notes="vet ai discover --scope project; reports project configs and MCP servers, no source analysis",
 )
 _PATH_KEYS = ("path", "file", "config_path", "config", "source", "location", "source_file")
@@ -80,8 +80,11 @@ class VetAdapter:
                     if isinstance(entry, str):
                         paths.append(entry)
             server = item.get("MCPServer")
+            metadata = item.get("Metadata")
             for path in paths:
                 facts.update(taxonomy.facts_for_config_path(path))
+            if isinstance(metadata, dict) and any(str(k).startswith("skill.") for k in metadata):
+                facts.add("agent-config:skills")
             if isinstance(server, dict) and server:
                 if not any(f.startswith("mcp-client-config:") for f in facts):
                     facts.add("mcp-client-config:generic")

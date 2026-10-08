@@ -20,7 +20,7 @@ SPEC = ToolSpec(
     id="geiger",
     name="Geiger",
     vendor="Atomburst",
-    categories=frozenset({"mcp-client-config", "agent-config", "mcp"}),
+    categories=frozenset({"mcp-client-config", "agent-config"}),
     notes="geiger --path <repo> --home <empty home> --json; reads configs only",
 )
 _KIND_FACTS = {
