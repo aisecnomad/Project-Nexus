@@ -9,9 +9,10 @@ address, the AI services it contacted:
   ``server_name`` field;
 * flows: Zeek ``conn.log`` and AWS VPC Flow Logs. A flow carries no host
   name, so it is attributed only through the same input: by Zeek ``uid`` to
-  the TLS record of the same connection, or to the AI host that the same
+  the TLS record of the same client/connection, or to the AI host that the same
   client resolved to that address. An address that also resolved to a host
-  of another service (a shared CDN address) attributes nothing.
+  of another service (a shared CDN address) attributes nothing through DNS.
+  Known non-AI or conflicting TLS evidence never falls back to DNS.
 
 Host names are matched exactly or by a signature's declared wildcard, never by
 substring, so ``www.anthropologie.com`` is not Anthropic. Only names that
@@ -121,7 +122,7 @@ class _Contact:
 
 @dataclass
 class _Pair:
-    """Aggregated flows from one client to one server address and port."""
+    """Flows sharing client, server, port and connection UID (when available)."""
 
     flows: int = 0
     bytes_out: int = 0
@@ -129,6 +130,27 @@ class _Pair:
     first: float | None = None
     last: float | None = None
     times: list[float] = field(default_factory=list)
+
+
+@dataclass
+class _TLSIdentity:
+    """Bounded service identity for a client/UID, including negative evidence."""
+
+    server: str | None
+    port: int | None
+    signature: str
+    ambiguous: bool = False
+
+    def observe(self, server: str | None, port: int | None, signature: str) -> None:
+        if self.signature != signature or not self.matches(server, port):
+            self.ambiguous = True
+        self.server = self.server or server
+        self.port = self.port if self.port is not None else port
+
+    def matches(self, server: str | None, port: int | None) -> bool:
+        return (self.server is None or server is None or self.server == server) and (
+            self.port is None or port is None or self.port == port
+        )
 
 
 class NetworkLogConnector(BaseConnector, _NoDump):
@@ -326,7 +348,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 return  # a TLS connection without SNI names nothing
             yield {
                 "kind": "tls", "ts": _seconds(when), "client": client, "server": server, "port": port,
-                "sni": sni, "uid": _text(row.get("uid")),
+                "sni": sni, "uid": _text(_first(row, ("uid",))),
             }  # fmt: skip
             return
         if server and client:
@@ -334,7 +356,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 "kind": "flow", "ts": _seconds(when), "client": client, "server": server, "port": port,
                 "bytes_out": _int(row.get("orig_bytes") or row.get("bytes_out") or row.get("bytes")) or 0,
                 "bytes_in": _int(row.get("resp_bytes") or row.get("bytes_in")) or 0,
-                "uid": _text(row.get("uid")),
+                "uid": _text(_first(row, ("uid",))),
             }  # fmt: skip
             return
         self.ctx.warn(f"network.logs: {name}: record has no query, server name or flow endpoints")
@@ -381,11 +403,10 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         resolved: dict[tuple[str, str], set[str]] = {}  # (client, address) -> signatures it resolved to
         resolved_any: dict[str, set[str]] = {}  # address -> signatures, any client
         address_hosts: dict[str, set[tuple[str, str]]] = {}  # address -> AI (signature, host) names
-        sni_by_uid: dict[str, str] = {}
-        pairs: dict[tuple[str, str, int | None], _Pair] = {}
-        uid_pairs: dict[str, tuple[str, str, int | None]] = {}
+        sni_by_uid: dict[tuple[str, str], _TLSIdentity] = {}
+        pairs: dict[tuple[str, str, int | None, str | None], _Pair] = {}
         times_used = 0
-        dropped_pairs = dropped_clients = 0
+        dropped_pairs = dropped_clients = dropped_tls = 0
         clients: set[str] = set()
         for rec in records:
             self.ctx.examined()
@@ -400,14 +421,25 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             if kind in {"dns", "tls"}:
                 host = str(rec.get("query") if kind == "dns" else rec.get("sni"))
                 match = self._service(host)
+                signature = match.signature.id if match else ""
                 if kind == "dns":
-                    signature = match.signature.id if match else ""
                     for address in rec.get("answers") or []:
                         resolved.setdefault((client, address), set()).add(signature)
                         resolved_any.setdefault(address, set()).add(signature)
                         names = address_hosts.setdefault(address, set())
                         if match is not None and len(names) < 8:
                             names.add((signature, host))
+                elif rec.get("uid"):
+                    # Non-AI names must survive as negative correlation evidence:
+                    # DNS must not override the known destination of this connection.
+                    uid_key = (client, str(rec["uid"]))
+                    identity = sni_by_uid.get(uid_key)
+                    if identity is not None:
+                        identity.observe(rec.get("server"), rec.get("port"), signature)
+                    elif len(sni_by_uid) < _MAX_PAIRS:
+                        sni_by_uid[uid_key] = _TLSIdentity(rec.get("server"), rec.get("port"), signature)
+                    else:
+                        dropped_tls += 1
                 if match is None:
                     continue
                 c = self._contact(contacts, client, match.signature.id)
@@ -417,15 +449,14 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     c.dns_queries += 1
                 else:
                     c.tls_connections += 1
-                    if rec.get("uid"):
-                        sni_by_uid[str(rec["uid"])] = host
                     if ts is not None and len(c.times) < _MAX_TIMES and times_used < _MAX_TOTAL_TIMES:
                         c.times.append(ts)
                         times_used += 1
                 _seen(c, ts)
                 continue
             if kind == "flow":
-                key = (client, str(rec.get("server")), rec.get("port"))
+                uid = str(rec["uid"]) if rec.get("uid") else None
+                key = (client, str(rec.get("server")), rec.get("port"), uid)
                 pair = pairs.get(key)
                 if pair is None:
                     if len(pairs) >= _MAX_PAIRS:
@@ -441,8 +472,6 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     if len(pair.times) < _MAX_TIMES and times_used < _MAX_TOTAL_TIMES:
                         pair.times.append(ts)
                         times_used += 1
-                if rec.get("uid"):
-                    uid_pairs[str(rec["uid"])] = key
         if dropped_clients:
             self.ctx.warn(
                 f"network.logs: {dropped_clients:,} record(s) from clients beyond the first {_MAX_CLIENTS:,} "
@@ -450,17 +479,21 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             )
         if dropped_pairs:
             self.ctx.warn(
-                f"network.logs: {dropped_pairs:,} flow record(s) beyond {_MAX_PAIRS:,} client/server pairs "
+                f"network.logs: {dropped_pairs:,} flow record(s) beyond {_MAX_PAIRS:,} connection groups "
                 "were not attributed"
             )
+        if dropped_tls:
+            self.ctx.warn(
+                f"network.logs: {dropped_tls:,} TLS record(s) beyond {_MAX_PAIRS:,} client/UID identities "
+                "were not retained for flow attribution"
+            )
         ambiguous = self._attribute_flows(
-            contacts, pairs, uid_pairs, sni_by_uid, resolved, resolved_any, address_hosts
+            contacts, pairs, sni_by_uid, bool(dropped_tls), resolved, resolved_any, address_hosts
         )
         if ambiguous:
             # Strict attribution, not missing coverage: the scan stays complete.
             self.ctx.warn(
-                f"network.logs: {ambiguous:,} flow(s) to addresses shared by AI and other hosts were not "
-                "attributed",
+                f"network.logs: {ambiguous:,} flow(s) with ambiguous service attribution were not attributed",
                 incomplete=False,
             )
         for c in contacts.values():
@@ -477,27 +510,36 @@ class NetworkLogConnector(BaseConnector, _NoDump):
     def _attribute_flows(
         self,
         contacts: dict[tuple[str, str], _Contact],
-        pairs: dict[tuple[str, str, int | None], _Pair],
-        uid_pairs: dict[str, tuple[str, str, int | None]],
-        sni_by_uid: dict[str, str],
+        pairs: dict[tuple[str, str, int | None, str | None], _Pair],
+        sni_by_uid: dict[tuple[str, str], _TLSIdentity],
+        tls_limit_reached: bool,
         resolved: dict[tuple[str, str], set[str]],
         resolved_any: dict[str, set[str]],
         address_hosts: dict[str, set[tuple[str, str]]],
     ) -> int:
-        """Attribute aggregated flows to AI services; return the flows left ambiguous."""
-        by_uid: dict[tuple[str, str, int | None], str] = {}
-        for uid, key in uid_pairs.items():
-            host = sni_by_uid.get(uid)
-            if host is not None:
-                by_uid[key] = host
+        """Attribute connection groups before adding traffic to service totals."""
+        # Generic SNI exports can omit endpoints. Bind those identities from
+        # flows first, so a reused UID spanning endpoints cannot claim both.
+        # Finish this pass before attribution to keep ambiguity order-independent.
+        for client, server, port, uid in pairs:
+            identity = sni_by_uid.get((client, uid)) if uid is not None else None
+            if identity is not None:
+                identity.observe(server, port, identity.signature)
         ambiguous = 0
-        for (client, server, port), pair in pairs.items():
+        for (client, server, port, uid), pair in pairs.items():
             signature: str | None = None
             basis = ""
-            host = by_uid.get((client, server, port))
-            match = self._service(host) if host else None
-            if match is not None:
-                signature, basis = match.signature.id, "tls"
+            identity = sni_by_uid.get((client, uid)) if uid is not None else None
+            if identity is not None:
+                if identity.ambiguous or not identity.matches(server, port):
+                    ambiguous += pair.flows
+                    continue
+                if not identity.signature:
+                    continue  # Known non-AI SNI cannot become AI traffic via DNS/port.
+                signature, basis = identity.signature, "tls"
+            elif uid is not None and tls_limit_reached:
+                # A dropped SNI might contradict DNS; do not guess after overflow.
+                continue
             else:
                 local = resolved.get((client, server))
                 anywhere = resolved_any.get(server)

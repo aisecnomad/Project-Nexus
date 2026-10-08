@@ -1,4 +1,4 @@
-"""Execute the scheduled audit against incomplete and disabled API readbacks."""
+"""Execute the scoped scheduled audit against complete, partial and failed reads."""
 
 from __future__ import annotations
 
@@ -17,9 +17,20 @@ RULESET_IDS = (23892853, 23913372)
 
 @pytest.mark.parametrize(
     "change",
-    ["none", "disabled", "missing_gate", "missing_bypass", "wrong_repository", "denied", "malformed"],
+    [
+        "none",
+        "disabled",
+        "missing_gate",
+        "missing_bypass",
+        "missing_bypass_and_disabled",
+        "missing_rules",
+        "wrong_repository",
+        "denied",
+        "denied_with_valid_stdout",
+        "malformed",
+    ],
 )
-def test_scheduled_audit_requires_enforced_readback_without_admin_writes(tmp_path: Path, change: str) -> None:
+def test_scheduled_audit_reports_scoped_assurance_without_admin_writes(tmp_path: Path, change: str) -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/audit.yml").read_text())
     job = workflow["jobs"]["merge-policy"]
     assert workflow["permissions"] == {"contents": "read"}
@@ -38,10 +49,12 @@ def test_scheduled_audit_requires_enforced_readback_without_admin_writes(tmp_pat
             "source": "aisecnomad/Project-Nexus",
         }
     ruleset = snapshots["23913372"]
-    if change == "disabled":
+    if change in {"disabled", "missing_bypass_and_disabled"}:
         ruleset["enforcement"] = "disabled"
-    elif change == "missing_bypass":
+    if change in {"missing_bypass", "missing_bypass_and_disabled"}:
         del ruleset["bypass_actors"]
+    elif change == "missing_rules":
+        del ruleset["rules"]
     elif change == "wrong_repository":
         ruleset["source"] = "different/repository"
     elif change == "missing_gate":
@@ -74,6 +87,8 @@ def test_scheduled_audit_requires_enforced_readback_without_admin_writes(tmp_pat
         "else:\n"
         "    data = json.loads(Path(os.environ['AUDIT_RESPONSES']).read_text())\n"
         "    print(json.dumps(data[args[1].rsplit('/', 1)[1]]))\n"
+        "if os.environ['AUDIT_CHANGE'] == 'denied_with_valid_stdout':\n"
+        "    raise SystemExit(1)\n"
     )
     cli.chmod(0o700)
     requests = tmp_path / "requests.log"
@@ -84,6 +99,7 @@ def test_scheduled_audit_requires_enforced_readback_without_admin_writes(tmp_pat
         PATH=os.pathsep.join((str(fake_bin), str(Path(sys.executable).parent), env.get("PATH", ""))),
         GITHUB_REPOSITORY="aisecnomad/Project-Nexus",
         RUNNER_TEMP=str(runner_temp),
+        GITHUB_STEP_SUMMARY=str(tmp_path / "summary.md"),
         AUDIT_RESPONSES=str(inputs),
         AUDIT_REQUEST_LOG=str(requests),
         AUDIT_CHANGE=change,
@@ -91,11 +107,35 @@ def test_scheduled_audit_requires_enforced_readback_without_admin_writes(tmp_pat
     result = subprocess.run(
         ["bash", "-c", steps[0]["run"]], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30
     )
-    assert (result.returncode == 0) is (change == "none"), result.stdout + result.stderr
+    assert (result.returncode == 0) is (change in {"none", "missing_bypass"}), result.stdout + result.stderr
     observed = requests.read_text().splitlines()
     assert observed[0].endswith("/23892853")
     assert set(observed).issubset(
         {f"repos/aisecnomad/Project-Nexus/rulesets/{number}" for number in RULESET_IDS}
     )
-    if change == "none":
-        assert len(observed) == 2
+    assert len(observed) == 2  # One bad ruleset must not hide the other's status.
+    reports = {
+        number: json.loads(
+            (runner_temp / "governance-observations" / f"observation-{number}.json").read_text()
+        )
+        for number in RULESET_IDS
+    }
+    report = reports[23913372]
+    summary = (tmp_path / "summary.md").read_text()
+    if change == "missing_bypass":
+        assert report["status"] == "partial"
+        assert report["visible_controls_match"] is True
+        assert report["complete_readback_verified"] is False
+        assert report["administrator_readback_required"] is True
+        assert report["unknown_fields"] == ["bypass_actors"]
+        assert "Bypass actors are UNKNOWN; administrator readback REQUIRED" in summary
+    elif change == "none":
+        assert report["status"] == "complete" and report["complete_readback_verified"] is True
+        assert report["unknown_fields"] == []
+    else:
+        assert report["status"] == "failed"
+        assert report["complete_readback_verified"] is False and report["verified_fields"] == []
+        assert "Verification FAILED" in summary
+    retention = [step for step in job["steps"] if step.get("name") == "Retain scoped governance observations"]
+    assert len(retention) == 1 and retention[0]["if"] == "always()"
+    assert retention[0]["with"]["if-no-files-found"] == "error"

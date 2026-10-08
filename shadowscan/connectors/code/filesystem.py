@@ -94,6 +94,15 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
+from shadowscan.connectors.code.python_reexports import (
+    MAX_PENDING_BYTES,
+    MAX_PENDING_FILES,
+    ImportResolver,
+    PythonReexports,
+    ReexportLimitError,
+    has_local_import,
+    project_path,
+)
 from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
@@ -559,6 +568,9 @@ class _ScanState:
     infra_models: dict[str, list[Match]] = field(default_factory=dict)  # relpath -> model ids declared in IaC
     # project root -> (relpath, line, excerpt)
     iam_wildcards: dict[str, list[tuple[str, int, str]]] = field(default_factory=dict)
+    reexports: PythonReexports = field(default_factory=PythonReexports)
+    reexport_files: list[_SourceFile] = field(default_factory=list)
+    reexport_bytes: int = 0
 
     def covered_files(self) -> frozenset[str]:
         """Files whose own MCP, manifest, workflow or IaC finding reports their evidence."""
@@ -1650,7 +1662,31 @@ class FilesystemConnector(BaseConnector):
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         scan = _ScanState(root, self._scan_label(root))
         self._walk(scan)
+        self._resolve_reexport_sources(scan)
         yield from self._emit_findings(scan)
+
+    def _resolve_reexport_sources(self, scan: _ScanState) -> None:
+        """Bind queued consumers after all shim snapshots have been read safely."""
+        for file in scan.reexport_files:
+            if self.ctx.deadline is not None and time.monotonic() >= self.ctx.deadline:
+                self.ctx.error("code.filesystem: Python re-export analysis deadline exceeded")
+                break
+            local = _local_module_predicate(scan.root, file.path, file.proj_root)
+            with (
+                self._isolated(file.rel, "Python re-export analysis"),
+                self.index.scan_budget(seconds=scan_timeout_for_size(self.scan_timeout, len(file.text))),
+            ):
+                try:
+                    self._scan_source(
+                        scan.root,
+                        file,
+                        file.text,
+                        resolve_import=scan.reexports.resolver(file.proj_root, local),
+                    )
+                except ReexportLimitError as exc:
+                    self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
+                    self._scan_source(scan.root, file, file.text)
+        scan.reexport_files.clear()
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -1731,6 +1767,7 @@ class FilesystemConnector(BaseConnector):
     def _scan_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
         """Run every analysis pass over one file of the walk."""
         proj = scan.projects.setdefault(proj_root, _Project(proj_root))
+        scan.reexports.note_path(proj_root, rel)
         proj.files += 1
         self.ctx.examined()
         lang = language_for_path(rel)
@@ -2119,7 +2156,8 @@ class FilesystemConnector(BaseConnector):
         if file.ext in _XML_EXTENSIONS:
             content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
-            self._scan_source(scan.root, file, content_text)
+            if not self._defer_reexport_source(scan, file):
+                self._scan_source(scan.root, file, content_text)
         elif not is_nonexecutable:
             self._scan_config(scan, file, content_text)
         if not is_nonexecutable and not file.is_mcp:
@@ -2133,7 +2171,30 @@ class FilesystemConnector(BaseConnector):
             if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):
                 file.proj.configuration_files.add(file.rel)
 
-    def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> None:
+    def _defer_reexport_source(self, scan: _ScanState, file: _SourceFile) -> bool:
+        """Keep only eligible root-level Python consumers, within a fixed memory budget."""
+        if file.ext != ".py" or len(project_path(file.proj_root, file.rel).parts) != 1:
+            return False
+        scan.reexports.add(file.proj_root, file.rel, file.text)
+        local = _local_module_predicate(scan.root, file.path, file.proj_root)
+        if not has_local_import(file.text, local):
+            return False
+        size = len(file.text.encode("utf-8"))
+        if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
+            self.ctx.error(f"code.filesystem: {file.rel}: Python re-export source budget exceeded")
+            return False
+        scan.reexport_files.append(file)
+        scan.reexport_bytes += size
+        return True
+
+    def _scan_source(
+        self,
+        root: Path,
+        file: _SourceFile,
+        content_text: str,
+        *,
+        resolve_import: ImportResolver | None = None,
+    ) -> None:
         """Match the imports, code patterns and import-bound calls of a source file."""
         lang, ext = file.lang, file.ext
         is_local_module = _local_module_predicate(root, file.path, file.proj_root)
@@ -2163,7 +2224,9 @@ class FilesystemConnector(BaseConnector):
             if ignored
             else self.index.match_code(content_text, lang)
         )
-        bound, unbound = self._bound_matches(file, content_text, ignored, is_local_module)
+        bound, unbound = self._bound_matches(
+            file, content_text, ignored, is_local_module, resolve_import=resolve_import
+        )
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
         # tool-calling protocol; elsewhere they are build tooling.
@@ -2182,6 +2245,8 @@ class FilesystemConnector(BaseConnector):
         content_text: str,
         ignored: list[tuple[int, int]],
         is_local_module: Callable[[str], bool],
+        *,
+        resolve_import: ImportResolver | None = None,
     ) -> tuple[list[Match], list[tuple[int, int]]]:
         """Return bound evidence, including narrow typed-field registration for Java.
 
@@ -2212,6 +2277,7 @@ class FilesystemConnector(BaseConnector):
                 is_local_module=is_local_module if lang == "python" else None,
                 max_ast_nodes=self.max_ast_nodes,
                 truncated=truncated,
+                resolve_import=resolve_import,
             )
         except SourceBudgetExceeded as exc:
             # The budget is a property of the file, not of

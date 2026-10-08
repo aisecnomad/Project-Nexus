@@ -110,6 +110,26 @@ Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be
 effective on `main`; their presence in workflow files alone is insufficient.
 
+For the unreleased attribution corrections, review these paired cases:
+
+- AI and non-AI TLS connections to the same destination address and port,
+  including reversed input order, missing UIDs and conflicting connection
+  identities. Each service may receive only its attributable traffic volume.
+- A hosted-agent invocation versus listing, reading or deleting a managed
+  resource. Missing method or service identity must not turn a path match into
+  executed-agent or tool-use evidence. Request cadence alone is not a tool loop.
+- A supported Python import-only re-export versus a cycle, a shadowed binding
+  or executable shim. Inspect the declared source-analysis limits and verify
+  that scanned code is never imported or executed.
+- A complete governance readback versus a read-only response with withheld
+  bypass settings. Visible-policy drift must fail the monitor; a partial result
+  must identify unknown fields and must never satisfy full release verification.
+
+Record attribution correctness separately from binary discovery accuracy.
+Commission fresh blinded human labels and scoped live acceptance using the
+[migration and acceptance guidance](../production.md#unreleased-attribution-migration);
+the authored regression cases in this change are not a held-out field sample.
+
 ## Suggested deliverable
 
 A concise review record could list the SHA reviewed, commands run, review slices

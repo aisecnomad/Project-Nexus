@@ -5,7 +5,8 @@ name: Dependency and governance audit
 # dependency set against current advisories, so a vulnerability published after
 # the last commit still surfaces as a failed run.
 # The independent read-only governance job also detects disabled or weakened
-# main protections between commits. It reports drift; it never changes settings.
+# visible main protections between commits. A withheld bypass list remains
+# explicitly unknown and needs a separate administrator readback.
 on:
   schedule:
     - cron: "41 4 * * 2"  # Tuesday 04:41 UTC
@@ -16,7 +17,7 @@ permissions:
 
 jobs:
   merge-policy:
-    name: Verify live main protections
+    name: Verify visible main controls (bypass assurance separate)
     if: github.repository == 'aisecnomad/Project-Nexus' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -30,20 +31,40 @@ jobs:
       - name: Install the hash-locked verification toolchain
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock
-      - name: Read and verify current rulesets without changing settings
+      - name: Observe current rulesets without changing settings
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Missing or unreadable policy is unknown assurance and fails this
-          # audit. Never supply an administrator credential or issue a PUT.
+          evidence_dir="$RUNNER_TEMP/governance-observations"
+          mkdir "$evidence_dir"
+          failed=0
+          # Only a withheld bypass list permits partial assurance. Visible drift,
+          # other missing fields and failed API reads still fail the job. Never
+          # supply an administrator credential or treat partial as release proof.
           for ruleset_id in 23892853 23913372; do
-            snapshot="$RUNNER_TEMP/ruleset-$ruleset_id.json"
-            gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" > "$snapshot"
-            python -m tools.governance.rulesets verify \
+            snapshot="$evidence_dir/ruleset-$ruleset_id.json"
+            read_flags=()
+            if ! gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" > "$snapshot"; then
+              read_flags=(--read-failed)
+            fi
+            if ! python -m tools.governance.rulesets observe \
               --input "$snapshot" --ruleset-id "$ruleset_id" \
-              --expected ".github/rulesets/$ruleset_id.update.json"
+              --expected ".github/rulesets/$ruleset_id.update.json" \
+              --output "$evidence_dir/observation-$ruleset_id.json" \
+              --summary "$GITHUB_STEP_SUMMARY" "${read_flags[@]}"; then
+              failed=1
+            fi
           done
+          exit "$failed"
+      - name: Retain scoped governance observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: governance-observations-${{ github.run_id }}
+          path: ${{ runner.temp }}/governance-observations/observation-*.json
+          if-no-files-found: error
+          retention-days: 90
   lock-audit:
     name: Audit hash-locked dependencies
     runs-on: ubuntu-latest

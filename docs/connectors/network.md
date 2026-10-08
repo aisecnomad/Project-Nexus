@@ -35,15 +35,25 @@ never stored.
 **Flows are attributed only through the same input.** A flow has addresses,
 not names, so it counts towards a service only when:
 
-- its Zeek `uid` links it to a TLS record whose server name is an AI host;
+- its Zeek `uid` and client address link it to a TLS record whose server
+  name is an AI host, with matching server address and port when supplied;
 - the same client resolved an AI host to that address; or
 - no client resolved anything else to that address, and some client resolved
   an AI host to it (weaker evidence, reported as such).
 
-An address that also resolved to a host of another service, as shared CDN
-addresses do, attributes nothing; the number of such flows is reported as a
-warning that does not make the scan incomplete. A flow to port 11434, the
-default Ollama port, is attributed to Ollama.
+Flow counts and bytes remain separated by connection UID until attribution,
+so one AI connection cannot claim another connection's traffic on the same
+address and port. UIDs are scoped to the client address. A known non-AI TLS
+name blocks DNS and service-port attribution for that connection; conflicting
+TLS service identities or endpoints leave its flows unattributed. A missing
+UID does not inherit a different connection's TLS name. Without linked TLS
+evidence, the DNS rules above still apply.
+
+DNS evidence for a shared address does not attribute flows when it names
+multiple services or both AI and non-AI hosts. Ambiguous flows are reported
+as a warning that does not make the scan incomplete. A flow to port 11434,
+the default Ollama port, is attributed to Ollama only without TLS or DNS
+evidence that contradicts it.
 
 **Agent indicators.** Traffic to a coding agent's own service, an MCP server
 or a hosted agent runtime (for example `api2.cursor.sh`, `mcp.linear.app` or
@@ -66,9 +76,11 @@ Options:
 
 Malformed lines, records the connector cannot read as DNS, TLS or flow
 records, and DNS or TLS records without a client address make the scan
-incomplete. Analysis keeps at most 50,000 client addresses and 500,000
-client/server address pairs; records beyond either bound are reported and
-make the scan incomplete.
+incomplete. Analysis keeps at most 50,000 client addresses, 500,000 flow
+groups (client, server address, port and UID), and 500,000 TLS identities
+(client and UID). Records beyond any bound are reported and make the scan
+incomplete. If TLS identity storage fills, flows with an unretained UID are
+left unattributed because a discarded TLS record could contradict DNS.
 
 Client addresses identify a device or a NAT gateway, not a person. Join
 findings to DHCP, VPN or asset records before assigning an owner.

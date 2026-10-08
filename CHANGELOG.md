@@ -3,6 +3,25 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
+## Unreleased
+
+### Discovery attribution and review assurance
+
+- Attribute network flow volume using individual TLS connection identities before
+  aggregating service totals, so a shared destination address cannot transfer
+  unrelated traffic to an AI service.
+- Distinguish hosted-agent execution operations from management API requests.
+  Listing assistants or inspecting runs does not establish invocation or tool
+  use; request cadence alone remains a weak automation hint.
+- Resolve a bounded subset of local Python import-only re-exports without
+  importing or executing scanned code. Unsupported or ambiguous bindings retain
+  their existing conservative classification.
+- Separate the scheduled governance audit's visible-policy checks from complete
+  policy assurance. Withheld bypass settings remain explicitly unknown; release
+  verification still requires a complete policy readback.
+- Add regression coverage and reviewer guidance for these boundaries. These
+  checks do not establish human-reviewed field accuracy or live tenant acceptance.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

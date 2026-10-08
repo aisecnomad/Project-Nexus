@@ -43,6 +43,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -83,6 +84,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/messages",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -123,6 +125,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/messages",
+    "method": "POST",
     "metadata": {},
     "schema": "generic",
     "scope": {},
@@ -160,6 +163,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": null,
     "metadata": {
      "method": null,
      "bytes": null
@@ -200,6 +204,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/healthz",
+    "method": null,
     "metadata": {
      "method": null,
      "bytes": null
@@ -240,6 +245,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/models",
+    "method": "GET",
     "metadata": {
      "method": "GET",
      "bytes": null

@@ -31,8 +31,22 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
-Confidence groups cap repeated observations of the same technology. Unsupported
-dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
+Confidence groups cap repeated observations of the same technology. Python also
+resolves absolute `from local_shim import Alias` imports through already-read
+`.py` files at the same manifest project root (or scan root without a manifest).
+These shims must contain only unconditional `from` imports and an optional
+docstring. Aliases and chains are supported; assignments, `__all__`, branches,
+star/relative imports, package collisions, cycles and consumer shadowing do not
+establish a re-exported constructor. A repository-local module with the name of
+a framework never becomes third-party framework evidence through an alias.
+No scanned code is imported or executed, and source is not reopened for this
+pass. It retains at most 4,096 consumer files / 16 MiB of source, and resolves
+at most 16 modules per chain. Each shim has a 64 KiB source and 256-export
+budget, with at most 4,096 shims per scan. Reaching a required source or chain
+budget marks the scan incomplete and preserves available per-file evidence.
+
+Packages, nested source layouts, dynamic imports, other re-exports and uncertain
+bindings remain usage evidence when ordinary signatures identify them. Other
 languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code

@@ -42,6 +42,7 @@ from typing import Any, ClassVar
 from shadowscan.connectors.agent_behavior import (
     LOOP_MAX_GAP_SECONDS,
     LOOP_MIN_CALLS,
+    AgentOperation,
     agent_operations,
     host_service,
     is_browser_user_agent,
@@ -230,6 +231,7 @@ def _validate_scalar_fields(ev: Event) -> None:
         "team",
         "status",
         "path",
+        "method",
     ):
         value = getattr(ev, name)
         if value is not None and not isinstance(value, str):
@@ -607,6 +609,7 @@ class _Caller:
     users: Counter = field(default_factory=Counter)
     teams: Counter = field(default_factory=Counter)
     paths: Counter = field(default_factory=Counter)
+    agent_operations: Counter = field(default_factory=Counter)
     tools_requests: int = 0
     tool_call_responses: int = 0
     tool_known: int = 0
@@ -744,13 +747,19 @@ def _record_behaviour(c: _Caller, ev: Event, detail_budget: _DetailBudget | None
     if is_browser_user_agent(ev.user_agent):
         c.browser_requests += ev.request_count
     if ev.path:
+        # Classify before truncating or aggregating: methods and hosts from
+        # different requests must never corroborate each other's paths.
+        for operation in agent_operations(
+            {ev.path: ev.request_count}, method=ev.method, host=ev.host, schema=ev.schema
+        ):
+            c.agent_operations[(operation.label, operation.signature)] += operation.requests
         bare = str(ev.path).split("?", 1)[0][:120]
         candidate = (str(ev.host or "")[:_MAX_LABEL_CHARS], bare)
         if _MCP_CANDIDATE_PATH.search(bare) and (
             candidate in c.mcp_candidates or len(c.mcp_candidates) < _MAX_MCP_CANDIDATES
         ):
             c.mcp_candidates[candidate] += ev.request_count
-    if ev.timestamp is None or ev.aggregated or not is_generation(ev.path, ev.model):
+    if ev.timestamp is None or ev.aggregated or not is_generation(ev.path, ev.model, ev.method):
         return
     budget_left = detail_budget is None or detail_budget.call_times_used < _MAX_TOTAL_CALL_TIMES
     if len(c.call_times) < _MAX_CALL_TIMES and budget_left:
@@ -914,7 +923,11 @@ def _caller_indicator(match: Match) -> bool:
     matched in a key alias or a user name is a hint, not behaviour: a person
     called Jules is not Google's Jules agent.
     """
-    return match.signature.category != "identity-app" and match.signal.type != "name"
+    return (
+        match.signature.category != "identity-app"
+        and match.signal.type != "name"
+        and not (match.signature.category == "cloud-service" and match.signal.type == "domain")
+    )
 
 
 def _service_indicator(owner: str | None) -> Callable[[Match], bool]:
@@ -1774,20 +1787,20 @@ class GatewayLogConnector(BaseConnector, _NoDump):
     def _behaviour_evidence(self, f: Finding, c: _Caller) -> None:
         """Agent indicators from operations, MCP endpoints and call cadence (no request bodies needed)."""
         summary: dict[str, Any] = {}
-        operations = agent_operations(c.paths)
+        operations = [AgentOperation(label, sig, n) for (label, sig), n in c.agent_operations.most_common()]
         if operations:
             for op in operations:
                 if op.signature and self.index.get(op.signature) is not None:
                     f.add_framework(op.signature)
             total = sum(op.requests for op in operations)
-            f.add_capability("tool-use")
             f.add_tag("agent-runtime-api")
             f.add_evidence(
                 Evidence(
                     signal="gateway:agent-runtime-api",
                     description=(
-                        f"{total} request(s) invoked hosted agent runtimes: "
+                        f"{total} request(s) targeted hosted agent runtime invocation operations: "
                         + ", ".join(f"{op.label} ×{op.requests}" for op in operations[:5])
+                        + "; request metadata does not establish successful execution or tool use"
                     ),
                     weight=0.7,
                 )
@@ -1836,7 +1849,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     weight=0.45,
                 )
             )
-            f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
+            # Cadence is compatible with ordinary batch scripts and chat front ends.
+            # Keep the hint without promoting the caller to an agent by itself.
         if cadence.loops:
             summary["loop_cadence"] = {
                 "loops": cadence.loops,
@@ -1867,6 +1881,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 f,
                 host_matches,
                 weight_scale=0.6,
+                # A managed service hostname establishes contact, not its
+                # caller's tool use or agent execution.
+                capabilities=service is None or service.signature.category != "cloud-service",
                 indicator_filter=_service_indicator(service.signature.id if service is not None else None),
             )
         framework_user_agent = False

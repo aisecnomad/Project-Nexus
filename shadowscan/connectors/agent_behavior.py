@@ -2,7 +2,7 @@
 
 Gateway, proxy and flow logs rarely carry request bodies, so tool definitions
 cannot always be seen. These checks read only what such logs keep: the
-operation path, the host, the user agent and request times.
+operation path and HTTP method, the host, the user agent and request times.
 
 * **Hosted agent runtime operations**: the request invokes a managed agent
   (Amazon Bedrock ``InvokeAgent``, Bedrock AgentCore runtimes, the OpenAI and
@@ -26,43 +26,64 @@ from dataclasses import dataclass
 
 from shadowscan.signatures import Match
 
-# (label, framework signature id or None, compiled pattern over the path without its query string)
-_AGENT_OPERATIONS: tuple[tuple[str, str | None, re.Pattern[str]], ...] = (
+# Execution paths are bound to the service that implements them. A path seen
+# on another provider (or a local proxy with no upstream host) proves nothing.
+_AWS_HOST = r"(?:-fips)?\.[a-z0-9-]+\.amazonaws\.com(?:\.cn)?"
+_VERTEX_HOST = re.compile(r"(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com")
+_ASSISTANTS_RUN = r"/threads(?:/[^/]+/runs(?:/[^/]+/submit_tool_outputs)?|/runs)/?"
+_AGENT_OPERATIONS: tuple[tuple[str, str | None, re.Pattern[str], re.Pattern[str]], ...] = (
     (
         "Amazon Bedrock InvokeAgent",
         "cloud.aws-bedrock-agents",
-        re.compile(r"/agents/[^/]+/agentAliases/[^/]+/sessions/[^/]+/text/?$"),
+        re.compile(r"bedrock-agent-runtime" + _AWS_HOST),
+        re.compile(r"/agents/[^/]+/agentAliases/[^/]+/sessions/[^/]+/text/?"),
     ),
     (
         "Amazon Bedrock AgentCore runtime",
         "cloud.aws-bedrock-agents",
-        re.compile(r"/runtimes/[^/]+/invocations/?$"),
+        re.compile(r"bedrock-agentcore" + _AWS_HOST),
+        re.compile(r"/runtimes/[^/]+/invocations/?"),
     ),
     (
         "Assistants API run",
         None,
-        re.compile(r"/threads/[^/]+/runs(?:/[^/]+)?(?:/submit_tool_outputs)?/?$|/threads/runs/?$"),
+        re.compile(r"api\.openai\.com"),
+        re.compile(r"/v1" + _ASSISTANTS_RUN),
     ),
-    ("Assistants API", None, re.compile(r"/assistants(?:/[^/]+)?/?$")),
+    (
+        "Assistants API run",
+        None,
+        re.compile(r"\A[a-z0-9-]+\.openai\.azure\.(?:com|us|cn)\Z"),
+        re.compile(r"/openai(?:/v1)?" + _ASSISTANTS_RUN),
+    ),
     (
         "Vertex AI Agent Engine",
         "cloud.gcp-vertex-agent-engine",
-        re.compile(r"/reasoningEngines/[^/:]+:(?:stream)?[qQ]uery$"),
+        _VERTEX_HOST,
+        re.compile(
+            r"/v1(?:beta1)?/projects/[^/]+/locations/[^/]+/reasoningEngines/[^/:]+:(?:query|streamQuery)"
+        ),
     ),
     (
         "Dialogflow CX agent session",
         None,
+        re.compile(r"\A(?:[a-z0-9-]+-)?dialogflow\.googleapis\.com\Z"),
         re.compile(
-            r"/agents/[^/]+/(?:environments/[^/]+/)?sessions/[^/:]+:(?:detectIntent|streamingDetectIntent)$"
+            r"/v3(?:beta1)?/projects/[^/]+/locations/[^/]+/agents/[^/]+/"
+            r"(?:environments/[^/]+/)?sessions/[^/:]+:(?:detectIntent|streamingDetectIntent)"
         ),
     ),
+)
+_VERTEX_EXECUTION = re.compile(
+    r"google\.cloud\.aiplatform\.v1(?:beta1)?\.ReasoningEngineExecutionService\."
+    r"(?:QueryReasoningEngine|StreamQueryReasoningEngine)"
 )
 _MCP_PATH = re.compile(r"(?:^|/)mcp/?$", re.IGNORECASE)
 _MCP_HOST_PATH = re.compile(r"(?:^|/)(?:sse|messages)/?$", re.IGNORECASE)
 # Operations that are not a generation step of an agent loop.
 _NON_GENERATION = re.compile(
     r"embed|moderation|rerank|tokeni[sz]e|count_tokens|/models/?$|/files\b|/batches\b|/audio/|/images/|"
-    r"/fine[_-]?tun",
+    r"/fine[_-]?tun|/(?:assistants|threads|runs|agents|runtimes|reasoningEngines)(?:/|$|:)",
     re.IGNORECASE,
 )
 _BROWSER = re.compile(r"^Mozilla/5\.0 \(")
@@ -105,15 +126,33 @@ class AgentOperation:
     requests: int
 
 
-def agent_operations(paths: Mapping[str, int]) -> list[AgentOperation]:
-    """Hosted agent runtime operations among request paths, with request counts."""
+def agent_operations(
+    paths: Mapping[str, int],
+    *,
+    method: str | None = None,
+    host: str | None = None,
+    schema: str | None = None,
+) -> list[AgentOperation]:
+    """Invocation requests supported by a method, exact execution path and service.
+
+    Native Vertex audit RPC names identify the operation without an HTTP verb.
+    Schema labels or free-form provider names alone never substitute for the
+    destination service. Requests identify attempted invocation, not successful
+    execution or tool use.
+    """
+    if method not in (None, "POST"):
+        return []
     counts: Counter[tuple[str, str | None]] = Counter()
+    destination = str(host or "").lower().removesuffix(":443").rstrip(".")
     for path, n in paths.items():
         bare = str(path).split("?", 1)[0]
-        for label, signature, pattern in _AGENT_OPERATIONS:
-            if pattern.search(bare):
-                counts[(label, signature)] += int(n)
-                break
+        if schema == "vertex" and _VERTEX_HOST.fullmatch(destination) and _VERTEX_EXECUTION.fullmatch(bare):
+            counts[("Vertex AI Agent Engine", "cloud.gcp-vertex-agent-engine")] += int(n)
+        elif method == "POST":
+            for label, signature, service, pattern in _AGENT_OPERATIONS:
+                if service.fullmatch(destination) and pattern.fullmatch(bare):
+                    counts[(label, signature)] += int(n)
+                    break
     return [AgentOperation(label, sig, n) for (label, sig), n in counts.most_common()]
 
 
@@ -130,9 +169,40 @@ def is_mcp_request(path: str | None, mcp_host: bool) -> bool:
     return mcp_host and bool(_MCP_HOST_PATH.search(bare))
 
 
-def is_generation(path: str | None, model: str | None = None) -> bool:
-    """Whether a request is a model generation step (not embeddings, listing or file handling)."""
-    return not (_NON_GENERATION.search(str(path or "")) or _NON_GENERATION.search(str(model or "")))
+def is_generation(path: str | None, model: str | None = None, method: str | None = None) -> bool:
+    """Whether metadata supports a possible generation step for cadence analysis.
+
+    Unknown or read-only HTTP operations never become model steps simply
+    because they were sent to an AI provider. Native model records can carry
+    a model without an HTTP path or method.
+    """
+    if method is not None and method != "POST":
+        return False
+    bare = str(path or "").split("?", 1)[0]
+    if _NON_GENERATION.search(bare) or _NON_GENERATION.search(str(model or "")):
+        return False
+    if bare.startswith("/"):
+        return method == "POST" and bool(
+            re.fullmatch(
+                r"(?:/v1|/openai/deployments/[^/]+)?/(?:chat/completions|completions|messages|responses)"
+                r"|/api/(?:chat|generate)|/model/[^/]+/(?:invoke|invoke-with-response-stream|converse|converse-stream)"
+                r"|/v1(?:beta1)?/projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/[^/:]+:"
+                r"(?:generateContent|streamGenerateContent)",
+                bare.rstrip("/"),
+            )
+        )
+    return bool(model) and (
+        not bare
+        or bare
+        in {
+            "completion",
+            "acompletion",
+            "InvokeModel",
+            "Converse",
+            "ConverseStream",
+            "InvokeModelWithResponseStream",
+        }
+    )
 
 
 def is_browser_user_agent(user_agent: str | None) -> bool:
