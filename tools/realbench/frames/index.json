@@ -1,0 +1,336 @@
+{
+ "fetched_at": "2026-10-08T17:02:15+00:00",
+ "strata": {
+  "gh-agents": [
+   {
+    "name": "e2b-dev/awesome-ai-agents:README.md",
+    "kind": "github-list",
+    "count": 116
+   },
+   {
+    "name": "kyrolabs/awesome-agents:README.md",
+    "kind": "github-list",
+    "count": 178
+   },
+   {
+    "name": "ashishpatel26/500-AI-Agents-Projects:README.md",
+    "kind": "github-list",
+    "count": 31
+   },
+   {
+    "name": "Jenqyang/Awesome-AI-Agents:README.md",
+    "kind": "github-list",
+    "count": 284
+   },
+   {
+    "name": "slavakurilyak/awesome-ai-agents:README.md",
+    "kind": "github-list",
+    "count": 301
+   },
+   {
+    "name": "kaushikb11/awesome-llm-agents:README.md",
+    "kind": "github-list",
+    "count": 110
+   }
+  ],
+  "gh-mcp": [
+   {
+    "name": "punkpeye/awesome-mcp-servers:README.md",
+    "kind": "github-list",
+    "count": 4134
+   },
+   {
+    "name": "appcypher/awesome-mcp-servers:README.md",
+    "kind": "github-list",
+    "count": 176
+   },
+   {
+    "name": "wong2/awesome-mcp-servers:README.md",
+    "kind": "github-list",
+    "count": 486
+   }
+  ],
+  "gh-genai": [
+   {
+    "name": "humanloop/awesome-chatgpt:README.md",
+    "kind": "github-list",
+    "count": 44
+   },
+   {
+    "name": "sindresorhus/awesome-chatgpt:readme.md",
+    "kind": "github-list",
+    "count": 143
+   },
+   {
+    "name": "Hannibal046/Awesome-LLM:README.md",
+    "kind": "github-list",
+    "count": 150
+   },
+   {
+    "name": "filipecalegario/awesome-generative-ai:README.md",
+    "kind": "github-list",
+    "count": 188
+   },
+   {
+    "name": "steven2358/awesome-generative-ai:README.md",
+    "kind": "github-list",
+    "count": 108
+   }
+  ],
+  "gh-general": [
+   {
+    "name": "vinta/awesome-python:README.md",
+    "kind": "github-list",
+    "count": 506
+   },
+   {
+    "name": "avelino/awesome-go:README.md",
+    "kind": "github-list",
+    "count": 2918
+   },
+   {
+    "name": "sindresorhus/awesome-nodejs:readme.md",
+    "kind": "github-list",
+    "count": 527
+   },
+   {
+    "name": "awesome-selfhosted/awesome-selfhosted:README.md",
+    "kind": "github-list",
+    "count": 1123
+   },
+   {
+    "name": "rust-unofficial/awesome-rust:README.md",
+    "kind": "github-list",
+    "count": 1701
+   },
+   {
+    "name": "akullpp/awesome-java:README.md",
+    "kind": "github-list",
+    "count": 803
+   },
+   {
+    "name": "ziadoz/awesome-php:README.md",
+    "kind": "github-list",
+    "count": 392
+   },
+   {
+    "name": "markets/awesome-ruby:README.md",
+    "kind": "github-list",
+    "count": 867
+   },
+   {
+    "name": "quozd/awesome-dotnet:README.md",
+    "kind": "github-list",
+    "count": 570
+   }
+  ],
+  "npm-ai": [
+   {
+    "name": "npm:ai-agent",
+    "kind": "npm-search",
+    "count": 194
+   },
+   {
+    "name": "npm:langchain",
+    "kind": "npm-search",
+    "count": 186
+   },
+   {
+    "name": "npm:mcp-server",
+    "kind": "npm-search",
+    "count": 217
+   },
+   {
+    "name": "npm:openai",
+    "kind": "npm-search",
+    "count": 175
+   },
+   {
+    "name": "npm:llm",
+    "kind": "npm-search",
+    "count": 166
+   },
+   {
+    "name": "npm:anthropic",
+    "kind": "npm-search",
+    "count": 194
+   },
+   {
+    "name": "npm:ai-sdk",
+    "kind": "npm-search",
+    "count": 120
+   },
+   {
+    "name": "npm:agent",
+    "kind": "npm-search",
+    "count": 178
+   }
+  ],
+  "npm-general": [
+   {
+    "name": "npm:cli",
+    "kind": "npm-search",
+    "count": 217
+   },
+   {
+    "name": "npm:express",
+    "kind": "npm-search",
+    "count": 238
+   },
+   {
+    "name": "npm:react",
+    "kind": "npm-search",
+    "count": 174
+   },
+   {
+    "name": "npm:eslint-plugin",
+    "kind": "npm-search",
+    "count": 220
+   },
+   {
+    "name": "npm:vite-plugin",
+    "kind": "npm-search",
+    "count": 223
+   },
+   {
+    "name": "npm:webpack-plugin",
+    "kind": "npm-search",
+    "count": 216
+   },
+   {
+    "name": "npm:utility",
+    "kind": "npm-search",
+    "count": 233
+   }
+  ],
+  "gitlab-ai": [
+   {
+    "name": "gitlab:llm",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:langchain",
+    "kind": "gitlab-topic",
+    "count": 45
+   },
+   {
+    "name": "gitlab:openai",
+    "kind": "gitlab-topic",
+    "count": 119
+   },
+   {
+    "name": "gitlab:chatgpt",
+    "kind": "gitlab-topic",
+    "count": 95
+   },
+   {
+    "name": "gitlab:ai-agent",
+    "kind": "gitlab-topic",
+    "count": 62
+   },
+   {
+    "name": "gitlab:ai-agents",
+    "kind": "gitlab-topic",
+    "count": 187
+   },
+   {
+    "name": "gitlab:chatbot",
+    "kind": "gitlab-topic",
+    "count": 116
+   },
+   {
+    "name": "gitlab:ollama",
+    "kind": "gitlab-topic",
+    "count": 86
+   },
+   {
+    "name": "gitlab:generative-ai",
+    "kind": "gitlab-topic",
+    "count": 50
+   },
+   {
+    "name": "gitlab:gpt",
+    "kind": "gitlab-topic",
+    "count": 0
+   },
+   {
+    "name": "gitlab:mcp",
+    "kind": "gitlab-topic",
+    "count": 208
+   },
+   {
+    "name": "gitlab:llms",
+    "kind": "gitlab-topic",
+    "count": 0
+   }
+  ],
+  "gitlab-general": [
+   {
+    "name": "gitlab:python",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:javascript",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:go",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:java",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:rust",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:php",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:ruby",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:typescript",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:docker",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:terraform",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:kubernetes",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:django",
+    "kind": "gitlab-topic",
+    "count": 300
+   },
+   {
+    "name": "gitlab:react",
+    "kind": "gitlab-topic",
+    "count": 300
+   }
+  ]
+ }
+}
