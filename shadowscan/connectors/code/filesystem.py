@@ -680,6 +680,8 @@ class _ProjectEvidence:
     def verified_indicator(self, match: Match) -> bool:
         if match.signature.category == "heuristic" or match.signature_id == "protocol.mcp":
             return False
+        if match.signal.agent_indicator:
+            return True
         if "verified_agent" in match.extra:
             return bool(match.extra["verified_agent"])
         if match.extra.get("lexical_source"):
@@ -1934,7 +1936,8 @@ class FilesystemConnector(BaseConnector):
             # incomplete card gets its own unverified finding instead.
             if file.card_kind and not file.card_valid:
                 continue
-            m.extra["verified_agent"] = file.card_valid
+            if file.card_kind is not None:
+                m.extra["verified_agent"] = file.card_valid
             self._record(file.proj, m, file.rel, None)
         issues = assess_posture(file.rel, file.text)
         if issues:
@@ -3085,10 +3088,18 @@ class FilesystemConnector(BaseConnector):
         # Installed SDKs, imports and endpoint strings establish framework
         # use. MCP code/config alone establishes a tool server/client, not
         # an agent capable of choosing actions or planning.
+        #
+        # Code and file signals with a verified indicator are the primary
+        # evidence. Imports and dependencies of inherently-agent frameworks
+        # (signature-level agent_indicator) are supplementary evidence: they
+        # confirm the project uses a framework whose purpose IS agents.
         f.metadata["agent_indicators"] = sum(
             evidence.verified_indicator(m)
-            and m.signal.type in {"code", "file"}
             and not evidence.in_tests(rel)
+            and (
+                m.signal.type in {"code", "file"}
+                or (m.signal.type in {"import", "dependency"} and m.signature.agent_indicator)
+            )
             for m, rel, _ in matches
         )
         if any(

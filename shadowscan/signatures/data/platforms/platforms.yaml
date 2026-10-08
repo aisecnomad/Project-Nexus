@@ -137,10 +137,10 @@ signatures:
         names: [dify-client]
         weight: 0.9
       - type: code
-        patterns: ['^[^\S\r\n]*mode:\s*(?:agent-chat|advanced-chat|workflow|completion)\s*$', '^[^\S\r\n]*kind:\s*app\s*$', 'agent_mode\s*:\s*\n\s*enabled\s*:\s*true']
+        patterns: ['^[^\S\r\n]*mode:\s*(?:agent-chat|advanced-chat|workflow|completion)\s*$', '^[^\S\r\n]*kind:\s*app\s*$', 'agent_mode\s*:\s*\n\s*enabled\s*:\s*true', '"graph"\s*:\s*\{[^}]*"nodes"\s*:', 'agent\s*:\s*\n\s+strategy\s*:\s*\w+']
         weight: 0.6
       - type: file
-        globs: [dify.yml, "**/dify.yml", dify.yaml, "**/dify.yaml"]
+        globs: [dify.yml, "**/dify.yml", dify.yaml, "**/dify.yaml", "dify-workflow*.yaml", "**/dify-workflow*.yaml", "dify-workflow*.yml", "**/dify-workflow*.yml", "dify_*.yaml", "**/dify_*.yaml"]
         weight: 0.8
       - type: env
         names: [DIFY_API_KEY, DIFY_API_URL, DIFY_BASE_URL]
@@ -174,10 +174,10 @@ signatures:
         names: [flowise]
         weight: 0.9
       - type: code
-        patterns: ['"category"\s*:\s*"(?:Agents|Multi Agents|Sequential Agents|Agentflow)"', '"name"\s*:\s*"(?:toolAgent|openAIFunctionAgent|conversationalAgent|reactAgentLLM|supervisor|worker|agentflow)"']
+        patterns: ['"category"\s*:\s*"(?:Agents|Multi Agents|Sequential Agents|Agentflow)"', '"name"\s*:\s*"(?:toolAgent|openAIFunctionAgent|conversationalAgent|reactAgentLLM|supervisor|worker|agentflow)"', '"label"\s*:\s*"(?:Tool Agent|Agent|Conversational Agent|ReAct Agent|OpenAI Assistant)"', '"nodes"\s*:\s*\[.*"edges"\s*:\s*\[']
         weight: 0.9
       - type: file
-        globs: [flowise.json, "**/flowise.json"]
+        globs: [flowise.json, "**/flowise.json", "chatflow*.json", "**/chatflow*.json", "agentflow*.json", "**/agentflow*.json"]
         weight: 0.8
       - type: env
         names: [FLOWISE_API_KEY, FLOWISE_USERNAME, FLOWISE_PASSWORD, FLOWISE_SECRETKEY_OVERWRITE]
@@ -202,7 +202,7 @@ signatures:
         patterns: ['langflowai/langflow', 'logspace/langflow']
         weight: 0.97
       - type: code
-        patterns: ['"last_tested_version"\s*:', '"is_component"\s*:\s*(?:true|false)\s*,\s*"last_tested_version"', '"type"\s*:\s*"Agent"\s*,\s*"display_name"\s*:\s*"Agent"']
+        patterns: ['"last_tested_version"\s*:', '"is_component"\s*:\s*(?:true|false)\s*,\s*"last_tested_version"', '"type"\s*:\s*"Agent"\s*,\s*"display_name"\s*:\s*"Agent"', '"type"\s*:\s*"(?:OpenAIModel|ChatOpenAI|RetrievalQA|ConversationChain|PromptTemplate|VectorStore)"', '"data"\s*:\s*\{\s*"type"\s*:\s*"[A-Z][a-zA-Z]+"\s*,\s*"node"\s*:']
         weight: 0.8
       - type: env
         names: [LANGFLOW_API_KEY, LANGFLOW_SUPERUSER, LANGFLOW_SUPERUSER_PASSWORD, LANGFLOW_AUTO_LOGIN]
@@ -241,6 +241,34 @@ signatures:
         values: ["re:.*\\.app\\.n8n\\.cloud$", "re:.*\\.n8n\\.cloud$"]
         weight: 0.8
       # The n8n display name is owned by identity-app.automation-agents.
+
+  - id: platform.rivet
+    name: Rivet
+    category: platform
+    vendor: Ironclad
+    homepage: https://rivet.ironcladapp.com
+    description: Visual AI pipeline builder with graph-based agent orchestration.
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@ironclad/rivet-core", "@ironclad/rivet-node", "@ironclad/rivet-cli"]
+        prefixes: ["@ironclad/rivet"]
+        weight: 0.95
+      - type: file
+        globs: ["*.rivet-project", "**/*.rivet-project", "*.rivet-graph", "**/*.rivet-graph"]
+        weight: 0.95
+      - type: code
+        patterns: ['"type"\s*:\s*"chat".*"useToolCalling"\s*:\s*true', '"type"\s*:\s*"loopController"', '"graphs"\s*:\s*\{.*"nodes"\s*:\s*\[']
+        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@ironclad/rivet']
+        weight: 0.95
+      - type: env
+        names: [RIVET_OPENAI_API_KEY, RIVET_PLUGIN_DIR]
+        weight: 0.6
 
   - id: platform.make
     name: Make (Integromat)
