@@ -2,6 +2,8 @@
 
 ## From PyPI
 
+Use Python 3.11, 3.12 or 3.13 in a fresh virtual environment:
+
 ```bash
 python -m pip install NexusShadowScan            # or: pipx install NexusShadowScan
 python -m pip install "NexusShadowScan[cloud]"   # adds the AWS, GCP, Azure and OCI SDKs
@@ -14,8 +16,7 @@ Releases reach PyPI only through the maintainer-approved
 [publish job](../operations/publishing.md), which uploads the wheel that the
 release-evidence workflow attested. Check a downloaded wheel against this
 repository with
-`gh attestation verify <wheel> --repo aisecnomad/Project-Nexus`. Until the
-first release is published, use the reviewed-revision install below.
+`gh attestation verify <wheel> --repo aisecnomad/Project-Nexus`.
 
 A plain `pip install` resolves dependencies from the live index. For a
 deployment, prefer the hash-locked install.

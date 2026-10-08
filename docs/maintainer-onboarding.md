@@ -2,9 +2,9 @@
 
 A checklist for adding a reviewer or co-maintainer, matching the roles in
 [Governance](https://github.com/aisecnomad/Project-Nexus/blob/main/GOVERNANCE.md#path-to-additional-maintainers).
-It lists only what the project actually has to hand over: there are currently
-no shared credentials, signing keys, deployment tokens or release automation
-with publish rights, and a release is a separate manual maintainer action.
+Publishing uses the protected GitHub environments and PyPI trusted publisher
+described in the [publishing runbook](operations/publishing.md); no long-lived
+package-index token is required. A release remains a manual maintainer action.
 
 ## Before access is granted
 

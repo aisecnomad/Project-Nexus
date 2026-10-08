@@ -1,6 +1,6 @@
 # Deployment and migration
 
-This is the rollout guide for the unreleased 0.1.1 candidate. It covers reviewed
+This is the rollout guide for version 0.1.1. It covers reviewed
 revisions, installation, validation, rollout, operation and migration.
 
 Automated validation establishes implementation behavior. Production rollout
@@ -18,6 +18,12 @@ merge rules. A versioned policy, merged pull request or passing CI does not
 establish independent human review. The [merge gate and review status](#merge-gate-and-review-status)
 section records the available evidence and commands for checking current
 enforcement. Independent human review is required before any tagged release.
+
+Release tags are annotated; personal tag signatures are optional. Verify the
+downloaded wheel's digest and GitHub provenance as described in the
+[publishing runbook](operations/publishing.md#per-release). Workflow
+attestations identify the artifact's origin and do not replace the review
+record or deployment acceptance evidence.
 
 ## Contents
 

@@ -6,17 +6,24 @@ is the detailed engineering log, recorded per change, and the
 [deployment and migration guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md)
 has the full upgrade steps.
 
-## 0.1.1 — unreleased candidate
+## 0.1.1 — 2026-10-08
 
-**Not released.** There is no tag, package or signed artifact, and no change
-has had independent human review. Install a reviewed commit SHA as the
+Initial public alpha of `NexusShadowScan`, with 38 connectors across nine
+discovery surfaces. Install with `python -m pip install NexusShadowScan` and
+run `shadowscan --help`; see the
 [README](https://github.com/aisecnomad/Project-Nexus/blob/main/README.md#install)
-describes.
+for cloud extras and hash-locked deployment instructions.
+
+These notes prepare the release; confirm publication on
+[PyPI](https://pypi.org/project/NexusShadowScan/0.1.1/) and the
+[GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.1).
+No independent human review is recorded in this release preparation.
+Publication and artifact attestations do not establish deployment acceptance.
 
 ### Before you upgrade
 
-- Install the `NexusShadowScan` distribution (`pip install NexusShadowScan`
-  once this release is published) into a fresh virtual environment. The
+- Install the `NexusShadowScan` distribution (`pip install NexusShadowScan`)
+  into a fresh virtual environment. The
   command and Python imports stay `shadowscan`; the unrelated `shadowscan`
   package on PyPI is not this project. Earlier candidate builds were named
   `project-nexus-shadowscan`; do not install both.

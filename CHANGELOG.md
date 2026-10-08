@@ -3,7 +3,17 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
-## 0.1.1 — Unreleased
+## 0.1.1 — 2026-10-08
+
+### October 8 release tags without a personal signing key
+
+- Release policy now permits unsigned annotated tags on the exact reviewed
+  commit; personal SSH or GPG tag signatures are optional. The default tagging
+  command disables automatic signing for that invocation.
+- Publishing continues through the existing protected GitHub Actions workflow
+  and PyPI trusted publisher, with GitHub provenance, SBOM and PyPI publish
+  attestations. Independent review, CI and CodeQL, immutable tag protections,
+  digest checks and environment approval remain required.
 
 ### October 7 release merge-rule check with an administrator readback
 
