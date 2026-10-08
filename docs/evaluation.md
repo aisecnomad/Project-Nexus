@@ -329,6 +329,23 @@ score, not an estimated probability. The report's Brier/ECE proxies use the
 maximum target finding confidence or zero for absence, and reliability bins;
 the tiny selected sample does not calibrate that score.
 
+## Real-world benchmark against other tools
+
+`tools/realbench/` compares ShadowScan with other open-source discovery tools
+and two naive baselines on 183 public GitHub and GitLab repositories. The
+repositories were drawn by a seeded, pre-registered procedure from public
+sampling frames and pinned to commits. Two AI annotators label each repository
+without seeing any tool output, an AI adjudicator resolves their disagreements,
+and every tool runs offline on a read-only checkout.
+
+Its labels are AI annotations, not human review, and the harness was written in
+this repository, so its results are not independent evidence. Its frames
+over-represent AI projects, so it does not estimate prevalence or precision for
+an estate either, and the procedure below still applies to production
+decisions. See its
+[protocol](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/realbench/PROTOCOL.md)
+for the design, conflicts of interest and limits.
+
 ## Build a genuinely held-out field set
 
 1. Define the population and unit before labeling: repository revision and

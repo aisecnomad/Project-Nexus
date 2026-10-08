@@ -3,6 +3,26 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
+## Unreleased
+
+### October 8 real-world discovery benchmark
+
+- New `tools/realbench/` harness: a pre-registered benchmark of
+  repository-scanning shadow-AI and agent discovery tools on 183 public GitHub
+  and GitLab repositories drawn by a seeded procedure from 63 public sampling
+  frames, each pinned to a commit. The tools are ShadowScan, Cisco AI BOM,
+  agent-bom, AgentDiscover Scanner, SafeDep vet, agentguard and cdxgen, plus
+  keyword-grep and manifest-dependency baselines.
+- Labels come from two independent AI annotators that differ in strategy and
+  model, with machine-checked evidence lines and AI adjudication of
+  disagreements. Every tool runs offline in fresh mount, network and PID
+  namespaces on a read-only checkout.
+- Analyses: primary and secondary analyses fixed before the scored run, exact
+  McNemar tests with Holm correction, precision at stated prevalences, blind
+  post-run label adjudication and a blind cited-file audit. Results are AI
+  annotations of a selected corpus, not independent human review or field
+  precision.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

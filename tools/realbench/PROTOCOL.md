@@ -210,6 +210,12 @@ repository's scanner code, signatures, the earlier synthetic benchmark, or
 any tool output; no tool has run on the scored corpus at that point. Each
 records its label, attributes and evidence in a ledger under `labels/`.
 
+*Run freeze:* annotator A ran on Claude Opus and annotator B on Claude Sonnet,
+so the two differ in model as well as strategy; the adjudicator ran on
+Claude Opus. A worked in batches of 12–13 consecutive identifiers and B in
+batches of 9–10 identifiers taken with a stride of 19, so no A batch matches a
+B batch. Each annotator saw only its own packets.
+
 **Disagreements** on the primary label or `assistant_artifacts` go to a third
 AI adjudicator. The adjudicator sees both rationales and the checkout, and
 writes the final label with a reason. Agreement before adjudication is
@@ -230,6 +236,30 @@ Every tool that can scan a repository directory is included:
 Tools that inspect only a live machine or network traffic are out of scope.
 Each tool is pinned to a commit or release in `install_tools.sh`.
 
+*Run freeze:* the tools and how each one is run.
+
+| Tool | Version | Run on a checkout |
+|---|---|---|
+| ShadowScan | this repository at the run-freeze commit | `scan` with one `code.filesystem` connector, defaults, `use_git: false` |
+| Cisco AI BOM | `cisco-ai-defense/aibom` `8d7bec0` | `analyze --output-format json`; its required LLM endpoint is unreachable offline, so the LLM tier keeps its deterministic candidates |
+| agent-bom | `msaad00/agent-bom` `129615f` (0.108.2) | `scan --no-scan --offline -f json`: inventory only, no vulnerability lookups |
+| AgentDiscover Scanner | `Defend-AI-Tech-Inc/agent-discover-scanner` `a3756cd` | `scan --format sarif`, then `audit --skip-layers 2,3,4,5` (the skipped layers need live hosts, clusters or cloud accounts) |
+| SafeDep vet | `safedep/vet` v1.20.0 `568cb0e` | `ai discover --scope project`, then `code scan` (AI-tagged signatures); telemetry disabled |
+| agentguard | `ak2dev/agentguard-v1` `6d4f75d` | `scan --config <empty policy> -f json` |
+| cdxgen | `@cyclonedx/cdxgen` 12.8.5 | `-t ai -t mcp -t ai-skill -r --no-install-deps`, with license fetching off and an empty command allow-list so it runs nothing inside the checkout |
+| Keyword grep | this repository | case-insensitive `rg -l` over every file except `.git` |
+| Manifest dependencies | this repository | direct dependencies in manifests outside vendored directories |
+
+Considered and excluded:
+
+- Snyk Agent Scan, Cisco MCP Scanner, Claw-Hunter and AI-Detector inspect a
+  machine's client configuration, processes or live MCP servers, not a
+  directory.
+- AgentSonar, Open Shadow AI and Shadow AI Detector read network traffic or
+  proxy logs.
+- PatronAI has no offline repository scanner: its code hook and repository
+  discovery upload to an S3 bucket for server-side analysis.
+
 Every run:
 
 - has no network (fresh network namespace) and no host processes (fresh PID
@@ -245,6 +275,11 @@ A crash, timeout or incomplete scan is an **error**. In primary metrics an
 error is a wrong answer: a miss on a positive, and a false alarm on a
 negative, because a failed scan cannot certify a repository clean. Metrics
 over completed scans only are reported as a secondary analysis.
+
+*Run freeze:* an adapter reports `ok` (a complete report), `partial` (a report
+the tool itself marks incomplete, such as ShadowScan's exit 3) or `error` (no
+usable report). The primary analysis treats `partial` as an error, as
+pre-registered. See §12 for the added secondary analysis.
 
 A seeded 10% subset is run a second time per tool to measure run-to-run
 flips.
@@ -297,6 +332,9 @@ correction is applied within each family of comparisons.
 - Each tool's detection rate on assistant-only repositories.
 - Positive predictive value at prevalences of 1%, 5% and 20%, computed from
   recall and specificity.
+- *Added at the run freeze:* the evidence rule (an item found by an
+  incomplete scan counts as a positive verdict), and T2 with repositories
+  that carry AI coding-assistant files removed from the negatives (§12).
 
 ### 8.4 Breakdowns (exploratory)
 
@@ -375,4 +413,32 @@ checkouts with `fetch.py`.
 
 ## 12. Deviations
 
-None so far.
+Every change below was made before any tool ran on the scored corpus.
+
+1. **Partial scans.** Calibration showed that ShadowScan and others report
+   some scans as incomplete while still listing findings. The primary rule
+   is unchanged: an incomplete scan is an error and a wrong answer. The
+   *evidence rule* is added as a secondary analysis. It counts an item found
+   by an incomplete scan as a positive verdict, because incompleteness
+   undermines only a negative conclusion. The rule was added after seeing
+   calibration output in which ShadowScan reported the most incomplete scans,
+   so it is reported only as a secondary analysis.
+2. **T2 without assistant-file negatives.** Several tools classify AI
+   coding-assistant files (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules`) as
+   agent configuration, while the rubric does not label them `agent`. A
+   secondary T2 analysis drops repositories with such files from the T2
+   negatives, so that this definitional difference does not decide the
+   comparison.
+3. **Annotator workspace.** In the first wave, annotators shared one scratch
+   directory for helper files. One annotator's helper script was overwritten
+   by another's, and one label line landed in the wrong batch file. The owner
+   removed it, the label remained in the right file, and every batch file was
+   checked for foreign and missing identifiers. Two B annotators had written
+   draft labels for twelve repositories into that shared directory. Every
+   later annotator received a private working directory. The drafts were
+   moved out of reach once their authors finished. Each annotator's
+   transcript is audited for access to the other side's files, and the
+   result is reported with the agreement statistics.
+4. **Tool set.** The run uses agent-bom at `129615f`, newer than the commit
+   pinned in the synthetic benchmark, and adds SafeDep vet, agentguard and
+   cdxgen as directory scanners. PatronAI was examined and excluded (§6).
