@@ -461,3 +461,59 @@ the `none` are assistant-only, which leaves 171 repositories in the primary
 population. Before adjudication, the annotators agreed on 179 of 183
 three-class labels (κ 0.96) and on every `assistant_artifacts` value. The
 adjudicator resolved the four disagreements.
+
+## 13. Post-change holdout (pre-registered before its draw)
+
+The first run found ShadowScan's analysis accurate on the scans it finished
+and its coverage policy the main weakness. ShadowScan was then changed using
+that run's repositories (see `CHANGELOG.md`, "October 8 benchmark
+remediation"). Re-scoring those repositories would measure fit, not
+generalisation, so the changes are measured on a fresh holdout. Everything
+in this section was committed before the holdout was drawn.
+
+### 13.1 Draw
+
+`holdout.py` runs the scored draw of §3.2 on the same frame snapshot, with
+the same strata, quotas (140 sampled repositories), eligibility rules and
+two-stage selection, and with seed `HOLDOUT_SEED = 20261009`. Every
+repository and every owner of `corpus.json`, `calibration.json` and
+`purposive.json` is excluded. There are no purposive sets: the original hard
+negatives cannot be reused, and picking new ones by hand after the first
+results would not be blind. Specificity therefore comes from the sampled
+strata alone. Identifiers are `h001`–`h140`.
+
+### 13.2 Labels
+
+The rubric (§4) and annotation process (§5) are unchanged: annotator A on
+Claude Opus with evidence packets, annotator B on Claude Sonnet without, in
+batches that never pair up, and a third AI adjudicator for disagreements.
+Annotators see no tool output; each works in a private directory. The labels
+are frozen and pushed before any tool runs on the holdout. These are AI
+annotations, not human review.
+
+While the labels are produced, ShadowScan's development continues on other
+repositories only. Nobody opens a holdout checkout to change ShadowScan, and
+its code is frozen at a stated commit before the run.
+
+### 13.3 Run
+
+Every tool of §6 runs on the holdout with the same versions, adapters,
+isolation and 900 s timeout; ShadowScan runs at the code-freeze commit. One
+adapter rule changes, because ShadowScan now states it: its `agentic` value
+is primarily any finding with `metadata.agentic` true (the classification
+the scanner documents), and secondarily the original kind list of §7.
+`detected` is unchanged: any finding.
+
+### 13.4 Analyses
+
+As §8 on the holdout: the strict rule (an incomplete or failed scan is a
+wrong answer) is primary; completed scans and the evidence rule are
+secondary. For ShadowScan, the incomplete rate and its causes are reported
+next to the first run's. The first run's numbers and the holdout's come from
+different samples, so the difference between them is described, not tested.
+A post-change ShadowScan run on the original corpus is reported as an
+in-sample check only, because the fixes were derived from it.
+
+Targets stated before the draw, reported as met or not met and never
+adjusted afterwards: incomplete scans at most 5%; T1 MCC at least 0.80; T2
+MCC at least 0.75; T1 specificity at least 0.97.
