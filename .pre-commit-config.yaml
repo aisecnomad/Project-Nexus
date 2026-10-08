@@ -28,7 +28,8 @@ repos:
         exclude: |
           (?x)^(
             shadowscan/utils/redaction_formats\.py|
-            tests/unit/test_(redaction_security|redaction_cli_and_formats|redaction_pass_order|redaction_performance|regex_linearity)\.py
+            tests/unit/test_(redaction_security|redaction_cli_and_formats|redaction_pass_order|redaction_performance|regex_linearity)\.py|
+            tests/unit/test_benchmark_realworld_review2\.py
           )$
       - id: no-commit-to-branch
         args: [--branch=main]

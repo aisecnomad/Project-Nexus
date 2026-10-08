@@ -124,18 +124,33 @@ def cohen_kappa(pairs: list[tuple[str, str]]) -> float | None:
     return 1.0 if expected == 1 else (observed - expected) / (1 - expected)
 
 
+def _binary(label: str) -> str:
+    return "pos" if label in ("agent", "llm") else label
+
+
 def agreement(repos: list[dict[str, Any]]) -> dict[str, Any]:
-    three = [(r["labels"]["A"], r["labels"]["B"]) for r in repos]
-    binary = [
-        ("pos" if a in ("agent", "llm") else a, "pos" if b in ("agent", "llm") else b) for a, b in three
-    ]
-    return {
-        "repos": len(repos),
-        "exact_agreement": sum(a == b for a, b in three) / len(three) if three else None,
-        "kappa_three_way": cohen_kappa(three),
-        "kappa_positive_vs_none": cohen_kappa(binary),
-        "disagreements": [r["id"] for r in repos if r["labels"]["A"] != r["labels"]["B"]],
-    }
+    """Agreement for every pair of labelers (A, B, C). The top level keeps the A-B pair for the v1 report.
+
+    Positive versus none uses only repositories with no ambiguous label on either side of the pair
+    (protocol v2, section 4.2)."""
+    repos = [r for r in repos if "labels" in r]  # endpoint-only entries carry no repository labels
+    pairs: dict[str, dict[str, Any]] = {}
+    for a, b in (("A", "B"), ("A", "C"), ("B", "C")):
+        both = [(r["labels"][a], r["labels"][b]) for r in repos if a in r["labels"] and b in r["labels"]]
+        pairs[a + b] = {
+            "n": len(both),
+            "exact_agreement": sum(x == y for x, y in both) / len(both) if both else None,
+            "kappa_three_way": cohen_kappa(both),
+            "kappa_positive_vs_none": cohen_kappa(
+                [(_binary(x), _binary(y)) for x, y in both if "ambiguous" not in (x, y)]
+            ),
+            "disagreements": [
+                r["id"]
+                for r in repos
+                if a in r["labels"] and b in r["labels"] and r["labels"][a] != r["labels"][b]
+            ],
+        }
+    return {"repos": len(repos), **pairs["AB"], "pairs": pairs}
 
 
 def fmt_p(p: float | None, lo: float | None = None, hi: float | None = None) -> str:

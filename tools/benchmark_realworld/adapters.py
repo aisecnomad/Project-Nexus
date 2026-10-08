@@ -48,8 +48,9 @@ TOOL_PINS: dict[str, str] = {
 
 
 def _in_scope(items: list[Any], scope: str) -> list[Any] | None:
-    """Items for one ``Scope`` code; ``None`` when an item lacks a Scope (an unexpected format)."""
-    if any(not isinstance(i, dict) or "Scope" not in i for i in items):
+    """Items for one ``Scope`` code. ``None`` (an unexpected format) when an item has no
+    Scope or a Scope other than the two documented codes; such an item is never dropped."""
+    if any(not isinstance(i, dict) or str(i.get("Scope")) not in ("1", "2") for i in items):
         return None
     return [i for i in items if str(i["Scope"]) == scope]
 
@@ -85,7 +86,12 @@ class SafeDepVet(Adapter):
         if code != 0 or not report.exists():
             return None, "", f"exit {code}: {_tail(stderr or stdout)}", secs
         text = report.read_text(encoding="utf-8")
-        return json.loads(text) or [], text, "", secs
+        items = json.loads(text)
+        if items is None:  # an empty inventory is printed as null
+            items = []
+        if not isinstance(items, list):
+            return None, "", "unexpected inventory format (not a list)", secs
+        return items, text, "", secs
 
     def _outcome(self, items: list[Any], text: str, secs: float, scope: str, name: str) -> Outcome:
         own = _in_scope(items, scope)
@@ -221,6 +227,17 @@ class ShadowMCPDiscover(Adapter):
         )
 
 
+class ShadowScanDedicatedV2(ShadowScanDedicated):
+    """Dedicated connectors on the endpoint surface only (benchmark v2).
+
+    On the repository surface this configuration calls the same ``code.filesystem``
+    scan as the published configuration, so v2 does not run it twice. The v1
+    repository rows are kept and reported as a determinism check.
+    """
+
+    surfaces = {"endpoint": ShadowScanDedicated.surfaces["endpoint"]}
+
+
 # Every tool the real-world benchmark runs. Network-only tools (Open Shadow AI,
 # AgentSonar, Shadow AI Detector) have no real-world input and are not listed.
 ADAPTERS: tuple[Adapter, ...] = (
@@ -237,3 +254,37 @@ ADAPTERS: tuple[Adapter, ...] = (
     ClawHunter(),
     AIDetector(),
 )
+
+
+class ShadowScanRepoOnlyV2(ShadowScan):
+    """The published configuration on the repository surface only (benchmark v2).
+
+    On the endpoint surface this configuration scans the copied tree as a path, so
+    its rows measure repository files and not the home view (protocol v2, section 5).
+    Its v1 whole-tree home rows are reported as a diagnostic, not as endpoint evidence.
+    """
+
+    surfaces = {"repo": ShadowScan.surfaces["repo"]}
+
+
+class CiscoAIBOMRepoOnlyV2(CiscoAIBOM):
+    """Cisco AI BOM on the repository surface only (benchmark v2); see ShadowScanRepoOnlyV2."""
+
+    surfaces = {"repo": CiscoAIBOM.surfaces["repo"]}
+
+
+class AgentDiscoverRepoOnlyV2(AgentDiscover):
+    """AgentDiscover on the repository surface only (benchmark v2); see ShadowScanRepoOnlyV2."""
+
+    surfaces = {"repo": AgentDiscover.surfaces["repo"]}
+
+
+# The tools for benchmark v2. Each override changes only the surfaces a tool is run on;
+# every other tool is the v1 adapter unchanged.
+_V2_OVERRIDES: dict[str, Adapter] = {
+    "shadowscan": ShadowScanRepoOnlyV2(),
+    "shadowscan-dedicated": ShadowScanDedicatedV2(),
+    "cisco-aibom": CiscoAIBOMRepoOnlyV2(),
+    "agentdiscover": AgentDiscoverRepoOnlyV2(),
+}
+ADAPTERS_V2: tuple[Adapter, ...] = tuple(_V2_OVERRIDES.get(a.name, a) for a in ADAPTERS)

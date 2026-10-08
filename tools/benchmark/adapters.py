@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -78,21 +79,43 @@ def _isolated(cmd: list[str], *, env: dict[str, str], cwd: Path, stdin: str | No
     running processes sees only its own and cannot report the benchmark host.
     """
     full = ["unshare", "--net", "--pid", "--fork", "--mount-proc", "--", *_RUN_AS, *cmd]
+    return _run_group(full, env=env, cwd=cwd, stdin=stdin, timeout=TIMEOUT_S)
+
+
+def _run_group(full: list[str], *, env: dict[str, str], cwd: Path, stdin: str | None, timeout: float) -> Run:
+    """Run ``full`` in its own process group; on timeout, kill the whole group.
+
+    ``subprocess.run`` kills only the direct child on timeout, and the tools
+    start helpers of their own. In the v1 real-world run, a timed-out Cisco AI
+    BOM process kept running for 34 minutes after its verdict was recorded.
+    Killing the group stops those helpers too. A timeout still returns code 124,
+    so the case is an error and never a negative.
+    """
     started = time.monotonic()
+    proc = subprocess.Popen(
+        full,
+        stdin=subprocess.PIPE if stdin is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        cwd=cwd,
+        start_new_session=True,
+    )
     try:
-        proc = subprocess.run(
-            full,
-            input=stdin,
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=cwd,
-            timeout=TIMEOUT_S,
-            check=False,
-        )
+        out, err = proc.communicate(input=stdin, timeout=timeout)
     except subprocess.TimeoutExpired:
-        return 124, "", f"timeout after {TIMEOUT_S}s", time.monotonic() - started
-    return proc.returncode, proc.stdout, proc.stderr, time.monotonic() - started
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # the group already exited
+        try:
+            out, err = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            out, err = "", ""  # a process left the group and still holds the pipes
+        # No stdout on timeout: a tool that printed its report and then hung must not score.
+        return 124, "", f"timeout after {timeout}s", time.monotonic() - started
+    return proc.returncode, out, err, time.monotonic() - started
 
 
 def _base_env(home: Path, work: Path) -> dict[str, str]:
@@ -136,12 +159,17 @@ def copy_checkout(src: Path, dst: Path) -> dict[str, int]:
     Links are never followed, so a scanned repository cannot make a tool read
     files outside the copy. Returns the counts of copied and skipped entries.
     """
-    counts = {"files": 0, "skipped_links": 0, "skipped_other": 0}
-    for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
+    counts = {"files": 0, "skipped_links": 0, "skipped_other": 0, "skipped_git": 0}
+
+    def _unreadable(error: OSError) -> None:
+        raise error  # an unreadable subtree fails the copy; it is never skipped silently
+
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=False, onerror=_unreadable):
         here = Path(dirpath)
         for name in list(dirnames):
             if name == ".git":
                 dirnames.remove(name)
+                counts["skipped_git"] += 1
             elif (here / name).is_symlink():
                 counts["skipped_links"] += 1
                 dirnames.remove(name)
@@ -149,7 +177,9 @@ def copy_checkout(src: Path, dst: Path) -> dict[str, int]:
         target.mkdir(parents=True, exist_ok=True)
         for name in filenames:
             path = here / name
-            if path.is_symlink():
+            if name == ".git":  # a .git file (worktree or submodule pointer) is metadata too
+                counts["skipped_git"] += 1
+            elif path.is_symlink():
                 counts["skipped_links"] += 1
             elif path.is_file():
                 shutil.copy2(path, target / name)
@@ -224,14 +254,16 @@ class ShadowScan(Adapter):
         "network": "gateway.logs on a JSON access log",
     }
 
-    def _scan(self, connector: dict[str, Any], work: Path, env: ToolEnv) -> Outcome:
+    def _scan(
+        self, connector: dict[str, Any], work: Path, env: ToolEnv, home: Path | None = None
+    ) -> Outcome:
         cfg = work / "shadowscan.yaml"
         cfg.write_text(json.dumps({"connectors": [connector]}), encoding="utf-8")
         out = work / "report.json"
         code, stdout, stderr, secs = _isolated(
             [env.python, "-m", "shadowscan", "scan", "-c", str(cfg), "-f", "json", "-o", str(out)],
             env={
-                **_base_env(_empty_home(work), work),
+                **_base_env(home if home is not None else _empty_home(work), work),
                 "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
             },
             cwd=work,
@@ -264,7 +296,8 @@ class ShadowScan(Adapter):
 
     def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         root = self.tree(case, work, "home")
-        return self._scan({"name": "code.filesystem", "path": str(root), "use_git": False}, work, env)
+        connector = {"name": "code.filesystem", "path": str(root), "use_git": False}
+        return self._scan(connector, work, env, home=root)
 
     def run_network(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         log = work / "access.jsonl"
@@ -306,14 +339,16 @@ class ShadowScanDedicated(ShadowScan):
         "network": "gateway.logs on a JSON access log + network.logs on TLS/flow records",
     }
 
-    def _scan_all(self, connectors: list[dict[str, Any]], work: Path, env: ToolEnv) -> Outcome:
+    def _scan_all(
+        self, connectors: list[dict[str, Any]], work: Path, env: ToolEnv, home: Path | None = None
+    ) -> Outcome:
         cfg = work / "shadowscan.yaml"
         cfg.write_text(json.dumps({"connectors": connectors}), encoding="utf-8")
         out = work / "report.json"
         code, stdout, stderr, secs = _isolated(
             [env.python, "-m", "shadowscan", "scan", "-c", str(cfg), "-f", "json", "-o", str(out)],
             env={
-                **_base_env(_empty_home(work), work),
+                **_base_env(home if home is not None else _empty_home(work), work),
                 "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
             },
             cwd=work,
@@ -344,7 +379,7 @@ class ShadowScanDedicated(ShadowScan):
     def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         root = self.tree(case, work, "home")
         connector = {"name": "endpoint.inventory", "path": str(root), "label": "bench"}
-        return self._scan_all([connector], work, env)
+        return self._scan_all([connector], work, env, home=root)
 
     def run_network(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         access = work / "access.jsonl"
@@ -409,17 +444,25 @@ class CiscoAIBOM(Adapter):
             "--agentic-max-consecutive-failures", "1",
         ]  # fmt: skip
         code, stdout, stderr, secs = _isolated(cmd, env=_base_env(_empty_home(work), work), cwd=work)
+        if code != 0:  # measured: exit 0 on every completed analysis; non-zero is an error
+            return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
         if not out.exists():
             return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
         text = out.read_text(encoding="utf-8")
-        analysis = json.loads(text)["aibom_analysis"]
-        if analysis["metadata"].get("status") != "completed" or analysis["metadata"].get(
-            "sources_with_errors"
-        ):
-            return Outcome("error", seconds=secs, note=f"status {analysis['metadata'].get('status')}", raw={})
-        summary = analysis["summary"]
+        doc = json.loads(text)
+        analysis = doc.get("aibom_analysis") if isinstance(doc, dict) else None
+        meta = analysis.get("metadata") if isinstance(analysis, dict) else None
+        summary = analysis.get("summary") if isinstance(analysis, dict) else None
+        if not isinstance(meta, dict) or not isinstance(summary, dict):
+            note = "report has no aibom_analysis metadata and summary"
+            return Outcome("error", seconds=secs, note=note, raw={})
+        if not isinstance(summary.get("total_components"), int):
+            return Outcome("error", seconds=secs, note="report has no total_components", raw={})
+        if meta.get("status") != "completed" or meta.get("sources_with_errors"):
+            note = f"incomplete analysis: status {meta.get('status')}"
+            return Outcome("error", seconds=secs, note=note, raw={})
         types = set(summary.get("component_types") or {})
-        total = int(summary.get("total_components") or 0)
+        total = summary["total_components"]
         return Outcome(
             "ok",
             detected=total > 0,
@@ -461,23 +504,43 @@ class AgentBom(Adapter):
         exe = env.venv_bin("agentbom", "agent-bom")
         return None if exe.exists() else str(exe)
 
-    def _report(self, args: list[str], home: Path, work: Path, env: ToolEnv) -> tuple[Any, str, str, float]:
-        out = work / f"agent-bom-{home.name}.json"
+    def _report(
+        self, args: list[str], home: Path, work: Path, env: ToolEnv, tag: str
+    ) -> tuple[Any, str, str, float]:
+        out = work / f"agent-bom-{tag}.json"  # one file per scan: a baseline must never answer a repo scan
+        out.unlink(missing_ok=True)
         cmd = [str(env.venv_bin("agentbom", "agent-bom")), "scan", *args, "--no-scan", "--offline"]
         cmd += ["-f", "json", "-o", str(out)]
         code, stdout, stderr, secs = _isolated(cmd, env=_base_env(home, work), cwd=work)
-        if not out.exists():
+        # Measured: exit 1 is either a completed scan with findings ("found critical") or a partial
+        # scan. The report's scan_run tells them apart, so the report decides, not the exit code.
+        if code not in (0, 1) or not out.exists():
             return None, "", f"exit {code}: {_tail(stderr or stdout)}", secs
         text = out.read_text(encoding="utf-8")
-        return json.loads(text), text, "", secs
+        try:
+            doc = json.loads(text)
+        except json.JSONDecodeError:
+            return None, "", f"exit {code}: report is not JSON", secs
+        run = doc.get("scan_run") if isinstance(doc, dict) else None
+        outcome = run.get("outcome") if isinstance(run, dict) else None
+        if outcome != "complete" or (run or {}).get("incomplete_scope_count"):
+            return None, "", f"exit {code}: scan not complete ({outcome})", secs
+        if not isinstance(doc.get("agents"), list):
+            return None, "", f"exit {code}: report has no agents list", secs
+        return doc, text, "", secs
 
     @staticmethod
     def _agent_key(agent: dict[str, Any]) -> tuple[str, str, str]:
         return (str(agent.get("name")), str(agent.get("agent_type")), str(agent.get("status")))
 
+    @staticmethod
+    def _bound_to_model(server: dict[str, Any]) -> bool:
+        """A project server is bound to a model when its model, models or provider field is set."""
+        return any(server.get(key) for key in ("model", "bound_model", "models", "provider"))
+
     def _baseline_agents(self, work: Path, env: ToolEnv) -> frozenset[tuple[str, str, str]]:
         if self._baseline is None:
-            doc, _, err, _ = self._report([], _empty_home(work), work, env)
+            doc, _, err, _ = self._report([], _empty_home(work), work, env, "baseline")
             if doc is None:
                 raise RuntimeError(f"agent-bom baseline failed: {err}")
             self._baseline = frozenset(self._agent_key(a) for a in doc.get("agents", []))
@@ -491,10 +554,7 @@ class AgentBom(Adapter):
             is_project = (agent.get("discovery_provenance") or {}).get("source") == "project"
             if is_project:
                 for server in agent.get("mcp_servers", []):
-                    if server.get("surface") == "ai-inventory" or server.get("command") not in (
-                        "project",
-                        None,
-                    ):
+                    if server.get("surface") == "ai-inventory" or self._bound_to_model(server):
                         ai.append(server.get("name"))
             elif self._agent_key(agent) not in baseline:
                 clients.append(agent.get("name"))
@@ -513,14 +573,14 @@ class AgentBom(Adapter):
     def run_repo(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         baseline = self._baseline_agents(work, env)
         root = self.tree(case, work, "repo")
-        doc, text, err, secs = self._report([str(root)], _empty_home(work), work, env)
+        doc, text, err, secs = self._report([str(root)], _empty_home(work), work, env, "repo")
         if doc is None:
             return Outcome("error", seconds=secs, note=err)
         return self._outcome(doc, text, secs, baseline)
 
     def run_endpoint(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         baseline = self._baseline_agents(work, env)
-        doc, text, err, secs = self._report([], self.tree(case, work, "home"), work, env)
+        doc, text, err, secs = self._report([], self.tree(case, work, "home"), work, env, "home")
         if doc is None:
             return Outcome("error", seconds=secs, note=err)
         return self._outcome(doc, text, secs, baseline)
@@ -557,6 +617,8 @@ class AgentDiscover(Adapter):
             env=_base_env(home, work),
             cwd=work,
         )
+        if code != 0:  # measured: 0 on every completed scan
+            return Outcome("error", seconds=secs, note=f"scan exit {code}: {_tail(stderr or stdout)}")
         results: list[Any] = []
         raw: dict[str, str] = {}
         if sarif.exists():
@@ -623,6 +685,8 @@ class SnykAgentScan(Adapter):
         cmd = [str(env.venv_bin("snyk", "snyk-agent-scan")), "inspect", "--json"]
         cmd += ["--storage-file", str(work / "agent-scan-state"), "--server-timeout", "2"]
         code, stdout, stderr, secs = _isolated(cmd, env=_base_env(home, work), cwd=work)
+        if code != 0:  # measured: 0 on every completed inspection
+            return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
         try:
             doc = json.loads(stdout)
         except json.JSONDecodeError:
@@ -675,7 +739,11 @@ class CiscoMCPScanner(Adapter):
             doc = None
         if code != 0 or not isinstance(doc, dict):
             return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
-        scanned = {str(r.get("server_name") or r.get("name")) for r in doc.get("scan_results") or []}
+        scanned = set()
+        for record in doc.get("scan_results") or []:
+            name = (record.get("server_name") or record.get("name")) if isinstance(record, dict) else None
+            if name:
+                scanned.add(str(name))
         enumerated = {
             name for name, path in _MCP_SCANNER_SERVER.findall(stderr) if path.startswith(str(home))
         }
@@ -898,15 +966,18 @@ class ClawHunter(Adapter):
         code, stdout, stderr, secs = _isolated(
             ["bash", str(script), "--json"], env=_base_env(home, work), cwd=work
         )
+        if code not in (0, 1, 2):  # its contract: 0 clean, 1 findings, 2 not installed; 3 is an error
+            return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
         marker = stdout.find("JSON OUTPUT")
         start = stdout.find("{", marker if marker >= 0 else 0)
         try:
             doc = json.loads(stdout[start:]) if start >= 0 else None
         except json.JSONDecodeError:
             doc = None
-        if not isinstance(doc, dict):
-            return Outcome("error", seconds=secs, note=f"exit {code}: {_tail(stderr or stdout)}")
-        signals = [k for k in self.SIGNALS if doc.get(k) is True]
+        # Every signal field is printed as a boolean on every run; a report without them is unreadable.
+        if not isinstance(doc, dict) or not all(isinstance(doc.get(k), bool) for k in self.SIGNALS):
+            return Outcome("error", seconds=secs, note=f"exit {code}: report lacks the signal fields")
+        signals = [k for k in self.SIGNALS if doc[k] is True]
         return Outcome(
             "ok",
             detected=bool(signals),
@@ -944,15 +1015,21 @@ class AIDetector(Adapter):
         cmd = [*drop, "bash", str(script)]
         environ = {**_base_env(home, work), "SHADOW_AI_REPORT": "json", "SHADOW_AI_NETWORK": "false"}
         code, stdout, stderr, secs = _isolated(cmd, env=environ, cwd=work)
+        # Its contract: 0 clean, 1 found, 2 error. Its JSON omits script errors, which appear on
+        # stderr as "[ERROR]" lines, so any such line makes the run incomplete.
+        if code not in (0, 1) or "[ERROR]" in stderr:
+            return code, None, f"exit {code}: {_tail(stderr or stdout)}", secs
         start = stdout.find("{")
         try:
             doc = json.loads(stdout[start:]) if start >= 0 else None
         except json.JSONDecodeError:
             doc = None
-        if not isinstance(doc, dict):
-            return code, None, f"exit {code}: {_tail(stderr or stdout)}", secs
-        found = doc.get("findings", [])
-        return code, found if isinstance(found, list) else [], stdout[start:], secs
+        found = doc.get("findings") if isinstance(doc, dict) else None
+        flagged = doc.get("shadow_ai_detected") if isinstance(doc, dict) else None
+        # The exit code and the JSON flag must agree (1 found, 0 clean). Anything else is unreadable.
+        if not isinstance(found, list) or not isinstance(flagged, bool) or flagged != (code == 1):
+            return code, None, f"exit {code}: report lacks findings or disagrees with the exit code", secs
+        return code, found, stdout[start:], secs
 
     @staticmethod
     def _key(item: dict[str, Any], home: Path) -> str:
@@ -964,8 +1041,10 @@ class AIDetector(Adapter):
             base_work = work.parent / f"{work.name}-baseline"
             (base_work / "home").mkdir(parents=True)
             (base_work / "tmp").mkdir()
-            _, found, _, _ = self._findings(base_work / "home", base_work, env)
-            self._baseline = frozenset(self._key(f, base_work / "home") for f in (found or []))
+            _, found, text, _ = self._findings(base_work / "home", base_work, env)
+            if found is None:  # a failed baseline is an error, never an empty baseline
+                raise RuntimeError(f"ai-detector baseline failed: {text}")
+            self._baseline = frozenset(self._key(f, base_work / "home") for f in found)
         home = self.tree(case, work, "home")
         code, found, text, secs = self._findings(home, work, env)
         if found is None:

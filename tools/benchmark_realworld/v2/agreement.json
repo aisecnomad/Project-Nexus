@@ -1,0 +1,16 @@
+{
+  "subjects_repo_s1": 43,
+  "unanimous": 40,
+  "disagreements": 3,
+  "adjudicated_adopted": 3,
+  "pairwise_cohen_kappa_three_way": {
+    "B2-C2": 0.9247594050743656,
+    "B2-D2": 0.8903993203058623,
+    "C2-D2": 0.9264328485885372
+  },
+  "fleiss_kappa_three_way": 0.9136546184738954,
+  "fleiss_kappa_positive_vs_none": 1.0,
+  "warnings": [
+    "fivethirtyeight/data: glob citation, not checked as a path: us-weather-history/*.py"
+  ]
+}

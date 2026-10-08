@@ -1,0 +1,31 @@
+{
+  "rule": "A disagreement among the three blinded labelers is settled by reading the cited lines against protocol section 4. Where the criteria are not clearly met either way, the label is ambiguous. Each decision names the cited lines it rests on; the builder checks that every cited path exists.",
+  "decisions": {
+    "patrickjs/awesome-cursorrules": {
+      "label": "agent",
+      "confidence": "medium",
+      "reason": "Clause (b) holds literally: a registration of an mcpServers entry for an AI client sits in a shipped sample rule (rules/helium-mcp-cursorrules-prompt-file.mdc, line 16). The llm reading also holds (257 instruction files; an OpenAI SDK sample in rules/convex-cursorrules-prompt-file.mdc, lines 479 and 565). The repository is a positive either way, so the agent/llm split affects only the agent-tier analysis.",
+      "cited": [
+        "rules/helium-mcp-cursorrules-prompt-file.mdc (mcpServers entry, line 16)",
+        "rules/convex-cursorrules-prompt-file.mdc (OpenAI SDK sample, lines 479 and 565)"
+      ]
+    },
+    "zie619/n8n-workflows": {
+      "label": "agent",
+      "confidence": "medium",
+      "reason": "Clause (b): workflows/Gmailtool/1142_Gmailtool_Stickynote_Automation_Triggered.json, line 124, configures an n8n-nodes-mcp MCP client node in a shipped sample. ai-stack/docker-compose.yml, lines 52-54, deploys an agent runtime (agent-zero). The llm reading also holds (OpenAI nodes; CLAUDE.md). The repository is a positive either way.",
+      "cited": [
+        "workflows/Gmailtool/1142_Gmailtool_Stickynote_Automation_Triggered.json (n8n-nodes-mcp.mcpClientTool, line 124)",
+        "ai-stack/docker-compose.yml (agent-zero service, lines 52-54)"
+      ]
+    },
+    "google/mediapipe": {
+      "label": "ambiguous",
+      "confidence": "low",
+      "reason": "Shipped and test code expose an on-device LLM inference SDK (class LlmInference, line 170; generateResponse, line 665) and make no provider API call. The protocol's llm definition (a call to an LLM provider API or SDK) and its none definition (ML model code that calls no provider API) both fit. Two of three labelers chose ambiguous, so the repository is excluded from the primary metrics and reported in the sensitivity analysis.",
+      "cited": [
+        "mediapipe/tasks/web/genai/llm_inference/llm_inference.ts (class LlmInference, line 170; generateResponse, line 665)"
+      ]
+    }
+  }
+}

@@ -28,10 +28,12 @@ from pathlib import Path
 from typing import Any
 
 from tools.benchmark.adapters import Adapter, Outcome, ShadowScan, ToolEnv, set_run_as
-from tools.benchmark_realworld.adapters import ADAPTERS, TOOL_PINS
+from tools.benchmark_realworld.adapters import ADAPTERS, ADAPTERS_V2, TOOL_PINS
 from tools.benchmark_realworld.cases import (
     RealCase,
     build_cases,
+    build_cases_v2,
+    checkout_head,
     redact,
     sanitize_note,
     validate_manifest,
@@ -44,6 +46,46 @@ SANDBOX = (
     "HOME=case; no .git, no symlinks"
 )
 ROOT = Path(__file__).resolve().parents[2]
+
+
+# The code that produces the verdict rows: the case builder, the adapters, the runner and the
+# case base they share. The scorers and the report are not in this hash; they are frozen as files
+# in FREEZE-v2.txt, so a change to them does not invalidate a run that was already made.
+VERDICT_CODE = (
+    "tools/benchmark/adapters.py",
+    "tools/benchmark/common.py",
+    "tools/benchmark_realworld/adapters.py",
+    "tools/benchmark_realworld/cases.py",
+    "tools/benchmark_realworld/run.py",
+)
+
+
+def code_sha256(root: Path) -> str:
+    """SHA-256 over the verdict code (``VERDICT_CODE``), each file's path included."""
+    digest = hashlib.sha256()
+    for name in VERDICT_CODE:
+        digest.update(name.encode() + b"\0" + (root / name).read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def select_only(cases: list[RealCase], only_cases: Path) -> list[RealCase]:
+    """The cases named in a sensitivity re-run's list. An unknown id is refused, never ignored."""
+    keep = set(only_cases.read_text(encoding="utf-8").split())
+    unknown = sorted(keep - {c.case_id for c in cases})
+    if unknown:  # a misspelt id must not shrink a sensitivity re-run without a word
+        raise ValueError(f"--only-cases names cases that do not exist: {unknown[:5]}")
+    selected = [c for c in cases if c.case_id in keep]
+    if not selected:
+        raise ValueError("--only-cases lists no case")
+    return selected
+
+
+def provenance_conflict(previous: dict[str, Any], provenance: dict[str, Any], names: set[str]) -> str | None:
+    """Why the summaries a run would keep came from other inputs or code; None when they did not."""
+    kept = sorted(r["tool"] for r in previous.get("runs", []) if r["tool"] not in names)
+    if kept and any(previous.get(key) != value for key, value in provenance.items()):
+        return f"holds {kept} from a run with other inputs or code; use a new results directory"
+    return None
 
 
 def _run_one(adapter: Adapter, case: RealCase, env: ToolEnv, scratch: Path, checkout_root: Path) -> Outcome:
@@ -160,20 +202,59 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--limit", type=int, default=0, help="first N repositories (calibration only)")
     parser.add_argument("--self-check", action="store_true", help="also run ShadowScan on this repository")
+    parser.add_argument(
+        "--only-cases", type=Path, default=None, help="file of case ids to run (sensitivity re-runs only)"
+    )
+    parser.add_argument(
+        "--protocol", type=Path, default=None, help="protocol file; its SHA-256 goes in the run manifest"
+    )
     args = parser.parse_args(argv)
 
     # Work directories are created world-writable so the unprivileged tool runs can write to them.
     os.umask(0)
     manifest_bytes = args.manifest.read_bytes()
-    repos = validate_manifest(json.loads(manifest_bytes))
+    doc = json.loads(manifest_bytes)
+    version = int(doc.get("version", 1))  # v1 manifests carry no version field
+    if version not in (1, 2):
+        parser.error(f"unknown manifest version {version}")
+    repos = validate_manifest(doc)
     if args.limit:
         repos = repos[: args.limit]
-    cases = build_cases(repos, args.checkout_root)
+    subset = bool(args.only_cases or args.limit)
+    if subset and (args.results / "run-manifest.json").exists():
+        # A subset run writes its rows over the same tool files, so it needs its own results folder.
+        parser.error("a subset run needs a results directory of its own")
+    cases = (build_cases_v2 if version == 2 else build_cases)(repos, args.checkout_root)
+    if args.only_cases:
+        try:
+            cases = select_only(cases, args.only_cases)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     wanted = None if args.tools == "all" else set(args.tools.split(","))
-    adapters = [a for a in ADAPTERS if wanted is None or a.name in wanted]
+    adapters = [a for a in (ADAPTERS_V2 if version == 2 else ADAPTERS) if wanted is None or a.name in wanted]
     if wanted and wanted - {a.name for a in adapters}:
         parser.error(f"unknown tools: {sorted(wanted - {a.name for a in adapters})}")
+
+    # Summaries kept from an earlier run must come from the same manifest, protocol and code.
+    provenance = {
+        "manifest_version": version,
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "protocol_sha256": hashlib.sha256(args.protocol.read_bytes()).hexdigest() if args.protocol else None,
+        "code_sha256": code_sha256(ROOT),
+        "tool_pins": TOOL_PINS,
+        "sandbox": SANDBOX,
+    }
+    # A subset run (sensitivity or calibration) keeps its own manifest and never edits the full one.
+    previous_path = args.results / ("run-subset-manifest.json" if subset else "run-manifest.json")
+    previous: dict[str, Any] = {"runs": []}
+    if previous_path.exists():
+        previous = json.loads(previous_path.read_text(encoding="utf-8"))
+    names = {a.name for a in adapters}
+    conflict = provenance_conflict(previous, provenance, names)
+    if conflict:
+        parser.error(f"{previous_path.name} {conflict}")
+    only_sha = hashlib.sha256(args.only_cases.read_bytes()).hexdigest() if args.only_cases else None
 
     tool_root = args.tool_root.resolve()
     env = ToolEnv(root=tool_root, python=str(tool_root / "venvs" / "shadowscan" / "bin" / "python"))
@@ -188,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = run_tool(
             adapter, cases, env, args.results, args.raw, args.scratch, args.checkout_root, args.workers
         )
+        summary["only_cases_sha256"] = only_sha  # each tool may run its own case list
         summaries.append(summary)
         print(json.dumps(summary), flush=True)
 
@@ -199,22 +281,21 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     manifest = {
+        **provenance,
         "manifest": args.manifest.name,
-        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "protocol": args.protocol.name if args.protocol else None,
+        "only_cases": args.only_cases.name if args.only_cases else None,
+        "workers": args.workers,
         "repos": len(repos),
         "cases": len(cases),
-        "tool_pins": TOOL_PINS,
-        "sandbox": SANDBOX,
         "python": platform.python_version(),
         "platform": platform.platform(),
         "finished_utc": datetime.now(UTC).isoformat(timespec="seconds"),
-        "runs": summaries,
+        "runs": [r for r in previous.get("runs", []) if r["tool"] not in names] + summaries,
         "self_check": self_result,
+        "subset": subset,
+        "shadowscan_commit": checkout_head(ROOT),
     }
-    previous_path = args.results / "run-manifest.json"
-    previous = json.loads(previous_path.read_text()) if previous_path.exists() else {"runs": []}
-    kept = [r for r in previous.get("runs", []) if r["tool"] not in {s["tool"] for s in summaries}]
-    manifest["runs"] = kept + summaries
     previous_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return 0
 

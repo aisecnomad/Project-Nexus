@@ -1,0 +1,2808 @@
+{
+  "version": 2,
+  "repos": [
+    {
+      "id": "rw-01-claude-quickstarts",
+      "repo": "anthropics/claude-quickstarts",
+      "url": "https://github.com/anthropics/claude-quickstarts",
+      "dir": "anthropics/claude-quickstarts",
+      "sha": "9ec32b91df50b0d4906cae64b13c6298055ff40d",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "browser-toolset/python/run.py: tool-use loop",
+        "managed-agents/*/CLAUDE.md"
+      ]
+    },
+    {
+      "id": "rw-02-open-deep-research",
+      "repo": "langchain-ai/open_deep_research",
+      "url": "https://github.com/langchain-ai/open_deep_research",
+      "dir": "langchain-ai/open_deep_research",
+      "sha": "1b7d2e80db9faa586165c60e09096dbbfd483a64",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "src/open_deep_research/deep_researcher.py: LangGraph agent",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "rw-03-gpt-researcher",
+      "repo": "assafelovic/gpt-researcher",
+      "url": "https://github.com/assafelovic/gpt-researcher",
+      "dir": "assafelovic/gpt-researcher",
+      "sha": "0957c301ed06c2a5857b834358c7227c739041d4",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "gpt_researcher/utils/tools.py",
+        "gpt_researcher/retrievers/mcp/retriever.py",
+        ".mcp.json"
+      ]
+    },
+    {
+      "id": "rw-04-swe-agent",
+      "repo": "princeton-nlp/SWE-agent",
+      "url": "https://github.com/princeton-nlp/SWE-agent",
+      "dir": "princeton-nlp/swe-agent",
+      "sha": "3ea751c087f32b16e039a2233dd6eefecef325d5",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "sweagent/agent/models.py: tool calls",
+        "config/*.yaml agent configs"
+      ]
+    },
+    {
+      "id": "rw-05-quickstart-resources",
+      "repo": "modelcontextprotocol/quickstart-resources",
+      "url": "https://github.com/modelcontextprotocol/quickstart-resources",
+      "dir": "modelcontextprotocol/quickstart-resources",
+      "sha": "2912bb30785c7702a2f9abfab783e9140aa7246b",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "mcp-client-typescript/index.ts: MCP client",
+        "mcp-client-rust/src/main.rs"
+      ]
+    },
+    {
+      "id": "rw-06-github-mcp-server",
+      "repo": "github/github-mcp-server",
+      "url": "https://github.com/github/github-mcp-server",
+      "dir": "github/github-mcp-server",
+      "sha": "eb47a99ddb866ca2b8a162920e6bda9521f33ebb",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "agent-plugin/mcp.json",
+        ".github/copilot-instructions.md",
+        "MCP server implementation"
+      ]
+    },
+    {
+      "id": "rw-07-crewai-examples",
+      "repo": "crewAIInc/crewai-examples",
+      "url": "https://github.com/crewAIInc/crewai-examples",
+      "dir": "crewaiinc/crewai-examples",
+      "sha": "da94a91e691e1cf5b3151416bb15b5b62729bea8",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "flows/write_a_book_with_flows/**/crews/*.py: crews and agents"
+      ]
+    },
+    {
+      "id": "rw-08-web-ui",
+      "repo": "browser-use/web-ui",
+      "url": "https://github.com/browser-use/web-ui",
+      "dir": "browser-use/web-ui",
+      "sha": "61962296c38a0d064e0ba02c827192b7a81d1819",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "src/agent/browser_use/browser_use_agent.py",
+        "src/agent/deep_research/deep_research_agent.py"
+      ]
+    },
+    {
+      "id": "rw-09-aider",
+      "repo": "Aider-AI/aider",
+      "url": "https://github.com/Aider-AI/aider",
+      "dir": "aider-ai/aider",
+      "sha": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "llm"
+      },
+      "label": "ambiguous",
+      "confidence": "medium",
+      "evidence": [
+        "aider/coders/wholefile_func_coder.py: model output is a function call that the code applies as an edit",
+        "aider/coders/base_coder.py:100-101 and 933-940: reflection loop, max_reflections = 3"
+      ],
+      "adjudication": "Model output selects edit functions that the code applies inside a bounded reflection loop, which reads as clause (a). Labeler B read function calls as output formatting only, and the cited evidence does not settle which reading the protocol intends, so the label is ambiguous.",
+      "candidates": [
+        "llm",
+        "agent"
+      ]
+    },
+    {
+      "id": "rw-10-anything-llm",
+      "repo": "Mintplex-Labs/anything-llm",
+      "url": "https://github.com/Mintplex-Labs/anything-llm",
+      "dir": "mintplex-labs/anything-llm",
+      "sha": "3c7e73b8104e25327b9db3c4a8eeaf3ac4af237f",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "server/utils/agents/aibitat/: agent framework"
+      ]
+    },
+    {
+      "id": "rw-11-chatbot-ui",
+      "repo": "mckaywrigley/chatbot-ui",
+      "url": "https://github.com/mckaywrigley/chatbot-ui",
+      "dir": "mckaywrigley/chatbot-ui",
+      "sha": "81328b61d2a4ab597a7a057be70e785cf756d9f8",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "ambiguous"
+      },
+      "label": "ambiguous",
+      "confidence": "medium",
+      "evidence": [
+        "app/api/chat/tools/route.ts:81 and 153: executes each model-selected tool via fetch",
+        "app/api/chat/tools/route.ts:207: one follow-up completion, with no loop back to the model"
+      ],
+      "adjudication": "One round of model-selected tool execution and no loop. Clause (a) asks for a loop, and tool execution is present, so the evidence is weak either way.",
+      "candidates": [
+        "llm",
+        "agent"
+      ]
+    },
+    {
+      "id": "rw-12-shell-gpt",
+      "repo": "TheR1D/shell_gpt",
+      "url": "https://github.com/TheR1D/shell_gpt",
+      "dir": "ther1d/shell_gpt",
+      "sha": "a082bd5327ce0c4ef5a0284d9060e833be9444a6",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "sgpt/handlers/handler.py: handle_function_call executes model-selected function"
+      ]
+    },
+    {
+      "id": "rw-13-llm-app",
+      "repo": "pathwaycom/llm-app",
+      "url": "https://github.com/pathwaycom/llm-app",
+      "dir": "pathwaycom/llm-app",
+      "sha": "beb17f1ea0894b2430727388b78be4b26e37c16f",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "cookbooks/self-rag-agents/*.ipynb: LangGraph agents (samples)"
+      ]
+    },
+    {
+      "id": "rw-14-flask",
+      "repo": "pallets/flask",
+      "url": "https://github.com/pallets/flask",
+      "dir": "pallets/flask",
+      "sha": "d086db856be187255b8ec61ef409357393020f32",
+      "license": "BSD",
+      "stratum": "ordinary",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "no provider SDK or agent pattern in tree"
+      ]
+    },
+    {
+      "id": "rw-15-requests",
+      "repo": "psf/requests",
+      "url": "https://github.com/psf/requests",
+      "dir": "psf/requests",
+      "sha": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+      "license": "Apache-2.0",
+      "stratum": "ordinary",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "no provider SDK or agent pattern in tree"
+      ]
+    },
+    {
+      "id": "rw-16-node-exporter",
+      "repo": "prometheus/node_exporter",
+      "url": "https://github.com/prometheus/node_exporter",
+      "dir": "prometheus/node_exporter",
+      "sha": "1271bc244266457fd225dcef9b8a33641b582c64",
+      "license": "Apache-2.0",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "llm",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "medium",
+      "evidence": [
+        "AGENTS.md: coding-agent instructions (no AI API use)"
+      ]
+    },
+    {
+      "id": "rw-17-ublock-ai-blocklist",
+      "repo": "laylavish/uBlockOrigin-HUGE-AI-Blocklist",
+      "url": "https://github.com/laylavish/uBlockOrigin-HUGE-AI-Blocklist",
+      "dir": "laylavish/ublockorigin-huge-ai-blocklist",
+      "sha": "9bb188e2701138e03f73bacebd6b19b181ca0012",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "AI-domain blocklist",
+        "no AI use in code"
+      ]
+    },
+    {
+      "id": "rw-18-uap-core",
+      "repo": "ua-parser/uap-core",
+      "url": "https://github.com/ua-parser/uap-core",
+      "dir": "ua-parser/uap-core",
+      "sha": "73e7340c3ed8055051607b296bf46ead7aa5f19e",
+      "license": "Apache-2.0",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "user-agent regex database",
+        "no AI use"
+      ]
+    },
+    {
+      "id": "rw-19-mcpconfig",
+      "repo": "MinecraftForge/MCPConfig",
+      "url": "https://github.com/MinecraftForge/MCPConfig",
+      "dir": "minecraftforge/mcpconfig",
+      "sha": "751a4f362ef15ec19d3616416e18853fee68968e",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "Minecraft Coder Pack mappings: MCP name collision"
+      ]
+    },
+    {
+      "id": "rw-20-awesome-chatgpt-prompts",
+      "repo": "f/awesome-chatgpt-prompts",
+      "url": "https://github.com/f/awesome-chatgpt-prompts",
+      "dir": "f/awesome-chatgpt-prompts",
+      "sha": "7d3f248962d1dca209d59e033524bcb86c2b26b8",
+      "license": "unrecognized",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "src/app/api/prompt-builder/chat/route.ts: tool calls executed",
+        "plugins/claude/prompts.chat/.mcp.json"
+      ]
+    },
+    {
+      "id": "rw-21-nanogpt",
+      "repo": "karpathy/nanoGPT",
+      "url": "https://github.com/karpathy/nanoGPT",
+      "dir": "karpathy/nanogpt",
+      "sha": "3adf61e154c3fe3fca428ad6bc3818b27a3b8291",
+      "license": "MIT",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "medium",
+      "evidence": [
+        "model training and sampling code",
+        "no provider API call"
+      ]
+    },
+    {
+      "id": "rw-22-awesome-mcp-servers",
+      "repo": "punkpeye/awesome-mcp-servers",
+      "url": "https://github.com/punkpeye/awesome-mcp-servers",
+      "dir": "punkpeye/awesome-mcp-servers",
+      "sha": "0a5f1ae6eff3885ef53cfe0d0a910c354b423b38",
+      "license": "MIT",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "curated list (docs only)"
+      ]
+    },
+    {
+      "id": "rw-23-nextchat",
+      "repo": "ChatGPTNextWeb/NextChat",
+      "url": "https://github.com/ChatGPTNextWeb/NextChat",
+      "dir": "chatgptnextweb/nextchat",
+      "sha": "defdcdb55d850cd12c4c657eb83729fd66e215c0",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "app/mcp/client.ts: MCP client"
+      ]
+    },
+    {
+      "id": "rw-24-openai-cs-agents-demo",
+      "repo": "openai/openai-cs-agents-demo",
+      "url": "https://github.com/openai/openai-cs-agents-demo",
+      "dir": "openai/openai-cs-agents-demo",
+      "sha": "bd7bfca0f5abf50529370814c3e7c88542011925",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "ui/components/agents-list.tsx",
+        "multi-agent triage with tool calls (README)"
+      ]
+    },
+    {
+      "id": "rw-25-mcp-servers",
+      "repo": "modelcontextprotocol/servers",
+      "url": "https://github.com/modelcontextprotocol/servers",
+      "dir": "modelcontextprotocol/servers",
+      "sha": "5abed86c5317b833dd59907492d56c65981642aa",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        ".mcp.json",
+        "src/everything/ MCP server"
+      ]
+    },
+    {
+      "id": "rw-26-autogpt",
+      "repo": "Significant-Gravitas/AutoGPT",
+      "url": "https://github.com/Significant-Gravitas/AutoGPT",
+      "dir": "significant-gravitas/autogpt",
+      "sha": "ca259ccc21e1ff50357084d5f90cd8bfc6b544e8",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "classic/forge agent code",
+        "CLAUDE.md files"
+      ]
+    },
+    {
+      "id": "rw-27-openhands",
+      "repo": "All-Hands-AI/OpenHands",
+      "url": "https://github.com/All-Hands-AI/OpenHands",
+      "dir": "all-hands-ai/openhands",
+      "sha": "6eebcbecc3ede47ae16395e5a6eb59c93963979c",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "AGENTS.md",
+        "src/types/agent-server/ event types"
+      ]
+    },
+    {
+      "id": "rw-28-chatgpt-web",
+      "repo": "Chanzhaoyu/chatgpt-web",
+      "url": "https://github.com/Chanzhaoyu/chatgpt-web",
+      "dir": "chanzhaoyu/chatgpt-web",
+      "sha": "7474b2c14971d2d9584c4b129396f9332ed87b7b",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "llm",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "high",
+      "evidence": [
+        "service/src/chatgpt/index.ts: provider API calls",
+        "no tool loop"
+      ]
+    },
+    {
+      "id": "rw-29-open-insure",
+      "repo": "daxaxelrod/open_insure",
+      "url": "https://github.com/daxaxelrod/open_insure",
+      "dir": "daxaxelrod/open_insure",
+      "sha": "b94c3a29578aaec7201d4870d6a41c9f2d8b054f",
+      "license": "none-found",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "insurance policy management",
+        "no AI use"
+      ]
+    },
+    {
+      "id": "rw-30-real-estate",
+      "repo": "skynette/real-estate",
+      "url": "https://github.com/skynette/real-estate",
+      "dir": "skynette/real-estate",
+      "sha": "018ed33629307d03b11161a0ec6e7ff0be8ecdf3",
+      "license": "none-found",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "Django real-estate app",
+        "agent is a human role"
+      ]
+    },
+    {
+      "id": "rw-31-gemini-api",
+      "repo": "eliasbenaddou/gemini_api",
+      "url": "https://github.com/eliasbenaddou/gemini_api",
+      "dir": "eliasbenaddou/gemini_api",
+      "sha": "05d348a5fc18b6329b3e3f0ddb4c61a95eb23e53",
+      "license": "MIT",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "Gemini crypto-exchange client",
+        "no AI use"
+      ]
+    },
+    {
+      "id": "rw-32-fastapi",
+      "repo": "tiangolo/fastapi",
+      "url": "https://github.com/tiangolo/fastapi",
+      "dir": "tiangolo/fastapi",
+      "sha": "f5c6e9b4f9cadc1bf0f9a1fd672e621206b63007",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "labels": {
+        "A": "none",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "high",
+      "evidence": [
+        "scripts/translate.py:14: imports pydantic_ai Agent",
+        "scripts/translate.py:143 and 157: Agent('openai-chat:...') and run_sync() call an LLM provider"
+      ],
+      "adjudication": "A maintainer script in the repository calls an LLM provider. Protocol v1.1 clarifies that 'shipped' covers repository code outside documentation and tests. The stratum stays ordinary because it is a design-time choice; the label is evidence-based."
+    },
+    {
+      "id": "rw-33-open-webui",
+      "repo": "open-webui/open-webui",
+      "url": "https://github.com/open-webui/open-webui",
+      "dir": "open-webui/open-webui",
+      "sha": "8bd8b4fac5e059578ac0c74b3c18d11139f88b7d",
+      "license": "BSD",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "backend/open_webui/utils/middleware.py: tool function execution"
+      ]
+    },
+    {
+      "id": "rw-34-ai-chatbot",
+      "repo": "vercel/ai-chatbot",
+      "url": "https://github.com/vercel/ai-chatbot",
+      "dir": "vercel/ai-chatbot",
+      "sha": "c2f8235e1f3ea903ad8b7f61447c4f74164b5c58",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "lib/ai/tools/request-suggestions.ts",
+        "app/(chat)/api/chat/route.ts: streamText with tools"
+      ]
+    },
+    {
+      "id": "rw-35-private-gpt",
+      "repo": "zylon-ai/private-gpt",
+      "url": "https://github.com/zylon-ai/private-gpt",
+      "dir": "zylon-ai/private-gpt",
+      "sha": "3cefd532cb6cccf65065af5e873c44bdca71e4d4",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "llm",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "private_gpt/server/mcp/_runtime.py:10: imports mcp ClientSession (MCP client implementation, clause b)",
+        "private_gpt/server/mcp/mcp_service.py:49: builds mcp__<server>__<tool> names for MCP tools"
+      ],
+      "adjudication": "Shipped MCP client implementation (clause b). The orchestrator's first pass missed it."
+    },
+    {
+      "id": "rw-36-azure-search-openai-demo",
+      "repo": "Azure-Samples/azure-search-openai-demo",
+      "url": "https://github.com/Azure-Samples/azure-search-openai-demo",
+      "dir": "azure-samples/azure-search-openai-demo",
+      "sha": "da209dc86bb66bedd0fa2a0d2ac55a6f4fcfc0c7",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "ambiguous",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        ".github/agents/triager.agent.md: agent definition with a tools list (clause c)",
+        ".github/agents/fixer.agent.md: second agent definition (clause c)",
+        "app/backend/prepdocslib/servicesetup.py:12: OpenAI SDK (llm evidence in addition)"
+      ],
+      "adjudication": "Agent definitions for an AI platform are in the repository (clause c). The orchestrator's first pass had marked it ambiguous from the RAG code alone."
+    },
+    {
+      "id": "rw-37-openai-quickstart-python",
+      "repo": "openai/openai-quickstart-python",
+      "url": "https://github.com/openai/openai-quickstart-python",
+      "dir": "openai/openai-quickstart-python",
+      "sha": "ec8890d101bdc17d66512d94a76b5e7131d188a1",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "examples/assistant-functions/functions.py: function calls executed"
+      ]
+    },
+    {
+      "id": "rw-38-langchain-tutorials",
+      "repo": "gkamradt/langchain-tutorials",
+      "url": "https://github.com/gkamradt/langchain-tutorials",
+      "dir": "gkamradt/langchain-tutorials",
+      "sha": "697c4de4f6c655ea3aa16ea0de324da157398557",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "agents/Agents.ipynb: LangChain agent tools (samples)"
+      ]
+    },
+    {
+      "id": "rw-39-streamlit-llm-examples",
+      "repo": "streamlit/llm-examples",
+      "url": "https://github.com/streamlit/llm-examples",
+      "dir": "streamlit/llm-examples",
+      "sha": "7cf260745675e41f92e7436d3777aafdab9dad9f",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "llm",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "pages/2_Chat_with_search.py:3 and 40-46: initialize_agent with AgentType.ZERO_SHOT_REACT_DESCRIPTION",
+        "pages/2_Chat_with_search.py:6 and 40: DuckDuckGoSearchRun tool that the agent calls"
+      ],
+      "adjudication": "A ReAct agent loop with a search tool, in a shipped sample page (clause a). The orchestrator's first pass had marked it llm from two other pages only."
+    },
+    {
+      "id": "rw-40-pdfgpt",
+      "repo": "bhaskatripathi/pdfgpt",
+      "url": "https://github.com/bhaskatripathi/pdfgpt",
+      "dir": "bhaskatripathi/pdfgpt",
+      "sha": "04d7a41a23b9aa8f2907992a73f3c7056bdec6fa",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "llm",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "medium",
+      "evidence": [
+        "api.py / app.py: provider calls",
+        "no tool loop found"
+      ]
+    },
+    {
+      "id": "rw-41-llms-from-scratch",
+      "repo": "rasbt/llms-from-scratch",
+      "url": "https://github.com/rasbt/llms-from-scratch",
+      "dir": "rasbt/llms-from-scratch",
+      "sha": "cdbd33e6d57a71e20ea31434841095fac50cecd8",
+      "license": "Apache-2.0",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "high",
+      "evidence": [
+        "pkg/llms_from_scratch/ch07.py:212: query_model posts to the Ollama /api/chat endpoint",
+        "ch07/03_model-evaluation/llm-instruction-eval-openai.ipynb:164: chat.completions.create call"
+      ],
+      "adjudication": "LLM API calls in shipped package code and sample notebooks. The stratum stays hard-negative because it is a design-time choice; the label is evidence-based."
+    },
+    {
+      "id": "rw-42-a2a-samples",
+      "repo": "a2aproject/a2a-samples",
+      "url": "https://github.com/a2aproject/a2a-samples",
+      "dir": "a2aproject/a2a-samples",
+      "sha": "6603ba3f2c31a7ef33e70b9d8b5b5f8be42ac9a3",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "samples/python/agents/crewai/agent.py (ImageGenerationAgent, Crew, generate_image_tool)",
+        "samples/python/agents/airbnb_planner_multiagent/airbnb_agent/airbnb_agent.py (AirbnbAgent, tools)",
+        "samples/go/agents/deepresearch/internal/agents/orchestrator.go (orchestrator.Execute, runNextStage)",
+        "samples/java/agents/weather_mcp/mcp/weather_mcp.py (FastMCP, @mcp.tool, mcp.run)",
+        "samples/python/agents/a2a_mcp/src/a2a_mcp/agents/langgraph_planner_agent.py (create_react_agent, ChatGoogleGenerativeAI)",
+        "samples/python/agents/crewai/agent.py (Agent, Task, Crew)",
+        "samples/python/agents/a2a_mcp/src/a2a_mcp/mcp/client.py (ClientSession, StdioServerParameters)",
+        "samples/python/agents/a2a_mcp/src/a2a_mcp/mcp/server.py (FastMCP)",
+        "samples/python/agents/adk_currency_agent/src/currency_agent/agent.py (LlmAgent, tools)",
+        "samples/python/agents/langgraph/app/agent.py (create_react_agent, @tool)",
+        "samples/python/agents/github-agent/openai_agent_executor.py (AsyncOpenAI, chat.completions.create, tool_calls)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-43-adk-samples",
+      "repo": "google/adk-samples",
+      "url": "https://github.com/google/adk-samples",
+      "dir": "google/adk-samples",
+      "sha": "c339821da836d05a366de7687c6c75f0b2c9c9af",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "contrib/python/small-business-loan-agent/app/agent.py (LlmAgent, AgentTool)",
+        "contrib/python/multiformat-hybrid-rag/app/mcp_server.py (FastMCP)",
+        "contrib/python/multiformat-hybrid-rag/app/agent.py (Agent, tools)",
+        "contrib/python/llm-auditor/app/sub_agents/critic/agent.py (Agent, tools)",
+        "AGENTS.md",
+        "contrib/python/small-business-loan-agent/app/agent.py (root_agent)",
+        "contrib/python/small-business-loan-agent/app/sub_agents/underwriting/agent.py (LlmAgent)",
+        "core/python/genmedia-for-commerce/genmedia4commerce/mcp_server/server.py (FastMCP)",
+        "contrib/python/on-brand-genmedia/app/sub_agents/image/tools/image_generation_tool.py (google.genai, generate_content)",
+        "contrib/python/financial-advisor/app/agent.py (LlmAgent, AgentTool)",
+        "contrib/python/llm-auditor/app/agent.py (SequentialAgent)",
+        "core/python/genmedia-for-commerce/genmedia4commerce/agent.py (Agent, McpToolset, StdioServerParameters)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-44-chatdev",
+      "repo": "OpenBMB/chatdev",
+      "url": "https://github.com/OpenBMB/chatdev",
+      "dir": "openbmb/chatdev",
+      "sha": "4fb2db0ea90375ce1059f44fe03ffbd191a7a169",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "runtime/node/agent/tool/tool_manager.py (ToolManager, execute_tool, _fetch_mcp_tools_stdio, _execute_mcp_remote_tool, call_tool)",
+        "runtime/node/agent/providers/openai_provider.py (OpenAIProvider, tool_calls, OpenAI)",
+        "mcp_example/mcp_server.py (FastMCP, @mcp.tool)",
+        "runtime/node/agent/tool/tool_manager.py (execute_tool)",
+        "runtime/node/executor/agent_executor.py (execute_tool, ToolCall, FunctionCall, tool_calls)",
+        "runtime/node/agent/providers/openai_provider.py (OpenAI, chat.completions, tool_calls)",
+        "runtime/node/agent/providers/gemini_provider.py (google.genai, generate_content, tool_calls)",
+        "runtime/node/agent/providers/openai_provider.py (OpenAIProvider, chat.completions.create, tool_calls)",
+        "runtime/node/agent/providers/gemini_provider.py (GeminiProvider, genai.Client, generate_content)",
+        "runtime/node/executor/agent_executor.py (tool_calls)",
+        "mcp_example/mcp_server.py (FastMCP)",
+        "yaml_instance/general_problem_solving_team.yaml (type: agent, type: function)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-45-gptme",
+      "repo": "gptme/gptme",
+      "url": "https://github.com/gptme/gptme",
+      "dir": "gptme/gptme",
+      "sha": "33e1952ee1be34c7d0ca0b5ed132f24f94426cb9",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "gptme/server/session_step.py (step, execute_tool_thread, ToolUse)",
+        "gptme/llm/llm_openai.py (chat, tool_calls, openai import)",
+        "AGENTS.md",
+        "gptme/tools/base.py (ToolUse)",
+        "gptme/server/session_step.py (execute_tool_thread)",
+        "gptme/tools/subagent (subagent tool)",
+        "gptme/mcp/client.py (ClientSession, StdioServerParameters)",
+        "gptme/tools/mcp.py (modelcontextprotocol)",
+        "gptme/llm/llm_openai.py (from openai)",
+        "gptme/chat.py (step, tooluse loop)",
+        "gptme/tools/base.py (_execute_tool)",
+        "gptme/llm/llm_openai.py (OpenAI, chat.completions.create, tool_calls)",
+        "gptme/mcp/server.py (Server)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-46-open-interpreter",
+      "repo": "OpenInterpreter/open-interpreter",
+      "url": "https://github.com/OpenInterpreter/open-interpreter",
+      "dir": "openinterpreter/open-interpreter",
+      "sha": "cc054cf52fa3585a3de50e0d4e0be6f9ee6677e8",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "codex-rs/core/src/codex_thread.rs (call_mcp_tool, call_tool)",
+        "codex-rs/core/src/exec.rs (process_exec_tool_call)",
+        "codex-rs/core/src/hook_runtime.rs (ResponseItem::FunctionCall)",
+        "codex-rs/codex-api/src/endpoint/responses.rs (stream_request)",
+        "AGENTS.md",
+        "codex-rs/exec/src/lib.rs (ToolCall)",
+        "codex-rs/app-server/src/request_processors/mcp_processor.rs (McpServerSource, mcp_manager)",
+        "codex-rs/rmcp-client (MCP client crate)",
+        "codex-rs/mcp-server (MCP server crate)",
+        "codex-rs/chat-wire-compat/src/client.rs (chat/completions)",
+        "codex-rs/core/src/stream_events_utils.rs (ResponseItem::FunctionCall, handle_output_item_done)",
+        "codex-rs/core/src/harness/swe_agent.rs (FunctionCallOutputPayload, ResponseItem)",
+        "codex-rs/mcp-server/src/codex_tool_runner.rs (rmcp, call_tool)",
+        "codex-rs/mcp-server/src/lib.rs (run_main)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-47-goose",
+      "repo": "block/goose",
+      "url": "https://github.com/block/goose",
+      "dir": "block/goose",
+      "sha": "a4189ec8c7c09a66ce300c8aca528385bdc13ff0",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "crates/goose/src/agents/agent.rs (reply, dispatch_tool_call)",
+        "crates/goose/src/agents/mcp_client.rs (MCP client module)",
+        "crates/goose/src/agents/state_machine/ops_toolcalling.rs (tool-calling state)",
+        "crates/goose-providers/src/openai_live.rs (OpenAI API endpoint)",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "crates/goose/src/agents/agent.rs (rmcp, ToolCall)",
+        "crates/goose/src/agents/extension_manager/streamable_http.rs (McpClient, rmcp)",
+        "crates/goose-provider-types/src/formats/openai.rs (ToolCall, tool_calls)",
+        ".github/copilot-instructions.md",
+        "crates/goose/src/agents/agent.rs (ToolRequest)",
+        "crates/goose/src/agents/mcp_client.rs (rmcp, ServiceExt)",
+        "crates/goose-providers/src/openai.rs (OpenAiProvider, /chat/completions)",
+        "crates/goose-providers/src/anthropic.rs (AnthropicProvider)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-48-roo-code",
+      "repo": "RooVetGit/roo-code",
+      "url": "https://github.com/RooVetGit/roo-code",
+      "dir": "roovetgit/roo-code",
+      "sha": "b867ec9145750d0ae1ff7f02d35406e9bf2a0b16",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "src/core/task/Task.ts (Task, recursivelyMakeClineRequests, presentAssistantMessage)",
+        "src/services/mcp/McpHub.ts (MCP hub)",
+        "src/api/providers/openai-native.ts (new OpenAI, responses.create)",
+        "src/api/providers/anthropic-vertex.ts (messages.create)",
+        ".roomodes (custom mode definitions)",
+        "AGENTS.md",
+        "src/services/mcp/McpHub.ts (@modelcontextprotocol/sdk client, StdioClientTransport)",
+        "src/core/task/Task.ts (tool_use)",
+        "src/api/providers/anthropic.ts (@anthropic-ai/sdk, Anthropic)",
+        "src/core/task/Task.ts (ToolUse, tool_use)",
+        "src/core/assistant-message/presentAssistantMessage.ts (ToolUse)",
+        "src/services/mcp/McpHub.ts (Client, StdioClientTransport)",
+        "src/api/providers/openai.ts (OpenAiHandler, chat.completions.create)",
+        ".roomodes (slug, roleDefinition, groups)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-49-opencode",
+      "repo": "sst/opencode",
+      "url": "https://github.com/sst/opencode",
+      "dir": "sst/opencode",
+      "sha": "687664c63b2bb4eb9b9c7e0dc37227869282ed80",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        ".opencode/agent/triage.md (mode, model, tools frontmatter)",
+        "packages/opencode/src/session/llm/ai-sdk.ts (AI SDK import, tool-call handling)",
+        "packages/opencode/src/session/llm/native-runtime.ts (AI SDK import, tool-call handling)",
+        "packages/opencode/src/agent/agent.ts (Info, Service)",
+        "AGENTS.md",
+        "packages/opencode/src/session/llm.ts (streamText, tools, ToolCall)",
+        "packages/opencode/src/mcp/oauth-provider.ts (@modelcontextprotocol/sdk)",
+        "packages/opencode/src/tool/code-mode.ts (@modelcontextprotocol/sdk)",
+        "packages/opencode/src/cli/cmd/mcp.ts (@modelcontextprotocol/sdk)",
+        "packages/opencode/src/session/prompt.ts (tool-call)",
+        "packages/opencode/src/agent/agent.ts (agent module)",
+        "packages/opencode/src/mcp/index.ts (StdioClientTransport, StreamableHTTPClientTransport)",
+        "packages/llm/src/protocols/anthropic-messages.ts (tool-call)",
+        ".opencode/agent/triage.md (mode, model, tools)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-50-gemini-cli",
+      "repo": "google-gemini/gemini-cli",
+      "url": "https://github.com/google-gemini/gemini-cli",
+      "dir": "google-gemini/gemini-cli",
+      "sha": "44d764ee579610bf73c43107f5e0422cd92588b9",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "packages/core/src/agents/local-executor.ts (LocalAgentExecutor, run, @google/genai import)",
+        "packages/core/src/agents/registry.ts (AgentRegistry)",
+        "packages/core/src/agents/local-invocation.ts (LocalSubagentInvocation)",
+        "packages/core/src/tools/mcp-client.ts (McpClient, @modelcontextprotocol/sdk)",
+        "GEMINI.md",
+        "packages/core/src/agents/local-executor.ts (LocalAgentExecutor, functionCalls, ToolCallRequest)",
+        "packages/core/src/tools/mcp-client.ts (@modelcontextprotocol/sdk/client/index.js)",
+        "packages/core/src/core/geminiChat.ts (@google/genai)",
+        "packages/core/src/core/turn.ts (Turn, functionCalls)",
+        "packages/core/src/core/geminiChat.ts (GeminiChat, generateContentStream)",
+        "packages/core/src/agents/local-executor.ts (LocalAgentExecutor)",
+        "packages/core/src/tools/mcp-client.ts (McpClient, StdioClientTransport)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-51-ui-tars-desktop",
+      "repo": "bytedance/ui-tars-desktop",
+      "url": "https://github.com/bytedance/ui-tars-desktop",
+      "dir": "bytedance/ui-tars-desktop",
+      "sha": "20b2dfe85e0a84eb2fe7b2f5db1c2807a4c8d829",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "agent-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "packages/ui-tars/sdk/src/GUIAgent.ts (GUIAgent)",
+        "packages/agent-infra/browser-use/src/agent/agents/navigator.ts (NavigatorAgent)",
+        "packages/agent-infra/browser-use/src/agent/executor.ts (Executor)",
+        "packages/agent-infra/mcp-client/src/index.ts (MCPClient, StdioClientTransport)",
+        "packages/ui-tars/sdk/src/Model.ts (new OpenAI, chat.completions.create)",
+        "packages/ui-tars/sdk/src/GUIAgent.ts (GUIAgent, while (true) loop)",
+        "packages/ui-tars/sdk/src/Model.ts (OpenAI, chat.completions)",
+        "packages/agent-infra/mcp-client/src/index.ts (@modelcontextprotocol/sdk/client/index.js)",
+        "multimodal/tarko/agent/src/agent/base-agent.ts (BaseAgent)",
+        "multimodal/gui-agent/agent-sdk/src/GUIAgent.ts (GUIAgent)",
+        "multimodal/tarko/agent/src/tool-call-engine/NativeToolCallEngine.ts (tool_calls)",
+        "multimodal/tarko/llm-client/src/handlers/openai.ts (OpenAI, chat.completions.create)",
+        "multimodal/tarko/llm-client/src/handlers/anthropic.ts (Anthropic, messages.create)",
+        "multimodal/tarko/mcp-agent/src/mcp-client-v2.ts (@modelcontextprotocol/sdk)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-52-llm-universe",
+      "repo": "datawhalechina/llm-universe",
+      "url": "https://github.com/datawhalechina/llm-universe",
+      "dir": "datawhalechina/llm-universe",
+      "sha": "77beb748047e8a0d8ff708716606a8e0b132dc45",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "category": "llm-app",
+      "label": "llm",
+      "confidence": "medium",
+      "labels": {
+        "A": "llm",
+        "B": "llm",
+        "C": "llm"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "notebook/C4 \u6784\u5efa RAG \u5e94\u7528/zhipuai_llm.py (ZhipuAI)",
+        "notebook/C4 \u6784\u5efa RAG \u5e94\u7528/streamlit_app.py (ChatOpenAI)",
+        "notebook/C4 \u6784\u5efa RAG \u5e94\u7528/C4.ipynb (ChatOpenAI, zhipuai)",
+        "notebook/C2 \u4f7f\u7528 LLM API \u5f00\u53d1\u5e94\u7528/C2.ipynb (OpenAI, ZhipuAI)",
+        "notebook/C2 \u4f7f\u7528 LLM API \u5f00\u53d1\u5e94\u7528/C2.ipynb (from openai, OpenAI, chat.completions)",
+        "notebook/C5 \u7cfb\u7edf\u8bc4\u4f30\u4e0e\u4f18\u5316/C5.ipynb (OpenAI, client.chat.completions.create)",
+        "notebook/C4 \u6784\u5efa RAG \u5e94\u7528/zhipuai_llm.py (ZhipuAI, ZhipuaiLLM)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-53-langchain4j-examples",
+      "repo": "langchain4j/langchain4j-examples",
+      "url": "https://github.com/langchain4j/langchain4j-examples",
+      "dir": "langchain4j/langchain4j-examples",
+      "sha": "790431c9fa6764a4501461a322d7ccdb60869e26",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "llm-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "mcp-example/src/main/java/dev/langchain4j/example/mcp/McpToolsExampleOverStdio.java",
+        "DefaultMcpClient",
+        "StdioMcpTransport",
+        "customer-support-agent-example/src/main/java/dev/langchain4j/example/BookingTools.java",
+        "@Tool",
+        "agentic-tutorial/src/main/java/_2_sequential_workflow/_2a_Sequential_Agent_Example.java",
+        "sequenceBuilder",
+        "mcp-example/src/main/java/dev/langchain4j/example/mcp/McpToolsExampleOverHttp.java (McpToolProvider, DefaultMcpClient, toolProvider)",
+        "mcp-github-example/src/main/java/dev/langchain4j/example/mcp/github/McpGithubToolsExample.java (McpClient, toolProvider)",
+        "customer-support-agent-example/src/main/java/dev/langchain4j/example/BookingTools.java (@Tool)",
+        "agentic-tutorial/src/main/java/_6_composed_workflow/_6_Composed_Workflow_Example.java (AgenticServices, UntypedAgent)",
+        "mcp-example/src/main/java/dev/langchain4j/example/mcp/McpToolsExampleOverStdio.java (AiServices, DefaultMcpClient, McpToolProvider, StdioMcpTransport)",
+        "agentic-tutorial/src/main/java/_3_loop_workflow/_3a_Loop_Agent_Example.java (AgenticServices)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-54-azure-search-openai-demo-csharp",
+      "repo": "Azure-Samples/azure-search-openai-demo-csharp",
+      "url": "https://github.com/Azure-Samples/azure-search-openai-demo-csharp",
+      "dir": "azure-samples/azure-search-openai-demo-csharp",
+      "sha": "7d702a68d37f8c93d902acf8a35088979a2e3fa3",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "category": "llm-app",
+      "label": "llm",
+      "confidence": "high",
+      "labels": {
+        "A": "llm",
+        "B": "llm",
+        "C": "llm"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "app/backend/Services/ReadRetrieveReadChatService.cs",
+        "Microsoft.SemanticKernel",
+        "GetChatMessageContentAsync",
+        "OpenAIClient",
+        "app/shared/Shared/Services/AzureSearchEmbedService.cs",
+        "GetEmbeddingsAsync",
+        "app/backend/Extensions/WebApplicationExtensions.cs (GetChatCompletionsStreamingAsync)",
+        "app/backend/Services/ReadRetrieveReadChatService.cs (OpenAIClient, GetChatMessageContentAsync)",
+        "app/shared/Shared/Services/AzureSearchEmbedService.cs (OpenAIClient)",
+        "app/backend/Services/ReadRetrieveReadChatService.cs (IChatCompletionService, AddAzureOpenAIChatCompletion)",
+        "app/backend/Extensions/WebApplicationExtensions.cs (GetChatCompletionsStreamingAsync, ChatCompletionsOptions)",
+        "app/shared/Shared/Services/AzureSearchEmbedService.cs (GetEmbeddingsAsync)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-55-cookbook",
+      "repo": "google-gemini/cookbook",
+      "url": "https://github.com/google-gemini/cookbook",
+      "dir": "google-gemini/cookbook",
+      "sha": "2db908b7de9611871281bec55cb465461a04fe4f",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "llm-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "examples/google-adk/Getting_started_with_ADK.ipynb",
+        "from google.adk.agents import Agent",
+        "quickstarts/Function_calling.ipynb",
+        "FunctionDeclaration",
+        "automatic_function_calling",
+        "quickstarts/Function_calling.ipynb (FunctionDeclaration, automatic_function_calling)",
+        "examples/google-adk/Getting_started_with_ADK.ipynb (LlmAgent, Runner)",
+        "quickstarts/Get_started_managed_agents.ipynb (function_call, agent=)",
+        "quickstarts/Function_calling.ipynb (FunctionDeclaration, FunctionResponse, automatic_function_calling, generate_content)",
+        "quickstarts/Get_started_managed_agents.ipynb (interactions.create, agent=)",
+        "examples/langchain/SQL_Agent_Gemini_LangChain.ipynb (create_sql_agent)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-56-cookbook",
+      "repo": "mistralai/cookbook",
+      "url": "https://github.com/mistralai/cookbook",
+      "dir": "mistralai/cookbook",
+      "sha": "cd8369fb18dfabebcd18b5f43fe5169e4c523074",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "category": "llm-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "mistral/lechat_custom_mcp_server/tic-tac-toe/mcp_server.py",
+        "FastMCP",
+        "@mcp.tool",
+        "mistral/agents/agents_api/financial_analyst/app.py",
+        "StdioServerParameters",
+        "mistral/agents/agents_api/food_diet_companion/agent.py",
+        "handoff",
+        "mistral/function_calling/function_calling.ipynb",
+        "tool_calls",
+        "mistral/lechat_custom_mcp_server/tic-tac-toe/mcp_server.py (FastMCP, @mcp.tool)",
+        "mistral/agents/agents_api/travel_assistant/agent.py (Handoff, handoff, beta.agents, tools=)",
+        "mistral/agents/agents_api/food_diet_companion/agent.py (Handoff, handoff, beta.agents, tools=)",
+        "mistral/agents/agents_api/travel_assistant/agent.py (beta.agents, tool_call_id)",
+        "mistral/agents/agents_api/food_diet_companion/agent.py (beta.agents, tools=)",
+        "mistral/function_calling/function_calling.ipynb (tool_calls, names_to_functions)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-57-notebooks",
+      "repo": "huggingface/notebooks",
+      "url": "https://github.com/huggingface/notebooks",
+      "dir": "huggingface/notebooks",
+      "sha": "fbfa20e92f1cf28a87f49b569eb1ba46016127b5",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "llm-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "smolagents_doc/en/guided_tour.ipynb",
+        "CodeAgent",
+        "ToolCallingAgent",
+        "smolagents_doc/en/multiagents.ipynb",
+        "managed_agents",
+        "smolagents_doc/en/tools.ipynb",
+        "MCPClient",
+        "smolagents_doc/en/using_different_models.ipynb",
+        "InferenceClientModel",
+        "LiteLLMModel",
+        "smolagents_doc/en/multiagents.ipynb (ToolCallingAgent, CodeAgent, managed_agents)",
+        "smolagents_doc notebooks (111 of 117 instantiate CodeAgent, ToolCallingAgent or managed_agents)",
+        "smolagents_doc/en/guided_tour.ipynb (CodeAgent, ToolCallingAgent, @tool, InferenceClientModel)",
+        "smolagents_doc/en/multiagents.ipynb (managed_agents, ToolCallingAgent)",
+        "smolagents_doc/en/tools.ipynb (@tool, CodeAgent)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-58-openai",
+      "repo": "Azure-Samples/openai",
+      "url": "https://github.com/Azure-Samples/openai",
+      "dir": "azure-samples/openai",
+      "sha": "ce4fc1f1bc4de4c0914fb87984d488e12a3bbde2",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "category": "llm-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "Agent_Based_Samples/customer_assist/src/common/agent_factory/agent_factory_base.py",
+        "AzureAIAgent",
+        "ChatCompletionAgent",
+        "Agent_Based_Samples/document_generator/src/solution_accelerators/document_generator/mcp_servers/sharepoint_mcp_server.py",
+        "FastMCP",
+        "Agent_Based_Samples/customer_assist/src/common/agent_factory/agent_base.py (ChatCompletionAgent, AzureAIAgent)",
+        "Agent_Based_Samples/release_manager/src/solution_accelerators/release_manager/agents/agent_factory.py (ChatCompletionAgent, AzureAIAgent)",
+        "Basic_Samples/Functions/working_with_functions.ipynb (tool_calls, tool_choice, function_call)",
+        "Agent_Based_Samples/document_generator/src/solution_accelerators/document_generator/mcp_servers/sharepoint_mcp_server.py (FastMCP)",
+        "Agent_Based_Samples/document_generator/src/solution_accelerators/document_generator/agents/sharepoint_agent.py (Agent, create_agent)",
+        "Basic_Samples/Functions/working_with_functions.ipynb (tool_calls, function_call, chat.completions.create)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-59-lobe-chat",
+      "repo": "lobehub/lobe-chat",
+      "url": "https://github.com/lobehub/lobe-chat",
+      "dir": "lobehub/lobe-chat",
+      "sha": "6d8c8675f7484a0d9bdc56c5d73285e6f6afffce",
+      "license": "unrecognized",
+      "stratum": "ai-app",
+      "category": "llm-app",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "src/libs/mcp/client.ts",
+        "StdioClientTransport",
+        "StreamableHTTPClientTransport",
+        "callTool",
+        "packages/heterogeneous-agents/src/builtinMcp/LobeBuiltinMcpServer.ts",
+        "McpServer",
+        "registerTool",
+        "src/app/(backend)/api/agent/stream/route.ts",
+        "AgentRuntime",
+        "createAgent",
+        "packages/agent-runtime/src/agents/GeneralChatAgent.ts (tool_calls handling)",
+        "packages/agent-runtime/src/agents/graph/GraphAgent.ts",
+        "src/libs/mcp/client.ts (@modelcontextprotocol/sdk)",
+        "apps/server/src/services/mcp/index.ts (@modelcontextprotocol/sdk)",
+        "AGENTS.md",
+        "GEMINI.md",
+        "packages/model-runtime/CLAUDE.md",
+        "src/libs/mcp/client.ts (Client, StdioClientTransport, StreamableHTTPClientTransport, callTool)",
+        "packages/heterogeneous-agents/src/builtinMcp/LobeBuiltinMcpServer.ts (McpServer, registerTool)",
+        "apps/server/src/services/toolExecution/index.ts (ToolExecutionService, executeTool)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-60-awesome-cursorrules",
+      "repo": "PatrickJS/awesome-cursorrules",
+      "url": "https://github.com/PatrickJS/awesome-cursorrules",
+      "dir": "patrickjs/awesome-cursorrules",
+      "sha": "b044f956f021b6e8877f16781bcfc466a6a120e9",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "category": "instruction-only",
+      "label": "agent",
+      "confidence": "medium",
+      "labels": {
+        "A": "llm",
+        "B": "agent",
+        "C": "ambiguous"
+      },
+      "adjudicated": true,
+      "evidence": [
+        "rules/helium-mcp-cursorrules-prompt-file.mdc (mcpServers entry, line 16)",
+        "rules/convex-cursorrules-prompt-file.mdc (OpenAI SDK sample, lines 479 and 565)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-61-awesome-claude-code",
+      "repo": "hesreallyhim/awesome-claude-code",
+      "url": "https://github.com/hesreallyhim/awesome-claude-code",
+      "dir": "hesreallyhim/awesome-claude-code",
+      "sha": "04756249c5ae4102e78681f5dcfee6bf31b35820",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "category": "instruction-only",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "README.md",
+        "THE_RESOURCES_TABLE_NEW.csv",
+        "scripts/badges/badge_notification.py",
+        "requirements.txt",
+        "README.md (awesome list)",
+        "generate_readme.py",
+        "resources/submit_resource_issue.py",
+        "ticker/fetch_repo_ticker_data.py",
+        "Makefile (submit-resource target)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-62-awesome-ai-agents",
+      "repo": "e2b-dev/awesome-ai-agents",
+      "url": "https://github.com/e2b-dev/awesome-ai-agents",
+      "dir": "e2b-dev/awesome-ai-agents",
+      "sha": "9596ab1e69fbbb6c95291141c8dab5c181083216",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "category": "instruction-only",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "README.md",
+        "CODEOWNERS",
+        "README.md (awesome list)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-63-awesome-generative-ai",
+      "repo": "steven2358/awesome-generative-ai",
+      "url": "https://github.com/steven2358/awesome-generative-ai",
+      "dir": "steven2358/awesome-generative-ai",
+      "sha": "3e16ff8a97ef579f74b76c498fa831605702af1f",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "category": "instruction-only",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "README.md",
+        "ARCHIVE.md",
+        "DISCOVERIES.md",
+        ".github/workflows/awesome-lint.yml",
+        ".github/workflows/link-check.yml",
+        "README.md (awesome list)",
+        "DISCOVERIES.md (awesome list)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-64-n8n-workflows",
+      "repo": "Zie619/n8n-workflows",
+      "url": "https://github.com/Zie619/n8n-workflows",
+      "dir": "zie619/n8n-workflows",
+      "sha": "94007c1445d9258a7da116646b79473e7c7c3282",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "category": "workflow-export",
+      "label": "agent",
+      "confidence": "medium",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "llm"
+      },
+      "adjudicated": true,
+      "evidence": [
+        "workflows/Gmailtool/1142_Gmailtool_Stickynote_Automation_Triggered.json (n8n-nodes-mcp.mcpClientTool, line 124)",
+        "ai-stack/docker-compose.yml (agent-zero service, lines 52-54)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-65-amazon-bedrock-samples",
+      "repo": "aws-samples/amazon-bedrock-samples",
+      "url": "https://github.com/aws-samples/amazon-bedrock-samples",
+      "dir": "aws-samples/amazon-bedrock-samples",
+      "sha": "b5ad367ad897dc8dbb9af0f671b58129d4e19672",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "category": "workflow-export",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "agents-and-function-calling/bedrock-agents/use-case-examples/product-review-agent/agent.py (invoke_agent)",
+        "agents-and-function-calling/agentic-guardrails/langgraph_guardrails.py (StateGraph)",
+        "agents-and-function-calling/mcp/bedrock_github_mcp_agent.ipynb (ClientSession)",
+        "agents-and-function-calling/open-source-agents/crew.ai/ (CrewAI, Crew)",
+        "agents-and-function-calling/agent-code-interpreter/01_create_agent.ipynb",
+        "rag/knowledge-bases/use-case-examples/agentic-self-corrective-rag-kb-langraph/02-langgraph_agentic_rag.ipynb",
+        "rag/knowledge-bases/use-case-examples/agentic-rag-using-metadata-filters/02-agentic-rag-converse-api.ipynb",
+        "invoke_agent",
+        "toolConfig",
+        "StateGraph",
+        "agents-and-function-calling/bedrock-agents/test-agent/test_agent.py (invoke_agent_helper, bedrock_agent_runtime_client.invoke_agent)",
+        "agents-and-function-calling/bedrock-agents/agent-blueprint-templates/lib/stacks/01-agent-with-function-definitions/agent-with-function-definition-stack.ts (AgentActionGroup)",
+        "agents-and-function-calling/agent-code-interpreter/02_invoke_agent.ipynb"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-66-awesome-llm-apps",
+      "repo": "Shubhamsaboo/awesome-llm-apps",
+      "url": "https://github.com/Shubhamsaboo/awesome-llm-apps",
+      "dir": "shubhamsaboo/awesome-llm-apps",
+      "sha": "4bf51ab704fb2c5b3803cd5191b30d7dcdb51dc2",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "category": "workflow-export",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "mcp_ai_agents/github_mcp_agent/github_agent.py (StdioServerParameters)",
+        "mcp_ai_agents/notion_mcp_agent/notion_mcp_agent.py (StdioServerParameters)",
+        "advanced_llm_apps/chat_with_X_tutorials/chat_with_research_papers/chat_arxiv.py (from agno.agent import)",
+        "generative_ui_agents/ai-shadcn-component-generator/.mcp.json (MCP server registration)",
+        "generative_ui_agents/ai-dashboard-canvas-agent/AGENTS.md",
+        "mcp_ai_agents/github_mcp_agent/github_agent.py",
+        "voice_ai_agents/ai_audio_tour_agent/agent.py",
+        "generative_ui_agents/ai-shadcn-component-generator/.mcp.json",
+        "from agno",
+        "from agents import",
+        "mcpServers",
+        "starter_ai_agents/ai_travel_agent/local_travel_agent.py (Agent, tools=[SerpApiTools])",
+        "mcp_ai_agents/github_mcp_agent/github_agent.py (MCPTools)",
+        "generative_ui_agents/ai-shadcn-component-generator/.mcp.json (mcpServers)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-67-osquery",
+      "repo": "osquery/osquery",
+      "url": "https://github.com/osquery/osquery",
+      "dir": "osquery/osquery",
+      "sha": "d9db97e3a86cf3e3ed4b3f8abbb8c4175b107855",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "category": "hard-negative",
+      "label": "llm",
+      "confidence": "medium",
+      "labels": {
+        "A": "llm",
+        "B": "llm",
+        "C": "llm"
+      },
+      "adjudicated": false,
+      "evidence": [
+        ".cursor/rules/build-format.mdc (alwaysApply Cursor rules file)",
+        ".cursor/rules/build-format.mdc",
+        ".cursor/rules/build-format.mdc (alwaysApply)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-68-opentelemetry-collector",
+      "repo": "open-telemetry/opentelemetry-collector",
+      "url": "https://github.com/open-telemetry/opentelemetry-collector",
+      "dir": "open-telemetry/opentelemetry-collector",
+      "sha": "1b185fe622bd93f8dcd7cd0043a2781488cd4e53",
+      "license": "Apache-2.0",
+      "stratum": "hard-negative",
+      "category": "hard-negative",
+      "label": "llm",
+      "confidence": "high",
+      "labels": {
+        "A": "llm",
+        "B": "llm",
+        "C": "llm"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "AGENTS.md",
+        "CLAUDE.md (imports AGENTS.md)",
+        "CLAUDE.md",
+        "CLAUDE.md (imports @AGENTS.md)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-69-gym",
+      "repo": "openai/gym",
+      "url": "https://github.com/openai/gym",
+      "dir": "openai/gym",
+      "sha": "bc212954b6713d5db303b3ead124de6cba66063e",
+      "license": "MIT",
+      "stratum": "hard-negative",
+      "category": "hard-negative",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "gym/core.py (OpenAI Gym name)",
+        "gym/envs/mujoco/inverted_double_pendulum_v4.py (RL agent docstring)",
+        "setup.py",
+        "pyproject.toml",
+        "README.md",
+        "README.md (OpenAI Gym BibTeX title)",
+        "gym/envs/classic_control/pendulum.py (comment naming the openai gym API)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-70-mediapipe",
+      "repo": "google/mediapipe",
+      "url": "https://github.com/google/mediapipe",
+      "dir": "google/mediapipe",
+      "sha": "ce5bb867b3a3a44d2092b11ba5dbd95b1cd75dba",
+      "license": "Apache-2.0",
+      "stratum": "hard-negative",
+      "category": "hard-negative",
+      "label": "ambiguous",
+      "confidence": "low",
+      "labels": {
+        "A": "llm",
+        "B": "ambiguous",
+        "C": "ambiguous"
+      },
+      "adjudicated": true,
+      "evidence": [
+        "mediapipe/tasks/web/genai/llm_inference/llm_inference.ts (class LlmInference, line 170; generateResponse, line 665)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-71-scikit-learn",
+      "repo": "scikit-learn/scikit-learn",
+      "url": "https://github.com/scikit-learn/scikit-learn",
+      "dir": "scikit-learn/scikit-learn",
+      "sha": "e316dbeeebfd8f38cf293d6443ce81aaa33686d3",
+      "license": "BSD",
+      "stratum": "hard-negative",
+      "category": "hard-negative",
+      "label": "llm",
+      "confidence": "high",
+      "labels": {
+        "A": "llm",
+        "B": "llm",
+        "C": "llm"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "AGENTS.md (AGENTS Instruction)",
+        "AGENTS.md"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-72-jquery",
+      "repo": "jquery/jquery",
+      "url": "https://github.com/jquery/jquery",
+      "dir": "jquery/jquery",
+      "sha": "c2f27864e4ffc2d1409c289fcb9a42b6165dfeaf",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "category": "edge-data",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "test/unit/support.js (navigator userAgent browser checks)",
+        "package-lock.json (proxy-agent packages)",
+        "package.json",
+        "README.md",
+        "src/core.js"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-73-chart-js",
+      "repo": "chartjs/chart.js",
+      "url": "https://github.com/chartjs/chart.js",
+      "dir": "chartjs/chart.js",
+      "sha": "7169e65147a47f3720957a6f156a33c838ab9f57",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "category": "edge-data",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "pnpm-lock.yaml (agent-base and proxy-agent packages only)",
+        "package.json",
+        "test/types/autogen.js",
+        "package.json (lint-types script runs test/types/autogen.js)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-74-data",
+      "repo": "fivethirtyeight/data",
+      "url": "https://github.com/fivethirtyeight/data",
+      "dir": "fivethirtyeight/data",
+      "sha": "4c1ff5e3aef1816ae04af63218015066e186c147",
+      "license": "unrecognized",
+      "stratum": "ordinary",
+      "category": "edge-data",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "us-weather-history/*.py (pandas, matplotlib, bs4 and urllib imports)",
+        "bechdel/analyze-bechdel.R",
+        "README.md",
+        "index.csv",
+        "most-common-name/most-common-name.R",
+        "us-weather-history/wunderground_scraper.py"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-75-spring-petclinic",
+      "repo": "spring-projects/spring-petclinic",
+      "url": "https://github.com/spring-projects/spring-petclinic",
+      "dir": "spring-projects/spring-petclinic",
+      "sha": "500158f732419217507c7656904b8e6aa1bcc0d6",
+      "license": "Apache-2.0",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "pom.xml",
+        "build.gradle",
+        "README.md",
+        "pom.xml:prepare-agent",
+        "src/main/java",
+        "pom.xml (prepare-agent)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-76-gin",
+      "repo": "gin-gonic/gin",
+      "url": "https://github.com/gin-gonic/gin",
+      "dir": "gin-gonic/gin",
+      "sha": "43fe48e8a0f44af783116cdb010725e6bb50255f",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "README.md",
+        "go.mod",
+        "docs/doc.md:UserAgent"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-77-ripgrep",
+      "repo": "BurntSushi/ripgrep",
+      "url": "https://github.com/BurntSushi/ripgrep",
+      "dir": "burntsushi/ripgrep",
+      "sha": "3fce3b5bb0236da2df6d99672afb8a719642eca7",
+      "license": "unrecognized",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "none",
+      "confidence": "medium",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "AI_POLICY.md",
+        "CONTRIBUTING.md",
+        "FAQ.md",
+        "benchsuite/runs/2018-01-08-archlinux-cheetah/raw.csv"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-78-jekyll",
+      "repo": "jekyll/jekyll",
+      "url": "https://github.com/jekyll/jekyll",
+      "dir": "jekyll/jekyll",
+      "sha": "541d8b2ee75c8907de4744d4b87a7a6f1f997cae",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "docs/pages/resources.md",
+        "Rakefile",
+        "lib/jekyll/commands/serve/servlet.rb:USER_AGENT",
+        "lib/jekyll/mime.types",
+        "docs/_data/showcase.yml",
+        "docs/pages/resources.md (list of AI tools)",
+        "Rakefile (autogen)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-79-laravel",
+      "repo": "laravel/laravel",
+      "url": "https://github.com/laravel/laravel",
+      "dir": "laravel/laravel",
+      "sha": "f4000aeb018fcbf71d4a13e3ee4b80c7e2d45be5",
+      "license": "none-found",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "llm",
+      "confidence": "medium",
+      "labels": {
+        "A": "llm",
+        "B": "llm",
+        "C": "llm"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "CLAUDE.md",
+        "AGENTS.md",
+        "AGENTS.md:laravel/boost"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-80-core",
+      "repo": "vuejs/core",
+      "url": "https://github.com/vuejs/core",
+      "dir": "vuejs/core",
+      "sha": "4ab865a848a1da3d10fb674f857e5fff13094644",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "package.json",
+        "README.md",
+        "packages/runtime-core/src/devtools.ts:userAgent",
+        "packages/runtime-dom/src/jsx.ts",
+        ".github/git-branch-workflow.excalidraw"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-81-turborepo",
+      "repo": "vercel/turborepo",
+      "url": "https://github.com/vercel/turborepo",
+      "dir": "vercel/turborepo",
+      "sha": "4a9c0a2c3ea90ef6662a2a376aea41a6885d793a",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "examples/with-mcp-servers/packages/mcp-calculator/src/server.ts (McpServer, registerTool)",
+        "examples/with-mcp-servers/apps/mcp-client/src/index.ts (Client, StdioClientTransport)",
+        "AGENTS.md",
+        "apps/factory/agent/subagents/issue_security_triager/agent.ts:defineAgent",
+        "apps/factory/agent/tools/list_examples.ts:defineTool",
+        "examples/with-mcp-servers/packages/mcp-calculator/src/server.ts:McpServer",
+        "examples/with-mcp-servers/apps/mcp-client/src/index.ts:StdioClientTransport",
+        "examples/with-mcp-servers/apps/mcp-client/src/index.ts (Client, StdioClientTransport, callTool)",
+        "apps/factory/agent/subagents/gpt_performance_reviewer/agent.ts (defineAgent)",
+        "apps/factory/agent/tools/list_examples.ts (defineTool, inputSchema)",
+        "apps/factory/CLAUDE.md"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-82-eshop",
+      "repo": "dotnet/eshop",
+      "url": "https://github.com/dotnet/eshop",
+      "dir": "dotnet/eshop",
+      "sha": "dc7ea499cd356924fb6689b3702964a5869dbae9",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "agent",
+      "confidence": "high",
+      "labels": {
+        "A": "agent",
+        "B": "agent",
+        "C": "agent"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "src/WebApp/Components/Chatbot/ChatState.cs (ChatOptions.Tools, AIFunctionFactory.Create(SearchCatalog), AddToCart)",
+        "src/WebApp/Extensions/Extensions.cs (UseFunctionInvocation)",
+        "src/Catalog.API/Services/CatalogAI.cs (IEmbeddingGenerator)",
+        "src/WebApp/Components/Chatbot/ChatState.cs:AIFunctionFactory.Create",
+        "src/WebApp/Components/Chatbot/ChatState.cs:GetResponseAsync",
+        "src/WebApp/Extensions/Extensions.cs:UseFunctionInvocation",
+        "src/Catalog.API/Services/CatalogAI.cs:IEmbeddingGenerator",
+        "src/WebApp/Components/Chatbot/ChatState.cs (ChatOptions Tools, AIFunctionFactory.Create, GetResponseAsync)",
+        "src/WebApp/Extensions/Extensions.cs (UseFunctionInvocation, AddOllamaApiClient, AddOpenAIClientFromConfiguration)",
+        "src/Catalog.API/Services/CatalogAI.cs (IEmbeddingGenerator, GenerateAsync)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-83-okhttp",
+      "repo": "square/okhttp",
+      "url": "https://github.com/square/okhttp",
+      "dir": "square/okhttp",
+      "sha": "42e5888d45623662c138ed27e80ea28bbe0aa5cc",
+      "license": "Apache-2.0",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        "CONTRIBUTING.md",
+        "build.gradle.kts",
+        "okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http/BridgeInterceptor.kt:USER_AGENT",
+        "okhttp-idna-mapping-table/src/main/resources/okhttp3/internal/idna/IdnaMappingTable.txt",
+        "okhttp/src/jvmTest/resources/okhttp3/internal/publicsuffix/public_suffix_list.dat",
+        "okhttp/src/jvmTest/kotlin/okhttp3/FakeRoutePlanner.kt (autoGen)",
+        "okhttp/src/jvmTest/kotlin/okhttp3/AutobahnTester.kt (agent)"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-84-execa",
+      "repo": "sindresorhus/execa",
+      "url": "https://github.com/sindresorhus/execa",
+      "dir": "sindresorhus/execa",
+      "sha": "63ddae6aeb6934da06fdb3754647791e58cd87c3",
+      "license": "none-found",
+      "stratum": "ordinary",
+      "category": "ordinary-lang",
+      "label": "none",
+      "confidence": "high",
+      "labels": {
+        "A": "none",
+        "B": "none",
+        "C": "none"
+      },
+      "adjudicated": false,
+      "evidence": [
+        ".github/security.md",
+        "package.json",
+        "readme.md",
+        "test/transform/encoding-transform.js"
+      ],
+      "surfaces": [
+        "repo"
+      ]
+    },
+    {
+      "id": "rw-85-macos-dotfiles",
+      "repo": "ryanspletzer/macos-dotfiles",
+      "url": "https://github.com/ryanspletzer/macos-dotfiles",
+      "dir": "ryanspletzer/macos-dotfiles",
+      "sha": "3fa1ab9f19c2f6713c7f1a1a3ad9be3d4da2dc39",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [
+        ".claude/settings.json",
+        ".codex/config.toml"
+      ],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-86-dotfiles",
+      "repo": "pcewing/dotfiles",
+      "url": "https://github.com/pcewing/dotfiles",
+      "dir": "pcewing/dotfiles",
+      "sha": "72bc35562c827c55a8df43efa1668f99e3eaa6c3",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-87-dotfiles",
+      "repo": "KristofferRisa/dotfiles",
+      "url": "https://github.com/KristofferRisa/dotfiles",
+      "dir": "kristofferrisa/dotfiles",
+      "sha": "f4674b1c19084ae4f8e9bf2d2fb81a027a8db517",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [
+        ".claude/settings.json"
+      ],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-88-dotfiles",
+      "repo": "luanzeba/dotfiles",
+      "url": "https://github.com/luanzeba/dotfiles",
+      "dir": "luanzeba/dotfiles",
+      "sha": "b4e506cdf127c2691eabd61edb3ffa53fbf52bc4",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-89-dotfiles",
+      "repo": "mmenanno/dotfiles",
+      "url": "https://github.com/mmenanno/dotfiles",
+      "dir": "mmenanno/dotfiles",
+      "sha": "b12fe8c8fef7c144b634b85b7a0e3e13580cd45b",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-90-dotfiles",
+      "repo": "mateialexandru/dotfiles",
+      "url": "https://github.com/mateialexandru/dotfiles",
+      "dir": "mateialexandru/dotfiles",
+      "sha": "9b852bacc473dc590cb45a87d2c48b694b02dcda",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-91-dotfiles",
+      "repo": "isuryanarayanan/dotfiles",
+      "url": "https://github.com/isuryanarayanan/dotfiles",
+      "dir": "isuryanarayanan/dotfiles",
+      "sha": "7498d32a7841a075dd59994dc49a05c2b0b446c5",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-92-dotfiles",
+      "repo": "dom1nux/dotfiles",
+      "url": "https://github.com/dom1nux/dotfiles",
+      "dir": "dom1nux/dotfiles",
+      "sha": "920b9eceeb4af01cde03a35e1e4100f57d7961af",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-93-dotfiles",
+      "repo": "mainliufeng/dotfiles",
+      "url": "https://github.com/mainliufeng/dotfiles",
+      "dir": "mainliufeng/dotfiles",
+      "sha": "7ee5b50a8e6ed9faef11cdb32b20d649ddbf455f",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-94-dotfiles",
+      "repo": "jdiamond/dotfiles",
+      "url": "https://github.com/jdiamond/dotfiles",
+      "dir": "jdiamond/dotfiles",
+      "sha": "2e400d256f1dd183fcebc3b6199fbea006f3a315",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-95-claude-code-dotfiles",
+      "repo": "elizabethfuentes12/claude-code-dotfiles",
+      "url": "https://github.com/elizabethfuentes12/claude-code-dotfiles",
+      "dir": "elizabethfuentes12/claude-code-dotfiles",
+      "sha": "286aba5bfa2ea97deab36fc8345640a7c1dc075a",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-96-dotfiles",
+      "repo": "jinyeow/dotfiles",
+      "url": "https://github.com/jinyeow/dotfiles",
+      "dir": "jinyeow/dotfiles",
+      "sha": "56e4e0bceb6df98f89e954750f684a4767bf1b72",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [
+        ".claude/settings.json"
+      ],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-97-ai-dotfiles",
+      "repo": "jsavyasachi/ai-dotfiles",
+      "url": "https://github.com/jsavyasachi/ai-dotfiles",
+      "dir": "jsavyasachi/ai-dotfiles",
+      "sha": "4593b82142343198fbb73b3343b648f9bbdc6118",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-98-homedir",
+      "repo": "masonegger/homedir",
+      "url": "https://github.com/masonegger/homedir",
+      "dir": "masonegger/homedir",
+      "sha": "6d5a8f24da6cca09d9822f4a24c0aeeeceb07d9d",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [
+        ".claude/settings.json"
+      ],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-99-dotfiles",
+      "repo": "yakkun/dotfiles",
+      "url": "https://github.com/yakkun/dotfiles",
+      "dir": "yakkun/dotfiles",
+      "sha": "43cd9fb71cd148ea938edb1e299fc86fada1e32b",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-100-dotfiles",
+      "repo": "chrisliu298/dotfiles",
+      "url": "https://github.com/chrisliu298/dotfiles",
+      "dir": "chrisliu298/dotfiles",
+      "sha": "e475615691224cb7631dec4c6b901ef4890135b4",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-101-dotfile",
+      "repo": "ryomamoyr/dotfile",
+      "url": "https://github.com/ryomamoyr/dotfile",
+      "dir": "ryomamoyr/dotfile",
+      "sha": "de27ab5b555578659b0ef21b0304244e03d95f41",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [
+        ".claude/settings.json",
+        ".codex/config.toml"
+      ],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-102-dotter-config",
+      "repo": "JonGretar/dotter_config",
+      "url": "https://github.com/JonGretar/dotter_config",
+      "dir": "jongretar/dotter_config",
+      "sha": "ddadc55379531c5462ded3a88db79b66371eec6f",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-103-dotfiles",
+      "repo": "Zate/dotfiles",
+      "url": "https://github.com/Zate/dotfiles",
+      "dir": "zate/dotfiles",
+      "sha": "3284d5d3334838d76b6f436fe1a71d269080d59a",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-104-dotai",
+      "repo": "CTHua/dotai",
+      "url": "https://github.com/CTHua/dotai",
+      "dir": "cthua/dotai",
+      "sha": "2062cf1cb474372960efa2fe0f398db6ef7b5e93",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "ai-client-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-105-dotfiles",
+      "repo": "jacobwg/dotfiles",
+      "url": "https://github.com/jacobwg/dotfiles",
+      "dir": "jacobwg/dotfiles",
+      "sha": "33c16484906942b2130af906fb6ae5b42c0897e8",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-106-dotfiles",
+      "repo": "Pradumnasaraf/.dotfiles",
+      "url": "https://github.com/Pradumnasaraf/.dotfiles",
+      "dir": "pradumnasaraf/.dotfiles",
+      "sha": "bc52823b77e780d79b769d9ffc37b835293c2583",
+      "license": "GPL-3.0",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-107-dotfiles",
+      "repo": "yannbf/dotfiles",
+      "url": "https://github.com/yannbf/dotfiles",
+      "dir": "yannbf/dotfiles",
+      "sha": "099a3c19ef7bcad4a20dd1e7f551f21323e2e10e",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [
+        ".claude/settings.json"
+      ],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-108-dotfiles",
+      "repo": "alexolivas/dotfiles",
+      "url": "https://github.com/alexolivas/dotfiles",
+      "dir": "alexolivas/dotfiles",
+      "sha": "d85899a648a8cf2bd852eb19c88cba993d1fdfd2",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-109-dotfiles",
+      "repo": "jacobwgillespie/dotfiles",
+      "url": "https://github.com/jacobwgillespie/dotfiles",
+      "dir": "jacobwgillespie/dotfiles",
+      "sha": "33c16484906942b2130af906fb6ae5b42c0897e8",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-110-dotfiles",
+      "repo": "nilesh2000/dotfiles",
+      "url": "https://github.com/nilesh2000/dotfiles",
+      "dir": "nilesh2000/dotfiles",
+      "sha": "b8a2d49bd09604c2b55655a29452e9ccc3df06a0",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-111-dotfiles",
+      "repo": "poornigga/dotfiles",
+      "url": "https://github.com/poornigga/dotfiles",
+      "dir": "poornigga/dotfiles",
+      "sha": "9a2cb782b151428711921dd6693da4365ce8c9c1",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-112-dotfiles",
+      "repo": "renuo/dotfiles",
+      "url": "https://github.com/renuo/dotfiles",
+      "dir": "renuo/dotfiles",
+      "sha": "be0609a7cb6c0b1b08b30fd07b037ce5ced62d90",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-113-dotfiles",
+      "repo": "pendletons/dotfiles",
+      "url": "https://github.com/pendletons/dotfiles",
+      "dir": "pendletons/dotfiles",
+      "sha": "1837d3400aa36143d244bcb99720c53c0474c2b4",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-114-dotfiles",
+      "repo": "sgra64/dotfiles",
+      "url": "https://github.com/sgra64/dotfiles",
+      "dir": "sgra64/dotfiles",
+      "sha": "2331a0770562f4d39aa43c8dcbf6a1afb9f143f8",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-115-dotfiles",
+      "repo": "gusgard/dotfiles",
+      "url": "https://github.com/gusgard/dotfiles",
+      "dir": "gusgard/dotfiles",
+      "sha": "e51d8b73f0d8ab99d1a12efdfbcd6dd287bec15c",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-116-dotfiles",
+      "repo": "maishiroma/dotfiles",
+      "url": "https://github.com/maishiroma/dotfiles",
+      "dir": "maishiroma/dotfiles",
+      "sha": "ef1c4bd72c78c573d33361fc3771dbdefd161e96",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-117-dotfiles-2",
+      "repo": "rifotu/dotfiles-2",
+      "url": "https://github.com/rifotu/dotfiles-2",
+      "dir": "rifotu/dotfiles-2",
+      "sha": "c0ca64b48a911765e4454fcf69bf0d208bc8a9d8",
+      "license": "MIT",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-118-dotfiles",
+      "repo": "Alturino/dotfiles",
+      "url": "https://github.com/Alturino/dotfiles",
+      "dir": "alturino/dotfiles",
+      "sha": "330d364046de824ce4fed30c7bcc9e30f15c7ab8",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-119-dotfiles",
+      "repo": "challsted/dotfiles",
+      "url": "https://github.com/challsted/dotfiles",
+      "dir": "challsted/dotfiles",
+      "sha": "0b6fe79625f62d504089f4b14bf32946bb0dc80a",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-120-dotfiles",
+      "repo": "kamigami55/dotfiles",
+      "url": "https://github.com/kamigami55/dotfiles",
+      "dir": "kamigami55/dotfiles",
+      "sha": "211343e6f39a209c96e90ba1d783e52893e6294a",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-121-bash-dotfiles",
+      "repo": "allen-garvey/bash-dotfiles",
+      "url": "https://github.com/allen-garvey/bash-dotfiles",
+      "dir": "allen-garvey/bash-dotfiles",
+      "sha": "f6455f182f24a3ad7c8d99c2208fa0f54c584b92",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-122-dotfiles",
+      "repo": "slydragonn/dotfiles",
+      "url": "https://github.com/slydragonn/dotfiles",
+      "dir": "slydragonn/dotfiles",
+      "sha": "db319dad0367e18f7d48b89604355e74be92668d",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-123-wvim",
+      "repo": "wmilou/wvim",
+      "url": "https://github.com/wmilou/wvim",
+      "dir": "wmilou/wvim",
+      "sha": "63ac1ed1996efa12d6e94d05e98e7f00151d7fec",
+      "license": "none-found",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    },
+    {
+      "id": "rw-124-nvim-config",
+      "repo": "cworld1/nvim-config",
+      "url": "https://github.com/cworld1/nvim-config",
+      "dir": "cworld1/nvim-config",
+      "sha": "13372de1772339e681445bab4e5ebcee86975168",
+      "license": "Apache-2.0",
+      "stratum": "dotfiles",
+      "design": "general-query",
+      "label": "n/a",
+      "confidence": "high",
+      "home_paths": [],
+      "surfaces": [
+        "home"
+      ]
+    }
+  ]
+}
