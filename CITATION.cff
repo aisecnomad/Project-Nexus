@@ -26,4 +26,4 @@ keywords:
   - sarif
 license: Apache-2.0
 version: 0.1.1
-# date-released is omitted: 0.1.1 is an unreleased candidate on main.
+date-released: 2026-10-08

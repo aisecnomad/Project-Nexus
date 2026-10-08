@@ -3,7 +3,7 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
-## 0.1.1 — Unreleased
+## 0.1.1 — 2026-10-08
 
 ### October 7 release merge-rule check with an administrator readback
 

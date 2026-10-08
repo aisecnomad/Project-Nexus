@@ -177,8 +177,8 @@ When a reviewer or maintainer steps away:
    [publishing runbook](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/publishing.md)
    has the steps.
 
-The project is unreleased. A source version string is not a release, a published
-package or proof that these steps have been completed.
+The package remains Alpha. A source version string or published package is
+not proof that independent review and deployment acceptance are complete.
 
 ## AI-assisted development
 

@@ -311,7 +311,7 @@ reviewer receives write access and approves. Never manufacture an approval or
 treat an AI reviewer as that person.
 
 For deployment, pin the full reviewed commit SHA and retain its review and
-acceptance evidence. No tag exists yet; `0.1.1` names an unreleased candidate.
+acceptance evidence. A version tag does not replace that evidence.
 Independent review of a release does not itself establish live tenant acceptance.
 See [governance](GOVERNANCE.md) for release and decision responsibilities.
 

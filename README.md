@@ -116,10 +116,8 @@ python -m pip download --no-deps --dest wheels NexusShadowScan==0.1.1
 gh attestation verify wheels/nexusshadowscan-0.1.1-py3-none-any.whl --repo aisecnomad/Project-Nexus
 ```
 
-Until the maintainer publishes the first release, `pip install NexusShadowScan`
-finds nothing; use the reviewed-revision install below. A plain `pip install`
-resolves dependencies from the live index. For a deployment, prefer the
-hash-locked install.
+A plain `pip install` resolves dependencies from the live index. For a
+deployment, prefer the hash-locked install.
 
 ### Deployment install (reviewed revision, hash-locked)
 
@@ -463,7 +461,10 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
 
 ## Project status
 
-* **Release state.** There is no tag, published package, or signed artifact yet.
+* **Release state.** Version `0.1.1` is prepared for public alpha distribution
+  as `NexusShadowScan`. Confirm publication and artifact identity on
+  [PyPI](https://pypi.org/project/NexusShadowScan/0.1.1/) and the
+  [GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.1).
   The package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under

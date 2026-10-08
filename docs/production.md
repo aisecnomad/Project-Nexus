@@ -1,6 +1,6 @@
 # Deployment and migration
 
-This is the rollout guide for the unreleased 0.1.1 candidate. It covers reviewed
+This is the rollout guide for version 0.1.1. It covers reviewed
 revisions, installation, validation, rollout, operation and migration.
 
 Automated validation establishes implementation behavior. Production rollout
