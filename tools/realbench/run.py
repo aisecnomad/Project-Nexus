@@ -144,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"unknown tools: {sorted(wanted - {a.name for a in adapters})}")
     args.results.mkdir(parents=True, exist_ok=True)
     env = ToolEnv(root=args.tool_root.resolve(), python=args.python)
+    started_at_commit = _git_head(Path(__file__).resolve().parents[2])
     scratch = Path(tempfile.mkdtemp(prefix="realbench-work-")).resolve()
     repeat = []
     if args.repeat_fraction:
@@ -171,7 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "repositories": len(repos),
         "finished_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
-        "shadowscan_commit": _git_head(project),
+        "shadowscan_commit": started_at_commit,
+        "commit_at_finish": _git_head(project),
         "python": platform.python_version(),
         "platform": platform.platform(),
         "tool_commits": {

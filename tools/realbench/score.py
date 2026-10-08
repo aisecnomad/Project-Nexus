@@ -223,6 +223,11 @@ def score(
         }
         entry["breakdowns"] = breakdowns(labels, manifest, rows)
         entry["evidence_overlap"] = evidence_overlap(labels, rows)
+        assistant_only = [
+            rid for rid, lab in labels.items() if lab["label"] == "none" and lab["assistant_artifacts"]
+        ]
+        flagged = sum(verdict(rows[rid], "t1") is True for rid in assistant_only)
+        entry["assistant_only_detection"] = wilson(flagged, len(assistant_only))
         out["tools"][tool] = entry
     for reference in REFERENCES:
         if reference not in results:

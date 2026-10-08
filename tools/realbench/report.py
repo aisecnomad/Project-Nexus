@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -97,6 +98,18 @@ def secondary(scored: dict[str, Any], task: str, out: list[str]) -> None:
     w("")
 
 
+def _source_tree(commit: str | None) -> str | None:
+    """The git tree id of ``shadowscan/`` at ``commit``: identical ids mean identical scanner source."""
+    if not commit:
+        return None
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", f"{commit}:shadowscan"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def render(summary: dict[str, Any], run_manifest: dict[str, Any], labels: list[dict[str, Any]],
            manifest: dict[str, Any], localisation: dict[str, Any] | None) -> str:  # fmt: skip
     frozen = summary["frozen"]
@@ -109,12 +122,14 @@ def render(summary: dict[str, Any], run_manifest: dict[str, Any], labels: list[d
     counts = Counter(lab["label"] for lab in labels)
     assistant_only = sum(1 for lab in labels if lab["label"] == "none" and lab["assistant_artifacts"])
     w("# Real-world shadow-AI discovery benchmark: results\n")
+    tree = _source_tree(run_manifest.get("shadowscan_commit"))
     w(
         f"{len(repos)} public repositories ({Counter(r['host'] for r in repos)['github']} GitHub, "
         f"{Counter(r['host'] for r in repos)['gitlab']} GitLab), each pinned to a commit, drawn by the "
         "pre-registered procedure in [PROTOCOL.md](PROTOCOL.md). Every tool ran offline on a read-only "
-        f"checkout. ShadowScan commit `{run_manifest.get('shadowscan_commit')}`; Python "
-        f"{run_manifest.get('python')} on {run_manifest.get('platform')}.\n"
+        f"checkout. ShadowScan commit `{run_manifest.get('shadowscan_commit')}`"
+        + (f" (source tree `{tree}`)" if tree else "")
+        + f"; Python {run_manifest.get('python')} on {run_manifest.get('platform')}.\n"
     )
     w(
         "**Read this first.** Labels come from two independent AI annotators and an AI adjudicator, not from "
@@ -122,6 +137,14 @@ def render(summary: dict[str, Any], run_manifest: dict[str, Any], labels: list[d
         "below). The harness lives in the ShadowScan repository; see the protocol's conflict-of-interest "
         "section. Intervals are 95% Wilson (proportions) or 2,000-sample bootstrap (F1, MCC).\n"
     )
+    w("## Tools\n")
+    w("| Tool | Upstream | How it ran | Counted as an agent |")
+    w("|---|---|---|---|")
+    for run in sorted(
+        run_manifest.get("runs", []), key=lambda x: ORDER.index(x["tool"]) if x["tool"] in ORDER else 99
+    ):
+        w(f"| {run['display']} | `{run['source']}` | {run['mode']} | {run['agentic_rule']} |")
+    w("")
     w("## Corpus and labels\n")
     w(f"- Labels: {counts['agent']} `agent`, {counts['llm']} `llm`, {counts['none']} `none` "
       f"({assistant_only} of them assistant-only, excluded from the primary population).")  # fmt: skip
@@ -152,6 +175,17 @@ def render(summary: dict[str, Any], run_manifest: dict[str, Any], labels: list[d
         headline(primary, task, out, frozen if adjudicated else None)
         w("### Secondary analyses (MCC)\n")
         secondary(primary, task, out)
+    w("## Assistant-only repositories\n")
+    w(
+        f"{assistant_only} repositories carry only AI coding-assistant files, with no generative-AI use in "
+        "code or configuration. They are outside the primary population: flagging them is a policy choice, "
+        "not an error.\n"
+    )
+    w("| Tool | Flagged |")
+    w("|---|---|")
+    for t in _tools(primary):
+        w(f"| {DISPLAY.get(t, t)} | {ci(primary['tools'][t].get('assistant_only_detection'))} |")
+    w("")
     w("## Precision at other prevalences (T1, from recall and specificity)\n")
     w("| Tool | 1% | 5% | 20% |")
     w("|---|---|---|---|")
