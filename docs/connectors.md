@@ -289,7 +289,7 @@ makes the scan incomplete.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
-`strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
+`strict_coverage`, `include_tests`, `triage`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
 checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
@@ -381,7 +381,7 @@ Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
 `GITHUB_TOKEN`, falling back to `github_token` / env `GH_TOKEN`); `api_url`,
 `mode`, `include_archived`, `include_forks`, `max_repos`, `clone_depth`,
 `topics`. The filesystem scanner options `exclude`, `max_file_size`,
-`max_files`, `max_entries`, `scan_timeout`, `scan_secrets` and `use_git` are forwarded to
+`max_files`, `max_entries`, `scan_timeout`, `scan_secrets`, `triage` and `use_git` are forwarded to
 every repository scan. `repos` and `topics` must be lists of non-empty strings,
 and `max_repos` and `clone_depth` whole numbers; anything else (including a bare
 string such as `--set topics=llm`, which would be read as single characters)

@@ -3,6 +3,69 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
+## Unreleased
+
+### Real-world robustness: input-defect taxonomy for code.filesystem
+
+- Pure syntax failures that every downstream consumer rejects identically —
+  invalid TOML/JSON in committed templates and fixtures, invalid structured
+  configuration syntax, invalid agent manifests, an MCP configuration whose
+  servers value is not an object or array — are now file-attributed
+  **input-defect warnings** that keep the scan complete, instead of errors
+  that failed the whole scan closed (exit 3). The file and issue are always
+  named in the report; nothing is dropped silently. Integrity and ambiguity
+  failures (duplicate keys, conflicting dialects, resource-limit hits,
+  undecodable analyzable files, unscanned symlink targets) still fail
+  closed, because parsers diverge on those and they could hide content.
+  `strict_coverage: true` restores the previous behavior in full. Operators
+  who alerted on exit 3 for malformed-template repositories should read the
+  migration note in docs/production.md.
+
+### Lexing, matching and walk-order robustness (real-world benchmark fixes)
+
+- The JS/TS/TSX lexer now lexes brace-less JSX elements as attribute values
+  (`title=<span>…</span>`), a legal construct that marked real repositories
+  incomplete. Malformed JSX still fails closed.
+- Credential detection scales its per-execution regex allowance linearly
+  with declared input size (`LINEAR_SECONDS_PER_MILLION_CHARS`, floor
+  0.1 s, always inside the per-file wall budget), so keyword-dense
+  megabyte files no longer abort the secret pass with MatchTimeoutError.
+  `python -m shadowscan.signatures.validate` now enforces a per-pattern
+  throughput floor on secret patterns against a pathological corpus:
+  patterns slower than the runtime allowance are rejected at validation.
+- The filesystem walk buffers and orders entries by signal priority —
+  dependency manifests, MCP and coding-agent configuration first, source
+  files last, smaller before larger — so a connector deadline cuts the
+  largest, lowest-signal tail first, and the deadline diagnostic now
+  reports the exact remainder (never "at least N").
+
+### Classification and precision
+
+- An exported low-code flow whose nodes include a verified agent node (n8n
+  `.agent`/`agentTool`/`openAiAssistant`, Dify `agent_mode: enabled`) now
+  yields a `kind: agent` finding, matching the lowcode.n8n connector; an
+  LLM chain without an agent node stays `kind: workflow`. Finding identity
+  is unchanged (`resource_type` stays `workflow-export`); the finding kind
+  and title change, and metadata gains `agent_flow`. Evaluation corpora
+  were relabeled accordingly.
+- Provider domains quoted inside crawler user-agent strings
+  (`Mozilla/5.0 (compatible; …-Bot/1.0; +https://provider.example/)`) no
+  longer count as provider usage; the discount is recorded as a visible
+  note naming the hosts.
+
+### New capabilities
+
+- `--format ocsf`: OCSF 1.1.0 Detection Finding (class_uid 2004) report
+  output for SIEM pipelines, with scan completeness marked on the document.
+- `triage: true` (and `shadowscan code --triage`): a fast subset scan of
+  manifests, MCP/coding-agent configuration, flow exports and IaC that
+  skips source analysis, credential detection and content sweeps. A triage
+  scan is always reported incomplete so it can never pass as a full scan.
+- `shadowscan diff --shadow-only`: display only findings whose `shadow`
+  field is true; counts, incompleteness reasons and exit codes are still
+  computed over the full comparison, and the JSON document always carries
+  the complete comparison plus a `shadow_only_view` id list.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

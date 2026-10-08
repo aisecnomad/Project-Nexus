@@ -455,6 +455,43 @@ def _analyzed_by_name(name: str) -> bool:
     )
 
 
+_UA_BOT_RX = re.compile(r"\bbot/\d", re.IGNORECASE)
+
+
+def _ua_string_context(line: str, host: str) -> bool:
+    """Whether a provider-domain mention sits inside a crawler user-agent string.
+
+    User-agent parsers and crawler lists quote strings such as
+    ``Mozilla/5.0 (compatible; HuggingFace-Bot/1.0; +https://huggingface.co/)``;
+    the domain there identifies the bot's operator, never use of the
+    provider. Markers are deliberately UA-specific so single-URL inputs
+    (MCP server URLs, agent-card endpoints) can never match.
+    """
+    lowered = line.lower()
+    if "mozilla/" in lowered or "compatible;" in lowered:
+        return True
+    host_lowered = host.lower()
+    if f"+https://{host_lowered}" in lowered or f"+http://{host_lowered}" in lowered:
+        return True
+    return bool(_UA_BOT_RX.search(lowered))
+
+
+def _scan_priority(rel: str, name: str) -> int:
+    """Deadline-ordering rank: the highest-signal files are scanned first.
+
+    Dependency manifests, MCP configurations and coding-agent configuration
+    files establish what a repository integrates with at a fraction of the
+    cost of source analysis, so a connector deadline must never spend its
+    budget on alphabetically-earlier source files instead. Configuration and
+    data files (flow exports, IaC) come second; source files come last.
+    """
+    if is_manifest_name(name) or name in MCP_CONFIG_NAMES or is_agent_config_path(rel):
+        return 0
+    if Path(name).suffix.lower() in SOURCE_EXTENSIONS:
+        return 2
+    return 1
+
+
 # Files that may be manifests whatever their name: IaC, compose, CI and deployment templates.
 _MANIFEST_EXTENSIONS = frozenset({".tf", ".bicep", ".yml", ".yaml", ".json", ".hcl"})
 # XML-based files whose comments are masked before content matching.
@@ -1051,6 +1088,12 @@ class FilesystemConnector(BaseConnector):
             "let test and fixture code establish agents and credential findings at full weight "
             "(default false)"
         ),
+        "triage": (
+            "fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC "
+            "only; source analysis, credential detection and content sweeps are skipped and the scan "
+            "is always reported incomplete so a triage result is never mistaken for a full scan "
+            "(default false)"
+        ),
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
         "account": "account label recorded on every finding (default none)",
@@ -1092,6 +1135,7 @@ class FilesystemConnector(BaseConnector):
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
+        self.triage = config_boolean(ctx.get("triage", False), "triage")
         extra = _validated_names(ctx.get("exclude"), "exclude")
         self.default_excludes = config_boolean(ctx.get("default_excludes", True), "default_excludes")
         self._explicit_exclude_names = frozenset(e for e in extra if "*" not in e and "/" not in e)
@@ -1576,6 +1620,9 @@ class FilesystemConnector(BaseConnector):
         # from filling the report with thousands of link names.
         if root not in self._symlink_warnings:
             self._symlink_warnings.add(root)
+            # Stays fail-closed: the target's bytes exist and other tools may
+            # read them, so an unscanned target is lost coverage a repository
+            # could hide behind — not a file-attributable input defect.
             message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
             if self.strict_coverage:
                 self.ctx.error(f"{message}; coverage incomplete")
@@ -1596,34 +1643,16 @@ class FilesystemConnector(BaseConnector):
         will_read = _analyzed_by_name(path.name) or bool(self.index.match_file(rel))
         return budget if will_read else 0.0
 
-    def _stop_at_deadline(
-        self,
-        root: Path,
-        examined: int,
-        entries: Iterator[tuple[str, Path, str, int]],
-        deadline: float,
-        margin: float,
-    ) -> None:
-        """Record one error naming how much of the tree the connector deadline left unread.
+    def _stop_at_deadline(self, root: Path, examined: int, remaining: int) -> None:
+        """Record one error naming exactly how much of the tree the deadline left unread.
 
-        The remaining entries are only counted (a stat each, never a read).
-        Counting stops at half the margin or just before the ``max_files``
-        cap, so the findings already collected are still emitted in time.
+        The walk buffers its entries up front, so the remainder is exact
+        arithmetic, never the budgeted re-count (and its ``at least N``
+        truncation) that the lazy walk needed.
         """
-        remaining = 1  # the entry that could not start
-        truncated = False
-        count_until = deadline - margin / 2
-        for _ in entries:
-            remaining += 1
-            if examined + remaining >= self.max_files or (
-                not (remaining & 63) and time.monotonic() >= count_until
-            ):
-                truncated = True
-                break
-        total = f"at least {examined + remaining}" if truncated else str(examined + remaining)
         self.ctx.error(
-            f"code.filesystem: connector deadline reached after {examined} of {total} files under {root}; "
-            "results incomplete",
+            f"code.filesystem: connector deadline reached after {examined} of {examined + remaining} "
+            f"files under {root}; results incomplete",
         )
 
     # ------------------------------------------------------------------ scan
@@ -1649,6 +1678,14 @@ class FilesystemConnector(BaseConnector):
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         scan = _ScanState(root, self._scan_label(root))
+        if self.triage:
+            # Unconditional, per scanned root: a triage result is a subset
+            # and must never read as a complete scan (fail closed, exit 3).
+            self.ctx.warn(
+                f"code.filesystem: {scan.label}: triage scan: source analysis, credential detection "
+                "and content sweeps skipped; findings are a subset of a full scan",
+                incomplete=True,
+            )
         self._walk(scan)
         yield from self._emit_findings(scan)
 
@@ -1695,12 +1732,29 @@ class FilesystemConnector(BaseConnector):
         self._report_default_excluded(scan)
 
     def _walk_entries(self, scan: _ScanState) -> None:
-        """Start each file only while its matching budget fits before the connector deadline."""
+        """Start each file only while its matching budget fits before the connector deadline.
+
+        Entries are buffered (bounded by ``max_files``) and ordered by
+        ``_scan_priority`` — manifests and agent/MCP configuration first,
+        source last — with smaller files before larger within each class and
+        the deterministic walk order breaking ties. A deadline therefore
+        degrades predictably: whatever is cut is the largest, lowest-signal
+        tail, and the remainder is reported exactly. Each entry carries its
+        own project root, so ordering never changes attribution.
+        """
         deadline = self.ctx.deadline
         margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
-        entries = self._iter_entries(scan.root)
+        entries: list[tuple[str, Path, str, int]] = []
+        try:
+            entries.extend(self._iter_entries(scan.root))
+        except _WalkLimitError as exc:
+            # Enumeration hit max_entries: the files already enumerated are
+            # still scanned (in priority order) so partial findings survive,
+            # and the limit is recorded exactly as the lazy walk did.
+            self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
+        entries.sort(key=lambda entry: (_scan_priority(entry[0], entry[1].name), entry[3]))
         examined = 0
-        for rel, path, proj_root, size in entries:
+        for index, (rel, path, proj_root, size) in enumerate(entries):
             budget = scan_timeout_for_size(self.scan_timeout, size)
             reserve = self._reserved_budget(rel, path, size, budget)
             if deadline is not None:
@@ -1719,12 +1773,12 @@ class FilesystemConnector(BaseConnector):
                     # could run into the margin. Findings collected so far are
                     # returned and the engine keeps them; only a result that
                     # arrives after the deadline is discarded.
-                    self._stop_at_deadline(scan.root, examined, entries, deadline, margin)
+                    self._stop_at_deadline(scan.root, examined, len(entries) - index)
                     break
             examined += 1
             with (
                 self._isolated(rel, "file analysis", _file_failure_reason),
-                self.index.scan_budget(seconds=budget),
+                self.index.scan_budget(seconds=budget, chars=size),
             ):
                 self._scan_file(scan, rel, path, proj_root)
 
@@ -1741,6 +1795,10 @@ class FilesystemConnector(BaseConnector):
         file_matches = self.index.match_file(rel)
         by_name = _analyzed_by_name(path.name)
         if not (by_name or file_matches):
+            return
+        if self.triage and not file_matches and path.suffix.lower() in SOURCE_EXTENSIONS:
+            # Triage never reads plain source files; the per-root warning
+            # already discloses the skipped stages.
             return
         named = by_name or self._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
@@ -1760,7 +1818,7 @@ class FilesystemConnector(BaseConnector):
             cells=cells,
         )
         self._record_file_matches(file)
-        if self.scan_secrets:
+        if self.scan_secrets and not self.triage:
             self._detect_secrets(scan, file)
         if self._record_detection_rules(file):
             # A rule pack lists the names and hosts it detects. Its content
@@ -1804,6 +1862,9 @@ class FilesystemConnector(BaseConnector):
                     incomplete=True,
                 )
             else:
+                # Undecodable analyzable files stay fail-closed: editors and
+                # runtimes tolerate bytes the scanner cannot decode, so a NUL
+                # in a CLAUDE.md could otherwise hide content from the scan.
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
         if text is None:
             return None
@@ -1840,7 +1901,7 @@ class FilesystemConnector(BaseConnector):
         raw_notebook = None if oversized_notebook else document
         sources: list[str] = []
         text = notebook_to_source(document, notebook_errors, cells=sources)
-        self._file_errors(rel, dict.fromkeys(notebook_errors))
+        self._file_errors(rel, dict.fromkeys(notebook_errors), defect=True)
         # The cells are joined by one line break each.
         spans: list[tuple[int, int]] = []
         offset = 0
@@ -1892,14 +1953,60 @@ class FilesystemConnector(BaseConnector):
             return None
 
     def _withhold_excerpts(self, rel: str, exc: Exception, stage: str = "sanitization") -> None:
+        # Stays fail-closed: a resource-limit or integrity failure here means
+        # the credential-redaction context could not be established, and
+        # parsers diverge on such content (duplicate keys, deep nesting), so
+        # treating it as a benign input defect would open an evasion channel.
         self.ctx.error(
             f"code.filesystem: {rel}: structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"
         )
 
-    def _file_errors(self, rel: str, issues: Iterable[str]) -> None:
-        """Record each issue a parser or validator reported for ``rel`` as an error."""
+    def _input_defect(self, rel: str, issue: str) -> None:
+        """Record a defect attributable to the file's own content.
+
+        A malformed, template or undecodable file is evidence about the
+        repository, not a scanner inability: real checkouts routinely carry
+        intentionally invalid files (cookiecutter templates, fixtures, link
+        farms past structured limits). The file and issue are named in the
+        report, and the scan stays complete; the scanner's own failures
+        (lexing, matching, deadlines) still fail closed elsewhere.
+        ``strict_coverage`` keeps the previous behavior: every defect is an
+        error and the scan is incomplete.
+        """
+        message = f"code.filesystem: {rel}: input defect: {issue}"
+        if self.strict_coverage:
+            self.ctx.error(message)
+        else:
+            self.ctx.warn(message, incomplete=False)
+
+    # Issues that downstream consumers reject exactly as the scanner does:
+    # a file that fails these cannot configure a client or install a
+    # dependency either, so nothing scannable hides behind it. Integrity
+    # and ambiguity issues (duplicate keys, conflicting dialects, shape
+    # violations in otherwise-valid documents) are NOT here — parsers
+    # diverge on those, which is an evasion channel, so they fail closed.
+    _SYNTAX_DEFECT_PREFIXES = (
+        "invalid TOML",
+        "invalid JSON",
+        "invalid structured configuration syntax",
+        "invalid agent manifest syntax",
+        "MCP servers must be an object or array",
+    )
+
+    def _file_errors(self, rel: str, issues: Iterable[str], *, defect: bool = False) -> None:
+        """Record parser or validator issues for ``rel``.
+
+        ``defect`` permits routing pure syntax failures — issues every
+        downstream consumer rejects identically (see
+        ``_SYNTAX_DEFECT_PREFIXES``) — through :meth:`_input_defect`, which
+        keeps the scan complete. Any other issue, and every issue when
+        ``defect`` is false, stays an error and fails the scan closed.
+        """
         for issue in issues:
-            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+            if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
+                self._input_defect(rel, issue)
+            else:
+                self.ctx.error(f"code.filesystem: {rel}: {issue}")
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
@@ -1922,7 +2029,7 @@ class FilesystemConnector(BaseConnector):
         file.card_kind = agent_manifest_kind(file.rel)
         if file.card_kind:
             validation = parse_agent_manifest(file.rel, file.text, file.card_kind)
-            self._file_errors(file.rel, validation.errors)
+            self._file_errors(file.rel, validation.errors, defect=True)
             file.card_valid = validation.valid
             file.card_incomplete = validation.incomplete
         for m in file.file_matches:
@@ -2012,7 +2119,7 @@ class FilesystemConnector(BaseConnector):
         if file.is_mcp:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors)
-            self._file_errors(file.rel, dict.fromkeys(mcp_errors))
+            self._file_errors(file.rel, dict.fromkeys(mcp_errors), defect=True)
             dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             if not file.mcp_servers and not mcp_errors and not dedicated:
                 # The content heuristic (an "mcp" and a "servers" key anywhere
@@ -2066,7 +2173,7 @@ class FilesystemConnector(BaseConnector):
         manifest = parse_manifest(rel, file.text)
         if not manifest:
             return
-        self._file_errors(rel, dict.fromkeys(manifest.errors))
+        self._file_errors(rel, dict.fromkeys(manifest.errors), defect=True)
         for dep in manifest.deps:
             file.proj.deps.append(dep)
             for m in self.index.match_dependency(dep.ecosystem, dep.name):
@@ -2119,15 +2226,33 @@ class FilesystemConnector(BaseConnector):
         if file.ext in _XML_EXTENSIONS:
             content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
-            self._scan_source(scan.root, file, content_text)
+            if not self.triage:
+                self._scan_source(scan.root, file, content_text)
         elif not is_nonexecutable:
             self._scan_config(scan, file, content_text)
-        if not is_nonexecutable and not file.is_mcp:
+        if not is_nonexecutable and not file.is_mcp and not self.triage:
             variables = self.index.match_envs_in_text(content_text)
             for m in variables:
                 self._record_content(file, m, self._file_excerpt(file, m.line))
+            content_lines: list[str] | None = None
+            ua_discounted: list[str] = []
             for m in self.index.match_domains_in_text(content_text):
+                if content_lines is None:
+                    content_lines = content_text.splitlines()
+                line_text = ""
+                if m.line and m.line <= len(content_lines):
+                    line_text = content_lines[m.line - 1]
+                if _ua_string_context(line_text, str(m.value)):
+                    # A crawler user-agent string names the provider's site;
+                    # it is bot *detection* data, not use of the provider.
+                    # The matcher keeps one match per host and file, so a
+                    # genuine use of the same host on a later line of this
+                    # file is covered by its import/env/code evidence instead.
+                    ua_discounted.append(str(m.value))
+                    continue
                 self._record_content(file, m, self._file_excerpt(file, m.line))
+            if ua_discounted:
+                self._note_ua_mentions(file.rel, ua_discounted)
             # A deployment or CI document is configuration however many products it names.
             parsed = None if file.structure is _NO_STRUCTURE else file.structure
             if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):
@@ -2914,6 +3039,20 @@ class FilesystemConnector(BaseConnector):
             for m, rel, _ in observations
         )
 
+    def _note_ua_mentions(self, rel: str, hosts: list[str]) -> None:
+        """Name the provider hosts a user-agent string mentioned; never drop them silently.
+
+        A note, not a coverage gap: the file was read and matched, and the
+        mention identifies a crawler's operator rather than provider use.
+        """
+        listed = sorted(set(hosts))
+        names = ", ".join(listed[:5]) + (f" and {len(listed) - 5} more" if len(listed) > 5 else "")
+        self.ctx.warn(
+            f"code.filesystem: {rel}: provider domains inside crawler user-agent strings were not "
+            f"counted as usage: {names}; review them if this file configures a client",
+            incomplete=False,
+        )
+
     def _note_discounted_catalogs(self, label: str, proj: _Project, catalogs: frozenset[str]) -> None:
         """Name the catalogs that held evidence a project finding would have listed; never drop it silently.
 
@@ -3488,10 +3627,18 @@ class FilesystemConnector(BaseConnector):
             for m, _ in hits
             if m.signature.category != "provider" and self.index.get(m.signature_id)
         }
-        f.title = f"Exported AI workflow ({', '.join(sorted(names))}): {rel}"
+        # An export whose nodes include a verified agent node (n8n .agent,
+        # agentTool, openAiAssistant — semantic_config sets verified_agent)
+        # is an agent, matching the lowcode.n8n connector's classification;
+        # an LLM chain without one stays a workflow. The resource_type stays
+        # "workflow-export" either way, so finding identity is unchanged.
+        agent_flow = any(m.extra.get("verified_agent") for m, _ in hits)
+        noun = "agent workflow" if agent_flow else "AI workflow"
+        f.title = f"Exported {noun} ({', '.join(sorted(names))}): {rel}"
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
-        f.kind = Kind.WORKFLOW
+        f.kind = Kind.AGENT if agent_flow else Kind.WORKFLOW
+        f.metadata["agent_flow"] = agent_flow
         return f
 
     def _infra_finding(

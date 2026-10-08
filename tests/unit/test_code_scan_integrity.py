@@ -457,3 +457,34 @@ def test_host_of_returns_none_without_a_host(url):
 
 
 # ------------------------------------------------------------- inventory links
+
+
+def test_committed_template_syntax_is_an_input_defect_not_lost_coverage(tmp_path, run_connector):
+    """Pure syntax failures every consumer rejects identically keep the scan complete.
+
+    Real checkouts carry intentionally invalid files (cookiecutter templates,
+    fixtures); the real-world benchmark measured them failing whole scans
+    closed. They are now file-attributed input-defect warnings; integrity and
+    ambiguity failures elsewhere still fail closed.
+    """
+    (tmp_path / "agent.py").write_text("from crewai import Agent\nAgent(role='r', goal='g')\n")
+    template = tmp_path / "{{cookiecutter.package_name}}"
+    template.mkdir()
+    (template / "pyproject.toml").write_text('[project\nname = "{{cookiecutter.package_name}}"\n')
+    (tmp_path / "broken.mcp.json").write_text('{"mcpServers": "not-an-object"}')
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors, ctx.stats.errors
+    assert not ctx.stats.incomplete
+    defects = [w for w in ctx.stats.warnings if "input defect" in w]
+    assert any("invalid TOML" in w for w in defects)
+    assert any("MCP servers must be an object or array" in w for w in defects)
+    assert any("framework.crewai" in f.frameworks for f in findings)
+
+
+def test_strict_coverage_keeps_template_syntax_failing_closed(tmp_path, run_connector):
+    template = tmp_path / "{{cookiecutter.package_name}}"
+    template.mkdir()
+    (template / "pyproject.toml").write_text("[project\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=True)
+    assert ctx.stats.incomplete
+    assert any("input defect" in e and "invalid TOML" in e for e in ctx.stats.errors)

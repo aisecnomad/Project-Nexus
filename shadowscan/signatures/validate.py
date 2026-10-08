@@ -10,10 +10,24 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections.abc import Sequence
+from itertools import islice
 
 from shadowscan.signatures.loader import Signature, builtin_signature_dir, load_signatures
 from shadowscan.signatures.schema import NAMESPACE_CATEGORIES
+
+# One mebichar of the measured worst case for credential patterns: markdown
+# link lists dense in the keywords that pass the literal prefilter, with the
+# dot/hyphen-rich runs that make keyword patterns re-scan. Deterministic by
+# construction (no randomness) so timings are comparable across runs.
+_THROUGHPUT_LINE = (
+    "- [awesome-api-key-manager](https://api.key-manager.example-host.io/docs/access-token) "
+    "manage every API key, access token, client secret, password and credential store.\n"
+)
+_THROUGHPUT_CHARS = 1_048_576
+_THROUGHPUT_ATTEMPTS = 3
+_THROUGHPUT_MATCH_CAP = 50
 
 
 def _regexes(signature: Signature) -> list[tuple[str, str]]:
@@ -64,9 +78,56 @@ def builtin_namespace_violations(signatures: Sequence[Signature]) -> list[str]:
     return problems
 
 
+def secret_pattern_throughput(signatures: Sequence[Signature]) -> list[str]:
+    """Reject secret patterns slower than the matcher's linear time allowance.
+
+    The matcher grants each execution ``LINEAR_SECONDS_PER_MILLION_CHARS`` of
+    work per million input characters (see :mod:`shadowscan.signatures.matcher`).
+    A credential pattern that cannot sweep the keyword-dense worst-case corpus
+    within that allowance would time out on real megabyte files and fail
+    scans closed, so it must be rewritten rather than shipped. Timing takes
+    the best of three attempts, which discards scheduler contention.
+    """
+    from shadowscan.signatures.matcher import LINEAR_SECONDS_PER_MILLION_CHARS
+
+    corpus = _THROUGHPUT_LINE * (_THROUGHPUT_CHARS // len(_THROUGHPUT_LINE) + 1)
+    corpus = corpus[:_THROUGHPUT_CHARS]
+    allowance = LINEAR_SECONDS_PER_MILLION_CHARS * (_THROUGHPUT_CHARS / 1_000_000)
+    problems: list[str] = []
+    for signature in signatures:
+        for signal in signature.signals:
+            if signal.type != "secret":
+                continue
+            for pattern, compiled in zip(signal.patterns, signal.bounded_compiled, strict=True):
+                best = None
+                for _ in range(_THROUGHPUT_ATTEMPTS):
+                    started = time.perf_counter()
+                    try:
+                        # Bound a pathological pattern instead of hanging the
+                        # validator; a timeout is far beyond the allowance.
+                        matches = compiled.finditer(corpus, timeout=4 * allowance, concurrent=False)
+                        list(islice(matches, _THROUGHPUT_MATCH_CAP))
+                    except TimeoutError:
+                        best = 4 * allowance
+                        break
+                    elapsed = time.perf_counter() - started
+                    best = elapsed if best is None or elapsed < best else best
+                if best is not None and best > allowance:
+                    problems.append(
+                        f"{signature.id}: secret pattern {pattern!r} needs {best:.3f}s per "
+                        f"{_THROUGHPUT_CHARS} chars; the matcher allows {allowance:.3f}s — "
+                        "rewrite the pattern rather than raising budgets"
+                    )
+    return problems
+
+
 def validate_signature_set(signatures: Sequence[Signature]) -> list[str]:
     """Return every whole-set problem, in a stable order (empty when valid)."""
-    return builtin_namespace_violations(signatures) + cross_signature_duplicates(signatures)
+    return (
+        builtin_namespace_violations(signatures)
+        + cross_signature_duplicates(signatures)
+        + secret_pattern_throughput(signatures)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

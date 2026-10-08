@@ -34,6 +34,7 @@ Offline input: n/a (path is the input).
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
+| `triage` | fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC only; source analysis, credential detection and content sweeps are skipped and the scan is always reported incomplete so a triage result is never mistaken for a full scan (default false) |
 | `label` | prefix for resource ids (e.g. 'github:org/repo'); defaults to the path |
 | `root_ids` | unique stable IDs aligned with paths, for resource identity across checkout moves |
 | `account` | account label recorded on every finding (default none) |
@@ -65,6 +66,7 @@ Offline input: directory of cloned repositories.
 | `default_excludes` | see code.filesystem (default true) |
 | `strict_coverage` | see code.filesystem (default false) |
 | `include_tests` | see code.filesystem (default false) |
+| `triage` | see code.filesystem (default false) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
@@ -100,6 +102,7 @@ Offline input: directory of cloned projects.
 | `default_excludes` | see code.filesystem (default true) |
 | `strict_coverage` | see code.filesystem (default false) |
 | `include_tests` | see code.filesystem (default false) |
+| `triage` | see code.filesystem (default false) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |

@@ -354,8 +354,10 @@ Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations; results are warnings or notes with the
 heuristic risk level, never a CVSS `security-severity`, see
 [severity](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/severity.md)), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down), and `cyclonedx` (a CycloneDX 1.6 AI bill
-of materials, see [AI-BOM](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ai-bom.md)). Opt-in
+filterable, with evidence drill-down), `cyclonedx` (a CycloneDX 1.6 AI bill
+of materials, see [AI-BOM](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ai-bom.md)), and `ocsf`
+(OCSF 1.1.0 Detection Finding events for SIEMs and security data lakes, see
+[OCSF](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ocsf.md)). Opt-in
 [LLM triage](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/llm-triage.md) adds an advisory model verdict to
 the highest-risk findings; it is off by default and never changes scores.
 CSV inserts a literal `'` at the start of

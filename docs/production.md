@@ -2145,6 +2145,48 @@ Redaction and lexing changes to review:
   `emoji-regex` or similar generated tables stop reporting
   `incomplete source lexical analysis` for them.
 
+### Real-world robustness migration (unreleased)
+
+- **Input defects keep scans complete.** A checkout's own malformed content —
+  invalid TOML/JSON (cookiecutter templates, fixtures), invalid structured
+  configuration or agent-manifest syntax, an MCP configuration whose servers
+  value is not an object or array — is now a per-file `input defect:` warning
+  and the scan completes (exit 0) instead of exiting 3. Pipelines that
+  treated exit 3 as "malformed file present" should alert on the warning
+  text instead, or set `strict_coverage: true`, which restores every defect
+  as an error. Integrity and ambiguity failures (duplicate keys, conflicting
+  MCP dialects, YAML resource limits, undecodable analyzable files,
+  unscanned symlink targets) are unchanged and still fail closed.
+- **Flow exports with agent nodes are agents.** `code.filesystem` now emits
+  `kind: agent` for an exported flow whose nodes include a verified agent
+  node (n8n `.agent`/`agentTool`/`openAiAssistant`, Dify
+  `agent_mode: enabled`), titled `Exported agent workflow (…)`; chains
+  without an agent node stay `kind: workflow`. Finding identity does not
+  change (`resource_type` stays `workflow-export`), so diffs resolve across
+  the upgrade, but kind-based dashboards and `--fail-on` policies see such
+  findings move from `workflow` to `agent`, and metadata gains
+  `agent_flow`.
+- **Lexer.** Brace-less JSX elements as attribute values
+  (`description=<div>…</div>`, `title=<span>…</span>`, self-closing
+  `icon=<Plus/>`) are now lexed completely; repositories that reported
+  `incomplete source lexical analysis` for such files scan complete and may
+  gain findings there.
+- **Credential pass on large files.** The per-execution regex allowance
+  scales linearly with input size inside the per-file wall budget, so
+  keyword-dense megabyte files no longer record
+  `credential detection incomplete (MatchTimeoutError)`. The ReDoS bar is
+  size-relative: allowed work is proportional to input length, and
+  `signatures.validate` rejects secret patterns slower than the allowance.
+- **Deadline degradation is deterministic.** The walk scans manifests, MCP
+  and coding-agent configuration, flow exports and IaC before source files
+  (largest last), and the deadline diagnostic names the exact remainder.
+  Order-sensitive truncated lists (example credentials, detection-rule
+  files) may list different members than an earlier release.
+- **Triage scans are always incomplete.** `triage: true` discloses the
+  skipped stages per root and exits 3 by design; never compare a triage
+  report against a full baseline (the configuration is part of the
+  comparison fingerprint, so `diff` refuses to resolve across the modes).
+
 Operational notes:
 
 - With a Kubernetes ConfigMap mount, pass the resolved file path as the

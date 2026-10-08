@@ -780,12 +780,12 @@
     {
       "id": "n8n-agent-with-openai-node",
       "family": "workflow",
-      "description": "n8n AI Agent export attributes its OpenAI model node",
+      "description": "n8n AI Agent export attributes its OpenAI model node (agent node present, so the export classifies as an agent).",
       "files": {
         "workflow.json": "{\"name\": \"triage\", \"nodes\": [{\"parameters\": {}, \"name\": \"AI Agent\", \"type\": \"@n8n/n8n-nodes-langchain.agent\", \"typeVersion\": 1.7, \"position\": [0, 0]}, {\"parameters\": {}, \"name\": \"Model\", \"type\": \"@n8n/n8n-nodes-langchain.lmChatOpenAi\", \"typeVersion\": 1, \"position\": [0, 1]}], \"connections\": {}}"
       },
       "target": {
-        "kind": "workflow",
+        "kind": "agent",
         "signature": "provider.openai"
       },
       "present": true

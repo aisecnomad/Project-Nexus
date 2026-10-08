@@ -582,6 +582,13 @@ By default `diff` exits 0 when the comparison is complete, whatever it finds.
 `--fail-on-new` exits 2 when there are new findings or a finding's risk level
 rose; an incomplete comparison still exits 3.
 
+`--shadow-only` narrows the displayed records to findings whose `shadow`
+field is true (unmatched against the supplied inventory; findings from
+inventory-less scans have `shadow: null` and are not shown). It is a view:
+the summary counts, incompleteness reasons, `--fail-on-new` gating and exit
+codes are always computed over the full comparison, and `--json` always
+carries the complete document plus a `shadow_only_view` id list.
+
 Connectors that were disabled or left out by `--only` do not make a scan
 incomplete (that is operator intent), but the JSON report lists them as
 `collection_scope.not_run` with the reason. The list is not part of the scope

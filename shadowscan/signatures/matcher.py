@@ -26,7 +26,16 @@ from shadowscan.signatures.loader import Signal, Signature, load_signatures, nor
 from shadowscan.utils.redaction import sanitize_text
 
 _SCAN_DEADLINE: ContextVar[float | None] = ContextVar("signature_scan_deadline", default=None)
+_SCAN_EXECUTION_CAP: ContextVar[float | None] = ContextVar("signature_scan_execution_cap", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
+# Per-execution allowance grows linearly with the input declared to
+# scan_budget: a pattern may spend this long per million characters. The
+# fail-fast property is size-relative, not absolute — a super-linear pattern
+# still times out on large inputs, while a linear pattern with a large
+# constant (keyword-dense megabyte files) is not misreported as pathological.
+# Patterns must still pass the per-pattern throughput floor enforced by
+# ``python -m shadowscan.signatures.validate``.
+LINEAR_SECONDS_PER_MILLION_CHARS = 0.25
 DEFAULT_SCAN_BUDGET_SECONDS = 2.0
 # A briefly busy worker can exhaust several regex wall-clock attempts before
 # this thread has used its own 100 ms CPU allowance. Keep retries finite and
@@ -39,10 +48,9 @@ class MatchTimeoutError(RuntimeError):
 
 
 def _remaining_timeout() -> float:
+    cap = _SCAN_EXECUTION_CAP.get() or REGEX_TIMEOUT_SECONDS
     deadline = _SCAN_DEADLINE.get()
-    remaining = (
-        REGEX_TIMEOUT_SECONDS if deadline is None else min(REGEX_TIMEOUT_SECONDS, deadline - time.monotonic())
-    )
+    remaining = cap if deadline is None else min(cap, deadline - time.monotonic())
     if remaining <= 0:
         raise MatchTimeoutError("signature matching exceeded the input execution budget")
     return remaining
@@ -973,22 +981,37 @@ class SignatureIndex:
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     @contextmanager
-    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS) -> Iterator[None]:
+    def scan_budget(
+        self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS, *, chars: int | None = None
+    ) -> Iterator[None]:
         """Share one deadline across all signature operations for an input file.
 
         Individual regex executions are also preempted by the regex engine. An
         elapsed deadline always raises, including after non-matching work.
+        ``chars`` declares the input size so each execution's allowance scales
+        linearly with it (never below ``REGEX_TIMEOUT_SECONDS``, never beyond
+        this budget's own deadline); without it the strict flat cap applies.
         """
         if not 0 < seconds <= 60:
             raise ValueError("signature scan budget must be greater than zero and at most 60 seconds")
         deadline = time.monotonic() + seconds
         outer = _SCAN_DEADLINE.get()
         token = _SCAN_DEADLINE.set(min(deadline, outer) if outer is not None else deadline)
+        cap_token = None
+        if chars is not None and chars > 0:
+            scaled = max(REGEX_TIMEOUT_SECONDS, LINEAR_SECONDS_PER_MILLION_CHARS * (chars / 1_000_000))
+            cap = min(scaled, seconds)
+            outer_cap = _SCAN_EXECUTION_CAP.get()
+            if outer_cap is not None:
+                cap = min(cap, outer_cap)
+            cap_token = _SCAN_EXECUTION_CAP.set(cap)
         try:
             _remaining_timeout()
             yield
             _remaining_timeout()
         finally:
+            if cap_token is not None:
+                _SCAN_EXECUTION_CAP.reset(cap_token)
             _SCAN_DEADLINE.reset(token)
 
     # ------------------------------------------------------------- matchers

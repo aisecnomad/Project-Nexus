@@ -38,6 +38,20 @@ VALID_TSX = {
     ),
     "block-comment-in-tag": "export const F = () => <input /* it's fine */ size={3} />;\n",
     "child-text-starting-with-parenthesis": "export const G = ({ n }: { n: number }) => <Text>({n})</Text>;\n",
+    # Brace-less JSX elements as attribute values are legal JSX; autogen-studio
+    # uses them throughout (the real-world benchmark's lexer regressions).
+    "braceless-element-attribute-value": (
+        "export const H = () => (\n"
+        '  <Tooltip title=<span>Sessions {" "}<b>{n}</b>{" "}</span>>\n'
+        "    <button />\n  </Tooltip>\n);\n"
+    ),
+    "braceless-self-closing-attribute-value": 'export const I = () => <A b=<i/> c="d">t</A>;\n',
+    "braceless-capitalized-self-closing-value": "export const J = () => <Row icon=<Plus/> wide>t</Row>;\n",
+    "braceless-value-then-template-attribute": (
+        "export const K = () => (\n"
+        '  <CodeSection title="1. Dockerfile" description=<div><a href="https://e.x">docs</a>'
+        '{" "}</div> code={`FROM python:3.10-slim\nRUN pip install .`} />\n);\n'
+    ),
 }
 
 
@@ -45,6 +59,36 @@ VALID_TSX = {
 def test_valid_tsx_constructs_are_lexed_completely(source: str) -> None:
     _, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
     assert not ambiguous
+
+
+def test_braceless_attribute_value_text_stays_masked() -> None:
+    source = (
+        "export const View = () => (\n"
+        '  <Tooltip title=<span>createReactAgent( is documented {" "}here</span>>\n'
+        "    <button />\n  </Tooltip>\n);\n"
+        'import { createReactAgent } from "@langchain/langgraph/prebuilt";\n'
+        "const graph = createReactAgent({});\n"
+    )
+    ignored, ambiguous = noncode_ranges(source, "javascript", ".tsx", jsx=True)
+    assert not ambiguous
+    prose = source.index("createReactAgent( is")
+    code = source.rindex("createReactAgent(")
+    assert any(start <= prose < end for start, end in ignored)
+    assert not any(start <= code < end for start, end in ignored)
+
+
+def test_braceless_attribute_file_scans_complete(tmp_path: Path, run_connector) -> None:
+    (tmp_path / "Guide.tsx").write_text(
+        'import { createReactAgent } from "@langchain/langgraph/prebuilt";\n'
+        "export const Guide = () => (\n"
+        '  <CodeSection title="1. Install" description=<div>Run the agent{" "}</div>'
+        " code={`pip install .`} />\n);\n"
+        "export const graph = createReactAgent({});\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert not any("incomplete source lexical analysis" in w for w in ctx.stats.warnings)
+    assert any(f.kind == Kind.AGENT and "framework.langgraph" in f.frameworks for f in findings)
 
 
 def test_jsx_text_after_typed_element_stays_masked() -> None:

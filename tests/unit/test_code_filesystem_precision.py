@@ -221,3 +221,32 @@ def test_oversize_source_and_config_stay_coverage_gaps(run_connector, tmp_path, 
     assert stats.warnings and not stats.errors and stats.incomplete
     _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=True)
     assert stats.errors and stats.incomplete
+
+
+def test_provider_domain_in_crawler_ua_string_is_discounted(tmp_path, run_connector):
+    """Regression for the real-world benchmark's only ShadowScan false positive.
+
+    A user-agent parser's crawler fixture quotes provider sites inside UA
+    strings; the domain identifies the bot's operator, not provider use.
+    The mention is discounted with a visible note and the scan stays
+    complete; a genuine API host in code is unaffected.
+    """
+    fixture = tmp_path / "test" / "data"
+    fixture.mkdir(parents=True)
+    fixture.joinpath("crawler.json").write_text(
+        '[{"ua": "Mozilla/5.0 (compatible; HuggingFace-Bot/1.0; +https://huggingface.co/)"}]\n'
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not findings
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert any(
+        "crawler user-agent strings" in warning and "huggingface.co" in warning
+        for warning in ctx.stats.warnings
+    )
+
+
+def test_provider_domain_outside_ua_strings_still_counts(tmp_path, run_connector):
+    (tmp_path / "settings.json").write_text('{"endpoint": "https://api.anthropic.com/v1/messages"}\n')
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any("provider.anthropic" in {e.signature for e in f.evidence} for f in findings)
+    assert not any("user-agent" in warning for warning in ctx.stats.warnings)
