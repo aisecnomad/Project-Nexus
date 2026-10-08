@@ -197,6 +197,8 @@ def test_evidence_extraction_labels_a_synthetic_repo(tmp_path: Path) -> None:
     assert "framework:crewai" not in facts and "framework:crewai" in ev.tolerated
     assert "provider:ollama" not in facts and "provider:ollama" in ev.tolerated  # test fixture only
     assert evidence.is_test_path("pkg/server_test.go") and not evidence.is_test_path("pkg/server.go")
+    assert evidence.is_test_path("src/broker_tests.rs") and evidence.is_test_path("src/net/tests.rs")
+    assert not evidence.is_test_path("src/contest.rs")
     assert "mcp:sdk" not in ev.tolerated  # required evidence wins over the indirect go.mod entry
     locations = {h.location for h in ev.facts["provider:mistral"]}
     assert "config.yaml:2" in locations

@@ -138,7 +138,7 @@ MCP_SERVER_RS = re.compile(r"\bServerHandler\b")
 
 TEST_PATH = re.compile(
     r"(^|/)(tests?|testdata|test_data|fixtures?|__fixtures__|cassettes|__snapshots__|snapshots|__tests__|__mocks__|mocks|e2e|spec)/"
-    r"|(^|/)(test_[^/]*\.py|[^/]*_test\.(py|go|rs|java|kt)|[^/]*\.(test|spec)\.[cm]?[jt]sx?|conftest\.py)$",
+    r"|(^|/)(test_[^/]*\.py|[^/]*_tests?\.(py|go|rs|java|kt)|tests?\.rs|[^/]*\.(test|spec)\.[cm]?[jt]sx?|conftest\.py)$",
 )
 
 
