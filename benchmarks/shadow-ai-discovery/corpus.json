@@ -682,6 +682,13 @@
      ]
     },
     {
+     "fact": "framework:portkey",
+     "evidence": [
+      "manifest:libs/agno/pyproject.toml (portkey-ai)",
+      "import:libs/agno/agno/models/portkey/portkey.py:9 (portkey_ai)"
+     ]
+    },
+    {
      "fact": "framework:pydantic-ai",
      "evidence": [
       "import:cookbook/09_evals/performance/comparison/pydantic_ai_instantiation.py:11 (pydantic_ai)",
@@ -938,8 +945,7 @@
      "fact": "provider:bedrock",
      "evidence": [
       "idiom:aider/resources/model-settings.yml:246 (bedrock/anthropic)",
-      "idiom:aider/resources/model-settings.yml:246 (anthropic.claude-3-7-sonnet-20250219-v1:0)",
-      "idiom:aider/website/_data/edit_leaderboard.yml:2041 (amazon.nova-)"
+      "idiom:aider/resources/model-settings.yml:246 (anthropic.claude-3-7-sonnet-20250219-v1:0)"
      ]
     },
     {
@@ -978,8 +984,7 @@
      "fact": "provider:groq",
      "evidence": [
       "idiom:aider/models.py:729 (groq_api_key)",
-      "idiom:aider/resources/model-settings.yml:512 (groq/llama)",
-      "idiom:aider/website/_data/edit_leaderboard.yml:292 (groq/llama)"
+      "idiom:aider/resources/model-settings.yml:512 (groq/llama)"
      ]
     },
     {
@@ -988,21 +993,6 @@
       "manifest:requirements.txt (huggingface-hub)",
       "manifest:requirements/common-constraints.txt (huggingface-hub)",
       "manifest:requirements/common-constraints.txt (transformers)"
-     ]
-    },
-    {
-     "fact": "provider:mistral",
-     "evidence": [
-      "idiom:aider/website/_data/edit_leaderboard.yml:475 (mistral/codestral)",
-      "idiom:aider/website/_data/edit_leaderboard.yml:458 (codestral)",
-      "idiom:aider/website/_data/polyglot_leaderboard.yml:411 (mistral/codestral)"
-     ]
-    },
-    {
-     "fact": "provider:ollama",
-     "evidence": [
-      "idiom:aider/website/_data/edit_leaderboard.yml:498 (ollama/c)",
-      "idiom:aider/website/_data/quant.yml:42 (ollama/q)"
      ]
     },
     {
@@ -1025,8 +1015,7 @@
      "fact": "provider:together",
      "evidence": [
       "idiom:aider/resources/model-metadata.json:711 (together_ai/)",
-      "idiom:aider/resources/model-settings.yml:1586 (together_ai/)",
-      "idiom:aider/website/_data/edit_leaderboard.yml:338 (together_ai/)"
+      "idiom:aider/resources/model-settings.yml:1586 (together_ai/)"
      ]
     },
     {
@@ -1046,7 +1035,10 @@
      ]
     }
    ],
-   "tolerated": [],
+   "tolerated": [
+    "provider:mistral",
+    "provider:ollama"
+   ],
    "notes": ""
   },
   {
@@ -2481,7 +2473,7 @@
      "evidence": [
       "idiom:apps/vscode/proto/cline/models.proto:376 (mistral_api_key)",
       "idiom:apps/vscode/proto/cline/state.proto:80 (mistral_api_key)",
-      "idiom:docs/docs.json:1073 (codestral)"
+      "idiom:sdk/packages/core/scripts/compact-session.ts:22 (mistral_api_key)"
      ]
     },
     {
@@ -4595,6 +4587,12 @@
    "file_count": 19936,
    "expected": [
     {
+     "fact": "a2a:sdk",
+     "evidence": [
+      "manifest:packages/core/package.json (@a2a-js/sdk)"
+     ]
+    },
+    {
      "fact": "agent-config:agents-md",
      "evidence": [
       "config:AGENTS.md (AGENTS.md)",
@@ -4737,9 +4735,9 @@
     {
      "fact": "provider:bedrock",
      "evidence": [
-      "idiom:docs/vercel.json:1459 (bedrock-agent)",
-      "idiom:docs/vercel.redirects.json:1444 (bedrock-agent)",
-      "idiom:docs/src/content/en/integrations/sidebars.js:498 (bedrock-agent)"
+      "idiom:mastracode/factory/src/factory.ts:220 (aws_bearer_token_bedrock)",
+      "manifest:mastracode/sdk/package.json (@ai-sdk/amazon-bedrock)",
+      "import:mastracode/sdk/src/providers/amazon-bedrock-gateway.ts:3 (@ai-sdk/amazon-bedrock)"
      ]
     },
     {
@@ -4778,8 +4776,8 @@
      "fact": "provider:google-gemini",
      "evidence": [
       "idiom:.opencode/mastra.json:2 (gemini-2.)",
-      "idiom:docs/src/plugins/remark-model-tokens/models.ts:30 (gemini-2.)",
-      "idiom:e2e-tests/monorepo/template/packages/hello-world/src/agent/my-agent.ts:11 (gemini-2.)"
+      "idiom:e2e-tests/monorepo/template/packages/hello-world/src/agent/my-agent.ts:11 (gemini-2.)",
+      "idiom:examples/agent/src/mastra/agents/index.ts:211 (gemini-2.)"
      ]
     },
     {
@@ -4841,9 +4839,9 @@
     {
      "fact": "provider:together",
      "evidence": [
+      "manifest:packages/core/package.json (@ai-sdk/togetherai)",
       "idiom:packages/core/src/llm/model/provider-registry.json:9637 (together_api_key)",
-      "idiom:packages/core/src/llm/model/provider-registry.json:8146 (together_ai/)",
-      "idiom:packages/core/src/llm/model/provider-types.generated.d.ts:6183 (together_ai/)"
+      "idiom:packages/core/src/llm/model/provider-registry.json:8146 (together_ai/)"
      ]
     },
     {
@@ -5020,25 +5018,23 @@
     {
      "fact": "framework:langchain",
      "evidence": [
-      "import:python/docs/src/user-guide/core-user-guide/cookbook/langgraph-agent.ipynb:7 (langchain_core.messages)",
-      "import:python/docs/src/user-guide/core-user-guide/cookbook/langgraph-agent.ipynb:8 (langchain_core.tools)",
-      "import:python/docs/src/user-guide/core-user-guide/cookbook/langgraph-agent.ipynb:9 (langchain_openai)"
+      "manifest:python/packages/autogen-core/pyproject.toml (langchain-openai)",
+      "manifest:python/packages/autogen-ext/pyproject.toml (langchain_core)",
+      "manifest:python/packages/autogen-ext/pyproject.toml (langchain-experimental)"
      ]
     },
     {
      "fact": "framework:langgraph",
      "evidence": [
-      "import:python/docs/src/user-guide/core-user-guide/cookbook/langgraph-agent.ipynb:10 (langgraph.graph)",
-      "import:python/docs/src/user-guide/core-user-guide/cookbook/langgraph-agent.ipynb:11 (langgraph.prebuilt)",
       "manifest:python/packages/autogen-core/pyproject.toml (langgraph)"
      ]
     },
     {
      "fact": "framework:llamaindex",
      "evidence": [
-      "import:python/docs/src/user-guide/core-user-guide/cookbook/llamaindex-agent.ipynb:7 (llama_index.core)",
-      "import:python/docs/src/user-guide/core-user-guide/cookbook/llamaindex-agent.ipynb:8 (llama_index.core.agent)",
-      "import:python/docs/src/user-guide/core-user-guide/cookbook/llamaindex-agent.ipynb:9 (llama_index.core.agent.runner.base)"
+      "manifest:python/packages/autogen-core/pyproject.toml (llama-index-embeddings-azure-openai)",
+      "manifest:python/packages/autogen-core/pyproject.toml (llama-index-llms-azure-openai)",
+      "manifest:python/packages/autogen-core/pyproject.toml (llama-index-readers-web)"
      ]
     },
     {
@@ -5967,7 +5963,9 @@
     {
      "fact": "framework:portkey",
      "evidence": [
-      "manifest:package.json (portkey-ai)"
+      "manifest:package.json (portkey-ai)",
+      "notebook:cookbook/getting-started/fallback-from-openai-to-azure.ipynb (pip install portkey-ai)",
+      "import:cookbook/getting-started/fallback-from-openai-to-azure.ipynb:2 (portkey_ai)"
      ]
     },
     {
@@ -6089,6 +6087,12 @@
       "idiom:src/data/models.json:9518 (perplexity/llama)",
       "host:src/data/providers.json:227 (api.perplexity.ai)",
       "host:src/providers/perplexity-ai/api.ts:4 (api.perplexity.ai)"
+     ]
+    },
+    {
+     "fact": "provider:replicate",
+     "evidence": [
+      "host:src/providers/replicate/api.ts:4 (api.replicate.com)"
      ]
     },
     {
@@ -7011,8 +7015,8 @@
      "fact": "framework:dspy",
      "evidence": [
       "manifest:.github/.internal_dspyai/pyproject.toml (dspy)",
-      "manifest:docs/Pipfile (dspy)",
-      "import:docs/docs/tutorials/agents/index.ipynb:1 (dspy)"
+      "import:dspy/__init__.py:2 (dspy)",
+      "import:dspy/__init__.py:4 (dspy.predict)"
      ]
     },
     {
@@ -7043,8 +7047,8 @@
      "fact": "provider:anthropic",
      "evidence": [
       "manifest:pyproject.toml (anthropic)",
-      "idiom:docs/docs/js/hero-interactive.js:15 (anthropic/claude)",
-      "idiom:docs/docs/js/hero-interactive.js:15 (claude-sonnet)"
+      "idiom:dspy/_vendor/lm15/__init__.py:18 (claude-sonnet)",
+      "idiom:dspy/_vendor/lm15/access.py:75 (anthropic_api_key)"
      ]
     },
     {
@@ -7072,9 +7076,8 @@
     {
      "fact": "provider:deepseek",
      "evidence": [
-      "idiom:docs/docs/js/hero-interactive.js:16 (deepseek/deepseek)",
-      "idiom:docs/docs/js/hero-interactive.js:16 (deepseek-r1)",
-      "idiom:dspy/_vendor/lm15/access.py:239 (deepseek_api_key)"
+      "idiom:dspy/_vendor/lm15/access.py:239 (deepseek_api_key)",
+      "host:dspy/_vendor/lm15/compat.py:841 (api.deepseek.com)"
      ]
     },
     {
@@ -7111,14 +7114,13 @@
      "fact": "provider:openai",
      "evidence": [
       "manifest:pyproject.toml (openai)",
-      "idiom:docs/docs/js/hero-interactive.js:14 (gpt-5)",
-      "idiom:docs/docs/tutorials/agents/index.ipynb:4 (gpt-4)"
+      "idiom:dspy/_vendor/lm15/access.py:120 (openai_api_key)",
+      "idiom:dspy/_vendor/lm15/access.py:430 (gpt-oss)"
      ]
     },
     {
      "fact": "provider:openrouter",
      "evidence": [
-      "idiom:docs/docs/js/hero-interactive.js:16 (openrouter/deepseek/)",
       "idiom:dspy/_vendor/lm15/access.py:225 (openrouter_api_key)",
       "host:dspy/_vendor/lm15/compat.py:295 (openrouter.ai/api)"
      ]

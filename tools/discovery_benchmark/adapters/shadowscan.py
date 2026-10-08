@@ -180,8 +180,9 @@ class ShadowScanAdapter:
                         facts.add("iac:azure-openai")
                     elif family == "provider" and slug in {"vertex-ai", "google-vertex", "gcp-vertex-ai"}:
                         facts.add("iac:vertex-ai")
-                    elif family in {"provider", "framework", "platform", "protocol"}:
+                    elif family in {"provider", "framework", "platform"}:
                         facts.update(_slug_facts(sig))
+                    # a protocol on an infra finding is a deployed image or endpoint, not SDK usage
             elif kind == "mcp-server":
                 for path in [resource, *locations]:
                     facts.update(
