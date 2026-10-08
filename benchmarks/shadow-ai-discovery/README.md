@@ -80,10 +80,27 @@ with evidence from:
 * provider hostnames and SDK idioms in code and configuration files, never in
   documentation.
 
-A fact seen only in lock files, in `// indirect` Go requirements, or in test and
-fixture paths is **tolerated**: a tool may report it without penalty, but it is
-not required. Documentation-only mentions (README, docs, markdown lists) do not
-count at all; a list of products is not use of them.
+A fact seen only in lock files, in `// indirect` Go requirements, in test and
+fixture paths, or in a documentation-site tree (`docs/`, `website/`, `site/`,
+`_data/`, `_posts/`, `_includes/`, `blog/`, `changelogs/`; committed
+configuration files inside them still count) is **tolerated**: a tool may
+report it without penalty, but it is not required. Documentation-only mentions
+(README, docs, markdown lists) do not count at all; a list of products is not
+use of them. A `package.json` alias (`"name-v1": "npm:@scope/name@range"`)
+names the real package.
+
+The labels were revised once after the first run (corpus v2, 836 expected
+facts): auditing every tool's false positives against the raw reports found
+three labeling gaps (an npm alias, the `portkey-ai` PyPI package, the
+`api.replicate.com` host) and the documentation-tree rule above; the audit
+also found four adapter bugs that had scored real ShadowScan detections as
+misses or false positives (ids such as `provider.voyage-ai` and
+`framework.microsoft-extensions-ai` were mapped by name rules instead of by
+their exact slug, `protocol.mcp` counted as SDK usage without dependency,
+import or code evidence, and two ids resembled products the taxonomy does not
+track). Rescored against corpus v2 with the fixed adapters, the 2026-10-08 run
+gives ShadowScan in-scope precision 97.8%, recall 87.5%, F1 92.3% (17 false
+positives, 106 misses); every other tool moves by at most 0.2 points.
 
 The extractor output was reviewed by the author of this benchmark (a Claude
 session) and spot-checked against the evidence pointers. **This is author-written
