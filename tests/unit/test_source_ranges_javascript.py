@@ -426,7 +426,8 @@ HOSTILE = {
     "unclosed-tags": ("<div " * 50_000, AMBIGUOUS),
     "unclosed-expressions": ("<a>{" * 62_500, AMBIGUOUS),
     "unterminated-comments": ("/* " * 83_334, AMBIGUOUS),
-    "generic-arrow-heads": ("<T extends X>(" * 17_857, AMBIGUOUS),
+    # TypeScript reads `<T extends X` where an expression starts as type parameters, not JSX.
+    "generic-arrow-heads": ("<T extends X>(" * 17_857, COMPLETE),
     "brace-slash-open-class": ("}/[" * 83_333, LIMIT),
     "brace-slash-quote": ("}/'" * 83_333, AMBIGUOUS),
     "backticks": ("`" * 250_000, COMPLETE),

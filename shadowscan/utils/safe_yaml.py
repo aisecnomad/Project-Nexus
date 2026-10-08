@@ -209,6 +209,44 @@ class YAMLIntegrityError(yaml.YAMLError):
 
 
 _MERGE_KEY = object()
+# Nodes compared to decide whether a repeated key's two values are the same.
+_MAX_REPEAT_COMPARISON_NODES = 10_000
+
+
+def _same_node(first: Node, second: Node) -> bool:
+    """Whether two composed nodes spell the same value: same kinds, resolved tags and scalar text, in order.
+
+    The comparison is deliberately literal. ``1`` and ``1.0``, ``1`` and
+    ``true``, or a mapping in another key order differ, so only a repetition
+    that every YAML reader resolves to one value compares equal. A comparison
+    larger than the bound answers False.
+    """
+    budget = _MAX_REPEAT_COMPARISON_NODES
+    pending = [(first, second)]
+    seen: set[tuple[int, int]] = set()
+    while pending:
+        a, b = pending.pop()
+        if a is b or (id(a), id(b)) in seen:
+            continue
+        seen.add((id(a), id(b)))
+        budget -= 1
+        if budget < 0 or type(a) is not type(b) or a.tag != b.tag:
+            return False
+        if isinstance(a, ScalarNode):
+            if a.value != b.value:
+                return False
+        elif isinstance(a, SequenceNode):
+            if len(a.value) != len(b.value):
+                return False
+            pending.extend(zip(a.value, b.value, strict=True))
+        elif isinstance(a, MappingNode):
+            if len(a.value) != len(b.value):
+                return False
+            for (key_a, value_a), (key_b, value_b) in zip(a.value, b.value, strict=True):
+                pending.extend(((key_a, key_b), (value_a, value_b)))
+        else:
+            return False
+    return True
 
 
 class StrictBoundedSafeLoader(BoundedSafeLoader):
@@ -220,11 +258,15 @@ class StrictBoundedSafeLoader(BoundedSafeLoader):
     """
 
     REQUIRE_STRING_KEYS: ClassVar[bool] = True
+    # Whether a key written again, with the same spelling and the same value
+    # (see _same_node), is accepted. Keys that only collide once YAML 1.1
+    # constructs them (`on` and `true`) are never a repeat of one another.
+    ACCEPT_IDENTICAL_REPEATS: ClassVar[bool] = False
 
     def flatten_mapping(self, node: MappingNode) -> None:
         if node not in self._flattened:
-            keys: set[Any] = set()
-            for key_node, _ in node.value:
+            keys: dict[Any, tuple[Node, Node]] = {}
+            for key_node, value_node in node.value:
                 if key_node.tag == "tag:yaml.org,2002:merge":
                     key = _MERGE_KEY
                 else:
@@ -236,8 +278,16 @@ class StrictBoundedSafeLoader(BoundedSafeLoader):
                     except TypeError:
                         raise YAMLIntegrityError("YAML mapping keys must be scalar") from None
                 if key in keys:
-                    raise YAMLIntegrityError("Duplicate YAML field")
-                keys.add(key)
+                    first_key, first_value = keys[key]
+                    if not (
+                        self.ACCEPT_IDENTICAL_REPEATS
+                        and key is not _MERGE_KEY
+                        and _same_node(first_key, key_node)
+                        and _same_node(first_value, value_node)
+                    ):
+                        raise YAMLIntegrityError("Duplicate YAML field")
+                    continue
+                keys[key] = (key_node, value_node)
         super().flatten_mapping(node)
 
 
@@ -248,9 +298,15 @@ class StrictBoundedConfigLoader(StrictBoundedSafeLoader):
     unquoted ``on`` to booleans. Repository formats such as GitHub Actions use
     that spelling as a key, so code scanning must accept it while still
     rejecting fields that collide after construction.
+
+    A field a hand-written file repeats with the same value (an evaluation
+    task's metadata listing one entry twice) is accepted: every reader resolves
+    it to that one value, so nothing is discarded. A repeat with any other
+    value stays an integrity error. Offline exports keep rejecting both.
     """
 
     REQUIRE_STRING_KEYS: ClassVar[bool] = False
+    ACCEPT_IDENTICAL_REPEATS: ClassVar[bool] = True
 
 
 def _validate_strict_yaml_values(values: list[Any], *, max_depth: int) -> None:

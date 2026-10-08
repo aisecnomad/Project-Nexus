@@ -25,16 +25,6 @@ from shadowscan.connectors.code.source_ranges import noncode_ranges
             "framework.langchain4j",
         ),
         (
-            "sample.rb",
-            "docs = <<DOC\n#{AiServices.builder(example)}\nDOC\n",
-            "framework.langchain4j",
-        ),
-        (
-            "sample.php",
-            "<?php\n$docs = <<<DOC\n{$example} AiServices.builder(example)\nDOC;\n",
-            "framework.langchain4j",
-        ),
-        (
             "sample.rs",
             'let docs = r#"AgentBuilder::new(example)\n',
             "framework.rig",
@@ -58,8 +48,6 @@ from shadowscan.connectors.code.source_ranges import noncode_ranges
     ids=[
         "ruby-unclosed-heredoc",
         "php-unclosed-heredoc",
-        "ruby-interpolated-heredoc",
-        "php-interpolated-heredoc",
         "rust-unclosed-raw-string",
         "ruby-unclosed-percent-string",
         "ruby-interpolated-percent-string",
@@ -93,6 +81,38 @@ def test_ambiguous_multiline_source_retains_neighbor_and_fails_closed(
         for finding in report["findings"]
     )
     assert all(phantom_framework not in finding["frameworks"] for finding in report["findings"])
+
+
+@pytest.mark.parametrize(
+    ("filename", "source", "inert"),
+    [
+        ("sample.rb", "docs = <<DOC\nAsk #{example.name} AiServices.builder(example)\nDOC\n", True),
+        ("sample.php", "<?php\n$docs = <<<DOC\n{$example} AiServices.builder(example)\nDOC;\n", True),
+        ("sample.rb", "docs = <<DOC\n#{AiServices.builder(example)}\nDOC\n", False),
+    ],
+    ids=["ruby-heredoc-text", "php-heredoc-text", "ruby-interpolated-code"],
+)
+def test_interpolated_heredoc_is_lexed_completely(tmp_path, filename: str, source: str, inert: bool):
+    # Interpolations that close on their line are code; the rest of the heredoc is text.
+    (tmp_path / filename).write_text(source, encoding="utf-8")
+    (tmp_path / "real.py").write_text(
+        'from crewai import Agent\nagent = Agent(role="writer", goal="draft")\n',
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.stdout)
+    assert report["summary"]["complete"] is True
+    language = "ruby" if filename.endswith(".rb") else "php"
+    spans, incomplete = noncode_ranges(source, language, ".php" if language == "php" else ".rb")
+    assert not incomplete
+    call = source.index("AiServices.builder")
+    assert any(start <= call < end for start, end in spans) is inert
+    assert any(
+        finding["kind"] == "agent" and "framework.crewai" in finding["frameworks"]
+        for finding in report["findings"]
+    )
 
 
 @pytest.mark.parametrize(

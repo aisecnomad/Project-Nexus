@@ -108,12 +108,14 @@ an available framework feature is not an observed workload capability.
 
 Source masking is a bounded lexical filter. Ruby `%q` strings with supported
 delimiters are masked; `%Q` interpolation and unterminated percent strings mark
-the scan incomplete. Ruby regular expressions, PHP heredoc interpolation, C#
-raw strings with multiple interpolation delimiters, and Scala interpolation
-need more dialect-specific handling. Such constructs can be missed or
-misclassified; an identified unterminated literal or ambiguous heredoc marks
-the scan incomplete. Review source evidence before using these languages to
-enforce a production policy gate.
+the scan incomplete. PHP and Ruby here-document interpolation is read as code
+when the expression closes on its line, and C# raw strings honour their quote
+count and their `$` interpolation delimiters; an interpolation that continues
+on another line still marks the scan incomplete. Ruby regular expressions and
+Scala interpolation need more dialect-specific handling. Such constructs can
+be missed or misclassified; an identified unterminated literal or ambiguous
+heredoc marks the scan incomplete. Review source evidence before using these
+languages to enforce a production policy gate.
 
 `tools/evaluation/realistic_corpus.json` holds multi-file repository
 snapshots (5 to 7 files each) written from scratch to resemble real projects:

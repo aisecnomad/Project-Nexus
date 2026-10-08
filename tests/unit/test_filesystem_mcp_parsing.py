@@ -282,7 +282,103 @@ def test_unparseable_embedded_mcp_settings_fail_closed() -> None:
         '            {"mcpServers": {"x": ${{ vars.SERVER }} }}\n'
     )
     assert _parse_mcp_servers(".github/workflows/agent.yml", text, errors) == []
+    assert errors == ["embedded MCP servers depend on a workflow expression"]
+
+
+def test_embedded_settings_that_are_not_json_even_after_rendering_fail_closed() -> None:
+    errors: list[str] = []
+    text = (
+        "on: push\njobs:\n  a:\n    steps:\n      - with:\n          settings: |\n"
+        '            {"mcpServers": {"x": {"command": "docker"}}, ${{ vars.MORE }}\n'
+    )
+    assert _parse_mcp_servers(".github/workflows/agent.yml", text, errors) == []
     assert errors == ["invalid embedded MCP configuration syntax"]
+
+
+SETTINGS_WITH_EXPRESSIONS = """\
+on: issues
+jobs:
+  fix:
+    steps:
+      - uses: google-github-actions/run-gemini-cli@v0
+        with:
+          settings: |-
+            {
+              // ${{ not an expression in a comment }}
+              "debug": ${{ fromJSON(vars.GEMINI_DEBUG || false) }},
+              "model": {"maxSessionTurns": ${{ vars.TURNS }}},
+              "mcpServers": {
+                "github": {
+                  "command": "docker",
+                  "args": ["run", "-i", "--rm", "ghcr.io/github/github-mcp-server"],
+                  "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
+                }
+              }
+            }
+"""
+
+
+def test_expressions_outside_the_servers_do_not_hide_embedded_servers() -> None:
+    errors: list[str] = []
+    servers = _parse_mcp_servers(".github/workflows/fix.yml", SETTINGS_WITH_EXPRESSIONS, errors)
+    assert not errors
+    assert [(s["name"], s["command"], s["env_names"]) for s in servers] == [
+        ("github", "docker", ["GITHUB_PERSONAL_ACCESS_TOKEN"])
+    ]
+    assert servers[0]["secrets_inline"] is False
+
+
+@pytest.mark.parametrize("trigger", ["on: issues", '"on": issues'])
+def test_workflow_kept_outside_the_workflows_directory_is_read_as_a_workflow(
+    tmp_path: Path, run_connector, trigger: str
+) -> None:
+    examples = tmp_path / "examples" / "workflows"
+    examples.mkdir(parents=True)
+    (examples / "fix.yml").write_text(SETTINGS_WITH_EXPRESSIONS.replace("on: issues", trigger))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert not ctx.stats.incomplete
+    mcp = [f for f in findings if f.kind == Kind.MCP_SERVER]
+    assert [s["name"] for s in mcp[0].metadata["servers"]] == ["github"]
+
+
+def test_boolean_keys_outside_a_workflow_stay_invalid_mcp_yaml() -> None:
+    errors: list[str] = []
+    text = "on: true\nmcpServers:\n  s:\n    command: docker\n"
+    assert _parse_mcp_servers("config/mcp.yaml", text, errors) == []
+    assert errors == ["invalid MCP configuration syntax"]
+
+
+@pytest.mark.parametrize("reference", ["./.mcp.json", ["./.mcp.json", "./extra-mcp.json"]])
+@pytest.mark.parametrize("rel", [".claude-plugin/plugin.json", "tools/.codex-plugin/plugin.json"])
+def test_plugin_manifest_may_name_its_mcp_configuration_files(rel: str, reference: object) -> None:
+    servers, errors = _parse({"name": "plugin", "mcpServers": reference}, rel)
+    assert (servers, errors) == ([], [])
+
+
+def test_plugin_manifest_with_inline_servers_still_reports_them() -> None:
+    servers, errors = _parse(
+        {"name": "p", "mcpServers": {"s": {"command": "npx"}}}, ".claude-plugin/plugin.json"
+    )
+    assert not errors
+    assert [s["name"] for s in servers] == ["s"]
+
+
+def test_a_path_is_not_a_server_table_outside_a_plugin_manifest() -> None:
+    servers, errors = _parse({"mcpServers": "./.mcp.json"}, ".cursor/mcp.json")
+    assert servers == []
+    assert errors == ["MCP servers must be an object or array"]
+
+
+def test_plugin_manifest_reference_keeps_the_scan_complete(tmp_path: Path, run_connector) -> None:
+    plugin = tmp_path / "plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text('{"name": "p", "mcpServers": "./.mcp.json"}')
+    (plugin / ".mcp.json").write_text('{"mcpServers": {"tracker": {"command": "npx", "args": ["tracker"]}}}')
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    servers = [s["name"] for f in findings if f.kind == Kind.MCP_SERVER for s in f.metadata["servers"]]
+    assert servers == ["tracker"]
 
 
 def test_repeated_embedded_server_names_are_kept_apart() -> None:

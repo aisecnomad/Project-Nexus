@@ -5,6 +5,53 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 8 benchmark remediation: lexing and configuration parsing
+
+The real-world benchmark marked 64 of 183 ShadowScan scans incomplete. Most
+causes were scanner bugs or over-strict rules, not unreadable content. This
+first batch fixes the lexer and configuration-parser causes; each fix has a
+regression test written from scratch, not copied from the corpus.
+
+- The source lexer no longer gives up on common valid syntax. 231 of the 250
+  benchmark files that ended in `incomplete source lexical analysis` traced to
+  five gaps, now fixed:
+  - JSX in `.js`, `.mjs` and `.cjs` files (React components), now lexed as
+    JSX like `.jsx` and `.tsx`;
+  - Rust, PHP and Ruby quoted strings that span lines;
+  - C# raw strings fenced with four or more quotes, and `$$"""` raw strings
+    whose interpolation needs as many braces as dollars;
+  - TypeScript's non-null assertion before a division (`a[b]! / n`);
+  - PHP and Ruby here-documents with interpolation: an interpolated
+    expression that closes on its line is now read as code and the rest as
+    text. Nowdocs and single-quoted Ruby markers are literal, and a PHP
+    closing marker may be indented and followed by code (PHP 7.3).
+- Also fixed: a C# verbatim string that starts with an escaped quote
+  (`@"""a"":""b"`) was read as a raw string, and in a `.tsx` file a type
+  parameter list such as `<V extends string>(props: P): R` in a type literal
+  was read as a JSX element. TypeScript's own rule now decides: `<T =` and
+  `<T extends X` where an expression starts are type parameters.
+- A GitHub Actions workflow kept outside `.github/workflows` (an example or
+  template) is read as a workflow when it has `jobs` and a trigger, so its
+  embedded MCP settings are parsed instead of failing as YAML with a boolean
+  `on:` key.
+- Embedded MCP settings with an Actions expression outside a JSON string
+  (`"debug": ${{ fromJSON(vars.DEBUG) }}`) are parsed with a placeholder in
+  its place. When a placeholder lands inside the server table, the servers
+  depend on a value the workflow renders at run time and the scan stays
+  incomplete (`embedded MCP servers depend on a workflow expression`).
+- A plugin manifest (`plugin.json`) may name the files that hold its MCP
+  servers (`"mcpServers": "./.mcp.json"` or a list of paths); those files are
+  scanned on their own. Elsewhere a path is still not a server table.
+- Repository YAML (not offline exports) accepts a key written twice with the
+  same spelling and the same value, compared node by node: every YAML reader
+  resolves it to one value. A different value, a different scalar form (`1`
+  and `1.0`, `1` and `true`), keys that only collide after YAML 1.1 reads them
+  (`on` and `true`), and a repeat larger than 10,000 compared nodes stay
+  integrity errors.
+- Parse and validation issues in test code (a malformed `package.json` under
+  `tests/fixtures/`) are warnings unless `include_tests` or `strict_coverage`
+  is set, following the existing test-code policy for analysis limits.
+
 ### October 8 real-world discovery benchmark
 
 - New `tools/realbench/` harness: a pre-registered benchmark of

@@ -59,12 +59,26 @@ _JS_LINE_BREAK = re.compile(f"[{_JS_LINE_TERMINATORS}]")
 # What can open a string, a template or a comment when the body of a regular expression is read as code.
 _REGEX_BODY_OPENER = re.compile("[\"'`/]")
 _NON_SPACE = re.compile(r"\S")
+# JavaScript dialects whose sources may hold JSX: React projects commonly keep
+# components in `.js` files. The lexer only reads a `<` as a JSX tag where an
+# expression starts, where plain JavaScript has no `<` operator, so this does
+# not change how other sources read. TypeScript's `.ts`, `.mts` and `.cts`
+# instead allow `<T>value` type assertions there and never hold JSX.
+JSX_DIALECTS = frozenset({".js", ".jsx", ".mjs", ".cjs", ".tsx"})
 
 
 def _js_line_end(text: str, pos: int) -> int:
     """Return the offset of the first line terminator at or after ``pos``, or the end of ``text``."""
     match = _JS_LINE_BREAK.search(text, pos)
     return len(text) if match is None else match.start()
+
+
+def _on_line_of_previous_token(text: str, pos: int) -> bool:
+    """Whether no line terminator separates ``pos`` from the non-blank character before it."""
+    pos -= 1
+    while pos >= 0 and text[pos] in " \t\v\f\N{NO-BREAK SPACE}\N{ZERO WIDTH NO-BREAK SPACE}":
+        pos -= 1
+    return pos >= 0 and text[pos] not in _JS_LINE_TERMINATORS
 
 
 def _skip_trivia(text: str, pos: int) -> int:
@@ -225,12 +239,15 @@ def _parenthesized_end(text: str, start: int, budget: _LookaheadBudget) -> int |
     return end
 
 
-def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str, int] | None:
+def _jsx_open_tag(
+    text: str, start: int, budget: _LookaheadBudget, *, expression: bool = True
+) -> tuple[str, int] | None:
     """Return the JSX tag name and the offset where its attributes begin.
 
     TSX allows explicit type arguments on an element (`<Select<Option> ...>`,
     `<Form<{ email: string }>>`); they are skipped so that the type argument
-    is not mistaken for a nested opening tag.
+    is not mistaken for a nested opening tag. ``expression`` is False for a
+    ``<`` in JSX text, where it always opens a child element.
     """
     if text.startswith("<>", start):
         return "", start + 1
@@ -250,6 +267,20 @@ def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str,
         return name, after
     if pos == len(text) or text[pos] not in " \t\r\n/>":
         return None
+    if expression:
+        # Where an expression starts, TypeScript reads `<T =` and `<T extends X`
+        # (X not `=`, `>` or `/`) in a .tsx file as type parameters, never as
+        # JSX: a generic arrow function, or a call signature in a type literal
+        # (`{ <V extends string>(props: P): R }`).
+        suffix = text[pos : min(len(text), pos + 64)].lstrip()
+        if suffix.startswith("="):
+            return None
+        if (
+            suffix.startswith("extends")
+            and (len(suffix) == 7 or suffix[7].isspace() or suffix[7] in "<{")
+            and not suffix[7:].lstrip().startswith(("=", ">", "/"))
+        ):
+            return None
     # A bare `<T>(...) => ...` in TSX is a generic arrow function, with no
     # JSX closing tag. Leave its body visible to the scanner. Element text
     # that merely starts with a parenthesis (`<Text>({n})</Text>`) is JSX.
@@ -659,7 +690,7 @@ class _JavaScriptLexer:
                 spans.append((start, i + 1))
                 self._enter_expression("jsx_expression")
                 return i + 1
-            opened = _jsx_open_tag(text, i, self.budget) if text[i] == "<" else None
+            opened = _jsx_open_tag(text, i, self.budget, expression=False) if text[i] == "<" else None
             if opened is not None:
                 spans.append((start, i))
                 modes.append(("jsx_tag", i))
@@ -865,6 +896,17 @@ class _JavaScriptLexer:
                 # they are prefix operators.
                 control_pending[-1] = False
                 i += 2
+            elif (
+                text[i] == "!"
+                and not can_start_regex[-1]
+                and not text.startswith("!=", i)
+                and _on_line_of_previous_token(text, i)
+            ):
+                # After an operand on the same line, `!` is TypeScript's postfix
+                # non-null assertion, so `a[b]! / n` divides. (JavaScript has no
+                # binary `!`; after a line break ASI makes it a prefix `!`.)
+                control_pending[-1] = False
+                i += 1
             elif text[i] in ";:=!?%~^&|*<>+-":
                 can_start_regex[-1] = True
                 control_pending[-1] = False
@@ -923,6 +965,14 @@ _RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
 _SWIFT_RAW_OPEN = re.compile(r'#{1,255}+(?=")')
 _RUBY_HEREDOC = re.compile(r"<<[-~]?(['\"]?)([A-Za-z_]\w*)\1")
 _PHP_HEREDOC = re.compile(r"<<<[ \t]*(['\"]?)([A-Za-z_]\w*)\1")
+# Where interpolated code starts in a here-document: PHP's `{$expr}` (the `$`
+# begins the expression) and `${expr}`, Ruby's `#{expr}`.
+_HEREDOC_INTERPOLATION = {"php": re.compile(r"\{(?=\$)|\$\{"), "ruby": re.compile(r"#\{")}
+# A C# string prefix: `$`s (interpolation braces) and `@` (verbatim). Possessive, so a long run of `$` is
+# one bounded pass in C.
+_DOTNET_STRING_PREFIX = re.compile(r'(?:\$++@?|@\$?)(?=")')
+# Rust, PHP and Ruby quoted strings may span lines; elsewhere a line break ends an unclosed literal.
+_MULTILINE_QUOTED = frozenset({"rust", "php", "ruby"})
 _GO_IMPORT_BLOCK = re.compile(r"import\s*\(")
 _MAX_GO_IMPORT_PREFIX = 4096
 _RUBY_PERCENT_PAIRS = {"{": "}", "[": "]", "(": ")", "<": ">"}
@@ -1054,6 +1104,45 @@ def _translated_java_ranges(
     return [(origin[start], origin[end]) for start, end in spans], incomplete
 
 
+def _php_heredoc_close(marker: str, line: str) -> int | None:
+    """Return the offset just past ``marker`` when ``line`` closes a PHP here-document, else None.
+
+    Since PHP 7.3 the closing marker may be indented and be followed by any
+    character that cannot continue an identifier, such as `);` or `, $next`.
+    """
+    stripped = line.lstrip(" \t")
+    if not stripped.startswith(marker):
+        return None
+    after = len(line) - len(stripped) + len(marker)
+    if after < len(line) and (line[after].isalnum() or line[after] == "_" or ord(line[after]) >= 0x80):
+        return None
+    return after
+
+
+def _interpolation_end(text: str, start: int, end: int) -> int | None:
+    """Return the offset of the ``}`` closing an interpolation whose body starts at ``start``, or None."""
+    depth = 1
+    i = start
+    while i < end:
+        char = text[i]
+        if char in "\"'":
+            close = i + 1
+            while close < end and text[close] != char:
+                close += 2 if text[close] == "\\" else 1
+            if close >= end:
+                return None
+            i = close + 1
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if not depth:
+                return i
+        i += 1
+    return None
+
+
 def _block_comment_end(text: str, start: int, opener: str, closer: str, *, nested: bool) -> tuple[int, bool]:
     """Return the end of the block comment opened at ``start`` and whether it closed."""
     depth = 1
@@ -1074,9 +1163,10 @@ def _block_comment_end(text: str, start: int, opener: str, closer: str, *, neste
 def _literal_prefix(text: str, i: int, language: str) -> str:
     """Return the string prefix (C# ``$@``, Dart ``r``, Rust ``b``, Swift ``#``) at ``i``, if any."""
     if language == "dotnet":
-        for candidate in ("$@", "@$", "@", "$"):
-            if text.startswith(candidate + '"', i):
-                return candidate
+        if text[i] in "$@":
+            prefix = _DOTNET_STRING_PREFIX.match(text, i)
+            if prefix is not None:
+                return prefix.group()
     elif language == "dart" and text.startswith(("r'", 'r"'), i):
         return "r"
     elif language == "rust" and text.startswith(('b"', "b'"), i):
@@ -1098,9 +1188,18 @@ def _open_literal(
 ) -> tuple[_Literal, int]:
     """Return the literal opened by ``prefix`` at ``i`` and the quote at ``q``, and the index after it."""
     quote = text[q]
-    triple = (
-        quote == '"' and language in {"java", "dotnet", "swift", "dart", "ruby"} and text.startswith('"""', q)
-    )
+    if language == "dotnet" and "@" not in prefix and text.startswith('"""', q):
+        # A C# 11 raw string opens with three or more quotes and closes with as
+        # many; it has no escapes. Its `$`s give the braces that open an
+        # interpolation (`$$"""{ "a": {{x}} }"""` holds one); fewer are text.
+        # F# triple-quoted strings always use three. A verbatim `@"""` is not
+        # raw: it opens a string whose text starts with an escaped quote.
+        quotes = 3
+        while dialect != ".fs" and q + quotes < len(text) and text[q + quotes] == '"':
+            quotes += 1
+        raw = _Literal(i, '"' * quotes, escaped=False, interpolation="{" * len(prefix), multiline=True)
+        return raw, q + quotes
+    triple = quote == '"' and language in {"java", "swift", "dart", "ruby"} and text.startswith('"""', q)
     if quote == "'" and language in {"dart", "ruby"} and text.startswith("'''", q):
         triple = True
     opener = quote * (3 if triple else 1)
@@ -1117,11 +1216,10 @@ def _open_literal(
     literal = _Literal(
         i,
         close,
-        escaped=quote != "`"
-        and not (prefix == "r" or "@" in prefix or prefix.startswith("#") or triple and language == "dotnet"),
+        escaped=quote != "`" and not (prefix == "r" or "@" in prefix or prefix.startswith("#")),
         verbatim="@" in prefix,
         interpolation=interpolation,
-        multiline=triple or quote == "`" or "@" in prefix,
+        multiline=triple or quote == "`" or "@" in prefix or language in _MULTILINE_QUOTED,
     )
     return literal, q + len(opener)
 
@@ -1162,7 +1260,8 @@ class _SourceLexer:
         self.incomplete = False
         self.stopped = False
         self.go_import_block = False
-        self.heredocs: list[str] = []
+        # Pending here-documents in order: each marker and whether its text interpolates code.
+        self.heredocs: list[tuple[str, bool]] = []
         self.line_start = 0
         self.line_checked_through = 0
         # A PHP source file can be an HTML-only template. Enter code mode only at
@@ -1260,23 +1359,54 @@ class _SourceLexer:
     def _heredoc_line(self, i: int) -> int:
         """Mask one here-document line starting at ``i``; the pending marker's line closes it."""
         text, size, language, heredocs = self.text, self.size, self.language, self.heredocs
-        marker = heredocs[0]
+        marker, interpolates = heredocs[0]
         end = text.find("\n", i)
         end = size if end < 0 else end
         line = text[i:end]
-        if (language == "ruby" and line.strip() == marker) or (
-            language == "php" and re.fullmatch(r"\s*" + re.escape(marker) + r"[;,)]?\s*", line)
-        ):
+        closing = _php_heredoc_close(marker, line) if language == "php" else None
+        if closing is not None:
+            # Code can continue after a PHP closing marker on the same line.
             heredocs.pop(0)
-        elif (language == "ruby" and "#{" in line) or (language == "php" and ("${" in line or "{$" in line)):
-            # Interpolation inside a here-document needs language parsing.
-            # Preserve the conservative mask and report incomplete analysis.
-            self.incomplete = True
-        self.spans.append((i, end))
+            self.spans.append((i, i + closing))
+            return i + closing
+        if language == "ruby" and line.strip() == marker:
+            heredocs.pop(0)
+            self.spans.append((i, end))
+        elif interpolates:
+            self._mask_interpolated(i, end)
+        else:
+            self.spans.append((i, end))
         if end < size:
             return end + 1
         self.incomplete |= bool(heredocs)
         return end
+
+    def _mask_interpolated(self, start: int, end: int) -> None:
+        """Mask here-document text in ``[start, end)``, leaving interpolated expressions visible as code.
+
+        An expression that does not close on its line needs language parsing:
+        the rest of the line stays masked and the walk is incomplete.
+        """
+        text = self.text
+        opener = _HEREDOC_INTERPOLATION[self.language]
+        masked_from = search_from = start
+        while (found := opener.search(text, search_from, end)) is not None:
+            at = found.start()
+            if text[at] in "$#":
+                # `\${` and `\#{` are escaped text (PHP's `{$` cannot be escaped).
+                before = at - 1
+                while before >= start and text[before] == "\\":
+                    before -= 1
+                if (at - 1 - before) % 2:
+                    search_from = found.end()
+                    continue
+            close = _interpolation_end(text, found.end(), end)
+            if close is None:
+                self.incomplete = True
+                break
+            self.spans.append((masked_from, found.end()))
+            masked_from = search_from = close
+        self.spans.append((masked_from, end))
 
     def _quote(self, i: int, q: int, prefix: str) -> tuple[int, bool]:
         """Handle the quote at ``q``; return the next index and whether a literal opened."""
@@ -1354,7 +1484,8 @@ class _SourceLexer:
             if language == "ruby" and text.startswith("<<", i):
                 heredoc = _RUBY_HEREDOC.match(text, i)
                 if heredoc:
-                    heredocs.append(heredoc.group(2))
+                    # A single-quoted marker (`<<~'SQL'`) makes the text literal.
+                    heredocs.append((heredoc.group(2), heredoc.group(1) != "'"))
                     i = heredoc.end()
                     continue
 
@@ -1365,7 +1496,8 @@ class _SourceLexer:
             if language == "php" and text.startswith("<<<", i):
                 heredoc = _PHP_HEREDOC.match(text, i)
                 if heredoc:
-                    heredocs.append(heredoc.group(2))
+                    # A single-quoted marker opens a nowdoc, whose text is literal.
+                    heredocs.append((heredoc.group(2), heredoc.group(1) != "'"))
                     i = heredoc.end()
                     continue
 

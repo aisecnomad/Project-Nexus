@@ -152,7 +152,11 @@ tag. Recognisable placeholders (repeated characters, marker words such as
 Evidence that only names a coding agent in a test path (an environment variable,
 a display name, a dependency or a code pattern) likewise does not establish a
 coding-agent configuration; instruction documents and coding-agent config
-files still do.
+files still do. Test suites keep malformed files on purpose, so a parse or
+validation issue in a file under a test path (an invalid `package.json` or
+agent manifest fixture) is a warning rather than a coverage gap, as the
+import-bound analysis limits in test code already are; `include_tests` or
+`strict_coverage` keeps it incomplete.
 
 ## Incremental scans
 

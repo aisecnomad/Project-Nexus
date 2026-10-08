@@ -228,7 +228,17 @@ contains the literal text `\xff`, are indistinguishable in a report.
 Configuration files are parsed as JSONC where their format allows comments.
 A syntax error in a file that is not coding-agent settings only skips its
 structured checks, with a warning; `.claude`, `.codex` and `.gemini` settings
-and `strict_coverage` keep such an error incomplete. A notebook larger than
+and `strict_coverage` keep such an error incomplete. In repository YAML a key
+written twice with the same spelling and value is read once; a repeat with any
+other value, or keys that only collide after YAML 1.1 reads them (`on` and
+`true`), stays an integrity error. A GitHub Actions workflow is recognised by
+its `jobs` table and trigger wherever it is kept, so an example under
+`examples/workflows/` has its embedded MCP settings parsed like one under
+`.github/workflows/`. An Actions expression outside a JSON string in those
+settings stands for a placeholder; one inside the server table keeps the scan
+incomplete, because the servers depend on a value rendered at run time. A
+plugin manifest (`plugin.json`) may name the files that hold its MCP servers
+instead of listing them; those files are scanned on their own. A notebook larger than
 `max_file_size` because of saved outputs is analyzed by its code cells up to
 `max_notebook_size` (default 20 MiB); its outputs are then not scanned for
 credentials, which leaves coverage incomplete unless `scan_secrets` is off.

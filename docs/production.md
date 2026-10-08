@@ -795,6 +795,29 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 8 benchmark remediation
+
+The real-world benchmark (`tools/realbench/`) found that most incomplete
+repository scans came from scanner gaps, not from content that could not be
+read. Re-scan before comparing completeness with earlier reports:
+
+- Scans of React code in `.js` files, multi-line Rust, PHP and Ruby strings,
+  C# raw strings, TypeScript non-null assertions and interpolated PHP or Ruby
+  here-documents no longer end in `incomplete source lexical analysis`. More
+  of those files are now read as code, so a repository can gain evidence that
+  was masked before. JSX text in `.js` files is now masked as text.
+- Workflows kept outside `.github/workflows`, plugin manifests that name
+  their MCP configuration file, and repository YAML that repeats a key with
+  the same value no longer make a scan incomplete. Embedded MCP settings that
+  depend on an Actions expression inside the server table now report
+  `embedded MCP servers depend on a workflow expression` instead of a syntax
+  error; the scan stays incomplete either way.
+- Parse and validation issues in files under test paths are warnings unless
+  `include_tests` or `strict_coverage` is set. Set one of them if your policy
+  treats malformed test fixtures as coverage gaps.
+
+Finding identity is unchanged by these fixes.
+
 ### October 7 distribution rename and PyPI publication
 
 The distribution is renamed from `project-nexus-shadowscan` to

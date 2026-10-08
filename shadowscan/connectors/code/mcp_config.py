@@ -9,6 +9,7 @@ any record leaves this module.
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from typing import Any
@@ -18,7 +19,7 @@ import yaml
 from shadowscan.connectors.common import looks_like_placeholder
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.redaction import REDACTED, sanitize
-from shadowscan.utils.safe_yaml import strict_bounded_safe_load
+from shadowscan.utils.safe_yaml import YAMLIntegrityError, strict_bounded_safe_load
 
 
 def _mcp_client_for(rel: str) -> str:
@@ -108,6 +109,70 @@ def _args_reveal_secret(args: list[Any], sanitized: Any) -> bool:
 
 _WORKFLOW_PATH = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
 _EMBEDDED_MCP_MARKERS = ('"mcpServers"', '"mcp_servers"')
+# A JSON string, a JSONC comment, or a GitHub Actions expression outside both. The workflow
+# renders an expression before the action reads its input, so a raw input such as
+# `{"debug": ${{ fromJSON(vars.DEBUG) }}}` is not JSON until then. Bounded, so that many
+# unclosed `${{` cannot each rescan the rest of the input.
+_EXPRESSION_TOKENS = re.compile(r'"(?:[^"\\\n]|\\.)*"?|//[^\n]*|/\*.*?\*/|\$\{\{.{0,4096}?\}\}', re.DOTALL)
+_EXPRESSION_PLACEHOLDER = "\x00unrendered workflow expression\x00"
+# A plugin manifest (Claude Code `.claude-plugin/plugin.json`, Codex `.codex-plugin/plugin.json`)
+# may name the file that holds its servers instead of listing them: `"mcpServers": "./.mcp.json"`.
+_PLUGIN_MANIFEST = re.compile(r"(?:^|/)plugin\.json$", re.IGNORECASE)
+
+
+def _with_expression_placeholders(value: str) -> str | None:
+    """Replace each Actions expression outside a string with a placeholder string; None if there is none."""
+    replaced = False
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal replaced
+        token = match.group(0)
+        if not token.startswith("${{"):
+            return token
+        replaced = True
+        return json.dumps(_EXPRESSION_PLACEHOLDER)
+
+    rendered = _EXPRESSION_TOKENS.sub(replace, value)
+    return rendered if replaced else None
+
+
+def _holds_placeholder(value: Any) -> bool:
+    """Whether a parsed value, keys included, holds an unrendered-expression placeholder."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            if _EXPRESSION_PLACEHOLDER in item:
+                return True
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return False
+
+
+def _is_workflow(document: Any) -> bool:
+    """Whether a YAML document has a GitHub Actions workflow's shape: a trigger and a jobs table.
+
+    PyYAML reads the unquoted `on:` key as the YAML 1.1 boolean true.
+    """
+    return (
+        isinstance(document, dict)
+        and isinstance(document.get("jobs"), dict)
+        and ("on" in document or True in document)
+    )
+
+
+def _is_path_reference(value: Any) -> bool:
+    """Whether a server container names configuration files rather than listing servers."""
+    if isinstance(value, str):
+        return bool(value.strip())
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, str) and item.strip() for item in value)
+    )
 
 
 def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
@@ -134,13 +199,19 @@ def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
                 try:
                     embedded = _load_json_lenient(value)
                 except (ValueError, RecursionError):
-                    errors.append("invalid embedded MCP configuration syntax")
-                    continue
+                    embedded = _rendered_embedded_json(value)
+                    if embedded is None:
+                        errors.append("invalid embedded MCP configuration syntax")
+                        continue
                 container = (
                     embedded.get("mcpServers", embedded.get("mcp_servers"))
                     if isinstance(embedded, dict)
                     else None
                 )
+                if _holds_placeholder(container):
+                    # Which servers run is decided when the workflow renders the input.
+                    errors.append("embedded MCP servers depend on a workflow expression")
+                    continue
                 if not isinstance(container, dict):
                     errors.append("embedded MCP servers must be an object")
                     continue
@@ -152,12 +223,35 @@ def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
     return {"mcpServers": servers} if servers else {}
 
 
+def _rendered_embedded_json(value: str) -> Any:
+    """Parse a step input with its Actions expressions outside strings as placeholders; None if invalid."""
+    rendered = _with_expression_placeholders(value)
+    if rendered is None:
+        return None
+    try:
+        return _load_json_lenient(rendered)
+    except (ValueError, RecursionError):
+        return None
+
+
+def _load_yaml_mcp_document(text: str, errors: list[str]) -> Any:
+    """Load a YAML MCP candidate; a workflow kept outside `.github/workflows` (an example) is read as one."""
+    try:
+        document = strict_bounded_safe_load(text)
+    except YAMLIntegrityError:
+        # A workflow's `on:` key is a YAML 1.1 boolean, which only a workflow may use.
+        document = strict_bounded_safe_load(text, require_string_keys=False)
+        if not _is_workflow(document):
+            raise
+    return _embedded_workflow_mcp(document, errors) if _is_workflow(document) else document
+
+
 def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
     errors = errors if errors is not None else []
     data = _load_mcp_document(rel, text, errors)
     if data is None:
         return []
-    servers = _mcp_server_entries(data, errors)
+    servers = _mcp_server_entries(data, errors, plugin_manifest=_PLUGIN_MANIFEST.search(rel) is not None)
     if servers is None:
         return []
     out: list[dict[str, Any]] = []
@@ -183,7 +277,7 @@ def _load_mcp_document(rel: str, text: str, errors: list[str]) -> dict[str, Any]
             # configuration loader that permits non-string mapping keys.
             data = _embedded_workflow_mcp(strict_bounded_safe_load(text, require_string_keys=False), errors)
         elif rel.endswith((".yaml", ".yml")):
-            data = strict_bounded_safe_load(text)
+            data = _load_yaml_mcp_document(text, errors)
         else:
             data = _load_json_lenient(text)
     except (ValueError, RecursionError, yaml.YAMLError):
@@ -195,8 +289,20 @@ def _load_mcp_document(rel: str, text: str, errors: list[str]) -> dict[str, Any]
     return data
 
 
-def _mcp_server_entries(data: dict[str, Any], errors: list[str]) -> dict[Any, Any] | None:
-    """Return the server table of a client configuration or registry manifest, keyed by name."""
+def _mcp_server_entries(
+    data: dict[str, Any], errors: list[str], *, plugin_manifest: bool = False
+) -> dict[Any, Any] | None:
+    """Return the server table of a client configuration or registry manifest, keyed by name.
+
+    A plugin manifest that names the files holding its servers lists none
+    itself: those files are scanned as configuration in their own right.
+    """
+    if (
+        plugin_manifest
+        and _is_path_reference(data.get("mcpServers"))
+        and not ({"mcp_servers", "servers", "mcp"} & data.keys())
+    ):
+        return {}
     mcp = data.get("mcp", {})
     if not isinstance(mcp, dict):
         errors.append("MCP mcp field must be an object")

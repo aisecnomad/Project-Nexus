@@ -102,7 +102,7 @@ from shadowscan.connectors.code.semantic_config import (
     parse_agent_manifest,
     structured_code_matches,
 )
-from shadowscan.connectors.code.source_ranges import noncode_ranges
+from shadowscan.connectors.code.source_ranges import JSX_DIALECTS, noncode_ranges
 from shadowscan.connectors.code.source_semantics import (
     MAX_CALL_TEXT,
     SourceBudgetExceeded,
@@ -1897,9 +1897,20 @@ class FilesystemConnector(BaseConnector):
         )
 
     def _file_errors(self, rel: str, issues: Iterable[str]) -> None:
-        """Record each issue a parser or validator reported for ``rel`` as an error."""
+        """Record each issue a parser or validator reported for ``rel``.
+
+        Test code follows the test-code policy for analysis limits: suites keep
+        malformed manifests and configurations on purpose, and their evidence is
+        discounted, so an issue there is a warning (incomplete only under
+        ``strict_coverage``) unless test code is included.
+        """
+        test_code = not self.include_tests and _is_test_path(rel)
         for issue in issues:
-            self.ctx.error(f"code.filesystem: {rel}: {issue}")
+            message = f"code.filesystem: {rel}: {issue}"
+            if test_code:
+                self.ctx.warn(message, incomplete=self.strict_coverage)
+            else:
+                self.ctx.error(message)
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
@@ -2144,7 +2155,7 @@ class FilesystemConnector(BaseConnector):
         if file.cells:
             ignored, ambiguous = _cell_noncode_ranges(content_text, file.cells)
         else:
-            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
+            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in JSX_DIALECTS)
         if ambiguous:
             self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
         imports = (
