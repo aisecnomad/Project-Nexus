@@ -1,11 +1,20 @@
 """Run ShadowScan against the real-world corpus and produce scored results.
 
 Usage:
-    python -m benchmarks.sab-realworld.harness [--output DIR]
+    python -m benchmarks.sab_realworld [--output DIR]
 
 Materializes each case to a temporary directory, runs the FilesystemConnector,
 and compares findings against expected labels. Produces JSONL results and a
 Markdown report.
+
+Surface-balanced scoring:
+    Many discovery tools only support a subset of scanning surfaces (repo,
+    endpoint, network). The harness reports per-surface metrics so that tools
+    are scored on the surfaces they actually cover, not penalized for surfaces
+    they never claimed to support. The "best-surface F1" metric reports the
+    highest F1 across supported surfaces, and the "surface-normalized score"
+    is a weighted average across all surfaces, each weighted by number of
+    cases.
 
 This harness is author-written and cannot establish independent precision or
 recall.  It complements the synthetic benchmark with structurally realistic
@@ -182,6 +191,7 @@ def run_benchmark(output_dir: Path) -> dict[str, Any]:
                 "family": case.family,
                 "label": case.label,
                 "difficulty": case.difficulty,
+                "surface": case.surface,
                 "detected": scan_result["detected"],
                 "agentic": scan_result["agentic"],
                 "finding_count": scan_result["finding_count"],
@@ -203,6 +213,7 @@ def run_benchmark(output_dir: Path) -> dict[str, Any]:
                 "family": case.family,
                 "label": case.label,
                 "difficulty": case.difficulty,
+                "surface": case.surface,
                 "detected": False,
                 "agentic": False,
                 "finding_count": 0,
@@ -275,12 +286,34 @@ def _build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         if r["correct_detection"]:
             by_difficulty[r["difficulty"]]["correct"] += 1
 
+    # --- Surface-balanced metrics ---
+    by_surface: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in ok_rows:
+        by_surface[r["surface"]].append(r)
+    surface_metrics = {
+        s: confusion(rows) for s, rows in sorted(by_surface.items())
+    }
+
+    best_surface_f1 = max(
+        (m["f1"] for m in surface_metrics.values()), default=0.0
+    )
+    best_surface_name = max(
+        surface_metrics, key=lambda s: surface_metrics[s]["f1"], default=""
+    )
+
+    total_surface_cases = sum(m["n"] for m in surface_metrics.values())
+    surface_normalized = (
+        sum(m["f1"] * m["n"] for m in surface_metrics.values()) / total_surface_cases
+        if total_surface_cases else 0.0
+    )
+
     by_family: dict[str, dict[str, Any]] = {}
     for r in ok_rows:
         key = f"{r['category']}|{r['family']}"
         if key not in by_family:
             by_family[key] = {
                 "label": r["label"],
+                "surface": r["surface"],
                 "detected": r["detected"],
                 "correct": r["correct_detection"],
                 "agent_tier_correct": r["correct_agent_tier"],
@@ -299,11 +332,20 @@ def _build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     false_positives = [r for r in ok_rows if r["label"] == "none" and r["detected"]]
     false_negatives = [r for r in ok_rows if r["label"] != "none" and not r["detected"]]
 
+    # --- Adversarial breakdown ---
+    adversarial_rows = [r for r in ok_rows if r["category"] == "adversarial"]
+    adversarial_metrics = confusion(adversarial_rows) if adversarial_rows else None
+
     return {
         "overall": overall,
         "by_category": category_metrics,
         "by_label": dict(by_label),
         "by_difficulty": dict(by_difficulty),
+        "by_surface": surface_metrics,
+        "best_surface_f1": round(best_surface_f1, 4),
+        "best_surface_name": best_surface_name,
+        "surface_normalized_f1": round(surface_normalized, 4),
+        "adversarial_metrics": adversarial_metrics,
         "by_family": by_family,
         "agent_tier_accuracy": agent_tier_accuracy,
         "mean_signature_recall": mean_sig_recall,
@@ -330,17 +372,22 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
 
     lines.append("# SAB Real-World Benchmark Report")
     lines.append("")
-    lines.append("> **Shadow AI Agent Discovery — Real-World Pattern Corpus**")
+    lines.append("> **Shadow AI Agent Discovery — Real-World Pattern Corpus v2**")
     lines.append(">")
     lines.append("> This benchmark uses file patterns modeled on actual public GitHub")
     lines.append("> repositories. It is author-written and cannot establish independent")
-    lines.append("> precision or recall. See [Limitations](#limitations).")
+    lines.append("> precision or recall. An adversarial category explicitly targets")
+    lines.append("> known ShadowScan blind spots to surface author bias rather than")
+    lines.append("> hide it. See [Limitations](#limitations).")
     lines.append("")
     lines.append("## Metadata")
     lines.append("")
     lines.append(f"- **Tool**: ShadowScan v{manifest['tool_version']}")
     lines.append(f"- **Corpus version**: {manifest['version']}")
     lines.append(f"- **Cases**: {manifest['case_count']}")
+    lines.append(f"- **Surfaces**: {', '.join(sorted(summary['by_surface'].keys()))}")
+    lines.append(f"- **Categories**: {len(summary['by_category'])}")
+    lines.append(f"- **Families**: {len(summary['by_family'])}")
     lines.append(f"- **Timestamp**: {manifest['timestamp']}")
     lines.append(f"- **Python**: {manifest['python']}")
     lines.append(f"- **Errors**: {summary['error_count']}")
@@ -365,6 +412,33 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
         lines.append(f"| Mean signature recall | {_fmt(summary['mean_signature_recall'])} |")
     lines.append("")
 
+    # --- Surface-balanced scoring ---
+    lines.append("## Surface-Balanced Scoring")
+    lines.append("")
+    lines.append("Tools differ in which scanning surfaces they support. These metrics")
+    lines.append("allow fair comparison by reporting per-surface performance.")
+    lines.append("")
+    lines.append("| Surface | N | TP | FP | FN | TN | Recall | Precision | F1 | MCC |")
+    lines.append("|---------|---|----|----|----|----|--------|-----------|----|-----|")
+    for surface, m in sorted(summary["by_surface"].items()):
+        lines.append(
+            f"| {surface} | {m['n']} | {m['tp']} | {m['fp']} | {m['fn']} | {m['tn']} "
+            f"| {_fmt(m['recall'][0])} | {_fmt(m['precision'][0])} "
+            f"| {_fmt(m['f1'])} | {_fmt(m['mcc'])} |"
+        )
+    lines.append("")
+    lines.append("| Aggregate Metric | Value |")
+    lines.append("|------------------|-------|")
+    lines.append(f"| Best-surface F1 | {_fmt(summary['best_surface_f1'])} ({summary['best_surface_name']}) |")
+    lines.append(f"| Surface-normalized F1 | {_fmt(summary['surface_normalized_f1'])} |")
+    lines.append("")
+    lines.append("*Best-surface F1*: highest F1 among supported surfaces. Use when")
+    lines.append("comparing tools that claim different surface coverage.")
+    lines.append("")
+    lines.append("*Surface-normalized F1*: weighted average of per-surface F1 scores,")
+    lines.append("each weighted by case count. Penalizes tools that skip surfaces.")
+    lines.append("")
+
     lines.append("## Results by Category")
     lines.append("")
     lines.append("| Category | N | TP | FP | FN | TN | Recall | Precision | F1 | MCC |")
@@ -376,6 +450,24 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
             f"| {_fmt(m['f1'])} | {_fmt(m['mcc'])} |"
         )
     lines.append("")
+
+    # --- Adversarial breakdown ---
+    if summary.get("adversarial_metrics"):
+        am = summary["adversarial_metrics"]
+        lines.append("### Adversarial Category Detail")
+        lines.append("")
+        lines.append("These 15 cases target known ShadowScan blind spots (sparse")
+        lines.append("Go/Rust patterns, custom HTTP-only LLM clients, C/C++ unsupported")
+        lines.append("extensions, dynamic imports, gated heuristics). An honest benchmark")
+        lines.append("should expose, not hide, the tool author's weaknesses.")
+        lines.append("")
+        lines.append("| Metric | Value |")
+        lines.append("|--------|-------|")
+        lines.append(f"| Cases | {am['n']} |")
+        lines.append(f"| TP / FP / FN / TN | {am['tp']} / {am['fp']} / {am['fn']} / {am['tn']} |")
+        lines.append(f"| F1 | {_fmt(am['f1'])} |")
+        lines.append(f"| MCC | {_fmt(am['mcc'])} |")
+        lines.append("")
 
     lines.append("## Results by Difficulty")
     lines.append("")
@@ -399,16 +491,16 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
 
     lines.append("## Per-Family Results")
     lines.append("")
-    lines.append("| Family | Label | Detected | Correct | Agent Tier | Sig Recall |")
-    lines.append("|--------|-------|----------|---------|------------|------------|")
+    lines.append("| Family | Surface | Label | Detected | Correct | Agent Tier | Sig Recall |")
+    lines.append("|--------|---------|-------|----------|---------|------------|------------|")
     for key, fam in sorted(summary["by_family"].items()):
         cat_fam = key.split("|", 1)[1]
         check = "Y" if fam["correct"] else "**N**"
         at = "Y" if fam["agent_tier_correct"] else "**N**"
         sr = _fmt(fam["signature_recall"]) if fam["signature_recall"] is not None else "-"
         lines.append(
-            f"| {cat_fam} | {fam['label']} | {fam['detected']} "
-            f"| {check} | {at} | {sr} |"
+            f"| {cat_fam} | {fam.get('surface', 'repo')} | {fam['label']} "
+            f"| {fam['detected']} | {check} | {at} | {sr} |"
         )
     lines.append("")
 
@@ -430,14 +522,23 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
     lines.append("")
     lines.append("1. **Author-written corpus**: This benchmark is written by the ShadowScan")
     lines.append("   maintainer. It cannot serve as independent validation. See AGENTS.md.")
-    lines.append("2. **Single tool**: Only ShadowScan is tested against this corpus. The")
+    lines.append("2. **Adversarial cases surface but do not eliminate bias**: The adversarial")
+    lines.append("   category targets known blind spots (Go/Rust sparse patterns, C/C++ no")
+    lines.append("   source extension support, custom HTTP LLM clients, gated heuristics).")
+    lines.append("   This makes weaknesses visible but the author chose which weaknesses to")
+    lines.append("   test, which is itself a form of bias.")
+    lines.append("3. **Single tool**: Only ShadowScan is tested against this corpus. The")
     lines.append("   cross-tool comparison uses the separate synthetic benchmark.")
-    lines.append("3. **Structural patterns only**: Cases reproduce file structure and import")
+    lines.append("4. **Structural patterns only**: Cases reproduce file structure and import")
     lines.append("   patterns, not full repositories with git history, CI, or runtime signals.")
-    lines.append("4. **Limited hard-negative diversity**: 12 negative families cannot cover")
-    lines.append("   the full space of false-positive triggers in production.")
-    lines.append("5. **No endpoint or network surface**: This corpus covers repo-surface")
-    lines.append("   detection only. Endpoint and network surfaces need separate corpora.")
+    lines.append("5. **Surface coverage**: This corpus covers repo and endpoint surfaces.")
+    lines.append("   Network surface (egress traffic, DNS) needs a separate corpus with")
+    lines.append("   packet captures. The FilesystemConnector scans both repo and endpoint")
+    lines.append("   cases identically; a tool that distinguishes surfaces would need")
+    lines.append("   separate harness paths.")
+    lines.append("6. **39 hard negatives**: While substantially expanded from 12, 39 families")
+    lines.append("   still cannot cover the full space of false-positive triggers in")
+    lines.append("   production environments.")
     lines.append("")
     return "\n".join(lines)
 
@@ -456,6 +557,11 @@ def main() -> int:
           f"TP: {o['tp']} FP: {o['fp']} FN: {o['fn']} TN: {o['tn']}")
     if summary["error_count"]:
         print(f"Errors: {summary['error_count']}")
+
+    for surface, m in sorted(summary["by_surface"].items()):
+        print(f"  [{surface}] F1: {m['f1']}  N: {m['n']}")
+    print(f"  Best-surface F1: {summary['best_surface_f1']} ({summary['best_surface_name']})")
+    print(f"  Surface-normalized F1: {summary['surface_normalized_f1']}")
     return 0
 
 
