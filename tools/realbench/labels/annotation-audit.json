@@ -1,0 +1,145 @@
+{
+ "method": "Each annotator's tool calls (shell commands and file reads) were scanned for paths of the other annotator's packets, labels, drafts or working directories, the quarantined shared drafts, ShadowScan's source, the synthetic benchmark, the corpus manifest, adapters, tool installs, probes and calibration results. The label validator command, which reads the manifest internally, is exempt.",
+ "annotators": 34,
+ "tool_calls": 3119,
+ "violations": 0,
+ "per_batch": {
+  "A01": {
+   "tool_calls": 82,
+   "violations": 0
+  },
+  "A02": {
+   "tool_calls": 97,
+   "violations": 0
+  },
+  "A03": {
+   "tool_calls": 78,
+   "violations": 0
+  },
+  "A04": {
+   "tool_calls": 95,
+   "violations": 0
+  },
+  "A05": {
+   "tool_calls": 88,
+   "violations": 0
+  },
+  "A06": {
+   "tool_calls": 107,
+   "violations": 0
+  },
+  "A07": {
+   "tool_calls": 95,
+   "violations": 0
+  },
+  "A08": {
+   "tool_calls": 91,
+   "violations": 0
+  },
+  "A09": {
+   "tool_calls": 84,
+   "violations": 0
+  },
+  "A10": {
+   "tool_calls": 78,
+   "violations": 0
+  },
+  "A11": {
+   "tool_calls": 91,
+   "violations": 0
+  },
+  "A12": {
+   "tool_calls": 90,
+   "violations": 0
+  },
+  "A13": {
+   "tool_calls": 81,
+   "violations": 0
+  },
+  "A14": {
+   "tool_calls": 81,
+   "violations": 0
+  },
+  "A15": {
+   "tool_calls": 81,
+   "violations": 0
+  },
+  "B01": {
+   "tool_calls": 105,
+   "violations": 0
+  },
+  "B02": {
+   "tool_calls": 117,
+   "violations": 0
+  },
+  "B03": {
+   "tool_calls": 94,
+   "violations": 0
+  },
+  "B04": {
+   "tool_calls": 100,
+   "violations": 0
+  },
+  "B05": {
+   "tool_calls": 93,
+   "violations": 0
+  },
+  "B06": {
+   "tool_calls": 87,
+   "violations": 0
+  },
+  "B07": {
+   "tool_calls": 114,
+   "violations": 0
+  },
+  "B08": {
+   "tool_calls": 81,
+   "violations": 0
+  },
+  "B09": {
+   "tool_calls": 94,
+   "violations": 0
+  },
+  "B10": {
+   "tool_calls": 95,
+   "violations": 0
+  },
+  "B11": {
+   "tool_calls": 94,
+   "violations": 0
+  },
+  "B12": {
+   "tool_calls": 86,
+   "violations": 0
+  },
+  "B13": {
+   "tool_calls": 99,
+   "violations": 0
+  },
+  "B14": {
+   "tool_calls": 90,
+   "violations": 0
+  },
+  "B15": {
+   "tool_calls": 76,
+   "violations": 0
+  },
+  "B16": {
+   "tool_calls": 102,
+   "violations": 0
+  },
+  "B17": {
+   "tool_calls": 100,
+   "violations": 0
+  },
+  "B18": {
+   "tool_calls": 86,
+   "violations": 0
+  },
+  "B19": {
+   "tool_calls": 87,
+   "violations": 0
+  }
+ },
+ "shared_scratch_access": "A01-A05 accessed only their own helper scripts in the shared scratch directory; B01, B02 and B05 only their own drafts. No annotator accessed a file written by the other side."
+}

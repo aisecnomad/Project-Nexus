@@ -1,0 +1,16 @@
+{"agentic": false, "detected": false, "id": "c001", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.76, "status": "ok"}
+{"agentic": false, "detected": false, "id": "c002", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.0, "status": "ok"}
+{"agentic": false, "detected": true, "id": "c003", "items": 2, "kinds": ["@ai-sdk/provider", "ai"], "note": "@ai-sdk/provider,ai", "paths": ["package.json"], "raw_sha256": null, "seconds": 0.01, "status": "ok"}
+{"agentic": false, "detected": false, "id": "c004", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.83, "status": "ok"}
+{"agentic": false, "detected": false, "id": "c005", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 1.17, "status": "ok"}
+{"agentic": true, "detected": true, "id": "c006", "items": 1, "kinds": ["@modelcontextprotocol/sdk"], "note": "@modelcontextprotocol/sdk", "paths": ["package.json"], "raw_sha256": null, "seconds": 0.01, "status": "ok"}
+{"agentic": true, "detected": true, "id": "c007", "items": 3, "kinds": ["@anthropic-ai/claude-agent-sdk", "@anthropic-ai/sdk", "@modelcontextprotocol/sdk"], "note": "@anthropic-ai/claude-agent-sdk,@anthropic-ai/sdk,@modelcontextprotocol/sdk", "paths": ["agent-eval/package.json", "code/lib/mcp/package.json", "scripts/package.json"], "raw_sha256": null, "seconds": 1.34, "status": "ok"}
+{"agentic": true, "detected": true, "id": "c008", "items": 3, "kinds": ["mcp", "ollama"], "note": "mcp,ollama", "paths": ["pyproject.toml"], "raw_sha256": null, "seconds": 0.05, "status": "ok"}
+{"agentic": false, "detected": false, "id": "c009", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.3, "status": "ok"}
+{"agentic": false, "detected": false, "id": "c010", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.03, "status": "ok"}
+{"agentic": false, "detected": true, "id": "c011", "items": 3, "kinds": ["@ai-sdk/provider", "@ai-sdk/provider-utils", "ai"], "note": "@ai-sdk/provider,@ai-sdk/provider-utils,ai", "paths": ["package.json"], "raw_sha256": null, "seconds": 0.02, "status": "ok"}
+{"agentic": false, "detected": false, "id": "c012", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.0, "status": "ok"}
+{"agentic": true, "detected": true, "id": "c013", "items": 2, "kinds": ["MCP", "fastmcp"], "note": "MCP,fastmcp", "paths": ["pyproject.toml"], "raw_sha256": null, "seconds": 0.0, "status": "ok"}
+{"agentic": false, "detected": false, "id": "c014", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.01, "status": "ok"}
+{"agentic": false, "detected": true, "id": "c015", "items": 2, "kinds": ["openai"], "note": "openai", "paths": ["requirements.txt", "setup.py"], "raw_sha256": null, "seconds": 0.07, "status": "ok"}
+{"agentic": false, "detected": true, "id": "c016", "items": 3, "kinds": ["langchain-serve", "litellm", "openai"], "note": "langchain-serve,litellm,openai", "paths": ["requirements.txt"], "raw_sha256": null, "seconds": 0.0, "status": "ok"}

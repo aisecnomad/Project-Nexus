@@ -436,9 +436,28 @@ Every change below was made before any tool ran on the scored corpus.
    checked for foreign and missing identifiers. Two B annotators had written
    draft labels for twelve repositories into that shared directory. Every
    later annotator received a private working directory. The drafts were
-   moved out of reach once their authors finished. Each annotator's
-   transcript is audited for access to the other side's files, and the
-   result is reported with the agreement statistics.
+   moved out of reach once their authors finished. The audit
+   (`labels/annotation-audit.json`) scanned all 3,119 tool calls of the 34
+   annotator runs for access to the other side's packets, labels, drafts or
+   working directories, to the scanner's source, to tool output and to the
+   corpus manifest, and found none. In the shared directory, each annotator
+   touched only its own helper files.
 4. **Tool set.** The run uses agent-bom at `129615f`, newer than the commit
    pinned in the synthetic benchmark, and adds SafeDep vet, agentguard and
    cdxgen as directory scanners. PatronAI was examined and excluded (§6).
+5. **Calibration fixes to adapters.** On the calibration repositories only:
+   - agent-bom's code-level findings were moved from the field the first
+     draft read to `ai_inventory`. Its tool definitions are counted, and
+     its prompt and guardrail heuristics are not: they fired on non-AI
+     repositories, and agent-bom's own AI-BOM summary counts neither.
+   - agent-bom creates a Terraform "agent" for any provider. It is
+     counted only when it carries AI resources.
+   - `--kill-child` was added to the runner after a timed-out tool kept
+     running.
+   The adapter docstrings record each rule.
+
+Label summary at the run freeze: 77 `agent`, 26 `llm` and 80 `none`. 12 of
+the `none` are assistant-only, which leaves 171 repositories in the primary
+population. Before adjudication, the annotators agreed on 179 of 183
+three-class labels (κ 0.96) and on every `assistant_artifacts` value. The
+adjudicator resolved the four disagreements.
