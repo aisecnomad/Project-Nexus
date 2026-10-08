@@ -18,6 +18,12 @@ The [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob
 package-index token exists: PyPI trusts this repository's workflow and
 environment through OpenID Connect (trusted publishing).
 
+Release tags are annotated and may be unsigned. No personal SSH or GPG signing
+key is required: package provenance comes from the workflow's GitHub
+attestations and the PyPI publish attestations. These identify the build and
+publishing workflow; they do not establish a personal signature on the Git tag
+or replace independent human review.
+
 | Job | What it enforces | Permissions |
 |---|---|---|
 | `build` | Runs on `main` only. The commit must equal `expected_commit` and have successful push CI and CodeQL runs. Checks the live merge ruleset against the administrator readback passed at dispatch (see below), builds the wheel from a clean `git archive`, installs it outside the checkout, smoke-scans, and records the SBOM and `SHA256SUMS`. | read |
@@ -59,10 +65,10 @@ package.
    - **Deployment branches and tags:** selected branches only, `main`.
    - **Secrets:** none. Trusted publishing needs no token, and a stored token
      would bypass these gates.
-4. **Protect release tags.** Add a tag ruleset that targets `v*` and restricts
-   creation, updates and deletion to the maintainer, so a published version's
-   tag cannot be moved. The publication gate reads the tag before the approval
-   wait, and the ruleset keeps that answer true until the upload.
+4. **Protect release tags.** Use an active tag ruleset targeting `v*` that
+   blocks updates and deletion, with no bypass actors. The maintainer creates
+   the initial tag after review. The publication gate reads the tag before the
+   approval wait, and the ruleset keeps that answer true until the upload.
 
 ## Per release
 
@@ -103,12 +109,19 @@ package.
    shadowscan --help && python -m shadowscan.signatures.validate
    ```
 
-4. **Tag the reviewed commit.** Use a signed, annotated tag:
+4. **Tag the reviewed commit.** Create an annotated tag on that exact commit.
+   The default release path uses an unsigned tag and needs no personal signing
+   key. `--no-sign` overrides any local `tag.gpgSign` preference:
 
    ```bash
-   git tag -s v0.1.1 -m "NexusShadowScan 0.1.1" <reviewed-40-character-sha>
-   git push origin v0.1.1
+   git tag --no-sign -a v0.1.1 -m "NexusShadowScan 0.1.1" <reviewed-40-character-sha>
+   git push origin refs/tags/v0.1.1
    ```
+
+   A maintainer may instead sign the annotated tag with `git tag -s` when a
+   signing key is available. Signing is optional. Both routes require the
+   reviewed commit, immutable tag protections, successful CI and CodeQL,
+   artifact attestations, and approval in the protected publishing environment.
 
 5. **Publish.** Dispatch the workflow again with the same inputs, a fresh
    `ruleset_readback`, and `publish: pypi`, then approve the `pypi`
@@ -131,9 +144,10 @@ package.
 
 ## When something goes wrong
 
-- **A gate fails.** Fix the cause and dispatch again. If the tag points at the
-  wrong commit and nothing was uploaded, delete and recreate it on the reviewed
-  commit. Never move the tag of a version that was uploaded.
+- **A gate fails.** Fix the cause and dispatch again. Check the tag's target
+  before pushing; a mistaken local tag can be corrected before it reaches the
+  remote. Once pushed, the tag is immutable even if no package was uploaded.
+  Prepare a new version if an incorrect tag reached the remote.
 - **A bad file reached PyPI.** PyPI never accepts the same file name twice,
   even after deletion. Yank the release in the PyPI project settings, so
   that resolvers skip it unless it is pinned exactly, and publish a fixed

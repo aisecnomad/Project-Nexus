@@ -19,6 +19,12 @@ establish independent human review. The [merge gate and review status](#merge-ga
 section records the available evidence and commands for checking current
 enforcement. Independent human review is required before any tagged release.
 
+Release tags are annotated; personal tag signatures are optional. Verify the
+downloaded wheel's digest and GitHub provenance as described in the
+[publishing runbook](operations/publishing.md#per-release). Workflow
+attestations identify the artifact's origin and do not replace the review
+record or deployment acceptance evidence.
+
 ## Contents
 
 1. [Review before deployment](#review-before-deployment)
