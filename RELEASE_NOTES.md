@@ -6,18 +6,34 @@ is the detailed engineering log, recorded per change, and the
 [deployment and migration guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md)
 has the full upgrade steps.
 
+## 0.1.2 — 2026-10-08
+
+Corrects the release workflow's production tag lookup and prepares the next
+public alpha candidate. The workflow now uses `refs/tags/v<version>` after
+the previous `tags/v<version>` lookup returned HTTP 422 for an existing tag.
+Scanner behavior is
+unchanged from the 0.1.1 candidate described below.
+
+Version 0.1.1 was published to TestPyPI, installed and verified, and tagged.
+Its production preflight failed before a PyPI upload. The immutable tag remains
+on its original commit; version 0.1.2 carries the correction through a new
+review and CI cycle. Confirm publication on
+[PyPI](https://pypi.org/project/NexusShadowScan/0.1.2/) and the
+[GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2/)
+before installing this version from the production index.
+
 ## 0.1.1 — 2026-10-08
 
-Initial public alpha of `NexusShadowScan`, with 38 connectors across nine
+Initial alpha candidate of `NexusShadowScan`, with 38 connectors across nine
 discovery surfaces. Install with `python -m pip install NexusShadowScan` and
 run `shadowscan --help`; see the
 [README](https://github.com/aisecnomad/Project-Nexus/blob/main/README.md#install)
 for cloud extras and hash-locked deployment instructions.
 
-These notes prepare the release; confirm publication on
-[PyPI](https://pypi.org/project/NexusShadowScan/0.1.1/) and the
-[GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.1).
-No independent human review is recorded in this release preparation.
+This version reached [TestPyPI](https://test.pypi.org/project/NexusShadowScan/0.1.1/)
+and the immutable `v0.1.1` tag, but not production PyPI.
+[PR #159](https://github.com/aisecnomad/Project-Nexus/pull/159#pullrequestreview-5458962521)
+received a non-author approval on a source tree identical to the tagged commit.
 Publication and artifact attestations do not establish deployment acceptance.
 
 ### Before you upgrade

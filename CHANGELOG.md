@@ -3,6 +3,20 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
+## 0.1.2 — 2026-10-08
+
+### Release tag lookup correction
+
+- Fix the production publication gate to query GitHub with the fully qualified
+  `refs/tags/v<version>` ref. The previous `tags/v<version>` lookup returned
+  HTTP 422 for the existing annotated tag during release preflight. The gate still
+  requires the resolved commit to equal the reviewed workflow commit.
+- Execute the gate in regression tests against the accepted API ref format,
+  including rejection of the old lookup and of missing or mismatched tags.
+- Prepare a new version because `v0.1.1` is already immutable. Its TestPyPI
+  upload and fresh installation passed; production preflight stopped before
+  any PyPI dispatch or upload. Preserve the tag and the rehearsal evidence.
+
 ## 0.1.1 — 2026-10-08
 
 ### October 8 release tags without a personal signing key

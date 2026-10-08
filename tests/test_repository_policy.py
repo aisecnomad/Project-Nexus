@@ -436,7 +436,7 @@ def _release_publish_violations(workflow: dict[str, Any]) -> list[str]:
             problems.append("publication-gate: needs contents read only")
         script = "\n".join(step.get("run", "") for step in gate.get("steps", []))
         if (
-            '"repos/$GITHUB_REPOSITORY/commits/tags/v$version"' not in script
+            '"repos/$GITHUB_REPOSITORY/commits/refs/tags/v$version"' not in script
             or 'if [ "$tagged" != "$GITHUB_SHA" ]; then' not in script
         ):
             problems.append(
@@ -881,6 +881,12 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
             _replace('if [ "$tagged" != "$GITHUB_SHA" ]; then', 'if [ -z "$tagged" ]; then'),
             "require tag v<version> on the reviewed commit",
             id="publish-without-tag-on-reviewed-commit",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace("/commits/refs/tags/v$version", "/commits/tags/v$version"),
+            "require tag v<version> on the reviewed commit",
+            id="publish-with-unqualified-tag-ref",
         ),
         pytest.param(
             ".github/workflows/release.yml",
@@ -1671,7 +1677,7 @@ _REVIEWED = "a" * 40
 def test_publication_gate_executes_fail_closed(
     tmp_path: Path, target: str, wheels: list[str], tagged: str | None, tamper: bool, passes: bool
 ) -> None:
-    """Run the committed gate script against a stub `gh` that answers the tag lookup."""
+    """Execute the gate using the fully qualified tag ref verified against GitHub."""
     gate = _load(GITHUB / "workflows" / "release.yml")["jobs"]["publication-gate"]
     script = next(step["run"] for step in gate["steps"] if "run" in step)
     candidate = tmp_path / "publication-input"
@@ -1693,7 +1699,7 @@ def test_publication_gate_executes_fail_closed(
     stub.mkdir()
     (stub / "gh").write_text(
         "#!/bin/bash\n"
-        'expected="api repos/aisecnomad/Project-Nexus/commits/tags/v$EXPECTED_VERSION --jq .sha"\n'
+        'expected="api repos/aisecnomad/Project-Nexus/commits/refs/tags/v$EXPECTED_VERSION --jq .sha"\n'
         '[ "$*" = "$expected" ] || { echo "unexpected gh call: $*" >&2; exit 64; }\n'
         '[ -n "$TAGGED" ] || { echo "HTTP 404: No commit found for SHA" >&2; exit 1; }\n'
         'printf "%s\\n" "$TAGGED"\n',
@@ -1720,6 +1726,13 @@ def test_publication_gate_executes_fail_closed(
     assert "unexpected gh call" not in result.stderr
     if passes:
         assert f"to {target} from {_REVIEWED}" in result.stdout
+    elif target == "pypi" and len(wheels) == 1 and not tamper:
+        if tagged is None:
+            assert f"tag v{wheels[0]} does not exist" in result.stderr
+        else:
+            assert (
+                f"tag v{wheels[0]} points at {tagged}, not the reviewed commit {_REVIEWED}" in result.stderr
+            )
 
 
 @pytest.mark.parametrize(
