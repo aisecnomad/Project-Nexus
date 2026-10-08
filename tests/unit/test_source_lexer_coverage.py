@@ -44,27 +44,13 @@ def test_genuinely_unterminated_literals_stay_incomplete(
     assert noncode_ranges(text, language, dialect)[1] is True
 
 
-def test_ruby_heredoc_interpolation_is_code_and_keeps_the_scan_complete() -> None:
-    text = 'puts <<~MSG.send(color)\n  #{(label + " ").ljust(49, "-")}\nMSG\n'
-    assert noncode_ranges(text, "ruby")[1] is False
-
-
-def test_ruby_interpolated_code_is_not_masked_as_heredoc_text() -> None:
-    text = "x = <<~MSG\n  #{ChatOpenAI.new.chat}\nMSG\n"
+def test_ruby_heredoc_interpolation_stays_incomplete_and_masked() -> None:
+    # Interpolated Ruby is not scanned as code: the scanner's matchers are not Ruby-aware, so a closed
+    # interpolation such as #{AiServices.builder(x)} would report a Java framework in a Ruby file.
+    text = "docs = <<DOC\n#{AiServices.builder(example)}\nDOC\n"
     spans, ambiguous = noncode_ranges(text, "ruby")
-    index = text.index("ChatOpenAI")
-    assert not ambiguous and not any(start <= index < end for start, end in spans)
-
-
-def test_single_quoted_ruby_heredoc_has_no_interpolation() -> None:
-    text = "x = <<~'MSG'\n  #{ChatOpenAI.new}\nMSG\n"
-    spans, ambiguous = noncode_ranges(text, "ruby")
-    index = text.index("ChatOpenAI")
-    assert not ambiguous and any(start <= index < end for start, end in spans)
-
-
-def test_unclosed_ruby_interpolation_stays_incomplete() -> None:
-    assert noncode_ranges("x = <<~MSG\n  #{foo\nMSG\n", "ruby")[1] is True
+    index = text.index("AiServices")
+    assert ambiguous is True and any(start <= index < end for start, end in spans)
 
 
 def test_typescript_is_never_read_as_jsx() -> None:

@@ -5,7 +5,7 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
-### Lexical coverage: three constructs the lexer wrongly called ambiguous
+### Lexical coverage: two constructs the lexer wrongly called ambiguous
 
 - Fixed: a Rust ordinary double-quoted string may span lines. The lexer ended it at the
   line break and reported `incomplete source lexical analysis`. It now stays open across the
@@ -13,16 +13,16 @@ summarizes each release for people who install and operate ShadowScan.
 - Fixed: a `.js`, `.mjs` or `.cjs` file with JSX (React code in a `.js` file) was lexed as
   plain JavaScript and reported incomplete. Plain lexing is retried as JSX only when it fails,
   and the JSX reading is used only when it lexes completely. `.ts` files are never read as JSX.
-- Fixed: Ruby `#{...}` interpolation inside an unquoted here-document was masked as text and
-  reported incomplete. The interpolated code is now code and is matched as code. An
-  interpolation that does not close on its line is still incomplete, and a single-quoted
-  here-document has no interpolation.
-- Measured on the v2 real-world repositories (a tuning set for this change, not held out): 90 of
+- Measured on the v2 real-world repositories (a tuning set for this change, not held out): 77 of
   the 100 lexically flagged files, excluding notebook cells, now complete. The bundled regression
   corpora (`make evaluate`) show identical outcomes with timing removed; only the scanner source
   hash differs.
-- Not changed: binary or undecodable content, parser failures on configuration files, connector
-  deadlines and notebook cell lexing. Each still marks the scan incomplete.
+- Not changed: Ruby `#{...}` interpolation in a here-document still marks the scan incomplete. An
+  attempt to scan the interpolated code as code reported a Java framework in a Ruby file, because
+  the matchers are not Ruby-aware. That change was reverted, and
+  `tests/unit/test_source_lexer_coverage.py` pins the conservative behaviour. Binary or undecodable
+  content, parser failures on configuration files, connector deadlines and notebook cell lexing also
+  still mark the scan incomplete.
 
 ### October 7 release merge-rule check with an administrator readback
 
