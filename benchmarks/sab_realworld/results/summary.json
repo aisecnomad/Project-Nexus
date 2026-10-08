@@ -1,0 +1,525 @@
+{
+  "overall": {
+    "n": 40,
+    "tp": 27,
+    "fp": 1,
+    "fn": 1,
+    "tn": 11,
+    "recall": [
+      0.9642857142857143,
+      0.8228780225664668,
+      0.9936674801509623
+    ],
+    "specificity": [
+      0.9166666666666666,
+      0.646120088858883,
+      0.9851349055950829
+    ],
+    "precision": [
+      0.9642857142857143,
+      0.8228780225664668,
+      0.9936674801509623
+    ],
+    "f1": 0.9643,
+    "mcc": 0.881,
+    "f1_ci": [
+      0.9057,
+      1.0
+    ]
+  },
+  "by_category": {
+    "agent-framework": {
+      "n": 14,
+      "tp": 14,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.7846891972623643,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.7846891972623643,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "cloud-ai": {
+      "n": 2,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.34238022750665303,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.34238022750665303,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "coding-agent": {
+      "n": 4,
+      "tp": 3,
+      "fp": 0,
+      "fn": 1,
+      "tn": 0,
+      "recall": [
+        0.75,
+        0.30064184258240184,
+        0.9544127391902995
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.4385029682449546,
+        1.0
+      ],
+      "f1": 0.8571,
+      "mcc": 0.0
+    },
+    "llm-sdk": {
+      "n": 5,
+      "tp": 5,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.5655175352168251,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.5655175352168251,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "lowcode-ai": {
+      "n": 1,
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.20654931437723745,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.20654931437723745,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "mcp-protocol": {
+      "n": 2,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.34238022750665303,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.34238022750665303,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "negative": {
+      "n": 12,
+      "tp": 0,
+      "fp": 1,
+      "fn": 0,
+      "tn": 11,
+      "recall": [
+        null,
+        null,
+        null
+      ],
+      "specificity": [
+        0.9166666666666666,
+        0.646120088858883,
+        0.9851349055950829
+      ],
+      "precision": [
+        0.0,
+        0.0,
+        0.7934506856227626
+      ],
+      "f1": 0.0,
+      "mcc": 0.0
+    }
+  },
+  "by_label": {
+    "agent": {
+      "correct": 21,
+      "total": 22
+    },
+    "llm": {
+      "correct": 6,
+      "total": 6
+    },
+    "none": {
+      "correct": 11,
+      "total": 12
+    }
+  },
+  "by_difficulty": {
+    "easy": {
+      "correct": 10,
+      "total": 10
+    },
+    "medium": {
+      "correct": 15,
+      "total": 16
+    },
+    "hard": {
+      "correct": 13,
+      "total": 14
+    }
+  },
+  "by_family": {
+    "agent-framework|langgraph-react": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|crewai-team": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|autogen-groupchat": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|pydantic-ai": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|openai-agents-sdk": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|google-adk": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|smolagents": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|llamaindex-agent": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|vercel-ai-tools": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|semantic-kernel-csharp": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|claude-agent-sdk": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|openai-embeddings": {
+      "label": "llm",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|anthropic-messages": {
+      "label": "llm",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|ollama-local": {
+      "label": "llm",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|gemini-multimodal": {
+      "label": "llm",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "mcp-protocol|mcp-server-python": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "mcp-protocol|claude-desktop-mcp-config": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|cursor-rules": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|aider-config": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|cline-config": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|bedrock-agent-terraform": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|vertex-ai-pipeline": {
+      "label": "llm",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "lowcode-ai|n8n-ai-workflow": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|langchaingo": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|mastra-agent": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "negative|neg-insurance-agents": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-travel-agent": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-user-agent-parser": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-monitoring-agent": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-minecraft-bedrock": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-sklearn-pipeline": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-agent-pattern": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-gemini-exchange": {
+      "label": "none",
+      "detected": true,
+      "correct": false,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-commented-out": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-egress-blocklist": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-minecraft-mcp": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-plain-webapp": {
+      "label": "none",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "agent-framework|raw-openai-tool-loop": {
+      "label": "agent",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|litellm-proxy": {
+      "label": "llm",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|openclaw-state": {
+      "label": "agent",
+      "detected": false,
+      "correct": false,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    }
+  },
+  "agent_tier_accuracy": 0.7619047619047619,
+  "mean_signature_recall": 0.0,
+  "false_positives": [
+    {
+      "case_id": "rw-repo-033",
+      "family": "neg-gemini-exchange"
+    }
+  ],
+  "false_negatives": [
+    {
+      "case_id": "rw-repo-040",
+      "family": "openclaw-state"
+    }
+  ],
+  "error_count": 0
+}
