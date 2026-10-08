@@ -132,6 +132,44 @@ summarizes each release for people who install and operate ShadowScan.
   attestations. Independent review, CI and CodeQL, immutable tag protections,
   digest checks and environment approval remain required.
 
+### October 8 catalog discount scoped to lists
+
+- `code.filesystem`: the catalog rule no longer discounts configuration that
+  names four or more products. Three public repositories showed the cost:
+  SWE-agent's `.devcontainer/sample_keys.cfg` (five provider keys, read as a
+  catalog, so the project reported LiteLLM alone), the providers aider's
+  `models.py` loads from `aider/resources/model-settings.yml`, and those a
+  codex-rs crate embeds from `provider_catalog_overrides.json` with
+  `include_str!`. Three shapes are configuration now, whatever they name: a
+  data file under `.devcontainer/`, or under `config/`, `conf/` or `settings/`
+  at the top of the scan or of its project; a data file that assigns a variable
+  it names on a line of its own (`NAME=value`, `export NAME=value`,
+  `NAME: value`, also in `.cfg`, `.ini`, `.conf` and `.properties` files, which
+  have no parser), as a key with a scalar value at any depth, or under a
+  `containerEnv` or `remoteEnv` key; and a data file that source code, a
+  notebook or a shell script of the same project names in a quoted path literal
+  (`open("model-settings.yml")`, `include_str!("../providers.json")`). A
+  reference does not reach data under a documentation or website directory
+  (`docs/`, `doc/`, `website/`, `site/`, `_data/`, `_posts/`, `_includes/`,
+  `blog/`): leaderboards, galleries and pricing tables stay catalogs even when
+  a script writes them, and a model identifier found in a data file counts as a
+  mention like a domain or a variable name, so a table of model ids is a
+  catalog while a model a manifest or IaC file selects still anchors.
+  Blocklists, vendor policies and the signature packs are discounted as before;
+  a vendor policy that names a variable as a value (`key_env: OPENAI_API_KEY`),
+  keys a mapping or a list by it in any style (a YAML block or flow mapping, a
+  JSON object or array, a TOML inline table) or lists it as a key with no value
+  still assigns nothing. The reference exemption is by name and its
+  documentation-directory list is fixed, which is the accepted cost: a quoted
+  `"settings.yaml"` anywhere in code exempts every data file of that name in
+  the project, and published data outside the listed directories (`public/`,
+  `static/`) is configuration once a build script names it. The two new passes
+  are bounded (10,000 assignment lines per data file, 2,000 quoted literals per
+  loader) and run under the matcher's retrying budget, so a file of 100,000
+  `X=1` lines is judged on its first 10,000 instead of marking the scan
+  incomplete. `metadata.catalog_mentions`, the scan note and finding identity
+  are unchanged.
+
 ### October 7 release merge-rule check with an administrator readback
 
 - Fixed: the release-evidence workflow could never pass its merge-rule step.

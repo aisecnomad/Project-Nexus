@@ -599,21 +599,208 @@ def test_deployment_and_ci_configuration_is_not_a_catalog(tmp_path: Path, run_co
 
 def test_a_projects_only_evidence_is_never_discounted_silently(tmp_path: Path, run_connector):
     # Four providers configured by base URL cannot be told from a vendor list by
-    # their shape; when such files are all a project has, the scan says so.
+    # their shape (outside a config/ directory, which is configuration); when
+    # such files are all a project has, the scan says so.
     routing = "providers:\n" + "".join(
         f"  {name}:\n    base_url: https://{host}/v1\n    api_key_env: {env}\n"
         for name, host, env in VENDOR_POLICY[:4]
     )
-    _write_tree(tmp_path, {"config/llm.yaml": routing, "network/ai-domain-blocklist.yaml": BLOCKLIST_YAML})
+    _write_tree(tmp_path, {"deploy/llm.yaml": routing, "network/ai-domain-blocklist.yaml": BLOCKLIST_YAML})
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert findings == [] and not ctx.stats.errors and not ctx.stats.incomplete
     notes = [w for w in ctx.stats.warnings if "catalog" in w]
     assert len(notes) == 1
-    assert "config/llm.yaml" in notes[0] and "network/ai-domain-blocklist.yaml" in notes[0]
+    assert "deploy/llm.yaml" in notes[0] and "network/ai-domain-blocklist.yaml" in notes[0]
     # With library evidence the project finding is reported and lists the catalogs itself.
     (tmp_path / "requirements.txt").write_text("openai>=1.0\n")
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert _project(findings) is not None and not [w for w in ctx.stats.warnings if "catalog" in w]
+
+
+# The catalog rule is scoped to lists. Configuration that a workspace, a loader
+# or a credential file declares is reported however many products it names.
+SWE_AGENT_KEYS = [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "TOGETHER_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "GROQ_API_KEY",
+]
+SAMPLE_KEYS_CFG = "# Copy to keys.cfg and fill in; the devcontainer sources it\n" + "".join(
+    f"{name}=your-{name.lower()}\n" for name in SWE_AGENT_KEYS
+)
+
+
+def _catalog_notes(ctx):
+    return [w for w in ctx.stats.warnings if "catalog" in w]
+
+
+def test_devcontainer_sample_keys_are_configuration_not_a_catalog(tmp_path: Path, run_connector):
+    # SWE-agent: .devcontainer/sample_keys.cfg hands five provider keys to the
+    # workspace. It read as a catalog, so the project reported LiteLLM alone.
+    _write_tree(
+        tmp_path,
+        {
+            ".devcontainer/sample_keys.cfg": SAMPLE_KEYS_CFG,
+            "requirements.txt": "litellm>=1.0\n",
+            "sweagent/models.py": (
+                "import litellm\n\n\ndef complete(model, messages):\n"
+                "    return litellm.completion(model=model, messages=messages)\n"
+            ),
+        },
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    project = _project(findings)
+    assert project is not None and "platform.litellm" in project.frameworks
+    assert set(project.model_providers) == {
+        "provider.openai",
+        "provider.anthropic",
+        "provider.together",
+        "provider.azure-openai",
+        "provider.groq",
+    }
+    assert "catalog_mentions" not in project.metadata and not _catalog_notes(ctx)
+    # A credential file assigns its variables on lines of its own, wherever it sits.
+    (tmp_path / ".devcontainer" / "sample_keys.cfg").unlink()
+    _write_tree(tmp_path, {"keys/sample_keys.cfg": SAMPLE_KEYS_CFG})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    project = _project(findings)
+    assert project is not None and len(project.model_providers) == 5
+    assert "catalog_mentions" not in project.metadata and not _catalog_notes(ctx)
+
+
+def test_a_data_file_the_projects_code_loads_is_configuration(tmp_path: Path, run_connector):
+    # aider: aider/models.py loads aider/resources/model-settings.yml, which
+    # names the providers it routes to. The file read as a vendor list.
+    settings = "".join(
+        f"- name: {name}\n  api_base: https://{host}/v1\n  api_key_env: {env}\n"
+        for name, host, env in VENDOR_POLICY[:5]
+    )
+    loader = (
+        "import yaml\nfrom importlib import resources\n\n\ndef load_settings():\n"
+        '    path = resources.files("aider.resources").joinpath("model-settings.yml")\n'
+        "    return yaml.safe_load(path.read_text())\n"
+    )
+    _write_tree(tmp_path, {"aider/models.py": loader, "aider/resources/model-settings.yml": settings})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None and len(project.model_providers) == 5
+    assert "catalog_mentions" not in project.metadata and not _catalog_notes(ctx)
+    # Without the loader the same file is a vendor list.
+    (tmp_path / "aider" / "models.py").write_text("import yaml\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and len(_catalog_notes(ctx)) == 1
+
+
+def test_a_crate_embedding_its_provider_catalog_is_configuration(tmp_path: Path, run_connector):
+    # codex: codex-rs/model-provider-info embeds provider_catalog_overrides.json
+    # with include_str!; the providers it configures were discounted as a catalog.
+    overrides = json.dumps(
+        {
+            "providers": {
+                name.split()[0].lower(): {"base_url": f"https://{host}/v1", "env_key": env}
+                for name, host, env in VENDOR_POLICY[:5]
+            }
+        },
+        indent=2,
+    )
+    crate = "codex-rs/model-provider-info"
+    _write_tree(
+        tmp_path,
+        {
+            f"{crate}/Cargo.toml": '[package]\nname = "model-provider-info"\nversion = "0.1.0"\nedition = "2021"\n',
+            f"{crate}/src/lib.rs": (
+                'pub const OVERRIDES: &str = include_str!("../provider_catalog_overrides.json");\n\n'
+                "pub fn catalog() -> &'static str {\n    OVERRIDES\n}\n"
+            ),
+            f"{crate}/provider_catalog_overrides.json": overrides,
+        },
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors
+    project = _project(findings)
+    assert project is not None and len(project.model_providers) == 5
+    assert "catalog_mentions" not in project.metadata and not _catalog_notes(ctx)
+
+
+def test_a_shell_script_sourcing_a_data_file_makes_it_configuration(tmp_path: Path, run_connector):
+    endpoints = "[endpoints]\n" + "".join(
+        f"{name.split()[0].lower()} = https://{host}/v1\n" for name, host, _ in VENDOR_POLICY[:5]
+    )
+    _write_tree(tmp_path, {"etc/endpoints.cfg": endpoints})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and len(_catalog_notes(ctx)) == 1
+    _write_tree(tmp_path, {"scripts/setup.sh": '#!/bin/sh\nsource "$(dirname "$0")/../etc/endpoints.cfg"\n'})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    project = _project(findings)
+    assert project is not None and len(project.model_providers) == 5 and not _catalog_notes(ctx)
+
+
+def test_website_data_stays_a_catalog_when_a_script_names_it(tmp_path: Path, run_connector):
+    # aider/website/_data/*.yml leaderboards name every provider; publishing
+    # them is not use, even for the benchmark script that writes them.
+    leaderboard = "".join(f"- name: {name}\n  host: {host}\n" for name, host, _ in VENDOR_POLICY[:6])
+    data = "aider/website/_data/edit_leaderboard.yml"
+    _write_tree(tmp_path, {data: leaderboard})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and not ctx.stats.errors
+    assert len(_catalog_notes(ctx)) == 1 and data in _catalog_notes(ctx)[0]
+    plot = f'import yaml\n\nLEADERBOARD = "{data}"\n\nwith open(LEADERBOARD) as handle:\n    rows = yaml.safe_load(handle)\n'
+    _write_tree(tmp_path, {"benchmark/plot.py": plot})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and len(_catalog_notes(ctx)) == 1
+
+
+@pytest.mark.parametrize(
+    "rel,text",
+    [
+        (
+            "governance/keys.yaml",
+            "".join(f"{env}: {{vendor: {name}, rotate_days: 90}}\n" for name, _, env in VENDOR_POLICY[:5]),
+        ),
+        (
+            "governance/keys.json",
+            json.dumps(
+                {env: {"vendor": name, "rotate_days": 90} for name, _, env in VENDOR_POLICY[:5]}, indent=2
+            ),
+        ),
+        (
+            "governance/keys.toml",
+            "".join(
+                f'{env} = {{ vendor = "{name}", rotate_days = 90 }}\n' for name, _, env in VENDOR_POLICY[:5]
+            ),
+        ),
+        (
+            "governance/required.yaml",
+            "required_env:\n" + "".join(f"  {env}:\n" for _, _, env in VENDOR_POLICY[:5]),
+        ),
+    ],
+    ids=["yaml-flow-map", "json-map", "toml-inline-table", "yaml-bare-keys"],
+)
+def test_a_policy_keyed_by_variable_name_is_a_catalog_in_any_style(tmp_path: Path, run_connector, rel, text):
+    # A policy map keyed by variable name assigns nothing whether the mapping
+    # follows on the next line or opens on the same one, and a list of names
+    # with no values assigns nothing in YAML as in INI: the verdict follows
+    # the shape, not the format.
+    _write_tree(tmp_path, {rel: text})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and not ctx.stats.errors and not ctx.stats.incomplete
+    assert len(_catalog_notes(ctx)) == 1 and rel in _catalog_notes(ctx)[0]
+
+
+def test_a_large_properties_file_is_read_to_its_last_line(tmp_path: Path, run_connector):
+    # Lower-case keys make up a properties file; they are not variable names
+    # and cost the assignment pass no match, so the provider keys at the end of
+    # a long one are still read and the file is configuration, not a catalog.
+    filler = "".join(f"service.{number}.timeout=30\n" for number in range(5_000))
+    keys = "".join(f"{env}=replace-me\n" for _, _, env in VENDOR_POLICY[:5])
+    _write_tree(tmp_path, {"etc/llm.properties": filler + keys})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    project = _project(findings)
+    assert project is not None and len(project.model_providers) == 5 and not _catalog_notes(ctx)
 
 
 # ------------------------------------------------------ heuristics alone

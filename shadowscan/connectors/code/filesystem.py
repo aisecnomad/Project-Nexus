@@ -68,9 +68,11 @@ import yaml
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.code.catalogs import (
     CATALOG_MIN_SIGNATURES,
+    LOADER_EXTENSIONS,
     catalog_metadata,
     configuration_document,
     project_catalog_files,
+    referenced_data_files,
 )
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
@@ -529,6 +531,8 @@ class _Project:
     detection_rule_files: list[str] = field(default_factory=list)  # the first, in walk order
     # Data files that declare what a deployment or a job runs with: never catalogs.
     configuration_files: set[str] = field(default_factory=set)
+    # Data files the project's code, notebooks and shell scripts load by name: never catalogs.
+    referenced_data_files: set[str] = field(default_factory=set)
     mcp_tools_limited: bool = False
     # Coding-agent signature id -> posture issues read from its settings files.
     posture: dict[str, list[dict[str, str]]] = field(default_factory=dict)
@@ -2130,8 +2134,12 @@ class FilesystemConnector(BaseConnector):
                 self._record_content(file, m, self._file_excerpt(file, m.line))
             # A deployment or CI document is configuration however many products it names.
             parsed = None if file.structure is _NO_STRUCTURE else file.structure
-            if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):
+            variable_names = {m.value for m in variables}
+            if configuration_document(file.rel, content_text, parsed, variable_names, file.proj_root):
                 file.proj.configuration_files.add(file.rel)
+        if file.ext in LOADER_EXTENSIONS:
+            # A data file that code loads by name is configuration, not a catalog.
+            file.proj.referenced_data_files.update(referenced_data_files(content_text))
 
     def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> None:
         """Match the imports, code patterns and import-bound calls of a source file."""
@@ -2869,7 +2877,7 @@ class FilesystemConnector(BaseConnector):
         proj: _Project,
         covered_files: frozenset[str] = frozenset(),
     ) -> Iterator[Finding]:
-        catalogs = project_catalog_files(proj, proj.configuration_files)
+        catalogs = project_catalog_files(proj, proj.configuration_files, proj.referenced_data_files)
         observations = self._project_observations(proj, catalogs)
         # Evidence held back only because it sits in a catalog is listed in the
         # project finding (catalog_mentions) or, without one, in a scan note.
@@ -2980,7 +2988,7 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("env-names-only")
         self._attach_example_credentials(f, proj)
         self._attach_project_metadata(f, root, proj, evidence)
-        catalogs = project_catalog_files(proj, proj.configuration_files)
+        catalogs = project_catalog_files(proj, proj.configuration_files, proj.referenced_data_files)
         if catalogs:
             f.metadata["catalog_mentions"] = catalog_metadata(catalogs)
         if evidence.test_only:

@@ -55,10 +55,11 @@ blocklist, a vendor policy or a copy of the signature packs, is a *catalog*:
 its mentions count only for a product that also has an import, a dependency or
 specific code evidence elsewhere in the project, and a project with nothing
 else yields no finding. Discounted files are listed in
-`metadata.catalog_mentions`. Source code, dotenv, Compose, Helm and CI files
-are never catalogs, and a file naming one to three products is configuration;
-see [Code connectors](../connectors/code.md) for the exact rule and the
-threshold.
+`metadata.catalog_mentions`. Source code, dotenv, Compose, Helm and CI files,
+files under `.devcontainer/` or a top-level `config/` directory, files that
+assign the variables they name and data files the project's own code loads are
+never catalogs, and a file naming one to three products is configuration; see
+[Code connectors](../connectors/code.md) for the exact rule and the threshold.
 
 ## Risk
 

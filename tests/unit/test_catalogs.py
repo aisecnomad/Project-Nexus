@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from shadowscan.connectors.code.catalogs import (
     CATALOG_MIN_SIGNATURES,
+    MAX_ASSIGNMENT_LINES,
     MAX_CATALOG_FILES,
+    MAX_PATH_LITERALS,
+    MAX_REFERENCES_PER_FILE,
     catalog_files,
     catalog_metadata,
     configuration_document,
     project_catalog_files,
+    referenced_data_files,
 )
 from shadowscan.signatures import Match, Signal, Signature
 
@@ -40,6 +45,14 @@ def mention(rel: str, signal_type: str = "domain", number: int = 0, category: st
 
 def products(rel: str, count: int, signal_type: str = "domain"):
     return [mention(rel, signal_type, number) for number in range(count)]
+
+
+def model_id(rel: str, number: int, data_mention: bool):
+    """A model-identifier match, flagged ``data_mention`` when the connector found it in a data file."""
+    match, rel, snippet = mention(rel, "model", number)
+    if data_mention:
+        match.extra["data_mention"] = True
+    return match, rel, snippet
 
 
 def test_the_threshold_is_four_distinct_signatures():
@@ -191,34 +204,320 @@ def test_configuration_documents_are_recognized(rel, text, parsed, names):
     assert configuration_document(rel, text, parsed, names)
 
 
+# A policy entry per variable, as a mapping value in any style.
+POLICY_MAP = {
+    "OPENAI_API_KEY": {"vendor": "OpenAI", "rotate_days": 90},
+    "ANTHROPIC_API_KEY": {"vendor": "Anthropic", "rotate_days": 90},
+}
+
+# A credential file assigns the variables it names, on lines of its own; so do
+# a settings document keyed by them and a development container's environment.
+SAMPLE_KEYS = (
+    "# Copy to keys.cfg and fill in\nOPENAI_API_KEY=sk-example\n"
+    'export ANTHROPIC_API_KEY="x"\nTOGETHER_API_KEY = y\n[azure]\nAZURE_OPENAI_API_KEY: z\n'
+)
+
+
+@pytest.mark.parametrize(
+    "rel,text,parsed,names",
+    [
+        ("keys/sample_keys.cfg", SAMPLE_KEYS, None, {"OPENAI_API_KEY"}),
+        ("keys/sample_keys.cfg", SAMPLE_KEYS, None, {"ANTHROPIC_API_KEY"}),
+        ("keys/sample_keys.cfg", SAMPLE_KEYS, None, {"TOGETHER_API_KEY"}),
+        ("keys/sample_keys.cfg", SAMPLE_KEYS, None, {"AZURE_OPENAI_API_KEY"}),
+        ("keys/llm.properties", "openai.key=x\nOPENAI_API_KEY: sk\n", None, {"OPENAI_API_KEY"}),
+        ("keys/keys.json", '{\n  "OPENAI_API_KEY": "sk-",\n}', None, {"OPENAI_API_KEY"}),
+        ("keys/keys.yaml", "OPENAI_API_KEY: sk\n", {"OPENAI_API_KEY": "sk"}, {"OPENAI_API_KEY"}),
+        ("settings.json", "{}", {"OPENAI_API_KEY": "sk-..."}, {"OPENAI_API_KEY"}),
+        ("settings.yaml", "", {"llm": {"keys": {"GROQ_API_KEY": "gsk-example"}}}, {"GROQ_API_KEY"}),
+        ("settings.toml", "", {"providers": [{"MISTRAL_API_KEY": True}]}, {"MISTRAL_API_KEY"}),
+        (
+            "devcontainer.json",
+            "{}",
+            {"containerEnv": {"OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}"}},
+            {"OPENAI_API_KEY"},
+        ),
+        ("devcontainer.json", "{}", {"remoteEnv": {"ANTHROPIC_API_KEY": ""}}, {"ANTHROPIC_API_KEY"}),
+    ],
+    ids=[
+        "dotenv-line",
+        "export-line",
+        "spaced-line",
+        "colon-line",
+        "properties",
+        "unparsed-json",
+        "yaml-key",
+        "json-key",
+        "nested-key",
+        "list-item-key",
+        "container-env",
+        "remote-env",
+    ],
+)
+def test_credential_assignments_make_a_data_file_configuration(rel, text, parsed, names):
+    assert configuration_document(rel, text, parsed, names)
+
+
 @pytest.mark.parametrize(
     "rel,text,parsed,names",
     [
         # A vendor policy names each product's variable as a value, not as configuration.
         (
             "governance/vendors.yaml",
-            "",
+            "vendors:\n  - name: OpenAI\n    host: api.openai.com\n    key_env: OPENAI_API_KEY\n",
             {"vendors": [{"name": "OpenAI", "host": "api.openai.com", "key_env": "OPENAI_API_KEY"}]},
             {"OPENAI_API_KEY"},
         ),
+        # A policy map keyed by variable assigns nothing: the key opens a mapping,
+        # on the next line or on the same one, in YAML, JSON (parsed or not) or TOML.
+        (
+            "governance/keys.yaml",
+            "OPENAI_API_KEY:  # reviewed\n  vendor: OpenAI\n",
+            {"OPENAI_API_KEY": {"vendor": "OpenAI"}},
+            {"OPENAI_API_KEY"},
+        ),
+        (
+            "governance/keys.yaml",
+            "OPENAI_API_KEY: {vendor: OpenAI, rotate_days: 90}\n",
+            {"OPENAI_API_KEY": {"vendor": "OpenAI", "rotate_days": 90}},
+            {"OPENAI_API_KEY"},
+        ),
+        (
+            "governance/keys.json",
+            json.dumps(POLICY_MAP, indent=2),
+            POLICY_MAP,
+            {"OPENAI_API_KEY"},
+        ),
+        (
+            "governance/keys.jsonc",
+            "// reviewed\n" + json.dumps(POLICY_MAP, indent=2),
+            None,
+            {"OPENAI_API_KEY"},
+        ),
+        (
+            "governance/keys.toml",
+            'OPENAI_API_KEY = { vendor = "OpenAI", rotate_days = 90 }\n',
+            {"OPENAI_API_KEY": {"vendor": "OpenAI", "rotate_days": 90}},
+            {"OPENAI_API_KEY"},
+        ),
+        (
+            "governance/stages.json",
+            '{\n  "OPENAI_API_KEY": ["prod", "staging"]\n}',
+            {"OPENAI_API_KEY": ["prod", "staging"]},
+            {"OPENAI_API_KEY"},
+        ),
+        # A list of names, or a name without a value, is not an assignment in any format.
+        ("governance/required.json", '["OPENAI_API_KEY"]', ["OPENAI_API_KEY"], {"OPENAI_API_KEY"}),
+        ("governance/keys.ini", "[providers]\nOPENAI_API_KEY\nGROQ_API_KEY\n", None, {"OPENAI_API_KEY"}),
+        (
+            "governance/required.yaml",
+            "required_env:\n  OPENAI_API_KEY:\n  GROQ_API_KEY:\n",
+            {"required_env": {"OPENAI_API_KEY": None, "GROQ_API_KEY": None}},
+            {"OPENAI_API_KEY"},
+        ),
+        ("governance/required.json", "{}", {"OPENAI_API_KEY": None}, {"OPENAI_API_KEY"}),
+        ("governance/keys.cfg", "OPENAI_ORG=acme\n", None, {"OPENAI_API_KEY"}),
         ("net/blocklist.yaml", "blocked:\n  - api.openai.com\n", {"blocked": ["api.openai.com"]}, set()),
         # The variable a file configures must be one it names, and a key in prose is not a resource.
         ("deploy/job.yaml", "", {"env": {"PATH": "/bin"}}, {"OPENAI_API_KEY"}),
         ("docs/kinds.yaml", "notes: |\n  apiVersion: v1\n  kind: Pod\n", None, set()),
         # Source code and manifests are never catalogs, so they need no exemption.
         ("app/settings.py", "", {"env": {"OPENAI_API_KEY": ""}}, {"OPENAI_API_KEY"}),
+        ("app/settings.py", "OPENAI_API_KEY=x\n", None, {"OPENAI_API_KEY"}),
     ],
-    ids=["vendor-policy", "blocklist", "other-variable", "indented-keys", "source"],
+    ids=[
+        "vendor-policy",
+        "policy-map",
+        "policy-map-flow",
+        "policy-map-json",
+        "policy-map-unparsed-json",
+        "policy-map-toml",
+        "list-value",
+        "name-list",
+        "names-without-values",
+        "bare-keys",
+        "null-value",
+        "other-assignment",
+        "blocklist",
+        "other-variable",
+        "indented-keys",
+        "source",
+        "source-line",
+    ],
 )
 def test_lists_are_not_configuration_documents(rel, text, parsed, names):
     assert not configuration_document(rel, text, parsed, names)
+
+
+def test_the_assignment_pass_is_bounded_per_file():
+    names = {"OPENAI_API_KEY"}
+    # Lower-case keys, the bulk of a properties or INI file, are not variable
+    # names and cost no match: a large file is still read to its last line.
+    big = "openai.timeout=30\n" * 30_000 + "OPENAI_API_KEY=sk-example\n"
+    assert configuration_document("etc/llm.properties", big, None, names)
+    # A file is judged on its first MAX_ASSIGNMENT_LINES assignment lines and
+    # stops there, instead of timing out and marking the scan incomplete.
+    within = "KEY_X=1\n" * (MAX_ASSIGNMENT_LINES - 1) + "OPENAI_API_KEY=sk-example\n"
+    assert configuration_document("etc/keys.cfg", within, None, names)
+    beyond = "KEY_X=1\n" * (MAX_ASSIGNMENT_LINES * 50) + "OPENAI_API_KEY=sk-example\n"
+    assert not configuration_document("etc/keys.cfg", beyond, None, names)
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".devcontainer/sample_keys.cfg",
+        ".devcontainer/devcontainer.json",
+        "examples/agent/.devcontainer/keys.cfg",
+        "config/llm.yaml",
+        "Config/llm.yaml",
+        "conf/providers.toml",
+        "settings/models.json",
+        "config/vendors.md",
+    ],
+)
+def test_configuration_directories_hold_configuration_not_catalogs(rel):
+    # A development container's files, and a top-level configuration directory,
+    # configure the workspace or the service however many products they name.
+    assert catalog_files(products(rel, 8, "env")) == frozenset()
+    assert catalog_files(products(rel, 8)) == frozenset()
+    if not rel.endswith(".md"):
+        assert configuration_document(rel, "", None, set())
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "src/main/resources/config/vendors.yaml",
+        "tests/config/blocklist.yaml",
+        "proxy/settings/blocklist.yaml",
+    ],
+)
+def test_a_deeper_configuration_directory_is_not_exempt(rel):
+    assert catalog_files(products(rel, 8)) == {rel}
+    assert not configuration_document(rel, "", None, set())
+
+
+def test_a_projects_own_configuration_directory_is_configuration():
+    rel = "services/router/config/llm.yaml"
+    assert catalog_files(products(rel, 8), root="services/router") == frozenset()
+    assert configuration_document(rel, "", None, set(), root="services/router")
+    # Relative to another project, or to the scan root, config/ is two levels down.
+    assert catalog_files(products(rel, 8), root="services") == {rel}
+    assert catalog_files(products(rel, 8)) == {rel}
+    assert not configuration_document(rel, "", None, set())
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (
+            'settings = yaml.safe_load(open("aider/resources/model-settings.yml"))',
+            {"aider/resources/model-settings.yml", "model-settings.yml"},
+        ),
+        (
+            'const OVERRIDES: &str = include_str!("../provider_catalog_overrides.json");',
+            {"provider_catalog_overrides.json"},
+        ),
+        (
+            'source "$HOME/.devcontainer/sample_keys.cfg"\n',
+            {"home/.devcontainer/sample_keys.cfg", "sample_keys.cfg"},
+        ),
+        ('path = f"{root}/Config/Models.TOML"', {"config/models.toml", "models.toml"}),
+        (r'p = Path(r"configs\providers.ini")', {"configs/providers.ini", "providers.ini"}),
+        ("load(`./data/routes.json5`)", {"data/routes.json5", "routes.json5"}),
+        ("cfg = ini.read('etc/../keys.properties')", {"keys.properties"}),
+        ('SCHEMA = "https://example.test/schemas/config.json"', set()),
+        ('name = "models"  # see models.yaml', set()),
+        ("x = 'prose with a .json suffix'", set()),
+        ('long = "' + "a" * 201 + '.yaml"', set()),
+        ('module = "settings.py"; page = "index.html"', set()),
+        ('backup = "keys.json.bak"; pattern = "*.yamlx"', set()),
+    ],
+    ids=[
+        "python-open",
+        "rust-include",
+        "shell-source",
+        "f-string-tail",
+        "windows-raw",
+        "template-literal",
+        "parent-segment",
+        "url",
+        "comment",
+        "prose",
+        "overlong",
+        "other-suffixes",
+        "suffix-not-last",
+    ],
+)
+def test_referenced_data_files_collects_quoted_path_literals(text, expected):
+    assert referenced_data_files(text) == expected
+
+
+def test_referenced_data_files_are_bounded_per_file():
+    text = "".join(f'load("file-{number}.json")\n' for number in range(MAX_REFERENCES_PER_FILE))
+    assert len(referenced_data_files(text)) == MAX_REFERENCES_PER_FILE
+    # Literals without a data suffix cost no match, however many a bundle holds.
+    assert referenced_data_files("x = \"abc\"; y = 'def'\n" * 50_000) == set()
+    # A literal is read at most MAX_PATH_LITERALS times; the pass stops there
+    # instead of timing out and marking the scan incomplete.
+    repeated = 'load("a.json")\n' * (MAX_PATH_LITERALS * 250)
+    assert referenced_data_files(repeated) == {"a.json"}
+    assert referenced_data_files('load("a.json")\n' * MAX_PATH_LITERALS + 'load("late.json")\n') == {"a.json"}
+
+
+def test_a_data_file_the_projects_code_loads_is_configuration():
+    rel = "aider/resources/model-settings.yml"
+    assert catalog_files(products(rel, 8)) == {rel}
+    assert catalog_files(products(rel, 8), referenced={"model-settings.yml"}) == frozenset()
+    assert catalog_files(products(rel, 8), referenced={"resources/model-settings.yml"}) == frozenset()
+    assert catalog_files(products(rel, 8), referenced=["Model-Settings.yml".lower()]) == frozenset()
+    # A longer path that does not end the file's own path names another file.
+    assert catalog_files(products(rel, 8), referenced={"other/model-settings.yml"}) == {rel}
+    assert catalog_files(products(rel, 8), referenced={"settings.yml"}) == {rel}
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "aider/website/_data/edit_leaderboard.yml",
+        "docs/providers.yaml",
+        "doc/pricing.json",
+        "site/gallery.json",
+        "blog/_posts/vendors.yml",
+        "web/_includes/models.csv",
+    ],
+)
+def test_documentation_and_website_data_stay_catalogs_when_a_script_names_them(rel):
+    name = rel.rsplit("/", 1)[-1]
+    assert catalog_files(products(rel, 8), referenced={name, rel}) == {rel}
+
+
+def test_a_loaded_data_file_keeps_small_neighbours_out_of_the_catalog():
+    big = products("net/blocklist.yaml", 8)
+    small = products("app/providers.yaml", 2)
+    assert catalog_files([*big, *small]) == {"net/blocklist.yaml", "app/providers.yaml"}
+    assert catalog_files([*big, *small], referenced={"providers.yaml"}) == {"net/blocklist.yaml"}
+
+
+def test_model_identifiers_found_in_data_files_are_mentions():
+    rel = "website/_data/edit_leaderboard.yml"
+    leaderboard = [model_id(rel, number, data_mention=True) for number in range(8)]
+    assert catalog_files(leaderboard) == {rel}
+    assert catalog_files([*leaderboard, *products(rel, 2)]) == {rel}
+    # A model id in a data file without the flag, or one a manifest or IaC file selects, anchors.
+    assert catalog_files([*products(rel, 6), model_id(rel, 99, data_mention=False)]) == frozenset()
+    assert (
+        catalog_files([model_id("infra/main.tf", number, data_mention=True) for number in range(8)])
+        == frozenset()
+    )
 
 
 @pytest.mark.parametrize(
     "anchor", ["dependency", "import", "code", "file", "image", "iac", "model", "secret"]
 )
 def test_a_structural_anchor_keeps_a_file_a_configuration(anchor):
-    observations = [*products("config/gateway.yaml", 6), mention("config/gateway.yaml", anchor, 99)]
+    observations = [*products("router/gateway.yaml", 6), mention("router/gateway.yaml", anchor, 99)]
     assert catalog_files(observations) == frozenset()
 
 
@@ -259,11 +558,12 @@ def test_small_data_files_join_a_catalog_only_when_no_code_names_a_technology():
         "frameworks/orchestrators.yaml"
     }
     # So does a single configuration file with a base URL and a catalog beside it.
-    assert catalog_files([*big, mention("config/app.json", "file", 32)]) == {"frameworks/orchestrators.yaml"}
+    assert catalog_files([*big, mention("router/app.json", "file", 32)]) == {"frameworks/orchestrators.yaml"}
 
 
 def test_project_catalogs_include_coding_agent_matches():
     proj = SimpleNamespace(
+        root=".",
         matches=products("net/allow.yaml", 2),
         coding_agent_matches={
             "coding-agent.one": [mention("net/allow.yaml", "domain", 40, "coding-agent")],
@@ -271,8 +571,17 @@ def test_project_catalogs_include_coding_agent_matches():
         },
     )
     assert project_catalog_files(proj) == {"net/allow.yaml"}
+    assert project_catalog_files(proj, referenced={"allow.yaml"}) == frozenset()
     proj.coding_agent_matches = {}
     assert project_catalog_files(proj) == frozenset()
+
+
+def test_project_catalogs_are_judged_relative_to_the_project_root():
+    rel = "services/router/config/llm.yaml"
+    proj = SimpleNamespace(root="services/router", matches=products(rel, 8), coding_agent_matches={})
+    assert project_catalog_files(proj) == frozenset()
+    proj.root = "."
+    assert project_catalog_files(proj) == {rel}
 
 
 def test_catalog_metadata_is_sorted_and_bounded():

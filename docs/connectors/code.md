@@ -51,9 +51,10 @@ capabilities and score without a source change; see [scanning](../scanning.md) a
 
 A list of products is not use of them. A data or prose file (YAML, JSON, TOML, INI,
 XML, CSV, text, Markdown) that names four or more different products through
-domains or environment-variable names, and holds no import, dependency, code,
-file-name, image, IaC, model or credential evidence, is a *catalog*: a proxy
-blocklist, an egress allowlist, a vendor policy, a copy of the signature packs.
+domains, environment-variable names or model identifiers, and holds no import,
+dependency, code, file-name, image, IaC or credential evidence and no model that
+a manifest or IaC file selects, is a *catalog*: a proxy blocklist, an egress
+allowlist, a vendor policy, a leaderboard, a copy of the signature packs.
 Its mentions establish a technology only when the same signature also has an
 import, a dependency or specific code evidence elsewhere in the project, like an
 ambiguous pattern. A project with nothing else yields no finding for them, and
@@ -69,10 +70,40 @@ what a project builds or runs with (dotenv files, Compose files, Helm
 `.buildkite/`, Spring `application*` and `bootstrap*` configuration, dependency
 manifests, IaC) are never catalogs. Neither is a configuration document: a
 Kubernetes-style resource (`apiVersion` and `kind`, also in a multi-document
-stream), an ECS task definition, or a data file that assigns a variable it
-names under an `env`, `environment`, `variables` or `secrets` key (as a key, or
-as the `name` or `key` of an item). A data file naming one to three products is
-configuration. The threshold of four is a judgement from the bundled corpora and
+stream), an ECS task definition, a data file under `.devcontainer/` or under a
+`config/`, `conf/` or `settings/` directory at the top of the scan or of its
+project (not deeper, where the name says less), or a data file that assigns a
+variable it names: under an `env`, `environment`, `variables`, `secrets`,
+`containerEnv` or `remoteEnv` key (as a key, or as the `name` or `key` of an
+item), as a key with a scalar value at any depth, or on a line of its own
+(`OPENAI_API_KEY=...`, `export NAME=value`, `NAME: value`, with or without
+quotes, also in `.cfg`, `.ini`, `.conf` and `.properties` files, which have no
+parser). A vendor policy that names a variable as a value
+(`key_env: OPENAI_API_KEY`), keys a mapping or a list by it in any style
+(`OPENAI_API_KEY:` followed by an indented block, `OPENAI_API_KEY: {vendor:
+OpenAI}`, a JSON object or array value, a TOML inline table) or lists it as a
+key with no value (`OPENAI_API_KEY:` alone, `null`) assigns nothing: the
+verdict follows the shape, not the format. Nor is a
+data file that source code, a notebook or a shell script of the same project
+loads by name: a quoted path literal ending in a data suffix
+(`open("model-settings.yml")`, `include_str!("../provider_catalog.json")`,
+`source "$HOME/keys.cfg"`) exempts the file whose name or trailing path it
+names, unless the file sits under a documentation or website directory
+(`docs/`, `doc/`, `website/`, `site/`, `_data/`, `_posts/`, `_includes/`,
+`blog/`): a leaderboard or gallery table is published, not loaded, and stays a
+catalog even when a script writes it. The reference is by name and that
+directory list is fixed, which is the accepted cost: a quoted `"settings.yaml"`
+anywhere in code, in a docstring included, exempts every data file of that name
+in the project, and published data outside those directories (`public/`,
+`static/`, `assets/`) is configuration once a build script names it. Both
+passes are bounded: a data file is judged on its first 10,000 assignment lines
+and a loader is read for its first 2,000 quoted data-file literals (at most 400
+distinct names); a file with more is judged on those rather than timing out. A
+model identifier found in a data file is
+a mention like a domain or a variable name (a pricing table of model ids is a
+catalog); one selected by a manifest or IaC file still anchors. A data file
+naming one to three products is configuration. The threshold of four is a
+judgement from the bundled corpora and
 fixtures: their multi-provider configurations name at most four products and are
 dotenv files, while blocklists and vendor policies name six to ten and the
 signature packs seven to thirty-six per file. A real routing table kept in a
