@@ -60,8 +60,10 @@ median per repository and timed out at 900 s on four, and flagged three
 negatives.
 
 **4. The per-family table shows complementary blind spots.** The IaC
-Bedrock module was detected only by ShadowScan and the baseline. The n8n
-flow was detected only by ShadowScan (as `workflow`) and the baseline.
+Bedrock module was missed by AgentDiscover, Agentic Radar and vet
+(detected by ShadowScan, Cisco AI BOM, agent-bom and the baseline). The
+n8n flow was detected only by ShadowScan (as `workflow`), Cisco AI BOM
+and the baseline.
 Both TypeScript tool-calling apps beat AgentDiscover and Radar; the
 LLM-only JS apps beat vet's signature set entirely. Framework *sources*
 (as opposed to apps) beat ShadowScan mostly through fail-closed errors,
