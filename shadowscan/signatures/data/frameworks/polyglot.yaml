@@ -528,3 +528,97 @@ signatures:
       - type: image
         patterns: ['anthropic-quickstarts:computer-use-demo', 'computer-use-demo']
         weight: 0.9
+
+  # ------------------------------------------------------------ elixir
+  - id: framework.nx-bumblebee
+    name: Nx / Bumblebee (Elixir ML)
+    category: framework
+    vendor: Dashbit / Elixir
+    homepage: https://github.com/elixir-nx/bumblebee
+    description: Elixir machine-learning stack; Bumblebee wraps HuggingFace Transformers models via ONNX.
+    signals:
+      - type: dependency
+        ecosystem: hex
+        names: [bumblebee, nx, nx_serving, exla, torchx, ortex, instructor]
+        weight: 0.7
+      - type: import
+        languages: [elixir]
+        patterns: ['^[^\S\r\n]*(?:alias|import|require|use)\s+(?:Bumblebee|Nx|Instructor)\b']
+        weight: 0.7
+      - type: code
+        patterns: ['\bBumblebee\.(?:load_model|Text|Audio|Vision|Diffusion)\b', '\bNx\.Serving\b', '\bInstructor\.chat_completion\b']
+        weight: 0.7
+
+  - id: framework.langchain-elixir
+    name: LangChain (Elixir)
+    category: framework
+    vendor: LangChain
+    homepage: https://github.com/brainlid/langchain
+    description: Elixir implementation of the LangChain framework for LLM applications.
+    capabilities: [tool-use]
+    signals:
+      - type: dependency
+        ecosystem: hex
+        names: [langchain]
+        weight: 0.8
+      - type: import
+        languages: [elixir]
+        patterns: ['^[^\S\r\n]*(?:alias|import|require|use)\s+LangChain\b']
+        weight: 0.8
+      - type: code
+        patterns: ['\bLangChain\.(?:Chains|ChatModels|Function|Message|PromptTemplate)\b', '\b%LangChain\.Message\b']
+        weight: 0.8
+
+  # ------------------------------------------------------------ r
+  - id: framework.r-ai
+    name: R AI / ML Libraries
+    category: framework
+    vendor: R Project
+    description: R packages for AI API access and ML model serving.
+    signals:
+      - type: dependency
+        ecosystem: cran
+        names: [openai, httr2, reticulate, ellmer, elmer, tidymodels, keras3, torch, luz]
+        weight: 0.6
+      - type: import
+        languages: [r]
+        patterns: ['^[^\S\r\n]*(?:library|require)\s*\(\s*(?:openai|ellmer|elmer|reticulate)\s*\)', '^[^\S\r\n]*(?:library|require)\s*\(\s*(?:keras3?|torch|luz)\s*\)']
+        weight: 0.6
+      - type: code
+        patterns: ['(?:httr2?::)?(?:POST|GET|request)\s*\(.*(?:api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com)', '\bchat\s*\(\s*(?:turns|model)\s*=', '\bpython_import\s*\(\s*["\x27](?:openai|anthropic|langchain|transformers)["\x27]\s*\)']
+        weight: 0.6
+
+  # ------------------------------------------------------------ lua
+  - id: framework.lua-ai
+    name: Lua AI / LLM Clients
+    category: framework
+    vendor: Community
+    description: Lua libraries for LLM API access and integration.
+    signals:
+      - type: import
+        languages: [lua]
+        patterns: ['^[^\S\r\n]*(?:local\s+\w+\s*=\s*)?require\s*\(?["\x27](?:ollama|openai|llm)["\x27]\)?']
+        weight: 0.6
+      - type: code
+        patterns: ['\bollama\s*[\.\:]\s*(?:generate|chat|embeddings|list)\s*\(', '\bopenai\s*[\.\:]\s*(?:chat|completions)\s*\(', 'api%.openai%.com', 'api%.anthropic%.com']
+        weight: 0.6
+
+  # ------------------------------------------------------------ rust ai crates
+  - id: framework.rust-ai
+    name: Rust AI / ML Crates
+    category: framework
+    vendor: Community
+    description: Rust crates for LLM inference and AI application development.
+    signals:
+      - type: dependency
+        ecosystem: cargo
+        names: [kalosm, candle-core, candle-nn, candle-transformers, llm, llm-chain, mistralrs, async-openai, genai]
+        prefixes: [kalosm-, candle-]
+        weight: 0.8
+      - type: import
+        languages: [rust]
+        patterns: ['^[^\S\r\n]*use\s+(?:kalosm|candle_core|candle_nn|candle_transformers|llm|llm_chain|mistralrs|async_openai|genai)::', '^[^\S\r\n]*use\s+kalosm::']
+        weight: 0.8
+      - type: code
+        patterns: ['\bKalosm::\w+Agent\b', '\bTextGeneration(?:Stream)?\s*::\s*(?:builder|new)\b', '\bllm_chain!\s*\(']
+        weight: 0.7

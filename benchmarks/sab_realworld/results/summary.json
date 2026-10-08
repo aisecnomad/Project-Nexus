@@ -1,43 +1,43 @@
 {
   "overall": {
     "n": 130,
-    "tp": 77,
-    "fp": 1,
-    "fn": 14,
-    "tn": 38,
+    "tp": 88,
+    "fp": 0,
+    "fn": 3,
+    "tn": 39,
     "recall": [
-      0.8461538461538461,
-      0.7581785928776223,
-      0.9060878659408453
+      0.967032967032967,
+      0.907506930570377,
+      0.9887255932323175
     ],
     "specificity": [
-      0.9743589743589743,
-      0.8681900983014993,
-      0.99545929689901
+      1.0,
+      0.9103331462924287,
+      1.0
     ],
     "precision": [
-      0.9871794871794872,
-      0.930891429982978,
-      0.9977332682461664
+      1.0,
+      0.9581729333351078,
+      0.9999999999999999
     ],
-    "f1": 0.9112,
-    "mcc": 0.7675,
+    "f1": 0.9832,
+    "mcc": 0.9476,
     "f1_ci": [
-      0.8592,
-      0.9518
+      0.9617,
+      1.0
     ]
   },
   "by_category": {
     "adversarial": {
       "n": 15,
-      "tp": 14,
+      "tp": 15,
       "fp": 0,
-      "fn": 1,
+      "fn": 0,
       "tn": 0,
       "recall": [
-        0.9333333333333333,
-        0.7018347012621998,
-        0.9881331045067315
+        1.0,
+        0.7961166989641515,
+        1.0
       ],
       "specificity": [
         null,
@@ -46,22 +46,22 @@
       ],
       "precision": [
         1.0,
-        0.7846891972623643,
+        0.7961166989641515,
         1.0
       ],
-      "f1": 0.9655,
+      "f1": 1.0,
       "mcc": 0.0
     },
     "agent-framework": {
       "n": 30,
-      "tp": 29,
+      "tp": 30,
       "fp": 0,
-      "fn": 1,
+      "fn": 0,
       "tn": 0,
       "recall": [
-        0.9666666666666667,
-        0.8332960900859082,
-        0.9940914096183874
+        1.0,
+        0.8864866068260312,
+        0.9999999999999999
       ],
       "specificity": [
         null,
@@ -70,22 +70,22 @@
       ],
       "precision": [
         1.0,
-        0.8830302015002593,
-        1.0
+        0.8864866068260312,
+        0.9999999999999999
       ],
-      "f1": 0.9831,
+      "f1": 1.0,
       "mcc": 0.0
     },
     "cloud-ai": {
       "n": 8,
-      "tp": 7,
+      "tp": 8,
       "fp": 0,
-      "fn": 1,
+      "fn": 0,
       "tn": 0,
       "recall": [
-        0.875,
-        0.5291118177871464,
-        0.9775825085499433
+        1.0,
+        0.6755924351161198,
+        1.0
       ],
       "specificity": [
         null,
@@ -94,22 +94,22 @@
       ],
       "precision": [
         1.0,
-        0.6456695649333126,
+        0.6755924351161198,
         1.0
       ],
-      "f1": 0.9333,
+      "f1": 1.0,
       "mcc": 0.0
     },
     "coding-agent": {
       "n": 10,
-      "tp": 7,
+      "tp": 10,
       "fp": 0,
-      "fn": 3,
+      "fn": 0,
       "tn": 0,
       "recall": [
-        0.7,
-        0.39677814746114537,
-        0.8922087325936989
+        1.0,
+        0.7224672001371107,
+        0.9999999999999999
       ],
       "specificity": [
         null,
@@ -118,22 +118,22 @@
       ],
       "precision": [
         1.0,
-        0.6456695649333126,
-        1.0
+        0.7224672001371107,
+        0.9999999999999999
       ],
-      "f1": 0.8235,
+      "f1": 1.0,
       "mcc": 0.0
     },
     "endpoint": {
       "n": 5,
-      "tp": 1,
+      "tp": 3,
       "fp": 0,
-      "fn": 4,
+      "fn": 2,
       "tn": 0,
       "recall": [
-        0.2,
-        0.03622410863243014,
-        0.6244653702374747
+        0.6,
+        0.2307242812760128,
+        0.882379225767352
       ],
       "specificity": [
         null,
@@ -142,10 +142,10 @@
       ],
       "precision": [
         1.0,
-        0.20654931437723745,
+        0.4385029682449546,
         1.0
       ],
-      "f1": 0.3333,
+      "f1": 0.75,
       "mcc": 0.0
     },
     "llm-sdk": {
@@ -174,14 +174,14 @@
     },
     "lowcode-ai": {
       "n": 5,
-      "tp": 1,
+      "tp": 4,
       "fp": 0,
-      "fn": 4,
+      "fn": 1,
       "tn": 0,
       "recall": [
-        0.2,
-        0.03622410863243014,
-        0.6244653702374747
+        0.8,
+        0.37553462976252533,
+        0.9637758913675698
       ],
       "specificity": [
         null,
@@ -190,10 +190,10 @@
       ],
       "precision": [
         1.0,
-        0.20654931437723745,
+        0.5101091635454027,
         1.0
       ],
-      "f1": 0.3333,
+      "f1": 0.8889,
       "mcc": 0.0
     },
     "mcp-protocol": {
@@ -223,23 +223,23 @@
     "negative": {
       "n": 39,
       "tp": 0,
-      "fp": 1,
+      "fp": 0,
       "fn": 0,
-      "tn": 38,
+      "tn": 39,
       "recall": [
         null,
         null,
         null
       ],
       "specificity": [
-        0.9743589743589743,
-        0.8681900983014993,
-        0.99545929689901
+        1.0,
+        0.9103331462924287,
+        1.0
       ],
       "precision": [
-        0.0,
-        0.0,
-        0.7934506856227626
+        null,
+        null,
+        null
       ],
       "f1": 0.0,
       "mcc": 0.0
@@ -247,43 +247,43 @@
   },
   "by_label": {
     "agent": {
-      "correct": 54,
+      "correct": 63,
       "total": 66
     },
     "llm": {
-      "correct": 23,
+      "correct": 25,
       "total": 25
     },
     "none": {
-      "correct": 38,
+      "correct": 39,
       "total": 39
     }
   },
   "by_difficulty": {
     "easy": {
-      "correct": 22,
+      "correct": 23,
       "total": 23
     },
     "medium": {
-      "correct": 48,
+      "correct": 53,
       "total": 55
     },
     "hard": {
-      "correct": 45,
+      "correct": 51,
       "total": 52
     }
   },
   "by_surface": {
     "endpoint": {
       "n": 5,
-      "tp": 1,
+      "tp": 3,
       "fp": 0,
-      "fn": 4,
+      "fn": 2,
       "tn": 0,
       "recall": [
-        0.2,
-        0.03622410863243014,
-        0.6244653702374747
+        0.6,
+        0.2307242812760128,
+        0.882379225767352
       ],
       "specificity": [
         null,
@@ -292,50 +292,50 @@
       ],
       "precision": [
         1.0,
-        0.20654931437723745,
+        0.4385029682449546,
         1.0
       ],
-      "f1": 0.3333,
+      "f1": 0.75,
       "mcc": 0.0
     },
     "repo": {
       "n": 125,
-      "tp": 76,
-      "fp": 1,
-      "fn": 10,
-      "tn": 38,
+      "tp": 85,
+      "fp": 0,
+      "fn": 1,
+      "tn": 39,
       "recall": [
-        0.8837209302325582,
-        0.7990278882092989,
-        0.9355995417807128
+        0.9883720930232558,
+        0.9370359341070826,
+        0.9979444313347503
       ],
       "specificity": [
-        0.9743589743589743,
-        0.8681900983014993,
-        0.99545929689901
+        1.0,
+        0.9103331462924287,
+        1.0
       ],
       "precision": [
-        0.987012987012987,
-        0.9300380108531947,
-        0.9977037827028759
+        1.0,
+        0.9567605161859486,
+        1.0
       ],
-      "f1": 0.9325,
-      "mcc": 0.8174
+      "f1": 0.9942,
+      "mcc": 0.9817
     }
   },
-  "best_surface_f1": 0.9325,
+  "best_surface_f1": 0.9942,
   "best_surface_name": "repo",
-  "surface_normalized_f1": 0.9095,
+  "surface_normalized_f1": 0.9848,
   "adversarial_metrics": {
     "n": 15,
-    "tp": 14,
+    "tp": 15,
     "fp": 0,
-    "fn": 1,
+    "fn": 0,
     "tn": 0,
     "recall": [
-      0.9333333333333333,
-      0.7018347012621998,
-      0.9881331045067315
+      1.0,
+      0.7961166989641515,
+      1.0
     ],
     "specificity": [
       null,
@@ -344,10 +344,10 @@
     ],
     "precision": [
       1.0,
-      0.7846891972623643,
+      0.7961166989641515,
       1.0
     ],
-    "f1": 0.9655,
+    "f1": 1.0,
     "mcc": 0.0
   },
   "by_family": {
@@ -436,7 +436,7 @@
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": false,
+      "agent_tier_correct": true,
       "signature_recall": 0.0
     },
     "agent-framework|langchaingo": {
@@ -498,8 +498,8 @@
     "agent-framework|agency-swarm": {
       "label": "agent",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
@@ -508,7 +508,7 @@
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": false,
+      "agent_tier_correct": true,
       "signature_recall": 0.0
     },
     "agent-framework|phidata-agent": {
@@ -532,7 +532,7 @@
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": false,
+      "agent_tier_correct": true,
       "signature_recall": 0.0
     },
     "agent-framework|autogpt": {
@@ -794,24 +794,24 @@
     "coding-agent|sourcegraph-cody-config": {
       "label": "agent",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
     "coding-agent|devin-config": {
       "label": "agent",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
     "coding-agent|openclaw-state": {
       "label": "agent",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
@@ -842,8 +842,8 @@
     "cloud-ai|sagemaker-llm-endpoint": {
       "label": "llm",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
@@ -890,16 +890,16 @@
     "lowcode-ai|dify-workflow": {
       "label": "agent",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
     "lowcode-ai|flowise-chatflow": {
       "label": "agent",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
@@ -914,8 +914,8 @@
     "lowcode-ai|rivet-graph": {
       "label": "agent",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
@@ -924,7 +924,7 @@
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": false,
+      "agent_tier_correct": true,
       "signature_recall": 0.0
     },
     "adversarial|go-import-only-agent": {
@@ -1002,8 +1002,8 @@
     "adversarial|cpp-llm-rest-client": {
       "label": "llm",
       "surface": "repo",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": null
     },
@@ -1066,16 +1066,16 @@
     "endpoint|jetbrains-ai-plugin": {
       "label": "agent",
       "surface": "endpoint",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
     "endpoint|npm-global-ai-packages": {
       "label": "agent",
       "surface": "endpoint",
-      "detected": false,
-      "correct": false,
+      "detected": true,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
@@ -1154,8 +1154,8 @@
     "negative|neg-egress-blocklist": {
       "label": "none",
       "surface": "repo",
-      "detected": true,
-      "correct": false,
+      "detected": false,
+      "correct": true,
       "agent_tier_correct": true,
       "signature_recall": null
     },
@@ -1392,54 +1392,13 @@
       "signature_recall": null
     }
   },
-  "agent_tier_accuracy": 0.5740740740740741,
+  "agent_tier_accuracy": 0.6984126984126984,
   "mean_signature_recall": 0.0,
-  "false_positives": [
-    {
-      "case_id": "rw-repo-101",
-      "family": "neg-egress-blocklist"
-    }
-  ],
+  "false_positives": [],
   "false_negatives": [
-    {
-      "case_id": "rw-repo-019",
-      "family": "agency-swarm"
-    },
-    {
-      "case_id": "rw-repo-056",
-      "family": "sourcegraph-cody-config"
-    },
-    {
-      "case_id": "rw-repo-057",
-      "family": "devin-config"
-    },
-    {
-      "case_id": "rw-repo-058",
-      "family": "openclaw-state"
-    },
-    {
-      "case_id": "rw-repo-062",
-      "family": "sagemaker-llm-endpoint"
-    },
-    {
-      "case_id": "rw-repo-068",
-      "family": "dify-workflow"
-    },
-    {
-      "case_id": "rw-repo-069",
-      "family": "flowise-chatflow"
-    },
     {
       "case_id": "rw-repo-070",
       "family": "langflow-pipeline"
-    },
-    {
-      "case_id": "rw-repo-071",
-      "family": "rivet-graph"
-    },
-    {
-      "case_id": "rw-repo-082",
-      "family": "cpp-llm-rest-client"
     },
     {
       "case_id": "rw-repo-088",
@@ -1448,14 +1407,6 @@
     {
       "case_id": "rw-repo-089",
       "family": "shell-history-ai-cli"
-    },
-    {
-      "case_id": "rw-repo-090",
-      "family": "jetbrains-ai-plugin"
-    },
-    {
-      "case_id": "rw-repo-091",
-      "family": "npm-global-ai-packages"
     }
   ],
   "error_count": 0

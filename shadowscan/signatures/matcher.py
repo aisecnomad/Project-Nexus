@@ -788,6 +788,12 @@ _LANG_ALIASES = {
     "hpp": "cpp",
     "hxx": "cpp",
     "hh": "cpp",
+    "ex": "elixir",
+    "exs": "elixir",
+    "elixir": "elixir",
+    "r": "r",
+    "rmd": "r",
+    "lua": "lua",
 }
 
 SOURCE_EXTENSIONS = {
@@ -821,6 +827,11 @@ SOURCE_EXTENSIONS = {
     ".hh",
     ".hpp",
     ".hxx",
+    ".ex",
+    ".exs",
+    ".r",
+    ".rmd",
+    ".lua",
 }
 
 

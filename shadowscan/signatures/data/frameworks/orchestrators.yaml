@@ -24,6 +24,12 @@ signatures:
         exclude_names: [langchain-text-splitters]
         weight: 0.85
       - type: dependency
+        ecosystem: conda
+        names: [langchain, langchain-core, langchain-community]
+        prefixes: [langchain-]
+        exclude_names: [langchain-text-splitters]
+        weight: 0.85
+      - type: dependency
         ecosystem: npm
         names: [langchain]
         prefixes: ["@langchain/"]
@@ -147,6 +153,11 @@ signatures:
         ecosystem: pypi
         names: [llama-index, llama-index-core, llama-index-agent-openai, llama-index-llms-openai, llama-index-llms-anthropic, llama-index-llms-bedrock-converse, llama-index-llms-vertex, llama-index-tools-mcp, llama-deploy, llama-agents, llama-cloud, llama-cloud-services, llama-parse]
         prefixes: [llama-index, llama-cloud]
+        weight: 0.85
+      - type: dependency
+        ecosystem: conda
+        names: [llama-index, llama-index-core]
+        prefixes: [llama-index]
         weight: 0.85
       - type: dependency
         ecosystem: npm

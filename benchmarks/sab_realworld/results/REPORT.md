@@ -16,7 +16,7 @@
 - **Surfaces**: endpoint, repo
 - **Categories**: 9
 - **Families**: 130
-- **Timestamp**: 2026-10-08T14:45:22.766661+00:00
+- **Timestamp**: 2026-10-08T16:38:37.215272+00:00
 - **Python**: 3.13.16
 - **Errors**: 0
 
@@ -25,14 +25,14 @@
 | Metric | Value |
 |--------|-------|
 | Cases | 130 |
-| TP / FP / FN / TN | 77 / 1 / 14 / 38 |
-| Recall | 0.85 [0.76, 0.91] |
-| Specificity | 0.97 [0.87, 1.00] |
-| Precision | 0.99 [0.93, 1.00] |
-| F1 | 0.91 |
-| F1 95% CI (bootstrap) | [0.86, 0.95] |
-| MCC | 0.77 |
-| Agent-tier accuracy | 0.57 |
+| TP / FP / FN / TN | 88 / 0 / 3 / 39 |
+| Recall | 0.97 [0.91, 0.99] |
+| Specificity | 1.00 [0.91, 1.00] |
+| Precision | 1.00 [0.96, 1.00] |
+| F1 | 0.98 |
+| F1 95% CI (bootstrap) | [0.96, 1.00] |
+| MCC | 0.95 |
+| Agent-tier accuracy | 0.70 |
 | Mean signature recall | 0.00 |
 
 ## Surface-Balanced Scoring
@@ -42,13 +42,13 @@ allow fair comparison by reporting per-surface performance.
 
 | Surface | N | TP | FP | FN | TN | Recall | Precision | F1 | MCC |
 |---------|---|----|----|----|----|--------|-----------|----|-----|
-| endpoint | 5 | 1 | 0 | 4 | 0 | 0.20 | 1.00 | 0.33 | 0.00 |
-| repo | 125 | 76 | 1 | 10 | 38 | 0.88 | 0.99 | 0.93 | 0.82 |
+| endpoint | 5 | 3 | 0 | 2 | 0 | 0.60 | 1.00 | 0.75 | 0.00 |
+| repo | 125 | 85 | 0 | 1 | 39 | 0.99 | 1.00 | 0.99 | 0.98 |
 
 | Aggregate Metric | Value |
 |------------------|-------|
-| Best-surface F1 | 0.93 (repo) |
-| Surface-normalized F1 | 0.91 |
+| Best-surface F1 | 0.99 (repo) |
+| Surface-normalized F1 | 0.98 |
 
 *Best-surface F1*: highest F1 among supported surfaces. Use when
 comparing tools that claim different surface coverage.
@@ -60,15 +60,15 @@ each weighted by case count. Penalizes tools that skip surfaces.
 
 | Category | N | TP | FP | FN | TN | Recall | Precision | F1 | MCC |
 |----------|---|----|----|----|----|--------|-----------|----|-----|
-| adversarial | 15 | 14 | 0 | 1 | 0 | 0.93 | 1.00 | 0.97 | 0.00 |
-| agent-framework | 30 | 29 | 0 | 1 | 0 | 0.97 | 1.00 | 0.98 | 0.00 |
-| cloud-ai | 8 | 7 | 0 | 1 | 0 | 0.88 | 1.00 | 0.93 | 0.00 |
-| coding-agent | 10 | 7 | 0 | 3 | 0 | 0.70 | 1.00 | 0.82 | 0.00 |
-| endpoint | 5 | 1 | 0 | 4 | 0 | 0.20 | 1.00 | 0.33 | 0.00 |
+| adversarial | 15 | 15 | 0 | 0 | 0 | 1.00 | 1.00 | 1.00 | 0.00 |
+| agent-framework | 30 | 30 | 0 | 0 | 0 | 1.00 | 1.00 | 1.00 | 0.00 |
+| cloud-ai | 8 | 8 | 0 | 0 | 0 | 1.00 | 1.00 | 1.00 | 0.00 |
+| coding-agent | 10 | 10 | 0 | 0 | 0 | 1.00 | 1.00 | 1.00 | 0.00 |
+| endpoint | 5 | 3 | 0 | 2 | 0 | 0.60 | 1.00 | 0.75 | 0.00 |
 | llm-sdk | 12 | 12 | 0 | 0 | 0 | 1.00 | 1.00 | 1.00 | 0.00 |
-| lowcode-ai | 5 | 1 | 0 | 4 | 0 | 0.20 | 1.00 | 0.33 | 0.00 |
+| lowcode-ai | 5 | 4 | 0 | 1 | 0 | 0.80 | 1.00 | 0.89 | 0.00 |
 | mcp-protocol | 6 | 6 | 0 | 0 | 0 | 1.00 | 1.00 | 1.00 | 0.00 |
-| negative | 39 | 0 | 1 | 0 | 38 | - | 0.00 | 0.00 | 0.00 |
+| negative | 39 | 0 | 0 | 0 | 39 | - | - | 0.00 | 0.00 |
 
 ### Adversarial Category Detail
 
@@ -80,31 +80,31 @@ should expose, not hide, the tool author's weaknesses.
 | Metric | Value |
 |--------|-------|
 | Cases | 15 |
-| TP / FP / FN / TN | 14 / 0 / 1 / 0 |
-| F1 | 0.97 |
+| TP / FP / FN / TN | 15 / 0 / 0 / 0 |
+| F1 | 1.00 |
 | MCC | 0.00 |
 
 ## Results by Difficulty
 
 | Difficulty | Correct | Total | Accuracy |
 |------------|---------|-------|----------|
-| easy | 22 | 23 | 0.96 |
-| medium | 48 | 55 | 0.87 |
-| hard | 45 | 52 | 0.87 |
+| easy | 23 | 23 | 1.00 |
+| medium | 53 | 55 | 0.96 |
+| hard | 51 | 52 | 0.98 |
 
 ## Results by Label
 
 | Label | Correct | Total | Accuracy |
 |-------|---------|-------|----------|
-| agent | 54 | 66 | 0.82 |
-| llm | 23 | 25 | 0.92 |
-| none | 38 | 39 | 0.97 |
+| agent | 63 | 66 | 0.95 |
+| llm | 25 | 25 | 1.00 |
+| none | 39 | 39 | 1.00 |
 
 ## Per-Family Results
 
 | Family | Surface | Label | Detected | Correct | Agent Tier | Sig Recall |
 |--------|---------|-------|----------|---------|------------|------------|
-| cpp-llm-rest-client | repo | llm | False | **N** | Y | - |
+| cpp-llm-rest-client | repo | llm | True | Y | Y | - |
 | custom-http-llm-client | repo | llm | True | Y | Y | - |
 | docker-ai-deployment | repo | llm | True | Y | Y | 0.00 |
 | dynamic-import-agent | repo | agent | True | Y | **N** | 0.00 |
@@ -115,16 +115,16 @@ should expose, not hide, the tool author's weaknesses.
 | monorepo-hidden-ai | repo | agent | True | Y | Y | 0.00 |
 | php-openai-client | repo | llm | True | Y | Y | 0.00 |
 | polyglot-ai-project | repo | agent | True | Y | **N** | 0.00 |
-| raw-openai-tool-loop | repo | agent | True | Y | **N** | 0.00 |
+| raw-openai-tool-loop | repo | agent | True | Y | Y | 0.00 |
 | ruby-langchain-agent | repo | agent | True | Y | **N** | 0.00 |
 | rust-llm-cargo-only | repo | llm | True | Y | Y | 0.00 |
 | test-only-ai-code | repo | llm | True | Y | Y | 0.00 |
 | ag2-swarm | repo | agent | True | Y | Y | 0.00 |
-| agency-swarm | repo | agent | False | **N** | Y | 0.00 |
+| agency-swarm | repo | agent | True | Y | Y | 0.00 |
 | autogen-groupchat | repo | agent | True | Y | Y | 0.00 |
 | autogpt | repo | agent | True | Y | **N** | 0.00 |
 | browser-use-agent | repo | agent | True | Y | Y | 0.00 |
-| claude-agent-sdk | repo | agent | True | Y | **N** | 0.00 |
+| claude-agent-sdk | repo | agent | True | Y | Y | 0.00 |
 | composio-agent | repo | agent | True | Y | Y | 0.00 |
 | copilotkit-agent | repo | agent | True | Y | **N** | 0.00 |
 | crewai-team | repo | agent | True | Y | Y | 0.00 |
@@ -136,10 +136,10 @@ should expose, not hide, the tool author's weaknesses.
 | langchain4j-agent | repo | agent | True | Y | **N** | 0.00 |
 | langchaingo | repo | agent | True | Y | **N** | 0.00 |
 | langgraph-react | repo | agent | True | Y | Y | 0.00 |
-| letta-memgpt | repo | agent | True | Y | **N** | 0.00 |
+| letta-memgpt | repo | agent | True | Y | Y | 0.00 |
 | llamaindex-agent | repo | agent | True | Y | Y | 0.00 |
 | mastra-agent | repo | agent | True | Y | Y | 0.00 |
-| metagpt-team | repo | agent | True | Y | **N** | 0.00 |
+| metagpt-team | repo | agent | True | Y | Y | 0.00 |
 | openai-agents-sdk | repo | agent | True | Y | Y | 0.00 |
 | openai-swarm-node | repo | agent | True | Y | **N** | 0.00 |
 | phidata-agent | repo | agent | True | Y | Y | 0.00 |
@@ -154,7 +154,7 @@ should expose, not hide, the tool author's weaknesses.
 | bedrock-agent-terraform | repo | agent | True | Y | **N** | 0.00 |
 | bedrock-knowledge-base | repo | agent | True | Y | **N** | 0.00 |
 | lambda-ai-function | repo | llm | True | Y | Y | 0.00 |
-| sagemaker-llm-endpoint | repo | llm | False | **N** | Y | 0.00 |
+| sagemaker-llm-endpoint | repo | llm | True | Y | Y | 0.00 |
 | vertex-agent-builder | repo | agent | True | Y | Y | 0.00 |
 | vertex-ai-pipeline | repo | llm | True | Y | Y | 0.00 |
 | aider-config | repo | agent | True | Y | Y | 0.00 |
@@ -162,14 +162,14 @@ should expose, not hide, the tool author's weaknesses.
 | cline-config | repo | agent | True | Y | Y | 0.00 |
 | continue-dev-config | repo | agent | True | Y | Y | 0.00 |
 | cursor-rules | repo | agent | True | Y | Y | 0.00 |
-| devin-config | repo | agent | False | **N** | Y | 0.00 |
+| devin-config | repo | agent | True | Y | Y | 0.00 |
 | github-copilot-workspace | repo | agent | True | Y | Y | 0.00 |
-| openclaw-state | repo | agent | False | **N** | Y | 0.00 |
-| sourcegraph-cody-config | repo | agent | False | **N** | Y | 0.00 |
+| openclaw-state | repo | agent | True | Y | Y | 0.00 |
+| sourcegraph-cody-config | repo | agent | True | Y | Y | 0.00 |
 | windsurf-rules | repo | agent | True | Y | Y | 0.00 |
 | dev-home-claude-dir | endpoint | agent | True | Y | Y | 0.00 |
-| jetbrains-ai-plugin | endpoint | agent | False | **N** | Y | 0.00 |
-| npm-global-ai-packages | endpoint | agent | False | **N** | Y | 0.00 |
+| jetbrains-ai-plugin | endpoint | agent | True | Y | Y | 0.00 |
+| npm-global-ai-packages | endpoint | agent | True | Y | Y | 0.00 |
 | shell-history-ai-cli | endpoint | agent | False | **N** | Y | 0.00 |
 | vscode-ai-extensions | endpoint | agent | False | **N** | Y | 0.00 |
 | anthropic-messages | repo | llm | True | Y | Y | 0.00 |
@@ -184,11 +184,11 @@ should expose, not hide, the tool author's weaknesses.
 | ollama-local | repo | llm | True | Y | Y | 0.00 |
 | openai-embeddings | repo | llm | True | Y | Y | 0.00 |
 | replicate-prediction | repo | llm | True | Y | Y | 0.00 |
-| dify-workflow | repo | agent | False | **N** | Y | 0.00 |
-| flowise-chatflow | repo | agent | False | **N** | Y | 0.00 |
+| dify-workflow | repo | agent | True | Y | Y | 0.00 |
+| flowise-chatflow | repo | agent | True | Y | Y | 0.00 |
 | langflow-pipeline | repo | agent | False | **N** | Y | 0.00 |
 | n8n-ai-workflow | repo | agent | True | Y | Y | 0.00 |
-| rivet-graph | repo | agent | False | **N** | Y | 0.00 |
+| rivet-graph | repo | agent | True | Y | Y | 0.00 |
 | claude-desktop-mcp-config | repo | agent | True | Y | Y | 0.00 |
 | mcp-client-python | repo | agent | True | Y | **N** | 0.00 |
 | mcp-server-python | repo | agent | True | Y | **N** | 0.00 |
@@ -203,7 +203,7 @@ should expose, not hide, the tool author's weaknesses.
 | neg-consul-agent | repo | none | False | Y | Y | - |
 | neg-db-replication | repo | none | False | Y | Y | - |
 | neg-deepseek-crypto | repo | none | False | Y | Y | - |
-| neg-egress-blocklist | repo | none | True | **N** | Y | - |
+| neg-egress-blocklist | repo | none | False | Y | Y | - |
 | neg-game-npc-ai | repo | none | False | Y | Y | - |
 | neg-gemini-exchange | repo | none | False | Y | Y | - |
 | neg-graphql-resolver | repo | none | False | Y | Y | - |
@@ -235,26 +235,11 @@ should expose, not hide, the tool author's weaknesses.
 | neg-user-agent-parser | repo | none | False | Y | Y | - |
 | neg-vault-agent | repo | none | False | Y | Y | - |
 
-## False Positives
-
-- `rw-repo-101` (neg-egress-blocklist)
-
 ## False Negatives
 
-- `rw-repo-019` (agency-swarm)
-- `rw-repo-056` (sourcegraph-cody-config)
-- `rw-repo-057` (devin-config)
-- `rw-repo-058` (openclaw-state)
-- `rw-repo-062` (sagemaker-llm-endpoint)
-- `rw-repo-068` (dify-workflow)
-- `rw-repo-069` (flowise-chatflow)
 - `rw-repo-070` (langflow-pipeline)
-- `rw-repo-071` (rivet-graph)
-- `rw-repo-082` (cpp-llm-rest-client)
 - `rw-repo-088` (vscode-ai-extensions)
 - `rw-repo-089` (shell-history-ai-cli)
-- `rw-repo-090` (jetbrains-ai-plugin)
-- `rw-repo-091` (npm-global-ai-packages)
 
 ## Limitations
 
