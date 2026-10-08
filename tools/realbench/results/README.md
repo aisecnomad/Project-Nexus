@@ -57,11 +57,16 @@ are in [PROTOCOL.md](../PROTOCOL.md).
    weakest.** On the 111 repositories it scanned to completion, it scored
    T1 recall 0.98, precision 0.86 and MCC 0.81, the best of any tool. On
    T2 it scored MCC 0.69, level with the best. But it marked 64 of 183 scans
-   incomplete:
-   - 37 for source files over its 1 MB default;
-   - 23 for source its lexer could not finish;
-   - 11 for symlinks leaving the root;
-   - 10 for binary content in analyzable files.
+   incomplete. Counted once per repository and cause (one scan can have
+   several causes):
+   - 26 for text files over its 1 MB default, mostly JSON and plain-text data;
+   - 18 for source its lexer could not finish;
+   - 11 for symbolic links it does not follow, all pointing inside the
+     repository (2 of them dangling);
+   - 10 for binary or non-UTF-8 content in files it treats as analyzable;
+   - smaller counts for AI configuration it could not parse (6), missing
+     submodule or Git LFS content (5), structured-data limits (5), deadlines
+     (2) and other analysis limits (2).
    Under the pre-registered rule an incomplete scan without a finding cannot
    certify a repository clean and counts as wrong, which puts it last
    (MCC 0.17). Counting findings from incomplete scans, a rule added only
