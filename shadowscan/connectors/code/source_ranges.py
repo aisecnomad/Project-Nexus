@@ -271,6 +271,10 @@ def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str,
     return name, pos
 
 
+# Extensions whose sources may hold JSX even without a ``jsx`` marker (React and other JSX in ``.js``).
+_JSX_IN_JS_FILES = frozenset({".js", ".mjs", ".cjs"})
+
+
 def noncode_ranges(
     text: str,
     language: str | None,
@@ -282,7 +286,14 @@ def noncode_ranges(
     if language == "python":
         return _python_ranges(text)
     if language == "javascript":
-        return _javascript_ranges(text, jsx=jsx)
+        ranges, ambiguous = _javascript_ranges(text, jsx=jsx)
+        if ambiguous and not jsx and dialect in _JSX_IN_JS_FILES:
+            # Plain lexing failed on a ``.js`` file, which may hold JSX. The JSX reading is used only when
+            # it lexes completely; a genuinely unterminated literal stays ambiguous under both readings.
+            jsx_ranges, jsx_ambiguous = _javascript_ranges(text, jsx=True)
+            if not jsx_ambiguous:
+                return jsx_ranges, False
+        return ranges, ambiguous
     if language in {"go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"}:
         return _other_source_ranges(text, language, dialect)
     return [], False
@@ -1121,9 +1132,52 @@ def _open_literal(
         and not (prefix == "r" or "@" in prefix or prefix.startswith("#") or triple and language == "dotnet"),
         verbatim="@" in prefix,
         interpolation=interpolation,
-        multiline=triple or quote == "`" or "@" in prefix,
+        # Rust allows a line break inside an ordinary string literal, so such a literal stays open across it.
+        multiline=triple or quote == "`" or "@" in prefix or (language == "rust" and quote == '"'),
     )
     return literal, q + len(opener)
+
+
+def _ruby_interpolation_ranges(line: str) -> list[tuple[int, int]] | None:
+    """Text spans of a here-document line: everything outside its ``#{...}`` interpolations, which are code.
+
+    None when an interpolation does not close on this line."""
+    text_spans: list[tuple[int, int]] = []
+    pos = 0
+    while True:
+        start = line.find("#{", pos)
+        if start < 0:
+            if pos < len(line):
+                text_spans.append((pos, len(line)))
+            return text_spans
+        if start > pos:
+            text_spans.append((pos, start))
+        end = _ruby_interpolation_end(line, start + 2)
+        if end is None:
+            return None
+        pos = end
+
+
+def _ruby_interpolation_end(line: str, pos: int) -> int | None:
+    """Index just past the ``}`` that closes an interpolation whose code starts at ``pos``, or None."""
+    depth, quote, i = 1, "", pos
+    while i < len(line):
+        char = line[i]
+        if quote:
+            if char == "\\":
+                i += 1
+            elif char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if not depth:
+                return i + 1
+        i += 1
+    return None
 
 
 class _SourceLexer:
@@ -1162,7 +1216,8 @@ class _SourceLexer:
         self.incomplete = False
         self.stopped = False
         self.go_import_block = False
-        self.heredocs: list[str] = []
+        # Each pending here-document: its closing marker, and whether its body interpolates (not '-quoted).
+        self.heredocs: list[tuple[str, bool]] = []
         self.line_start = 0
         self.line_checked_through = 0
         # A PHP source file can be an HTML-only template. Enter code mode only at
@@ -1258,9 +1313,13 @@ class _SourceLexer:
         return i
 
     def _heredoc_line(self, i: int) -> int:
-        """Mask one here-document line starting at ``i``; the pending marker's line closes it."""
+        """Mask one here-document line starting at ``i``; the pending marker's line closes it.
+
+        Ruby evaluates ``#{...}`` in a here-document that is not single-quoted, so that code stays
+        unmasked and is matched as code. An interpolation that does not close on its line is incomplete.
+        """
         text, size, language, heredocs = self.text, self.size, self.language, self.heredocs
-        marker = heredocs[0]
+        marker, interpolates = heredocs[0]
         end = text.find("\n", i)
         end = size if end < 0 else end
         line = text[i:end]
@@ -1268,11 +1327,18 @@ class _SourceLexer:
             language == "php" and re.fullmatch(r"\s*" + re.escape(marker) + r"[;,)]?\s*", line)
         ):
             heredocs.pop(0)
-        elif (language == "ruby" and "#{" in line) or (language == "php" and ("${" in line or "{$" in line)):
-            # Interpolation inside a here-document needs language parsing.
-            # Preserve the conservative mask and report incomplete analysis.
-            self.incomplete = True
-        self.spans.append((i, end))
+        if language == "ruby" and interpolates and "#{" in line:
+            text_spans = _ruby_interpolation_ranges(line)
+            if text_spans is None:
+                self.incomplete = True
+                self.spans.append((i, end))
+            else:
+                self.spans.extend((i + a, i + b) for a, b in text_spans)
+        else:
+            if language == "php" and ("${" in line or "{$" in line):
+                # PHP interpolation needs language parsing too: keep the conservative mask and report it.
+                self.incomplete = True
+            self.spans.append((i, end))
         if end < size:
             return end + 1
         self.incomplete |= bool(heredocs)
@@ -1354,7 +1420,7 @@ class _SourceLexer:
             if language == "ruby" and text.startswith("<<", i):
                 heredoc = _RUBY_HEREDOC.match(text, i)
                 if heredoc:
-                    heredocs.append(heredoc.group(2))
+                    heredocs.append((heredoc.group(2), heredoc.group(1) != "'"))
                     i = heredoc.end()
                     continue
 
@@ -1365,7 +1431,7 @@ class _SourceLexer:
             if language == "php" and text.startswith("<<<", i):
                 heredoc = _PHP_HEREDOC.match(text, i)
                 if heredoc:
-                    heredocs.append(heredoc.group(2))
+                    heredocs.append((heredoc.group(2), heredoc.group(1) != "'"))
                     i = heredoc.end()
                     continue
 
