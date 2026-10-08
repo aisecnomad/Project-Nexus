@@ -517,3 +517,11 @@ in-sample check only, because the fixes were derived from it.
 Targets stated before the draw, reported as met or not met and never
 adjusted afterwards: incomplete scans at most 5%; T1 MCC at least 0.80; T2
 MCC at least 0.75; T1 specificity at least 0.97.
+
+### 13.5 Deviations
+
+1. **Empty repository in the draw.** The first holdout draw stopped at a
+   candidate that cloned without any commit: the sampler's clone step could
+   not read its `HEAD`. The step now rejects such a repository as `empty`,
+   which §3.2's eligibility rule already requires, and the draw was restarted
+   from scratch with the same seed. The first attempt produced no manifest.

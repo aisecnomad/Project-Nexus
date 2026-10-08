@@ -208,10 +208,16 @@ def clone(cand_url: str, dest: Path) -> dict[str, Any]:
         detail = (exc.stderr or "").strip().splitlines()
         return {"reject": "clone-failed", "detail": (detail[-1] if detail else "")[:160]}
     facts = inspect_checkout(dest)
-    facts["sha"] = _git(["rev-parse", "HEAD"], cwd=dest)
-    facts["tree"] = _git(["rev-parse", "HEAD^{tree}"], cwd=dest)
-    facts["commit_date"] = _git(["log", "-1", "--format=%cI"], cwd=dest)
-    facts["branch"] = _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=dest)
+    try:
+        facts["sha"] = _git(["rev-parse", "HEAD"], cwd=dest)
+        facts["tree"] = _git(["rev-parse", "HEAD^{tree}"], cwd=dest)
+        facts["commit_date"] = _git(["log", "-1", "--format=%cI"], cwd=dest)
+        facts["branch"] = _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=dest)
+    except subprocess.CalledProcessError:
+        # A repository without commits clones successfully but has no HEAD:
+        # it is empty, which the eligibility rules already reject.
+        shutil.rmtree(dest, ignore_errors=True)
+        return {"reject": "empty", **{k: facts[k] for k in ("files", "bytes")}}
     if facts["bytes"] > MAX_BYTES:
         facts["reject"] = "too-large-bytes"
     elif facts["files"] > MAX_FILES:
