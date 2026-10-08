@@ -56,6 +56,7 @@ re-verified and any checkout a tool wrote into is recorded and restored.
 | Tool | Scored | Detection rule ("detected" when…) |
 |---|---|---|
 | ShadowScan (this checkout) | yes | unchanged from the synthetic benchmark: any finding, complete scan |
+| ShadowScan, `max_file_size` 20 MiB | yes (post-change variant) | same rule and completeness requirement; added after the first scored run, in which 15 of 34 default-options scans ended incomplete (exit 3) on real repositories — scannable files over the 1 MB default, a credential-detection match timeout on a multi-megabyte markdown list, and lexical-analysis failures on three real `.tsx` files. Reported separately; the default row stands |
 | Cisco AI BOM | yes | unchanged: `total_components` > 0 |
 | agent-bom | yes | unchanged: non-baseline client/server, or a project entry on `ai-inventory` or bound to a model |
 | AgentDiscover Scanner | yes | unchanged: any SARIF result, inventoried agent or MCP server |

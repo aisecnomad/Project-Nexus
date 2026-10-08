@@ -79,6 +79,34 @@ class RWShadowScan(RealTreeMixin, ShadowScan):
         return self._scan(connector, work, env)
 
 
+class RWShadowScanTuned(RWShadowScan):
+    """Post-change variant, added after the first scored run and reported separately.
+
+    The scored default-options run left 15 of 34 scans incomplete (exit 3):
+    real repositories carry scannable files over the 1 MB ``max_file_size``
+    default, and two further causes surfaced (credential detection hitting
+    its match timeout on a multi-megabyte markdown link list; lexical
+    analysis failing on three real .tsx files). This variant makes the one
+    documented change the connector's own warning points to, raising
+    ``max_file_size`` to 20 MiB, and keeps the same detection rule, so
+    repositories that stay incomplete for the other two causes still count
+    as errors. Same author, after seeing scored results: a tuning check,
+    not independent evidence. The default-options row stands.
+    """
+
+    name = "shadowscan-tuned"
+    display = "ShadowScan (max_file_size 20 MiB)"
+    surfaces = {"repo": "code.filesystem, max_file_size raised to 20 MiB, otherwise default"}
+
+    def run_repo(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
+        connector = {
+            "name": "code.filesystem",
+            "path": str(self.paths[case.case_id]),
+            "max_file_size": 20 * 1024 * 1024,
+        }
+        return self._scan(connector, work, env)
+
+
 class RWCiscoAIBOM(RealTreeMixin, CiscoAIBOM):
     surfaces = {"repo": "analyze on the pinned checkout; Tier-3 LLM classifier unreachable"}
 
@@ -330,6 +358,7 @@ class GrepBaseline(Adapter):
 def rw_adapters(paths: dict[str, Path]) -> tuple[Adapter, ...]:
     return (
         RWShadowScan(paths),
+        RWShadowScanTuned(paths),
         RWCiscoAIBOM(paths),
         RWAgentBom(paths),
         RWAgentDiscover(paths),
