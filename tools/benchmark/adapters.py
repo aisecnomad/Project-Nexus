@@ -13,10 +13,12 @@ results directory so the rule can be audited and re-applied.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -73,20 +75,27 @@ def _isolated(cmd: list[str], *, env: dict[str, str], cwd: Path, stdin: str | No
     """
     full = ["unshare", "--net", "--pid", "--fork", "--mount-proc", "--", *cmd]
     started = time.monotonic()
-    try:
-        proc = subprocess.run(
-            full,
-            input=stdin,
-            capture_output=True,
-            text=True,
-            env=env,
-            cwd=cwd,
-            timeout=TIMEOUT_S,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return 124, "", f"timeout after {TIMEOUT_S}s", time.monotonic() - started
-    return proc.returncode, proc.stdout, proc.stderr, time.monotonic() - started
+    # The tool runs in its own session so a timeout can kill the whole process
+    # group: killing ``unshare`` alone orphans the tool inside the namespace,
+    # which then keeps running (and competing for CPU) after the case is over.
+    with subprocess.Popen(
+        full,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        cwd=cwd,
+        start_new_session=True,
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate(stdin, timeout=TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            return 124, "", f"timeout after {TIMEOUT_S}s", time.monotonic() - started
+    return proc.returncode, stdout, stderr, time.monotonic() - started
 
 
 def _base_env(home: Path, work: Path) -> dict[str, str]:

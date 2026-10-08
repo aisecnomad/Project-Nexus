@@ -390,12 +390,21 @@ def evidence_coverage(
 
 
 def shadowscan_lenient(results: Path) -> dict[str, Any] | None:
-    """Post hoc: count an incomplete ShadowScan scan that still wrote findings as a detection."""
+    """Post hoc: ShadowScan under two alternative readings of its reports.
+
+    ``lenient`` counts an incomplete scan (exit 3) that still wrote findings as a
+    detection. ``lenient_no_secret_only`` additionally ignores reports whose only
+    findings are ``secret`` (provider-key-shaped strings), which an agent
+    inventory may not want to count. The incompleteness reasons are tallied from
+    the connector stats. None of this was pre-registered.
+    """
     rows = _rows(results, "shadowscan")
     if not rows:
         return None
     raw_path = results / "raw" / "shadowscan.jsonl.gz"
     found: dict[str, bool] = {}
+    non_secret: dict[str, bool] = {}
+    reasons: Counter[str] = Counter()
     if raw_path.exists():
         import gzip
 
@@ -403,18 +412,55 @@ def shadowscan_lenient(results: Path) -> dict[str, Any] | None:
             for line in fh:
                 item = json.loads(line)
                 report = json.loads(item["raw"].get("report.json", "{}"))
-                found[item["case"]] = bool(report.get("findings"))
+                findings = report.get("findings") or []
+                found[item["case"]] = bool(findings)
+                non_secret[item["case"]] = any(f.get("kind") != "secret" for f in findings)
+                if not report.get("summary", {}).get("complete", True):
+                    seen: set[str] = set()
+                    for stat in report.get("stats") or []:
+                        for msg in list(stat.get("errors") or []) + list(stat.get("warnings") or []):
+                            seen.add(_incomplete_reason(str(msg)))
+                    seen.discard("")
+                    reasons.update(seen)
     lenient = []
+    strict = []
     for r in rows:
-        if r["status"] == "error" and "incomplete" in r.get("note", ""):
-            lenient.append({**r, "status": "ok", "detected": found.get(r["case"], False)})
-        else:
-            lenient.append(r)
+        incomplete = r["status"] == "error" and "incomplete" in r.get("note", "")
+        hit = found.get(r["case"], False) if incomplete else (r["status"] == "ok" and r["detected"])
+        lenient.append({**r, "status": "ok", "detected": hit} if incomplete else r)
+        strict.append({**r, "status": "ok", "detected": hit and non_secret.get(r["case"], False)})
     return {
         "pre_registered": confusion(rows),
         "lenient": confusion(lenient),
+        "lenient_no_secret_only": confusion(strict),
         "incomplete": sum(1 for r in rows if r["status"] == "error" and "incomplete" in r.get("note", "")),
+        "reasons": dict(reasons.most_common()),
     }
+
+
+def _incomplete_reason(msg: str) -> str:
+    """Bucket a ShadowScan connector error or warning into a short reason, or '' when it is informational."""
+    if "incomplete source lexical analysis" in msg:
+        return "source lexical analysis incomplete"
+    if "symbolic link" in msg:
+        return "symbolic link with unavailable target"
+    if "exceeds max_file_size" in msg:
+        return "text file over max_file_size"
+    if "import-bound" in msg:
+        return "import-bound analysis incomplete"
+    if "structured parsing" in msg or "structured config" in msg:
+        return "structured configuration parsing"
+    if "MCP servers must be" in msg:
+        return "malformed MCP configuration"
+    if "submodule" in msg:
+        return "missing submodule checkout"
+    if "binary or undecodable" in msg:
+        return "binary content in an analyzable path"
+    if "A2A" in msg:
+        return "unreadable A2A agent card"
+    if "default-excluded" in msg or "over max_file_size" in msg or "invalid structured configuration" in msg:
+        return ""
+    return "other"
 
 
 def stratum_rates(
@@ -515,21 +561,6 @@ def render(corpus: Path, results: Path) -> str:
                 cells.append(f"{hit}/{n}" if n else "–")
             w(f"| {stratum} | {label} | " + " | ".join(cells) + " |")
     w("")
-    w("## Detection by family\n")
-    fams = sorted(
-        {k for t in ranked for k in s["families"][t]},
-        key=lambda k: ({"agent": 0, "llm": 1, "none": 2}[k.split("|")[2]], k),
-    )
-    w("| Family | Label | " + " | ".join(display[t] for t in ranked) + " |")
-    w("|---|---|" + "---|" * len(ranked))
-    for k in fams:
-        _, fam, lab = k.split("|")
-        cells = []
-        for t in ranked:
-            hit, n = s["families"][t].get(k, (0, 0))
-            cells.append(f"{hit}/{n}" if n else "–")
-        w(f"| {fam} | {lab} | " + " | ".join(cells) + " |")
-    w("")
     w("## Evidence coverage (secondary)\n")
     w(
         "For each evidence type a tool's adapter can map, the share of repositories labeled with that "
@@ -569,17 +600,27 @@ def render(corpus: Path, results: Path) -> str:
         w("## Supplementary (post hoc): ShadowScan incomplete scans\n")
         w(
             f"{lenient['incomplete']} ShadowScan scans ended incomplete (exit 3) and count as errors "
-            "under the pre-registered rule. This row counts such a scan as a detection when its report still "
-            "holds findings. It was not pre-registered.\n"
+            "under the pre-registered rule, as ShadowScan's own fail-closed contract requires. The rows "
+            "below re-read the stored reports: first counting an incomplete scan with findings as a "
+            "detection, then also ignoring reports whose only findings are provider-key-shaped strings. "
+            "Neither rule was pre-registered.\n"
         )
         w("| Rule | Recall | Specificity | F1 | MCC |")
         w("|---|---|---|---|---|")
         for rule, x in (
             ("pre-registered", lenient["pre_registered"]),
             ("incomplete with findings = detected", lenient["lenient"]),
+            ("as above, ignoring reports whose only findings are secrets", lenient["lenient_no_secret_only"]),
         ):
             w(f"| {rule} | {_ci(x['recall'])} | {_ci(x['specificity'])} | {x['f1']:.2f} | {x['mcc']:.2f} |")
         w("")
+        if lenient["reasons"]:
+            w("Why the scans were incomplete (a scan can have several reasons):\n")
+            w("| Reason | Scans |")
+            w("|---|---|")
+            for reason, count in lenient["reasons"].items():
+                w(f"| {reason} | {count} |")
+            w("")
     w("## Per-repository results\n")
     w("✓ detected, · not detected, ✗ error (crash, timeout or incomplete scan), – not applicable.\n")
     w("| Repository | Stratum | Label | " + " | ".join(display[t] for t in ranked) + " |")
