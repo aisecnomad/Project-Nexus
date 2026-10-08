@@ -1,0 +1,3838 @@
+{
+ "metadata": {
+  "type": "real-world-pinned",
+  "name": "ShadowScan real-world repository corpus",
+  "pinned_on": "2026-10-08",
+  "case_count": 91,
+  "selection": "Public repositories chosen by the harness author to cover agent frameworks in six languages, MCP servers and client configurations, coding-agent configuration files, skills, A2A cards, low-code exports, IaC, provider SDKs, and hard negatives whose names collide with AI products. Not a random sample. Two candidates were excluded for size (openclaw/openclaw at 52k files and the mastra monorepo at 20k files).",
+  "labeling": "Author-labeled, single reviewer, not independently reviewed. Candidate evidence came from a pattern probe written separately from any scanner's signatures; every label and evidence path was then checked by reading the files. 'agent' means agent code, a configured MCP server or client, coding-agent configuration, skills, agent cards, low-code agents or flows with AI steps, or IaC provisioning agents. 'llm' means provider SDK or API use with none of those. 'none' means no AI integration; prose, lists, crawler data and classical ML count as none. Credential evidence records that a provider-key-shaped string exists (fixtures and examples included); values were never copied.",
+  "pins": "Commit SHAs from git ls-remote on the pin date; fetch uses shallow clones without Git LFS objects."
+ },
+ "cases": [
+  {
+   "id": "rw-gpt-researcher",
+   "surface": "repo",
+   "family": "py-langgraph-research-agent",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Deep-research agent built on LangGraph and LangChain with an MCP retriever, a project .mcp.json, Cursor rules and a Claude skill.",
+   "source": {
+    "host": "github",
+    "repo": "assafelovic/gpt-researcher",
+    "sha": "0957c301ed06c2a5857b834358c7227c739041d4"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "langgraph",
+     "paths": [
+      "multi_agents/agents/orchestrator.py",
+      "pyproject.toml"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "langchain-agents",
+     "paths": [
+      "gpt_researcher/utils/tools.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "autogen",
+     "paths": [
+      "multi_agents/ag2/agents/orchestrator.py"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-client",
+     "paths": [
+      "gpt_researcher/mcp/client.py",
+      "gpt_researcher/retrievers/mcp/retriever.py"
+     ]
+    },
+    {
+     "type": "mcp-config",
+     "family": "project-mcp-json",
+     "paths": [
+      ".mcp.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "evals/context_filter/judge.py",
+      "requirements.txt"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "gpt_researcher/llm_provider/generic/base.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "cursor-rules",
+     "paths": [
+      ".cursorrules"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "claude-skill",
+     "paths": [
+      "skills/gpt-researcher/SKILL.md",
+      ".claude/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-crewai-examples",
+   "surface": "repo",
+   "family": "py-crewai-samples",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Official CrewAI crews and flows plus a CrewAI-LangGraph integration.",
+   "source": {
+    "host": "github",
+    "repo": "crewAIInc/crewAI-examples",
+    "sha": "da94a91e691e1cf5b3151416bb15b5b62729bea8"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "notebook"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "crewai",
+     "paths": [
+      "flows/write_a_book_with_flows/src/write_a_book_with_flows/main.py",
+      "crews/job-posting/pyproject.toml"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "langgraph",
+     "paths": [
+      "integrations/CrewAI-LangGraph/src/graph.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "crews/markdown_validator/src/markdown_validator/main.py"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-react-agent",
+   "surface": "repo",
+   "family": "py-langgraph-template",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "LangGraph ReAct agent template with a tools node; only the recorded test cassette names a provider.",
+   "source": {
+    "host": "github",
+    "repo": "langchain-ai/react-agent",
+    "sha": "f5520937686b06d7139a165e71af1b86e291b866"
+   },
+   "stratum": "app",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "langgraph",
+     "paths": [
+      "src/react_agent/graph.py",
+      "src/react_agent/tools.py",
+      "pyproject.toml"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "tests/cassettes/103fe67e-a040-4e4e-aadb-b20a7057f904.yaml"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-openai-cs-agents-demo",
+   "surface": "repo",
+   "family": "py-openai-agents-app",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Customer-service demo on the OpenAI Agents SDK with a Next.js UI.",
+   "source": {
+    "host": "github",
+    "repo": "openai/openai-cs-agents-demo",
+    "sha": "bd7bfca0f5abf50529370814c3e7c88542011925"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "openai-agents",
+     "paths": [
+      "python-backend/airline/agents.py",
+      "python-backend/requirements.txt"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "ui/package.json"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-openai-realtime-agents",
+   "surface": "repo",
+   "family": "ts-openai-agents-realtime",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Realtime voice agents on the @openai/agents TypeScript SDK.",
+   "source": {
+    "host": "github",
+    "repo": "openai/openai-realtime-agents",
+    "sha": "94c9e9116b581052655cff7b756cc5e02771cda1"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "openai-agents",
+     "paths": [
+      "src/app/App.tsx",
+      "package.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "src/app/api/session/route.ts"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-adk-samples",
+   "surface": "repo",
+   "family": "multi-google-adk-samples",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Google ADK sample agents in five languages with A2A, MCP servers, Vertex AI Terraform, AGENTS.md files and skills.",
+   "source": {
+    "host": "github",
+    "repo": "google/adk-samples",
+    "sha": "c339821da836d05a366de7687c6c75f0b2c9c9af"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "typescript",
+    "java",
+    "kotlin",
+    "go"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "google-adk",
+     "paths": [
+      "contrib/python/small-business-loan-agent/app/agent.py",
+      "contrib/java/financial-advisor/pom.xml"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "a2a",
+     "paths": [
+      "contrib/python/financial-advisor/app/app_utils/a2a.py"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-server",
+     "paths": [
+      "contrib/python/multiformat-hybrid-rag/app/mcp_server.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "google-gemini",
+     "paths": [
+      "contrib/python/small-business-loan-agent/app/gemini_custom.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "vertex-ai",
+     "paths": [
+      "contrib/python/financial-advisor/deployment/deploy.py"
+     ]
+    },
+    {
+     "type": "iac",
+     "family": "terraform-vertex",
+     "paths": [
+      "core/python/long-horizon-harness/terraform/agent_engine.tf"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "adk-skill",
+     "paths": [
+      "contrib/python/agent-skills-tutorial/app/skills/blog-writer/SKILL.md"
+     ]
+    },
+    {
+     "type": "a2a-card",
+     "family": "agent-card-fixture",
+     "paths": [
+      "core/python/long-horizon-harness/web/e2e/fixtures/agent-card.json"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-a2a-samples",
+   "surface": "repo",
+   "family": "multi-a2a-samples",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "A2A protocol samples: agent cards served by LangGraph, CrewAI, ADK, Semantic Kernel, LangChain4j and Spring AI agents.",
+   "source": {
+    "host": "github",
+    "repo": "a2aproject/a2a-samples",
+    "sha": "6603ba3f2c31a7ef33e70b9d8b5b5f8be42ac9a3"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "typescript",
+    "java",
+    "go",
+    "csharp"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "a2a",
+     "paths": [
+      "demo/ui/utils/agent_card.py",
+      "samples/python/agents/crewai/__main__.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "langgraph",
+     "paths": [
+      "samples/python/agents/langgraph/app/agent.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "crewai",
+     "paths": [
+      "samples/python/agents/crewai/agent.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "google-adk",
+     "paths": [
+      "demo/ui/service/server/adk_host_manager.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "langchain4j",
+     "paths": [
+      "samples/java/agents/content_editor/src/main/java/com/samples/a2a/ContentEditorAgent.java"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "semantic-kernel",
+     "paths": [
+      "samples/dotnet/A2ASemanticKernelDemo/AIServer/AIAgent.cs"
+     ]
+    },
+    {
+     "type": "a2a-card",
+     "family": "agent-card",
+     "paths": [
+      "demo/ui/utils/agent_card.py",
+      "samples/js/agents/sign-and-verify-agent-card/package.json"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-server",
+     "paths": [
+      "samples/python/agents/a2a_mcp/src/a2a_mcp/mcp/server.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "google-gemini",
+     "paths": [
+      "demo/ui/tests/test_adk_host_manager.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "gemini-cli",
+     "paths": [
+      ".gemini/config.yaml"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "adk-skill",
+     "paths": [
+      "samples/python/agents/adk_skills_agent/src/skills_agent/skills/frankfurter/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-browser-use",
+   "surface": "repo",
+   "family": "py-browser-use-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of the browser-use agent framework with its MCP server and client, provider adapters, CLAUDE.md and skills.",
+   "source": {
+    "host": "github",
+    "repo": "browser-use/browser-use",
+    "sha": "c75e8476e26d18b7617643bc2ae082fae8eae431"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "browser-use",
+     "paths": [
+      "browser_use/agent/views.py",
+      "browser_use/cli.py"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-server",
+     "paths": [
+      "browser_use/mcp/server.py",
+      "browser_use/mcp/client.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "browser_use/llm/openai/chat.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "browser_use/llm/anthropic/chat.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "browser_use/llm/ollama/chat.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md",
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "skill",
+     "paths": [
+      "browser_use/skills/browser-use/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-aider",
+   "surface": "repo",
+   "family": "py-coding-agent-app",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "The aider coding agent: a bespoke tool loop over LiteLLM with function-calling coders and no framework import.",
+   "source": {
+    "host": "github",
+    "repo": "Aider-AI/aider",
+    "sha": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c"
+   },
+   "stratum": "app",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "custom-agent-loop",
+     "paths": [
+      "aider/coders/base_coder.py",
+      "aider/coders/wholefile_func_coder.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "litellm",
+     "paths": [
+      "aider/llm.py",
+      "requirements.txt"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openrouter",
+     "paths": [
+      "aider/openrouter.py"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-haystack-cookbook",
+   "surface": "repo",
+   "family": "py-haystack-notebooks",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Notebook-only cookbook; several notebooks build Haystack Agent pipelines with tools.",
+   "source": {
+    "host": "github",
+    "repo": "deepset-ai/haystack-cookbook",
+    "sha": "35212da9a2dfe6374b02f11c5f1a541265b09c1d"
+   },
+   "stratum": "app",
+   "languages": [
+    "notebook"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "haystack-agent",
+     "paths": [
+      "notebooks/agent_with_human_in_the_loop.ipynb",
+      "notebooks/github_issue_resolver_agent.ipynb"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "notebooks/web_enhanced_self_reflecting_agent.ipynb"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "notebooks/github_issue_resolver_agent.ipynb"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-strands-samples",
+   "surface": "repo",
+   "family": "py-strands-samples",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "AWS Strands Agents samples with MCP tools, A2A, Bedrock, a project mcp.json, CDK stacks and skills.",
+   "source": {
+    "host": "github",
+    "repo": "strands-agents/samples",
+    "sha": "11dd549c26c964a707de8189b7974a39603f2605"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "typescript",
+    "notebook"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "strands",
+     "paths": [
+      "python/04-industry-use-cases/productivity/scrum-master-assistant/jira_assistant.py",
+      "python/01-learn/01-first-agent/recipe-bot-cli/requirements.txt"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "a2a",
+     "paths": [
+      "python/03-integrate/protocols/a2a/agent_executor.py"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-server",
+     "paths": [
+      "python/04-industry-use-cases/finance/genai-powered-financial-advisor-tools/application/mcp_server_stock.py"
+     ]
+    },
+    {
+     "type": "mcp-config",
+     "family": "project-mcp-json",
+     "paths": [
+      "python/07-ux-demos/triage-agent/backend/mcp.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "python/04-industry-use-cases/productivity/multi-modal-email-assistant-agent/image_generation_agent.py"
+     ]
+    },
+    {
+     "type": "iac",
+     "family": "cdk-bedrock",
+     "paths": [
+      "python/04-industry-use-cases/software-engineering/lambda-error-analysis-agent/cdk/stacks/lambda-error-analysis-agent-stack.ts"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "strands-skill",
+     "paths": [
+      "python/01-learn/15-skills/skills/returns-policy/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-anthropic-cookbook",
+   "surface": "repo",
+   "family": "py-anthropic-notebooks",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Anthropic cookbook: tool-use agent patterns, Claude Agent SDK notebooks, MCP clients, CLAUDE.md, skills and a placeholder key in an .env example.",
+   "source": {
+    "host": "github",
+    "repo": "anthropics/anthropic-cookbook",
+    "sha": "d7265d6ae994ccd8429db0594b000073b2f9ad43"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "notebook",
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "anthropic-tool-use",
+     "paths": [
+      "patterns/agents/orchestrator_workers.ipynb",
+      "patterns/agents/util.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "claude-agent-sdk",
+     "paths": [
+      "claude_agent_sdk/01_The_chief_of_staff_agent.ipynb",
+      "claude_agent_sdk/pyproject.toml"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-client",
+     "paths": [
+      "claude_agent_sdk/site_reliability_agent/examples/sre_bot_slack.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "patterns/agents/util.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "finetuning/finetuning_on_bedrock.ipynb"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md",
+      "skills/.claude/settings.json"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "claude-skill",
+     "paths": [
+      "skills/custom_skills/creating-financial-models/SKILL.md",
+      ".claude/skills/cookbook-audit/SKILL.md"
+     ]
+    },
+    {
+     "type": "credential",
+     "family": "placeholder-key-in-env-example",
+     "paths": [
+      "skills/.env.example"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-anthropic-quickstarts",
+   "surface": "repo",
+   "family": "multi-anthropic-quickstarts",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Computer-use demo, browser and agent quickstarts with MCP servers, a Bedrock Agent runtime call, Vercel AI SDK, CLAUDE.md files and skills.",
+   "source": {
+    "host": "github",
+    "repo": "anthropics/anthropic-quickstarts",
+    "sha": "9ec32b91df50b0d4906cae64b13c6298055ff40d"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "anthropic-tool-use",
+     "paths": [
+      "computer-use-demo/computer_use_demo/loop.py",
+      "agents/agent.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "claude-agent-sdk",
+     "paths": [
+      "autonomous-coding/agent.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "vercel-ai-sdk",
+     "paths": [
+      "customer-support-agent/package.json"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "bedrock-agents",
+     "paths": [
+      "customer-support-agent/app/lib/utils.ts"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-server",
+     "paths": [
+      "managed-agents/mcp-server-typescript/src/server-http.ts",
+      "agents/tools/calculator_mcp.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "browser-toolset/python/run.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md",
+      "managed-agents/chat-sdk/CLAUDE.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "claude-skill",
+     "paths": [
+      "computer-use-demo/.claude/skills/verify/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-claude-agent-sdk-demos",
+   "surface": "repo",
+   "family": "ts-claude-agent-sdk-demos",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Demo apps on the Claude Agent SDK with bundled skills under .claude.",
+   "source": {
+    "host": "github",
+    "repo": "anthropics/claude-agent-sdk-demos",
+    "sha": "826b268506a5f3707623c9e6140b200befcbebae"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript",
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "claude-agent-sdk",
+     "paths": [
+      "hello-world-v2/v2-examples.ts",
+      "email-agent/package.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "email-agent/ccsdk/websocket-handler.ts"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "excel-demo/agent/.claude/skills/xlsx/SKILL.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "claude-skill",
+     "paths": [
+      "research-agent/.claude/skills/pdf/SKILL.md",
+      "resume-generator/.claude/skills/docx/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-amazon-bedrock-agent-samples",
+   "surface": "repo",
+   "family": "py-bedrock-agents-samples",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Amazon Bedrock Agents samples: InlineAgent SDK, CloudFormation and CDK agent stacks, CrewAI and LangChain tool integrations and an MCP client.",
+   "source": {
+    "host": "github",
+    "repo": "awslabs/amazon-bedrock-agent-samples",
+    "sha": "3e55140baa52555fdf73142abb04b4e1962be91f"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "notebook",
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "bedrock-agents",
+     "paths": [
+      "src/InlineAgent/src/InlineAgent/hello_world.py",
+      "src/utils/bedrock_agent.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "crewai",
+     "paths": [
+      "src/InlineAgent/examples/crewai_toolkit/pdf_rag_chroma_db/requirements.txt"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-client",
+     "paths": [
+      "src/InlineAgent/src/InlineAgent/tools/mcp.py"
+     ]
+    },
+    {
+     "type": "iac",
+     "family": "cfn-bedrock-agent",
+     "paths": [
+      "examples/agents/connected_house_agent/template.yml"
+     ]
+    },
+    {
+     "type": "iac",
+     "family": "cdk-bedrock",
+     "paths": [
+      "examples/agents/cdk_agent/BedrockAgentStack/BedrockAgentStack_stack.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "src/shared/web_search/cfn_stacks/web_search_stack.yaml"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "examples/agents/computer_use/src/amazon_bedrock_agent_app/app/streamlit.py"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-vercel-ai-chatbot",
+   "surface": "repo",
+   "family": "ts-vercel-ai-sdk-tools",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Next.js chatbot on the Vercel AI SDK with tool definitions and a Cursor rules file.",
+   "source": {
+    "host": "github",
+    "repo": "vercel/ai-chatbot",
+    "sha": "c2f8235e1f3ea903ad8b7f61447c4f74164b5c58"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "vercel-ai-sdk",
+     "paths": [
+      "lib/ai/tools/get-weather.ts",
+      "lib/ai/tools/create-document.ts",
+      "package.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ai-gateway",
+     "paths": [
+      "lib/ai/providers.ts"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "cursor-rules",
+     "paths": [
+      ".cursor/rules/ultracite.mdc"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-mastra-template-deep-research",
+   "surface": "repo",
+   "family": "ts-mastra-template",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Mastra deep-research template with agents and a Cursor MCP configuration.",
+   "source": {
+    "host": "github",
+    "repo": "mastra-ai/template-deep-research",
+    "sha": "8a33c09983f55d1fc75152b64e4ff486ad50fc86"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "mastra",
+     "paths": [
+      "src/mastra/agents/reportAgent.ts",
+      "package.json"
+     ]
+    },
+    {
+     "type": "mcp-config",
+     "family": "cursor-mcp-json",
+     "paths": [
+      ".cursor/mcp.json"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-langchain4j-examples",
+   "surface": "repo",
+   "family": "java-langchain4j-examples",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "LangChain4j examples including the agentic tutorial and tool-using assistants.",
+   "source": {
+    "host": "github",
+    "repo": "langchain4j/langchain4j-examples",
+    "sha": "790431c9fa6764a4501461a322d7ccdb60869e26"
+   },
+   "stratum": "app",
+   "languages": [
+    "java"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "langchain4j",
+     "paths": [
+      "agentic-tutorial/pom.xml",
+      "pom.xml"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "ollama-examples/src/main/java/OllamaChatModelTest.java"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "vertex-ai",
+     "paths": [
+      "other-examples/src/main/java/embedding/model/VertexAiEmbeddingModelExample.java"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-spring-ai-examples",
+   "surface": "repo",
+   "family": "java-spring-ai-examples",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Spring AI examples with MCP client and server samples, a CLAUDE.md and a Claude skill demo.",
+   "source": {
+    "host": "github",
+    "repo": "spring-projects/spring-ai-examples",
+    "sha": "74164123ba2d13cba7ae185a460b133914106b69"
+   },
+   "stratum": "app",
+   "languages": [
+    "java",
+    "kotlin"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "spring-ai",
+     "paths": [
+      "advisors/recursive-advisor-demo/pom.xml",
+      "kotlin/kotlin-hello-world/pom.xml"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "spring-ai-mcp",
+     "paths": [
+      "model-context-protocol/filesystem/src/main/java/org/springframework/ai/mcp/samples/filesystem/Application.java"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "misc/claude-skills-demo/document-forge/src/main/java/com/example/documentforge/service/DocumentGenerationService.java"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "claude-skill",
+     "paths": [
+      "misc/claude-skills-demo/document-forge/custom-skills/watermark/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-eino-examples",
+   "surface": "repo",
+   "family": "go-eino-examples",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "CloudWeGo Eino agent examples (deer-go, manus) with MCP tools and an agent skill.",
+   "source": {
+    "host": "github",
+    "repo": "cloudwego/eino-examples",
+    "sha": "a6dbd95ab51fe9896a2bafa2e5a468e3bed01161"
+   },
+   "stratum": "app",
+   "languages": [
+    "go",
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "eino",
+     "paths": [
+      "flow/agent/deer-go/main.go",
+      "flow/agent/manus/go.mod"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-go",
+     "paths": [
+      "flow/agent/deer-go/biz/infra/mcp.go",
+      "components/tool/mcptool/callresulthandler/main.go"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "quickstart/chatwitheino/chatmodel/model.go"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "quickstart/chat/ollama.go"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "eino-skill",
+     "paths": [
+      "adk/middlewares/skill/workdir/skills/log_analyzer/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-azure-search-openai-demo-csharp",
+   "surface": "repo",
+   "family": "cs-semantic-kernel-rag",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "RAG chat app on Semantic Kernel with Azure OpenAI and Bicep provisioning a Cognitive Services account.",
+   "source": {
+    "host": "github",
+    "repo": "Azure-Samples/azure-search-openai-demo-csharp",
+    "sha": "7d702a68d37f8c93d902acf8a35088979a2e3fa3"
+   },
+   "stratum": "app",
+   "languages": [
+    "csharp",
+    "bicep"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "semantic-kernel",
+     "paths": [
+      "app/backend/Services/ReadRetrieveReadChatService.cs",
+      "app/backend/MinimalApi.csproj"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "azure-openai",
+     "paths": [
+      "app/Directory.Packages.props"
+     ]
+    },
+    {
+     "type": "iac",
+     "family": "bicep-cognitive-services",
+     "paths": [
+      "infra/core/ai/cognitiveservices.bicep"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-copilot-studio-samples",
+   "surface": "repo",
+   "family": "lowcode-copilot-studio",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Copilot Studio solutions (bot components), MCP servers for extensibility, an Agent Framework A2A sample, CLAUDE.md and Copilot instructions.",
+   "source": {
+    "host": "github",
+    "repo": "microsoft/CopilotStudioSamples",
+    "sha": "6ee7fd5d9fa9b9c9f7bd9eee51311552d9b195ed"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript",
+    "csharp",
+    "xml"
+   ],
+   "evidence": [
+    {
+     "type": "lowcode-flow",
+     "family": "copilot-studio-solution",
+     "paths": [
+      "authoring/solutions/account-contact-lookup/sourcecode/bots/copilots_header_cref7_LookupDataAgent/bot.xml",
+      "authoring/solutions/account-contact-lookup/sourcecode/botcomponents/copilots_header_cref7_LookupDataAgent.topic.Search/botcomponent.xml"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-server",
+     "paths": [
+      "extensibility/mcp/order-management-enhanced-tc/mcp-servers/warehouse/src/server.ts"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "ms-agent-framework",
+     "paths": [
+      "extensibility/a2a/Simple-A2A-Sample/Program.cs"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "vercel-ai-sdk",
+     "paths": [
+      "ui/custom-ui/assistant-ui/assistant-ui-mcs/app/api/chat/route.ts"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md",
+      ".github/copilot-instructions.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-mem0",
+   "surface": "repo",
+   "family": "multi-mem0-memory",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Memory layer with agent integrations (Agno, Strands, CrewAI, OpenAI Agents, ADK, Vercel AI SDK), MCP configs for coding-agent plugins, AGENTS.md files and skills.",
+   "source": {
+    "host": "github",
+    "repo": "mem0ai/mem0",
+    "sha": "b7ad69afda6b6ed030347c66d48a13e4de9dec08"
+   },
+   "stratum": "app",
+   "languages": [
+    "python",
+    "typescript",
+    "notebook"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "agno",
+     "paths": [
+      "examples/misc/personal_assistant_agno.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "strands",
+     "paths": [
+      "integrations/mem0-strands/python/src/mem0_strands/store.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "vercel-ai-sdk",
+     "paths": [
+      "examples/mem0-demo/app/api/chat/route.ts"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "google-adk",
+     "paths": [
+      "examples/misc/healthcare_assistant_google_adk.py"
+     ]
+    },
+    {
+     "type": "mcp-config",
+     "family": "plugin-mcp-json",
+     "paths": [
+      "integrations/claude-code-plugin/.mcp.json",
+      "integrations/cursor-plugin/mcp.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "mem0/llms/openai.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "integrations/hermes-plugin-mem0/_oss_providers.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "skill",
+     "paths": [
+      "skills/mem0-integrate/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-open-canvas",
+   "surface": "repo",
+   "family": "ts-langgraph-app",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Open Canvas: LangGraph.js agents behind a Next.js app with Groq and Ollama providers.",
+   "source": {
+    "host": "github",
+    "repo": "langchain-ai/open-canvas",
+    "sha": "0310cecd51f31b3d37a52d6d1060137da3405280"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "langgraph",
+     "paths": [
+      "apps/agents/src/open-canvas/nodes/generate-artifact/index.ts",
+      "apps/agents/package.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "groq",
+     "paths": [
+      "apps/web/src/app/api/whisper/audio/route.ts"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-chatbot-ui",
+   "surface": "repo",
+   "family": "ts-chat-ui-tools",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Chatbot UI with per-provider chat routes and a tools route that passes OpenAI function schemas; no agent framework.",
+   "source": {
+    "host": "github",
+    "repo": "mckaywrigley/chatbot-ui",
+    "sha": "81328b61d2a4ab597a7a057be70e785cf756d9f8"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "custom-tool-loop",
+     "paths": [
+      "app/api/chat/tools/route.ts"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "vercel-ai-sdk",
+     "paths": [
+      "app/api/chat/mistral/route.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "app/api/retrieval/retrieve/route.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "app/api/chat/anthropic/route.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "google-gemini",
+     "paths": [
+      "app/api/chat/google/route.ts"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-openhands",
+   "surface": "repo",
+   "family": "ts-openhands-frontend",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "OpenHands coding-agent frontend: MCP service client, provider settings, AGENTS.md and .agents skills; the Python runtime lives elsewhere.",
+   "source": {
+    "host": "github",
+    "repo": "All-Hands-AI/OpenHands",
+    "sha": "bf92bcb6b337ca8d8f109aef0acaade447774b35"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "mcp-client",
+     "paths": [
+      "src/api/mcp-service/mcp-service.api.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "src/routes/llm-settings.tsx"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "agents-skill",
+     "paths": [
+      ".agents/skills/e2e-testing/SKILL.md",
+      ".agents/skills/verify-openhands/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-awesome-chatgpt-prompts",
+   "surface": "repo",
+   "family": "ts-prompt-site-with-mcp",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Prompt collection whose site ships an MCP server, OpenAI API routes, CLAUDE.md, AGENTS.md, Windsurf and Claude skills and a plugin .mcp.json.",
+   "source": {
+    "host": "github",
+    "repo": "f/awesome-chatgpt-prompts",
+    "sha": "7d3f248962d1dca209d59e033524bcb86c2b26b8"
+   },
+   "stratum": "app",
+   "languages": [
+    "typescript",
+    "markdown"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "mcp-server",
+     "paths": [
+      "src/pages/api/mcp.ts",
+      "package.json"
+     ]
+    },
+    {
+     "type": "mcp-config",
+     "family": "plugin-mcp-json",
+     "paths": [
+      "plugins/claude/prompts.chat/.mcp.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "src/app/api/prompt-builder/chat/route.ts"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md",
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "windsurf-skill",
+     "paths": [
+      ".windsurf/skills/book-translation/SKILL.md",
+      "plugins/claude/prompts.chat/skills/prompt-lookup/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-gitlab-cli",
+   "surface": "repo",
+   "family": "go-cli-with-mcp-server",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "GitLab CLI (glab) with an MCP server command on the Go SDK, CLAUDE.md, AGENTS.md and bundled skills.",
+   "source": {
+    "host": "gitlab",
+    "repo": "gitlab-org/cli",
+    "sha": "8ae0c0ef5cf94d75354053095bbdc2ec7fefd96f"
+   },
+   "stratum": "app",
+   "languages": [
+    "go"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "mcp-go-sdk",
+     "paths": [
+      "internal/commands/mcp/serve/server.go",
+      "go.mod"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md",
+      "AGENTS.md",
+      ".claude/settings.json"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "skill",
+     "paths": [
+      "internal/commands/skills/bundled/assets/glab/SKILL.md",
+      ".claude/skills/delegate-path-ownership/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-synapse",
+   "surface": "repo",
+   "family": "py-platform-with-mcp-server",
+   "label": "agent",
+   "difficulty": "hard",
+   "rationale": "Vertex Project Synapse: a hand-rolled JSON-RPC MCP server in the cell library, CLAUDE.md and a skill; the name collides with Vertex AI.",
+   "source": {
+    "host": "github",
+    "repo": "vertexproject/synapse",
+    "sha": "a2c28d85554348b1b6d0de0821f8cdac454be522"
+   },
+   "stratum": "app",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "custom-mcp-server",
+     "paths": [
+      "synapse/lib/mcp.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "skill",
+     "paths": [
+      "synapse/data/skills/storm/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-duo-workflow-service",
+   "surface": "repo",
+   "family": "py-langgraph-service",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "GitLab Duo Workflow service: LangGraph agents with LangChain tools and Anthropic models.",
+   "source": {
+    "host": "gitlab",
+    "repo": "gitlab-org/duo-workflow/duo-workflow-service",
+    "sha": "1d3f108b3c54549c520abd3f1a398566d7669514"
+   },
+   "stratum": "app",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "langgraph",
+     "paths": [
+      "duo_workflow_service/components/human_approval/component.py",
+      "pyproject.toml"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "langchain-agents",
+     "paths": [
+      "duo_workflow_service/components/tools_registry.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "duo_workflow_service/agents/agent.py"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-gitlab-ai-gateway",
+   "surface": "repo",
+   "family": "py-ai-gateway-agents",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "GitLab AI Gateway: LangGraph agent flows, LiteLLM, Anthropic and Vertex providers, AGENTS.md files and .agents skills.",
+   "source": {
+    "host": "gitlab",
+    "repo": "gitlab-org/modelops/applied-ml/code-suggestions/ai-assist",
+    "sha": "5e2986065e9f26e36289d8313236a1c03b71b124"
+   },
+   "stratum": "app",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "langgraph",
+     "paths": [
+      "duo_workflow_service/components/planner/component.py",
+      "pyproject.toml"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "langchain-agents",
+     "paths": [
+      "ai/features/insights/analytics_agent/components/run_glql_query.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "litellm",
+     "paths": [
+      "duo_workflow_service/server.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "duo_workflow_service/agents/chat_agent.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "vertex-ai",
+     "paths": [
+      "tests/models/test_vertex_text.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "agents-skill",
+     "paths": [
+      ".agents/skills/agent-flows/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-smolagents",
+   "surface": "repo",
+   "family": "py-smolagents-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of Hugging Face smolagents with MCP tool support, provider models and an AGENTS.md.",
+   "source": {
+    "host": "github",
+    "repo": "huggingface/smolagents",
+    "sha": "96f33faaf028479119ec8d34507b47694cf14e34"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "smolagents",
+     "paths": [
+      "src/smolagents/agents.py",
+      "pyproject.toml"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-client",
+     "paths": [
+      "tests/test_mcp_client.py",
+      "examples/structured_output_tool.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "src/smolagents/models.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "huggingface-inference",
+     "paths": [
+      "src/smolagents/models.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-pydantic-ai",
+   "surface": "repo",
+   "family": "py-pydantic-ai-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of Pydantic AI with MCP support, many provider packages, AGENTS.md files, .agents skills and fake keys in guardrail tests.",
+   "source": {
+    "host": "github",
+    "repo": "pydantic/pydantic-ai",
+    "sha": "f55bb8a6fd6cdb34405e5f523d67cf8f366df4aa"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "pydantic-ai",
+     "paths": [
+      "pydantic_ai_slim/pyproject.toml",
+      "pydantic_evals/pydantic_evals/evaluators/agentic.py"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "claude-agent-sdk",
+     "paths": [
+      "src/pydantic_clai2/pydantic_clai2/runtime/claude_code_sessions.py"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-client",
+     "paths": [
+      "pydantic_ai_slim/pydantic_ai/models/anthropic.py",
+      "pyproject.toml"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "pydantic_ai_slim/pyproject.toml"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "pydantic_ai_slim/pydantic_ai/providers/bedrock.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md",
+      ".gemini/config.yaml"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "agents-skill",
+     "paths": [
+      "pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md"
+     ]
+    },
+    {
+     "type": "credential",
+     "family": "fake-key-in-tests",
+     "paths": [
+      "tests/harness/guardrails/test_detectors.py"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-openai-swarm",
+   "surface": "repo",
+   "family": "py-swarm-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Archived OpenAI Swarm framework with multi-agent examples; the name collides with Docker Swarm.",
+   "source": {
+    "host": "github",
+    "repo": "openai/swarm",
+    "sha": "6af0b4caf37dca4526dfd98e9fbd8ce36e7eeb22"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "openai-swarm",
+     "paths": [
+      "examples/triage_agent/agents.py",
+      "examples/airline/configs/agents.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "examples/support_bot/main.py",
+      "setup.cfg"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-mcp-servers",
+   "surface": "repo",
+   "family": "multi-mcp-reference-servers",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Reference MCP servers in TypeScript and Python with a project .mcp.json, CLAUDE.md and an AGENTS.md.",
+   "source": {
+    "host": "github",
+    "repo": "modelcontextprotocol/servers",
+    "sha": "5abed86c5317b833dd59907492d56c65981642aa"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "typescript",
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "mcp-server",
+     "paths": [
+      "src/filesystem/index.ts",
+      "src/git/src/mcp_server_git/server.py"
+     ]
+    },
+    {
+     "type": "mcp-config",
+     "family": "project-mcp-json",
+     "paths": [
+      ".mcp.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "src/git/pyproject.toml"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md",
+      "src/everything/AGENTS.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-fastmcp",
+   "surface": "repo",
+   "family": "py-fastmcp-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of FastMCP with sampling handlers for OpenAI, Anthropic and Gemini, Cursor rules, Claude settings, AGENTS.md and skills.",
+   "source": {
+    "host": "github",
+    "repo": "jlowin/fastmcp",
+    "sha": "5baeacfe20eca735cb949564b4915f93a622b916"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "fastmcp",
+     "paths": [
+      "fastmcp_slim/fastmcp/server/providers/proxy.py",
+      "examples/atproto_mcp/pyproject.toml"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "pydantic-ai",
+     "paths": [
+      "examples/memory.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "fastmcp_slim/fastmcp/client/sampling/handlers/openai.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "fastmcp_slim/fastmcp/client/sampling/handlers/anthropic.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "cursor-rules",
+     "paths": [
+      ".cursor/rules/core-mcp-objects.mdc",
+      "AGENTS.md",
+      ".claude/settings.json"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "skill",
+     "paths": [
+      "skills/fastmcp-client-cli/SKILL.md",
+      ".agents/skills/review-issue/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-github-mcp-server",
+   "surface": "repo",
+   "family": "go-mcp-server",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "GitHub's MCP server on the Go SDK with Copilot instructions, a custom Copilot agent and a plugin mcp.json.",
+   "source": {
+    "host": "github",
+    "repo": "github/github-mcp-server",
+    "sha": "55edd58d5e1127fe7ea3c036bc14dca66f7e41c4"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "go"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "mcp-go-sdk",
+     "paths": [
+      "cmd/github-mcp-server/main_test.go",
+      "go.mod"
+     ]
+    },
+    {
+     "type": "mcp-config",
+     "family": "plugin-mcp-json",
+     "paths": [
+      "agent-plugin/mcp.json"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "copilot",
+     "paths": [
+      ".github/copilot-instructions.md",
+      ".github/agents/go-sdk-tool-migrator.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-tmc-langchaingo",
+   "surface": "repo",
+   "family": "go-langchaingo-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of LangChainGo with agents, tools and provider clients.",
+   "source": {
+    "host": "github",
+    "repo": "tmc/langchaingo",
+    "sha": "039fbb6c6469a8ffcdae615ec7bdc465c83abadc"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "go"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "langchaingo",
+     "paths": [
+      "doc.go",
+      "examples/anthropic-tool-call-example/anthropic-tool-call-example.go"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "llms/openai/internal/openaiclient/openaiclient.go"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "llms/ollama/ollama_test.go"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "llms/anthropic/internal/anthropicclient/anthropicclient.go"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-rig",
+   "surface": "repo",
+   "family": "rust-rig-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of the Rig agent framework in Rust with an rmcp integration, provider crates, AGENTS.md and fake keys in cassette tests.",
+   "source": {
+    "host": "github",
+    "repo": "0xPlaygrounds/rig",
+    "sha": "b6a9b44344a7e0c630853bf5bc426893c3c953c5"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "rust"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "rig",
+     "paths": [
+      "src/lib.rs",
+      "crates/rig-agent/Cargo.toml"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "rmcp",
+     "paths": [
+      "crates/rig-rmcp/src/handler.rs",
+      "crates/rig-rmcp/Cargo.toml"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "crates/rig-bedrock/src/client.rs"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "crates/rig-core/src/providers/openai/wire/dialects.rs"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "crates/rig-core/src/providers/anthropic/wire.rs"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "credential",
+     "family": "fake-key-in-tests",
+     "paths": [
+      "crates/rig-cassette/src/http/tests.rs"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-genkit",
+   "surface": "repo",
+   "family": "multi-genkit-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of Firebase Genkit with an MCP plugin, provider plugins, a GEMINI.md and sample skills.",
+   "source": {
+    "host": "github",
+    "repo": "firebase/genkit",
+    "sha": "a838fe30358daf19e1a29527155f3a890703c6d6"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "typescript",
+    "go",
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "genkit",
+     "paths": [
+      "js/genkit/package.json",
+      "py/packages/genkit/pyproject.toml"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-plugin",
+     "paths": [
+      "js/plugins/mcp/src/util/tools.ts",
+      "genkit-tools/cli/src/mcp/server.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "google-gemini",
+     "paths": [
+      "py/packages/genkit-google-genai/src/genkit_google_genai/_models/_gemini.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "py/packages/genkit-openai/src/genkit_openai/_openai_plugin.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "py/packages/genkit-ollama/src/genkit_ollama/plugin_api.py"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "gemini-cli",
+     "paths": [
+      "go/GEMINI.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "skill",
+     "paths": [
+      "skills/developing-genkit-tooling/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-flowise",
+   "surface": "repo",
+   "family": "ts-flowise-platform",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Flowise low-code platform source: LangChain and LlamaIndex agent nodes, an MCP tool node and marketplace chatflow and agentflow exports.",
+   "source": {
+    "host": "github",
+    "repo": "FlowiseAI/Flowise",
+    "sha": "9291856d1ea4a4ceea9f8fef8ce14f4f6c81e8eb"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "langchain-agents",
+     "paths": [
+      "packages/components/src/agents.ts",
+      "packages/components/nodes/agents/ReActAgentChat/ReActAgentChat.ts"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "langgraph",
+     "paths": [
+      "packages/components/nodes/sequentialagents/State/State.ts"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-tool-node",
+     "paths": [
+      "packages/components/nodes/tools/MCP/core.ts"
+     ]
+    },
+    {
+     "type": "lowcode-flow",
+     "family": "flowise-chatflow",
+     "paths": [
+      "packages/server/marketplaces/chatflows/Conversational Agent.json",
+      "packages/server/marketplaces/chatflows/CSV Agent.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "packages/components/nodes/chatmodels/ChatOpenAI/ChatOpenAI.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "packages/components/nodes/chatmodels/ChatOllama/ChatOllama.ts"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-microsoft-autogen",
+   "surface": "repo",
+   "family": "multi-autogen-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of Microsoft AutoGen (Python and .NET) with MCP tools, Semantic Kernel adapters and Copilot instructions.",
+   "source": {
+    "host": "github",
+    "repo": "microsoft/autogen",
+    "sha": "027ecf0a379bcc1d09956d46d12d44a3ad9cee14"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "python",
+    "csharp",
+    "notebook"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "autogen",
+     "paths": [
+      "python/packages/autogen-agentchat/src/autogen_agentchat/messages.py",
+      "python/packages/autogen-agentchat/pyproject.toml"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "semantic-kernel",
+     "paths": [
+      "dotnet/src/AutoGen.SemanticKernel/SemanticKernelAgent.cs"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-tools",
+     "paths": [
+      "python/packages/autogen-ext/src/autogen_ext/tools/mcp/_stdio.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "python/packages/autogen-ext/src/autogen_ext/agents/openai/_openai_assistant_agent.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "dotnet/src/AutoGen.Anthropic/AnthropicClient.cs"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "dotnet/samples/AgentChat/AutoGen.Ollama.Sample/Chat_With_LLaMA.cs"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "copilot",
+     "paths": [
+      ".github/copilot-instructions.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-semantic-kernel",
+   "surface": "repo",
+   "family": "multi-semantic-kernel-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of Semantic Kernel with Bedrock, Copilot Studio, A2A and AutoGen agents, MCP client and server samples and Bicep for Azure OpenAI.",
+   "source": {
+    "host": "github",
+    "repo": "microsoft/semantic-kernel",
+    "sha": "cc8a15fa356f02dcb7bc64999392ca02f3167312"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "csharp",
+    "python",
+    "notebook"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "semantic-kernel",
+     "paths": [
+      "dotnet/src/SemanticKernel.UnitTests/KernelTests.cs",
+      "python/pyproject.toml"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "bedrock-agents",
+     "paths": [
+      "dotnet/src/IntegrationTests/Agents/CommonInterfaceConformance/BedrockAgentFixture.cs"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "a2a",
+     "paths": [
+      "dotnet/src/Agents/A2A/A2AAgent.cs"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-samples",
+     "paths": [
+      "dotnet/samples/Demos/ModelContextProtocolClientServer/MCPClient/HumanInTheLoopFilter.cs",
+      "python/semantic_kernel/connectors/mcp.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "dotnet/src/Connectors/Connectors.AzureOpenAI/Connectors.AzureOpenAI.csproj"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "dotnet/src/Connectors/Connectors.Amazon/Bedrock/Extensions/BedrockKernelBuilderExtensions.cs"
+     ]
+    },
+    {
+     "type": "iac",
+     "family": "bicep-azure-openai",
+     "paths": [
+      "python/samples/demos/copilot_studio_skill/infra/openAI.bicep"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-microsoft-agent-framework",
+   "surface": "repo",
+   "family": "multi-ms-agent-framework",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Source of the Microsoft Agent Framework with A2A hosting, Copilot Studio agents, MCP clients, Copilot instructions, AGENTS.md files and skills.",
+   "source": {
+    "host": "github",
+    "repo": "microsoft/agent-framework",
+    "sha": "91ab44faa4824a30247d00c341f3498ba46b1ca3"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "csharp",
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "ms-agent-framework",
+     "paths": [
+      "python/packages/core/pyproject.toml",
+      "dotnet/src/Microsoft.Agents.AI/AgentExtensions.cs"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "a2a",
+     "paths": [
+      "dotnet/src/Microsoft.Agents.AI.A2A/Extensions/A2AAgentCardExtensions.cs"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "claude-agent-sdk",
+     "paths": [
+      "python/packages/claude/agent_framework_claude/_agent.py"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-client",
+     "paths": [
+      "dotnet/src/Microsoft.Agents.AI.Mcp/TaskAwareMcpClientAIFunction.cs",
+      "python/packages/core/tests/core/test_mcp.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "declarative-agents/agent-samples/azure/AzureOpenAI.yaml"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "dotnet/src/Microsoft.Agents.AI.Anthropic/Microsoft.Agents.AI.Anthropic.csproj"
+     ]
+    },
+    {
+     "type": "iac",
+     "family": "bicep-foundry",
+     "paths": [
+      "python/samples/04-hosting/foundry-hosted-agents/invocations/telegram/infra/resources.bicep"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "copilot",
+     "paths": [
+      ".github/copilot-instructions.md",
+      "python/AGENTS.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "copilot-skill",
+     "paths": [
+      ".github/skills/pull-requests/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-dspy",
+   "surface": "repo",
+   "family": "py-dspy-framework",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Source of DSPy with its ReAct agent module, MCP tool tests, LiteLLM-based providers and a release-notes skill.",
+   "source": {
+    "host": "github",
+    "repo": "stanfordnlp/dspy",
+    "sha": "a7e7edb8c6803d88aeb25c6a0412657c01835bc5"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "python",
+    "notebook"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "dspy",
+     "paths": [
+      "dspy/predict/react_v2.py",
+      "pyproject.toml"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-tools",
+     "paths": [
+      "tests/utils/test_mcp.py",
+      "tests/utils/resources/mcp_server.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "litellm",
+     "paths": [
+      "dspy/utils/usage_tracker.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "dspy/clients/openai.py"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "agents-skill",
+     "paths": [
+      ".agents/skills/writing-release-notes/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-anthropic-sdk-typescript",
+   "surface": "repo",
+   "family": "ts-anthropic-sdk",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Anthropic TypeScript SDK: an MCP helper and tool runner in the beta helpers, Bedrock and Vertex packages, and a CLAUDE.md.",
+   "source": {
+    "host": "github",
+    "repo": "anthropics/anthropic-sdk-typescript",
+    "sha": "0f9fdcaaf13916919a24f2b248aeb08cefc34a68"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "sdk-mcp-helper",
+     "paths": [
+      "src/helpers/beta/mcp.ts",
+      "package.json"
+     ]
+    },
+    {
+     "type": "framework",
+     "family": "anthropic-tool-runner",
+     "paths": [
+      "src/helpers/beta/toolsets/computer.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "package.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "packages/bedrock-sdk/src/client.ts"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-anthropic-sdk-ruby",
+   "surface": "repo",
+   "family": "ruby-anthropic-sdk",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Anthropic Ruby SDK: a tool-runner helper exercised by tests, the mcp gem in the Gemfile, Bedrock and Vertex helpers and a CLAUDE.md.",
+   "source": {
+    "host": "github",
+    "repo": "anthropics/anthropic-sdk-ruby",
+    "sha": "139c110274335178fcb8e22eadc194ffbb02e181"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "ruby"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "anthropic-tool-runner",
+     "paths": [
+      "test/anthropic/helpers/tool_runner/messages_test.rb"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-gem",
+     "paths": [
+      "Gemfile"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "test/anthropic/client_credentials_test.rb"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "lib/anthropic/helpers/bedrock/client.rb"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-openai-dotnet",
+   "surface": "repo",
+   "family": "cs-openai-sdk",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "OpenAI .NET SDK: an MCP chat guide, Copilot instructions and two Copilot skills besides the client itself.",
+   "source": {
+    "host": "github",
+    "repo": "openai/openai-dotnet",
+    "sha": "1f0e8829acac4e004ebe0960fa24f3a0f0e59e40"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "csharp"
+   ],
+   "evidence": [
+    {
+     "type": "mcp-code",
+     "family": "sdk-mcp-guide",
+     "paths": [
+      "docs/guides/mcp/chat_with_mcp.cs"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "OpenAI/src/Utility/OpenAIClientUtilities.cs",
+      "OpenAI/src/OpenAI.csproj"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "copilot",
+     "paths": [
+      ".github/copilot-instructions.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "copilot-skill",
+     "paths": [
+      ".github/skills/running-tests/SKILL.md",
+      ".github/skills/ingesting-spec/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-ollama-python",
+   "surface": "repo",
+   "family": "py-ollama-sdk",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Ollama Python client with tool-calling examples and an MCP web-search example.",
+   "source": {
+    "host": "github",
+    "repo": "ollama/ollama-python",
+    "sha": "8785556559ec1d045d27a1ba9d9cc7330c3d3cb1"
+   },
+   "stratum": "framework-source",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "framework",
+     "family": "raw-tool-loop",
+     "paths": [
+      "examples/async-tools.py",
+      "examples/gpt-oss-tools.py"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-example",
+     "paths": [
+      "examples/web-search-mcp.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "ollama/_client.py",
+      "pyproject.toml"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-anthropic-skills",
+   "surface": "repo",
+   "family": "config-claude-skills",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "Anthropic's skills repository: twenty SKILL.md packages, with helper scripts that call the Anthropic API and an MCP client.",
+   "source": {
+    "host": "github",
+    "repo": "anthropics/skills",
+    "sha": "683bc88e56f3e09ba94f7055977f3d3aa499f202"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "markdown",
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "agent-skill",
+     "family": "claude-skill",
+     "paths": [
+      "skills/canvas-design/SKILL.md",
+      "skills/mcp-builder/SKILL.md"
+     ]
+    },
+    {
+     "type": "mcp-code",
+     "family": "mcp-client-script",
+     "paths": [
+      "skills/mcp-builder/scripts/connections.py"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "skills/mcp-builder/scripts/evaluation.py"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-awesome-copilot",
+   "surface": "repo",
+   "family": "config-copilot-customizations",
+   "label": "agent",
+   "difficulty": "easy",
+   "rationale": "GitHub's Copilot customization catalog: hundreds of skills, custom agents, Copilot instructions and plugin mcp.json files.",
+   "source": {
+    "host": "github",
+    "repo": "github/awesome-copilot",
+    "sha": "7cce7cfb4b61196c36d7e8eb8475ae84b356b126"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "markdown",
+    "json"
+   ],
+   "evidence": [
+    {
+     "type": "agent-skill",
+     "family": "copilot-skill",
+     "paths": [
+      "skills/repo-standardizer/SKILL.md",
+      "skills/mcp-implementation-security-review/SKILL.md"
+     ]
+    },
+    {
+     "type": "mcp-config",
+     "family": "plugin-mcp-json",
+     "paths": [
+      "mcp.json",
+      "plugins/awesome-copilot/mcp.json"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "copilot",
+     "paths": [
+      ".github/copilot-instructions.md",
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openrouter",
+     "paths": [
+      "skills/nano-banana-pro-openrouter/scripts/generate_image.py"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-n8n-starter-kit",
+   "surface": "repo",
+   "family": "lowcode-n8n-llm-chain",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "n8n self-hosted AI starter kit: a demo workflow export with LLM chain and Ollama chat-model nodes but no agent node.",
+   "source": {
+    "host": "github",
+    "repo": "n8n-io/self-hosted-ai-starter-kit",
+    "sha": "662bd8892476b41d9084417a569cc84013354674"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "json",
+    "yaml"
+   ],
+   "evidence": [
+    {
+     "type": "lowcode-flow",
+     "family": "n8n-langchain-nodes",
+     "paths": [
+      "n8n/demo-data/workflows/srOnR8PAY3u4RSwb.json"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-n8n-workflows",
+   "surface": "repo",
+   "family": "lowcode-n8n-collection",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Collection of two thousand n8n workflow exports, a few with AI agent and LLM nodes, a CLAUDE.md, a medcards app on the Anthropic SDK and a key-shaped string in one workflow.",
+   "source": {
+    "host": "github",
+    "repo": "Zie619/n8n-workflows",
+    "sha": "94007c1445d9258a7da116646b79473e7c7c3282"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "json",
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "lowcode-flow",
+     "family": "n8n-ai-agent",
+     "paths": [
+      "workflows/Templates/9004_AI_Summarizer_Template_Webhook.json",
+      "workflows/Splitout/1591_Splitout_Code_Automate_Webhook.json"
+     ]
+    },
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "medcards-ai/package.json"
+     ]
+    },
+    {
+     "type": "credential",
+     "family": "key-shaped-string-in-workflow",
+     "paths": [
+      "workflows/Telegram/0742_Telegram_Splitout_Create_Webhook.json"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-awesome-dify-workflow",
+   "surface": "repo",
+   "family": "lowcode-dify-dsl",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Dify DSL exports (advanced-chat and workflow apps with model configuration) and screenshots.",
+   "source": {
+    "host": "github",
+    "repo": "svcvit/Awesome-Dify-Workflow",
+    "sha": "e730ed3627e5fa56fc1668d995b83178b6b1181c"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "yaml"
+   ],
+   "evidence": [
+    {
+     "type": "lowcode-flow",
+     "family": "dify-dsl",
+     "paths": [
+      "DSL/simple-kimi.yml",
+      "DSL/Jina Reader Jinja.yml"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-terraform-aws-bedrock",
+   "surface": "repo",
+   "family": "iac-terraform-bedrock-agent",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Terraform module that provisions Bedrock agents, knowledge bases and guardrails.",
+   "source": {
+    "host": "github",
+    "repo": "aws-ia/terraform-aws-bedrock",
+    "sha": "4b74b7dd5110292cb34ca911448581153484f13f"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "hcl"
+   ],
+   "evidence": [
+    {
+     "type": "iac",
+     "family": "terraform-bedrock-agent",
+     "paths": [
+      "main.tf",
+      "iam.tf",
+      "outputs.tf"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "bedrock",
+     "paths": [
+      "data.tf"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-coral-cloud",
+   "surface": "repo",
+   "family": "lowcode-agentforce-metadata",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Salesforce Coral Cloud sample app with Agentforce metadata: a bot, bot version, GenAI plugins and GenAI functions.",
+   "source": {
+    "host": "github",
+    "repo": "trailheadapps/coral-cloud",
+    "sha": "6e05e6cf74da47308d21a263ed0eb8f8236409de"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "xml",
+    "apex",
+    "javascript"
+   ],
+   "evidence": [
+    {
+     "type": "lowcode-flow",
+     "family": "agentforce-metadata",
+     "paths": [
+      "cc-service-app/main/default/bots/Coral_Cloud_Agent/Coral_Cloud_Agent.bot-meta.xml",
+      "cc-service-app/main/default/genAiPlugins/Verified_Customer_Support.genAiPlugin-meta.xml",
+      "cc-service-app/main/default/genAiFunctions/Create_Booking/Create_Booking.genAiFunction-meta.xml"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-openai-python",
+   "surface": "repo",
+   "family": "config-sdk-with-agents-md",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "OpenAI Python SDK: provider code throughout and an AGENTS.md coding-agent guidance file; no agent code of its own.",
+   "source": {
+    "host": "github",
+    "repo": "openai/openai-python",
+    "sha": "9301e319ea33ef28fba380f39a289dedc14652c1"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "src/openai/_client.py",
+      "pyproject.toml"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-aicommits",
+   "surface": "repo",
+   "family": "config-llm-cli-with-agents-md",
+   "label": "agent",
+   "difficulty": "medium",
+   "rationale": "Commit-message generator on the Vercel AI SDK with several providers and an AGENTS.md; no tools or agent loop.",
+   "source": {
+    "host": "github",
+    "repo": "Nutlope/aicommits",
+    "sha": "a414dd43b6ac2c5ff0f31eae758c5e6e106089c3"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "src/feature/providers/openai.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "src/feature/providers/ollama.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "vercel-ai-sdk",
+     "paths": [
+      "src/feature/generate-commit-message.ts",
+      "package.json"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-buildkite-agent",
+   "surface": "repo",
+   "family": "config-ci-agent-with-skills",
+   "label": "agent",
+   "difficulty": "hard",
+   "rationale": "Buildkite's CI agent (not an AI agent) that carries an AGENTS.md and two .agents skills.",
+   "source": {
+    "host": "github",
+    "repo": "buildkite/agent",
+    "sha": "7e35f2ed983d3636dc46fdc050e51c52c75f051d"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "go"
+   ],
+   "evidence": [
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md"
+     ]
+    },
+    {
+     "type": "agent-skill",
+     "family": "agents-skill",
+     "paths": [
+      ".agents/skills/buildkite-agent-release/SKILL.md",
+      ".agents/skills/cherrypicking-pr-to-v3/SKILL.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-python-telegram-bot",
+   "surface": "repo",
+   "family": "config-bot-library-copilot",
+   "label": "agent",
+   "difficulty": "hard",
+   "rationale": "Telegram bot library (no AI) with a GitHub Copilot instructions file.",
+   "source": {
+    "host": "github",
+    "repo": "python-telegram-bot/python-telegram-bot",
+    "sha": "d4f2b1682938710be93332c08be543a683e414e6"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "python"
+   ],
+   "evidence": [
+    {
+     "type": "coding-agent-config",
+     "family": "copilot",
+     "paths": [
+      ".github/copilot-instructions.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-gitlab-runner",
+   "surface": "repo",
+   "family": "config-ci-runner-agents-md",
+   "label": "agent",
+   "difficulty": "hard",
+   "rationale": "GitLab Runner (CI executor) with AGENTS.md files and a docs CLAUDE.md.",
+   "source": {
+    "host": "gitlab",
+    "repo": "gitlab-org/gitlab-runner",
+    "sha": "471891165404efe4384064780831084f8864741d"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "go"
+   ],
+   "evidence": [
+    {
+     "type": "coding-agent-config",
+     "family": "agents-md",
+     "paths": [
+      "AGENTS.md",
+      "docs/CLAUDE.md",
+      "docs/AGENTS.md"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-gitlab-agent",
+   "surface": "repo",
+   "family": "config-k8s-agent-claude-md",
+   "label": "agent",
+   "difficulty": "hard",
+   "rationale": "GitLab Kubernetes agent (agentk, not AI) with CLAUDE.md, AGENTS.md, Claude settings and a key-shaped string in a masking test.",
+   "source": {
+    "host": "gitlab",
+    "repo": "gitlab-org/cluster-integration/gitlab-agent",
+    "sha": "5d7d299dcc7c93895221f38f7877ff55dc0832c0"
+   },
+   "stratum": "config-only",
+   "languages": [
+    "go"
+   ],
+   "evidence": [
+    {
+     "type": "coding-agent-config",
+     "family": "claude-code",
+     "paths": [
+      "CLAUDE.md",
+      "AGENTS.md",
+      ".claude/settings.json"
+     ]
+    },
+    {
+     "type": "credential",
+     "family": "fake-key-in-tests",
+     "paths": [
+      "internal/tool/secretz/masking_test.go"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-opencommit",
+   "surface": "repo",
+   "family": "ts-llm-cli",
+   "label": "llm",
+   "difficulty": "easy",
+   "rationale": "Commit-message generator with engines for OpenAI, Anthropic, Gemini, Mistral, Ollama and others; no tools, configs or agents.",
+   "source": {
+    "host": "github",
+    "repo": "di-sukharev/opencommit",
+    "sha": "250d49ab5eae07d9081d0175ac50e1b0bb25b9d5"
+   },
+   "stratum": "llm-only",
+   "languages": [
+    "typescript"
+   ],
+   "evidence": [
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "src/engine/openAi.ts",
+      "package.json"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "anthropic",
+     "paths": [
+      "src/engine/anthropic.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "google-gemini",
+     "paths": [
+      "src/engine/gemini.ts"
+     ]
+    },
+    {
+     "type": "provider",
+     "family": "ollama",
+     "paths": [
+      "src/engine/ollama.ts"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-go-openai",
+   "surface": "repo",
+   "family": "go-openai-client",
+   "label": "llm",
+   "difficulty": "easy",
+   "rationale": "Community Go client for the OpenAI API; tool-call types only, no agent loop, config or MCP.",
+   "source": {
+    "host": "github",
+    "repo": "sashabaranov/go-openai",
+    "sha": "dd54fd29688ae9934688a2928be0abbd8647a812"
+   },
+   "stratum": "llm-only",
+   "languages": [
+    "go"
+   ],
+   "evidence": [
+    {
+     "type": "provider",
+     "family": "openai",
+     "paths": [
+      "chat.go",
+      "audio.go"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rw-aws-copilot-cli",
+   "surface": "repo",
+   "family": "neg-copilot-ecs-cli",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "AWS Copilot, an ECS deployment CLI; thousands of Copilot mentions, no AI.",
+   "source": {
+    "host": "github",
+    "repo": "aws/copilot-cli",
+    "sha": "a0dbe68908e55c4292e5838bd6cfbaea38364879"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "go"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-bedrock-protocol",
+   "surface": "repo",
+   "family": "neg-minecraft-bedrock",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Minecraft Bedrock Edition protocol library.",
+   "source": {
+    "host": "github",
+    "repo": "PrismarineJS/bedrock-protocol",
+    "sha": "f0ac6151322b2176244421c7c481f45814baf929"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "javascript"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-goose",
+   "surface": "repo",
+   "family": "neg-goose-migrations",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "pressly/goose database migration tool; collides with Block's Goose agent.",
+   "source": {
+    "host": "github",
+    "repo": "pressly/goose",
+    "sha": "0e5c23df4b93cec4594830b21f66c9ae16d77f75"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "go"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-swarmkit",
+   "surface": "repo",
+   "family": "neg-docker-swarm",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Docker SwarmKit orchestration; collides with OpenAI Swarm.",
+   "source": {
+    "host": "github",
+    "repo": "moby/swarmkit",
+    "sha": "1fd637ba5cc32ff30d1dd2bdb14997bd4f424b46"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "go"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-phoenix",
+   "surface": "repo",
+   "family": "neg-phoenix-elixir",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Phoenix web framework for Elixir; collides with Arize Phoenix.",
+   "source": {
+    "host": "github",
+    "repo": "phoenixframework/phoenix",
+    "sha": "cf8b44be432024bfc8250b5694ec5f91fe5f5029"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "elixir"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-weave",
+   "surface": "repo",
+   "family": "neg-weave-net",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Weave Net container networking; collides with Weights & Biases Weave.",
+   "source": {
+    "host": "github",
+    "repo": "weaveworks/weave",
+    "sha": "8c8476381d48820891356497bfcee6337e99a401"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "go"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-amppackager",
+   "surface": "repo",
+   "family": "neg-amp-packager",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "AMP signed-exchange packager; collides with the Amp coding agent.",
+   "source": {
+    "host": "github",
+    "repo": "ampproject/amppackager",
+    "sha": "57974efc943c09fec5e5d3cd4b95e70a482946f9"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "go"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-arduino-mcp2515",
+   "surface": "repo",
+   "family": "neg-mcp2515-can",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Arduino driver for the MCP2515 CAN controller; collides with MCP.",
+   "source": {
+    "host": "github",
+    "repo": "autowp/arduino-mcp2515",
+    "sha": "737f0d536770dc7182bc18e0168f38a810f710a8"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "cpp"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-agate",
+   "surface": "repo",
+   "family": "neg-gemini-protocol",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Agate server for the Gemini protocol; collides with Google Gemini.",
+   "source": {
+    "host": "github",
+    "repo": "mbrubeck/agate",
+    "sha": "a48d086163d02534f6d76f747aff2156d950ba44"
+   },
+   "stratum": "name-collision",
+   "languages": [
+    "rust"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-mingpt",
+   "surface": "repo",
+   "family": "neg-mingpt-training",
+   "label": "none",
+   "difficulty": "medium",
+   "rationale": "minGPT trains a transformer from scratch; no provider API, agent or configuration.",
+   "source": {
+    "host": "github",
+    "repo": "karpathy/minGPT",
+    "sha": "37baab71b9abea1b76ab957409a1cc2fbfba8a26"
+   },
+   "stratum": "ml-not-agent",
+   "languages": [
+    "python",
+    "notebook"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-imbalanced-learn",
+   "surface": "repo",
+   "family": "neg-sklearn-contrib",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "Classical resampling library on scikit-learn.",
+   "source": {
+    "host": "github",
+    "repo": "scikit-learn-contrib/imbalanced-learn",
+    "sha": "8504e95f0160f61d1b617ca66f779646d2ee609e"
+   },
+   "stratum": "ml-not-agent",
+   "languages": [
+    "python"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-gymnasium",
+   "surface": "repo",
+   "family": "neg-rl-gymnasium",
+   "label": "none",
+   "difficulty": "medium",
+   "rationale": "Reinforcement-learning environments with RL 'agents' and OpenAI heritage; no LLM.",
+   "source": {
+    "host": "github",
+    "repo": "Farama-Foundation/Gymnasium",
+    "sha": "2637f8c98edfc360453fe3202cc35bef7806d84f"
+   },
+   "stratum": "ml-not-agent",
+   "languages": [
+    "python"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-awesome-mcp-servers",
+   "surface": "repo",
+   "family": "neg-mcp-list-markdown",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Markdown list of MCP servers; thousands of MCP mentions and no code or configuration.",
+   "source": {
+    "host": "github",
+    "repo": "punkpeye/awesome-mcp-servers",
+    "sha": "6474b22a220359c9d4b836daef501067caf7266c"
+   },
+   "stratum": "docs-only",
+   "languages": [
+    "markdown"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-ai-robots-txt",
+   "surface": "repo",
+   "family": "neg-ai-crawler-list",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Lists of AI crawler user agents for robots.txt; provider names appear only as crawler names.",
+   "source": {
+    "host": "github",
+    "repo": "ai-robots-txt/ai.robots.txt",
+    "sha": "9ad8a47e23f7689ec3ea2423a47569d0bb91bdaf"
+   },
+   "stratum": "docs-only",
+   "languages": [
+    "markdown",
+    "json"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-uap-core",
+   "surface": "repo",
+   "family": "neg-user-agent-regexes",
+   "label": "none",
+   "difficulty": "medium",
+   "rationale": "User-agent parsing regexes.",
+   "source": {
+    "host": "github",
+    "repo": "ua-parser/uap-core",
+    "sha": "73e7340c3ed8055051607b296bf46ead7aa5f19e"
+   },
+   "stratum": "docs-only",
+   "languages": [
+    "yaml"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-awesome-cursorrules",
+   "surface": "repo",
+   "family": "neg-cursor-rule-templates",
+   "label": "none",
+   "difficulty": "hard",
+   "rationale": "Catalog of Cursor rule templates stored as rules/*.mdc, not at a location any editor reads.",
+   "source": {
+    "host": "github",
+    "repo": "PatrickJS/awesome-cursorrules",
+    "sha": "b044f956f021b6e8877f16781bcfc466a6a120e9"
+   },
+   "stratum": "docs-only",
+   "languages": [
+    "markdown"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-requests",
+   "surface": "repo",
+   "family": "neg-requests-ai-policy",
+   "label": "none",
+   "difficulty": "medium",
+   "rationale": "Requests HTTP library whose only AI relation is a contribution policy about LLM-generated code.",
+   "source": {
+    "host": "github",
+    "repo": "psf/requests",
+    "sha": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60"
+   },
+   "stratum": "docs-only",
+   "languages": [
+    "python"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-express",
+   "surface": "repo",
+   "family": "neg-web-framework",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "Express web framework.",
+   "source": {
+    "host": "github",
+    "repo": "expressjs/express",
+    "sha": "9efc29e280018dafc1f0617f3a3d28f4e463b7be"
+   },
+   "stratum": "plain",
+   "languages": [
+    "javascript"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-flask",
+   "surface": "repo",
+   "family": "neg-web-framework",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "Flask web framework.",
+   "source": {
+    "host": "github",
+    "repo": "pallets/flask",
+    "sha": "d086db856be187255b8ec61ef409357393020f32"
+   },
+   "stratum": "plain",
+   "languages": [
+    "python"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-gin",
+   "surface": "repo",
+   "family": "neg-web-framework",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "Gin web framework.",
+   "source": {
+    "host": "github",
+    "repo": "gin-gonic/gin",
+    "sha": "43fe48e8a0f44af783116cdb010725e6bb50255f"
+   },
+   "stratum": "plain",
+   "languages": [
+    "go"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-ripgrep",
+   "surface": "repo",
+   "family": "neg-cli-tool",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "ripgrep search tool.",
+   "source": {
+    "host": "github",
+    "repo": "BurntSushi/ripgrep",
+    "sha": "3fce3b5bb0236da2df6d99672afb8a719642eca7"
+   },
+   "stratum": "plain",
+   "languages": [
+    "rust"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-fzf",
+   "surface": "repo",
+   "family": "neg-cli-tool",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "fzf fuzzy finder.",
+   "source": {
+    "host": "github",
+    "repo": "junegunn/fzf",
+    "sha": "b1be3a8be1b833ce5b92fbbac11637643d60a046"
+   },
+   "stratum": "plain",
+   "languages": [
+    "go"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-bat",
+   "surface": "repo",
+   "family": "neg-cli-tool",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "bat pager.",
+   "source": {
+    "host": "github",
+    "repo": "sharkdp/bat",
+    "sha": "d9559c69f541873f8c47ac8ad81d985f4441edf6"
+   },
+   "stratum": "plain",
+   "languages": [
+    "rust"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-jq",
+   "surface": "repo",
+   "family": "neg-cli-tool",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "jq JSON processor.",
+   "source": {
+    "host": "github",
+    "repo": "jqlang/jq",
+    "sha": "fd25c3e720385919273b5b776486d84af9aa3914"
+   },
+   "stratum": "plain",
+   "languages": [
+    "c"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-jinja",
+   "surface": "repo",
+   "family": "neg-library",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "Jinja template engine.",
+   "source": {
+    "host": "github",
+    "repo": "pallets/jinja",
+    "sha": "5ef70112a1ff19c05324ff889dd30405b1002044"
+   },
+   "stratum": "plain",
+   "languages": [
+    "python"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-mdbook",
+   "surface": "repo",
+   "family": "neg-cli-tool",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "mdBook documentation builder.",
+   "source": {
+    "host": "github",
+    "repo": "rust-lang/mdBook",
+    "sha": "d4658998d44112e873c90049767d7eb002169a2d"
+   },
+   "stratum": "plain",
+   "languages": [
+    "rust"
+   ],
+   "evidence": []
+  },
+  {
+   "id": "rw-bubbletea",
+   "surface": "repo",
+   "family": "neg-library",
+   "label": "none",
+   "difficulty": "easy",
+   "rationale": "Bubble Tea TUI framework.",
+   "source": {
+    "host": "github",
+    "repo": "charmbracelet/bubbletea",
+    "sha": "96d69d2f7eb182bb311be08fc56ed2c208239aff"
+   },
+   "stratum": "plain",
+   "languages": [
+    "go"
+   ],
+   "evidence": []
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Install the ten third-party tools at the commits the benchmark was
-# pre-registered against, each in its own directory under TOOL_ROOT.
+# Install the thirteen third-party tools at the commits or versions the
+# benchmarks were pre-registered against, each in its own directory under TOOL_ROOT.
 #
 #   bash tools/benchmark/install_tools.sh /path/to/tool-root
 #
@@ -56,5 +56,14 @@ detector=$(checkout mizcausevic-dev/shadow-ai-detector f2bd5ab95018ec96eca47b0ea
 
 checkout backslash-security/claw-hunter 4125c4fc9892140d031d00da7c0114a7863fdfcf >/dev/null
 checkout shamo0/AI-Detector fa673ef9a990a2f54538bc1921a8e82f2a404ea5 >/dev/null
+
+# --- Added for the real-world repository corpus (tools/benchmark/realworld.py) ---
+# Agentic Radar is pinned to the Python 3.12 interpreter the real-world calibration used.
+uv venv --quiet --allow-existing -p 3.12 "$root/venvs/radar"
+uv pip install --quiet --python "$root/venvs/radar/bin/python" "agentic-radar==0.14.1"
+venv skillscanner "cisco-ai-skill-scanner==2.2.1"
+mkdir -p "$root/cdxgen"
+(cd "$root/cdxgen" && [[ -f package.json ]] || npm init -y >/dev/null)
+(cd "$root/cdxgen" && npm install --no-audit --no-fund --silent "@cyclonedx/cdxgen@12.8.5")
 
 echo "tools installed under $root"

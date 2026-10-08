@@ -64,6 +64,7 @@ def run_tool(
                 "agentic": outcome.agentic,
                 "seconds": round(outcome.seconds, 3),
                 "note": outcome.note,
+                "evidence": outcome.evidence,
             }
             with lock:
                 rows[case.case_id] = row

@@ -33,7 +33,12 @@ AGENTIC_KINDS = frozenset({"agent", "mcp-server", "agent-config", "bot-app", "wo
 
 @dataclass
 class Outcome:
-    """``status`` is ``ok``, ``error`` (crash, timeout, incomplete scan) or ``n/a``."""
+    """``status`` is ``ok``, ``error`` (crash, timeout, incomplete scan) or ``n/a``.
+
+    ``evidence`` counts the tool's items by benchmark evidence type (see
+    ``tools.benchmark.realworld.EVIDENCE_TYPES``); adapters that cannot map
+    their report onto those types leave it empty. It never changes ``detected``.
+    """
 
     status: str
     detected: bool = False
@@ -42,6 +47,7 @@ class Outcome:
     seconds: float = 0.0
     note: str = ""
     raw: dict[str, str] = field(default_factory=dict)
+    evidence: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -141,14 +147,77 @@ class Adapter:
 
     @staticmethod
     def tree(case: Case, work: Path, name: str) -> Path:
+        """Materialize the case input below ``work/name``.
+
+        Generated cases are written from ``case.files``. A real-world case
+        (``tools.benchmark.realworld.RepoCase``) carries a pinned checkout, which
+        is copied without its ``.git`` directory; symbolic links are copied as
+        links, never followed, so a checkout cannot reach outside its tree.
+        """
         root = work / name
         root.mkdir()
-        materialize(case, root)
+        checkout = getattr(case, "checkout", None)
+        if checkout:
+            shutil.copytree(
+                checkout, root, symlinks=True, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git")
+            )
+        else:
+            materialize(case, root)
         return root
 
 
 # ----------------------------------------------------------------------------
 # ShadowScan (this repository)
+
+
+def shadowscan_evidence(findings: list[dict[str, Any]]) -> dict[str, int]:
+    """Count ShadowScan code findings by benchmark evidence type.
+
+    The mapping reads the finding kind, resource type and signature ids; it is
+    fixed before the real-world run and only feeds the secondary evidence
+    coverage table, never the detection rule.
+    """
+    counts: dict[str, int] = {}
+
+    def add(kind: str) -> None:
+        counts[kind] = counts.get(kind, 0) + 1
+
+    for f in findings:
+        kind = str(f.get("kind") or "")
+        rtype = str(f.get("resource_type") or "")
+        sigs = [str(s) for s in f.get("frameworks") or []]
+        locations = " ".join(str(e.get("location") or "") for e in f.get("evidence") or [])
+        if kind == "agent":
+            add("framework")
+        elif kind == "framework-usage":
+            if any(s.startswith("framework.") for s in sigs):
+                add("framework")
+            if any(s.startswith("coding-agent.") for s in sigs):
+                add("coding-agent-config")
+            if "protocol.mcp" in sigs:
+                add("mcp-code")
+            if "protocol.a2a" in sigs:
+                add("a2a-card")
+        elif kind == "mcp-server":
+            add("mcp-config" if "config" in rtype else "mcp-code")
+        elif kind == "agent-config":
+            if "SKILL.md" in locations:
+                add("agent-skill")
+            elif "agent-card" in rtype or "a2a" in rtype or "protocol.a2a" in sigs:
+                add("a2a-card")
+            else:
+                add("coding-agent-config")
+        elif kind == "workflow":
+            add("lowcode-flow")
+        elif kind == "infra":
+            add("iac")
+        elif kind == "secret":
+            add("credential")
+        elif kind == "local-model":
+            add("local-model")
+        if f.get("model_providers"):
+            add("provider")
+    return counts
 
 
 def access_log_records(case: Case) -> list[dict[str, Any]]:
@@ -178,6 +247,11 @@ class ShadowScan(Adapter):
         "endpoint": "code.filesystem on the home directory",
         "network": "gateway.logs on a JSON access log",
     }
+    # Every benchmark evidence type (tools.benchmark.realworld.EVIDENCE_TYPES); see shadowscan_evidence.
+    evidence_types = (
+        "framework", "provider", "mcp-code", "mcp-config", "coding-agent-config", "agent-skill",
+        "a2a-card", "lowcode-flow", "iac", "credential", "local-model",
+    )  # fmt: skip
 
     def _scan(self, connector: dict[str, Any], work: Path, env: ToolEnv) -> Outcome:
         cfg = work / "shadowscan.yaml"
@@ -211,6 +285,7 @@ class ShadowScan(Adapter):
             seconds=secs,
             note=",".join(sorted(k for k in kinds if k)),
             raw=raw,
+            evidence=shadowscan_evidence(findings),
         )
 
     def run_repo(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
@@ -373,8 +448,13 @@ class CiscoAIBOM(Adapter):
         ):
             return Outcome("error", seconds=secs, note=f"status {analysis['metadata'].get('status')}", raw={})
         summary = analysis["summary"]
-        types = set(summary.get("component_types") or {})
+        type_counts = {str(k): int(v or 0) for k, v in (summary.get("component_types") or {}).items()}
+        types = set(type_counts)
         total = int(summary.get("total_components") or 0)
+        evidence: dict[str, int] = {}
+        for ctype, key in self._EVIDENCE_MAP.items():
+            if type_counts.get(ctype):
+                evidence[key] = evidence.get(key, 0) + type_counts[ctype]
         return Outcome(
             "ok",
             detected=total > 0,
@@ -383,7 +463,21 @@ class CiscoAIBOM(Adapter):
             seconds=secs,
             note=",".join(sorted(types))[:200],
             raw={"aibom.json": text},
+            evidence=evidence,
         )
+
+    # Component types of the AI BOM mapped onto benchmark evidence types (secondary table only).
+    _EVIDENCE_MAP = {
+        "agent": "framework",
+        "agent_proxy": "framework",
+        "mcp_server": "mcp-code",
+        "mcp_client": "mcp-config",
+        "model": "provider",
+        "llm_endpoint": "provider",
+        "embedding": "provider",
+        "skill": "agent-skill",
+    }
+    evidence_types = ("framework", "provider", "mcp-code", "mcp-config", "agent-skill")
 
     def run_repo(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         return self._analyze(self.tree(case, work, "repo"), work, env)
@@ -396,12 +490,24 @@ class CiscoAIBOM(Adapter):
 # agent-bom
 
 
+# agent-bom pseudo-agents derived from repository structure rather than AI evidence.
+_AGENTBOM_STRUCTURE_SOURCES = frozenset({"github-actions", "terraform", "jupyter"})
+
+
 class AgentBom(Adapter):
     """Calibrated: the report always lists a pseudo-agent for the scanned project
     (``source: project``) whose "servers" are its package manifests, and host-wide
     CLIs it finds on PATH. Neither is evidence about the case. AI evidence is a
     client agent or MCP server not present with an empty home, or a project
-    server on the ``ai-inventory`` surface or bound to a model."""
+    server on the ``ai-inventory`` surface or bound to a model.
+
+    Real-world calibration (three repositories, before the scored run): a real
+    checkout also yields a project server named ``github-actions`` listing the
+    workflow actions, and one pseudo-agent per workflow (``source:
+    github-actions``), on every repository with a workflow. Neither names an AI
+    package or a model, so they no longer count; the ``command`` clause that
+    admitted them is dropped, and pseudo-agents sourced from repository
+    structure (``github-actions``, ``terraform``, ``jupyter``) are ignored."""
 
     name = "agent-bom"
     display = "agent-bom"
@@ -443,14 +549,13 @@ class AgentBom(Adapter):
     ) -> Outcome:
         clients, servers, ai = [], [], []
         for agent in doc.get("agents", []):
-            is_project = (agent.get("discovery_provenance") or {}).get("source") == "project"
-            if is_project:
+            source = (agent.get("discovery_provenance") or {}).get("source")
+            if source == "project":
                 for server in agent.get("mcp_servers", []):
-                    if server.get("surface") == "ai-inventory" or server.get("command") not in (
-                        "project",
-                        None,
-                    ):
+                    if server.get("surface") == "ai-inventory" or server.get("model"):
                         ai.append(server.get("name"))
+            elif source in _AGENTBOM_STRUCTURE_SOURCES:
+                continue
             elif self._agent_key(agent) not in baseline:
                 clients.append(agent.get("name"))
                 servers += [s.get("name") for s in agent.get("mcp_servers", [])]
@@ -537,6 +642,11 @@ class AgentDiscover(Adapter):
         mcp = [line[3:].strip() for line in raw["mcp-report.md"].splitlines() if line.startswith("## ")]
         rules = sorted({str(r.get("ruleId")) for r in results if isinstance(r, dict)})
         items = len(results) + agents + len(mcp)
+        evidence: dict[str, int] = {}
+        if agents:
+            evidence["framework"] = agents
+        if mcp:
+            evidence["mcp-code"] = len(mcp)
         return Outcome(
             "ok",
             detected=items > 0,
@@ -545,7 +655,12 @@ class AgentDiscover(Adapter):
             seconds=secs + secs2,
             note=f"rules={','.join(rules)} agents={agents} mcp={mcp}"[:200],
             raw=raw,
+            evidence=evidence,
         )
+
+    # The inventory's agents are code-level agent detections; its MCP report lists MCP
+    # packages and servers found in dependencies and configuration (secondary table only).
+    evidence_types = ("framework", "mcp-code")
 
     def run_repo(self, case: Case, work: Path, env: ToolEnv) -> Outcome:
         return self._run(self.tree(case, work, "repo"), _empty_home(work), work, env)
