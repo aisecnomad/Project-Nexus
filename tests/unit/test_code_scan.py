@@ -89,8 +89,12 @@ def test_sample_repo_scan(run_connector, fixtures):
     a2a = next(f for f in cards if "protocol.a2a" in f.frameworks)
     assert a2a.metadata["agent_card"]["skills"] == ["Request quote", "Issue purchase order"]
     assert "no-auth-declared" in a2a.tags
-    wf = kinds[Kind.WORKFLOW]
+    # The exported flow holds a verified agent node, so it classifies as an
+    # agent workflow (kind agent, resource_type workflow-export).
+    wf = [f for f in kinds[Kind.AGENT] if f.resource_type == "workflow-export"]
     assert len(wf) == 1 and "platform.n8n" in wf[0].frameworks
+    assert wf[0].metadata["agent_flow"] is True
+    assert Kind.WORKFLOW not in kinds
 
 
 def test_scan_ignores_noise_dirs_and_binary(tmp_path: Path, run_connector):
