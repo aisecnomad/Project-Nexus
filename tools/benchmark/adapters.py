@@ -59,13 +59,25 @@ class ToolEnv:
 Run = tuple[int, str, str, float]
 
 
+# A privilege-drop prefix (for example ``setpriv`` to ``nobody``) applied inside
+# the namespaces. Empty by default, so the synthetic benchmark is unchanged; the
+# real-world runner sets it because it scans untrusted repositories.
+_RUN_AS: tuple[str, ...] = ()
+
+
+def set_run_as(prefix: tuple[str, ...]) -> None:
+    """Run every isolated command behind ``prefix``."""
+    global _RUN_AS
+    _RUN_AS = tuple(prefix)
+
+
 def _isolated(cmd: list[str], *, env: dict[str, str], cwd: Path, stdin: str | None = None) -> Run:
     """Run ``cmd`` without network access; returns (code, stdout, stderr, seconds).
 
     A fresh PID namespace hides the host's processes, so a tool that lists
     running processes sees only its own and cannot report the benchmark host.
     """
-    full = ["unshare", "--net", "--pid", "--fork", "--mount-proc", "--", *cmd]
+    full = ["unshare", "--net", "--pid", "--fork", "--mount-proc", "--", *_RUN_AS, *cmd]
     started = time.monotonic()
     try:
         proc = subprocess.run(
@@ -118,6 +130,35 @@ def _url(f: dict[str, Any]) -> str:
     return f"{f['scheme']}://{f['host']}{port}{f['path']}"
 
 
+def copy_checkout(src: Path, dst: Path) -> dict[str, int]:
+    """Copy a repository working tree, leaving out ``.git`` and every symbolic link.
+
+    Links are never followed, so a scanned repository cannot make a tool read
+    files outside the copy. Returns the counts of copied and skipped entries.
+    """
+    counts = {"files": 0, "skipped_links": 0, "skipped_other": 0}
+    for dirpath, dirnames, filenames in os.walk(src, followlinks=False):
+        here = Path(dirpath)
+        for name in list(dirnames):
+            if name == ".git":
+                dirnames.remove(name)
+            elif (here / name).is_symlink():
+                counts["skipped_links"] += 1
+                dirnames.remove(name)
+        target = dst / here.relative_to(src)
+        target.mkdir(parents=True, exist_ok=True)
+        for name in filenames:
+            path = here / name
+            if path.is_symlink():
+                counts["skipped_links"] += 1
+            elif path.is_file():
+                shutil.copy2(path, target / name)
+                counts["files"] += 1
+            else:
+                counts["skipped_other"] += 1
+    return counts
+
+
 class Adapter:
     name = ""
     display = ""
@@ -143,7 +184,11 @@ class Adapter:
     def tree(case: Case, work: Path, name: str) -> Path:
         root = work / name
         root.mkdir()
-        materialize(case, root)
+        source = getattr(case, "source_dir", None)  # a real checkout (real-world runner)
+        if source is not None:
+            copy_checkout(Path(source), root)
+        else:
+            materialize(case, root)
         return root
 
 
@@ -894,7 +939,9 @@ class AIDetector(Adapter):
         for p in (work, *work.rglob("*")):
             os.chmod(p, 0o755 if p.is_dir() else 0o644)
         os.chmod(work.parent, 0o755)
-        cmd = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", "bash", str(script)]
+        # Already unprivileged when the real-world runner sets _RUN_AS (setgroups fails for a non-root user).
+        drop = [] if _RUN_AS else ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"]
+        cmd = [*drop, "bash", str(script)]
         environ = {**_base_env(home, work), "SHADOW_AI_REPORT": "json", "SHADOW_AI_NETWORK": "false"}
         code, stdout, stderr, secs = _isolated(cmd, env=environ, cwd=work)
         start = stdout.find("{")
