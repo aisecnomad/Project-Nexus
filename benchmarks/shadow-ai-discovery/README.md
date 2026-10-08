@@ -174,6 +174,27 @@ The unprivileged account needs traverse access to the checkouts and the tool
 installations; `tools.json` maps adapter ids to binaries. Checkouts are never
 committed to this repository.
 
+### Regression gate
+
+`compare` turns a new `metrics.json` into a pass/fail against the most recent
+committed results:
+
+```console
+python -m tools.discovery_benchmark compare --corpus benchmarks/shadow-ai-discovery/corpus.json \
+    --baseline benchmarks/shadow-ai-discovery/results/<run>/metrics.json \
+    --current metrics.json --tools shadowscan
+```
+
+It exits 1 when a tool's in-scope value-level F1 falls by more than one point
+(`--f1-tolerance`), when repository-level recall falls at all, or when a control
+or near-miss repository that the baseline left clean is flagged. Improvements
+and newly clean negatives are printed but never fail the gate. The workflow
+`.github/workflows/benchmark.yml` runs ShadowScan alone on the pinned corpus
+weekly and on demand, with read-only permissions and no third-party tools, and
+uploads `runs.json`, `metrics.json`, `REPORT.md` and `compare.json` as an
+artifact. Publishing a new baseline stays a manual step: copy the scrubbed
+run into `results/<date>/` and describe what changed in this README.
+
 ## Results: run of 2026-10-08
 
 `results/2026-10-08/` holds the scrubbed run manifest (`runs.json`, with every

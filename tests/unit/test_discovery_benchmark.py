@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.discovery_benchmark import evidence, report, score, taxonomy
+from tools.discovery_benchmark import compare, evidence, report, score, taxonomy
 from tools.discovery_benchmark.adapters import Command, ToolConfig, facts_from_purl
 from tools.discovery_benchmark.adapters.agentdiscover import AgentDiscoverAdapter
 from tools.discovery_benchmark.adapters.agentic_radar import AgenticRadarAdapter
@@ -168,6 +168,8 @@ def test_evidence_extraction_labels_a_synthetic_repo(tmp_path: Path) -> None:
         tmp_path, "dify/app.yml", "app:\n  mode: workflow\n  name: demo\nkind: app\nworkflow:\n  graph: {}\n"
     )
     _write(tmp_path, "tests/fixtures/args.yaml", "base_url: http://localhost:11434\n")
+    _write(tmp_path, "website/_data/leaderboard.yml", "- model: xai/grok-4\n")
+    _write(tmp_path, "docs/CLAUDE.md", "# docs copy\n")
     _write(tmp_path, "src/i18n/locales/de/mcp.json", '{"servers": "Server", "title": "MCP"}')
     _write(
         tmp_path,
@@ -196,6 +198,8 @@ def test_evidence_extraction_labels_a_synthetic_repo(tmp_path: Path) -> None:
     assert all("other.py" not in h.location for h in ev.facts["framework:openai-agents"])
     assert "framework:crewai" not in facts and "framework:crewai" in ev.tolerated
     assert "provider:ollama" not in facts and "provider:ollama" in ev.tolerated  # test fixture only
+    assert "provider:xai" in ev.tolerated and "provider:xai" not in facts  # documentation-site data only
+    assert "agent-config:claude-md" in facts  # committed config paths count even under docs/
     assert evidence.is_test_path("pkg/server_test.go") and not evidence.is_test_path("pkg/server.go")
     assert evidence.is_test_path("src/broker_tests.rs") and evidence.is_test_path("src/net/tests.rs")
     assert not evidence.is_test_path("src/contest.rs")
@@ -379,6 +383,13 @@ def test_shadowscan_normalize(tmp_path: Path) -> None:
             "resource": "r/main.tf",
             "frameworks": ["cloud.aws-bedrock-agents"],
             "model_providers": ["provider.anthropic"],
+            "evidence": [],
+        },
+        {
+            "kind": "framework-usage",
+            "resource": "r/sdk",
+            "frameworks": ["platform.dify"],
+            "model_providers": [],
             "evidence": [],
         },
         {
@@ -600,3 +611,27 @@ def test_run_pair_executes_commands_and_records_timeouts(tmp_path: Path) -> None
         _FakeAdapter(sleep=5), cfg, repo, tmp_path / "repo", tmp_path / "out2", RunPolicy(timeout=1)
     )  # type: ignore[arg-type]
     assert slow.status == "timeout" and slow.commands[0].timed_out
+
+
+# --- compare --------------------------------------------------------------------------------------
+
+
+def test_compare_flags_f1_drop_and_new_negative_only() -> None:
+    corpus = _tiny_corpus()
+    classes = {r.id: r.klass for r in corpus.repos}
+    scopes = {"shadowscan": frozenset(taxonomy.CATEGORIES), "cdxgen": frozenset({"framework", "provider"})}
+    names = {"shadowscan": "ShadowScan", "cdxgen": "cdxgen"}
+    baseline = score.score_all(corpus, _manifest(), scopes, names)
+    improved = _manifest()
+    improved["results"][2]["facts"] = []  # the near-miss is clean now
+    current = score.score_all(corpus, improved, scopes, names)
+    results = compare.compare(baseline, current, classes)
+    by = {r.tool: r for r in results}
+    assert by["shadowscan"].ok and by["shadowscan"].newly_clean == ["acme__near"]
+    worse = _manifest()
+    worse["results"][0]["facts"] = []  # lost the positive
+    worse["results"][1]["facts"] = ["provider:openai"]  # flagged the control
+    results = compare.compare(baseline, score.score_all(corpus, worse, scopes, names), classes)
+    bad = {r.tool: r for r in results}["shadowscan"]
+    assert not bad.ok and bad.newly_flagged == ["acme__ctl"]
+    assert any("F1" in r for r in bad.regressions) and any("recall" in r for r in bad.regressions)

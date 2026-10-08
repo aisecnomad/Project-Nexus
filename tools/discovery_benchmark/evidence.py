@@ -142,9 +142,17 @@ TEST_PATH = re.compile(
 )
 
 
+DOC_PATH = re.compile(r"(^|/)(docs?|website|site|_data|_posts|_includes|blog|changelogs?)/", re.I)
+
+
 def is_test_path(location: str) -> bool:
     """Whether a hit location lies in test or fixture data."""
     return bool(TEST_PATH.search(location.split(":", 1)[0]))
+
+
+def is_doc_path(location: str) -> bool:
+    """Whether a hit location lies under a documentation site tree (data files included)."""
+    return bool(DOC_PATH.search(location.split(":", 1)[0]))
 
 
 @dataclass(frozen=True)
@@ -168,7 +176,9 @@ class Evidence:
 
     def add(self, fact: str, hit: Hit, *, tolerated: bool = False) -> None:
         """Record a hit. Test and fixture paths are kept apart until ``finish``."""
-        if not tolerated and is_test_path(hit.location):
+        if not tolerated and (
+            is_test_path(hit.location) or (hit.kind != "config" and is_doc_path(hit.location))
+        ):
             tolerated = True
             bucket = self.test_only
         else:
@@ -178,7 +188,7 @@ class Evidence:
             hits.append(hit)
 
     def finish(self) -> None:
-        """Facts seen only in test data or lock files become tolerated, never required."""
+        """Facts seen only in test data, documentation trees or lock files are tolerated, not required."""
         for fact, hits in self.test_only.items():
             if fact not in self.facts:
                 for hit in hits:

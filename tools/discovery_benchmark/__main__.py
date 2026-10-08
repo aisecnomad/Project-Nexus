@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from tools.discovery_benchmark import evidence, fetch, report, score
+from tools.discovery_benchmark import compare, evidence, fetch, report, score
 from tools.discovery_benchmark.adapters import ToolConfig
 from tools.discovery_benchmark.adapters.registry import adapters_by_id, all_adapters
 from tools.discovery_benchmark.corpus import CorpusError, load_corpus
@@ -93,6 +93,29 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_compare(args: argparse.Namespace) -> int:
+    corpus = load_corpus(Path(args.corpus))
+    classes = {r.id: r.klass for r in corpus.repos}
+    baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
+    current = json.loads(Path(args.current).read_text(encoding="utf-8"))
+    tools = args.tools.split(",") if args.tools else None
+    results = compare.compare(baseline, current, classes, tools=tools, f1_tolerance=args.f1_tolerance)
+    for item in results:
+        state = "ok" if item.ok else "REGRESSION"
+        f1 = f"F1 {item.baseline_f1} -> {item.current_f1}"
+        recall = f"repo recall {item.baseline_recall} -> {item.current_recall}"
+        print(f"{item.tool}\t{state}\t{f1}\t{recall}")
+        for reason in item.regressions:
+            print(f"\t{reason}")
+        for repo_id in item.newly_clean:
+            print(f"\tnow clean: {repo_id}")
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps([r.to_dict() for r in results], indent=1) + "\n", encoding="utf-8"
+        )
+    return 0 if all(r.ok for r in results) else 1
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     corpus = load_corpus(Path(args.corpus))
     metrics = json.loads(Path(args.metrics).read_text(encoding="utf-8"))
@@ -141,6 +164,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--runs", required=True)
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_score)
+
+    p = sub.add_parser("compare", help="fail when metrics regress against a committed baseline")
+    p.add_argument("--corpus", required=True)
+    p.add_argument("--baseline", required=True, help="baseline metrics.json")
+    p.add_argument("--current", required=True, help="new metrics.json")
+    p.add_argument("--tools", help="comma-separated tool ids (default: every tool in the baseline)")
+    p.add_argument("--f1-tolerance", type=float, default=0.01)
+    p.add_argument("--out", help="write the comparison as JSON")
+    p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("report", help="render metrics.json as Markdown")
     p.add_argument("--corpus", required=True)

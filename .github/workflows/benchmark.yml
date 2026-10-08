@@ -1,0 +1,79 @@
+name: Discovery benchmark
+# Weekly regression gate for ShadowScan's code.filesystem connector on the
+# pinned public corpus in benchmarks/shadow-ai-discovery. Only ShadowScan runs
+# here; the third-party tools are installed and run locally (see the README).
+# The gate fails when in-scope F1 drops more than one point, repository-level
+# recall drops, or a control or near-miss repository that the committed
+# baseline left clean is flagged. Checkouts are read-only inputs; nothing in
+# them is executed.
+on:
+  schedule:
+    - cron: "23 6 * * 3"  # Wednesday 06:23 UTC
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: "Comma-separated corpus repo ids (default: all)"
+        required: false
+        default: ""
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  shadowscan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the hash-locked runtime and development toolchain
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements.lock
+          python -m pip install --no-deps --no-build-isolation -e .
+      - name: Fetch the pinned corpus
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          python -m tools.discovery_benchmark fetch \
+            --corpus benchmarks/shadow-ai-discovery/corpus.json --dest "$RUNNER_TEMP/corpus"
+      - name: Write the tool configuration
+        run: |
+          printf '{"tools": {"shadowscan": {"bin": "%s"}}}\n' "$(command -v shadowscan)" > "$RUNNER_TEMP/tools.json"
+      - name: Run ShadowScan on the corpus
+        env:
+          REPOS: ${{ inputs.repos }}
+        run: |
+          extra=()
+          if [ -n "$REPOS" ]; then extra=(--repos "$REPOS"); fi
+          python -m tools.discovery_benchmark run \
+            --corpus benchmarks/shadow-ai-discovery/corpus.json --tools "$RUNNER_TEMP/tools.json" \
+            --checkouts "$RUNNER_TEMP/corpus" --out "$RUNNER_TEMP/run" --only shadowscan \
+            --workers 2 --timeout 1500 "${extra[@]}"
+      - name: Score and compare with the committed baseline
+        run: |
+          python -m tools.discovery_benchmark score \
+            --corpus benchmarks/shadow-ai-discovery/corpus.json --runs "$RUNNER_TEMP/run/runs.json" \
+            --out "$RUNNER_TEMP/run/metrics.json"
+          python -m tools.discovery_benchmark report \
+            --corpus benchmarks/shadow-ai-discovery/corpus.json --metrics "$RUNNER_TEMP/run/metrics.json" \
+            --out "$RUNNER_TEMP/run/REPORT.md"
+          baseline="$(ls -d benchmarks/shadow-ai-discovery/results/*/ | sort | tail -1)metrics.json"
+          echo "baseline: $baseline"
+          python -m tools.discovery_benchmark compare \
+            --corpus benchmarks/shadow-ai-discovery/corpus.json --baseline "$baseline" \
+            --current "$RUNNER_TEMP/run/metrics.json" --tools shadowscan --out "$RUNNER_TEMP/run/compare.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: discovery-benchmark-run
+          path: |
+            ${{ runner.temp }}/run/runs.json
+            ${{ runner.temp }}/run/metrics.json
+            ${{ runner.temp }}/run/REPORT.md
+            ${{ runner.temp }}/run/compare.json
+          if-no-files-found: ignore

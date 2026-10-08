@@ -64,7 +64,7 @@ def _slug_facts(signature: str) -> frozenset[str]:
         return frozenset()
     if family == "platform":
         if slug in _LOWCODE:
-            return frozenset({_LOWCODE[slug]})
+            return frozenset()  # an exported flow only counts on a workflow finding (handled by the caller)
         return frozenset(f for f in taxonomy.facts_from_name(words) if f.startswith("framework:"))
     if family == "cloud":
         fact = _PROVIDER_BY_CLOUD_SLUG.get(slug)
@@ -152,7 +152,11 @@ class ShadowScanAdapter:
                     facts.add("agent-config:generic")
             elif kind == "workflow":
                 for sig in signatures:
-                    facts.update(_slug_facts(sig))
+                    family, _, slug = sig.partition(".")
+                    if family == "platform" and slug in _LOWCODE:
+                        facts.add(_LOWCODE[slug])
+                    else:
+                        facts.update(_slug_facts(sig))
                 for sig in providers:
                     facts.update(_slug_facts(sig))
             else:  # agent, framework-usage, ai-app, local-model, cloud-resource ...

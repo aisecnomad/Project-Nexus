@@ -32,7 +32,11 @@ connector with other open-source discovery tools under one tool-neutral fact
 taxonomy. Its ground truth is session-labeled evidence with file pointers, not
 independent review, and it runs third-party tools as an unprivileged user with
 no network or credentials. See its README for the method and its REPORT.md for
-the measured numbers; neither replaces the regression corpora above.
+the measured numbers; neither replaces the regression corpora above. The
+`compare` subcommand and `.github/workflows/benchmark.yml` turn the committed
+results into a weekly regression gate for ShadowScan: a drop in in-scope F1 of
+more than one point, any drop in repository-level recall, or a newly flagged
+control or near-miss repository fails the run.
 
 ## Run the reproducible corpora
 
