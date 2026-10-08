@@ -92,6 +92,11 @@ def _properties(pairs: list[tuple[str, object]]) -> list[dict[str, str]]:
     return out
 
 
+def _metadata_text(value: object) -> str | None:
+    """A short string metadata value, or None for any other type."""
+    return value if isinstance(value, str) and len(value) <= 64 else None
+
+
 def _http_url(value: object) -> bool:
     """An http or https URL; the scheme is compared case-insensitively."""
     if not isinstance(value, str):
@@ -253,6 +258,12 @@ class _Bom:
                 ("shadowscan:finding-id", f.id),
                 ("shadowscan:surface", f.surface.value),
                 ("shadowscan:kind", f.kind.value),
+                # Set by the code connectors (see agent_profile); absent elsewhere.
+                ("shadowscan:agent-type", _metadata_text(f.metadata.get("agent_type"))),
+                (
+                    "shadowscan:agentic",
+                    f.metadata.get("agentic") if isinstance(f.metadata.get("agentic"), bool) else None,
+                ),
                 ("shadowscan:connector", f.connector),
                 ("shadowscan:resource", f.resource),
                 ("shadowscan:resource-type", f.resource_type),

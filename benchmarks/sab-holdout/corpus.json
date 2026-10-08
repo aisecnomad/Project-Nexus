@@ -123,11 +123,20 @@
     {
       "id": "inline-high-entropy-credential",
       "family": "exposure",
-      "description": "An inline high-entropy API credential is a separate secret finding",
-      "files": {"settings.env": "CUSTOM_API_KEY=R4nd0m9Qx2Vb7Lp6"},
+      "description": "An inline high-entropy API credential in a project with AI use is a separate secret finding",
+      "files": {"settings.env": "CUSTOM_API_KEY=R4nd0m9Qx2Vb7Lp6", "requirements.txt": "openai\n"},
       "target": {"kind": "secret"},
       "present": true,
       "assertions": {"max_secret_findings": 1, "max_agent_findings": 0}
+    },
+    {
+      "id": "inline-high-entropy-credential-without-ai",
+      "family": "exposure",
+      "description": "A credential only the generic pattern matches, in a project with no AI use, is not AI inventory",
+      "files": {"settings.env": "CUSTOM_API_KEY=R4nd0m9Qx2Vb7Lp6"},
+      "target": {"kind": "secret"},
+      "present": false,
+      "assertions": {"max_secret_findings": 0, "max_agent_findings": 0}
     },
     {
       "id": "empty-and-placeholder-keys",

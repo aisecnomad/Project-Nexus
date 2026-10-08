@@ -136,6 +136,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
 from shadowscan.signatures.matcher import (
+    GENERIC_CREDENTIAL,
     SOURCE_EXTENSIONS,
     MatchTimeoutError,
     language_for_path,
@@ -798,6 +799,157 @@ def _is_test_path(rel: str) -> bool:
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
 
 
+# Tabular, markup and feed files list or link to products: a host or variable
+# name there is a mention, not a call or a configured endpoint.
+_DATA_MARKUP_EXTENSIONS = frozenset({".csv", ".tsv", ".html", ".htm", ".rss", ".atom", ".svg"})
+_FEED_ROOT = re.compile(r"<(?:rss|feed)\b")
+_KEYED_EXTENSIONS = frozenset({".json", ".jsonc", ".json5", ".yaml", ".yml", ".toml"})
+# Keys whose value is prose about something, or a link to its pages, rather than a setting.
+_PROSE_KEYS = frozenset(
+    {
+        "about", "body", "category", "categories", "changelog", "comment", "comments", "content",
+        "desc", "description", "displayname", "display_name", "example", "examples", "help", "hint",
+        "keywords", "label", "message", "note", "notes", "placeholder", "readme", "summary", "tagline",
+        "tags", "text", "title",
+    }
+)  # fmt: skip
+_LINK_KEYS = frozenset(
+    {
+        "avatar", "bugs", "doc", "docs", "documentation", "home", "homepage", "href", "icon", "image",
+        "license_url", "link", "links", "logo", "privacy_policy", "repo", "repository", "screenshot",
+        "site", "source", "support", "terms", "thumbnail", "url", "website",
+    }
+)  # fmt: skip
+# `"key":`, `key:` (YAML, also as a list item) or `key =` (TOML) at the start of a line.
+_LINE_KEY = re.compile(r"""^\s*(?:-\s+)?["']?([A-Za-z_][\w.-]{0,63})["']?\s*[:=]""")
+_URL = re.compile(r"""https?://[^\s"'<>()\\]{1,2048}""")
+# A URL that calls a service rather than linking to its pages.
+_API_URL = re.compile(
+    r"https?://(?:[^/]*\b(?:api|mcp|hooks|gateway|inference|bedrock-runtime)\b[^/]*"
+    r"|[^/]+/(?:[^?#]*/)?(?:api|v\d+|chat/completions|completions|embeddings|messages|mcp|sse|openai/deployments)\b)",
+    re.IGNORECASE,
+)
+
+
+def _calls_api(line: str, host: str) -> bool:
+    """Whether a URL on ``line`` that contains ``host`` calls an API."""
+    host = host.lower()
+    return any(host in url.lower() and _API_URL.match(url) for url in _URL.findall(line))
+
+
+class _Mentions:
+    """Decide whether a host or variable-name match in one file only names a product.
+
+    A mention is a match in a tabular, markup or feed file, or under a prose or
+    link key of a JSON, YAML or TOML file, that is not part of a URL calling an
+    API. A mention is still evidence, but it cannot by itself establish AI use
+    (see ``_anchored``): a market map, a crawler list or a package's homepage
+    names a product without using it.
+    """
+
+    __slots__ = ("data_file", "keyed", "lines")
+
+    def __init__(self, file: _SourceFile, text: str) -> None:
+        head = text[:4096].lstrip().lower()
+        self.data_file = file.ext in _DATA_MARKUP_EXTENSIONS or (
+            file.ext == ".xml" and _FEED_ROOT.search(head) is not None
+        )
+        self.keyed = file.ext in _KEYED_EXTENSIONS
+        self.lines = text.splitlines() if self.data_file or self.keyed else []
+
+    def mention(self, m: Match) -> bool:
+        if not (self.data_file or self.keyed) or m.signal.type not in {"domain", "env"} or not m.line:
+            return False
+        line = self.lines[m.line - 1] if m.line <= len(self.lines) else ""
+        calls = m.signal.type == "domain" and _calls_api(line, m.value)
+        if self.data_file:
+            return not calls
+        key = _LINE_KEY.match(line)
+        name = key.group(1).lower() if key else ""
+        if name in _PROSE_KEYS:
+            return True
+        return name in _LINK_KEYS and not calls
+
+
+# `protocol.mcp` code that builds the client side of MCP: a host that hands a
+# server's tools to a model (langchain-mcp-adapters, the MCP SDK transports,
+# the OpenAI Agents SDK and Google ADK tool sources). Server code is told apart
+# by the tools it registers (``mcp_tools``).
+_MCP_CLIENT_CALL = re.compile(
+    r"\b(?:MultiServerMCPClient|stdio_client|streamablehttp_client|sse_client|MCPServerStdio"
+    r"|MCPServerStreamableHttp|MCPServerSse|McpToolset|MCPClient)\s*\("
+)
+# CI configuration that runs a coding agent unattended, with the job's token,
+# rather than assisting a developer at a workstation.
+_CI_CONFIGURATION = re.compile(
+    r"(?:^|/)(?:\.github/workflows/[^/]+\.ya?ml|\.gitlab-ci\.ya?ml|\.circleci/config\.ya?ml"
+    r"|azure-pipelines\.ya?ml|bitbucket-pipelines\.ya?ml|\.drone\.ya?ml|\.buildkite/[^/]+\.ya?ml|Jenkinsfile)$"
+)
+# Evidence that names a coding agent without configuring it (see _MENTION_SIGNALS).
+_CI_MENTION_PREFIXES = ("env:", "name:")
+
+
+def _evidence_file(location: str | None) -> str:
+    """The file of an evidence location (``path`` or ``path:line``)."""
+    path, _, line = (location or "").rpartition(":")
+    return path if path and line.isdigit() else location or ""
+
+
+def agent_profile(finding: Finding) -> tuple[str, bool]:
+    """Return what a code finding describes for policy, and whether it is agentic.
+
+    Agentic means an agent built, configured or run by the repository: an agent
+    framework or tool loop, an agent definition, an MCP server or the client
+    configuration that hands its tools to a model, a coding agent that runs in
+    CI, an agent workflow or agent infrastructure. A coding assistant's
+    instruction and settings files, plain LLM integrations and credentials are
+    not. The kind stays as reported; this is an explicit summary of it.
+    """
+    metadata = finding.metadata
+    if finding.kind == Kind.AGENT:
+        if finding.resource_type != "project":
+            return "agent-definition", True
+        # Without an agent framework, the agent is the program's own loop over
+        # the tools a model selects (function calling is a `protocol.*` signature).
+        if metadata.get("agent_classification") == "openai-responses-tool-dispatch" or all(
+            framework.startswith("protocol.") for framework in finding.frameworks
+        ):
+            return "tool-loop", True
+        return "framework-agent", True
+    if finding.kind == Kind.MCP_SERVER:
+        return ("mcp-server" if finding.resource_type == "project" else "mcp-client-config"), True
+    if finding.kind == Kind.AGENT_CONFIG:
+        in_ci = any(
+            _CI_CONFIGURATION.search(_evidence_file(item.location))
+            and not item.signal.startswith(_CI_MENTION_PREFIXES)
+            for item in finding.evidence
+        )
+        return ("ci-agent", True) if in_ci else ("coding-assistant-config", False)
+    if finding.kind == Kind.WORKFLOW:
+        agentic = int(metadata.get("agent_indicators") or 0) > 0 or bool(
+            {"tool-use", "autonomous", "multi-agent"} & set(finding.capabilities)
+        )
+        return "ai-workflow", agentic
+    if finding.kind == Kind.INFRA:
+        agentic = int(metadata.get("agent_indicators") or 0) > 0
+        return ("agent-infrastructure" if agentic else "ai-infrastructure"), agentic
+    if finding.kind == Kind.SECRET:
+        return "credential", False
+    if finding.kind == Kind.FRAMEWORK_USAGE:
+        if metadata.get("mcp_client"):
+            return "mcp-client", True
+        return "llm-integration", False
+    return finding.kind.value, False
+
+
+def _with_agent_profile(finding: Finding) -> Finding:
+    """Record ``agent_profile`` on ``finding`` as ``metadata.agent_type`` and ``metadata.agentic``."""
+    agent_type, agentic = agent_profile(finding)
+    finding.metadata["agent_type"] = agent_type
+    finding.metadata["agentic"] = agentic
+    return finding
+
+
 # A signature's source names its pack file (as the validator's namespace check reads it).
 _BUNDLED_PACKS = os.path.join(os.path.abspath(builtin_signature_dir()), "")
 
@@ -1038,6 +1190,11 @@ class FilesystemConnector(BaseConnector):
             "256 KiB, capped at 10 seconds or scan_timeout when higher"
         ),
         "scan_secrets": "detect provider credentials (default true)",
+        "report_generic_credentials": (
+            "report credentials that only the generic assignment pattern matched (no provider prefix) in "
+            "every project; by default they are reported only in projects with other AI findings "
+            "(default false)"
+        ),
         "use_git": (
             "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ "
             "(default false)"
@@ -1089,6 +1246,9 @@ class FilesystemConnector(BaseConnector):
             ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS))
         )
         self.scan_secrets = config_boolean(ctx.get("scan_secrets", True), "scan_secrets")
+        self.report_generic_credentials = config_boolean(
+            ctx.get("report_generic_credentials", False), "report_generic_credentials"
+        )
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
@@ -1650,7 +1810,8 @@ class FilesystemConnector(BaseConnector):
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         scan = _ScanState(root, self._scan_label(root))
         self._walk(scan)
-        yield from self._emit_findings(scan)
+        for finding in self._emit_findings(scan):
+            yield _with_agent_profile(finding)
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -2135,9 +2296,11 @@ class FilesystemConnector(BaseConnector):
             self._scan_config(scan, file, content_text)
         if not is_nonexecutable and not file.is_mcp:
             variables = self.index.match_envs_in_text(content_text)
-            for m in variables:
-                self._record_content(file, m, self._file_excerpt(file, m.line))
-            for m in self.index.match_domains_in_text(content_text):
+            hosts = self.index.match_domains_in_text(content_text)
+            mentions = _Mentions(file, content_text) if variables or hosts else None
+            for m in [*variables, *hosts]:
+                if mentions is not None and mentions.mention(m):
+                    m.extra["mention"] = True
                 self._record_content(file, m, self._file_excerpt(file, m.line))
             # A deployment or CI document is configuration however many products it names.
             parsed = None if file.structure is _NO_STRUCTURE else file.structure
@@ -2459,11 +2622,22 @@ class FilesystemConnector(BaseConnector):
         # manifest inside a reported project describes that project's agent
         # and is folded into its finding instead of counting it twice.
         project_findings: dict[str, Finding] = {}
-        yield from self._emit_projects(scan, project_findings)
+        # Projects with any AI finding: only there is a credential that a
+        # generic pattern matched part of the AI inventory.
+        ai_projects: set[str] = set()
+        for finding in self._emit_projects(scan, project_findings):
+            ai_projects.add(self._owning_project(scan, finding.metadata.get("path", ".")))
+            yield finding
         for rel, servers in scan.mcp_files:
             with self._isolated(rel, "MCP analysis"), self.index.scan_budget(seconds=self.scan_timeout):
+                ai_projects.add(self._owning_project(scan, rel))
                 yield self._mcp_finding(label, root, rel, servers)
-        yield from self._emit_manifests(scan, project_findings)
+        for finding in self._emit_manifests(scan, project_findings):
+            ai_projects.add(self._owning_project(scan, finding.metadata.get("path", ".")))
+            yield finding
+        ai_projects.update(project_findings)
+        for rel in [*scan.workflow_files, *scan.infra_files]:
+            ai_projects.add(self._owning_project(scan, rel))
         yield from project_findings.values()
         for rel, hits in scan.workflow_files.items():
             with self._isolated(rel, "workflow analysis"):
@@ -2481,9 +2655,30 @@ class FilesystemConnector(BaseConnector):
                 )
         for rel, hits in scan.secret_hits.items():
             with self._isolated(rel, "credential analysis"):
+                if (
+                    not self.report_generic_credentials
+                    and all(m.signature_id == GENERIC_CREDENTIAL for m, _ in hits)
+                    and self._owning_project(scan, rel) not in ai_projects
+                ):
+                    # A password or token that only the generic pattern matched,
+                    # with no AI use in its project, is not AI inventory.
+                    continue
                 f = self._secret_finding(label, root, rel, hits)
                 if f:
                     yield f
+
+    @staticmethod
+    def _owning_project(scan: _ScanState, rel: str) -> str:
+        """The deepest project root that is ``rel`` or holds it."""
+        owner, depth = ".", 0
+        for project_root in scan.projects:
+            if (
+                project_root != "."
+                and (rel == project_root or rel.startswith(project_root + "/"))
+                and len(project_root) > depth
+            ):
+                owner, depth = project_root, len(project_root)
+        return owner
 
     def _emit_projects(self, scan: _ScanState, project_findings: dict[str, Finding]) -> Iterator[Finding]:
         """Yield coding-agent findings and hold each project finding in ``project_findings``."""
@@ -2892,6 +3087,8 @@ class FilesystemConnector(BaseConnector):
             and not reported
             and self._anchored(self._project_observations(proj, frozenset()), covered_files)
         )
+        if not reported and not discounted and self._anchored(observations, covered_files, mentions=True):
+            self._note_mentions(label, proj, observations)
         for sig_id, files in proj.coding_agent_files.items():
             # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
             # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.
@@ -2911,18 +3108,35 @@ class FilesystemConnector(BaseConnector):
             self._note_discounted_catalogs(label, proj, catalogs)
 
     @staticmethod
-    def _anchored(observations: list[_Observation], covered_files: frozenset[str]) -> bool:
+    def _anchored(
+        observations: list[_Observation], covered_files: frozenset[str], *, mentions: bool = False
+    ) -> bool:
         """Whether ``observations`` establish a project finding.
 
         Anchors establish LLM / agent technology on their own. A credential
         alone is already a SECRET finding, evidence that an MCP, manifest,
-        workflow or IaC finding already reports is not a project anchor, and
-        a vendor-neutral heuristic alone (a retry loop, subprocess.run)
-        describes ordinary automation.
+        workflow or IaC finding already reports is not a project anchor, a
+        vendor-neutral heuristic alone (a retry loop, subprocess.run)
+        describes ordinary automation, and a product named in data or prose
+        (see ``_Mentions``) is not used there. ``mentions`` counts those too.
         """
         return any(
-            m.signature.category != "heuristic" and rel not in covered_files and m.signal.type != "secret"
+            m.signature.category != "heuristic"
+            and rel not in covered_files
+            and m.signal.type != "secret"
+            and (mentions or not m.extra.get("mention"))
             for m, rel, _ in observations
+        )
+
+    def _note_mentions(self, label: str, proj: _Project, observations: list[_Observation]) -> None:
+        """Name the data and prose files that only named AI products; a note, not a coverage gap."""
+        listed = sorted({rel for m, rel, _ in observations if m.extra.get("mention")})
+        names = ", ".join(listed[:5]) + (f" and {len(listed) - 5} more" if len(listed) > 5 else "")
+        where = "repository root" if proj.root == "." else proj.root
+        self.ctx.warn(
+            f"code.filesystem: {self._root_prefix(label)}{where}: AI products are only named in data or "
+            f"prose fields (a listing, a link, a description), not used: {names}; not reported as AI use",
+            incomplete=False,
         )
 
     def _note_discounted_catalogs(self, label: str, proj: _Project, catalogs: frozenset[str]) -> None:
@@ -2997,6 +3211,21 @@ class FilesystemConnector(BaseConnector):
         if evidence.test_only:
             f.add_tag("test-code-only")
         finalize(f, self.index)
+        if f.kind == Kind.FRAMEWORK_USAGE and "protocol.mcp" in f.frameworks:
+            if evidence.server_tools:
+                # Source that registers MCP tools implements an MCP server: it
+                # exposes them to whichever agent connects. A server is not an
+                # agent itself (see agent_indicators), so the kind says server.
+                f.kind = Kind.MCP_SERVER
+            elif any(
+                m.signature_id == "protocol.mcp"
+                and m.signal.type == "code"
+                and not evidence.in_tests(rel)
+                and _MCP_CLIENT_CALL.search(m.value)
+                for m, rel, _ in evidence.matches
+            ):
+                # A client that loads a server's tools for a model is an agent host.
+                f.metadata["mcp_client"] = True
         if evidence.env_only:
             cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
             f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
@@ -3261,6 +3490,13 @@ class FilesystemConnector(BaseConnector):
             if self.index.get(sid)
         ]
         where = "repository root" if proj.root == "." else proj.root
+        if f.kind == Kind.MCP_SERVER:
+            # The tool names keep one server's title apart from another's.
+            tools = f.metadata.get("mcp_tools") or []
+            listed = ", ".join(tools[:3]) + (", …" if len(tools) > 3 else "")
+            plural = "tool" if len(tools) == 1 else "tools"
+            protocol = ", ".join(names) or "Model Context Protocol"
+            return f"MCP server in {where}: {protocol} ({len(tools)} {plural}: {listed})"
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
         detail = ", ".join(names) or ", ".join(provs)
         if not detail:
@@ -3566,7 +3802,10 @@ class FilesystemConnector(BaseConnector):
         hits = list(unique.values())
         if not hits:
             return None
-        f = self._base(label, root, rel, Kind.SECRET, f"LLM provider credential in {rel}", "file")
+        # A generic assignment pattern names no provider: say what was found.
+        generic = all(m.signature_id == GENERIC_CREDENTIAL for m, _ in hits)
+        title = f"{'Hard-coded credential' if generic else 'LLM provider credential'} in {rel}"
+        f = self._base(label, root, rel, Kind.SECRET, title, "file")
         # Test, fixture and recorded-cassette paths follow the project test-code
         # policy: half weight and an explicit tag unless test code is included.
         # The credential is still reported: cassettes record real traffic, and a

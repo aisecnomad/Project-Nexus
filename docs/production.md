@@ -818,6 +818,35 @@ read. Re-scan before comparing completeness with earlier reports:
 
 Finding identity is unchanged by these fixes.
 
+The second batch changes how code findings are classified and which
+credentials are reported. Finding IDs do not change (identity v2 leaves kind
+and title out), but kinds, titles, scores and counts do:
+
+- **MCP server projects change kind.** Project source that registers MCP
+  tools was a `framework-usage` finding titled `LLM usage in …`; it is now an
+  `mcp-server` finding titled `MCP server in …`. The kind weighs more in the
+  risk score (15 instead of 5), the CycloneDX export lists it under
+  `services[]` instead of `components[]`, and `shadowscan inventory stubs`
+  writes a capability card for it under its default `--kinds`. Review
+  dashboards, policies and allowlists that select findings by kind or title.
+  `shadowscan diff` against an earlier report shows these findings as changed,
+  not as new.
+- **Agent classification fields.** Code findings carry `metadata.agent_type`
+  and `metadata.agentic` (and the CycloneDX properties `shadowscan:agent-type`
+  and `shadowscan:agentic`). Use `agentic` rather than a kind list to select
+  agents: an `agent-config` finding is agentic only when CI runs the coding
+  agent, and an `mcp-server` or `framework-usage` finding can be agentic.
+- **Generic credentials.** A credential that only the generic assignment
+  pattern matched is no longer reported in a project without AI findings, and
+  is titled `Hard-coded credential in …`. This is a credential-policy change:
+  set `report_generic_credentials: true` to keep reporting every one, for
+  example when a policy gate counts `secret` findings. Credentials in a
+  provider's format are unaffected.
+- **Mentions.** Products named only in data files, feeds or prose and link
+  fields no longer establish a project finding, so some projects disappear
+  from reports. The scan names the files in a note (a warning; the scan
+  stays complete).
+
 ### October 7 distribution rename and PyPI publication
 
 The distribution is renamed from `project-nexus-shadowscan` to

@@ -84,6 +84,7 @@ class GitLabConnector(RemoteRepositoryConnector):
         "default_excludes": "see code.filesystem (default true)",
         "strict_coverage": "see code.filesystem (default false)",
         "include_tests": "see code.filesystem (default false)",
+        "report_generic_credentials": "see code.filesystem (default false)",
         "use_git": (
             "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ "
             "(default false)"
@@ -272,6 +273,7 @@ class GitLabConnector(RemoteRepositoryConnector):
                 "use_git",
                 "strict_coverage",
                 "include_tests",
+                "report_generic_credentials",
             }
         }
 

@@ -31,7 +31,9 @@ index the scan used, custom packs included.
 ShadowScan's own judgements are `shadowscan:*` properties on each entry:
 heuristic risk level and score, confidence, likelihood, shadow status,
 registry match, capabilities, tags (one comma-separated `shadowscan:tags`),
-owner and first and last seen. They are not CycloneDX vulnerabilities or
+owner and first and last seen. Code findings also carry
+`shadowscan:agent-type` and `shadowscan:agentic` (`true` or `false`), the
+classification described in the [code connector guide](../connectors/code.md). They are not CycloneDX vulnerabilities or
 ratings: the risk score is a discovery heuristic, not a vulnerability
 severity (see [severity](../severity.md)).
 

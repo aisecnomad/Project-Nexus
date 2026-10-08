@@ -5,6 +5,41 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 8 benchmark remediation: classification and precision
+
+The benchmark's agent task needs to know what a finding describes, not only
+that it exists. Agents were reported under non-agent kinds (an MCP server as
+"LLM usage"), and coding-assistant instruction files counted as agents in 12
+repositories with no agent. Its false alarms were names in data files and
+generic credentials in repositories without AI use. Each change has a
+regression test.
+
+- Every code finding carries `metadata.agent_type` and `metadata.agentic`,
+  and the CycloneDX export carries both as `shadowscan:agent-type` and
+  `shadowscan:agentic`. Agentic: an agent framework or a hand-written tool
+  loop (`framework-agent`, `tool-loop`), an agent manifest or card, an MCP
+  server or client configuration, MCP client source outside tests
+  (`mcp-client`), a coding agent that CI runs (`ci-agent`), an agent
+  workflow and agent infrastructure. Not agentic: a coding assistant's
+  instructions and settings (`coding-assistant-config`), plain model calls
+  (`llm-integration`) and credentials. The kind is unchanged.
+- Project source that registers MCP tools is reported with kind
+  `mcp-server` instead of `framework-usage`, titled `MCP server in
+  <project>: <protocol> (<n> tools: …)`. An agent framework in the project
+  still makes it an `agent`.
+- A domain or environment-variable name in a CSV, TSV, HTML, SVG or feed
+  file, or under a prose or link key (`description`, `summary`, `homepage`,
+  `url`, …) of a JSON, YAML or TOML file, is a mention: it supports a project
+  finding but cannot establish one. A URL that calls an API is configuration
+  wherever it is. A project with mentions only gets a note (a warning that
+  does not make the scan incomplete).
+- A credential that only the generic assignment pattern matched is titled
+  `Hard-coded credential in <file>` instead of `LLM provider credential`, and
+  is reported only in a project that has another AI finding. The new
+  `report_generic_credentials` option (code.filesystem, code.github,
+  code.gitlab) reports it everywhere, as before. Credentials with a provider
+  format are reported wherever they are.
+
 ### October 8 benchmark remediation: lexing and configuration parsing
 
 The real-world benchmark marked 64 of 183 ShadowScan scans incomplete. Most

@@ -115,7 +115,14 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "cloud.gcp": frozenset({"allow_instance_credentials"}),
     "cloud.oci": frozenset({"allow_instance_credentials"}),
     "code.filesystem": frozenset(
-        {"default_excludes", "include_tests", "scan_secrets", "strict_coverage", "use_git"}
+        {
+            "default_excludes",
+            "include_tests",
+            "report_generic_credentials",
+            "scan_secrets",
+            "strict_coverage",
+            "use_git",
+        }
     ),
     "code.github": frozenset(
         {
@@ -123,6 +130,7 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
             "include_archived",
             "include_forks",
             "include_tests",
+            "report_generic_credentials",
             "scan_secrets",
             "strict_coverage",
             "use_git",
@@ -133,6 +141,7 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
             "default_excludes",
             "include_archived",
             "include_tests",
+            "report_generic_credentials",
             "scan_secrets",
             "strict_coverage",
             "use_git",

@@ -31,6 +31,7 @@ Offline input: n/a (path is the input).
 | `max_ast_nodes` | Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger file keeps its lexical evidence and is reported as partially analyzed: a warning under test paths, an error elsewhere |
 | `scan_timeout` | matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan\_timeout when higher |
 | `scan_secrets` | detect provider credentials (default true) |
+| `report_generic_credentials` | report credentials that only the generic assignment pattern matched (no provider prefix) in every project; by default they are reported only in projects with other AI findings (default false) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
@@ -65,6 +66,7 @@ Offline input: directory of cloned repositories.
 | `default_excludes` | see code.filesystem (default true) |
 | `strict_coverage` | see code.filesystem (default false) |
 | `include_tests` | see code.filesystem (default false) |
+| `report_generic_credentials` | see code.filesystem (default false) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
@@ -100,6 +102,7 @@ Offline input: directory of cloned projects.
 | `default_excludes` | see code.filesystem (default true) |
 | `strict_coverage` | see code.filesystem (default false) |
 | `include_tests` | see code.filesystem (default false) |
+| `report_generic_credentials` | see code.filesystem (default false) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |

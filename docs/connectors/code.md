@@ -81,6 +81,49 @@ evidence, therefore yields no finding; whenever a project's only evidence is in
 catalogs, the scan names those files in a note (a warning that does not make the
 scan incomplete) so the discount is never silent.
 
+A product named in data or prose is not used there either, whatever the count.
+A domain or environment-variable name in a tabular, markup or feed file (CSV,
+TSV, HTML, SVG, an RSS or Atom feed), or under a prose or link key of a JSON,
+YAML or TOML file (`description`, `summary`, `title`, `homepage`, `url`,
+`docs`, `logo`, …), is a *mention*: a market map, a crawler list, an app
+catalogue's blurb or a package's homepage. A mention is kept as evidence of a
+project that has AI findings, but cannot establish one. A URL that calls an
+API (an `api.`, `gateway.` or `inference.` host, or a path such as `/v1`,
+`/api`, `/chat/completions` or `/mcp`) is configuration wherever it appears,
+and so is any other key: `endpoint`, `base_url` and the like. When mentions are
+all that a project has, the scan names those files in a note (a warning that
+does not make the scan incomplete).
+
+Every code finding states what it describes for policy in
+`metadata.agent_type`, and whether that is agentic in `metadata.agentic`. The
+kind is unchanged; these fields summarise it:
+
+| `agent_type` | Kind | Agentic | Meaning |
+|---|---|---|---|
+| `framework-agent` | `agent` | yes | a project whose agent framework constructs an agent |
+| `tool-loop` | `agent` | yes | an agent without an agent framework: the program's own loop dispatches the tools a model selects |
+| `agent-definition` | `agent` | yes | an agent manifest or card (A2A, M365, CrewAI, LangGraph) |
+| `mcp-server` | `mcp-server` | yes | source that registers MCP tools for whichever agent connects |
+| `mcp-client-config` | `mcp-server` | yes | an MCP client configuration that hands servers' tools to a model |
+| `mcp-client` | `framework-usage` | yes | source outside tests that loads MCP servers' tools for a model (`MultiServerMCPClient`, `stdio_client`, `MCPServerStdio`, `McpToolset`, …) |
+| `ci-agent` | `agent-config` | yes | a coding agent that CI runs unattended (a workflow, `.gitlab-ci.yml`, `Jenkinsfile`, …) |
+| `coding-assistant-config` | `agent-config` | no | a coding assistant's instructions or settings (`CLAUDE.md`, `.cursorrules`, `AGENTS.md`) |
+| `ai-workflow` | `workflow` | if it has agent nodes or tool-use, autonomous or multi-agent capabilities | an exported low-code flow |
+| `agent-infrastructure` / `ai-infrastructure` | `infra` | agent resources only | IaC that declares an agent (Bedrock, Foundry, Vertex) or other AI resources |
+| `llm-integration` | `framework-usage` | no | model or SDK calls without an agent |
+| `credential` | `secret` | no | a hard-coded credential |
+
+Project source that registers MCP tools is reported with kind `mcp-server`
+and the title `MCP server in <project>: <protocol> (<n> tools: a, b, c, …)`.
+A server is not an agent itself; an agent framework in the same project still
+makes it an `agent`.
+
+A credential with a provider-specific format is reported wherever it is. One
+that only the generic assignment pattern matched (`DB_PASSWORD = "…"`, no
+provider prefix) is titled `Hard-coded credential in <file>`, and is reported
+only in a project with another AI finding: elsewhere it is not AI inventory.
+`report_generic_credentials: true` reports it in every project.
+
 Ordinary Spring `ChatClient` and LangChain4j `AiServices` construction, and
 standalone Java tool declarations, remain framework usage. Recognized explicit
 agent factories and supported concrete tool registration can establish agents.
@@ -150,7 +193,7 @@ metadata path. No submodule is initialized or fetched; see the detailed
 [coverage policy](../scanning.md#coverage-policy) for scope and limitations.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
-`max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
+`max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `report_generic_credentials`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 `max_entries` defaults to 1,000,000 filesystem entries inspected during

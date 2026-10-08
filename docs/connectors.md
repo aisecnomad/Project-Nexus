@@ -220,6 +220,17 @@ A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
+Every code finding carries `metadata.agent_type` (`framework-agent`,
+`tool-loop`, `mcp-server`, `mcp-client`, `ci-agent`,
+`coding-assistant-config`, `llm-integration`, …) and `metadata.agentic`; a
+coding assistant's instruction files are not agentic, a coding agent run by
+CI is. Project source that registers MCP tools has kind `mcp-server`. A
+product named only in data or prose (a CSV, a feed, a `description` or
+`homepage` field) cannot establish AI use, and a credential that only the
+generic pattern matched is reported only in projects with AI findings unless
+`report_generic_credentials` is set. See the
+[code connector guide](connectors/code.md).
+
 `package.json` npm aliases (`"runtime": "npm:@langchain/langgraph@^1"`) are
 attributed to the target package, not the local alias name. Malformed alias
 targets mark coverage incomplete while valid neighboring dependencies remain
@@ -289,7 +300,7 @@ makes the scan incomplete.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
-`strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
+`report_generic_credentials`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
 checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence

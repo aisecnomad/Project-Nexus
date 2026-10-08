@@ -116,9 +116,11 @@ def test_generic_inline_credential_has_file_line_identity_and_is_redacted(tmp_pa
     findings = _scan(
         tmp_path,
         run_connector,
-        {"credentials.env": f"comment=example\nCUSTOM_API_KEY={secret}\n"},
+        # A generic credential is AI inventory only in a project with AI use.
+        {"credentials.env": f"comment=example\nCUSTOM_API_KEY={secret}\n", "requirements.txt": "openai\n"},
     )
     finding = next(f for f in findings if f.kind.value == "secret")
+    assert finding.title == "Hard-coded credential in credentials.env"
     serialized = json.dumps(finding.to_dict())
     assert finding.resource_type == "file"
     assert finding.identity_schema == "shadowscan.finding-identity/v2"
