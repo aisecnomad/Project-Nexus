@@ -98,6 +98,9 @@ tool root is laid out by `install_tools.sh` plus `venvs/radar` (PyPI
 Scored results live in
 [`tools/benchmark/results-realworld/`](../../tools/benchmark/results-realworld/)
 with the rendered [`REPORT.md`](../../tools/benchmark/results-realworld/REPORT.md).
+A post-fix rerun of the ShadowScan rows, after the changes that run drove,
+is in [`results-realworld-post-fixes/`](../../tools/benchmark/results-realworld-post-fixes/README.md)
+(same author, same corpus: a regression check, not independent evidence).
 
 ## Limits
 
