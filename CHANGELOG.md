@@ -3,6 +3,23 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
+## Unreleased
+
+### Shadow AI agent discovery benchmark
+
+- Add `tools/discovery_benchmark/`, a harness that runs ShadowScan's
+  `code.filesystem` connector and other open-source code-surface discovery
+  tools (Trusera ai-bom, NuGuard, AgentDiscover, Agentic Radar, SafeDep xbom
+  and vet, Geiger, cdxgen) against the same pinned public repositories as an
+  unprivileged user with no network or credentials, normalizes their output
+  into one tool-neutral fact taxonomy and scores precision and recall at
+  repository, category and value level.
+- Add `benchmarks/shadow-ai-discovery/` with the pinned corpus (positives,
+  controls and vocabulary near-misses), session-labeled expected facts with
+  evidence pointers, the run results and the report. The labels are
+  author-written evidence, not independent human review, and the benchmark
+  covers the code surface only.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

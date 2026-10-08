@@ -23,6 +23,17 @@ was labeled separately, as described below. None of them is a random or
 representative sample of repositories, so none estimates field precision,
 recall or calibration; see the held-out procedure below for that.
 
+
+## Real-world repository benchmark against other tools
+
+`benchmarks/shadow-ai-discovery/` is a separate, code-surface benchmark on
+pinned public repositories that compares ShadowScan's `code.filesystem`
+connector with other open-source discovery tools under one tool-neutral fact
+taxonomy. Its ground truth is session-labeled evidence with file pointers, not
+independent review, and it runs third-party tools as an unprivileged user with
+no network or credentials. See its README for the method and its REPORT.md for
+the measured numbers; neither replaces the regression corpora above.
+
 ## Run the reproducible corpora
 
 From the reviewed checkout, with the package dependencies installed:
