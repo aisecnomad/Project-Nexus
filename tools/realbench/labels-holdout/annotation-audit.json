@@ -1,0 +1,105 @@
+{
+ "method": "Each holdout annotator's tool calls (shell commands, file reads and searches) were scanned for paths of the other side's packets, labels or working directories, other batches' files on the same side, the first run's and the merged holdout labels, ShadowScan's source, the synthetic benchmark, the manifests (holdout, corpus, calibration, purposive), adapters, the packet builder, draw logs, tool installs, probes, the first-run corpus, results, quarantine and the coordinator's scratch directory, and for listings or searches of a shared parent directory, of all of /home/user/rwbench or of a system root. The label validator command, which reads the manifest internally, is exempt.",
+ "annotators": 24,
+ "per_batch": {
+  "A01": {
+   "tool_calls": 74,
+   "violations": 0
+  },
+  "A02": {
+   "tool_calls": 66,
+   "violations": 0
+  },
+  "A03": {
+   "tool_calls": 68,
+   "violations": 0
+  },
+  "A04": {
+   "tool_calls": 63,
+   "violations": 0
+  },
+  "A05": {
+   "tool_calls": 67,
+   "violations": 0
+  },
+  "A06": {
+   "tool_calls": 75,
+   "violations": 0
+  },
+  "A07": {
+   "tool_calls": 60,
+   "violations": 0
+  },
+  "A08": {
+   "tool_calls": 92,
+   "violations": 0
+  },
+  "A09": {
+   "tool_calls": 56,
+   "violations": 0
+  },
+  "A10": {
+   "tool_calls": 72,
+   "violations": 0
+  },
+  "B01": {
+   "tool_calls": 45,
+   "violations": 0
+  },
+  "B02": {
+   "tool_calls": 52,
+   "violations": 0
+  },
+  "B03": {
+   "tool_calls": 52,
+   "violations": 0
+  },
+  "B04": {
+   "tool_calls": 59,
+   "violations": 0
+  },
+  "B05": {
+   "tool_calls": 65,
+   "violations": 0
+  },
+  "B06": {
+   "tool_calls": 48,
+   "violations": 0
+  },
+  "B07": {
+   "tool_calls": 53,
+   "violations": 0
+  },
+  "B08": {
+   "tool_calls": 51,
+   "violations": 0
+  },
+  "B09": {
+   "tool_calls": 36,
+   "violations": 0
+  },
+  "B10": {
+   "tool_calls": 49,
+   "violations": 0
+  },
+  "B11": {
+   "tool_calls": 60,
+   "violations": 0
+  },
+  "B12": {
+   "tool_calls": 56,
+   "violations": 0
+  },
+  "B13": {
+   "tool_calls": 55,
+   "violations": 0
+  },
+  "B14": {
+   "tool_calls": 59,
+   "violations": 0
+  }
+ },
+ "tool_calls": 1433,
+ "violations": 0,
+ "agreement_note": "The two sides agreed on every label and assistant flag (140 of 140). Their evidence was found independently: the mean overlap of cited paths per repository is 0.63 (first run 0.61), and 13 repositories have identical evidence sets (first run 14 of 183). At the first run's disagreement rate (4 of 183), no disagreement in 140 has a probability of about 5%."
+}

@@ -525,3 +525,25 @@ MCC at least 0.75; T1 specificity at least 0.97.
    not read its `HEAD`. The step now rejects such a repository as `empty`,
    which §3.2's eligibility rule already requires, and the draw was restarted
    from scratch with the same seed. The first attempt produced no manifest.
+2. **Late start of seven B batches.** B08–B14 were started after the other
+   22 batches, when the omission was noticed, with the same prompt, inputs
+   and model as B01–B07. Their annotators could not see the earlier labels
+   (see the audit below).
+3. **No adjudication.** The two sides agreed on every label and assistant
+   flag (140 of 140, κ = 1.0), so the adjudication step had nothing to
+   decide. Agreement this complete is unusual but not implausible: at the
+   first run's disagreement rate (4 of 183) it happens about one time in
+   twenty. The sides found their evidence independently: per repository,
+   the cited paths overlap by 0.63 on average (first run 0.61), and 13
+   repositories have identical evidence sets (first run 14 of 183). The
+   audit (`labels-holdout/annotation-audit.json`) scanned all 1,433 tool
+   calls of the 24 annotator runs for access to the other side's packets,
+   labels or working directories, to other batches, to the scanner's
+   source, to tool output, to the manifests and to broad listings of shared
+   directories, and found none. Both annotators are Claude models, so a
+   shared blind spot would agree with itself; the post-run adjudication
+   (§9) still reviews every repository where a tool disagrees.
+
+Label summary at the holdout freeze: 67 `agent`, 28 `llm` and 45 `none`.
+10 of the `none` are assistant-only, which leaves 130 repositories in the
+primary analysis.
