@@ -12,6 +12,7 @@ from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.signatures import SignatureIndex, load_signatures
 from shadowscan.signatures.loader import VALID_CATEGORIES, VALID_SIGNAL_TYPES
+from shadowscan.signatures.matcher import language_for_path
 
 
 def _ids(matches) -> set[str]:
@@ -671,3 +672,273 @@ def test_genai_vertex_switch_is_not_agent_development_kit_evidence(index) -> Non
     assert "framework.google-adk" not in vertex
     assert "provider.google-vertex-ai" in vertex
     assert "framework.google-adk" in {m.signature_id for m in index.match_env("ADK_API_KEY")}
+
+
+# ------------------------------------------------------------ language gates
+def test_language_bound_framework_idioms_do_not_match_other_languages(index: SignatureIndex) -> None:
+    rust = "pub trait ToolCallback {\n    fn call(&self, input: &str) -> String;\n}\n"
+    assert "framework.spring-ai" not in _ids(index.match_code(rust, "rust"))
+    assert "framework.spring-ai" not in _ids(index.match_code(rust, "go"))
+    java = "import org.springframework.ai.tool.ToolCallback;\n\nToolCallback callback = provider.get();\n"
+    assert "framework.spring-ai" in _ids(index.match_code(java, "java"))
+    # Kotlin and Scala sources classify as java, so the gate admits them.
+    assert language_for_path("src/main/kotlin/Agent.kt") == "java"
+    assert "framework.spring-ai" in _ids(index.match_code("val cb: ToolCallback = provider.get()\n", "java"))
+    # The gate applies only when the caller knows the language: configuration
+    # projections and `signatures test` pass none and run every pattern.
+    assert "framework.spring-ai" in _ids(index.match_code(rust))
+    # Other single-language idioms.
+    csharp = "builder.Services.AddMcpServer().WithStdioServerTransport();\n"
+    assert "protocol.mcp" in _ids(index.match_code(csharp, "dotnet"))
+    assert "protocol.mcp" not in _ids(index.match_code(csharp, "python"))
+    go = 's := server.NewMCPServer("demo", "1.0.0")\n'
+    assert "protocol.mcp" in _ids(index.match_code(go, "go"))
+    assert "protocol.mcp" not in _ids(index.match_code(go, "javascript"))
+    kernel = "[KernelFunction]\npublic string Lookup(string id) => id;\n"
+    assert "framework.semantic-kernel" in _ids(index.match_code(kernel, "dotnet"))
+    assert "framework.semantic-kernel" not in _ids(index.match_code(kernel, "python"))
+    assert "framework.semantic-kernel" in _ids(
+        index.match_code("@kernel_function\ndef lookup(): ...\n", "python")
+    )
+    assert "framework.rig" not in _ids(index.match_code("class AgentBuilder:\n    pass\n", "python"))
+    assert "framework.rig" in _ids(index.match_code("let agent = AgentBuilder::new(model);\n", "rust"))
+
+
+def test_kotlin_koog_framework_matches_through_the_java_language(index: SignatureIndex) -> None:
+    koog = index.get("framework.koog")
+    assert koog is not None and koog.agent_indicator and "tool-use" in koog.capabilities
+    for name in ("ai.koog:koog-agents", "ai.koog:agents-core", "ai.koog:prompt-executor-openai-client"):
+        [match] = index.match_dependency("maven", name)
+        assert match.signature_id == "framework.koog", name
+    statement = "import ai.koog.agents.core.agent.AIAgent\n"
+    assert _ids(index.match_imports(statement, language_for_path("Agent.kt"))) == {"framework.koog"}
+    assert "framework.koog" not in _ids(index.match_imports(statement, "python"))
+
+
+# ------------------------------------------------------- MCP server / client
+def test_mcp_server_idioms_carry_the_mcp_server_capability(index: SignatureIndex) -> None:
+    servers = [
+        ("python", 'mcp = FastMCP("demo")\n'),
+        ("python", 'server = mcp.server.Server("demo")\n'),
+        ("python", "@mcp.tool()\ndef add(a: int, b: int) -> int:\n    return a + b\n"),
+        ("python", "async with stdio_server() as (read, write):\n    pass\n"),
+        ("python", "mcp.run(transport='stdio')\n"),
+        ("javascript", 'const server = new McpServer({ name: "demo", version: "1.0.0" });\n'),
+        ("javascript", "const transport = new StdioServerTransport();\n"),
+        ("javascript", 'server.registerTool("add", { description: "x" }, handler);\n'),
+        ("go", 's := server.NewMCPServer("demo", "1.0.0")\n'),
+        ("go", 'srv := mcp.NewServer(&mcp.Implementation{Name: "demo"}, nil)\n'),
+        ("dotnet", "builder.Services.AddMcpServer().WithStdioServerTransport();\n"),
+        ("dotnet", '[McpServerTool, Description("Adds two numbers")]\n'),
+        ("dotnet", "var server = McpServer.Create(transport, options);\n"),
+        ("java", "McpSyncServer server = McpServer.sync(transport).build();\n"),
+        ("java", "McpAsyncServer server = McpServer.async(transport).build();\n"),
+        ("rust", "impl ServerHandler for Counter {\n"),
+    ]
+    for language, text in servers:
+        matches = [m for m in index.match_code(text, language) if m.signature_id == "protocol.mcp"]
+        assert matches, (language, text)
+        assert all("mcp-server" in m.capabilities() for m in matches), (language, text)
+        assert any(not m.signal.ambiguous and m.weight == 0.9 for m in matches), (language, text)
+    # Client idioms only consume servers: no capability beyond the signature's tool-use.
+    client = (
+        "async with stdio_client(params) as (read, write):\n"
+        "    async with ClientSession(read, write) as session:\n"
+        "        await session.initialize()\n"
+        "tools = MultiServerMCPClient(servers)\n"
+    )
+    mcp = [m for m in index.match_code(client, "python") if m.signature_id == "protocol.mcp"]
+    assert mcp and not any("mcp-server" in m.capabilities() for m in mcp)
+    assert all(m.capabilities() == ["tool-use"] for m in mcp)
+
+
+def test_bare_server_class_is_ambiguous_mcp_server_evidence(index: SignatureIndex) -> None:
+    # The low-level SDK class shares its name with every HTTP server class, so
+    # the pattern is ambiguous: the code connector counts it only with an MCP
+    # import, dependency or specific code match in the same project.
+    for text, language in (
+        ('server = Server("demo")\n', "python"),
+        ('const server = new Server({ name: "demo" }, {});\n', "javascript"),
+    ):
+        matches = [m for m in index.match_code(text, language) if m.signature_id == "protocol.mcp"]
+        assert matches, text
+        assert all(
+            m.signal.ambiguous and m.weight == 0.6 and "mcp-server" in m.capabilities() for m in matches
+        )
+    # Other servers never match the MCP pattern at all.
+    for text in (
+        "httpd = http.server.HTTPServer(('', 8000), Handler)\n",
+        "server = HTTPServer(addr, Handler)\n",
+        "const app = new WebSocketServer({ port: 8080 });\n",
+        "class McpServer(Server):\n    pass\n",
+    ):
+        assert not [m for m in index.match_code(text, "python") if m.signature_id == "protocol.mcp"], text
+    signature = index.get("protocol.mcp")
+    assert signature is not None
+    # Every signature with an ambiguous signal also declares library evidence.
+    assert any(s.type in {"import", "dependency"} for s in signature.signals)
+
+
+# ---------------------------------------------------- OpenAI-compatible shape
+def test_bare_openai_request_shape_is_ambiguous_without_the_sdk(index: SignatureIndex) -> None:
+    text = 'response = client.chat.completions.create(model="m", messages=[])\n'
+    openai = [m for m in index.match_code(text, "python") if m.signature_id == "provider.openai"]
+    assert openai and all(m.signal.ambiguous for m in openai)
+    responses = [
+        m
+        for m in index.match_code("client.responses.create(input=x)\n", "python")
+        if m.signature_id == "provider.openai"
+    ]
+    assert responses and all(m.signal.ambiguous for m in responses)
+    # The Assistants shapes are OpenAI's alone and stay unambiguous.
+    assistants = [
+        m
+        for m in index.match_code("client.beta.assistants.create(model='m')\n", "python")
+        if m.signature_id == "provider.openai"
+    ]
+    assert assistants and not any(m.signal.ambiguous for m in assistants)
+    # provider.openai-compatible reports the same shape at low weight, and only
+    # next to a base-URL override of its own: the shape is ambiguous there too.
+    compatible = [
+        m for m in index.match_code(text, "python") if m.signature_id == "provider.openai-compatible"
+    ]
+    assert compatible and all(m.weight == 0.5 and m.signal.ambiguous for m in compatible)
+
+
+def test_openai_client_with_a_base_url_is_openai_compatible_evidence(index: SignatureIndex) -> None:
+    constructed = 'client = OpenAI(\n    api_key=os.getenv("LLM_API_KEY"),\n    base_url=os.getenv("LLM_BASE_URL"),\n)\n'
+    overrides = [
+        m for m in index.match_code(constructed, "python") if m.signature_id == "provider.openai-compatible"
+    ]
+    # The override itself is specific evidence and stays unambiguous.
+    assert overrides and not any(m.signal.ambiguous for m in overrides)
+    assert "provider.openai-compatible" in _ids(
+        index.match_code("client = AsyncOpenAI(base_url=settings.llm_url, api_key=settings.key)\n", "python")
+    )
+    js = "const client = new OpenAI({ apiKey: process.env.KEY, baseURL: process.env.LLM_URL });\n"
+    assert "provider.openai-compatible" in _ids(index.match_code(js, "javascript"))
+    # The window closes at the constructor's closing parenthesis: a later
+    # assignment of the same name is not the client's base URL, and Azure's
+    # client is its own signature.
+    later = "client = OpenAI()\nx = 1\nbase_url = settings.llm_url\n"
+    assert "provider.openai-compatible" not in _ids(index.match_code(later, "python"))
+    azure = "client = AzureOpenAI(azure_endpoint=endpoint, api_key=key)\n"
+    assert "provider.openai-compatible" not in _ids(index.match_code(azure, "python"))
+
+
+# ------------------------------------------- Claude on Bedrock and Vertex AI
+def test_claude_platform_clients_attribute_the_platform(index: SignatureIndex) -> None:
+    bedrock = "from anthropic import AnthropicBedrock\n\nclient = AnthropicBedrock(aws_region='us-east-1')\n"
+    ids = _ids(index.match_imports(bedrock, "python") + index.match_code(bedrock, "python"))
+    assert {"provider.aws-bedrock", "provider.anthropic"} <= ids
+    assert _ids(index.match_code("client = AnthropicBedrock()\n", "python")) == {"provider.aws-bedrock"}
+    vertex = "from anthropic import AnthropicVertex\n\nclient = AnthropicVertex(region='us-east5', project_id='p')\n"
+    ids = _ids(index.match_imports(vertex, "python") + index.match_code(vertex, "python"))
+    assert {"provider.google-vertex-ai", "provider.anthropic"} <= ids
+    assert _ids(index.match_code("client = AnthropicVertex()\n", "python")) == {"provider.google-vertex-ai"}
+    js = 'import AnthropicBedrock from "@anthropic-ai/bedrock-sdk";\n'
+    assert {"provider.aws-bedrock", "provider.anthropic"} <= _ids(index.match_imports(js, "javascript"))
+    assert "provider.aws-bedrock" in _ids(index.match_dependency("npm", "@anthropic-ai/bedrock-sdk"))
+    assert "provider.google-vertex-ai" in _ids(index.match_dependency("npm", "@anthropic-ai/vertex-sdk"))
+    assert {"provider.anthropic", "provider.aws-bedrock"} <= _ids(index.match_env("CLAUDE_CODE_USE_BEDROCK"))
+    assert {"provider.anthropic", "provider.google-vertex-ai"} <= _ids(
+        index.match_env("CLAUDE_CODE_USE_VERTEX")
+    )
+    assert _ids(index.match_env("AWS_BEARER_TOKEN_BEDROCK")) == {"provider.aws-bedrock"}
+    java = "BedrockRuntimeClient client = BedrockRuntimeClient.builder().region(Region.US_EAST_1).build();\n"
+    assert "provider.aws-bedrock" in _ids(index.match_code(java, "java"))
+    assert "provider.aws-bedrock" in _ids(
+        index.match_code('client = session.client("bedrock-runtime")\n', "python")
+    )
+    assert "provider.aws-bedrock" in _ids(index.match_dependency("cargo", "aws-sdk-bedrockruntime"))
+
+
+# ---------------------------------------------------- JVM and long-tail SDKs
+def test_jvm_integration_modules_attribute_framework_and_provider(index: SignatureIndex) -> None:
+    dependencies = {
+        ("maven", "dev.langchain4j:langchain4j-anthropic"): {"framework.langchain4j", "provider.anthropic"},
+        ("maven", "dev.langchain4j:langchain4j-open-ai"): {"framework.langchain4j", "provider.openai"},
+        ("maven", "dev.langchain4j:langchain4j-azure-open-ai"): {
+            "framework.langchain4j",
+            "provider.azure-openai",
+        },
+        ("maven", "dev.langchain4j:langchain4j-bedrock"): {"framework.langchain4j", "provider.aws-bedrock"},
+        ("maven", "dev.langchain4j:langchain4j-vertex-ai-gemini"): {
+            "framework.langchain4j",
+            "provider.google-vertex-ai",
+        },
+        ("maven", "dev.langchain4j:langchain4j-google-ai-gemini"): {
+            "framework.langchain4j",
+            "provider.google-gemini",
+        },
+        ("maven", "dev.langchain4j:langchain4j-cohere"): {"framework.langchain4j", "provider.cohere"},
+        ("maven", "dev.langchain4j:langchain4j-hugging-face"): {
+            "framework.langchain4j",
+            "provider.huggingface",
+        },
+        ("maven", "dev.langchain4j:langchain4j-ollama"): {"framework.langchain4j", "provider.ollama"},
+        ("maven", "dev.langchain4j:langchain4j-mistral-ai"): {"framework.langchain4j", "provider.mistral"},
+        ("maven", "dev.langchain4j:langchain4j-voyage-ai"): {"framework.langchain4j", "provider.voyage-ai"},
+        ("maven", "dev.langchain4j:langchain4j-mcp"): {"framework.langchain4j", "protocol.mcp"},
+        ("maven", "org.springframework.ai:spring-ai-starter-model-anthropic"): {
+            "framework.spring-ai",
+            "provider.anthropic",
+        },
+        ("maven", "org.springframework.ai:spring-ai-starter-model-bedrock-converse"): {
+            "framework.spring-ai",
+            "provider.aws-bedrock",
+        },
+        ("maven", "org.springframework.ai:spring-ai-starter-model-vertex-ai-gemini"): {
+            "framework.spring-ai",
+            "provider.google-vertex-ai",
+        },
+        ("maven", "org.springframework.ai:spring-ai-ollama"): {"framework.spring-ai", "provider.ollama"},
+        ("maven", "org.springframework.ai:spring-ai-starter-mcp-server-webmvc"): {
+            "framework.spring-ai",
+            "protocol.mcp",
+        },
+        ("maven", "org.springframework.ai:spring-ai-mcp-annotations"): {
+            "framework.spring-ai",
+            "protocol.mcp",
+        },
+        ("nuget", "OllamaSharp"): {"provider.ollama"},
+        ("npm", "voyageai"): {"provider.voyage-ai"},
+        ("npm", "voyage-ai-provider"): {"provider.voyage-ai"},
+        ("npm", "@xenova/transformers"): {"provider.huggingface"},
+    }
+    for (ecosystem, name), expected in dependencies.items():
+        assert _ids(index.match_dependency(ecosystem, name)) == expected, name
+    imports = {
+        ("import dev.langchain4j.model.ollama.OllamaChatModel;\n", "java"): {
+            "framework.langchain4j",
+            "provider.ollama",
+        },
+        ("import dev.langchain4j.model.anthropic.AnthropicChatModel;\n", "java"): {
+            "framework.langchain4j",
+            "provider.anthropic",
+        },
+        ("import dev.langchain4j.mcp.McpToolProvider;\n", "java"): {"framework.langchain4j", "protocol.mcp"},
+        ("import org.springframework.ai.bedrock.converse.BedrockProxyChatModel;\n", "java"): {
+            "framework.spring-ai",
+            "provider.aws-bedrock",
+        },
+        ("using OllamaSharp;\n", "dotnet"): {"provider.ollama"},
+        ("import voyageai\n", "python"): {"provider.voyage-ai"},
+        ('import { pipeline } from "@xenova/transformers";\n', "javascript"): {"provider.huggingface"},
+        ('import { HfInference } from "@huggingface/inference";\n', "javascript"): {"provider.huggingface"},
+        ('import { Stagehand } from "@browserbasehq/stagehand";\n', "javascript"): {"framework.stagehand"},
+        ('import Browserbase from "@browserbasehq/sdk";\n', "javascript"): {"platform.browserbase"},
+        ("from browserbase import Browserbase\n", "python"): {"platform.browserbase"},
+        ("from stagehand import Stagehand, StagehandConfig\n", "python"): {"framework.stagehand"},
+    }
+    for (statement, language), expected in imports.items():
+        assert _ids(index.match_imports(statement, language)) == expected, statement
+    assert "provider.voyage-ai" in _ids(index.match_code("vo = voyageai.Client()\n", "python"))
+    assert "provider.ollama" in _ids(
+        index.match_code('OLLAMA = "http://host.docker.internal:11434"\n', "python")
+    )
+    stagehand = index.match_code('const stagehand = new Stagehand({ env: "LOCAL" });\n', "javascript")
+    assert _ids(stagehand) == {"framework.stagehand"}
+    assert "framework.stagehand" in _ids(
+        index.match_code("stagehand = Stagehand(StagehandConfig(env='LOCAL'))\n", "python")
+    )

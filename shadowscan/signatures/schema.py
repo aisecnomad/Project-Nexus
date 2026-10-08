@@ -82,6 +82,8 @@ LANGUAGES = frozenset(
 
 # Capability vocabulary scored by ``shadowscan.risk.CAPABILITY_WEIGHTS``. The
 # risk engine keys on these exact strings; anything else would never score.
+# ``mcp-server`` marks code that exposes tools to other agents over MCP, as
+# opposed to ``tool-use``, which marks code that calls tools itself.
 CAPABILITIES = frozenset(
     {
         "code-exec",
@@ -92,6 +94,7 @@ CAPABILITIES = frozenset(
         "multi-agent",
         "delegated-identity",
         "tool-use",
+        "mcp-server",
         "rag",
         "data-access",
     }

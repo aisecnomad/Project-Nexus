@@ -512,3 +512,40 @@ signatures:
       - type: name
         patterns: ['(?i)\bwatsonx orchestrate\b']
         weight: 0.8
+
+  # ------------------------------------------------------ hosted browsers
+  - id: platform.browserbase
+    name: Browserbase
+    category: platform
+    vendor: Browserbase
+    homepage: https://www.browserbase.com
+    description: Browserbase hosted headless browsers
+    # The hosted browser alone is infrastructure: the agent that drives it is
+    # framework.stagehand or another browser agent.
+    capabilities: [browsing]
+    agent_indicator: false
+    signals:
+      - type: dependency
+        ecosystem: npm
+        names: ["@browserbasehq/sdk"]
+        prefixes: ["@browserbasehq/"]
+        exclude_names: ["@browserbasehq/stagehand"]
+        weight: 0.9
+      - type: dependency
+        ecosystem: pypi
+        names: [browserbase]
+        weight: 0.9
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@browserbasehq/sdk["'']']
+        weight: 0.9
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+browserbase\b']
+        weight: 0.9
+      - type: env
+        names: [BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID]
+        weight: 0.7
+      - type: domain
+        values: [api.browserbase.com, connect.browserbase.com]
+        weight: 0.8

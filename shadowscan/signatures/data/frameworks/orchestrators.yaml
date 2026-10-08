@@ -373,7 +373,18 @@ signatures:
         patterns: ['^[^\S\r\n]*using\s+Microsoft\.SemanticKernel\b']
         weight: 0.9
       - type: code
-        patterns: ['\b(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)\s*\(', '@kernel_function\b', '\[KernelFunction(?:\]|\()', '\bFunctionChoiceBehavior\.(?:Auto|Required)\s*\(', '\bKernel\.CreateBuilder\s*\(', '\.Plugins\.AddFrom(?:Type|Object|Functions)\s*[<(]', '\bToolCallBehavior\.AutoInvokeKernelFunctions\b']
+        patterns: ['\b(?:ChatCompletionAgent|OpenAIAssistantAgent|AzureAIAgent|AgentGroupChat|BedrockAgent|CopilotStudioAgent)\s*\(', '\bFunctionChoiceBehavior\.(?:Auto|Required)\s*\(']
+        weight: 0.85
+        agent_indicator: true
+      - type: code
+        languages: [python]
+        patterns: ['@kernel_function\b']
+        weight: 0.85
+        agent_indicator: true
+      - type: code
+        # .NET attribute, builder and plugin registration idioms.
+        languages: [dotnet]
+        patterns: ['\[KernelFunction(?:\]|\()', '\bKernel\.CreateBuilder\s*\(', '\.Plugins\.AddFrom(?:Type|Object|Functions)\s*[<(]', '\bToolCallBehavior\.AutoInvokeKernelFunctions\b']
         weight: 0.85
         agent_indicator: true
 

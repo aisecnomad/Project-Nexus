@@ -94,6 +94,8 @@ include:
 | `tag:no-egress-policy` | AI workload namespace has no NetworkPolicy egress controls | 10 |
 | `capability:code-exec` | Can execute arbitrary code | 15 |
 | `capability:autonomous` | Operates without human approval | 10 |
+| `capability:tool-use` | Calls tools / functions | 5 |
+| `capability:mcp-server` | Exposes tools to other agents over MCP | 5 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
@@ -120,7 +122,8 @@ Posture and MCP-risk evidence has weight 0: it changes risk, not confidence.
 keys are checked, so a typo cannot silently change nothing: unknown groups,
 `kinds` and `governance` keys are rejected, `capabilities` keys must be one of
 the capability names (`code-exec`, `autonomous`, `saas-actions`, `data-access`,
-`browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`, `rag`),
+`browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`,
+`mcp-server`, `rag`),
 and `providers` keys must be the id of a provider signature in the loaded
 signature packs (for example `provider.deepseek`, or an id from your own pack).
 The error names the key and never echoes the value. `tags` is open-ended

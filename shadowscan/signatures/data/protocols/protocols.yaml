@@ -33,8 +33,8 @@ signatures:
         weight: 0.9
       - type: dependency
         ecosystem: maven
-        names: ["io.modelcontextprotocol.sdk:mcp", "io.modelcontextprotocol.sdk:mcp-spring-webmvc", "io.modelcontextprotocol.sdk:mcp-spring-webflux", "org.springframework.ai:spring-ai-starter-mcp-server", "org.springframework.ai:spring-ai-starter-mcp-client", "org.springframework.ai:spring-ai-mcp"]
-        prefixes: ["io.modelcontextprotocol"]
+        names: ["io.modelcontextprotocol.sdk:mcp", "io.modelcontextprotocol.sdk:mcp-spring-webmvc", "io.modelcontextprotocol.sdk:mcp-spring-webflux", "org.springframework.ai:spring-ai-starter-mcp-server", "org.springframework.ai:spring-ai-starter-mcp-client", "org.springframework.ai:spring-ai-mcp", "dev.langchain4j:langchain4j-mcp"]
+        prefixes: ["io.modelcontextprotocol", "org.springframework.ai:spring-ai-starter-mcp", "org.springframework.ai:spring-ai-mcp"]
         weight: 0.9
       - type: dependency
         ecosystem: nuget
@@ -59,14 +59,57 @@ signatures:
         weight: 0.9
       - type: import
         languages: [java]
-        patterns: ['^[^\S\r\n]*import\s+io\.modelcontextprotocol\.']
+        patterns: ['^[^\S\r\n]*import\s+io\.modelcontextprotocol\.', '^[^\S\r\n]*import\s+dev\.langchain4j\.mcp\.']
         weight: 0.9
       - type: import
         languages: [dotnet]
         patterns: ['^[^\S\r\n]*using\s+ModelContextProtocol\b']
         weight: 0.9
+      # Server idioms carry the mcp-server capability: the project exposes
+      # tools to other agents. Client idioms (below) only consume servers.
       - type: code
-        patterns: ['\bFastMCP\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bMcpServer\.Create\s*\(', '\bserver\.NewMCPServer\s*\(', '\[McpServerTool', '\bMultiServerMCPClient\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(', '\bmcp\.run\s*\(']
+        description: MCP server construction, transports and tool registration (Python, TypeScript)
+        patterns: ['\bFastMCP\s*\(', '\bmcp\.server\.Server\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bmcp\.run\s*\(']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP server construction (Go SDKs)
+        languages: [go]
+        patterns: ['\bserver\.NewMCPServer\s*\(', '\bmcp\.NewServer\s*\(']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP server construction (Java SDK)
+        languages: [java]
+        patterns: ['\bMcpServer\.(?:sync|async)\s*\(']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP server construction and tool attributes (.NET SDK)
+        languages: [dotnet]
+        patterns: ['\bMcpServer\.Create\s*\(', '\.AddMcpServer\s*\(', '\[McpServerTool']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP server handler (Rust rmcp)
+        languages: [rust]
+        patterns: ['\bimpl\s+ServerHandler\s+for\b']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        # Server( is the low-level class of the Python and TypeScript SDKs, and
+        # also the name of every HTTP server class. Counted only with other
+        # library evidence of this signature in the project; in Python and
+        # JavaScript the import binder also binds Server imported from
+        # mcp.server or @modelcontextprotocol/sdk/server.
+        description: Low-level MCP server class
+        ambiguous: true
+        patterns: ['\bServer\s*\(', '\bnew\s+Server\s*\(']
+        weight: 0.6
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP client sessions, transports and framework adapters
+        patterns: ['\bMultiServerMCPClient\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(']
         weight: 0.9
       - type: code
         # aiohttp.ClientSession is one of the most common classes in async Python.

@@ -130,7 +130,7 @@
     {
       "id": "spring-ai-tool-method",
       "family": "agent",
-      "description": "Spring AI ChatClient and tool annotation with no LangChain4j import",
+      "description": "Spring AI ChatClient and tool annotation with no LangChain4j import; the OpenAI starter attributes the model provider",
       "files": {
         "pom.xml": "<project><dependencies><dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-openai-spring-boot-starter</artifactId></dependency></dependencies></project>\n",
         "src/main/java/example/TicketAssistant.java": "package example;\nimport org.springframework.ai.chat.client.ChatClient;\nimport org.springframework.ai.tool.annotation.Tool;\nclass TicketAssistant {\n    private ChatClient client;\n    @Tool(description = \"Look up a ticket\")\n    public String findTicket(String ticket) { return ticket; }\n    String answer(String question) {\n        return client.prompt().user(question).tools(this).call().content();\n    }\n}\n"
@@ -145,6 +145,7 @@
           {
             "kind": "agent",
             "product_signature": "framework.spring-ai",
+            "provider_signature": "provider.openai",
             "capabilities": [
               "tool-use"
             ]
@@ -162,7 +163,9 @@
             "product_signatures": [
               "framework.spring-ai"
             ],
-            "provider_signatures": []
+            "provider_signatures": [
+              "provider.openai"
+            ]
           }
         ]
       }

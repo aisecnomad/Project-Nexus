@@ -18,7 +18,9 @@ signatures:
         patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.']
         weight: 0.9
       - type: code
-        # AI Services can be ordinary tool-free chat or RAG applications.
+        # AI Services can be ordinary tool-free chat or RAG applications. The
+        # qualified builder names are unique to LangChain4j, so they stay
+        # lexical in every language (the source-range tests probe with them).
         patterns: ['\bAiServices\.(?:builder|create)\s*\(', '\bAgenticServices\.']
         weight: 0.85
       - type: code
@@ -38,7 +40,9 @@ signatures:
         capabilities: [tool-use]
       - type: code
         # @Tool is shared by Spring AI. It identifies LangChain4j only when
-        # this project also has LangChain4j import/dependency evidence.
+        # this project also has LangChain4j import/dependency evidence, and
+        # only in Java/Kotlin sources: TypeScript decorators spell it the same.
+        languages: [java]
         patterns: ['@Tool\s*(?:\(|\n)']
         weight: 0.85
         ambiguous: true
@@ -59,16 +63,40 @@ signatures:
         patterns: ['^[^\S\r\n]*import\s+org\.springframework\.ai\.']
         weight: 0.9
       - type: code
+        # Java and Kotlin idioms only: ToolCallback is also an ordinary trait or
+        # interface name in Rust, Go and TypeScript projects.
+        languages: [java]
         patterns: ['\bChatClient\.(?:builder|create)\s*\(', '\bToolCallback\b', '@Tool\s*\(\s*(?:name|description)\s*=', '\bMethodToolCallbackProvider\b', '\bSyncMcpToolCallbackProvider\b']
         weight: 0.8
       - type: code
         # ChatClient and standalone @Tool declarations also serve ordinary
         # chat/tool-server applications. Require concrete inline registration
         # on the client builder before asserting an agent or tool capability.
+        languages: [java]
         patterns: ['\bChatClient\.builder\s*\(\s*[\w$.]{1,256}\s*\)\s*\.defaultTools\s*\(\s*new\s+(?!(?:java\.util\.)?(?:ArrayList|LinkedList|HashSet|LinkedHashSet|TreeSet|Vector|Stack)\s*\()(?!(?:java\.lang\.)?Object\s*\()[\w$.]{1,256}\s*\(\s*\)\s*\)\s*\.build\s*\(']
         weight: 0.85
         agent_indicator: true
         capabilities: [tool-use]
+
+  - id: framework.koog
+    name: Koog
+    category: framework
+    vendor: JetBrains
+    homepage: https://docs.koog.ai
+    description: JetBrains Koog agent framework (Kotlin)
+    capabilities: [tool-use]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: maven
+        names: ["ai.koog:koog-agents", "ai.koog:agents-core", "ai.koog:agents-features-a2a-server", "ai.koog:agents-features-a2a-client"]
+        prefixes: ["ai.koog"]
+        weight: 0.95
+      - type: import
+        # Kotlin sources (.kt, .kts) are classified as java by the matcher.
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+ai\.koog\.']
+        weight: 0.95
 
   - id: framework.rig
     name: Rig
@@ -88,6 +116,7 @@ signatures:
         patterns: ['^[^\S\r\n]*use\s+rig::']
         weight: 0.9
       - type: code
+        languages: [rust]
         patterns: ['\.agent\s*\(\s*"[^"]+"\s*\)', '\bAgentBuilder\b']
         weight: 0.6
         agent_indicator: true
@@ -109,6 +138,7 @@ signatures:
         patterns: ['"github\.com/tmc/langchaingo(?:/[^"]+)?"']
         weight: 0.9
       - type: code
+        languages: [go]
         patterns: ['\bagents\.NewExecutor\s*\(', '\bagents\.NewOneShotAgent\s*\(', '\bagents\.NewConversationalAgent\s*\(']
         weight: 0.9
         agent_indicator: true
@@ -185,6 +215,7 @@ signatures:
         patterns: ['^[^\S\r\n]*using\s+Microsoft\.Extensions\.AI\b']
         weight: 0.75
       - type: code
+        languages: [dotnet]
         patterns: ['\bUseFunctionInvocation\s*\(', '\bAIFunctionFactory\.Create\s*\(']
         weight: 0.8
         agent_indicator: true
@@ -307,6 +338,7 @@ signatures:
         patterns: ['from\s+["'']agents(?:/[a-z-]+)?["'']', 'from\s+["'']@cloudflare/agents']
         weight: 0.9
       - type: code
+        languages: [javascript]
         patterns: ['\bextends\s+(?:AIChatAgent|Agent|McpAgent)\b', '\brouteAgentRequest\s*\(', '\bgetAgentByName\s*\(']
         weight: 0.8
 
@@ -327,6 +359,7 @@ signatures:
         patterns: ['from\s+["'']@inngest/agent-kit']
         weight: 0.95
       - type: code
+        languages: [javascript]
         patterns: ['\bcreateAgent\s*\(\s*\{', '\bcreateNetwork\s*\(\s*\{']
         weight: 0.6
 
@@ -447,28 +480,33 @@ signatures:
         weight: 0.8
 
   - id: framework.stagehand
-    name: Stagehand / Browserbase
+    name: Stagehand
     category: framework
     vendor: Browserbase
-    description: AI browser automation SDK and hosted headless browsers.
+    description: AI browser automation agent SDK (act / extract / observe); the hosted browsers it drives are platform.browserbase.
     capabilities: [browsing]
     agent_indicator: true
     signals:
       - type: dependency
         ecosystem: npm
-        names: ["@browserbasehq/stagehand", "@browserbasehq/sdk"]
-        prefixes: ["@browserbasehq/"]
+        names: ["@browserbasehq/stagehand"]
         weight: 0.95
       - type: dependency
         ecosystem: pypi
-        names: [stagehand, browserbase, stagehand-py]
+        names: [stagehand, stagehand-py]
         weight: 0.9
-      - type: env
-        names: [BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID]
-        weight: 0.7
-      - type: domain
-        values: [api.browserbase.com, connect.browserbase.com]
-        weight: 0.8
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@browserbasehq/stagehand["'']']
+        weight: 0.95
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+stagehand\b']
+        weight: 0.9
+      - type: code
+        # Bound to the import in Python and JavaScript; lexical elsewhere.
+        patterns: ['\bnew\s+Stagehand\s*\(', '\bStagehand\s*\(\s*(?:env|config|model|StagehandConfig|\{)']
+        weight: 0.9
 
   - id: framework.openhands
     name: OpenHands (OpenDevin)

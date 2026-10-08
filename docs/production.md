@@ -795,6 +795,25 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 8 MCP server capability and model id attribution
+
+Re-scan code and compare risk scores before replacing a baseline or relying
+on a `--fail-on` threshold. Findings for projects that expose an MCP server
+(`FastMCP(`, `new McpServer(`, `server.NewMCPServer(`, `.AddMcpServer(`,
+`McpServer.sync(`, the server transports) now carry the `mcp-server`
+capability, which scores 5 risk points like `tool-use`, so their default risk
+rises by 5 without any repository change; a custom `risk_weights.capabilities`
+table may set `mcp-server` explicitly, and the default-weight digest pinned in
+the tests changed with it. Model-id attribution also moved: path-like strings
+such as `gpt-4-turbo-docs.md`, `command-line` or `claude-code-action` no
+longer attribute OpenAI, Cohere or Anthropic, LiteLLM-style routes
+(`bedrock/`, `vertex_ai/`, `openrouter/`, `ollama/`...) attribute the routed
+provider, `AnthropicBedrock(` and `AnthropicVertex(` attribute the platform
+instead of Anthropic, and `provider.openai-compatible` is reported only next
+to a `base_url` override, so provider lists and confidence may differ from an
+earlier candidate's report. Finding IDs are unchanged. These are detection
+corrections, not evidence of change in the scanned repositories.
+
 ### October 7 distribution rename and PyPI publication
 
 The distribution is renamed from `project-nexus-shadowscan` to

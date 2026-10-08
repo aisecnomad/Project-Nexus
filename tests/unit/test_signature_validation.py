@@ -253,6 +253,21 @@ def test_capability_vocabulary_matches_the_risk_engine():
     # risk.py scores capabilities by exact string; a signature capability the
     # engine does not know would silently never contribute to a score.
     assert set(CAPABILITY_WEIGHTS) == CAPABILITIES
+    # Exposing tools over MCP is scored like calling them.
+    assert "mcp-server" in CAPABILITIES
+    assert CAPABILITY_WEIGHTS["mcp-server"][0] == CAPABILITY_WEIGHTS["tool-use"][0]
+
+
+def test_mcp_server_capability_is_accepted_on_signals_and_signatures():
+    sig = _signature()
+    sig["signals"] = [{"type": "code", "patterns": [r"\bFastMCP\s*\("], "capabilities": ["mcp-server"]}]
+    assert signature_from_dict(sig).signals[0].capabilities == ["mcp-server"]
+    sig = _signature()
+    sig["capabilities"] = ["mcp-server"]
+    assert signature_from_dict(sig).capabilities == ["mcp-server"]
+    sig["capabilities"] = ["mcp_server"]
+    with pytest.raises(ValueError, match="unknown capability"):
+        signature_from_dict(sig)
 
 
 def test_language_vocabulary_matches_the_matcher_aliases():

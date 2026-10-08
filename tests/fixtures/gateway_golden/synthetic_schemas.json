@@ -2612,14 +2612,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -2784,14 +2784,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-3",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-3"
      }
     },
     {
@@ -2945,14 +2945,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o-mini-2024-07-18",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o-mini-2024-07-18"
      }
     },
     {
@@ -3177,14 +3177,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-3",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-3"
      }
     },
     {
@@ -3357,14 +3357,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-3",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-3"
      }
     },
     {
@@ -3522,14 +3522,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -3805,14 +3805,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -4002,14 +4002,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o-mini",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o-mini"
      }
     },
     {
@@ -4189,14 +4189,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o-mini",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o-mini"
      }
     },
     {
@@ -4341,14 +4341,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-3",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-3"
      }
     },
     {
@@ -5238,26 +5238,26 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o-mini",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o-mini"
      }
     },
     {
@@ -5459,14 +5459,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: text-embedding-",
+     "description": "model id matched OpenAI: text-embedding-3-small",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "text-embedding-"
+      "value": "text-embedding-3-small"
      }
     },
     {
@@ -5661,14 +5661,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4-0613",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4-0613"
      }
     },
     {
@@ -5858,14 +5858,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-sonnet",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-sonnet"
      }
     },
     {
@@ -6043,14 +6043,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-3",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-3"
      }
     },
     {
@@ -6230,14 +6230,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -6454,14 +6454,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-3",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-3"
      }
     },
     {
@@ -6652,14 +6652,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-sonnet",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-sonnet"
      }
     },
     {
@@ -7490,14 +7490,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -7660,14 +7660,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: text-embedding-",
+     "description": "model id matched OpenAI: text-embedding-3-large",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "text-embedding-"
+      "value": "text-embedding-3-large"
      }
     },
     {
@@ -7876,14 +7876,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -8529,14 +8529,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -8664,14 +8664,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {
@@ -8998,14 +8998,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o-prod",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o-prod"
      }
     },
     {
@@ -9154,14 +9154,14 @@
    "evidence": [
     {
      "signal": "model:provider.openai",
-     "description": "model id matched OpenAI: gpt-",
+     "description": "model id matched OpenAI: gpt-4o",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.openai",
      "attributes": {
       "category": "provider",
-      "value": "gpt-"
+      "value": "gpt-4o"
      }
     },
     {

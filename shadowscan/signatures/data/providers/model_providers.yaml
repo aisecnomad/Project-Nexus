@@ -82,8 +82,25 @@ signatures:
         languages: [dotnet]
         patterns: ['^[^\S\r\n]*using\s+OpenAI\b']
         weight: 0.7
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-open-ai", "org.springframework.ai:spring-ai-starter-model-openai", "org.springframework.ai:spring-ai-openai", "org.springframework.ai:spring-ai-openai-spring-boot-starter"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.openai\.', '^[^\S\r\n]*import\s+org\.springframework\.ai\.openai\.']
+        weight: 0.75
       - type: code
-        patterns: ['\bchat\.completions\.create\s*\(', '\bresponses\.create\s*\(', '\bclient\.beta\.assistants\.create\s*\(', '\bbeta\.threads\.runs\.create\s*\(']
+        patterns: ['\bclient\.beta\.assistants\.create\s*\(', '\bbeta\.threads\.runs\.create\s*\(']
+        weight: 0.7
+      - type: code
+        # Every OpenAI-compatible SDK, gateway and self-hosted server exposes
+        # the same request shape (see provider.openai-compatible), so the bare
+        # call counts only with an openai import, dependency or specific code
+        # match in the same project.
+        ambiguous: true
+        patterns: ['\bchat\.completions\.create\s*\(', '\bresponses\.create\s*\(']
         weight: 0.7
       - type: code
         patterns: ['\bassistants\.create\s*\(', '"type"\s*:\s*"code_interpreter"', '"type"\s*:\s*"file_search"', '"type"\s*:\s*"computer_use_preview"', '"type"\s*:\s*"web_search_preview"']
@@ -100,7 +117,15 @@ signatures:
         patterns: ['(?i)\bOpenAI/(?:Python|JS|NET|Go|Java|Ruby)', '(?i)openai-(?:python|node|go|java|ruby|dotnet)', '(?i)\bAsyncOpenAI\b']
         weight: 0.7
       - type: model
-        patterns: ['^(?:gpt-|chatgpt-|text-embedding-|codex-|tts-\d|(?:o1|o3|o4|dall-e|whisper|davinci|babbage|computer-use-preview)(?![A-Za-z0-9]))']
+        # Bare ids end with the id's own alphabet (letters, digits, dashes and
+        # dots between digits), so a file name such as gpt-4-turbo-docs.md or
+        # the word o1ne never matches. The gpt- family is not listed by
+        # generation: Azure's gpt-35-turbo, gpt-image-1, gpt-realtime and
+        # gpt-audio are OpenAI ids too, and an Ollama or OpenRouter tag or a
+        # gateway region pin may follow (gpt-oss:20b, gpt-5.4:free, o4-mini@eu).
+        # chatgpt- needs a digit or image- after it: chatgpt-token and
+        # chatgpt-plugin are not models. The openai/ prefix is the LiteLLM route.
+        patterns: ['^gpt-(?:[a-z0-9-]|\.\d)+(?:[:@][a-z0-9.-]+)?$', '^(?:chatgpt-(?:\d|image-)|text-embedding-(?:3|ada)|codex-|tts-\d)(?:[a-z0-9-]|\.\d)*(?:[:@][a-z0-9.-]+)?$', '^(?:o[134]|dall-e|whisper|davinci|babbage|computer-use-preview)(?:-[a-z0-9-]+)?(?:[:@][a-z0-9.-]+)?$', '^openai/(?:gpt-|chatgpt-|o[134](?![a-z])|text-embedding-|codex-|tts-|dall-e|whisper|davinci|babbage|computer-use|ft:)']
         weight: 0.8
       - type: secret
         # Only OpenAI-specific shapes: the project / service-account / admin
@@ -178,8 +203,20 @@ signatures:
         languages: [go]
         patterns: ['"github\.com/anthropics/anthropic-sdk-go']
         weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-anthropic", "org.springframework.ai:spring-ai-starter-model-anthropic", "org.springframework.ai:spring-ai-anthropic", "org.springframework.ai:spring-ai-anthropic-spring-boot-starter"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.anthropic\.', '^[^\S\r\n]*import\s+org\.springframework\.ai\.anthropic\.']
+        weight: 0.75
       - type: code
-        patterns: ['\bmessages\.create\s*\(\s*(?:model\s*=\s*)?["'']?claude', '\bAnthropic\s*\(\s*\)', '\bAnthropicBedrock\s*\(', '\bAnthropicVertex\s*\(', '\bclient\.beta\.messages\.']
+        # AnthropicBedrock( and AnthropicVertex( construct the Claude client of
+        # the cloud platform; provider.aws-bedrock and provider.google-vertex-ai
+        # claim them, and the Claude model id still attributes Anthropic.
+        patterns: ['\bmessages\.create\s*\(\s*(?:model\s*=\s*)?["'']?claude', '\bAnthropic\s*\(\s*\)', '\bclient\.beta\.messages\.']
         weight: 0.7
       - type: env
         names: [ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX, ANTHROPIC_ADMIN_KEY]
@@ -191,7 +228,10 @@ signatures:
         patterns: ['(?i)\bAnthropic/(?:Python|JS|Go|Java|Ruby)', '(?i)anthropic-sdk-(?:python|typescript|go|java)', '(?i)\bclaude-cli/', '(?i)\bclaude-code/']
         weight: 0.7
       - type: model
-        patterns: ['^claude-', 'anthropic\.claude-']
+        # anthropic.claude- stays unanchored on purpose: a Bedrock id such as
+        # us.anthropic.claude-3-5-sonnet-20241022-v2:0 is both Bedrock and
+        # Anthropic usage. anthropic/ is the LiteLLM route.
+        patterns: ['^claude-(?:[2-9]|opus|sonnet|haiku|instant|fable)', 'anthropic\.claude-', '^anthropic/claude-']
         weight: 0.8
       - type: secret
         patterns: ['\bsk-ant-(?:api|admin|oat)\d{2}-[A-Za-z0-9_-]{20,}\b']
@@ -265,8 +305,18 @@ signatures:
       - type: user_agent
         patterns: ['(?i)google-genai-sdk', '(?i)genai-(?:js|python|go)', '(?i)google-generativeai']
         weight: 0.7
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-google-ai-gemini"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.googleai\.']
+        weight: 0.75
       - type: model
-        patterns: ['^(?:gemini-|gemma-|imagen-|veo-|text-bison|chat-bison|textembedding-gecko|text-embedding-00|learnlm-)']
+        # gemini/ is the LiteLLM route for the AI Studio API.
+        patterns: ['^(?:gemini-|gemma-|imagen-|veo-|text-bison|chat-bison|textembedding-gecko|text-embedding-00|learnlm-)', '^gemini/(?:gemini|gemma|imagen|veo|learnlm|text-embedding)-']
         weight: 0.8
       - type: secret
         patterns: ['\bAIza[0-9A-Za-z_-]{35}\b']
@@ -328,9 +378,41 @@ signatures:
       - type: code
         patterns: ['\bvertexai\.init\s*\(', '\baiplatform\.init\s*\(', '\bvertexai\.generative_models\b', '\bVertexAI\s*\(\s*\{']
         weight: 0.7
+      - type: dependency
+        ecosystem: npm
+        names: ["@anthropic-ai/vertex-sdk"]
+        weight: 0.8
+        description: Claude on Vertex AI SDK
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-vertex-ai", "dev.langchain4j:langchain4j-vertex-ai-gemini", "org.springframework.ai:spring-ai-starter-model-vertex-ai-gemini", "org.springframework.ai:spring-ai-starter-model-vertex-ai-embedding", "org.springframework.ai:spring-ai-vertex-ai-gemini", "org.springframework.ai:spring-ai-vertex-ai-embedding"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.vertexai\.', '^[^\S\r\n]*import\s+org\.springframework\.ai\.vertexai\.']
+        weight: 0.75
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*from[^\S\r\n]+anthropic[^\S\r\n]+import\b[^\n]*?\bAnthropicVertex\b']
+        weight: 0.75
+        description: Claude on Vertex AI client
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@anthropic-ai/vertex-sdk["'']']
+        weight: 0.75
+        description: Claude on Vertex AI client
+      - type: code
+        patterns: ['\bAnthropicVertex\s*\(']
+        weight: 0.7
+        description: Claude on Vertex AI client
       - type: env
         names: [GOOGLE_GENAI_USE_VERTEXAI, VERTEXAI_PROJECT, VERTEXAI_LOCATION, VERTEX_AI_PROJECT, GOOGLE_VERTEX_PROJECT, GOOGLE_VERTEX_LOCATION]
         weight: 0.6
+      - type: env
+        names: [CLAUDE_CODE_USE_VERTEX]
+        weight: 0.5
+        description: Claude Code routed through Vertex AI
       - type: domain
         values: [aiplatform.googleapis.com, "re:^[a-z0-9-]+-aiplatform\\.googleapis\\.com$"]
         weight: 0.9
@@ -341,7 +423,9 @@ signatures:
         values: ["roles/aiplatform.user", "roles/aiplatform.admin", "roles/aiplatform.serviceAgent", "roles/aiplatform.expressUser", "roles/aiplatform.viewer", "aiplatform.endpoints.predict", "aiplatform.reasoningEngines.query", "https://www.googleapis.com/auth/cloud-platform"]
         weight: 0.6
       - type: model
-        patterns: ['^publishers/google/models/', '^projects/[^/]+/locations/[^/]+/(?:publishers|endpoints|models)/']
+        # vertex_ai/ is the LiteLLM route; the body is a lowercase id (dots
+        # only between digits), so vertex_ai/README does not match.
+        patterns: ['^publishers/google/models/', '^projects/[^/]+/locations/[^/]+/(?:publishers|endpoints|models)/', '^vertex_ai/[a-z](?:[a-z0-9/@_-]|\.\d)*$']
         weight: 0.8
 
   - id: provider.aws-bedrock
@@ -352,17 +436,36 @@ signatures:
     signals:
       - type: dependency
         ecosystem: npm
-        names: ["@langchain/aws", "@ai-sdk/amazon-bedrock"]
+        names: ["@langchain/aws", "@ai-sdk/amazon-bedrock", "@anthropic-ai/bedrock-sdk"]
         weight: 0.75
         description: Framework integration package for this provider
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-bedrock", "org.springframework.ai:spring-ai-starter-model-bedrock", "org.springframework.ai:spring-ai-starter-model-bedrock-converse", "org.springframework.ai:spring-ai-bedrock", "org.springframework.ai:spring-ai-bedrock-converse"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.bedrock\.', '^[^\S\r\n]*import\s+org\.springframework\.ai\.bedrock\.']
+        weight: 0.75
       - type: import
         languages: [python]
         patterns: ['^[^\S\r\n]*(?:from|import)\s+(?:langchain_aws|llama_index\.llms\.bedrock|llama_index\.llms\.bedrock_converse)\b']
         weight: 0.75
       - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*from[^\S\r\n]+anthropic[^\S\r\n]+import\b[^\n]*?\bAnthropicBedrock\b']
+        weight: 0.75
+        description: Claude on Bedrock client
+      - type: import
         languages: [javascript]
         patterns: ['from\s+["'']@?(?:langchain/aws|ai-sdk/amazon-bedrock)["'']']
         weight: 0.75
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@anthropic-ai/bedrock-sdk["'']']
+        weight: 0.75
+        description: Claude on Bedrock client
       - type: code
         description: n8n model node
         patterns: ['\bn8n-nodes-langchain\.(?:lmChatAwsBedrock)\b']
@@ -390,12 +493,33 @@ signatures:
         ecosystem: pypi
         names: [langchain-aws, llama-index-llms-bedrock, llama-index-llms-bedrock-converse, aws-bedrock-sdk]
         weight: 0.7
+      - type: dependency
+        ecosystem: cargo
+        names: [aws-sdk-bedrockruntime, aws-sdk-bedrock, aws-sdk-bedrockagentruntime, aws-sdk-bedrockagent]
+        weight: 0.85
       - type: code
         patterns: ['\.client\(\s*["'']bedrock-runtime["'']', '\.client\(\s*["'']bedrock["'']', '\bBedrockRuntimeClient\s*\(', '\bbedrockruntime\.New', '\binvoke_model(?:_with_response_stream)?\s*\(', '\bInvokeModelCommand\b', '\bConverseCommand\b', '\bclient\.converse(?:_stream)?\s*\(', '\bChatBedrock(?:Converse)?\s*\(']
         weight: 0.8
+      - type: code
+        patterns: ['\bAnthropicBedrock\s*\(']
+        weight: 0.7
+        description: Claude on Bedrock client
+      - type: code
+        # The runtime client class (Java, .NET, Go) and the service name passed
+        # to any AWS SDK client factory.
+        patterns: ['\bBedrockRuntime(?:Client|AsyncClient)?\b', '["'']bedrock-runtime["'']']
+        weight: 0.6
       - type: env
         names: [BEDROCK_MODEL_ID, AWS_BEDROCK_MODEL_ID, BEDROCK_REGION, AWS_REGION_BEDROCK]
         weight: 0.5
+      - type: env
+        names: [CLAUDE_CODE_USE_BEDROCK]
+        weight: 0.5
+        description: Claude Code routed through Bedrock
+      - type: env
+        names: [AWS_BEARER_TOKEN_BEDROCK]
+        weight: 0.6
+        description: Bedrock API key (bearer token)
       - type: domain
         values: ["re:^bedrock(?:-runtime|-agent-runtime|-agent|-agentcore|-data-automation-runtime)?(?:-fips)?\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^bedrock-mantle\\.[a-z0-9-]+\\.api\\.aws$"]
         weight: 0.9
@@ -406,7 +530,9 @@ signatures:
         values: ["bedrock:*", "bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:Converse", "bedrock:ConverseStream", "bedrock:Retrieve", "bedrock:RetrieveAndGenerate", "bedrock:GetFoundationModel", "bedrock:ListFoundationModels", "bedrock:CallWithBearerToken"]
         weight: 0.6
       - type: model
-        patterns: ['^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|stability|deepseek|writer|qwen|openai|twelvelabs)\.[a-z0-9.]+-[a-z0-9.-]+(?::\d+)?', '^arn:aws:bedrock:']
+        # bedrock/ is the LiteLLM route; it must carry a Bedrock id (vendor.model,
+        # an inference profile or an ARN), so bedrock/edition does not match.
+        patterns: ['^(?:us\.|eu\.|apac\.|global\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|stability|deepseek|writer|qwen|openai|twelvelabs)\.[a-z0-9.]+-[a-z0-9.-]+(?::\d+)?', '^arn:aws:bedrock:', '^bedrock/(?:(?:converse|invoke)/)?(?:arn:aws:bedrock:|(?:(?:us|eu|apac|global)\.)?(?:anthropic|amazon|meta|mistral|cohere|ai21|stability|deepseek|writer|qwen|openai|twelvelabs)\.)']
         weight: 0.85
       - type: user_agent
         # "Bedrock" alone also names Minecraft Bedrock clients: require the AWS
@@ -458,6 +584,15 @@ signatures:
         ecosystem: maven
         names: ["com.azure:azure-ai-openai", "com.azure:azure-ai-inference"]
         weight: 0.85
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-azure-open-ai", "org.springframework.ai:spring-ai-starter-model-azure-openai", "org.springframework.ai:spring-ai-azure-openai", "org.springframework.ai:spring-ai-azure-openai-spring-boot-starter"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.azure\.', '^[^\S\r\n]*import\s+org\.springframework\.ai\.azure\.openai\.']
+        weight: 0.75
       - type: dependency
         ecosystem: pypi
         names: [azure-ai-inference]
@@ -522,6 +657,15 @@ signatures:
         languages: [python]
         patterns: ['^[^\S\r\n]*(?:from|import)\s+mistralai\b']
         weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-mistral-ai", "org.springframework.ai:spring-ai-starter-model-mistral-ai", "org.springframework.ai:spring-ai-mistral-ai", "org.springframework.ai:spring-ai-mistral-ai-spring-boot-starter"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.mistralai\.', '^[^\S\r\n]*import\s+org\.springframework\.ai\.mistralai\.']
+        weight: 0.75
       - type: env
         names: [MISTRAL_API_KEY]
         weight: 0.6
@@ -529,7 +673,9 @@ signatures:
         values: [api.mistral.ai, codestral.mistral.ai]
         weight: 0.9
       - type: model
-        patterns: ['^(?:mistral-|mixtral-|codestral|ministral|pixtral|magistral|devstral|open-mistral|open-mixtral)']
+        # mistral/ is the LiteLLM route; it must carry a Mistral id, so a bare
+        # mistral/ path prefix does not match.
+        patterns: ['^(?:mistral-|mixtral-|codestral|ministral|pixtral|magistral|devstral|open-mistral|open-mixtral)', '^mistral/(?:open-)?(?:mistral|mixtral|codestral|ministral|pixtral|magistral|devstral)']
         weight: 0.8
 
   - id: provider.cohere
@@ -567,6 +713,15 @@ signatures:
         languages: [python]
         patterns: ['^[^\S\r\n]*(?:from|import)\s+cohere\b']
         weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-cohere"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.cohere\.']
+        weight: 0.75
       - type: env
         names: [COHERE_API_KEY, CO_API_KEY]
         weight: 0.6
@@ -574,7 +729,10 @@ signatures:
         values: [api.cohere.ai, api.cohere.com]
         weight: 0.9
       - type: model
-        patterns: ['^(?:command(?:-|$)|embed-(?:english|multilingual|v)|rerank-)']
+        # The command family is command, command-r*, command-a*, command-light*
+        # and command-nightly; the word command-line is not a model. cohere/ and
+        # cohere_chat/ are the LiteLLM routes.
+        patterns: ['^command(?:$|-(?:r|a|light|nightly)(?![a-z]))', '^embed-(?:english|multilingual|v)', '^rerank-', '^cohere(?:_chat)?/(?:command|embed-|rerank-)']
         weight: 0.8
 
   - id: provider.groq
@@ -622,6 +780,10 @@ signatures:
       - type: domain
         values: [api.groq.com]
         weight: 0.9
+      - type: model
+        patterns: ['^groq/[a-z0-9](?:[A-Za-z0-9/_@:-]|\.\d)*$']
+        weight: 0.6
+        description: LiteLLM route
       - type: secret
         patterns: ['\bgsk_[A-Za-z0-9]{40,}\b']
         weight: 0.9
@@ -664,6 +826,10 @@ signatures:
       - type: domain
         values: [api.together.xyz, api.together.ai]
         weight: 0.9
+      - type: model
+        patterns: ['^together_ai/[a-z0-9](?:[A-Za-z0-9/_@:-]|\.\d)*$']
+        weight: 0.6
+        description: LiteLLM route
       - type: secret
         patterns: ['\btgp_v1_[A-Za-z0-9_-]{30,}\b']
         weight: 0.85
@@ -731,6 +897,10 @@ signatures:
       - type: domain
         values: [openrouter.ai]
         weight: 0.9
+      - type: model
+        patterns: ['^openrouter/[a-z0-9](?:[A-Za-z0-9/_@:-]|\.\d)*$']
+        weight: 0.6
+        description: LiteLLM route
       - type: secret
         patterns: ['\bsk-or-v1-[a-f0-9]{64}\b']
         weight: 0.9
@@ -774,8 +944,27 @@ signatures:
         languages: [python]
         patterns: ['^[^\S\r\n]*(?:from|import)\s+ollama\b']
         weight: 0.8
+      - type: dependency
+        ecosystem: nuget
+        names: [OllamaSharp]
+        weight: 0.8
+      - type: import
+        languages: [dotnet]
+        patterns: ['^[^\S\r\n]*using\s+OllamaSharp\b']
+        weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-ollama", "org.springframework.ai:spring-ai-starter-model-ollama", "org.springframework.ai:spring-ai-ollama", "org.springframework.ai:spring-ai-ollama-spring-boot-starter"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.ollama\.', '^[^\S\r\n]*import\s+org\.springframework\.ai\.ollama\.']
+        weight: 0.75
       - type: code
-        patterns: ['\bollama\.(?:chat|generate)\s*\(', '\bChatOllama\s*\(', '\bOllamaLLM\s*\(', 'localhost:11434', '127\.0\.0\.1:11434']
+        # Port 11434 belongs to Ollama alone (the openai-compatible port rule
+        # does not list it), on every loopback and container-host spelling.
+        patterns: ['\bollama\.(?:chat|generate)\s*\(', '\bChatOllama\s*\(', '\bOllamaLLM\s*\(', 'localhost:11434', '127\.0\.0\.1:11434', 'host\.docker\.internal:11434', '0\.0\.0\.0:11434']
         weight: 0.7
       - type: env
         names: [OLLAMA_HOST, OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_API_BASE]
@@ -783,6 +972,10 @@ signatures:
       - type: domain
         values: ["re:.*:11434$"]
         weight: 0.8
+      - type: model
+        patterns: ['^ollama(?:_chat)?/[a-z0-9](?:[A-Za-z0-9/_@:-]|\.\d)*$']
+        weight: 0.6
+        description: LiteLLM route
       - type: image
         patterns: ['^ollama/ollama']
         weight: 0.9
@@ -833,13 +1026,31 @@ signatures:
         weight: 0.2
       - type: dependency
         ecosystem: npm
-        names: ["@huggingface/inference", "@huggingface/hub", "@huggingface/transformers"]
+        names: ["@huggingface/inference", "@huggingface/hub", "@huggingface/transformers", "@xenova/transformers"]
         prefixes: ["@huggingface/"]
+        weight: 0.6
+      - type: import
+        languages: [javascript]
+        patterns: ['from\s+["'']@(?:xenova|huggingface)/(?:transformers|inference|hub)["'']']
+        weight: 0.6
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-hugging-face"]
+        weight: 0.6
+        description: Framework integration package for this provider
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.huggingface\.']
         weight: 0.6
       - type: import
         languages: [python]
         patterns: ['^[^\S\r\n]*(?:from|import)\s+huggingface_hub\b']
         weight: 0.6
+      - type: model
+        # LiteLLM route: huggingface/<org>/<model>, where the org may be capitalised.
+        patterns: ['^huggingface/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9](?:[A-Za-z0-9/_@:-]|\.\d)*$']
+        weight: 0.6
+        description: LiteLLM route
       - type: code
         patterns: ['\bInferenceClient\s*\(', '\bHfInference\s*\(', '\bHuggingFaceEndpoint\s*\(']
         weight: 0.6
@@ -889,7 +1100,8 @@ signatures:
         values: [api.x.ai]
         weight: 0.9
       - type: model
-        patterns: ['^grok-']
+        # xai/ is the LiteLLM route; it must carry a Grok id, so xai/README does not match.
+        patterns: ['^grok-', '^xai/grok-']
         weight: 0.8
       - type: secret
         patterns: ['\bxai-[A-Za-z0-9]{60,}\b']
@@ -925,7 +1137,8 @@ signatures:
         values: [api.deepseek.com]
         weight: 0.9
       - type: model
-        patterns: ['^deepseek-']
+        # deepseek/ is the LiteLLM route.
+        patterns: ['^deepseek-(?:[a-z0-9-]|\.\d)+(?:[:@][a-z0-9.-]+)?$', '^deepseek-ai/[A-Za-z0-9](?:[A-Za-z0-9/_:@-]|\.\d)*$', '^deepseek/deepseek-']
         weight: 0.7
 
   - id: provider.perplexity
@@ -961,6 +1174,10 @@ signatures:
       - type: model
         patterns: ['^(?:sonar(?:$|-(?:pro|reasoning|deep|small|medium|large|online|chat))|pplx-)']
         weight: 0.8
+      - type: model
+        patterns: ['^perplexity/[a-z0-9](?:[A-Za-z0-9/_@:-]|\.\d)*$']
+        weight: 0.6
+        description: LiteLLM route
       - type: secret
         patterns: ['\bpplx-[A-Za-z0-9]{40,}\b']
         weight: 0.9
@@ -1027,6 +1244,10 @@ signatures:
       - type: domain
         values: [api.cerebras.ai]
         weight: 0.9
+      - type: model
+        patterns: ['^cerebras/[a-z0-9](?:[A-Za-z0-9/_@:-]|\.\d)*$']
+        weight: 0.6
+        description: LiteLLM route
       - type: secret
         patterns: ['\bcsk-[A-Za-z0-9]{30,}\b']
         weight: 0.85
@@ -1186,12 +1407,36 @@ signatures:
         ecosystem: pypi
         names: [voyageai, langchain-voyageai]
         weight: 0.6
+      - type: dependency
+        ecosystem: npm
+        names: [voyageai, voyage-ai-provider]
+        weight: 0.8
+      - type: dependency
+        ecosystem: maven
+        names: ["dev.langchain4j:langchain4j-voyage-ai"]
+        weight: 0.75
+        description: Framework integration package for this provider
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+voyageai\b']
+        weight: 0.8
+      - type: import
+        languages: [java]
+        patterns: ['^[^\S\r\n]*import\s+dev\.langchain4j\.model\.voyageai\.']
+        weight: 0.75
+      - type: code
+        patterns: ['\bvoyageai\.(?:Async)?Client\s*\(']
+        weight: 0.7
       - type: env
         names: [VOYAGE_API_KEY]
-        weight: 0.5
+        weight: 0.6
       - type: domain
         values: [api.voyageai.com]
         weight: 0.8
+      - type: model
+        # voyage-<n>, voyage-code-*, voyage-law-* and so on; rerank-* belongs to Cohere.
+        patterns: ['^voyage-(?:\d|code|finance|law|multilingual|large|lite|context)', '^voyage/voyage-']
+        weight: 0.6
 
   - id: provider.openai-compatible
     name: OpenAI-compatible endpoint override
@@ -1202,6 +1447,22 @@ signatures:
       - type: code
         patterns: ['\bbase_url\s*=\s*["'']https?://(?!api\.openai\.com)[^"'']+/v1["'']', '\bbaseURL\s*:\s*["'']https?://(?!api\.openai\.com)[^"'']+/v1["'']', '\bopenai\.api_base\s*=\s*["'']https?://(?!api\.openai\.com)']
         weight: 0.6
+      - type: code
+        # An OpenAI( / AsyncOpenAI( / new OpenAI({ client built with a base
+        # URL. The constructor window allows one level of nested calls and is
+        # bounded, so a stray base_url assignment later in the file does not
+        # match.
+        patterns: ['\b(?:Async)?OpenAI\s*\((?:[^()]|\([^()]*\)){0,200}?\bbase_url\s*=', '\b(?:Async)?OpenAI\s*\(\s*\{(?:[^()]|\([^()]*\)){0,200}?\bbaseURL\s*:']
+        weight: 0.5
+      - type: code
+        # The OpenAI request shape alone cannot say which server answers:
+        # every compatible SDK, gateway and self-hosted server exposes it. It
+        # counts only when this signature has a base-URL override (the code
+        # signals above) elsewhere in the project, so a plain OpenAI SDK
+        # project is provider.openai alone.
+        ambiguous: true
+        patterns: ['\.chat\.completions\.create\s*\(']
+        weight: 0.5
       - type: domain
         values: ["re:.*:1234$", "re:.*:8080/v1$", "re:.*:8000/v1$", "re:.*:4000$"]
         weight: 0.3

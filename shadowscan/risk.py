@@ -63,6 +63,7 @@ CAPABILITY_WEIGHTS: dict[str, tuple[int, str]] = {
     "multi-agent": (5, "orchestrates or delegates to other agents"),
     "delegated-identity": (5, "acts with delegated / on-behalf-of identity"),
     "tool-use": (5, "calls tools / functions"),
+    "mcp-server": (5, "exposes tools to other agents over MCP"),
     "rag": (3, "retrieves internal documents"),
 }
 
