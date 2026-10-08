@@ -1,0 +1,18 @@
+{"agentic": false, "detected": true, "id": "r010", "items": 1, "kinds": ["github.com/sashabaranov/go-openai"], "note": "github.com/sashabaranov/go-openai", "paths": ["go.mod"], "raw_sha256": null, "seconds": 0.01, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r013", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.0, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r015", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.01, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r018", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.32, "status": "ok"}
+{"agentic": true, "detected": true, "id": "r019", "items": 1, "kinds": ["@modelcontextprotocol/sdk"], "note": "@modelcontextprotocol/sdk", "paths": ["package.json"], "raw_sha256": null, "seconds": 0.03, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r023", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.02, "status": "ok"}
+{"agentic": true, "detected": true, "id": "r025", "items": 2, "kinds": ["@modelcontextprotocol/sdk"], "note": "@modelcontextprotocol/sdk", "paths": ["desktop/package.json", "server/package.json"], "raw_sha256": null, "seconds": 0.34, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r039", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.03, "status": "ok"}
+{"agentic": true, "detected": true, "id": "r055", "items": 7, "kinds": ["@anthropic-ai/sdk", "@google/genai", "@modelcontextprotocol/sdk", "openai"], "note": "@anthropic-ai/sdk,@google/genai,@modelcontextprotocol/sdk,openai", "paths": ["packages/agent-core-v2/package.json", "packages/kosong/package.json"], "raw_sha256": null, "seconds": 0.56, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r083", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.14, "status": "ok"}
+{"agentic": true, "detected": true, "id": "r094", "items": 1, "kinds": ["fastmcp"], "note": "fastmcp", "paths": ["requirements.txt"], "raw_sha256": null, "seconds": 0.0, "status": "ok"}
+{"agentic": false, "detected": true, "id": "r102", "items": 4, "kinds": ["gpt4all", "langchain", "langchain-community", "langchainhub"], "note": "gpt4all,langchain,langchain-community,langchainhub", "paths": ["requirements.txt"], "raw_sha256": null, "seconds": 0.02, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r108", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.11, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r112", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.06, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r130", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.01, "status": "ok"}
+{"agentic": false, "detected": true, "id": "r138", "items": 1, "kinds": ["openai"], "note": "openai", "paths": ["pyproject.toml"], "raw_sha256": null, "seconds": 0.04, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r150", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.05, "status": "ok"}
+{"agentic": false, "detected": false, "id": "r167", "items": 0, "kinds": [], "note": "", "paths": [], "raw_sha256": null, "seconds": 0.09, "status": "ok"}

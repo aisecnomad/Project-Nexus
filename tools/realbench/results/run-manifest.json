@@ -1,0 +1,168 @@
+{
+ "manifest": "corpus.json",
+ "manifest_sha256": "a800235820cf168c29abc9f6d410a55af8ac15f56423d8d2008ff6ae3b569c97",
+ "repositories": 183,
+ "finished_at": "2026-10-08T21:02:57+00:00",
+ "shadowscan_commit": "80d4bf67aa1aa46c02413de3c791ec2ed16f0d52",
+ "python": "3.13.16",
+ "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+ "tool_commits": {
+  "Defend-AI-Tech-Inc_agent-discover-scanner": "a3756cda779a6a46088a3290c77027b0ea5d83c9",
+  "ak2dev_agentguard-v1": "6d4f75d762a350a2ffc43377acb501d44c9d0c67",
+  "alebgl77_open-shadow-ai": "715044e079c48ec522ef50cb3ee9f927c4666e6d",
+  "cisco-ai-defense_aibom": "8d7bec099d5ddcd24dbda13a9777f3cf11e2c325",
+  "cisco-ai-defense_mcp-scanner": "f817899d9391b099f395acd5ae7ff435dccf2a47",
+  "giggsoinc_PatronAI": "79bdcc88bd0bd9b9642a05800f55654eef626b7f",
+  "knostic_AgentSonar": "8658b67741eb002e8937e3f7c8f3afac9daab148",
+  "msaad00_agent-bom": "26ed7c15841f9abf7dec70c66c49441ccd317d55",
+  "msaad00_agent-bom-latest": "129615f810e4153cf054a9514bded451ad6b2120",
+  "safedep_vet": "568cb0e1c90685dd89f07f91c64e97a49228a47f",
+  "snyk_agent-scan": "69ce32c6e5ae67e5d688efee9e9c45f7de7046c4"
+ },
+ "runs": [
+  {
+   "tool": "shadowscan",
+   "display": "Project Nexus ShadowScan",
+   "source": "aisecnomad/Project-Nexus",
+   "mode": "scan with one code.filesystem connector on the checkout, defaults, use_git false",
+   "agentic_rule": "a finding of kind agent, agent-config, bot-app, mcp-server, workflow (the tool's own agent kinds)",
+   "file": "shadowscan.jsonl",
+   "wall_seconds": 404.8,
+   "ok": 119,
+   "partial": 64,
+   "error": 0,
+   "repeat": {
+    "n": 18,
+    "file": "shadowscan.repeat.jsonl"
+   }
+  },
+  {
+   "tool": "cisco-aibom",
+   "display": "Cisco AI BOM",
+   "source": "cisco-ai-defense/aibom",
+   "mode": "analyze <checkout> --output-format json; the required LLM endpoint is unreachable offline, so the LLM tier keeps its deterministic candidates (marked unreviewed)",
+   "agentic_rule": "a component of type agent, agent_proxy, mcp_client, mcp_server, skill, tool",
+   "file": "cisco-aibom.jsonl",
+   "wall_seconds": 4662.0,
+   "ok": 180,
+   "partial": 0,
+   "error": 3,
+   "repeat": {
+    "n": 18,
+    "file": "cisco-aibom.repeat.jsonl"
+   }
+  },
+  {
+   "tool": "agent-bom",
+   "display": "agent-bom",
+   "source": "msaad00/agent-bom",
+   "mode": "scan <checkout> --no-scan --offline -f json (inventory only, no vulnerability lookups), empty HOME",
+   "agentic_rule": "a framework agent, an agent_framework component, a tool definition, an MCP server, or a discovered agent other than the project wrapper (Terraform agents only with AI resources)",
+   "file": "agent-bom.jsonl",
+   "wall_seconds": 559.4,
+   "ok": 182,
+   "partial": 0,
+   "error": 1,
+   "repeat": {
+    "n": 18,
+    "file": "agent-bom.repeat.jsonl"
+   }
+  },
+  {
+   "tool": "agentdiscover",
+   "display": "AgentDiscover Scanner",
+   "source": "Defend-AI-Tech-Inc/agent-discover-scanner",
+   "mode": "scan <checkout> --format sarif, then audit <checkout> --skip-layers 2,3,4,5",
+   "agentic_rule": "an inventoried agent or an MCP server in the audit",
+   "file": "agentdiscover.jsonl",
+   "wall_seconds": 240.0,
+   "ok": 183,
+   "partial": 0,
+   "error": 0,
+   "repeat": {
+    "n": 18,
+    "file": "agentdiscover.repeat.jsonl"
+   }
+  },
+  {
+   "tool": "vet",
+   "display": "SafeDep vet",
+   "source": "safedep/vet",
+   "mode": "ai discover --scope project -D <checkout> --report-json, then code scan --app <checkout> --db",
+   "agentic_rule": "an ai-discover item of kind MCP server, coding agent, project configuration or skill, or a code signature tagged agent, mcp or crewai",
+   "file": "vet.jsonl",
+   "wall_seconds": 3129.3,
+   "ok": 177,
+   "partial": 0,
+   "error": 6,
+   "repeat": {
+    "n": 18,
+    "file": "vet.repeat.jsonl"
+   }
+  },
+  {
+   "tool": "agentguard",
+   "display": "agentguard",
+   "source": "ak2dev/agentguard-v1",
+   "mode": "scan <checkout> --config <empty policy> -f json",
+   "agentic_rule": "an inventory item of kind agent, instruction_file, mcp_client_config, mcp_server, skill, subagent",
+   "file": "agentguard.jsonl",
+   "wall_seconds": 251.8,
+   "ok": 183,
+   "partial": 0,
+   "error": 0,
+   "repeat": {
+    "n": 18,
+    "file": "agentguard.repeat.jsonl"
+   }
+  },
+  {
+   "tool": "cdxgen",
+   "display": "cdxgen (CycloneDX AI/MCP BOM)",
+   "source": "CycloneDX/cdxgen",
+   "mode": "-t ai -t mcp -t ai-skill -r --no-install-deps, FETCH_LICENSE=false, CDXGEN_ALLOWED_COMMANDS=__none__",
+   "agentic_rule": "a component or service with cdx:agent:* or cdx:mcp:* properties",
+   "file": "cdxgen.jsonl",
+   "wall_seconds": 346.7,
+   "ok": 182,
+   "partial": 0,
+   "error": 1,
+   "repeat": {
+    "n": 18,
+    "file": "cdxgen.repeat.jsonl"
+   }
+  },
+  {
+   "tool": "baseline-grep",
+   "display": "Baseline: keyword grep",
+   "source": "this repository (ripgrep)",
+   "mode": "case-insensitive ripgrep over every file except .git for provider and framework names",
+   "agentic_rule": "a file matches the agent-framework or MCP name list",
+   "file": "baseline-grep.jsonl",
+   "wall_seconds": 4.7,
+   "ok": 183,
+   "partial": 0,
+   "error": 0,
+   "repeat": {
+    "n": 18,
+    "file": "baseline-grep.repeat.jsonl"
+   }
+  },
+  {
+   "tool": "baseline-deps",
+   "display": "Baseline: manifest dependencies",
+   "source": "this repository",
+   "mode": "parse dependency manifests (outside vendored dirs) for a fixed list of generative-AI packages",
+   "agentic_rule": "a dependency on an agent framework or MCP package",
+   "file": "baseline-deps.jsonl",
+   "wall_seconds": 13.3,
+   "ok": 183,
+   "partial": 0,
+   "error": 0,
+   "repeat": {
+    "n": 18,
+    "file": "baseline-deps.repeat.jsonl"
+   }
+  }
+ ]
+}
