@@ -362,7 +362,13 @@ def test_shadowscan_normalize(tmp_path: Path) -> None:
             "resource": "r/svc",
             "frameworks": ["framework.langgraph", "protocol.mcp"],
             "model_providers": ["provider.openai"],
-            "evidence": [],
+            "evidence": [
+                {
+                    "signal": "dependency:protocol.mcp",
+                    "signature": "protocol.mcp",
+                    "location": "pyproject.toml",
+                }
+            ],
         },
         {
             "kind": "mcp-server",
@@ -649,3 +655,41 @@ def test_shadowscan_slug_mapping_prefers_exact_taxonomy_values() -> None:
     assert _slug_facts("platform.browserbase") == frozenset()  # infrastructure, not an agent framework
     assert _slug_facts("provider.aws-bedrock") == {"provider:bedrock"}
     assert _slug_facts("framework.vercel-ai-sdk") == {"framework:vercel-ai"}  # name rules still apply
+    assert _slug_facts("framework.m365-agents-sdk") == frozenset()  # not the OpenAI Agents SDK
+    assert _slug_facts("provider.openai-compatible") == frozenset()  # a call shape, not a vendor
+
+
+def test_shadowscan_protocol_needs_sdk_evidence(tmp_path: Path) -> None:
+    from tools.discovery_benchmark.adapters.shadowscan import ShadowScanAdapter
+
+    def report(evidence: list[dict[str, str]]) -> None:
+        (tmp_path / "report.json").write_text(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "kind": "agent",
+                            "resource": "repo",
+                            "frameworks": ["protocol.mcp"],
+                            "model_providers": [],
+                            "evidence": evidence,
+                        }
+                    ],
+                    "stats": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    report([{"signal": "domain:protocol.mcp", "signature": "protocol.mcp", "location": "x.json:5"}])
+    assert "mcp:sdk" not in ShadowScanAdapter().normalize(tmp_path).facts
+    report([{"signal": "dependency:protocol.mcp", "signature": "protocol.mcp", "location": "pyproject.toml"}])
+    assert "mcp:sdk" in ShadowScanAdapter().normalize(tmp_path).facts
+
+
+def test_package_json_npm_alias_names_the_real_package() -> None:
+    text = json.dumps({"dependencies": {"@a2a-js/sdk-v0_3": "npm:@a2a-js/sdk@~0.3.14", "left-pad": "^1"}})
+    assert evidence._package_json_names(text) == ["@a2a-js/sdk-v0_3", "@a2a-js/sdk", "left-pad"]
+    assert "a2a:sdk" in taxonomy.facts_for("npm", "@a2a-js/sdk")
+    assert "framework:portkey" in taxonomy.facts_for("pypi", "portkey-ai")
+    assert "provider:replicate" in taxonomy.facts_for("host", "api.replicate.com")

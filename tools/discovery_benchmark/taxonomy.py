@@ -234,6 +234,8 @@ RULES: tuple[Rule, ...] = (
     _r("npm", r"(copilotkit|@copilotkit/[a-z0-9.-]+|@ag-ui/[a-z0-9.-]+)", "framework:copilotkit"),
     _r("npm", r"@browserbasehq/stagehand", "framework:stagehand"),
     _r("npm", r"portkey-ai", "framework:portkey"),
+    _r("pypi", r"portkey-ai", "framework:portkey"),
+    _r("pyimport", r"portkey_ai(\..*)?", "framework:portkey"),
     _r("npm", r"@n8n/n8n-nodes-langchain", "lowcode:n8n"),
     # ---- Go module paths (prefix match) ----
     _r("golang", r"github\.com/tmc/langchaingo(/.*)?", "framework:langchaingo"),
@@ -443,6 +445,7 @@ RULES: tuple[Rule, ...] = (
     _r("host", r"bedrock(-runtime|-agent|-agent-runtime)?\.[a-z0-9-]+\.amazonaws\.com", _BEDROCK),
     _r("host", r"\.openai\.azure\.com", _AZURE),
     _r("host", r"api\.mistral\.ai", _MISTRAL),
+    _r("host", r"api\.replicate\.com", _REPLICATE),
     _r("host", r"api\.cohere\.(ai|com)", _COHERE),
     _r("host", r"api\.groq\.com", _GROQ),
     _r("host", r"(localhost|127\.0\.0\.1|host\.docker\.internal|ollama):11434", _OLLAMA),

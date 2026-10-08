@@ -48,6 +48,14 @@ _LOWCODE = {
 }
 
 
+# ShadowScan ids that must not be mapped by the name rules: a shape (not a vendor) or a
+# product the taxonomy does not track whose words happen to resemble one it does.
+_NO_FACT = frozenset({"provider.openai-compatible", "framework.m365-agents-sdk"})
+
+# Signal types that establish an SDK (a dependency, an import or a code idiom); a host or a
+# configuration file alone shows a client configuration, not SDK usage.
+_SDK_SIGNALS = frozenset({"dependency", "import", "code"})
+
 # ShadowScan ids whose slug differs from the taxonomy value.
 _SLUG_ALIASES = {
     "provider.aws-bedrock": "provider:bedrock",
@@ -71,6 +79,8 @@ def _slug_facts(signature: str) -> frozenset[str]:
     """Map a signature id such as ``framework.vercel-ai-sdk`` onto taxonomy facts."""
     family, _, slug = signature.partition(".")
     words = slug.replace("-", " ").replace("_", " ")
+    if signature in _NO_FACT:
+        return frozenset()
     if signature in _SLUG_ALIASES:
         return frozenset({_SLUG_ALIASES[signature]})
     direct = _direct_fact(family, slug)
@@ -94,6 +104,19 @@ def _slug_facts(signature: str) -> frozenset[str]:
         fact = _PROVIDER_BY_CLOUD_SLUG.get(slug)
         return frozenset({fact}) if fact else frozenset()
     return frozenset()
+
+
+def _sdk_backed_protocols(finding: dict[str, Any]) -> frozenset[str]:
+    """Protocol signatures backed by dependency, import or code evidence in this finding."""
+    backed: set[str] = set()
+    for item in finding.get("evidence") or []:
+        if not isinstance(item, dict):
+            continue
+        signature = str(item.get("signature") or "")
+        signal = str(item.get("signal") or "")
+        if signature.startswith("protocol.") and signal.split(":", 1)[0] in _SDK_SIGNALS:
+            backed.add(signature)
+    return frozenset(backed)
 
 
 class ShadowScanAdapter:
@@ -184,9 +207,12 @@ class ShadowScanAdapter:
                 for sig in providers:
                     facts.update(_slug_facts(sig))
             else:  # agent, framework-usage, ai-app, local-model, cloud-resource ...
+                sdk_backed = _sdk_backed_protocols(finding)
                 for sig in signatures:
                     if sig == "protocol.a2a" and resource.endswith(".json"):
                         facts.add("a2a:agent-card")
+                    elif sig.startswith("protocol.") and sig not in sdk_backed:
+                        continue  # a host or config mention is not SDK usage
                     else:
                         facts.update(_slug_facts(sig))
                 for sig in providers:

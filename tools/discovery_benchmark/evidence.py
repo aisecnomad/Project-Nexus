@@ -357,7 +357,18 @@ def _package_json_names(text: str) -> list[str]:
     for section in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
         table = data.get(section)
         if isinstance(table, dict):
-            names.extend(k for k in table if isinstance(k, str))
+            for key, spec in table.items():
+                if not isinstance(key, str):
+                    continue
+                names.append(key)
+                # "alias": "npm:@scope/real-name@^1" installs real-name under another key.
+                if isinstance(spec, str) and spec.startswith("npm:"):
+                    real = spec[4:]
+                    cut = real.rfind("@")
+                    if cut > 0:
+                        real = real[:cut]
+                    if real:
+                        names.append(real)
     return names
 
 
