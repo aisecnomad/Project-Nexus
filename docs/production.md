@@ -764,6 +764,28 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 8 classification and risk follow-ups
+
+Re-scan before comparing risk to reports from an earlier candidate. Three
+things change what a report says without any repository change. A project
+whose executable code constructs and serves an MCP server is now an
+`mcp-server` finding (base weight 15) titled "MCP server implementation"
+instead of a `framework-usage` finding (base weight 5); its resource and
+identity are unchanged, so `shadowscan diff` reports it as changed, not new.
+Coding-agent configuration findings now carry the tags `hidden-instructions`
+(20), `remote-code-fetch` (15) and `invisible-text` (10) when the instruction
+files they report contain hidden comment content, fetch-and-execute or
+decode-and-execute pipelines, or invisible characters; the evidence names the
+file and line only. A bare `mlflow` dependency no longer produces a
+`provider.databricks` finding, so such findings resolve on re-scan; that is a
+detection correction, not remediation. Spring AI services that register tools
+on an injected `ChatClient.Builder` chain become `agent` findings. The new
+`shadowscan endpoint` and `shadowscan merge` commands and the `cyclonedx`
+format add outputs; they change nothing in existing scans. None of this is
+field-validated: the changes were driven by an author-written benchmark
+(`archive/reviews/head-to-head-2026-10-08.md`) and are covered by regression
+tests and evaluation cases only.
+
 ### October 3 source capability attribution migration
 
 Re-scan code with this candidate before comparing its risk to earlier reports.

@@ -313,6 +313,39 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
+### Limiting a walk with `include`
+
+`include` lists paths relative to each root; the walk enters only the
+directories that lead to them and reads only the files below them, with the
+usual excludes, limits and symlink policy still applied. Relative paths keep
+the directory context that file signatures expect (`.claude/skills/*/SKILL.md`
+only matches when `.claude/` is part of the relative path), which is why
+`shadowscan endpoint` scans a profile root with an include list rather than
+each location as its own root. Entries must be relative and may not escape the
+root; a bare string is rejected like `exclude`.
+
+```yaml
+connectors:
+  - name: code.filesystem
+    paths: [/home/dev]
+    include: [.claude, .cursor/mcp.json, .config/Claude/claude_desktop_config.json]
+    label: endpoint:dev-laptop
+```
+
+### Instruction-file content checks
+
+A coding-agent configuration finding inspects the instruction files it reports
+(skills, `CLAUDE.md`-style files, sub-agent definitions, rules, hooks) for
+content a rendered view hides or that executes fetched code: an HTML comment
+holding sentences, a network fetch piped into an interpreter, an inline blob
+decoded into one, and invisible or bidirectional control characters. A hit adds
+`content:<rule>` evidence naming the file and line, never an excerpt, and the
+risk tags `hidden-instructions`, `remote-code-fetch` or `invisible-text`
+(see [risk](../concepts/risk.md)); `metadata.instruction_content` lists the
+rules and files. The checks are bounded regexes; nothing is executed. They do
+not judge whether an instruction is malicious: a hidden comment may be a
+template note, and a documented installer may pipe to a shell. Read the file.
+
 ## `code.github`
 Enumerates an organisation, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded

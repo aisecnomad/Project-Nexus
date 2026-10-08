@@ -187,3 +187,14 @@ signatures:
       - type: code
         patterns: ['\bAgent\s*\(\s*(?:model|tools|system_prompt|instructions|llm)\s*=', '\bnew\s+Agent\s*\(\s*\{\s*(?:name|model|instructions|tools)\s*:']
         weight: 0.35
+
+  - id: heuristic.mcp-server
+    name: MCP server construction idioms
+    category: heuristic
+    vendor: null
+    description: Code constructs and serves a Model Context Protocol server, registering tools for other agents to call rather than consuming them. With MCP SDK evidence in the same project it types the project as an MCP server implementation.
+    capabilities: [tool-use]
+    signals:
+      - type: code
+        patterns: ['\bFastMCP\s*\(\s*["'']', '@mcp\.tool\b(?:\s*\()?', '\bmcp\.run\s*\(\s*(?:transport\s*=)?', '\bnew\s+McpServer\s*\(\s*\{', '\bserver\.registerTool\s*\(', '\bserver\.tool\s*\(\s*["'']', '\bStdioServerTransport\s*\(\s*\)', '\bStreamableHTTPServerTransport\s*\(\s*\{', '\bserver\.NewMCPServer\s*\(\s*"', '\bmcp\.NewTool\s*\(\s*"', '\bServeStdio\s*\(', '\[McpServerTool\b', '\.AddMcpServer\s*\(\s*\)', '\bimpl\s+ServerHandler\s+for\b', '#\[tool_router\]', '\bMcpServer\.(?:sync|async)\s*\(']
+        weight: 0.6

@@ -417,3 +417,30 @@ AI-Infra-Guard from its repository and AgentSonar with `go install`.
 `evidence_dump.py` prints the per-tool evidence used for the typed tier.
 `truth.json` and `score-found.json` are the labels and the final found-tier
 output from this run, with the scratch path replaced by `BENCH_ROOT`.
+
+## 9. Follow-up on the same day
+
+The gaps measured above drove a set of changes recorded in `CHANGELOG.md`
+under "October 8 benchmark follow-ups", landed on the same branch:
+
+- `shadowscan endpoint` scans a profile's well-known AI client locations;
+  `shadowscan merge` combines reports from many machines; `--format cyclonedx`
+  renders a CycloneDX 1.6 BOM; the code connector gained `include`.
+- Coding-agent configuration findings inspect the instruction files they
+  report for hidden comment content, fetch-and-execute and decode-and-execute
+  pipelines and invisible characters, adding evidence and risk tags.
+- A project that constructs and serves an MCP server is typed `mcp-server`;
+  Spring AI builder chains that register tools are typed `agent`; a bare
+  `mlflow` dependency no longer suggests Databricks model serving.
+
+Re-running the estate with that build: the Go server (A13) is an `mcp-server`
+finding titled "MCP server implementation", the Spring AI service (A15) is an
+`agent`, the ML pipeline produces no finding, and the two malicious skills
+(A27, W08) carry the `hidden-instructions` and `remote-code-fetch` tags with a
+critical risk level. `shadowscan endpoint --home <workstation>` found the six
+user-level client configs and both skills without walking the profile. The
+content checks are deliberately narrow (hidden content and code execution
+idioms); they do not attempt to judge intent, and Cisco Skill Scanner's rule
+set remains broader. These are regression-tested changes, not a re-run of the
+whole benchmark against the other tools, and the ranking above was not
+recomputed.

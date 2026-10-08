@@ -73,6 +73,12 @@ from shadowscan.connectors.code.catalogs import (
     project_catalog_files,
 )
 from shadowscan.connectors.code.import_provenance import local_module_conflict
+from shadowscan.connectors.code.instruction_content import (
+    MAX_TEXT_BYTES as MAX_INSTRUCTION_TEXT_BYTES,
+)
+from shadowscan.connectors.code.instruction_content import (
+    inspect_instruction_text,
+)
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
 from shadowscan.connectors.code.manifests import (
     MANIFEST_PATTERN_SECONDS,
@@ -952,6 +958,20 @@ def deadline_margin(remaining: float) -> float:
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
 
 
+def _validated_include(value: Any) -> frozenset[str]:
+    """``include``: relative posix paths below a root, normalized; nothing may escape or be absolute."""
+    out: set[str] = set()
+    for item in _validated_names(value, "include"):
+        normalized = item.replace("\\", "/").strip().strip("/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        parts = [part for part in normalized.split("/") if part not in ("", ".")]
+        if not parts or ".." in parts or item.startswith(("/", "\\")) or (len(item) > 1 and item[1] == ":"):
+            raise ConnectorError("code.filesystem: include entries must be relative paths below the root")
+        out.add("/".join(parts))
+    return frozenset(out)
+
+
 def _validated_names(value: Any, key: str) -> list[str]:
     """A list-typed option: a list of non-empty strings, or unset.
 
@@ -1066,6 +1086,11 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
+        "include": (
+            "list of paths relative to each root that limit the walk to those files and directories; "
+            "nothing else under the root is enumerated or read (an endpoint profile scan uses it; "
+            "default: everything)"
+        ),
         "default_excludes": (
             "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
             "state, and build-output or vendored names such as bin, build, dist, vendor) at any depth "
@@ -1164,6 +1189,7 @@ class FilesystemConnector(BaseConnector):
             set(DEFAULT_EXCLUDES) if self.default_excludes else set(VCS_METADATA_EXCLUDES)
         ) | self._explicit_exclude_names
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
+        self.include_paths = _validated_include(ctx.get("include"))
         # Default-excluded directory names the current walk skipped, with counts.
         self._default_skipped: dict[str, int] = {}
         self.label: str | None = ctx.get("label")
@@ -1246,6 +1272,16 @@ class FilesystemConnector(BaseConnector):
     def _excluded(self, rel: str, name: str) -> bool:
         """Directory exclusion: configured names and globs."""
         return name in self.exclude_names or self._excluded_file(rel)
+
+    def _included(self, rel: str) -> bool:
+        """Whether ``rel`` is one of the configured include paths or sits below one (all, when unset)."""
+        if not self.include_paths:
+            return True
+        return any(rel == p or rel.startswith(p + "/") for p in self.include_paths)
+
+    def _leads_to_include(self, rel: str) -> bool:
+        """Whether the walk must enter directory ``rel`` to reach a configured include path."""
+        return self._included(rel) or any(p.startswith(rel + "/") for p in self.include_paths)
 
     def _excluded_file(self, rel: str) -> bool:
         """File exclusion: globs only, so a file named like an excluded directory is still scanned."""
@@ -1526,7 +1562,7 @@ class FilesystemConnector(BaseConnector):
                 walk.budget.check()
                 shown = _report_name(fn)
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
-                if self._excluded_file(rel):
+                if self._excluded_file(rel) or not self._included(rel):
                     continue
                 p = Path(dirpath) / fn
                 try:
@@ -1573,6 +1609,8 @@ class FilesystemConnector(BaseConnector):
             shown = _report_name(name)
             rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
+            if not self._leads_to_include(rel):
+                continue
             if self._excluded(rel, name):
                 if self._disclosed_default_exclusion(rel, name) and _holds_file(path, walk.budget):
                     self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
@@ -3050,8 +3088,29 @@ class FilesystemConnector(BaseConnector):
         if evidence.env_only:
             cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
             f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
+        server_files = self._mcp_server_files(proj, evidence)
+        if f.kind != Kind.AGENT and server_files and "protocol.mcp" in f.frameworks:
+            # The project serves tools over MCP (an SDK plus server construction in
+            # executable code) rather than merely depending on the SDK: a tool
+            # server carries the MCP risk base, not the LLM-usage one. The
+            # resource and its identity are unchanged; only the classification is.
+            f.kind = Kind.MCP_SERVER
+            f.metadata["mcp_server_implementation"] = {"files": server_files}
         f.title = self._project_title(f, proj)
         return f
+
+    @staticmethod
+    def _mcp_server_files(proj: _Project, evidence: _ProjectEvidence) -> list[str]:
+        """Files outside test code whose executable code constructs an MCP server."""
+        return sorted(
+            {
+                rel
+                for m, rel, _ in proj.matches
+                if m.signature_id == "heuristic.mcp-server"
+                and m.signal.type == "code"
+                and not evidence.in_tests(rel)
+            }
+        )
 
     def _apply_project_evidence(self, f: Finding, evidence: _ProjectEvidence) -> None:
         # Decisive evidence must survive the per-signature report quota.
@@ -3183,6 +3242,7 @@ class FilesystemConnector(BaseConnector):
         for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
             apply_matches(f, [m], location=rel, snippet=snip)
         f.metadata["files"] = sorted(files)
+        self._inspect_instruction_files(f, root, sig_id, files)
         defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
         if defs:
             f.metadata["agent_definitions"] = defs
@@ -3195,6 +3255,42 @@ class FilesystemConnector(BaseConnector):
         finalize(f, self.index)
         f.kind = Kind.AGENT_CONFIG
         return f
+
+    @staticmethod
+    def _inspect_instruction_files(f: Finding, root: Path, sig_id: str, files: list[str]) -> None:
+        """Attach content checks (hidden comments, fetch-and-execute, invisible text) for instruction files.
+
+        The files are the coding-agent configuration this finding already
+        reports; each is re-read bounded and without following symlinks. A hit
+        adds evidence and a risk tag; the file content itself is never copied.
+        """
+        rules: dict[str, int] = {}
+        flagged: list[str] = []
+        # The scan root may itself be reached through a link (a temp dir on
+        # macOS); below it nothing is followed, as in the walk.
+        base = Path(os.path.realpath(root))
+        for rel in sorted(files):
+            text = read_text(base / rel, MAX_INSTRUCTION_TEXT_BYTES)
+            if not text:
+                continue
+            hits = inspect_instruction_text(text)
+            if hits:
+                flagged.append(rel)
+            for hit in hits:
+                rules[hit.rule] = rules.get(hit.rule, 0) + 1
+                f.add_tag(hit.tag)
+                f.add_evidence(
+                    Evidence(
+                        signal=f"content:{hit.rule}",
+                        description=f"{hit.detail} in {rel}",
+                        location=f"{rel}:{hit.line}",
+                        weight=hit.weight,
+                        signature=sig_id,
+                        attributes={"category": "content", "rule": hit.rule, "tag": hit.tag},
+                    )
+                )
+        if flagged:
+            f.metadata["instruction_content"] = {"rules": dict(sorted(rules.items())), "files": flagged}
 
     @staticmethod
     def _apply_mcp_tools(f: Finding, server_tools: dict[str, str]) -> None:
@@ -3308,14 +3404,19 @@ class FilesystemConnector(BaseConnector):
             if self.index.get(sid)
         ]
         where = "repository root" if proj.root == "." else proj.root
-        what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
+        if f.kind == Kind.AGENT:
+            what = "Agent"
+        elif f.kind == Kind.MCP_SERVER:
+            what = "MCP server implementation"
+        else:
+            what = "LLM usage"
         detail = ", ".join(names) or ", ".join(provs)
         if not detail:
             # Only supporting technology (a search tool, a vector store,
             # tracing): name it rather than claim an LLM SDK.
             support = [s.name.split(" (", 1)[0] for sid in f.frameworks if (s := self.index.get(sid))]
             detail = ", ".join(support[:3]) or "LLM SDK"
-            if support and f.kind != Kind.AGENT:
+            if support and f.kind not in {Kind.AGENT, Kind.MCP_SERVER}:
                 what = "AI tooling"
         return f"{what} in {where}: {detail}"
 

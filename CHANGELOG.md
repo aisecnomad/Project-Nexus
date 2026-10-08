@@ -5,6 +5,63 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 8 benchmark follow-ups
+
+The head-to-head benchmark in `archive/reviews/head-to-head-2026-10-08.md`
+compared ShadowScan with ten open-source discovery tools on a synthetic
+estate. These changes close the gaps it measured; the benchmark is
+author-written and not independent review.
+
+- `shadowscan endpoint` scans a workstation profile at the well-known
+  locations of AI client configuration (Claude Desktop and Claude Code,
+  Cursor, Windsurf, VS Code and its Cline and Roo extensions, Gemini CLI,
+  Codex CLI, Kiro, Amazon Q, GitHub Copilot CLI, Zed, Continue, Goose,
+  OpenCode and a generic `.mcp.json`), including user-level skills, sub-agent
+  definitions, hooks, rules and instruction files, without walking the whole
+  home directory. Findings carry an `endpoint:<hostname>` resource prefix
+  (`--label` overrides it) so fleet reports keep provenance; `--list` prints
+  the locations that exist. A profile without any location is a complete,
+  empty scan with a warning, not a setup error. The `code.filesystem`
+  connector gained the `include` option that implements it: a list of paths
+  relative to each root that limits the walk to those files and directories.
+- `shadowscan merge` combines JSON reports from several machines or scans into
+  one report. Findings with the same identity merge like repeated observations
+  inside a scan; every finding records the reports it came from in
+  `metadata.merged_from`; `collection_scope.fleet.sources` lists the sources.
+  The merged report is comparable with `shadowscan diff` only when every
+  source was complete and comparable, and its own completion (exit 3) follows
+  the sources. Reports with another finding identity schema are refused.
+- `--format cyclonedx` renders a CycloneDX 1.6 JSON bill of materials: one
+  component per finding with its surface, kind, risk, confidence, shadow
+  status, owner, technologies, tags and evidence locations as properties.
+  It never carries evidence snippets or credential values.
+- Coding-agent configuration findings now inspect the instruction files they
+  report (skills, `CLAUDE.md`-style files, sub-agent definitions, rules and
+  hooks) for content that a rendered view hides or that executes fetched
+  code: an HTML comment holding sentences, a network fetch piped into an
+  interpreter, an inline blob decoded into one, and invisible or
+  bidirectional control characters. Hits add `content:*` evidence with the
+  file and line (never an excerpt) and the tags `hidden-instructions` (20),
+  `remote-code-fetch` (15) and `invisible-text` (10), which raise the
+  finding's risk. `metadata.instruction_content` lists the rules and files.
+- A project whose executable code constructs and serves an MCP server (the
+  SDK plus a server-construction idiom outside test code) is now typed as an
+  `mcp-server` finding titled "MCP server implementation", with
+  `metadata.mcp_server_implementation.files`, instead of low-risk LLM usage.
+  The resource and identity are unchanged. MCP client code stays as before.
+- Spring AI: `ChatClient` builder chains that register concrete tools with
+  `defaultTools(new ...)` after setting a system prompt or advisors, and
+  per-request `prompt().tools(new ...)` chains, now establish an agent; Spring
+  Boot injects the builder, so the previous pattern (`ChatClient.builder(...)
+  .defaultTools(...)` in one expression) rarely matched real services.
+- `provider.databricks` no longer treats a bare `mlflow` or `mlflow-skinny`
+  dependency as Databricks Model Serving evidence; mlflow's LLM flavors and
+  the Databricks packages still match. A classic-ML training project no
+  longer produces a low-confidence LLM-usage finding.
+- Evaluation corpus: six cases cover the typing changes (mlflow tracking
+  versus the LLM flavor, Spring AI with and without tools, a Go MCP server
+  and a TypeScript MCP client).
+
 ### Security-review follow-ups
 
 - `SHADOWSCAN_IDENTITY_KEY` accepts explicit `hex:<value>` and

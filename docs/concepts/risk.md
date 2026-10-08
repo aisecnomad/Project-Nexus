@@ -80,6 +80,9 @@ include:
 | `tag:public-principal` | Granted to `allUsers` / `allAuthenticatedUsers` | 20 |
 | `capability:code-exec` | Can execute arbitrary code | 15 |
 | `capability:autonomous` | Operates without human approval | 10 |
+| `tag:hidden-instructions` | Instruction file carries content hidden from the rendered view (an HTML comment holding sentences) | 20 |
+| `tag:remote-code-fetch` | Instruction file downloads and executes code in one step, or decodes an inline blob into an interpreter | 15 |
+| `tag:invisible-text` | Instruction file contains invisible or bidirectional control characters | 10 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;

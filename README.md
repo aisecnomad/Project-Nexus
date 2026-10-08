@@ -99,7 +99,7 @@ Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export
 
 ## Frameworks & products recognised
 
-215 signatures / 1006 signals, YAML-defined with explicit opt-in overrides:
+216 signatures / 1008 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -218,9 +218,15 @@ shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # re-analyse l
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
 shadowscan jwt --file ./token.jwt --jwks-url https://acme.okta.com/oauth2/default/v1/keys
 
-# 6. Register what you found
+# 6. Developer workstations (well-known client locations only, never the whole home)
+shadowscan endpoint --list                                       # which AI client locations exist here
+shadowscan endpoint --format json -o laptop-$(hostname).json     # MCP configs, skills, rules, hooks
+shadowscan merge laptop-*.json --format json -o fleet.json       # one report for the fleet
+
+# 7. Register what you found
 shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents
 shadowscan diff last-week.json today.json                        # what is new / resolved/changed
+shadowscan scan -c shadowscan.yaml --format cyclonedx -o ai-bom.json   # CycloneDX 1.6 bill of materials
 ```
 
 Steps 1 and 2 need a repository checkout: `agent-card.yaml`, `examples/` and
@@ -364,7 +370,10 @@ See [deployment and migration](docs/production.md) for the rollout checks.
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations; results are warnings or notes with the
 heuristic risk level, never a CVSS `security-severity`, see
-[severity](docs/severity.md)), `csv`, `markdown`, `html` (self-contained,
+[severity](docs/severity.md)), `cyclonedx` (a CycloneDX 1.6 bill of
+materials with one component per finding and its risk, confidence, shadow
+status and evidence locations as properties; never evidence snippets or
+credential values), `csv`, `markdown`, `html` (self-contained,
 filterable, with evidence drill-down). In `csv` output a literal `'` is
 inserted at the start of a value, and after each `,`, `;`, tab, `|` or line
 break inside it, where the text that follows begins with `=`, `+`, `-` or `@`

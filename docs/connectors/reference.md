@@ -22,6 +22,7 @@ Offline input: n/a (path is the input).
 | `path` | directory to scan (or `paths`: list) |
 | `paths` | list of directories to scan instead of `path`; each root keeps its own identity |
 | `exclude` | list of extra directory names / glob patterns to skip (a bare string is rejected) |
+| `include` | list of paths relative to each root that limit the walk to those files and directories; nothing else under the root is enumerated or read (an endpoint profile scan uses it; default: everything) |
 | `default_excludes` | skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE state, and build-output or vendored names such as bin, build, dist, vendor) at any depth (default true); a skipped non-empty bin/build/dist/out/target/obj/coverage/vendor/third\_party/thirdparty/external directory is reported as a warning. false scans all of them, including node\_modules and virtualenvs unless `exclude` names them; VCS metadata (.git, .hg, .svn) is never scanned |
 | `max_file_size` | bytes; an analyzable larger file is skipped with incomplete coverage unless oversize\_skip\_globs matches it (default 1,000,000 bytes) |
 | `oversize_skip_globs` | case-insensitive file name globs; a file over max\_file\_size matching one is skipped with a warning even under strict\_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts) |

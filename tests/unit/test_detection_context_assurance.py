@@ -398,7 +398,8 @@ def test_mcp_tool_server_code_does_not_imply_autonomous_agent(tmp_path: Path, ru
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert len(findings) == 1
-    assert findings[0].kind == Kind.FRAMEWORK_USAGE
+    # Serving tools over MCP types the project as a server implementation, never as an agent.
+    assert findings[0].kind == Kind.MCP_SERVER
     assert "protocol.mcp" in findings[0].frameworks
 
 
