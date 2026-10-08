@@ -653,6 +653,11 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
     is_flag=True,
     help="let test and fixture code establish agents at full weight",
 )
+@click.option(
+    "--diff-base",
+    default=None,
+    help="git ref to diff against; only changed files are scanned (plus manifests and .env for context)",
+)
 @scan_options
 def code(
     paths: tuple[str, ...],
@@ -665,6 +670,7 @@ def code(
     no_secrets: bool,
     strict_coverage: bool,
     include_tests: bool,
+    diff_base: str | None,
     opts: ScanOptions,
 ) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and
@@ -677,6 +683,8 @@ def code(
         common["strict_coverage"] = True
     if include_tests:
         common["include_tests"] = True
+    if diff_base:
+        common["diff_base"] = diff_base
     if paths:
         specs.append(ConnectorSpec(name="code.filesystem", config={"paths": list(paths), **common}))
     if github_org or github_repo:

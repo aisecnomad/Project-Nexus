@@ -568,6 +568,8 @@ class _ScanState:
     infra_models: dict[str, list[Match]] = field(default_factory=dict)  # relpath -> model ids declared in IaC
     # project root -> (relpath, line, excerpt)
     iam_wildcards: dict[str, list[tuple[str, int, str]]] = field(default_factory=dict)
+    diff_files: frozenset[str] | None = None  # when set, only these changed files + context files are scanned
+    diff_base_ref: str | None = None  # the ref that was diffed against
 
     def covered_files(self) -> frozenset[str]:
         """Files whose own MCP, manifest, workflow or IaC finding reports their evidence."""
@@ -1200,6 +1202,11 @@ class FilesystemConnector(BaseConnector):
         ),
         "provider": "provider label recorded on findings (default filesystem)",
         "metadata": "mapping merged into every finding's metadata",
+        "diff_base": (
+            "git ref to diff against (branch, tag, or SHA); only files changed since this ref are scanned, "
+            "plus manifests and environment files for cross-file context. Requires a local .git directory. "
+            "Falls back to a full scan when the ref cannot be resolved"
+        ),
     }
     shared_config_keys: ClassVar[dict[str, str]] = {}  # scans a checkout, not an export file
     offline_formats: ClassVar[str] = "n/a (path is the input)"
@@ -1271,6 +1278,14 @@ class FilesystemConnector(BaseConnector):
             ):
                 raise ConnectorError("code.filesystem: invalid split root identity")
             self._root_ids[Path(path).expanduser().resolve()] = split_root_id
+        self.diff_base: str | None = ctx.get("diff_base")
+        if self.diff_base is not None:
+            from shadowscan.utils.git import validate_diff_base
+
+            if not isinstance(self.diff_base, str) or validate_diff_base(self.diff_base) is None:
+                raise ConnectorError(
+                    f"code.filesystem: diff_base must be a valid git ref, got {self.diff_base!r}"
+                )
         self.account: str | None = ctx.get("account")
         self.owner: str | None = ctx.get("owner")
         self.provider_override: str | None = ctx.get("provider")
@@ -1789,8 +1804,36 @@ class FilesystemConnector(BaseConnector):
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         scan = _ScanState(root, self._scan_label(root))
+        if self.diff_base is not None:
+            scan.diff_base_ref = self.diff_base
+            scan.diff_files = self._resolve_diff(root)
         self._walk(scan)
-        yield from self._emit_findings(scan)
+        for f in self._emit_findings(scan):
+            if scan.diff_files is not None:
+                f.add_tag("diff-scan")
+                f.metadata["diff_scan"] = {
+                    "base_ref": scan.diff_base_ref,
+                    "changed_files": len(scan.diff_files),
+                }
+            yield f
+
+    def _resolve_diff(self, root: Path) -> frozenset[str] | None:
+        from shadowscan.utils.git import DiffError, diff_changed_files
+
+        try:
+            changed = diff_changed_files(root, self.diff_base, self.ctx)  # type: ignore[arg-type]
+        except DiffError as exc:
+            self.ctx.warn(
+                f"code.filesystem: diff-base could not be resolved ({exc}); "
+                "falling back to full scan",
+                incomplete=False,
+            )
+            return None
+        self.ctx.warn(
+            f"code.filesystem: diff-base {self.diff_base!r}: {len(changed)} changed file(s)",
+            incomplete=False,
+        )
+        return changed
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -1841,6 +1884,8 @@ class FilesystemConnector(BaseConnector):
         entries = self._iter_entries(scan.root)
         examined = 0
         for rel, path, proj_root, size in entries:
+            if scan.diff_files is not None and not self._diff_included(rel, scan.diff_files):
+                continue
             budget = scan_timeout_for_size(self.scan_timeout, size)
             reserve = self._reserved_budget(rel, path, size, budget)
             if deadline is not None:
@@ -1867,6 +1912,23 @@ class FilesystemConnector(BaseConnector):
                 self.index.scan_budget(seconds=budget),
             ):
                 self._scan_file(scan, rel, path, proj_root)
+
+    @staticmethod
+    def _diff_included(rel: str, diff_files: frozenset[str]) -> bool:
+        """Whether a file should be scanned in diff mode.
+
+        Always included: files in the diff set, manifests, env files, and
+        config files whose content contextualizes code changes.
+        """
+        if rel in diff_files:
+            return True
+        name = rel.rsplit("/", 1)[-1]
+        lower = name.lower()
+        if lower.startswith(".env"):
+            return True
+        if is_manifest_name(name):
+            return True
+        return False
 
     def _scan_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
         """Run every analysis pass over one file of the walk."""
