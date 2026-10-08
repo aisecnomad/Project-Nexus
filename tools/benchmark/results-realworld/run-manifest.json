@@ -1,0 +1,807 @@
+{
+  "corpus": "realworld_corpus.json",
+  "corpus_sha256": "12d8cf8157ec9507d459562f5101ba134bbfe6a999e9690ba712862b7199065c",
+  "corpus_metadata": {
+    "type": "real-world-pinned",
+    "name": "ShadowScan real-world repository corpus",
+    "pinned_on": "2026-10-08",
+    "case_count": 91,
+    "selection": "Public repositories chosen by the harness author to cover agent frameworks in six languages, MCP servers and client configurations, coding-agent configuration files, skills, A2A cards, low-code exports, IaC, provider SDKs, and hard negatives whose names collide with AI products. Not a random sample. Two candidates were excluded for size (openclaw/openclaw at 52k files and the mastra monorepo at 20k files).",
+    "labeling": "Author-labeled, single reviewer, not independently reviewed. Candidate evidence came from a pattern probe written separately from any scanner's signatures; every label and evidence path was then checked by reading the files. 'agent' means agent code, a configured MCP server or client, coding-agent configuration, skills, agent cards, low-code agents or flows with AI steps, or IaC provisioning agents. 'llm' means provider SDK or API use with none of those. 'none' means no AI integration; prose, lists, crawler data and classical ML count as none. Credential evidence records that a provider-key-shaped string exists (fixtures and examples included); values were never copied.",
+    "pins": "Commit SHAs from git ls-remote on the pin date; fetch uses shallow clones without Git LFS objects."
+  },
+  "cases_run": 91,
+  "checkouts": [
+    {
+      "id": "rw-gpt-researcher",
+      "repo": "assafelovic/gpt-researcher",
+      "sha": "0957c301ed06c2a5857b834358c7227c739041d4",
+      "files": 839,
+      "bytes": 26800917
+    },
+    {
+      "id": "rw-crewai-examples",
+      "repo": "crewAIInc/crewAI-examples",
+      "sha": "da94a91e691e1cf5b3151416bb15b5b62729bea8",
+      "files": 313,
+      "bytes": 33131900
+    },
+    {
+      "id": "rw-react-agent",
+      "repo": "langchain-ai/react-agent",
+      "sha": "f5520937686b06d7139a165e71af1b86e291b866",
+      "files": 26,
+      "bytes": 1500071
+    },
+    {
+      "id": "rw-openai-cs-agents-demo",
+      "repo": "openai/openai-cs-agents-demo",
+      "sha": "bd7bfca0f5abf50529370814c3e7c88542011925",
+      "files": 43,
+      "bytes": 1409011
+    },
+    {
+      "id": "rw-openai-realtime-agents",
+      "repo": "openai/openai-realtime-agents",
+      "sha": "94c9e9116b581052655cff7b756cc5e02771cda1",
+      "files": 49,
+      "bytes": 2954310
+    },
+    {
+      "id": "rw-adk-samples",
+      "repo": "google/adk-samples",
+      "sha": "c339821da836d05a366de7687c6c75f0b2c9c9af",
+      "files": 2239,
+      "bytes": 30996473
+    },
+    {
+      "id": "rw-a2a-samples",
+      "repo": "a2aproject/a2a-samples",
+      "sha": "6603ba3f2c31a7ef33e70b9d8b5b5f8be42ac9a3",
+      "files": 866,
+      "bytes": 28833077
+    },
+    {
+      "id": "rw-browser-use",
+      "repo": "browser-use/browser-use",
+      "sha": "c75e8476e26d18b7617643bc2ae082fae8eae431",
+      "files": 538,
+      "bytes": 9638273
+    },
+    {
+      "id": "rw-aider",
+      "repo": "Aider-AI/aider",
+      "sha": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+      "files": 691,
+      "bytes": 77744649
+    },
+    {
+      "id": "rw-haystack-cookbook",
+      "repo": "deepset-ai/haystack-cookbook",
+      "sha": "35212da9a2dfe6374b02f11c5f1a541265b09c1d",
+      "files": 92,
+      "bytes": 32762542
+    },
+    {
+      "id": "rw-strands-samples",
+      "repo": "strands-agents/samples",
+      "sha": "11dd549c26c964a707de8189b7974a39603f2605",
+      "files": 1308,
+      "bytes": 173349238
+    },
+    {
+      "id": "rw-anthropic-cookbook",
+      "repo": "anthropics/anthropic-cookbook",
+      "sha": "d7265d6ae994ccd8429db0594b000073b2f9ad43",
+      "files": 604,
+      "bytes": 218006332
+    },
+    {
+      "id": "rw-anthropic-quickstarts",
+      "repo": "anthropics/anthropic-quickstarts",
+      "sha": "9ec32b91df50b0d4906cae64b13c6298055ff40d",
+      "files": 648,
+      "bytes": 8637991
+    },
+    {
+      "id": "rw-claude-agent-sdk-demos",
+      "repo": "anthropics/claude-agent-sdk-demos",
+      "sha": "826b268506a5f3707623c9e6140b200befcbebae",
+      "files": 269,
+      "bytes": 7141411
+    },
+    {
+      "id": "rw-amazon-bedrock-agent-samples",
+      "repo": "awslabs/amazon-bedrock-agent-samples",
+      "sha": "3e55140baa52555fdf73142abb04b4e1962be91f",
+      "files": 794,
+      "bytes": 60813728
+    },
+    {
+      "id": "rw-vercel-ai-chatbot",
+      "repo": "vercel/ai-chatbot",
+      "sha": "c2f8235e1f3ea903ad8b7f61447c4f74164b5c58",
+      "files": 181,
+      "bytes": 1179283
+    },
+    {
+      "id": "rw-mastra-template-deep-research",
+      "repo": "mastra-ai/template-deep-research",
+      "sha": "8a33c09983f55d1fc75152b64e4ff486ad50fc86",
+      "files": 17,
+      "bytes": 27995
+    },
+    {
+      "id": "rw-langchain4j-examples",
+      "repo": "langchain4j/langchain4j-examples",
+      "sha": "790431c9fa6764a4501461a322d7ccdb60869e26",
+      "files": 524,
+      "bytes": 4043177
+    },
+    {
+      "id": "rw-spring-ai-examples",
+      "repo": "spring-projects/spring-ai-examples",
+      "sha": "74164123ba2d13cba7ae185a460b133914106b69",
+      "files": 476,
+      "bytes": 4795235
+    },
+    {
+      "id": "rw-eino-examples",
+      "repo": "cloudwego/eino-examples",
+      "sha": "a6dbd95ab51fe9896a2bafa2e5a468e3bed01161",
+      "files": 439,
+      "bytes": 39117330
+    },
+    {
+      "id": "rw-azure-search-openai-demo-csharp",
+      "repo": "Azure-Samples/azure-search-openai-demo-csharp",
+      "sha": "7d702a68d37f8c93d902acf8a35088979a2e3fa3",
+      "files": 289,
+      "bytes": 6730104
+    },
+    {
+      "id": "rw-copilot-studio-samples",
+      "repo": "microsoft/CopilotStudioSamples",
+      "sha": "6ee7fd5d9fa9b9c9f7bd9eee51311552d9b195ed",
+      "files": 1111,
+      "bytes": 111287642
+    },
+    {
+      "id": "rw-mem0",
+      "repo": "mem0ai/mem0",
+      "sha": "b7ad69afda6b6ed030347c66d48a13e4de9dec08",
+      "files": 1837,
+      "bytes": 35998728
+    },
+    {
+      "id": "rw-open-canvas",
+      "repo": "langchain-ai/open-canvas",
+      "sha": "0310cecd51f31b3d37a52d6d1060137da3405280",
+      "files": 257,
+      "bytes": 2393589
+    },
+    {
+      "id": "rw-chatbot-ui",
+      "repo": "mckaywrigley/chatbot-ui",
+      "sha": "81328b61d2a4ab597a7a057be70e785cf756d9f8",
+      "files": 320,
+      "bytes": 1968539
+    },
+    {
+      "id": "rw-openhands",
+      "repo": "All-Hands-AI/OpenHands",
+      "sha": "bf92bcb6b337ca8d8f109aef0acaade447774b35",
+      "files": 2547,
+      "bytes": 20637866
+    },
+    {
+      "id": "rw-awesome-chatgpt-prompts",
+      "repo": "f/awesome-chatgpt-prompts",
+      "sha": "7d3f248962d1dca209d59e033524bcb86c2b26b8",
+      "files": 1574,
+      "bytes": 140573372
+    },
+    {
+      "id": "rw-gitlab-cli",
+      "repo": "gitlab-org/cli",
+      "sha": "8ae0c0ef5cf94d75354053095bbdc2ec7fefd96f",
+      "files": 1615,
+      "bytes": 23621875
+    },
+    {
+      "id": "rw-synapse",
+      "repo": "vertexproject/synapse",
+      "sha": "a2c28d85554348b1b6d0de0821f8cdac454be522",
+      "files": 1023,
+      "bytes": 34491117
+    },
+    {
+      "id": "rw-duo-workflow-service",
+      "repo": "gitlab-org/duo-workflow/duo-workflow-service",
+      "sha": "1d3f108b3c54549c520abd3f1a398566d7669514",
+      "files": 228,
+      "bytes": 2351554
+    },
+    {
+      "id": "rw-gitlab-ai-gateway",
+      "repo": "gitlab-org/modelops/applied-ml/code-suggestions/ai-assist",
+      "sha": "5e2986065e9f26e36289d8313236a1c03b71b124",
+      "files": 2654,
+      "bytes": 19003920
+    },
+    {
+      "id": "rw-smolagents",
+      "repo": "huggingface/smolagents",
+      "sha": "96f33faaf028479119ec8d34507b47694cf14e34",
+      "files": 185,
+      "bytes": 2694288
+    },
+    {
+      "id": "rw-pydantic-ai",
+      "repo": "pydantic/pydantic-ai",
+      "sha": "f55bb8a6fd6cdb34405e5f523d67cf8f366df4aa",
+      "files": 4178,
+      "bytes": 294851177
+    },
+    {
+      "id": "rw-openai-swarm",
+      "repo": "openai/swarm",
+      "sha": "6af0b4caf37dca4526dfd98e9fbd8ce36e7eeb22",
+      "files": 288,
+      "bytes": 984981
+    },
+    {
+      "id": "rw-mcp-servers",
+      "repo": "modelcontextprotocol/servers",
+      "sha": "5abed86c5317b833dd59907492d56c65981642aa",
+      "files": 159,
+      "bytes": 1521323
+    },
+    {
+      "id": "rw-fastmcp",
+      "repo": "jlowin/fastmcp",
+      "sha": "5baeacfe20eca735cb949564b4915f93a622b916",
+      "files": 1811,
+      "bytes": 61384603
+    },
+    {
+      "id": "rw-github-mcp-server",
+      "repo": "github/github-mcp-server",
+      "sha": "55edd58d5e1127fe7ea3c036bc14dca66f7e41c4",
+      "files": 659,
+      "bytes": 6653200
+    },
+    {
+      "id": "rw-tmc-langchaingo",
+      "repo": "tmc/langchaingo",
+      "sha": "039fbb6c6469a8ffcdae615ec7bdc465c83abadc",
+      "files": 1216,
+      "bytes": 18038289
+    },
+    {
+      "id": "rw-rig",
+      "repo": "0xPlaygrounds/rig",
+      "sha": "b6a9b44344a7e0c630853bf5bc426893c3c953c5",
+      "files": 3124,
+      "bytes": 108375731
+    },
+    {
+      "id": "rw-genkit",
+      "repo": "firebase/genkit",
+      "sha": "a838fe30358daf19e1a29527155f3a890703c6d6",
+      "files": 2699,
+      "bytes": 56263918
+    },
+    {
+      "id": "rw-flowise",
+      "repo": "FlowiseAI/Flowise",
+      "sha": "9291856d1ea4a4ceea9f8fef8ce14f4f6c81e8eb",
+      "files": 2450,
+      "bytes": 43859772
+    },
+    {
+      "id": "rw-microsoft-autogen",
+      "repo": "microsoft/autogen",
+      "sha": "027ecf0a379bcc1d09956d46d12d44a3ad9cee14",
+      "files": 1837,
+      "bytes": 48344797
+    },
+    {
+      "id": "rw-semantic-kernel",
+      "repo": "microsoft/semantic-kernel",
+      "sha": "cc8a15fa356f02dcb7bc64999392ca02f3167312",
+      "files": 4860,
+      "bytes": 47861510
+    },
+    {
+      "id": "rw-microsoft-agent-framework",
+      "repo": "microsoft/agent-framework",
+      "sha": "91ab44faa4824a30247d00c341f3498ba46b1ca3",
+      "files": 5514,
+      "bytes": 59898726
+    },
+    {
+      "id": "rw-dspy",
+      "repo": "stanfordnlp/dspy",
+      "sha": "a7e7edb8c6803d88aeb25c6a0412657c01835bc5",
+      "files": 735,
+      "bytes": 26208411
+    },
+    {
+      "id": "rw-anthropic-sdk-typescript",
+      "repo": "anthropics/anthropic-sdk-typescript",
+      "sha": "0f9fdcaaf13916919a24f2b248aeb08cefc34a68",
+      "files": 886,
+      "bytes": 7465748
+    },
+    {
+      "id": "rw-anthropic-sdk-ruby",
+      "repo": "anthropics/anthropic-sdk-ruby",
+      "sha": "139c110274335178fcb8e22eadc194ffbb02e181",
+      "files": 6109,
+      "bytes": 17946839
+    },
+    {
+      "id": "rw-openai-dotnet",
+      "repo": "openai/openai-dotnet",
+      "sha": "1f0e8829acac4e004ebe0960fa24f3a0f0e59e40",
+      "files": 4467,
+      "bytes": 344592185
+    },
+    {
+      "id": "rw-ollama-python",
+      "repo": "ollama/ollama-python",
+      "sha": "8785556559ec1d045d27a1ba9d9cc7330c3d3cb1",
+      "files": 55,
+      "bytes": 248753
+    },
+    {
+      "id": "rw-anthropic-skills",
+      "repo": "anthropics/skills",
+      "sha": "683bc88e56f3e09ba94f7055977f3d3aa499f202",
+      "files": 441,
+      "bytes": 11736962
+    },
+    {
+      "id": "rw-awesome-copilot",
+      "repo": "github/awesome-copilot",
+      "sha": "7cce7cfb4b61196c36d7e8eb8475ae84b356b126",
+      "files": 3430,
+      "bytes": 132748720
+    },
+    {
+      "id": "rw-n8n-starter-kit",
+      "repo": "n8n-io/self-hosted-ai-starter-kit",
+      "sha": "662bd8892476b41d9084417a569cc84013354674",
+      "files": 10,
+      "bytes": 4125278
+    },
+    {
+      "id": "rw-n8n-workflows",
+      "repo": "Zie619/n8n-workflows",
+      "sha": "94007c1445d9258a7da116646b79473e7c7c3282",
+      "files": 2178,
+      "bytes": 41881575
+    },
+    {
+      "id": "rw-awesome-dify-workflow",
+      "repo": "svcvit/Awesome-Dify-Workflow",
+      "sha": "e730ed3627e5fa56fc1668d995b83178b6b1181c",
+      "files": 166,
+      "bytes": 49088066
+    },
+    {
+      "id": "rw-terraform-aws-bedrock",
+      "repo": "aws-ia/terraform-aws-bedrock",
+      "sha": "4b74b7dd5110292cb34ca911448581153484f13f",
+      "files": 102,
+      "bytes": 359322
+    },
+    {
+      "id": "rw-coral-cloud",
+      "repo": "trailheadapps/coral-cloud",
+      "sha": "6e05e6cf74da47308d21a263ed0eb8f8236409de",
+      "files": 508,
+      "bytes": 9135689
+    },
+    {
+      "id": "rw-openai-python",
+      "repo": "openai/openai-python",
+      "sha": "9301e319ea33ef28fba380f39a289dedc14652c1",
+      "files": 2407,
+      "bytes": 17512967
+    },
+    {
+      "id": "rw-aicommits",
+      "repo": "Nutlope/aicommits",
+      "sha": "a414dd43b6ac2c5ff0f31eae758c5e6e106089c3",
+      "files": 97,
+      "bytes": 1299980
+    },
+    {
+      "id": "rw-buildkite-agent",
+      "repo": "buildkite/agent",
+      "sha": "7e35f2ed983d3636dc46fdc050e51c52c75f051d",
+      "files": 927,
+      "bytes": 7523138
+    },
+    {
+      "id": "rw-python-telegram-bot",
+      "repo": "python-telegram-bot/python-telegram-bot",
+      "sha": "d4f2b1682938710be93332c08be543a683e414e6",
+      "files": 1354,
+      "bytes": 9174615
+    },
+    {
+      "id": "rw-gitlab-runner",
+      "repo": "gitlab-org/gitlab-runner",
+      "sha": "471891165404efe4384064780831084f8864741d",
+      "files": 1448,
+      "bytes": 17243839
+    },
+    {
+      "id": "rw-gitlab-agent",
+      "repo": "gitlab-org/cluster-integration/gitlab-agent",
+      "sha": "5d7d299dcc7c93895221f38f7877ff55dc0832c0",
+      "files": 2315,
+      "bytes": 14390650
+    },
+    {
+      "id": "rw-opencommit",
+      "repo": "di-sukharev/opencommit",
+      "sha": "250d49ab5eae07d9081d0175ac50e1b0bb25b9d5",
+      "files": 156,
+      "bytes": 5863870
+    },
+    {
+      "id": "rw-go-openai",
+      "repo": "sashabaranov/go-openai",
+      "sha": "dd54fd29688ae9934688a2928be0abbd8647a812",
+      "files": 112,
+      "bytes": 607171
+    },
+    {
+      "id": "rw-aws-copilot-cli",
+      "repo": "aws/copilot-cli",
+      "sha": "a0dbe68908e55c4292e5838bd6cfbaea38364879",
+      "files": 1412,
+      "bytes": 46502983
+    },
+    {
+      "id": "rw-bedrock-protocol",
+      "repo": "PrismarineJS/bedrock-protocol",
+      "sha": "f0ac6151322b2176244421c7c481f45814baf929",
+      "files": 101,
+      "bytes": 377220
+    },
+    {
+      "id": "rw-goose",
+      "repo": "pressly/goose",
+      "sha": "0e5c23df4b93cec4594830b21f66c9ae16d77f75",
+      "files": 274,
+      "bytes": 845836
+    },
+    {
+      "id": "rw-swarmkit",
+      "repo": "moby/swarmkit",
+      "sha": "1fd637ba5cc32ff30d1dd2bdb14997bd4f424b46",
+      "files": 3019,
+      "bytes": 40389342
+    },
+    {
+      "id": "rw-phoenix",
+      "repo": "phoenixframework/phoenix",
+      "sha": "cf8b44be432024bfc8250b5694ec5f91fe5f5029",
+      "files": 508,
+      "bytes": 4262379
+    },
+    {
+      "id": "rw-weave",
+      "repo": "weaveworks/weave",
+      "sha": "8c8476381d48820891356497bfcee6337e99a401",
+      "files": 4187,
+      "bytes": 37737909
+    },
+    {
+      "id": "rw-amppackager",
+      "repo": "ampproject/amppackager",
+      "sha": "57974efc943c09fec5e5d3cd4b95e70a482946f9",
+      "files": 4815,
+      "bytes": 43784870
+    },
+    {
+      "id": "rw-arduino-mcp2515",
+      "repo": "autowp/arduino-mcp2515",
+      "sha": "737f0d536770dc7182bc18e0168f38a810f710a8",
+      "files": 15,
+      "bytes": 292686
+    },
+    {
+      "id": "rw-agate",
+      "repo": "mbrubeck/agate",
+      "sha": "a48d086163d02534f6d76f747aff2156d950ba44",
+      "files": 68,
+      "bytes": 264666
+    },
+    {
+      "id": "rw-mingpt",
+      "repo": "karpathy/minGPT",
+      "sha": "37baab71b9abea1b76ab957409a1cc2fbfba8a26",
+      "files": 18,
+      "bytes": 200070
+    },
+    {
+      "id": "rw-imbalanced-learn",
+      "repo": "scikit-learn-contrib/imbalanced-learn",
+      "sha": "8504e95f0160f61d1b617ca66f779646d2ee609e",
+      "files": 251,
+      "bytes": 2301378
+    },
+    {
+      "id": "rw-gymnasium",
+      "repo": "Farama-Foundation/Gymnasium",
+      "sha": "2637f8c98edfc360453fe3202cc35bef7806d84f",
+      "files": 738,
+      "bytes": 112707931
+    },
+    {
+      "id": "rw-awesome-mcp-servers",
+      "repo": "punkpeye/awesome-mcp-servers",
+      "sha": "6474b22a220359c9d4b836daef501067caf7266c",
+      "files": 12,
+      "bytes": 2337506
+    },
+    {
+      "id": "rw-ai-robots-txt",
+      "repo": "ai-robots-txt/ai.robots.txt",
+      "sha": "9ad8a47e23f7689ec3ea2423a47569d0bb91bdaf",
+      "files": 31,
+      "bytes": 283614
+    },
+    {
+      "id": "rw-uap-core",
+      "repo": "ua-parser/uap-core",
+      "sha": "73e7340c3ed8055051607b296bf46ead7aa5f19e",
+      "files": 26,
+      "bytes": 9265105
+    },
+    {
+      "id": "rw-awesome-cursorrules",
+      "repo": "PatrickJS/awesome-cursorrules",
+      "sha": "b044f956f021b6e8877f16781bcfc466a6a120e9",
+      "files": 295,
+      "bytes": 2642662
+    },
+    {
+      "id": "rw-requests",
+      "repo": "psf/requests",
+      "sha": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+      "files": 130,
+      "bytes": 4451562
+    },
+    {
+      "id": "rw-express",
+      "repo": "expressjs/express",
+      "sha": "9efc29e280018dafc1f0617f3a3d28f4e463b7be",
+      "files": 214,
+      "bytes": 717121
+    },
+    {
+      "id": "rw-flask",
+      "repo": "pallets/flask",
+      "sha": "d086db856be187255b8ec61ef409357393020f32",
+      "files": 236,
+      "bytes": 1785020
+    },
+    {
+      "id": "rw-gin",
+      "repo": "gin-gonic/gin",
+      "sha": "43fe48e8a0f44af783116cdb010725e6bb50255f",
+      "files": 130,
+      "bytes": 885190
+    },
+    {
+      "id": "rw-ripgrep",
+      "repo": "BurntSushi/ripgrep",
+      "sha": "3fce3b5bb0236da2df6d99672afb8a719642eca7",
+      "files": 237,
+      "bytes": 3255973
+    },
+    {
+      "id": "rw-fzf",
+      "repo": "junegunn/fzf",
+      "sha": "b1be3a8be1b833ce5b92fbbac11637643d60a046",
+      "files": 161,
+      "bytes": 1843375
+    },
+    {
+      "id": "rw-bat",
+      "repo": "sharkdp/bat",
+      "sha": "d9559c69f541873f8c47ac8ad81d985f4441edf6",
+      "files": 1007,
+      "bytes": 8006389
+    },
+    {
+      "id": "rw-jq",
+      "repo": "jqlang/jq",
+      "sha": "fd25c3e720385919273b5b776486d84af9aa3914",
+      "files": 435,
+      "bytes": 4794094
+    },
+    {
+      "id": "rw-jinja",
+      "repo": "pallets/jinja",
+      "sha": "5ef70112a1ff19c05324ff889dd30405b1002044",
+      "files": 107,
+      "bytes": 1146887
+    },
+    {
+      "id": "rw-mdbook",
+      "repo": "rust-lang/mdBook",
+      "sha": "d4658998d44112e873c90049767d7eb002169a2d",
+      "files": 729,
+      "bytes": 2328532
+    },
+    {
+      "id": "rw-bubbletea",
+      "repo": "charmbracelet/bubbletea",
+      "sha": "96d69d2f7eb182bb311be08fc56ed2c208239aff",
+      "files": 230,
+      "bytes": 2973629
+    }
+  ],
+  "timeout_seconds": 900,
+  "python": "3.13.16",
+  "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+  "started": "2026-10-08T12:53:26Z",
+  "runs": [
+    {
+      "tool": "shadowscan",
+      "display": "Project Nexus ShadowScan",
+      "source": "aisecnomad/Project-Nexus",
+      "surfaces": {
+        "repo": "code.filesystem on the checkout",
+        "endpoint": "code.filesystem on the home directory",
+        "network": "gateway.logs on a JSON access log"
+      },
+      "wall_seconds": 329.5,
+      "ok": 44,
+      "error": 47,
+      "n/a": 0,
+      "evidence_types": [
+        "framework",
+        "provider",
+        "mcp-code",
+        "mcp-config",
+        "coding-agent-config",
+        "agent-skill",
+        "a2a-card",
+        "lowcode-flow",
+        "iac",
+        "credential",
+        "local-model"
+      ]
+    },
+    {
+      "tool": "cisco-aibom",
+      "display": "Cisco AI BOM",
+      "source": "cisco-ai-defense/aibom",
+      "surfaces": {
+        "repo": "analyze <checkout>; Tier-3 LLM classifier unreachable (deterministic floor)",
+        "endpoint": "analyze <home directory>; Tier-3 LLM classifier unreachable"
+      },
+      "wall_seconds": 4235.1,
+      "ok": 86,
+      "error": 5,
+      "n/a": 0,
+      "evidence_types": [
+        "framework",
+        "provider",
+        "mcp-code",
+        "mcp-config",
+        "agent-skill"
+      ]
+    },
+    {
+      "tool": "agent-bom",
+      "display": "agent-bom",
+      "source": "msaad00/agent-bom",
+      "surfaces": {
+        "repo": "scan <checkout> --no-scan --offline (inventory only), empty HOME",
+        "endpoint": "scan --no-scan --offline with HOME=<case> (client auto-discovery)"
+      },
+      "wall_seconds": 418.6,
+      "ok": 90,
+      "error": 1,
+      "n/a": 0,
+      "evidence_types": []
+    },
+    {
+      "tool": "agentdiscover",
+      "display": "AgentDiscover Scanner",
+      "source": "Defend-AI-Tech-Inc/agent-discover-scanner",
+      "surfaces": {
+        "repo": "scan --format sarif + audit --skip-layers 2,3,4,5, empty HOME",
+        "endpoint": "scan + audit --skip-layers 2,3,4,5 on the home, HOME=<case>"
+      },
+      "wall_seconds": 183.6,
+      "ok": 91,
+      "error": 0,
+      "n/a": 0,
+      "evidence_types": [
+        "framework",
+        "mcp-code"
+      ]
+    },
+    {
+      "tool": "agentic-radar",
+      "display": "Agentic Radar (SPLX)",
+      "source": "splx-ai/agentic-radar",
+      "surfaces": {
+        "repo": "scan <framework> -i <checkout> --export-graph-json, for each of the five frameworks"
+      },
+      "wall_seconds": 330.6,
+      "ok": 47,
+      "error": 44,
+      "n/a": 0,
+      "evidence_types": [
+        "framework",
+        "mcp-code"
+      ]
+    },
+    {
+      "tool": "cdxgen-aibom",
+      "display": "OWASP cdxgen (AI inventory)",
+      "source": "cdxgen/cdxgen",
+      "surfaces": {
+        "repo": "cdxgen -t ai --no-install-deps --no-babel on the checkout"
+      },
+      "wall_seconds": 61.5,
+      "ok": 91,
+      "error": 0,
+      "n/a": 0,
+      "evidence_types": [
+        "provider",
+        "mcp-config",
+        "coding-agent-config",
+        "agent-skill",
+        "local-model"
+      ]
+    },
+    {
+      "tool": "cisco-skill-scanner",
+      "display": "Cisco Skill Scanner",
+      "source": "cisco-ai-defense/skill-scanner",
+      "surfaces": {
+        "repo": "scan-all <checkout> --recursive --format json (static analyzers; no LLM)"
+      },
+      "wall_seconds": 205.9,
+      "ok": 91,
+      "error": 0,
+      "n/a": 0,
+      "evidence_types": [
+        "agent-skill"
+      ]
+    },
+    {
+      "tool": "keyword-grep",
+      "display": "Keyword grep (control)",
+      "source": "this repository",
+      "surfaces": {
+        "repo": "word search for 22 AI product/SDK names and 6 agent config filenames over text files"
+      },
+      "wall_seconds": 176.0,
+      "ok": 91,
+      "error": 0,
+      "n/a": 0,
+      "evidence_types": [
+        "provider",
+        "framework",
+        "mcp-code",
+        "mcp-config",
+        "coding-agent-config",
+        "agent-skill"
+      ]
+    }
+  ]
+}

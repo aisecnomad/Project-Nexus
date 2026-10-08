@@ -5,6 +5,30 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 8 real-world repository benchmark
+
+- Added `tools/benchmark/realworld_corpus.json`: 91 public GitHub and GitLab
+  repositories pinned to commits and labeled by hand with evidence paths
+  (62 agent, 2 llm, 27 none) across application, framework-source,
+  configuration-only, LLM-only, name-collision, classical-ML, docs-only and
+  plain strata. Labels are the author's, single-reviewer and stratified, not a
+  random sample or independent review; the corpus does not estimate field
+  precision or recall.
+- Added `tools/benchmark/realworld.py` (`validate`, `fetch`, `run`, `report`)
+  and `adapters_repo.py` with adapters for Agentic Radar, OWASP cdxgen's AI
+  inventory, Cisco Skill Scanner and a keyword-grep control. `Adapter.tree`
+  copies a pinned checkout without `.git`, keeping links as links, so the
+  existing ShadowScan, Cisco AI BOM, agent-bom and AgentDiscover adapters run
+  unchanged. `Outcome.evidence` feeds a secondary evidence-coverage table and
+  never changes a detection rule.
+- Calibrated two adapters on three repositories before the scored run and
+  recorded why: agent-bom no longer counts GitHub Actions pseudo-agents as
+  AI; Agentic Radar's "didn't find any agentic workflow" exit is a clean
+  nothing-found. The synthetic generator sources and their pre-registered
+  digest are unchanged.
+- Results and the per-repository matrix are in
+  `tools/benchmark/results-realworld/`; `docs/evaluation.md` links the run.
+
 ### October 7 release merge-rule check with an administrator readback
 
 - Fixed: the release-evidence workflow could never pass its merge-rule step.

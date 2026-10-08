@@ -329,6 +329,19 @@ score, not an estimated probability. The report's Brier/ECE proxies use the
 maximum target finding confidence or zero for absence, and reliability bins;
 the tiny selected sample does not calibrate that score.
 
+## Real-world repository benchmark
+
+`tools/benchmark/realworld_corpus.json` pins 91 public GitHub and GitLab
+repositories to commits and labels each by hand with evidence paths; the
+harness in `tools/benchmark/realworld.py` runs ShadowScan and seven other
+tools on them and renders `tools/benchmark/results-realworld/REPORT.md`. It
+is a stratified, author-labeled selection, not a random sample or an
+independent review, so it estimates neither field precision nor recall; it
+shows how each tool behaves on real checkouts with their notebooks, lockfiles,
+fixtures and coding-agent files. See the harness
+[README](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/benchmark/README.md#real-world-repository-corpus)
+for the label rules, the run modes and the limits.
+
 ## Build a genuinely held-out field set
 
 1. Define the population and unit before labeling: repository revision and

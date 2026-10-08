@@ -2,7 +2,9 @@
 
 This harness runs ShadowScan and ten other open-source shadow-AI or
 agent-discovery tools on the same seeded, randomly generated cases and scores
-each tool only on the input types it says it handles.
+each tool only on the input types it says it handles. A second corpus of
+pinned, hand-labeled public repositories runs the repository-surface tools on
+real code; see [Real-world repository corpus](#real-world-repository-corpus).
 
 > **Read this first.** The cases are synthetic and were written in this
 > repository by the ShadowScan maintainers, whose author had read ShadowScan's
@@ -202,3 +204,177 @@ independent evidence, and the other tools were not rerun.
 - **Binary detection only.** A tool that reports the right case for the wrong
   reason still counts as a detection; a missing finding with an otherwise
   useful report still counts as a miss.
+
+## Real-world repository corpus
+
+The synthetic corpus answers "does the tool read this input type at all".
+The real-world corpus asks the harder question: on public repositories as they
+are, with vendored examples, notebooks, lockfiles, test fixtures and
+coding-agent files scattered through them, which tool tells agent repositories
+from look-alikes? [`realworld_corpus.json`](realworld_corpus.json) pins 91
+GitHub and GitLab repositories to commits and labels each one by hand with the
+paths that justify the label. [`realworld.py`](realworld.py) fetches the
+checkouts, runs the repository-surface adapters on them and renders the report
+in [`results-realworld/`](results-realworld/README.md).
+
+> **Read this first.** The repositories were chosen and labeled by the author
+> of this harness, who had read ShadowScan's signature packs. The selection is
+> stratified, not random, so the rates are not field precision or recall. No
+> second person reviewed the labels. The scored run was made once, after the
+> corpus and every detection rule were committed.
+
+### Corpus design
+
+| Stratum | Label | n | What it holds |
+|---|---|---|---|
+| `app` | agent | 30 | Applications and samples that use an agent framework, a bespoke tool loop, an MCP server or client, or an A2A card: LangGraph, CrewAI, OpenAI Agents (Python and TypeScript), Google ADK, Strands, Claude Agent SDK, Haystack, Semantic Kernel (C#), LangChain4j and Spring AI (Java), Eino (Go), Mastra and the Vercel AI SDK (TypeScript), Bedrock Agents, Copilot Studio, two GitLab services and three repositories whose MCP server sits inside an otherwise unrelated product |
+| `framework-source` | agent | 19 | The source of agent frameworks, SDKs and MCP servers: smolagents, Pydantic AI, Swarm, AutoGen, Semantic Kernel, Agent Framework, DSPy, Genkit, Rig (Rust), LangChainGo, Flowise, FastMCP, the reference MCP servers, GitHub's MCP server, browser-use, and provider SDKs whose repositories carry MCP helpers or tool runners |
+| `config-only` | agent | 13 | Agent evidence that is configuration, not code: SKILL.md collections, Copilot customizations, n8n and Dify exports, Agentforce metadata, a Terraform Bedrock agent module, and five repositories whose only agent evidence is an AGENTS.md, CLAUDE.md or Copilot instructions file (Buildkite's CI agent, GitLab Runner, GitLab's Kubernetes agent, python-telegram-bot, the OpenAI Python SDK) |
+| `llm-only` | llm | 2 | Provider SDK use with no agent evidence (opencommit, go-openai) |
+| `name-collision` | none | 9 | AWS Copilot, Minecraft Bedrock, pressly/goose, Docker SwarmKit, Phoenix (Elixir), Weave Net, AMP packager, an MCP2515 CAN driver, Agate (Gemini protocol) |
+| `ml-not-agent` | none | 3 | minGPT, imbalanced-learn, Gymnasium |
+| `docs-only` | none | 5 | awesome-mcp-servers, ai.robots.txt, uap-core, awesome-cursorrules (rule templates outside any editor's config path), requests (an AI contribution policy) |
+| `plain` | none | 10 | Express, Flask, Gin, ripgrep, fzf, bat, jq, Jinja, mdBook, Bubble Tea |
+
+Languages: Python, TypeScript and JavaScript, Go, Rust, Java and Kotlin, C#,
+Ruby, Elixir, C, HCL, Bicep, XML metadata, YAML and JSON exports, notebooks.
+Sizes run from 10 to 6,109 tracked files. Two candidates were dropped for
+size before labeling (openclaw/openclaw, 52k files; the mastra monorepo, 20k).
+
+Label rules, written before the run and enforced by `validate_corpus`:
+
+- `agent`: agent code (framework or SDK with agent constructs, a bespoke tool
+  loop), an MCP server or client implementation, an MCP client configuration,
+  a coding-agent configuration file, a skill package, an A2A agent card, a
+  low-code agent or flow with AI steps, or IaC provisioning agents.
+- `llm`: provider SDK or API use with none of the above.
+- `none`: no AI integration. Prose, lists, crawler data, rule templates
+  outside a config path and classical machine learning count as none.
+- Evidence types: `framework`, `provider`, `mcp-code`, `mcp-config`,
+  `coding-agent-config`, `agent-skill`, `a2a-card`, `lowcode-flow`, `iac`,
+  `credential` (a provider-key-shaped string exists; fixtures and examples
+  included; values never copied), `local-model`.
+
+The label boundary is the same as the synthetic corpus's, with one consequence
+worth stating: a repository whose only AI relation is an `AGENTS.md` or a
+Copilot instructions file is an `agent` positive, because a coding agent is
+configured to work on it. Thirteen such configuration-only cases, five of them
+in repositories that would otherwise be hard negatives, test whether a tool
+reads those files at all.
+
+### Labeling procedure
+
+1. Candidate evidence came from a pattern probe written for this corpus from
+   public SDK and client documentation, separate from ShadowScan's signature
+   packs. It lists dependency names, import patterns, config file paths,
+   low-code node types, IaC resource types and provider-key shapes per
+   repository.
+2. Every label and every evidence path was then checked by reading the files.
+   The probe never decides a label; several repositories planned as negatives
+   became configuration-only positives after reading, and one planned
+   docs-only repository (awesome-chatgpt-prompts) turned out to ship an MCP
+   server.
+3. `python -m tools.benchmark.realworld validate` enforces the vocabulary and
+   the label rules; a test verifies the bundled corpus and the stratification.
+
+### Pre-registration and calibration
+
+The corpus, the adapters and their detection rules were committed before the
+scored run. Three repositories (langchain-ai/react-agent, pallets/flask,
+Nutlope/aicommits) served as a calibration set first; the changes they forced
+are limited to reading a tool's report and are recorded in the adapter
+docstrings:
+
+- **agent-bom:** a real checkout yields a project server named
+  `github-actions` listing workflow actions, and one pseudo-agent per
+  workflow, on every repository with a workflow. Neither names an AI package
+  or a model, so the `command` clause that admitted them is dropped and
+  pseudo-agents sourced from repository structure are ignored.
+- **Agentic Radar:** "didn't find any agentic workflow" exits 1 without a
+  graph and is a clean nothing-found for that framework; a parser crash is a
+  crash. A case is an error only when a framework crashed and no framework
+  produced a graph.
+- **cdxgen** reports every AI inventory item as a `file` or
+  `machine-learning-model` component with a `cdx:ai:kind`; `prompt-config-file`
+  covers AGENTS.md-style instructions and counts as agentic.
+- **Harness, after the run started:** a timeout killed only the `unshare`
+  process and orphaned the tool inside its namespace, which the first Cisco
+  AI BOM timeouts exposed. `_isolated` now starts each tool in its own
+  session and kills the process group. The results README records the
+  orphans that ran during the scored run. This changes no detection rule.
+
+### Tools and how each is run
+
+Every tool runs on a copy of the checkout without its `.git` directory, in
+fresh network and PID namespaces, with a minimal environment and an empty
+`HOME`. Nothing from a checkout is executed by the harness. The per-invocation
+timeout is 900 s.
+
+| Tool | Version | Run as | "Detected" when | Evidence types mapped |
+|---|---|---|---|---|
+| ShadowScan | this checkout | `code.filesystem` on the copy | any finding and a complete scan (exit 3 is an error) | all |
+| Cisco AI BOM | `8d7bec0` | `cisco-aibom analyze`, LLM tier unreachable | `total_components` above zero | agent, MCP, model, skill types |
+| agent-bom | `26ed7c1` | `scan --no-scan --offline`, empty HOME | an `ai-inventory` project server, a model-bound server, or a non-structural client agent | none |
+| AgentDiscover Scanner | `a3756cd` | `scan --format sarif` plus `audit --skip-layers 2,3,4,5` | any SARIF result, inventoried agent or MCP entry | framework, mcp-code |
+| Agentic Radar (SPLX) | 0.14.1 | `scan <framework> --export-graph-json` for langgraph, crewai, n8n, openai-agents and autogen | any graph node besides START/END, agent or tool across the five runs | framework, mcp-code |
+| OWASP cdxgen (AI inventory) | 12.8.5 | `cdxgen -t ai --no-install-deps --no-babel` | any component in the AI BOM | provider, mcp-config, coding-agent-config, agent-skill, local-model |
+| Cisco Skill Scanner | 2.2.1 | `scan-all --recursive --format json`, static analyzers only | at least one skill package found, whatever its verdict | agent-skill |
+| Keyword grep (control) | this repository | case-insensitive word search for 22 AI product and SDK names and 6 agent config filenames | any hit | provider, framework, mcp-code, config types |
+
+Snyk Agent Scan and Cisco MCP Scanner are not scored: both read client
+configuration under a home directory, not a repository (see the synthetic
+calibration notes). The keyword control is deliberately naive; it shows what
+grepping buys on real repositories and where name collisions defeat it.
+
+### Metrics
+
+The repository-level metrics are the synthetic benchmark's: TP/FP/FN/TN,
+recall, specificity and precision with Wilson 95% intervals, F1 with a
+bootstrap interval, balanced accuracy, MCC, the agent-tier rate, median
+seconds, and an exact McNemar test against ShadowScan. Errors count as "not
+detected" and are listed separately. Two tables are new:
+
+- **Evidence coverage** (secondary): for each evidence type a tool's adapter
+  can express, the share of repositories labeled with that type on which the
+  tool reported at least one item of that type, and how many unlabeled
+  repositories received such a report. A tool is not scored on types it
+  cannot express, and the mapping never changes the detection rule.
+- **Per-repository matrix:** one row per repository with every tool's result,
+  so a reader can check any single call against the labeled evidence.
+
+### Run it
+
+```bash
+python -m tools.benchmark.realworld validate
+python -m tools.benchmark.realworld fetch --checkouts /tmp/bench/checkouts
+bash tools/benchmark/install_tools.sh /tmp/bench/tools
+python -m tools.benchmark.realworld run --checkouts /tmp/bench/checkouts \
+  --tool-root /tmp/bench/tools --results /tmp/bench/results-realworld --workers 4
+python -m tools.benchmark.realworld report --results /tmp/bench/results-realworld \
+  --output /tmp/bench/results-realworld/REPORT.md
+```
+
+`fetch` clones each repository at its pinned commit (shallow, no Git LFS
+objects, no credentials) and refuses a checkout whose HEAD is not the pin, so a
+rerun scans the same bytes. Checkouts are untrusted input: keep them outside
+this repository and never run their code.
+
+### Limits
+
+- **Author-labeled, single reviewer, stratified selection.** The same person
+  wrote the harness, read ShadowScan's signatures, chose the repositories and
+  labeled them. A second labeler would disagree on some boundaries, above all
+  on configuration-only positives and on SDK repositories.
+- **Positives outnumber negatives** (64 to 27), so specificity intervals are
+  wide, and two `llm` cases say little about the agent tier on their own.
+- **One commit per repository.** The pins are from 2026-10-08; most of these
+  projects change weekly, and a different commit would give different
+  evidence.
+- **Tools below full capability.** Cisco AI BOM runs without its LLM tier;
+  Agentic Radar's parsers crash on code they do not model, which the harness
+  records as errors rather than misses; cdxgen runs without dependency
+  installation or Babel analysis; Skill Scanner runs without its LLM
+  analyzer.
+- **Binary detection, like the synthetic benchmark.** The evidence-coverage
+  table is the only place a tool is credited for finding the right kind of
+  thing, and it depends on each adapter's mapping of that tool's report.
