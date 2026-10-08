@@ -33,6 +33,8 @@
 | `shadowscan/connectors/common.py` | turning matches into evidence / frameworks / capabilities, permission classification, blob scanning, merging the metadata of duplicate findings |
 | `shadowscan/connectors/<surface>/` | one module per data source |
 | `shadowscan/connectors/code/remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
+| `shadowscan/connectors/code/source_semantics.py` | bounded Python import binding, reachability and tool attribution, including literal comprehension exclusions |
+| `shadowscan/connectors/code/polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py` | bounded lexical import and scope checks for supported Go agent constructors and .NET automatic tool invocation; no cross-file type resolution |
 | `shadowscan/utils/http.py` | shared HTTPS client: destination policy, retries, 16 MiB response limit and whole-body read deadline |
 | `shadowscan/utils/files.py` | confined reads: no link followed in any path component, directories opened for traversal only (`O_PATH` on Linux) |
 | `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |

@@ -72,6 +72,9 @@ class _CallLexer:
         self._block_ends: list[int] | None = None
         # Comment and continuation starts mapped to where the trivia after them ends.
         self._trivia_ends: dict[int, int] = {}
+        # Actual Go comments indexed while reading SDK imports. Selector
+        # receivers can then be read backwards without searching source again.
+        self._go_comments: dict[int, int] = {}
 
     def tick(self) -> None:
         self.work += 1
@@ -364,6 +367,7 @@ def _redact_credential_calls(text: str) -> str:
     if '"' not in text and "'" not in text and "`" not in text:
         return text
     lexer = _CallLexer(text)
+    imported = _go_sdk_credential_bindings(text, lexer)
     values: list[tuple[int, int]] = []
     literals: list[tuple[int, int]] = []
     skip_until = 0
@@ -372,6 +376,7 @@ def _redact_credential_calls(text: str) -> str:
         _CALL_CHAIN.finditer(text),
         _CALL_TRIVIA_START.finditer(text),
         _CALL_CHAIN_TRIVIA.finditer(text),
+        _GO_SDK_CALL_START.finditer(text) if imported else (),
         key=lambda call: call.start(),
     )
     # Every word of a comment block before a '(' reaches that '(' as a callee.
@@ -398,12 +403,16 @@ def _redact_credential_calls(text: str) -> str:
             lexed[argument_start] = spans, state
         spans, state = lexed[argument_start]
         callee = _qualified_callee(text, call)
+        if imported and callee in _GO_SDK_METHODS:
+            receiver = _go_sdk_receiver(text, call.start(), lexer)
+            if receiver:
+                callee = f"{receiver}.{callee}"
         level = _credential_callee(callee)
         # A lone spaced "Login ('log|n')" occurs in prose. Treat its literal
         # like a lookup's, while qualified SDK logins retain password context.
         if callee.lower() == "login" and argument_start - call.start() > len(callee) + 1:
             level = min(level, 1)
-        known = _sdk_credential_positions(callee)
+        known = _sdk_credential_positions(callee, imported)
         if level or known:
             if state in {"nesting", "length"}:
                 raise SanitizationLimitError(f"credential call {state} limit exceeded")
@@ -519,8 +528,8 @@ _CALLEE_FACTORIES = frozenset({"basic", "create", "from", "new", "of"})
 # constructor's is (named arguments such as C#'s 'apiKey: "v"' are left to the
 # mapping rules).
 # A distinctive name counts wherever it is called from (a builder variable,
-# 'services.', a chain); a generic one only through its package's own name
-# ('openai.DefaultConfig'), so an aliased import is not recognized. The notes
+# 'services.', a chain); a generic one through its package's own name
+# ('openai.DefaultConfig') or a source-bound Go import, including dot imports. The notes
 # below say what other overloads pass at those positions. Positions were
 # checked against the SDKs' public signatures on 2026-10-01.
 _SDK_CREDENTIAL_ARGUMENTS: dict[str, tuple[int, ...]] = {
@@ -563,6 +572,19 @@ _SDK_CREDENTIAL_ARGUMENTS: dict[str, tuple[int, ...]] = {
     # Google AI JavaScript SDK (@google/generative-ai): new GoogleGenerativeAI(apiKey).
     "GoogleGenerativeAI": (0,),
 }
+# Only this imported package grants generic config helpers credential meaning.
+# Comments and strings are skipped before reading imports; a similarly named
+# method on an unrelated package must not lose its ordinary configuration data.
+_GO_SDK_PACKAGE = "github.com/sashabaranov/go-openai"
+_GO_SDK_METHODS = ("DefaultConfig", "DefaultAzureConfig", "NewClient")
+_GO_IMPORT_START = re.compile(r"/[/*]|[\"'`]|(?<![\w.])import(?!\w)")
+_GO_IMPORT_ALIAS = re.compile(r"(?:[^\W\d]|_)\w*|\.")
+# A method candidate alone lets the receiver be recovered lexically across
+# spaces/comments and through Unicode import aliases, without broadening the
+# ordinary cross-language call patterns or treating every generic method as SDK use.
+_GO_SDK_CALL_START = re.compile(
+    r"(?<!\w)(?:DefaultConfig|DefaultAzureConfig|NewClient)[ \t]*(?:\(|(?=/\*|//|\r?\n))"
+)
 # C#'s target-typed 'new(' constructs the type declared before the variable:
 # 'AzureKeyCredential credential = new("...")'. A generic type's arguments
 # are skipped within 256 characters.
@@ -596,10 +618,121 @@ def _credential_callee(name: str) -> int:
     return 1 if not _CREDENTIAL_CALLEE_WORDS.isdisjoint(words) else 0
 
 
-def _sdk_credential_positions(name: str) -> tuple[int, ...]:
+def _go_sdk_credential_bindings(text: str, lexer: _CallLexer) -> dict[str, tuple[int, ...]]:
+    """Credential callees bound by Go single or grouped imports in the full source.
+
+    A lightweight lexical pass reads literal imports without executing code or
+    resolving files. It shares the call lexer's work budget and string/comment
+    indexes. Import aliases are retained conservatively even when a local name
+    later shadows them: over-redaction is safer than publishing a credential.
+    """
+    # Interpreted Go import strings can escape the package's characters. A
+    # literal path or an escape keeps the lexical pass necessary; plain text
+    # without either does not pay for parsing unrelated import declarations.
+    if "import" not in text or ("go-openai" not in text and "\\" not in text):
+        return {}
+    bindings: dict[str, tuple[int, ...]] = {}
+    cursor = 0
+    for token in _GO_IMPORT_START.finditer(text):
+        if token.start() < cursor:
+            continue
+        lexer.tick()
+        marker = token.group()
+        if marker == "//":
+            cursor = lexer.line_end(token.start())
+            lexer._go_comments[cursor] = token.start()
+            continue
+        if marker == "/*":
+            cursor = lexer.block_end(token.start())
+            lexer._go_comments[cursor] = token.start()
+            continue
+        if marker in "\"'`":
+            cursor = lexer.string_end(token.start())
+            continue
+        position = lexer.argument_start(token.end(), len(text))
+        grouped = position < len(text) and text[position] == "("
+        position += grouped
+        while position < len(text):
+            position = lexer.argument_start(position, len(text))
+            if position >= len(text) or text[position] == ")":
+                cursor = position + (position < len(text))
+                break
+            if text[position] == ";":
+                position += 1
+                continue
+            alias = "openai"
+            named = _GO_IMPORT_ALIAS.match(text, position)
+            if named is not None:
+                alias = named.group()
+                position = lexer.argument_start(named.end(), len(text))
+            if position >= len(text) or text[position] not in '"`':
+                cursor = position
+                break
+            end = lexer.string_end(position)
+            literal = text[position:end]
+            package: str | None = None
+            if literal.startswith("`") and literal.endswith("`") and len(literal) > 1:
+                package = literal[1:-1]
+            elif len(literal) <= 4096:
+                try:
+                    parsed = ast.literal_eval(literal)
+                except (ValueError, SyntaxError, RecursionError):
+                    pass
+                else:
+                    package = parsed if isinstance(parsed, str) else None
+            if package == _GO_SDK_PACKAGE and alias != "_":
+                for method in _GO_SDK_METHODS:
+                    callee = method if alias == "." else f"{alias}.{method}"
+                    bindings[callee] = _SDK_CREDENTIAL_ARGUMENTS[f"openai.{method}"]
+                if len(bindings) > _MAX_SANITIZATION_NODES:
+                    raise SanitizationLimitError("SDK import binding limit exceeded")
+            cursor = position = end
+            if not grouped:
+                break
+    return bindings
+
+
+def _go_sdk_receiver(text: str, start: int, lexer: _CallLexer) -> str:
+    """The identifier before a Go selector's dot, skipping real comments and blanks.
+
+    Each traversal consumes the shared work budget. Comments are already
+    indexed by the full-source import pass, so a large comment is skipped once
+    rather than searched backwards from every method candidate.
+    """
+
+    def preceding(position: int) -> int:
+        while position > 0:
+            lexer.tick()
+            comment = lexer._go_comments.get(position)
+            if comment is not None:
+                position = comment
+            elif text[position - 1].isspace():
+                position -= 1
+            else:
+                break
+        return position
+
+    dot = preceding(start)
+    if dot == 0 or text[dot - 1] != ".":
+        return ""
+    end = preceding(dot - 1)
+    # _name_before supports Unicode letters and digits, as Go identifiers do.
+    receiver = _name_before(text, end, "_")
+    lexer.work += len(receiver)
+    lexer.tick()
+    return receiver
+
+
+def _sdk_credential_positions(
+    name: str, imported: dict[str, tuple[int, ...]] | None = None
+) -> tuple[int, ...]:
     """Candidate credential positions of a well-known SDK call (see ``_SDK_CREDENTIAL_ARGUMENTS``)."""
     receiver, _, method = name.rpartition(".")
     qualified = receiver.rpartition(".")[2] + "." + method
+    if imported:
+        bound = imported.get(qualified if receiver else method)
+        if bound is not None:
+            return bound
     positions = _SDK_CREDENTIAL_ARGUMENTS.get(qualified)
     return _SDK_CREDENTIAL_ARGUMENTS.get(method, ()) if positions is None else positions
 

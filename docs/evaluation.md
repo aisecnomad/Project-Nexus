@@ -185,6 +185,9 @@ October 6 cases from the head-to-head benchmark (`tools/benchmark/`) cover
 Goose's user configuration at `~/.config/goose/config.yaml` and an installed
 Cline editor extension without an MCP settings file, each with a look-alike
 negative.
+October 8 cases cover import-bound Go agent constructors, .NET tool definition
+versus invocation, and Python comprehension reachability. These authored cases
+are regression evidence, not new independent annotation.
 It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its
 annotation ledger remain frozen; adding regression cases does not refresh their
@@ -353,7 +356,7 @@ the tiny selected sample does not calibrate that score.
    declarations and source-based resolutions for every disagreement. The runner
    limits the corpus to 500 cases, 20 text files per case, 32 KB per file, 1 MB
    combined case content, and 2 MB of JSON. Larger real repositories need a
-   separate offline scan and a repository-level annotation protocol. Keep the
+   separate offline scan and the [repository-level annotation procedure](#repository-level-field-acceptance). Keep the
    source and labels access controlled; the JSON report never prints file
    content or evidence snippets but may contain finding signature IDs and MCP
    server names. If evaluating kind and attribution, freeze those labels and
@@ -367,6 +370,59 @@ the tiny selected sample does not calibrate that score.
    enter an analyst queue. Revalidate on a new holdout after changing the
    signatures or classification logic. A zero-error small sample gives little
    information about uncommon production patterns.
+
+### Repository-level field acceptance
+
+This procedure covers repositories larger than the bounded JSON evaluation
+runner permits. It is a review protocol, not an additional automated acceptance
+command. Do not split one repository into many cases and count those files as
+independent repository observations, or translate these records into a passing
+`tools.acceptance` receipt without its actual required evidence.
+
+1. Before selecting or scanning inputs, freeze the target population, repository
+   sampling unit, sampling seed, exclusion rules and acceptance policy. Stratify
+   across language, SDK family, repository size and organization. Include
+   conventional software, LLM-only integrations, standalone tools, configured
+   agents and supported model-directed action loops. Choose sample sizes,
+   false-positive and false-negative budgets, and latency/memory limits from
+   the intended deployment. Account for shared organizations and templates
+   when estimating uncertainty; files from the same repository are clustered.
+2. Retain permission-approved immutable snapshots outside this checkout, pinned
+   to full commits with a file-content manifest. Record omitted/generated files,
+   unavailable submodules, scope exclusions and any source transformations.
+   Never execute repository code to obtain labels or scan it. Use disposable
+   restricted workers without tenant credentials and record all scan budgets.
+3. Have two humans independently inspect source before seeing scanner output.
+   Freeze repository-level presence labels for each selected finding kind and
+   source-based reasons, separately from any inventory of individual entities,
+   attribution, capabilities or runtime activity. Adjudicate disagreements and
+   document ambiguity and exclusions. A source-coverage gap is not a negative.
+   Keep labels, decisions and snapshots access controlled and hash-bound to the
+   predeclared policy; do not reuse development fixtures or previously tuned
+   sources as a fresh holdout.
+4. Run the exact reviewed candidate on every immutable snapshot with
+   `code.filesystem`, a fixed configuration and no `--fail-on` threshold.
+   Retain private JSON reports, command exits, source/signature/configuration
+   identities, worker resources, elapsed time and peak memory. Require complete
+   coverage with no unexplained errors, warnings, skips or truncation. Exit 3
+   or a missing file blocks acceptance for that sample; it must not contribute
+   a true negative. Do not loosen exclusions or budgets after observing output.
+5. Score the frozen repository-level labels against findings of the declared
+   kinds. Report TP/FP/FN/TN, undefined denominators, class counts and suitable
+   uncertainty for each stratum; keep entity/attribution/capability errors in
+   separate predeclared results rather than hiding them in binary presence.
+   Review every discrepancy, apply the frozen acceptance policy, and retain
+   an independent human decision. Once results inform tuning, commission a
+   new holdout before claiming out-of-sample performance.
+
+For the October 8 corrections, independently selected field strata should cover
+SDK import aliases, .NET tool definition versus dispatch, Go package receivers
+versus ordinary local methods, Python comprehension reachability, multi-domain
+device identities and bounded export/replay. Source presence checks validate
+static discovery only. Device attribution and export roundtrips require their
+own labeled operational inputs, and AWS/Slack live acceptance requires the
+authorized [tenant canaries](canaries.md). Other providers need their own
+scope-specific live validation; they cannot inherit those receipts.
 
 ### Gate a frozen holdout
 

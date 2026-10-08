@@ -316,6 +316,19 @@ turn Git or the scanner into a process sandbox.
 
 ## Resource limits and incomplete scans
 
+Record dumps are JSONL and obey offline replay's 4 MiB encoded-byte line limit,
+including the newline. Each connector export also obeys the smaller of its
+`max_input_file_bytes` and `max_input_bytes` limits: 32 MiB by default. The hard
+file ceiling stays 64 MiB. Export-size and strict-JSON serialization rejections
+make the scan incomplete while preserving valid original records for analysis.
+Sanitizer safety-limit rejections skip the unsafe record and make the scan
+incomplete. Any of these rejections aborts dump publication and preserves a
+prior file; the manifest marks the new export `exported: false`.
+A partial dump is not complete evidence. Use smaller collection scopes or raise the
+configured file/total limits within their hard ceilings when appropriate.
+The line limit is fixed, so a single oversize record requires an upstream
+export with bounded records rather than a larger file limit.
+
 Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
 content by default. Each network attempt has a response-acquisition budget of
 twice the client timeout (60 seconds by default), covering connection, request
@@ -794,6 +807,46 @@ These notes record behavior changes made while the 0.1.1 candidate was being
 hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 8 discovery and replay review corrections (Unreleased)
+
+Regenerate reports and comparison baselines with the reviewed candidate.
+Supported SDK credential argument recognition is applied before evidence
+publication; redaction remains defense in depth, and reports remain confidential.
+
+Source classification becomes more conservative for standalone .NET tool
+definitions, unrelated Go receivers, and provably unreachable Python
+comprehension clauses. Supported .NET automatic invocation and Go agent
+constructors retain import-bound positive evidence. These are static candidate
+classifications and do not establish deployed execution. Unknown dynamic
+bindings remain potential or framework-usage evidence.
+
+Lifecycle links now require the same complete device value, compared after
+trimming and case normalization. Standardize endpoint and runtime exports on
+the same canonical immutable device identifier or full hostname. A short name
+does not implicitly alias a FQDN, and different DNS suffixes remain distinct.
+Repeat correlation clears derived endpoint activity tags when their process
+observations disappear; native runtime observations remain intact. Confidence
+and risk are unchanged by these links.
+
+Record exports are bounded by encoded bytes, including the JSONL newline,
+and the same limits used for offline replay. A dump rejected at a line, file
+or total limit makes the scan incomplete even when collection and analysis
+otherwise succeed. Valid records omitted for export size or strict-JSON
+serialization remain analyzed; sanitizer safety-limit rejections still skip
+the record. Any rejection aborts that dump's publication, preserves a prior
+file, and marks the new export `exported: false`. Retained dump records from
+other incomplete collection paths must not be accepted as complete evidence.
+Preserve and inspect export manifests: direct JSONL replay does not inherit
+the collection's incomplete status. Repeat smaller scopes before replaying.
+Older oversized dumps may require
+careful offline splitting; never silently truncate a JSON record.
+
+Use the [repository-level acceptance procedure](evaluation.md#repository-level-field-acceptance)
+for full repositories that exceed the bounded evaluation runner's limits.
+New authored regression cases are development evidence. Independent human
+annotation and authorized provider-specific tenant acceptance still require
+their own evidence and cannot be inferred from a passing CI run.
 
 ### October 7 distribution rename and PyPI publication
 

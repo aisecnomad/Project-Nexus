@@ -110,6 +110,17 @@ Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be
 effective on `main`; their presence in workflow files alone is insufficient.
 
+For the October 8 corrections, review supported SDK argument sanitization,
+positive and negative .NET/Go source classification, Python comprehension
+reachability, exact device identity, and encoded-byte export/replay limits.
+Confirm that size/encoding omissions preserve valid analysis, sanitizer safety
+rejections skip the unsafe record, and any rejection aborts dump publication.
+Check that repeated lifecycle correlation removes derived endpoint
+activity without erasing native runtime observations. Treat the new authored
+cases as regressions. Use [repository-level field acceptance](../evaluation.md#repository-level-field-acceptance)
+for fresh independently selected full repositories; obtain human labels and
+authorized live tenant receipts before declaring those checks complete.
+
 ## Suggested deliverable
 
 A concise review record could list the SHA reviewed, commands run, review slices

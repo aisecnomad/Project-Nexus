@@ -3,6 +3,30 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
+## Unreleased
+
+### Discovery, runtime attribution and record replay corrections
+
+- Resolve supported positional SDK credential arguments before publishing
+  source evidence, including supported import aliases; retain confidential
+  report handling and bounded sanitization.
+- Keep standalone .NET tool definitions and unrelated Go receivers as
+  framework usage. Recognize supported import-bound .NET automatic tool
+  invocation and Go agent construction without claiming runtime execution.
+- Exclude Python comprehension results and later clauses that cannot execute
+  because a literal iterable is empty or a preceding filter is false.
+- Match lifecycle observations by the complete case-insensitive device value.
+  Different DNS domains and short/FQDN spellings no longer implicitly alias;
+  repeated correlation clears stale derived endpoint activity tags.
+- Bound record exports by encoded JSONL bytes and the matching offline line,
+  file and total input limits. Export size, strict-JSON and sanitizer rejections
+  make coverage incomplete and abort dump publication, preserving a prior file.
+  Valid records omitted for export size or encoding remain analyzed; records
+  exceeding sanitizer safety limits remain skipped.
+- Add authored positive and negative regressions and a repository-level field
+  acceptance procedure. Regression passes do not supply independent human
+  labels or live tenant acceptance.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

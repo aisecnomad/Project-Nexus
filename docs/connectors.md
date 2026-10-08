@@ -10,6 +10,14 @@ written atomically with mode 0600 in a 0700 directory and JWT inputs are never
 exported. Every connector instance has a collision-resistant export filename,
 including repeated connector names or labels that normalize to the same text. Redaction
 removes sensitive values, so an export is not a lossless copy of the API response.
+JSONL exports use the same encoded-byte line and file limits as offline replay.
+Export-size and strict-JSON serialization rejections make the scan incomplete
+while preserving valid original records for connector analysis. Records that
+exceed sanitizer safety limits are skipped and also make the scan incomplete.
+Any such rejection aborts publication of that dump and preserves a prior file;
+the manifest marks the new export `exported: false`.
+Check and retain `exports/manifest.json`: replaying a partial JSONL file directly
+does not establish complete collection coverage.
 Live HTTP endpoints require HTTPS; redirects and pagination cannot send credentials
 to another origin. Denied access, collection failures, pagination limits and
 oversized or slow responses (see
