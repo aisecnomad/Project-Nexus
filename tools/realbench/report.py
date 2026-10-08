@@ -43,7 +43,7 @@ def _tools(scored: dict[str, Any]) -> list[str]:
 def headline(scored: dict[str, Any], task: str, out: list[str], compare: dict[str, Any] | None) -> None:
     w = out.append
     tools = [t for t in _tools(scored) if f"{task}:primary" in scored["tools"][t]]
-    extra = " | MCC, adjudicated labels" if compare else ""
+    extra = " | MCC, frozen labels" if compare else ""
     w(f"| Tool | n | TP | FP | FN | TN | No verdict | Recall | Specificity | Precision | F1 | MCC{extra} |")
     w("|---|---|---|---|---|---|---|---|---|---|---|---|" + ("---|" if compare else ""))
     rows = sorted(tools, key=lambda t: -scored["tools"][t][f"{task}:primary"]["mcc"])
@@ -126,7 +126,7 @@ def render(summary: dict[str, Any], run_manifest: dict[str, Any], labels: list[d
     w(
         f"{len(repos)} public repositories ({Counter(r['host'] for r in repos)['github']} GitHub, "
         f"{Counter(r['host'] for r in repos)['gitlab']} GitLab), each pinned to a commit, drawn by the "
-        "pre-registered procedure in [PROTOCOL.md](PROTOCOL.md). Every tool ran offline on a read-only "
+        "pre-registered procedure in [PROTOCOL.md](../PROTOCOL.md). Every tool ran offline on a read-only "
         f"checkout. ShadowScan commit `{run_manifest.get('shadowscan_commit')}`"
         + (f" (source tree `{tree}`)" if tree else "")
         + f"; Python {run_manifest.get('python')} on {run_manifest.get('platform')}.\n"

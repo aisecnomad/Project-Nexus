@@ -344,7 +344,9 @@ over-represent AI projects, so it does not estimate prevalence or precision for
 an estate either, and the procedure below still applies to production
 decisions. See its
 [protocol](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/realbench/PROTOCOL.md)
-for the design, conflicts of interest and limits.
+for the design, conflicts of interest and limits, and its
+[results](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/realbench/results/README.md)
+for what they show, including ShadowScan's incomplete-scan rate on real repositories.
 
 ## Build a genuinely held-out field set
 

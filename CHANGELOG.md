@@ -22,6 +22,12 @@ summarizes each release for people who install and operate ShadowScan.
   post-run label adjudication and a blind cited-file audit. Results are AI
   annotations of a selected corpus, not independent human review or field
   precision.
+- First results: on completed scans ShadowScan had the highest generative-AI
+  MCC (0.81), but it marked 64 of 183 real repositories incomplete (files over
+  1 MB, unfinished lexing, symlinks, binary content), which under the
+  pre-registered rule puts it last overall (0.17). A manifest-dependency
+  baseline (0.67), Cisco AI BOM (0.65) and SafeDep vet (0.64) led overall;
+  agentguard led agent detection (0.69).
 
 ## 0.1.2 — 2026-10-08
 

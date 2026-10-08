@@ -1,0 +1,222 @@
+{"item": 1, "verdict": "not-evidence", "criterion": "", "reason": "imports from 'ai' but only resumes a stored stream; no model call"}
+{"item": 5, "verdict": "ai-evidence", "criterion": "L2", "reason": "Helm values deploying vllm/vllm-openai serving Llama-3.1-8B-Instruct"}
+{"item": 9, "verdict": "ai-evidence", "criterion": "L1", "reason": "POSTs recorded audio to /v1/audio/transcriptions with model=agent"}
+{"item": 13, "verdict": "not-evidence", "criterion": "", "reason": "n8n form/gmail/sheets workflow; no AI nodes"}
+{"item": 17, "verdict": "ai-evidence", "criterion": "L3", "reason": "package manifest declares direct @modelcontextprotocol/sdk dependency"}
+{"item": 21, "verdict": "not-evidence", "criterion": "", "reason": "Markdown research prose"}
+{"item": 25, "verdict": "not-evidence", "criterion": "", "reason": "OAuth device-code auth flow; no AI use"}
+{"item": 29, "verdict": "ai-evidence", "criterion": "A3", "reason": "MCP App view using mcp-use/react useCallTool/useViewTool to call and register MCP tools"}
+{"item": 33, "verdict": "ai-evidence", "criterion": "L1", "reason": "LangChain Ollama LLM with LLMChain run"}
+{"item": 37, "verdict": "not-evidence", "criterion": "", "reason": "LangGraph channel internals; no model or agent construction"}
+{"item": 41, "verdict": "ai-evidence", "criterion": "L3", "reason": "csproj references Microsoft.Extensions.AI.OpenAI and Google.GenAI"}
+{"item": 45, "verdict": "not-evidence", "criterion": "", "reason": "RL policy loader (TF/PyTorch); non-generative"}
+{"item": 49, "verdict": "ai-evidence", "criterion": "L1", "reason": "Semantic Kernel OpenAIChatCompletion against local LM Studio endpoint"}
+{"item": 53, "verdict": "ai-evidence", "criterion": "L3", "reason": "requirements declare langchain, langchain-community, gpt4all"}
+{"item": 57, "verdict": "ai-evidence", "criterion": "A1", "reason": "Semantic Kernel ChatCompletionAgent with GitHub plugin and auto function choice"}
+{"item": 61, "verdict": "not-evidence", "criterion": "", "reason": "Django schema migration; no AI use"}
+{"item": 65, "verdict": "not-evidence", "criterion": "", "reason": "only pinecone-client vector DB; not a generative-model SDK"}
+{"item": 69, "verdict": "ai-evidence", "criterion": "L1", "reason": "openai client embeddings.create with text-embedding-ada-002"}
+{"item": 73, "verdict": "not-evidence", "criterion": "", "reason": "MDX documentation prose/code blocks"}
+{"item": 77, "verdict": "not-evidence", "criterion": "", "reason": "PyTorch activation function modules; no model API use"}
+{"item": 81, "verdict": "not-evidence", "criterion": "", "reason": "unit test of k8s service discovery event handling; no model call"}
+{"item": 85, "verdict": "ai-evidence", "criterion": "L1", "reason": "Dify workflow export with llm node (deepseek provider)"}
+{"item": 89, "verdict": "ai-evidence", "criterion": "A1", "reason": "Semantic Kernel chatbot with FunctionChoiceBehavior.Auto and TimePlugin"}
+{"item": 93, "verdict": "ai-evidence", "criterion": "A1", "reason": "Semantic Kernel handoff orchestration of ChatCompletion/Azure agents"}
+{"item": 97, "verdict": "ai-evidence", "criterion": "A1", "reason": "defines MCPAgent options: LLM, MCP servers as tools, tool-loop maxSteps"}
+{"item": 101, "verdict": "ai-evidence", "criterion": "A1", "reason": "spawns Claude Code/Codex agent processes with system prompt and parses responses"}
+{"item": 105, "verdict": "assistant-artifact", "criterion": "", "reason": ".cursor/rules coding-assistant rule file"}
+{"item": 109, "verdict": "ai-evidence", "criterion": "A1", "reason": "MCPAgent with ChatOpenAI and MCPClient runs tool-using query"}
+{"item": 113, "verdict": "not-evidence", "criterion": "", "reason": "MDX API reference documentation"}
+{"item": 117, "verdict": "ai-evidence", "criterion": "A4", "reason": "agent skill definition (SKILL.md) giving the agent an oracle CLI tool"}
+{"item": 121, "verdict": "assistant-artifact", "criterion": "", "reason": "AGENTS.md guidelines for AI coding agents"}
+{"item": 125, "verdict": "ai-evidence", "criterion": "A1", "reason": "MCPAgent with ChatOpenAI and LangChain DynamicStructuredTool"}
+{"item": 129, "verdict": "not-evidence", "criterion": "", "reason": "tests tool argument schema validation only; no agent or model"}
+{"item": 133, "verdict": "not-evidence", "criterion": "", "reason": "hermetic LangGraph test graph with fake chat model; no real LLM"}
+{"item": 137, "verdict": "not-first-party", "criterion": "", "reason": "generated pnpm lockfile of third-party entries"}
+{"item": 141, "verdict": "not-evidence", "criterion": "", "reason": "LangGraph StateGraph state-schema tests; no model or agent"}
+{"item": 145, "verdict": "ai-evidence", "criterion": "A6", "reason": "GitHub workflow runs Codium-ai/pr-agent with GITHUB_TOKEN and OpenAI key"}
+{"item": 149, "verdict": "not-evidence", "criterion": "", "reason": "Markdown prose"}
+{"item": 153, "verdict": "assistant-artifact", "criterion": "", "reason": ".claude/skills coding-assistant skill"}
+{"item": 157, "verdict": "not-evidence", "criterion": "", "reason": "FTP client context; no AI use"}
+{"item": 161, "verdict": "ai-evidence", "criterion": "A4", "reason": "agent skill definition (SKILL.md) giving the agent a Bear notes CLI tool"}
+{"item": 165, "verdict": "not-evidence", "criterion": "", "reason": "LangGraph pydantic state benchmark; no model or agent"}
+{"item": 169, "verdict": "ai-evidence", "criterion": "L1", "reason": "Semantic Kernel OpenAI connector client core using OpenAI SDK"}
+{"item": 173, "verdict": "not-evidence", "criterion": "", "reason": "Minecraft protocol relay; no AI use"}
+{"item": 177, "verdict": "ai-evidence", "criterion": "L3", "reason": "@ai-sdk/alibaba manifest depends on @ai-sdk/provider"}
+{"item": 181, "verdict": "not-evidence", "criterion": "", "reason": "RL baselines test; non-generative"}
+{"item": 185, "verdict": "ai-evidence", "criterion": "L3", "reason": "pyproject declares langgraph and langchain-core"}
+{"item": 189, "verdict": "ai-evidence", "criterion": "L3", "reason": "csproj references Microsoft.SemanticKernel.Connectors.OpenAI and Planners.OpenAI"}
+{"item": 193, "verdict": "ai-evidence", "criterion": "A3", "reason": "OAuth authorization server for MCP server using mcp.server.auth routes"}
+{"item": 197, "verdict": "ai-evidence", "criterion": "A1", "reason": "builds LangChain StructuredTool agent tools for Bloomberg data"}
+{"item": 201, "verdict": "ai-evidence", "criterion": "A1", "reason": "Slack bot runs AGiXT agent via chat_completions_stream"}
+{"item": 205, "verdict": "ai-evidence", "criterion": "A3", "reason": "example creates MCPServer.fromOpenAPI (MCP server implementation)"}
+{"item": 209, "verdict": "not-evidence", "criterion": "", "reason": "CI for RL library tests/lint; no AI agent"}
+{"item": 213, "verdict": "ai-evidence", "criterion": "L1", "reason": "LLMeBench config wiring OpenAIModel GPT-4 with chat prompts"}
+{"item": 217, "verdict": "not-evidence", "criterion": "", "reason": "MDX book prose"}
+{"item": 221, "verdict": "not-evidence", "criterion": "", "reason": "MDX reference documentation"}
+{"item": 2, "verdict": "not-evidence", "criterion": "", "reason": "password reset React form; no AI use"}
+{"item": 6, "verdict": "ai-evidence", "criterion": "L1", "reason": "test drives first-party AI SDK chat model streaming path (MockLanguageModelV3)"}
+{"item": 10, "verdict": "missing", "criterion": "", "reason": "literal path '<path:AGENTS.md>' does not exist in checkout"}
+{"item": 14, "verdict": "not-evidence", "criterion": "", "reason": "LangGraph constants module; no agent construction or model call"}
+{"item": 18, "verdict": "not-evidence", "criterion": "", "reason": "Markdown README; prose excluded"}
+{"item": 22, "verdict": "ai-evidence", "criterion": "L1", "reason": "Messenger bot generates replies via AGiXT ChatCompletions with selected agent"}
+{"item": 26, "verdict": "ai-evidence", "criterion": "A3", "reason": "defines MCP server tool listComments via defineTool/runMcpTool"}
+{"item": 30, "verdict": "not-evidence", "criterion": "", "reason": "n8n workflow of HTTP/code nodes; AI mentioned only in sticky-note prose"}
+{"item": 34, "verdict": "not-evidence", "criterion": "", "reason": "LangGraph pregel debug event helpers; no agent or model call"}
+{"item": 38, "verdict": "ai-evidence", "criterion": "A3", "reason": "MCP client elicitation helpers building ElicitResult from @modelcontextprotocol/client types"}
+{"item": 42, "verdict": "assistant-artifact", "criterion": "", "reason": ".agents/skills SKILL.md coding-assistant skill"}
+{"item": 46, "verdict": "not-evidence", "criterion": "", "reason": "unit tests of OpenAI prompt execution settings objects; no model call"}
+{"item": 50, "verdict": "ai-evidence", "criterion": "A3", "reason": "test builds McpServer with tool and MCP Client over streamable HTTP"}
+{"item": 54, "verdict": "ai-evidence", "criterion": "L1", "reason": "AI SDK generateText with google gemini model and tool definitions"}
+{"item": 58, "verdict": "ai-evidence", "criterion": "L1", "reason": "n8n OpenAI node with gpt-4 chat messages to categorize requests"}
+{"item": 62, "verdict": "not-evidence", "criterion": "", "reason": "validation tests for transcription data models; no model call"}
+{"item": 66, "verdict": "not-evidence", "criterion": "", "reason": "tests of provider config patch presets; no model call or service provisioning"}
+{"item": 70, "verdict": "assistant-artifact", "criterion": "", "reason": "SKILL.md skill instruction file for an AI agent (prose)"}
+{"item": 74, "verdict": "not-evidence", "criterion": "", "reason": "web fetch service test; no model call or tool loop"}
+{"item": 78, "verdict": "ai-evidence", "criterion": "L1", "reason": "n8n OpenAI node calling gpt-4 to generate user list"}
+{"item": 82, "verdict": "ai-evidence", "criterion": "A3", "reason": "scaffolder directory whose template implements MCPServer with tools"}
+{"item": 86, "verdict": "missing", "criterion": "", "reason": "literal path '<path:evals-nightly.yml>' does not exist in checkout"}
+{"item": 90, "verdict": "not-evidence", "criterion": "", "reason": "sklearn F1 evaluation of propaganda labels; no model call"}
+{"item": 94, "verdict": "ai-evidence", "criterion": "A4", "reason": "CLI writes mcpServers entries into Claude/Cursor/Windsurf agent MCP configs"}
+{"item": 98, "verdict": "missing", "criterion": "", "reason": "literal path '<path:SKILL.md>' does not exist in checkout"}
+{"item": 102, "verdict": "not-evidence", "criterion": "", "reason": "tests Electron IPC preload for agent detection/config; no agent run"}
+{"item": 106, "verdict": "ai-evidence", "criterion": "L1", "reason": "tests first-party Claude model class via @ai-sdk/anthropic streamText (mocked)"}
+{"item": 110, "verdict": "not-evidence", "criterion": "", "reason": "bridges MCP client RPC logs to a UI store; no protocol implementation"}
+{"item": 114, "verdict": "not-evidence", "criterion": "", "reason": "docs site page explaining MCP setup; prose/code snippets"}
+{"item": 118, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json declares @langchain/langgraph and @langchain/core"}
+{"item": 122, "verdict": "not-evidence", "criterion": "", "reason": "Django migration for ChatterBot statement tables; no generative model"}
+{"item": 126, "verdict": "ai-evidence", "criterion": "A1", "reason": "LangChain create_agent with MCP tools via mcp_use MCPClient"}
+{"item": 130, "verdict": "not-evidence", "criterion": "", "reason": "LangGraph StateGraph checkpoint tests with no model"}
+{"item": 134, "verdict": "ai-evidence", "criterion": "A1", "reason": "Semantic Kernel OpenAIChatCompletion with plugin and auto function calling"}
+{"item": 138, "verdict": "assistant-artifact", "criterion": "", "reason": "AGENTS.md coding-assistant instructions"}
+{"item": 142, "verdict": "not-evidence", "criterion": "", "reason": "filters tool visibility list; no model call or dispatch"}
+{"item": 146, "verdict": "assistant-artifact", "criterion": "", "reason": "CLAUDE.md coding-assistant instructions"}
+{"item": 150, "verdict": "assistant-artifact", "criterion": "", "reason": "SKILL.md coding-assistant skill with allowed-tools (prose)"}
+{"item": 154, "verdict": "assistant-artifact", "criterion": "", "reason": ".opencode/skills SKILL.md coding-assistant skill"}
+{"item": 158, "verdict": "not-evidence", "criterion": "", "reason": "React UI panel for elicitation answers; no MCP protocol code"}
+{"item": 162, "verdict": "ai-evidence", "criterion": "A2", "reason": "integration test runs project agent with openai upstream executing tool turns"}
+{"item": 166, "verdict": "not-evidence", "criterion": "", "reason": "Minecraft Bedrock protocol client; non-AI"}
+{"item": 170, "verdict": "not-evidence", "criterion": "", "reason": "VQ-VAE unit tests (non-foundation ML)"}
+{"item": 174, "verdict": "ai-evidence", "criterion": "A2", "reason": "Ollama/OpenAI chat with tool definitions and executes returned tool_calls"}
+{"item": 178, "verdict": "not-evidence", "criterion": "", "reason": "Google OAuth and file upload Django views; no AI"}
+{"item": 182, "verdict": "not-evidence", "criterion": "", "reason": "generic OAuth plugin tests; no AI"}
+{"item": 186, "verdict": "ai-evidence", "criterion": "L3", "reason": "requirements.txt declares langchain, langgraph, langchain-openrouter, openrouter"}
+{"item": 190, "verdict": "not-evidence", "criterion": "", "reason": "HTTP/SOCKS proxy utility; undici Agent name collision"}
+{"item": 194, "verdict": "ai-evidence", "criterion": "L1", "reason": "tests Anthropic/OpenAI session adapters building messages requests (mocked client)"}
+{"item": 198, "verdict": "ai-evidence", "criterion": "L3", "reason": "Cargo.toml for MCP stdio server declares rmcp with server feature"}
+{"item": 202, "verdict": "ai-evidence", "criterion": "A3", "reason": "agent plugin manifest loader parsing and normalizing mcpServers configs"}
+{"item": 206, "verdict": "ai-evidence", "criterion": "A3", "reason": "creates MCP Streamable HTTP endpoint via createMcpHandler"}
+{"item": 210, "verdict": "ai-evidence", "criterion": "L1", "reason": "notebook uses OpenAI client (OctoAI base_url) chat.completions.create"}
+{"item": 214, "verdict": "ai-evidence", "criterion": "L1", "reason": "AI SDK generateText with azure.responses gpt-4.1-mini"}
+{"item": 218, "verdict": "not-evidence", "criterion": "", "reason": "observability domain schemas (model/usage fields); no model call"}
+{"item": 222, "verdict": "not-evidence", "criterion": "", "reason": "dataset preprocessing for qasper eval task; no model call"}
+{"item": 3, "verdict": "ai-evidence", "criterion": "A4", "reason": "example MCP client config with mcpServers block listing servers"}
+{"item": 7, "verdict": "ai-evidence", "criterion": "A3", "reason": "decorator registering MCP server tools using @modelcontextprotocol/sdk McpServer"}
+{"item": 11, "verdict": "not-evidence", "criterion": "", "reason": "React form state for an MCP connection editor; no protocol calls or model use"}
+{"item": 15, "verdict": "ai-evidence", "criterion": "L1", "reason": "anthropic-sdk-go client sends Messages requests to Claude models"}
+{"item": 19, "verdict": "ai-evidence", "criterion": "A1", "reason": "AgentVerse task config defining solver/critic agents with gpt-4 llm settings"}
+{"item": 23, "verdict": "ai-evidence", "criterion": "A1", "reason": "constructs MCPAgent with LangChain ChatOpenAI and runs it with MCP tools"}
+{"item": 27, "verdict": "not-first-party", "criterion": "", "reason": "vendored openai-go SDK under vendor/"}
+{"item": 31, "verdict": "not-evidence", "criterion": "", "reason": "unit test of AI-security telemetry client with mocked HTTP; no model call"}
+{"item": 35, "verdict": "assistant-artifact", "criterion": "", "reason": "GEMINI.md coding-assistant instruction file"}
+{"item": 39, "verdict": "ai-evidence", "criterion": "A1", "reason": "LangGraph tests build agent graphs with fake chat models, tool_calls and ToolNode"}
+{"item": 43, "verdict": "ai-evidence", "criterion": "A4", "reason": "MCP registry server.json advertising a remote MCP server endpoint for agent clients"}
+{"item": 47, "verdict": "not-evidence", "criterion": "", "reason": "type definitions and default model names; no model call or agent construction"}
+{"item": 51, "verdict": "not-evidence", "criterion": "", "reason": "generic LangGraph functional workflow decorators; no model or agent use"}
+{"item": 55, "verdict": "ai-evidence", "criterion": "A4", "reason": "MCP registry server.json declaring stdio MCP server package for agent clients"}
+{"item": 59, "verdict": "ai-evidence", "criterion": "A1", "reason": "tests model/auth env assembly for runner-spawned Claude/Codex agents"}
+{"item": 63, "verdict": "ai-evidence", "criterion": "L1", "reason": "n8n HTTP request to Gemini generateContent endpoint"}
+{"item": 67, "verdict": "ai-evidence", "criterion": "A5", "reason": "n8n export with AI Agent node, OpenAI chat model and workflow tool"}
+{"item": 71, "verdict": "not-evidence", "criterion": "", "reason": "graph channel-id test; 'agent' node returns canned AIMessage, no model"}
+{"item": 75, "verdict": "not-evidence", "criterion": "", "reason": "UI picker for model providers; sends nothing to a model"}
+{"item": 79, "verdict": "ai-evidence", "criterion": "L1", "reason": "loads transformers causal LMs and runs generate for evaluation"}
+{"item": 83, "verdict": "ai-evidence", "criterion": "A3", "reason": "registers an MCP server tool with FastMCP"}
+{"item": 87, "verdict": "not-evidence", "criterion": "", "reason": "documentation prose (mdx) with code examples"}
+{"item": 91, "verdict": "assistant-artifact", "criterion": "", "reason": ".cursor/rules coding-assistant rule file"}
+{"item": 95, "verdict": "not-evidence", "criterion": "", "reason": "path is a directory, not a file"}
+{"item": 99, "verdict": "assistant-artifact", "criterion": "", "reason": "AGENTS.md coding-assistant instruction file"}
+{"item": 103, "verdict": "not-evidence", "criterion": "", "reason": "reinforcement-learning (stable-baselines3) tests; non-generative"}
+{"item": 107, "verdict": "ai-evidence", "criterion": "A3", "reason": "MCP client via langchain_mcp_adapters MultiServerMCPClient"}
+{"item": 111, "verdict": "not-evidence", "criterion": "", "reason": "network/DNS-pinning test for OpenAPI runner; no model use"}
+{"item": 115, "verdict": "ai-evidence", "criterion": "A1", "reason": "manages Claude agent SDK query sessions (create, resume, close)"}
+{"item": 119, "verdict": "assistant-artifact", "criterion": "", "reason": ".claude/skills SKILL.md for coding agent"}
+{"item": 123, "verdict": "ai-evidence", "criterion": "A1", "reason": "integration test runs MCPAgent with ChatOpenAI"}
+{"item": 127, "verdict": "not-evidence", "criterion": "", "reason": "Sonnet TensorFlow NN library base module; name collision"}
+{"item": 131, "verdict": "not-evidence", "criterion": "", "reason": "n8n meal-plan workflow; no AI nodes or model calls"}
+{"item": 135, "verdict": "not-first-party", "criterion": "", "reason": "vendored openai-go SDK under vendor/"}
+{"item": 139, "verdict": "not-evidence", "criterion": "", "reason": "path is a directory, not a file"}
+{"item": 143, "verdict": "not-evidence", "criterion": "", "reason": "documentation prose (mdx)"}
+{"item": 147, "verdict": "ai-evidence", "criterion": "A1", "reason": "resolves Claude Code binary of @anthropic-ai/claude-agent-sdk for query()"}
+{"item": 151, "verdict": "ai-evidence", "criterion": "A4", "reason": "test fixture MCP client config with mcpServers block"}
+{"item": 155, "verdict": "not-evidence", "criterion": "", "reason": "backup copy in non-importable .bak directory; disabled code"}
+{"item": 159, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json declares pi-coding-agent, pi-ai and pi-mcp-adapter deps"}
+{"item": 163, "verdict": "ai-evidence", "criterion": "L1", "reason": "LLMeBench asset prompting OpenAI GPT-4o chat model"}
+{"item": 167, "verdict": "not-evidence", "criterion": "", "reason": "path is a directory, not a file"}
+{"item": 171, "verdict": "ai-evidence", "criterion": "A5", "reason": "n8n gmailTool nodes with $fromAI parameters exposed as AI agent tools"}
+{"item": 175, "verdict": "not-evidence", "criterion": "", "reason": "FastAPI route tests; LLM summary path stubbed via cache, no model call"}
+{"item": 179, "verdict": "not-evidence", "criterion": "", "reason": "statistical post-processing of logprobs; no model call"}
+{"item": 183, "verdict": "ai-evidence", "criterion": "L3", "reason": "requirements.txt declares openai"}
+{"item": 187, "verdict": "ai-evidence", "criterion": "L1", "reason": "calls MiniMax embeddings API endpoint"}
+{"item": 191, "verdict": "ai-evidence", "criterion": "A3", "reason": "UI widget invoking MCP server tool via backend test endpoint"}
+{"item": 195, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json declares @ai-sdk/openai-compatible and @ai-sdk/provider"}
+{"item": 199, "verdict": "assistant-artifact", "criterion": "", "reason": ".cursor/rules coding-assistant rule file"}
+{"item": 203, "verdict": "ai-evidence", "criterion": "A3", "reason": "OAuth 2.1 authorization server for the project's MCP server"}
+{"item": 207, "verdict": "ai-evidence", "criterion": "L1", "reason": "Google Generative AI embeddings used for vector store search"}
+{"item": 211, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json declares ai and @ai-sdk/provider deps"}
+{"item": 215, "verdict": "not-evidence", "criterion": "", "reason": "tensor-parallel torch primitives; no generative model call"}
+{"item": 219, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json declares @anthropic-ai/mcpb dependency"}
+{"item": 4, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json depends on @modelcontextprotocol/client and core"}
+{"item": 8, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json declares @mastra/core, @mastra/mcp and @ai-sdk provider deps"}
+{"item": 12, "verdict": "ai-evidence", "criterion": "A1", "reason": "LangGraph StateGraph with prebuilt ToolNode runs an agent tool from an AIMessage tool_call"}
+{"item": 16, "verdict": "ai-evidence", "criterion": "L1", "reason": "tests vision provider that sends messages/max_tokens to an Anthropic VLM worker (mocked)"}
+{"item": 20, "verdict": "not-evidence", "criterion": "", "reason": "gym/pygame RL environment play tests; no generative model"}
+{"item": 24, "verdict": "ai-evidence", "criterion": "L3", "reason": "@ai-sdk/cohere package depends on @ai-sdk/provider and provider-utils"}
+{"item": 28, "verdict": "not-evidence", "criterion": "", "reason": "token budgeting/prompt sizing; litellm.get_model_info lookup only, no model call"}
+{"item": 32, "verdict": "assistant-artifact", "criterion": "", "reason": "AGENTS.md coding-assistant instructions"}
+{"item": 36, "verdict": "not-evidence", "criterion": "", "reason": "ChatterBot ListTrainer retrieval chatbot, not generative"}
+{"item": 40, "verdict": "not-evidence", "criterion": "", "reason": "stub langgraph entrypoint returning None; no model or tools"}
+{"item": 44, "verdict": "ai-evidence", "criterion": "A3", "reason": "registers list_comments tool on an McpServer"}
+{"item": 48, "verdict": "assistant-artifact", "criterion": "", "reason": "AGENTS.md coding-assistant instructions"}
+{"item": 52, "verdict": "not-evidence", "criterion": "", "reason": "Minecraft Bedrock packet dumper; no AI"}
+{"item": 56, "verdict": "not-evidence", "criterion": "", "reason": "OAuth provider resource-discovery tests; 'model' is DB model"}
+{"item": 60, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json depends on Vercel 'ai' SDK"}
+{"item": 64, "verdict": "ai-evidence", "criterion": "A1", "reason": "tests runner sessions driven by @anthropic-ai/claude-agent-sdk query (mocked)"}
+{"item": 68, "verdict": "ai-evidence", "criterion": "A3", "reason": "builds MCP CallToolResult for MCP server tools"}
+{"item": 72, "verdict": "not-evidence", "criterion": "", "reason": "PyPI download statistics data"}
+{"item": 76, "verdict": "ai-evidence", "criterion": "L1", "reason": "runs local LLaMA via transformers with gen template"}
+{"item": 80, "verdict": "not-evidence", "criterion": "", "reason": "cannabis strain data CSV"}
+{"item": 84, "verdict": "ai-evidence", "criterion": "L1", "reason": "google.genai client.models.generate_images / edit_image (Imagen)"}
+{"item": 88, "verdict": "not-evidence", "criterion": "", "reason": "HF Trainer subclass saving mm_projector weights; no model call"}
+{"item": 92, "verdict": "ai-evidence", "criterion": "A1", "reason": "Strands Agent with BedrockModel and @tool functions"}
+{"item": 96, "verdict": "assistant-artifact", "criterion": "", "reason": "CLAUDE.md coding-assistant file"}
+{"item": 100, "verdict": "not-evidence", "criterion": "", "reason": "n8n workflow with webhook/http/notion nodes, no AI nodes"}
+{"item": 104, "verdict": "assistant-artifact", "criterion": "", "reason": "CLAUDE.md coding-assistant file"}
+{"item": 108, "verdict": "assistant-artifact", "criterion": "", "reason": "CLAUDE.md coding-assistant file"}
+{"item": 112, "verdict": "ai-evidence", "criterion": "A2", "reason": "tests Codex adapter executing model-selected dynamic tool calls"}
+{"item": 116, "verdict": "ai-evidence", "criterion": "L3", "reason": "pyproject declares mcp[cli] dependency"}
+{"item": 120, "verdict": "ai-evidence", "criterion": "L2", "reason": "CI installs vLLM helm chart model-serving deployments and queries them"}
+{"item": 124, "verdict": "ai-evidence", "criterion": "A3", "reason": "MCP Streamable HTTP server using @modelcontextprotocol/sdk Server"}
+{"item": 128, "verdict": "assistant-artifact", "criterion": "", "reason": "directory holding a coding-assistant skill (SKILL.md) for building MCP apps"}
+{"item": 132, "verdict": "not-evidence", "criterion": "", "reason": "MDX documentation page (prose)"}
+{"item": 136, "verdict": "not-evidence", "criterion": "", "reason": "test fixture skill directory for a scanner; Markdown prose only"}
+{"item": 140, "verdict": "ai-evidence", "criterion": "L1", "reason": "Semantic Kernel Google AI text embedding tests via genai embed_content (mocked)"}
+{"item": 144, "verdict": "assistant-artifact", "criterion": "", "reason": "directory holding a coding-assistant skill (SKILL.md, allowed-tools)"}
+{"item": 148, "verdict": "ai-evidence", "criterion": "A3", "reason": "registers tools with @mcp.tool() on MCP server"}
+{"item": 152, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json depends on openai, @google/generative-ai, @modelcontextprotocol/sdk"}
+{"item": 156, "verdict": "assistant-artifact", "criterion": "", "reason": "CLAUDE.md coding-assistant file"}
+{"item": 160, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json depends on @modelcontextprotocol/sdk"}
+{"item": 164, "verdict": "assistant-artifact", "criterion": "", "reason": "CLAUDE.md coding-assistant file"}
+{"item": 168, "verdict": "ai-evidence", "criterion": "L3", "reason": "pyproject declares mcp[cli] dependency"}
+{"item": 172, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json depends on @modelcontextprotocol/sdk"}
+{"item": 176, "verdict": "ai-evidence", "criterion": "L1", "reason": "OpenAI chat.completions.create and litellm.completion calls"}
+{"item": 180, "verdict": "ai-evidence", "criterion": "A3", "reason": "MCP client sampling request UI generating LLM response for createMessage"}
+{"item": 184, "verdict": "ai-evidence", "criterion": "L3", "reason": "package.json depends on Vercel 'ai' SDK"}
+{"item": 188, "verdict": "ai-evidence", "criterion": "A3", "reason": "stdio MCP server exposing host tools via @modelcontextprotocol/sdk"}
+{"item": 192, "verdict": "ai-evidence", "criterion": "L3", "reason": "csproj references Microsoft.Agents.AI.OpenAI and Semantic Kernel"}
+{"item": 196, "verdict": "not-evidence", "criterion": "", "reason": "ChatterBot logic adapter fetching jokes over HTTP"}
+{"item": 200, "verdict": "ai-evidence", "criterion": "L1", "reason": "llmebench OpenAIModel ChatCompletion prompt config"}
+{"item": 204, "verdict": "ai-evidence", "criterion": "L1", "reason": "crawl4ai LLMContentFilter with openai/gpt-4o example script"}
+{"item": 208, "verdict": "not-evidence", "criterion": "", "reason": "tool-call event stream container; no model or agent construction"}
+{"item": 212, "verdict": "not-evidence", "criterion": "", "reason": "model context-length and price table tests; no model call"}
+{"item": 216, "verdict": "ai-evidence", "criterion": "L1", "reason": "llmebench OpenAIModel ChatCompletion prompt config"}
+{"item": 220, "verdict": "ai-evidence", "criterion": "A3", "reason": "MCP client inspector UI rendering prompts/get results"}

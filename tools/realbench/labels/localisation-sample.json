@@ -1,0 +1,2003 @@
+[
+ {
+  "key": "r077::examples/ai-e2e-next/app/api/chat/resume/[id]/stream/route.ts",
+  "id": "r077",
+  "path": "examples/ai-e2e-next/app/api/chat/resume/[id]/stream/route.ts",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 1
+ },
+ {
+  "key": "r136::client/src/components/ResetPassword/ResetPassword.tsx",
+  "id": "r136",
+  "path": "client/src/components/ResetPassword/ResetPassword.tsx",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 2
+ },
+ {
+  "key": "r171::examples/vulnerable/mcp.json",
+  "id": "r171",
+  "path": "examples/vulnerable/mcp.json",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 3
+ },
+ {
+  "key": "r092::libraries/typescript/packages/client/package.json",
+  "id": "r092",
+  "path": "libraries/typescript/packages/client/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 4
+ },
+ {
+  "key": "r044::tutorials/assets/values-09-lora-operator.yaml",
+  "id": "r044",
+  "path": "tutorials/assets/values-09-lora-operator.yaml",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 5
+ },
+ {
+  "key": "r075::src/shared/models/abstract-ai-sdk-reasoning-metadata.test.ts",
+  "id": "r075",
+  "path": "src/shared/models/abstract-ai-sdk-reasoning-metadata.test.ts",
+  "tools": [
+   "vet"
+  ],
+  "item": 6
+ },
+ {
+  "key": "r181::tegg/core/controller-decorator/src/decorator/mcp/MCPTool.ts",
+  "id": "r181",
+  "path": "tegg/core/controller-decorator/src/decorator/mcp/MCPTool.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 7
+ },
+ {
+  "key": "r034::worker/package.json",
+  "id": "r034",
+  "path": "worker/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 8
+ },
+ {
+  "key": "r021::ui/src/team-chat.js",
+  "id": "r021",
+  "path": "ui/src/team-chat.js",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 9
+ },
+ {
+  "key": "r048::<path:AGENTS.md>",
+  "id": "r048",
+  "path": "<path:AGENTS.md>",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 10
+ },
+ {
+  "key": "r092::libraries/typescript/packages/inspector/src/client/hooks/useConnectionFormState.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/inspector/src/client/hooks/useConnectionFormState.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 11
+ },
+ {
+  "key": "r059::py-xbbg-langgraph/tests/test_langgraph.py",
+  "id": "r059",
+  "path": "py-xbbg-langgraph/tests/test_langgraph.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 12
+ },
+ {
+  "key": "r140::workflows/Form/1649_Form_Extractfromfile_Automate_Triggered.json",
+  "id": "r140",
+  "path": "workflows/Form/1649_Form_Extractfromfile_Automate_Triggered.json",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 13
+ },
+ {
+  "key": "r080::libs/langgraph/langgraph/constants.py",
+  "id": "r080",
+  "path": "libs/langgraph/langgraph/constants.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 14
+ },
+ {
+  "key": "r066::model/claude.go",
+  "id": "r066",
+  "path": "model/claude.go",
+  "tools": [
+   "vet"
+  ],
+  "item": 15
+ },
+ {
+  "key": "r084::tests/test_vision_provider_contract.py",
+  "id": "r084",
+  "path": "tests/test_vision_provider_contract.py",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 16
+ },
+ {
+  "key": "r181::tegg/standalone/service-worker-controller/package.json",
+  "id": "r181",
+  "path": "tegg/standalone/service-worker-controller/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 17
+ },
+ {
+  "key": "r029::e2e/README.md",
+  "id": "r029",
+  "path": "e2e/README.md",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 18
+ },
+ {
+  "key": "r074::agentverse/tasks/tasksolving/pythoncalculator/config_html.yaml",
+  "id": "r074",
+  "path": "agentverse/tasks/tasksolving/pythoncalculator/config_html.yaml",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 19
+ },
+ {
+  "key": "r179::tests/utils/test_play.py",
+  "id": "r179",
+  "path": "tests/utils/test_play.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 20
+ },
+ {
+  "key": "r084::docs/research/external-ai-audits/2026-09-30/INTEGRATION-RESEARCH.md",
+  "id": "r084",
+  "path": "docs/research/external-ai-audits/2026-09-30/INTEGRATION-RESEARCH.md",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 21
+ },
+ {
+  "key": "r021::agixt/FacebookBotManager.py",
+  "id": "r021",
+  "path": "agixt/FacebookBotManager.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 22
+ },
+ {
+  "key": "r092::libraries/typescript/packages/agent/examples/advanced/structured_output.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/agent/examples/advanced/structured_output.ts",
+  "tools": [
+   "vet"
+  ],
+  "item": 23
+ },
+ {
+  "key": "r077::packages/cohere/package.json",
+  "id": "r077",
+  "path": "packages/cohere/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 24
+ },
+ {
+  "key": "r060::src/authsome/auth/flows/device_code.py",
+  "id": "r060",
+  "path": "src/authsome/auth/flows/device_code.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 25
+ },
+ {
+  "key": "r034::web/src/features/mcp/server/comments/tools/listComments.ts",
+  "id": "r034",
+  "path": "web/src/features/mcp/server/comments/tools/listComments.ts",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 26
+ },
+ {
+  "key": "r135::vendor/github.com/openai/openai-go/v3/adminorganizationprojectgrouprole.go",
+  "id": "r135",
+  "path": "vendor/github.com/openai/openai-go/v3/adminorganizationprojectgrouprole.go",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 27
+ },
+ {
+  "key": "r048::pr_agent/algo/token_budget.py",
+  "id": "r048",
+  "path": "pr_agent/algo/token_budget.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 28
+ },
+ {
+  "key": "r092::libraries/typescript/packages/create-mcp-use-app/src/templates/mcp-apps/views/my-view/view.tsx",
+  "id": "r092",
+  "path": "libraries/typescript/packages/create-mcp-use-app/src/templates/mcp-apps/views/my-view/view.tsx",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 29
+ },
+ {
+  "key": "r056::Other_Integrations_and_Use_Cases/Process store orders from webhook to supplier, shipping, CRM and ERP with stock checks.json",
+  "id": "r056",
+  "path": "Other_Integrations_and_Use_Cases/Process store orders from webhook to supplier, shipping, CRM and ERP with stock checks.json",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 30
+ },
+ {
+  "key": "r178::tests/cyclient/test_ai_security_manager_client.py",
+  "id": "r178",
+  "path": "tests/cyclient/test_ai_security_manager_client.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 31
+ },
+ {
+  "key": "r060::ui/AGENTS.md",
+  "id": "r060",
+  "path": "ui/AGENTS.md",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 32
+ },
+ {
+  "key": "r102::src/basic_chain.py",
+  "id": "r102",
+  "path": "src/basic_chain.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 33
+ },
+ {
+  "key": "r080::libs/langgraph/langgraph/pregel/debug.py",
+  "id": "r080",
+  "path": "libs/langgraph/langgraph/pregel/debug.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 34
+ },
+ {
+  "key": "r028::GEMINI.md",
+  "id": "r028",
+  "path": "GEMINI.md",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 35
+ },
+ {
+  "key": "r132::examples/training_example_list_data.py",
+  "id": "r132",
+  "path": "examples/training_example_list_data.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 36
+ },
+ {
+  "key": "r080::libs/langgraph/langgraph/channels/delta.py",
+  "id": "r080",
+  "path": "libs/langgraph/langgraph/channels/delta.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 37
+ },
+ {
+  "key": "r092::libraries/typescript/packages/client/src/utils/elicitation.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/client/src/utils/elicitation.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 38
+ },
+ {
+  "key": "r080::libs/langgraph/tests/test_pregel.py",
+  "id": "r080",
+  "path": "libs/langgraph/tests/test_pregel.py",
+  "tools": [
+   "agent-bom",
+   "agentdiscover"
+  ],
+  "item": 39
+ },
+ {
+  "key": "r080::libs/cli/tests/unit_tests/graphs/agent.py",
+  "id": "r080",
+  "path": "libs/cli/tests/unit_tests/graphs/agent.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 40
+ },
+ {
+  "key": "r073::dotnet/src/IntegrationTests/IntegrationTests.csproj",
+  "id": "r073",
+  "path": "dotnet/src/IntegrationTests/IntegrationTests.csproj",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 41
+ },
+ {
+  "key": "r077::.agents/skills/capture-api-response-test-fixture/SKILL.md",
+  "id": "r077",
+  "path": ".agents/skills/capture-api-response-test-fixture/SKILL.md",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 42
+ },
+ {
+  "key": "r001::server.json",
+  "id": "r001",
+  "path": "server.json",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 43
+ },
+ {
+  "key": "r129::src/tools/list-comments.ts",
+  "id": "r129",
+  "path": "src/tools/list-comments.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 44
+ },
+ {
+  "key": "r147::spinup/utils/test_policy.py",
+  "id": "r147",
+  "path": "spinup/utils/test_policy.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 45
+ },
+ {
+  "key": "r073::python/tests/unit/connectors/ai/open_ai/test_openai_request_settings.py",
+  "id": "r073",
+  "path": "python/tests/unit/connectors/ai/open_ai/test_openai_request_settings.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 46
+ },
+ {
+  "key": "r092::libraries/typescript/packages/inspector/src/client/components/chat/types.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/inspector/src/client/components/chat/types.ts",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 47
+ },
+ {
+  "key": "r092::libraries/typescript/packages/server/AGENTS.md",
+  "id": "r092",
+  "path": "libraries/typescript/packages/server/AGENTS.md",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 48
+ },
+ {
+  "key": "r073::python/samples/concepts/local_models/lm_studio_chat_completion.py",
+  "id": "r073",
+  "path": "python/samples/concepts/local_models/lm_studio_chat_completion.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 49
+ },
+ {
+  "key": "r092::libraries/typescript/packages/server/tests/mount-mcp.test.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/server/tests/mount-mcp.test.ts",
+  "tools": [
+   "vet"
+  ],
+  "item": 50
+ },
+ {
+  "key": "r080::libs/langgraph/langgraph/func/__init__.py",
+  "id": "r080",
+  "path": "libs/langgraph/langgraph/func/__init__.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 51
+ },
+ {
+  "key": "r020::tools/dumpPackets.js",
+  "id": "r020",
+  "path": "tools/dumpPackets.js",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 52
+ },
+ {
+  "key": "r102::requirements.txt",
+  "id": "r102",
+  "path": "requirements.txt",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 53
+ },
+ {
+  "key": "r077::examples/ai-functions/src/generate-text/google/tool-nested-empty-object.ts",
+  "id": "r077",
+  "path": "examples/ai-functions/src/generate-text/google/tool-nested-empty-object.ts",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 54
+ },
+ {
+  "key": "r084::server.json",
+  "id": "r084",
+  "path": "server.json",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 55
+ },
+ {
+  "key": "r070::packages/oauth-provider/src/resource-discovery.test.ts",
+  "id": "r070",
+  "path": "packages/oauth-provider/src/resource-discovery.test.ts",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 56
+ },
+ {
+  "key": "r073::python/samples/learn_resources/agent_docs/chat_agent.py",
+  "id": "r073",
+  "path": "python/samples/learn_resources/agent_docs/chat_agent.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 57
+ },
+ {
+  "key": "r140::workflows/Webhook/0270_Webhook_Discord_Automate_Webhook.json",
+  "id": "r140",
+  "path": "workflows/Webhook/0270_Webhook_Discord_Automate_Webhook.json",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 58
+ },
+ {
+  "key": "r115::apps/runner/__tests__/unit/agent-model-env.test.ts",
+  "id": "r115",
+  "path": "apps/runner/__tests__/unit/agent-model-env.test.ts",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 59
+ },
+ {
+  "key": "r070::packages/release-tooling/package.json",
+  "id": "r070",
+  "path": "packages/release-tooling/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 60
+ },
+ {
+  "key": "r132::chatterbot/ext/django_chatterbot/migrations/0004_rename_in_response_to.py",
+  "id": "r132",
+  "path": "chatterbot/ext/django_chatterbot/migrations/0004_rename_in_response_to.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 61
+ },
+ {
+  "key": "r084::tests/test_longform_foundation.py",
+  "id": "r084",
+  "path": "tests/test_longform_foundation.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 62
+ },
+ {
+  "key": "r056::OpenAI_and_LLMs/Prompt-based Object Detection with Gemini 2.0.json",
+  "id": "r056",
+  "path": "OpenAI_and_LLMs/Prompt-based Object Detection with Gemini 2.0.json",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 63
+ },
+ {
+  "key": "r115::apps/runner/__tests__/unit/reconcile-reap-cleanup.test.ts",
+  "id": "r115",
+  "path": "apps/runner/__tests__/unit/reconcile-reap-cleanup.test.ts",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 64
+ },
+ {
+  "key": "r006::nextpy/ai/rag/document_loaders/pinecone/requirements.txt",
+  "id": "r006",
+  "path": "nextpy/ai/rag/document_loaders/pinecone/requirements.txt",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 65
+ },
+ {
+  "key": "r165::src/commands/patch-provider.test.ts",
+  "id": "r165",
+  "path": "src/commands/patch-provider.test.ts",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 66
+ },
+ {
+  "key": "r056::AI_Research_RAG_and_Data_Analysis/Building RAG Chatbot for Movie Recommendations with Qdrant and Open AI.json",
+  "id": "r056",
+  "path": "AI_Research_RAG_and_Data_Analysis/Building RAG Chatbot for Movie Recommendations with Qdrant and Open AI.json",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 67
+ },
+ {
+  "key": "r129::src/utils/response.ts",
+  "id": "r129",
+  "path": "src/utils/response.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 68
+ },
+ {
+  "key": "r048::pr_agent/tools/pr_similar_issue.py",
+  "id": "r048",
+  "path": "pr_agent/tools/pr_similar_issue.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 69
+ },
+ {
+  "key": "r055::packages/agent-core-v2/src/features/skill/catalog/builtin/sub-skill",
+  "id": "r055",
+  "path": "packages/agent-core-v2/src/features/skill/catalog/builtin/sub-skill",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 70
+ },
+ {
+  "key": "r080::libs/langgraph/tests/test_delta_channel_id_stability.py",
+  "id": "r080",
+  "path": "libs/langgraph/tests/test_delta_channel_id_stability.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 71
+ },
+ {
+  "key": "r126::analytics/pypi-langchain-amg-2026-09-06.json",
+  "id": "r126",
+  "path": "analytics/pypi-langchain-amg-2026-09-06.json",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 72
+ },
+ {
+  "key": "r077::content/cookbook/20-rsc/40-stream-object.mdx",
+  "id": "r077",
+  "path": "content/cookbook/20-rsc/40-stream-object.mdx",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 73
+ },
+ {
+  "key": "r055::packages/agent-core-v2/test/app/web/web-fetch-service.test.ts",
+  "id": "r055",
+  "path": "packages/agent-core-v2/test/app/web/web-fetch-service.test.ts",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 74
+ },
+ {
+  "key": "r075::src/renderer/components/settings/provider/ProviderSpotlight.tsx",
+  "id": "r075",
+  "path": "src/renderer/components/settings/provider/ProviderSpotlight.tsx",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 75
+ },
+ {
+  "key": "r006::nextpy/ai/tests/engine/llms/transformers/test_llama.py",
+  "id": "r006",
+  "path": "nextpy/ai/tests/engine/llms/transformers/test_llama.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 76
+ },
+ {
+  "key": "r119::src/nanotron/nn/activations.py",
+  "id": "r119",
+  "path": "src/nanotron/nn/activations.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 77
+ },
+ {
+  "key": "r056::PDF_and_Document_Processing/Prepare CSV files with GPT-4.json",
+  "id": "r056",
+  "path": "PDF_and_Document_Processing/Prepare CSV files with GPT-4.json",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 78
+ },
+ {
+  "key": "r022::lm_eval/models/huggingface.py",
+  "id": "r022",
+  "path": "lm_eval/models/huggingface.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 79
+ },
+ {
+  "key": "r117::firecrawl-mcp-server/strain-data.csv",
+  "id": "r117",
+  "path": "firecrawl-mcp-server/strain-data.csv",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 80
+ },
+ {
+  "key": "r044::src/tests/test_k8s_pod_ip_service_discovery.py",
+  "id": "r044",
+  "path": "src/tests/test_k8s_pod_ip_service_discovery.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 81
+ },
+ {
+  "key": "r092::libraries/typescript/packages/create-mcp-use-app",
+  "id": "r092",
+  "path": "libraries/typescript/packages/create-mcp-use-app",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 82
+ },
+ {
+  "key": "r065::src/tools/policy.py",
+  "id": "r065",
+  "path": "src/tools/policy.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 83
+ },
+ {
+  "key": "r087::backend/nokodo_ai/adapters/google/predict_images.py",
+  "id": "r087",
+  "path": "backend/nokodo_ai/adapters/google/predict_images.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 84
+ },
+ {
+  "key": "r032::DSL/runLLMCode.yml",
+  "id": "r032",
+  "path": "DSL/runLLMCode.yml",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 85
+ },
+ {
+  "key": "r028::<path:evals-nightly.yml>",
+  "id": "r028",
+  "path": "<path:evals-nightly.yml>",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 86
+ },
+ {
+  "key": "r077::content/docs/07-reference/01-ai-sdk-core/61-wrap-image-model.mdx",
+  "id": "r077",
+  "path": "content/docs/07-reference/01-ai-sdk-core/61-wrap-image-model.mdx",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 87
+ },
+ {
+  "key": "r173::drivlme/train/llava_trainer.py",
+  "id": "r173",
+  "path": "drivlme/train/llava_trainer.py",
+  "tools": [
+   "agent-bom",
+   "cisco-aibom"
+  ],
+  "item": 88
+ },
+ {
+  "key": "r073::python/samples/concepts/chat_completion/simple_chatbot_with_summary_history_reducer.py",
+  "id": "r073",
+  "path": "python/samples/concepts/chat_completion/simple_chatbot_with_summary_history_reducer.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 89
+ },
+ {
+  "key": "r148::llmebench/tasks/MultilabelPropaganda.py",
+  "id": "r148",
+  "path": "llmebench/tasks/MultilabelPropaganda.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 90
+ },
+ {
+  "key": "r119::.cursor/rules/philosophy.mdc",
+  "id": "r119",
+  "path": ".cursor/rules/philosophy.mdc",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 91
+ },
+ {
+  "key": "r152::packages/support_agent/customer_support_agent_nx_support_agent/support_agent/agent.py",
+  "id": "r152",
+  "path": "packages/support_agent/customer_support_agent_nx_support_agent/support_agent/agent.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 92
+ },
+ {
+  "key": "r073::python/samples/getting_started_with_agents/multi_agent_orchestration/step4c_handoff_mix_agent_types.py",
+  "id": "r073",
+  "path": "python/samples/getting_started_with_agents/multi_agent_orchestration/step4c_handoff_mix_agent_types.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 93
+ },
+ {
+  "key": "r093::src/cli/init.js",
+  "id": "r093",
+  "path": "src/cli/init.js",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 94
+ },
+ {
+  "key": "r122::.agents/skills/create-update-schema",
+  "id": "r122",
+  "path": ".agents/skills/create-update-schema",
+  "tools": [
+   "vet"
+  ],
+  "item": 95
+ },
+ {
+  "key": "r158::CLAUDE.md",
+  "id": "r158",
+  "path": "CLAUDE.md",
+  "tools": [
+   "vet"
+  ],
+  "item": 96
+ },
+ {
+  "key": "r092::libraries/typescript/packages/agent/src/agents/agent_options.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/agent/src/agents/agent_options.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 97
+ },
+ {
+  "key": "r047::<path:SKILL.md>",
+  "id": "r047",
+  "path": "<path:SKILL.md>",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 98
+ },
+ {
+  "key": "r096::src/AGENTS.md",
+  "id": "r096",
+  "path": "src/AGENTS.md",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 99
+ },
+ {
+  "key": "r140::workflows/Http/0048_HTTP_Htmlextract_Create_Webhook.json",
+  "id": "r140",
+  "path": "workflows/Http/0048_HTTP_Htmlextract_Create_Webhook.json",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 100
+ },
+ {
+  "key": "r099::src/renderer/components/Wizard/services/conversationManager.ts",
+  "id": "r099",
+  "path": "src/renderer/components/Wizard/services/conversationManager.ts",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 101
+ },
+ {
+  "key": "r099::src/__tests__/main/preload/agents.test.ts",
+  "id": "r099",
+  "path": "src/__tests__/main/preload/agents.test.ts",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 102
+ },
+ {
+  "key": "r112::tests/test_sde.py",
+  "id": "r112",
+  "path": "tests/test_sde.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 103
+ },
+ {
+  "key": "r047::CLAUDE.md",
+  "id": "r047",
+  "path": "CLAUDE.md",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 104
+ },
+ {
+  "key": "r119::.cursor/rules/performance-optimization.mdc",
+  "id": "r119",
+  "path": ".cursor/rules/performance-optimization.mdc",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 105
+ },
+ {
+  "key": "r075::src/shared/providers/definitions/models/claude.test.ts",
+  "id": "r075",
+  "path": "src/shared/providers/definitions/models/claude.test.ts",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 106
+ },
+ {
+  "key": "r158::mcp_manager.py",
+  "id": "r158",
+  "path": "mcp_manager.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 107
+ },
+ {
+  "key": "r099::CLAUDE.md",
+  "id": "r099",
+  "path": "CLAUDE.md",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 108
+ },
+ {
+  "key": "r092::libraries/python/tests/integration/agent/test_agent_structured_output.py",
+  "id": "r092",
+  "path": "libraries/python/tests/integration/agent/test_agent_structured_output.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 109
+ },
+ {
+  "key": "r092::libraries/typescript/packages/inspector/src/client/rpc-traffic-bridge.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/inspector/src/client/rpc-traffic-bridge.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 110
+ },
+ {
+  "key": "r073::python/tests/unit/connectors/openapi_plugin/test_openapi_runner_dns_pinning.py",
+  "id": "r073",
+  "path": "python/tests/unit/connectors/openapi_plugin/test_openapi_runner_dns_pinning.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 111
+ },
+ {
+  "key": "r116::test/codex-dynamic-tools.test.js",
+  "id": "r116",
+  "path": "test/codex-dynamic-tools.test.js",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 112
+ },
+ {
+  "key": "r092::docs/typescript/api-reference/client/mcp-client.mdx",
+  "id": "r092",
+  "path": "docs/typescript/api-reference/client/mcp-client.mdx",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 113
+ },
+ {
+  "key": "r183::docs-site/src/pages/mcp.astro",
+  "id": "r183",
+  "path": "docs-site/src/pages/mcp.astro",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 114
+ },
+ {
+  "key": "r116::lib/sessions.js",
+  "id": "r116",
+  "path": "lib/sessions.js",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 115
+ },
+ {
+  "key": "r065::pyproject.toml",
+  "id": "r065",
+  "path": "pyproject.toml",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 116
+ },
+ {
+  "key": "r066::skills/oracle",
+  "id": "r066",
+  "path": "skills/oracle",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 117
+ },
+ {
+  "key": "r080::libs/cli/js-monorepo-example/apps/agent/package.json",
+  "id": "r080",
+  "path": "libs/cli/js-monorepo-example/apps/agent/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 118
+ },
+ {
+  "key": "r090::.claude/skills/codegraph-skill/SKILL.md",
+  "id": "r090",
+  "path": ".claude/skills/codegraph-skill/SKILL.md",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 119
+ },
+ {
+  "key": "r044::.github/workflows/functionality-helm-chart.yml",
+  "id": "r044",
+  "path": ".github/workflows/functionality-helm-chart.yml",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 120
+ },
+ {
+  "key": "r054::AGENTS.md",
+  "id": "r054",
+  "path": "AGENTS.md",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 121
+ },
+ {
+  "key": "r132::chatterbot/ext/django_chatterbot/migrations/0001_initial.py",
+  "id": "r132",
+  "path": "chatterbot/ext/django_chatterbot/migrations/0001_initial.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 122
+ },
+ {
+  "key": "r092::libraries/python/tests/integration/agent/test_stream_events_memory.py",
+  "id": "r092",
+  "path": "libraries/python/tests/integration/agent/test_stream_events_memory.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 123
+ },
+ {
+  "key": "r019::src/http.mjs",
+  "id": "r019",
+  "path": "src/http.mjs",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 124
+ },
+ {
+  "key": "r092::libraries/typescript/packages/agent/tests/integration/agent/test_server_manager.test.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/agent/tests/integration/agent/test_server_manager.test.ts",
+  "tools": [
+   "vet"
+  ],
+  "item": 125
+ },
+ {
+  "key": "r092::libraries/python/examples/langchain_integration_example.py",
+  "id": "r092",
+  "path": "libraries/python/examples/langchain_integration_example.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 126
+ },
+ {
+  "key": "r169::sonnet/src/base.py",
+  "id": "r169",
+  "path": "sonnet/src/base.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 127
+ },
+ {
+  "key": "r092::skills/mcp-apps-builder",
+  "id": "r092",
+  "path": "skills/mcp-apps-builder",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 128
+ },
+ {
+  "key": "r059::py-xbbg-langgraph/tests/test_core_tools.py",
+  "id": "r059",
+  "path": "py-xbbg-langgraph/tests/test_core_tools.py",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 129
+ },
+ {
+  "key": "r080::libs/langgraph/tests/test_delta_channel_supersteps_bound.py",
+  "id": "r080",
+  "path": "libs/langgraph/tests/test_delta_channel_supersteps_bound.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 130
+ },
+ {
+  "key": "r140::workflows/Code/0651_Code_Schedule_Create_Webhook.json",
+  "id": "r140",
+  "path": "workflows/Code/0651_Code_Schedule_Create_Webhook.json",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 131
+ },
+ {
+  "key": "r060::docs/site/integrations/agents/cursor.mdx",
+  "id": "r060",
+  "path": "docs/site/integrations/agents/cursor.mdx",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 132
+ },
+ {
+  "key": "r080::libs/sdk-py/integration/graph/streaming_graph.py",
+  "id": "r080",
+  "path": "libs/sdk-py/integration/graph/streaming_graph.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 133
+ },
+ {
+  "key": "r073::python/samples/demos/booking_restaurant/restaurant_booking.py",
+  "id": "r073",
+  "path": "python/samples/demos/booking_restaurant/restaurant_booking.py",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 134
+ },
+ {
+  "key": "r135::vendor/github.com/openai/openai-go/v3/betathreadmessage.go",
+  "id": "r135",
+  "path": "vendor/github.com/openai/openai-go/v3/betathreadmessage.go",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 135
+ },
+ {
+  "key": "r093::tests/fixtures/safe-skill",
+  "id": "r093",
+  "path": "tests/fixtures/safe-skill",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 136
+ },
+ {
+  "key": "r034::pnpm-lock.yaml",
+  "id": "r034",
+  "path": "pnpm-lock.yaml",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 137
+ },
+ {
+  "key": "r087::AGENTS.md",
+  "id": "r087",
+  "path": "AGENTS.md",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 138
+ },
+ {
+  "key": "r092::libraries/typescript/packages/server/examples/views/property-search",
+  "id": "r092",
+  "path": "libraries/typescript/packages/server/examples/views/property-search",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 139
+ },
+ {
+  "key": "r073::python/tests/unit/connectors/ai/google/google_ai/services/test_google_ai_text_embedding.py",
+  "id": "r073",
+  "path": "python/tests/unit/connectors/ai/google/google_ai/services/test_google_ai_text_embedding.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 140
+ },
+ {
+  "key": "r080::libs/langgraph/tests/test_state.py",
+  "id": "r080",
+  "path": "libs/langgraph/tests/test_state.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 141
+ },
+ {
+  "key": "r092::libraries/typescript/packages/inspector/src/client/components/chat/chat-tool-policy.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/inspector/src/client/components/chat/chat-tool-policy.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 142
+ },
+ {
+  "key": "r060::docs/site/integrations/oauth/hubspot.mdx",
+  "id": "r060",
+  "path": "docs/site/integrations/oauth/hubspot.mdx",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 143
+ },
+ {
+  "key": "r181::packages/skills/egg",
+  "id": "r181",
+  "path": "packages/skills/egg",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 144
+ },
+ {
+  "key": "r048::.github/workflows/pr-agent-review.yaml",
+  "id": "r048",
+  "path": ".github/workflows/pr-agent-review.yaml",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 145
+ },
+ {
+  "key": "r029::CLAUDE.md",
+  "id": "r029",
+  "path": "CLAUDE.md",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 146
+ },
+ {
+  "key": "r115::apps/runner/src/sdk-binary-path.ts",
+  "id": "r115",
+  "path": "apps/runner/src/sdk-binary-path.ts",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 147
+ },
+ {
+  "key": "r084::kinocut/server_tools_revideo.py",
+  "id": "r084",
+  "path": "kinocut/server_tools_revideo.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 148
+ },
+ {
+  "key": "r084::docs/AI_AGENT_DISCOVERY.md",
+  "id": "r084",
+  "path": "docs/AI_AGENT_DISCOVERY.md",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 149
+ },
+ {
+  "key": "r181::packages/skills/egg-controller",
+  "id": "r181",
+  "path": "packages/skills/egg-controller",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 150
+ },
+ {
+  "key": "r055::packages/migration-legacy/test/fixtures/golden/.kimi/mcp.json",
+  "id": "r055",
+  "path": "packages/migration-legacy/test/fixtures/golden/.kimi/mcp.json",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 151
+ },
+ {
+  "key": "r079::packages/core/package.json",
+  "id": "r079",
+  "path": "packages/core/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 152
+ },
+ {
+  "key": "r029::.claude/skills/local-e2e",
+  "id": "r029",
+  "path": ".claude/skills/local-e2e",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 153
+ },
+ {
+  "key": "r168::.opencode/skills/audit-reasoning-options",
+  "id": "r168",
+  "path": ".opencode/skills/audit-reasoning-options",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 154
+ },
+ {
+  "key": "r065::src/tools/.bak-2026-05-11/policy_engine.py",
+  "id": "r065",
+  "path": "src/tools/.bak-2026-05-11/policy_engine.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 155
+ },
+ {
+  "key": "r149::CLAUDE.md",
+  "id": "r149",
+  "path": "CLAUDE.md",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 156
+ },
+ {
+  "key": "r131::src/FtpContext.ts",
+  "id": "r131",
+  "path": "src/FtpContext.ts",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 157
+ },
+ {
+  "key": "r092::libraries/typescript/packages/inspector/src/client/components/elicitation/shared/ElicitationAskUserPanel.tsx",
+  "id": "r092",
+  "path": "libraries/typescript/packages/inspector/src/client/components/elicitation/shared/ElicitationAskUserPanel.tsx",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 158
+ },
+ {
+  "key": "r077::packages/harness-pi/package.json",
+  "id": "r077",
+  "path": "packages/harness-pi/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 159
+ },
+ {
+  "key": "r181::tegg/plugin/mcp-proxy/package.json",
+  "id": "r181",
+  "path": "tegg/plugin/mcp-proxy/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 160
+ },
+ {
+  "key": "r066::skills/bear-notes",
+  "id": "r066",
+  "path": "skills/bear-notes",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 161
+ },
+ {
+  "key": "r135::tests/executionforms/executionforms_test.go",
+  "id": "r135",
+  "path": "tests/executionforms/executionforms_test.go",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 162
+ },
+ {
+  "key": "r148::assets/ar/factuality_disinformation_harmful_content/offensive_language/OSACT4SubtaskB_GPT4_ZeroShot_English.py",
+  "id": "r148",
+  "path": "assets/ar/factuality_disinformation_harmful_content/offensive_language/OSACT4SubtaskB_GPT4_ZeroShot_English.py",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 163
+ },
+ {
+  "key": "r157::CLAUDE.md",
+  "id": "r157",
+  "path": "CLAUDE.md",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 164
+ },
+ {
+  "key": "r080::libs/langgraph/bench/pydantic_state.py",
+  "id": "r080",
+  "path": "libs/langgraph/bench/pydantic_state.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 165
+ },
+ {
+  "key": "r020::examples/client/nethernet_realm.js",
+  "id": "r020",
+  "path": "examples/client/nethernet_realm.js",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 166
+ },
+ {
+  "key": "r092::libraries/typescript",
+  "id": "r092",
+  "path": "libraries/typescript",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 167
+ },
+ {
+  "key": "r110::pyproject.toml",
+  "id": "r110",
+  "path": "pyproject.toml",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 168
+ },
+ {
+  "key": "r073::dotnet/src/Connectors/Connectors.OpenAI/Core/ClientCore.cs",
+  "id": "r073",
+  "path": "dotnet/src/Connectors/Connectors.OpenAI/Core/ClientCore.cs",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 169
+ },
+ {
+  "key": "r169::sonnet/src/nets/vqvae_test.py",
+  "id": "r169",
+  "path": "sonnet/src/nets/vqvae_test.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 170
+ },
+ {
+  "key": "r140::workflows/Gmailtool/1909_Gmailtool_Automation_Triggered.json",
+  "id": "r140",
+  "path": "workflows/Gmailtool/1909_Gmailtool_Automation_Triggered.json",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 171
+ },
+ {
+  "key": "r117::firecrawl-mcp-server/package.json",
+  "id": "r117",
+  "path": "firecrawl-mcp-server/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 172
+ },
+ {
+  "key": "r020::src/relay.js",
+  "id": "r020",
+  "path": "src/relay.js",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 173
+ },
+ {
+  "key": "r132::chatterbot/logic/llm_adapters.py",
+  "id": "r132",
+  "path": "chatterbot/logic/llm_adapters.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 174
+ },
+ {
+  "key": "r052::tests/test_server.py",
+  "id": "r052",
+  "path": "tests/test_server.py",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 175
+ },
+ {
+  "key": "r076::src/shaft/services/llm_client.py",
+  "id": "r076",
+  "path": "src/shaft/services/llm_client.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 176
+ },
+ {
+  "key": "r077::packages/alibaba/package.json",
+  "id": "r077",
+  "path": "packages/alibaba/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 177
+ },
+ {
+  "key": "r136::core/views.py",
+  "id": "r136",
+  "path": "core/views.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 178
+ },
+ {
+  "key": "r022::lm_eval/tasks/discrim_eval/utils.py",
+  "id": "r022",
+  "path": "lm_eval/tasks/discrim_eval/utils.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 179
+ },
+ {
+  "key": "r092::libraries/typescript/packages/inspector/src/client/components/sampling/SamplingRequestDisplay.tsx",
+  "id": "r092",
+  "path": "libraries/typescript/packages/inspector/src/client/components/sampling/SamplingRequestDisplay.tsx",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 180
+ },
+ {
+  "key": "r069::baselines/common/tests/test_env_after_learn.py",
+  "id": "r069",
+  "path": "baselines/common/tests/test_env_after_learn.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 181
+ },
+ {
+  "key": "r070::packages/better-auth/src/plugins/generic-oauth/generic-oauth.test.ts",
+  "id": "r070",
+  "path": "packages/better-auth/src/plugins/generic-oauth/generic-oauth.test.ts",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 182
+ },
+ {
+  "key": "r006::app-examples/nextpy-chat/requirements.txt",
+  "id": "r006",
+  "path": "app-examples/nextpy-chat/requirements.txt",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 183
+ },
+ {
+  "key": "r077::packages/tui/package.json",
+  "id": "r077",
+  "path": "packages/tui/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 184
+ },
+ {
+  "key": "r080::libs/cli/uv-examples/monorepo/apps/agent/pyproject.toml",
+  "id": "r080",
+  "path": "libs/cli/uv-examples/monorepo/apps/agent/pyproject.toml",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 185
+ },
+ {
+  "key": "r068::ai-agent/requirements.txt",
+  "id": "r068",
+  "path": "ai-agent/requirements.txt",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 186
+ },
+ {
+  "key": "r006::nextpy/ai/models/embedding/minimax.py",
+  "id": "r006",
+  "path": "nextpy/ai/models/embedding/minimax.py",
+  "tools": [
+   "agentdiscover",
+   "shadowscan"
+  ],
+  "item": 187
+ },
+ {
+  "key": "r077::packages/harness-acp/src/v1/bridge/host-tool-mcp.ts",
+  "id": "r077",
+  "path": "packages/harness-acp/src/v1/bridge/host-tool-mcp.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 188
+ },
+ {
+  "key": "r073::dotnet/samples/Demos/StepwisePlannerMigration/StepwisePlannerMigration.csproj",
+  "id": "r073",
+  "path": "dotnet/samples/Demos/StepwisePlannerMigration/StepwisePlannerMigration.csproj",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 189
+ },
+ {
+  "key": "r055::packages/agent-core-v2/src/_base/utils/proxy.ts",
+  "id": "r055",
+  "path": "packages/agent-core-v2/src/_base/utils/proxy.ts",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 190
+ },
+ {
+  "key": "r066::web-old/src/common/TestMcpWidget.js",
+  "id": "r066",
+  "path": "web-old/src/common/TestMcpWidget.js",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 191
+ },
+ {
+  "key": "r073::dotnet/samples/AgentFrameworkMigration/AzureOpenAIResponses/Step02_ReasoningModel/AzureOpenAIResponses_Step02_ReasoningModel.csproj",
+  "id": "r073",
+  "path": "dotnet/samples/AgentFrameworkMigration/AzureOpenAIResponses/Step02_ReasoningModel/AzureOpenAIResponses_Step02_ReasoningModel.csproj",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 192
+ },
+ {
+  "key": "r073::python/samples/demos/mcp_with_oauth/server/mcp_simple_auth/auth_server.py",
+  "id": "r073",
+  "path": "python/samples/demos/mcp_with_oauth/server/mcp_simple_auth/auth_server.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 193
+ },
+ {
+  "key": "r154::test/unit/session-cache-breakpoints.test.js",
+  "id": "r154",
+  "path": "test/unit/session-cache-breakpoints.test.js",
+  "tools": [
+   "vet"
+  ],
+  "item": 194
+ },
+ {
+  "key": "r077::packages/baseten/package.json",
+  "id": "r077",
+  "path": "packages/baseten/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 195
+ },
+ {
+  "key": "r049::sugaroid/brain/saypls.py",
+  "id": "r049",
+  "path": "sugaroid/brain/saypls.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 196
+ },
+ {
+  "key": "r059::py-xbbg-langgraph/src/xbbg_langgraph/core_tools.py",
+  "id": "r059",
+  "path": "py-xbbg-langgraph/src/xbbg_langgraph/core_tools.py",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 197
+ },
+ {
+  "key": "r059::apps/xbbg-mcp/Cargo.toml",
+  "id": "r059",
+  "path": "apps/xbbg-mcp/Cargo.toml",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 198
+ },
+ {
+  "key": "r161::.cursor/rules/general.mdc",
+  "id": "r161",
+  "path": ".cursor/rules/general.mdc",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 199
+ },
+ {
+  "key": "r148::assets/bn/sentiment_emotion_others/VITD/BanglaVITD_GPT4_ZeroShot.py",
+  "id": "r148",
+  "path": "assets/bn/sentiment_emotion_others/VITD/BanglaVITD_GPT4_ZeroShot.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 200
+ },
+ {
+  "key": "r021::agixt/SlackBotManager.py",
+  "id": "r021",
+  "path": "agixt/SlackBotManager.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 201
+ },
+ {
+  "key": "r055::packages/agent-core-v2/src/app/plugin/manifest.ts",
+  "id": "r055",
+  "path": "packages/agent-core-v2/src/app/plugin/manifest.ts",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 202
+ },
+ {
+  "key": "r029::backend/src/mcp/oauth.ts",
+  "id": "r029",
+  "path": "backend/src/mcp/oauth.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 203
+ },
+ {
+  "key": "r159::docs/examples/llm_markdown_generator.py",
+  "id": "r159",
+  "path": "docs/examples/llm_markdown_generator.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 204
+ },
+ {
+  "key": "r092::libraries/typescript/packages/server/examples/openapi",
+  "id": "r092",
+  "path": "libraries/typescript/packages/server/examples/openapi",
+  "tools": [
+   "agentguard"
+  ],
+  "item": 205
+ },
+ {
+  "key": "r092::libraries/typescript/packages/server/src/mount-mcp.ts",
+  "id": "r092",
+  "path": "libraries/typescript/packages/server/src/mount-mcp.ts",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 206
+ },
+ {
+  "key": "r123::test/test_tool.py",
+  "id": "r123",
+  "path": "test/test_tool.py",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 207
+ },
+ {
+  "key": "r080::libs/prebuilt/langgraph/prebuilt/_tool_call_stream.py",
+  "id": "r080",
+  "path": "libs/prebuilt/langgraph/prebuilt/_tool_call_stream.py",
+  "tools": [
+   "vet"
+  ],
+  "item": 208
+ },
+ {
+  "key": "r112::.github/workflows/ci.yml",
+  "id": "r112",
+  "path": ".github/workflows/ci.yml",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 209
+ },
+ {
+  "key": "r061::Llama_3_1_405B_>_8B_Conversion.ipynb",
+  "id": "r061",
+  "path": "Llama_3_1_405B_>_8B_Conversion.ipynb",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 210
+ },
+ {
+  "key": "r077::packages/rsc/package.json",
+  "id": "r077",
+  "path": "packages/rsc/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 211
+ },
+ {
+  "key": "r066::model/model_spec_test.go",
+  "id": "r066",
+  "path": "model/model_spec_test.go",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 212
+ },
+ {
+  "key": "r148::assets/ar/demographic_attributes/gender/ArapTweet_GPT4_ZeroShot.py",
+  "id": "r148",
+  "path": "assets/ar/demographic_attributes/gender/ArapTweet_GPT4_ZeroShot.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 213
+ },
+ {
+  "key": "r077::examples/ai-functions/src/generate-text/azure/responses-file-id.ts",
+  "id": "r077",
+  "path": "examples/ai-functions/src/generate-text/azure/responses-file-id.ts",
+  "tools": [
+   "agentdiscover"
+  ],
+  "item": 214
+ },
+ {
+  "key": "r119::src/nanotron/parallel/tensor_parallel/distributed_differentiable_primitives.py",
+  "id": "r119",
+  "path": "src/nanotron/parallel/tensor_parallel/distributed_differentiable_primitives.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 215
+ },
+ {
+  "key": "r148::assets/ar/sequence_tagging_and_information_extraction/dialect_identification/QADI_GPT4_ZeroShot.py",
+  "id": "r148",
+  "path": "assets/ar/sequence_tagging_and_information_extraction/dialect_identification/QADI_GPT4_ZeroShot.py",
+  "tools": [
+   "agent-bom"
+  ],
+  "item": 216
+ },
+ {
+  "key": "r054::src/content/book/14a-loop-engineering.mdx",
+  "id": "r054",
+  "path": "src/content/book/14a-loop-engineering.mdx",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 217
+ },
+ {
+  "key": "r034::packages/shared/src/domain/observations.ts",
+  "id": "r034",
+  "path": "packages/shared/src/domain/observations.ts",
+  "tools": [
+   "shadowscan"
+  ],
+  "item": 218
+ },
+ {
+  "key": "r084::tools/mcpb-validator/package.json",
+  "id": "r084",
+  "path": "tools/mcpb-validator/package.json",
+  "tools": [
+   "baseline-deps"
+  ],
+  "item": 219
+ },
+ {
+  "key": "r092::libraries/typescript/packages/inspector/src/client/components/prompts/PromptResultDisplay.tsx",
+  "id": "r092",
+  "path": "libraries/typescript/packages/inspector/src/client/components/prompts/PromptResultDisplay.tsx",
+  "tools": [
+   "cdxgen"
+  ],
+  "item": 220
+ },
+ {
+  "key": "r077::content/docs/07-reference/01-ai-sdk-core/22-get-batch-results.mdx",
+  "id": "r077",
+  "path": "content/docs/07-reference/01-ai-sdk-core/22-get-batch-results.mdx",
+  "tools": [
+   "baseline-grep"
+  ],
+  "item": 221
+ },
+ {
+  "key": "r022::lm_eval/tasks/qasper/utils.py",
+  "id": "r022",
+  "path": "lm_eval/tasks/qasper/utils.py",
+  "tools": [
+   "cisco-aibom"
+  ],
+  "item": 222
+ }
+]
