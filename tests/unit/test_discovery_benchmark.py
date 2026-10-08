@@ -635,3 +635,17 @@ def test_compare_flags_f1_drop_and_new_negative_only() -> None:
     bad = {r.tool: r for r in results}["shadowscan"]
     assert not bad.ok and bad.newly_flagged == ["acme__ctl"]
     assert any("F1" in r for r in bad.regressions) and any("recall" in r for r in bad.regressions)
+
+
+def test_shadowscan_slug_mapping_prefers_exact_taxonomy_values() -> None:
+    from tools.discovery_benchmark.adapters.shadowscan import _slug_facts
+
+    assert _slug_facts("provider.voyage-ai") == {"provider:voyage"}
+    assert _slug_facts("framework.microsoft-extensions-ai") == {"framework:microsoft-extensions-ai"}
+    assert _slug_facts("provider.llama-cpp") == {"provider:llama-cpp"}
+    assert _slug_facts("platform.portkey") == {"framework:portkey"}
+    assert _slug_facts("platform.litellm") == {"framework:litellm"}
+    assert _slug_facts("platform.dify") == frozenset()  # low-code exports only count on workflow findings
+    assert _slug_facts("platform.browserbase") == frozenset()  # infrastructure, not an agent framework
+    assert _slug_facts("provider.aws-bedrock") == {"provider:bedrock"}
+    assert _slug_facts("framework.vercel-ai-sdk") == {"framework:vercel-ai"}  # name rules still apply

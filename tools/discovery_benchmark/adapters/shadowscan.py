@@ -48,10 +48,34 @@ _LOWCODE = {
 }
 
 
+# ShadowScan ids whose slug differs from the taxonomy value.
+_SLUG_ALIASES = {
+    "provider.aws-bedrock": "provider:bedrock",
+    "provider.google-vertex-ai": "provider:vertex-ai",
+    "provider.voyage-ai": "provider:voyage",
+    "platform.litellm": "framework:litellm",
+    "platform.portkey": "framework:portkey",
+}
+
+
+def _direct_fact(family: str, slug: str) -> str | None:
+    """A taxonomy fact spelled exactly like the signature slug, when one exists."""
+    category = {"framework": "framework", "provider": "provider", "platform": "framework"}.get(family)
+    if category is None:
+        return None
+    fact = f"{category}:{slug}"
+    return fact if fact in taxonomy.all_known_facts() else None
+
+
 def _slug_facts(signature: str) -> frozenset[str]:
     """Map a signature id such as ``framework.vercel-ai-sdk`` onto taxonomy facts."""
     family, _, slug = signature.partition(".")
     words = slug.replace("-", " ").replace("_", " ")
+    if signature in _SLUG_ALIASES:
+        return frozenset({_SLUG_ALIASES[signature]})
+    direct = _direct_fact(family, slug)
+    if direct is not None and (family != "platform" or slug not in _LOWCODE):
+        return frozenset({direct})
     if family == "framework":
         return frozenset(f for f in taxonomy.facts_from_name(words) if f.startswith("framework:"))
     if family == "provider":
