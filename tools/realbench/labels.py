@@ -4,6 +4,7 @@
 ``python -m tools.realbench.labels agree A.jsonl B.jsonl``
 ``python -m tools.realbench.labels queue A.jsonl B.jsonl --output disagreements.json``
 ``python -m tools.realbench.labels freeze A.jsonl B.jsonl --adjudication ADJ.jsonl --output labels.json``
+``python -m tools.realbench.labels merge --batches batches.json --side A --dir DIR --output OUT.jsonl``
 
 Evidence is checked mechanically: the cited path must be a regular file inside
 the checkout, the line must exist, and the excerpt must appear on that line or
@@ -270,6 +271,28 @@ def freeze(
     return out
 
 
+def merge(batches: list[list[str]], directory: Path) -> list[dict[str, Any]]:
+    """One annotator's rows from its batch files: only each batch's own ids, redacted, sorted by id."""
+    rows: dict[str, dict[str, Any]] = {}
+    for number, ids in enumerate(batches, start=1):
+        path = directory / f"batch-{number:02d}.jsonl"
+        for row in load(path):
+            if row.get("id") not in ids:
+                continue  # a line written into the wrong batch file is not this batch's annotation
+            if row["id"] in rows:
+                raise ValueError(f"{row['id']} annotated twice in {path.name}")
+            row = dict(row)
+            row["evidence"] = [
+                {**e, "excerpt": redact(str(e.get("excerpt", "")))} for e in row.get("evidence") or []
+            ]
+            row["notes"] = redact(str(row.get("notes", "")))[:300]
+            rows[row["id"]] = row
+    missing = sorted({i for ids in batches for i in ids} - set(rows))
+    if missing:
+        raise ValueError(f"no annotation for {missing}")
+    return [rows[i] for i in sorted(rows)]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -289,8 +312,21 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("b", type=Path)
     f.add_argument("--adjudication", type=Path)
     f.add_argument("--output", type=Path, required=True)
+    m = sub.add_parser("merge")
+    m.add_argument("--batches", type=Path, required=True)
+    m.add_argument("--side", choices=("A", "B"), required=True)
+    m.add_argument("--dir", type=Path, required=True)
+    m.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
+    if args.command == "merge":
+        batches = json.loads(args.batches.read_text(encoding="utf-8"))[args.side]
+        merged = merge(batches, args.dir)
+        args.output.write_text(
+            "".join(json.dumps(r, sort_keys=True) + "\n" for r in merged), encoding="utf-8"
+        )
+        print(f"{len(merged)} annotation(s)")
+        return 0
     if args.command == "validate":
         ids = {r["id"] for r in json.loads(args.manifest.read_text(encoding="utf-8"))["repos"]}
         bad = 0
