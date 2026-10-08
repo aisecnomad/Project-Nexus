@@ -203,7 +203,7 @@ name belongs to an unrelated project.
 
 Once a release is published, a plugin declares the scanner as an ordinary
 dependency with a lower bound on the reviewed release, for example
-`NexusShadowScan>=0.1.1`. Before then, depend on a reviewed full git revision,
+`NexusShadowScan>=0.1.2`. Before then, depend on a reviewed full git revision,
 as the README install instructions do, for example
 `NexusShadowScan @ git+https://github.com/aisecnomad/Project-Nexus.git@<40-character-sha>`.
 PyPI rejects direct URL requirements, so a plugin published on PyPI cannot use

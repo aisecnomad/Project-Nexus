@@ -105,7 +105,7 @@ package.
    ```bash
    python -m venv /tmp/nss && . /tmp/nss/bin/activate
    python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
-   python -m pip install --no-deps --index-url https://test.pypi.org/simple/ NexusShadowScan==0.1.1
+   python -m pip install --no-deps --index-url https://test.pypi.org/simple/ NexusShadowScan==0.1.2
    shadowscan --help && python -m shadowscan.signatures.validate
    ```
 
@@ -114,8 +114,8 @@ package.
    key. `--no-sign` overrides any local `tag.gpgSign` preference:
 
    ```bash
-   git tag --no-sign -a v0.1.1 -m "NexusShadowScan 0.1.1" <reviewed-40-character-sha>
-   git push origin refs/tags/v0.1.1
+   git tag --no-sign -a v0.1.2 -m "NexusShadowScan 0.1.2" <reviewed-40-character-sha>
+   git push origin refs/tags/v0.1.2
    ```
 
    A maintainer may instead sign the annotated tag with `git tag -s` when a
@@ -130,8 +130,8 @@ package.
 6. **Verify what was published:**
 
    ```bash
-   python -m pip download --no-deps --dest wheels NexusShadowScan==0.1.1
-   gh attestation verify wheels/nexusshadowscan-0.1.1-py3-none-any.whl --repo aisecnomad/Project-Nexus
+   python -m pip download --no-deps --dest wheels NexusShadowScan==0.1.2
+   gh attestation verify wheels/nexusshadowscan-0.1.2-py3-none-any.whl --repo aisecnomad/Project-Nexus
    ```
 
    Compare the wheel's SHA-256 with `SHA256SUMS` in the retained
@@ -139,7 +139,7 @@ package.
    name this repository, `release.yml` and the `pypi` environment.
 7. **Optionally, create the GitHub release by hand** from the tag, using the
    version's `RELEASE_NOTES.md` section. The workflow never creates one.
-8. **Open the next candidate.** Bump the version (for example to `0.1.2`) and
+8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and
    add a new unreleased section to the changelog and release notes.
 
 ## When something goes wrong

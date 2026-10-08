@@ -324,7 +324,7 @@ and [connector permissions](https://github.com/aisecnomad/Project-Nexus/blob/mai
 
 ## Supported versions
 
-Version `0.1.1` is an alpha version. Fixes land on `main`; there is no
+Version `0.1.2` is an alpha version. Fixes land on `main`; there is no
 released-version backport commitment. Report the installed release version
 and artifact identity, or the full commit SHA for a source installation.
 Publication does not establish production acceptance for your environment.
