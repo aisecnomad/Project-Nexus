@@ -106,33 +106,7 @@ summarizes each release for people who install and operate ShadowScan.
   (the `review_corpus` case `provider-call-only` forbids the second
   provider).
 
-## 0.1.2 — 2026-10-08
-
-### Release tag lookup correction
-
-- Fix the production publication gate to query GitHub with the fully qualified
-  `refs/tags/v<version>` ref. The previous `tags/v<version>` lookup returned
-  HTTP 422 for the existing annotated tag during release preflight. The gate still
-  requires the resolved commit to equal the reviewed workflow commit.
-- Execute the gate in regression tests against the accepted API ref format,
-  including rejection of the old lookup and of missing or mismatched tags.
-- Prepare a new version because `v0.1.1` is already immutable. Its TestPyPI
-  upload and fresh installation passed; production preflight stopped before
-  any PyPI dispatch or upload. Preserve the tag and the rehearsal evidence.
-
-## 0.1.1 — 2026-10-08
-
-### October 8 release tags without a personal signing key
-
-- Release policy now permits unsigned annotated tags on the exact reviewed
-  commit; personal SSH or GPG tag signatures are optional. The default tagging
-  command disables automatic signing for that invocation.
-- Publishing continues through the existing protected GitHub Actions workflow
-  and PyPI trusted publisher, with GitHub provenance, SBOM and PyPI publish
-  attestations. Independent review, CI and CodeQL, immutable tag protections,
-  digest checks and environment approval remain required.
-
-### October 8 catalog discount scoped to lists
+### code.filesystem
 
 - `code.filesystem`: the catalog rule no longer discounts configuration that
   names four or more products. Three public repositories showed the cost:
@@ -2741,6 +2715,32 @@ entry. Tenant canaries and container runtime acceptance are still required.
 - Correct README commands, formatting and discovery claims; document the active required checks and independent-review merge gate.
 - Document dependency lock maintenance, soft deadline limits, rollout evidence and remaining tenant/container acceptance.
 - Clarify that finding confidence is heuristic, that static signals and resource existence need runtime corroboration, and that field precision/recall require a held-out local corpus before risk-gate enforcement.
+
+## 0.1.2 — 2026-10-08
+
+### Release tag lookup correction
+
+- Fix the production publication gate to query GitHub with the fully qualified
+  `refs/tags/v<version>` ref. The previous `tags/v<version>` lookup returned
+  HTTP 422 for the existing annotated tag during release preflight. The gate still
+  requires the resolved commit to equal the reviewed workflow commit.
+- Execute the gate in regression tests against the accepted API ref format,
+  including rejection of the old lookup and of missing or mismatched tags.
+- Prepare a new version because `v0.1.1` is already immutable. Its TestPyPI
+  upload and fresh installation passed; production preflight stopped before
+  any PyPI dispatch or upload. Preserve the tag and the rehearsal evidence.
+
+## 0.1.1 — 2026-10-08
+
+### October 8 release tags without a personal signing key
+
+- Release policy now permits unsigned annotated tags on the exact reviewed
+  commit; personal SSH or GPG tag signatures are optional. The default tagging
+  command disables automatic signing for that invocation.
+- Publishing continues through the existing protected GitHub Actions workflow
+  and PyPI trusted publisher, with GitHub provenance, SBOM and PyPI publish
+  attestations. Independent review, CI and CodeQL, immutable tag protections,
+  digest checks and environment approval remain required.
 
 ## Earlier hardening notes — 2026-09-24
 
