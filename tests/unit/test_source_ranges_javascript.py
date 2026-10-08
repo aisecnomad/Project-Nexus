@@ -650,3 +650,17 @@ def test_look_ahead_honours_the_per_file_time_budget(index) -> None:
     with pytest.raises(MatchTimeoutError), index.scan_budget(seconds=0.01):
         time.sleep(0.05)
         noncode_ranges("export const T = ({ n }) => <Text>({n})</Text>;", "javascript", ".tsx", jsx=True)
+
+
+def test_jsx_in_plain_js_file_scans_complete(tmp_path: Path, run_connector) -> None:
+    """React-in-.js (Docusaurus, CRA) must not fail closed on closing tags after expressions."""
+    (tmp_path / "index.js").write_text(
+        'import { createReactAgent } from "@langchain/langgraph/prebuilt";\n'
+        "const Icon = ({children}) => (\n"
+        '  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">\n'
+        "    {children}\n  </svg>\n);\n"
+        "export const graph = createReactAgent({});\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert any("framework.langgraph" in f.frameworks for f in findings)

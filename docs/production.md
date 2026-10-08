@@ -2168,7 +2168,9 @@ Redaction and lexing changes to review:
   `agent_flow`.
 - **Lexer.** Brace-less JSX elements as attribute values
   (`description=<div>…</div>`, `title=<span>…</span>`, self-closing
-  `icon=<Plus/>`) are now lexed completely; repositories that reported
+  `icon=<Plus/>`) are now lexed completely, and plain `.js`/`.mjs`/`.cjs`
+  files are lexed with JSX enabled (closing tags after expressions no
+  longer read as ambiguous regex-vs-division); repositories that reported
   `incomplete source lexical analysis` for such files scan complete and may
   gain findings there.
 - **Credential pass on large files.** The per-execution regex allowance
