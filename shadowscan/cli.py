@@ -42,7 +42,7 @@ from shadowscan.connectors import (
     get_connector_class,
     plugin_registry_errors,
 )
-from shadowscan.endpoint import default_label, describe, endpoint_paths, endpoint_roots
+from shadowscan.endpoint import default_label, describe, endpoint_include, endpoint_paths
 from shadowscan.engine import Engine
 from shadowscan.errors import SetupError
 from shadowscan.fleet import merge_reports, source_names
@@ -187,6 +187,8 @@ def _run_and_emit(
     verbose: int,
     max_rows: int | None,
     only: list[str] | None = None,
+    *,
+    extra_stats: list[ScanStats] | None = None,
 ) -> None:
     # Reuse a CLI-option watchdog already running during command preparation;
     # YAML-only and direct callers arm a local watchdog for engine/output work.
@@ -200,7 +202,7 @@ def _run_and_emit(
         watchdog = arm_job_deadline(cfg.job_deadline_seconds)
     owned_deadline = ctx is None or ctx.meta.get(_JOB_DEADLINE_CONTEXT_KEY) is None
     try:
-        _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only)
+        _run_and_emit_with_deadline(cfg, fmt, output, verbose, max_rows, only, extra_stats)
     finally:
         if watchdog is not None and owned_deadline:
             watchdog.cancel()
@@ -213,7 +215,10 @@ def _run_and_emit_with_deadline(
     verbose: int,
     max_rows: int | None,
     only: list[str] | None = None,
+    extra_stats: list[ScanStats] | None = None,
 ) -> None:
+    """Run the scan and emit its report; ``extra_stats`` (command-level diagnostics) join its stats."""
+
     def progress(cid: str, msg: str) -> None:
         err_console.print(Text(terminal_text(f"{cid}: {msg}"), style="dim"))
 
@@ -236,6 +241,7 @@ def _run_and_emit_with_deadline(
     except Exception as exc:  # noqa: BLE001 - third-party exception text may echo credentials
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
+    result.stats.extend(extra_stats or [])
     try:
         # The scan's own index names custom-pack signatures in the CycloneDX output.
         index = getattr(engine, "index", None)
@@ -488,11 +494,17 @@ def _apply_security_options(cfg: ScanConfig, opts: ScanOptions) -> None:
         cfg.job_deadline_seconds = opts.job_deadline_seconds
 
 
-def _run_scan(cfg: ScanConfig, opts: ScanOptions, only: list[str] | None = None) -> None:
+def _run_scan(
+    cfg: ScanConfig,
+    opts: ScanOptions,
+    only: list[str] | None = None,
+    *,
+    extra_stats: list[ScanStats] | None = None,
+) -> None:
     """Apply the shared security options, then run the scan and emit its report."""
     _apply_security_options(cfg, opts)
     verbose: int = main.verbose  # type: ignore[attr-defined]
-    _run_and_emit(cfg, opts.fmt, opts.output, verbose, opts.max_rows, only=only)
+    _run_and_emit(cfg, opts.fmt, opts.output, verbose, opts.max_rows, only=only, extra_stats=extra_stats)
 
 
 class _UsageError(click.UsageError):
@@ -1294,50 +1306,45 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
 def endpoint(home_dir: str | None, label: str | None, list_only: bool, opts: ScanOptions) -> None:
     """Scan this workstation's AI client configuration at its well-known locations: MCP client
     configs, coding-agent settings, user-level skills, rules and instruction files."""
-    home = Path(home_dir).resolve() if home_dir else Path.home()
+    # HOME is operator-trusted like --home: resolving it lets a profile below a
+    # linked /home (FreeBSD, image-based Fedora) pass the scan root link policy.
+    home = Path(home_dir).resolve() if home_dir else Path.home().resolve()
     discovery_errors: list[str] = []
     found = endpoint_paths(home, errors=discovery_errors)
-    if discovery_errors:
-        now = now_iso()
-        stats = ScanStats(
-            connector="code.filesystem",
-            started_at=now,
-            finished_at=now,
-            errors=discovery_errors,
-            incomplete=True,
-        )
-        result = ScanResult(findings=[], stats=[stats], version=__version__)
-        _emit(result, opts.fmt, opts.output, False, opts.max_rows)
-        raise click.exceptions.Exit(3)
     if list_only:
         for line in describe(found, home):
             click.echo(encodable_text(terminal_text(line)))
-        if not found:
+        for error in discovery_errors:
+            err_console.print(Text(terminal_text(error)))
+        if not found and not discovery_errors:
             err_console.print(
                 Text(terminal_text(f"no known AI client configuration locations exist under {home}"))
             )
+        if discovery_errors:
+            raise click.exceptions.Exit(3)
         return
-    verbose: int = main.verbose  # type: ignore[attr-defined]
-    if not found:
-        # Nothing to read is a complete, empty result, not a setup failure: the
-        # profile simply has no AI client wired in. The note stays in the report.
-        now = now_iso()
-        note = f"no known AI client configuration locations exist under {home}"
-        stats = ScanStats(connector="code.filesystem", started_at=now, finished_at=now, warnings=[note])
-        result = ScanResult(findings=[], stats=[stats], version=__version__)
-        _emit(result, opts.fmt, opts.output, verbose >= 1, opts.max_rows)
-        raise click.exceptions.Exit(_exit_code(result, opts.fail_on))
-    # Each profile root is walked only along the known locations below it, so
-    # the relative paths keep the `.claude/`, `.cursor/` context the file
-    # signatures expect and nothing else in the profile is read.
-    roots, include = endpoint_roots(found, home)
+    # A location that could not be inspected safely makes the scan incomplete
+    # (exit 3), but every other location is still read. Nothing to read is a
+    # complete, empty result, not a setup failure: the profile simply has no
+    # AI client wired in. The note stays in the report.
+    now = now_iso()
+    discovery = ScanStats(connector="engine.endpoint", started_at=now, finished_at=now)
+    if discovery_errors:
+        discovery.errors.extend(discovery_errors)
+        discovery.incomplete = True
+    elif not found:
+        discovery.warnings.append(f"no known AI client configuration locations exist under {home}")
+    # The profile is walked only along the known locations, so the relative
+    # paths keep the `.claude/`, `.cursor/` context the file signatures expect
+    # and nothing else in the profile is read.
     config: dict[str, Any] = {
-        "paths": [str(path) for path in roots],
-        "include": include,
+        "paths": [str(home)],
+        "include": endpoint_include(),
         "label": label or default_label(),
         "scan_secrets": True,
     }
-    _run_scan(opts.config([ConnectorSpec(name="code.filesystem", config=config)]), opts)
+    extra = [discovery] if discovery.errors or discovery.warnings else None
+    _run_scan(opts.config([ConnectorSpec(name="code.filesystem", config=config)]), opts, extra_stats=extra)
 
 
 # -------------------------------------------------------------------- merge

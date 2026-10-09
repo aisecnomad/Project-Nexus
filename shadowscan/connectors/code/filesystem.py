@@ -1044,8 +1044,8 @@ class FilesystemConnector(BaseConnector):
         "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
         "include": (
             "list of paths relative to each root that limit the walk to those files and directories; "
-            "other file contents are not read; parent directory names are listed (endpoint scans use it; "
-            "default: everything)"
+            "other file contents are not read; parent directory names are listed; such a scan always "
+            "runs in full, without the incremental cache (endpoint scans use it; default: everything)"
         ),
         "default_excludes": (
             "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
