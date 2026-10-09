@@ -46,7 +46,21 @@ _SETUP_SCRIPT_MAX_BYTES = 256 * 1024
 _PACKAGING_SETUP = re.compile(rb"\b(?:setuptools|distutils|skbuild)\b|(?<!def )(?<![.\w])setup\s*\(")
 
 
-def _packaging_setup_script(path: Path) -> bool:
+def _packaging_setup_script(path: Path, root: Path | None = None) -> bool:
+    """Whether ``path`` packages a project; True when it cannot be read.
+
+    A link that resolves inside ``root`` (the resolved scan root) is judged by
+    its target's content, as a copy of the target would be; the target is
+    opened at its real path without following a link in any component.
+    """
+    if root is not None and os.path.islink(path):
+        try:
+            target = path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return True
+        if target != root and root not in target.parents:
+            return True
+        path = target
     try:
         with open_confined_file(path, label="setup.py") as (stream, _):
             head = stream.read(_SETUP_SCRIPT_MAX_BYTES)
@@ -55,10 +69,11 @@ def _packaging_setup_script(path: Path) -> bool:
     return _PACKAGING_SETUP.search(head) is not None
 
 
-def _marks_project(directory: Path, names: Iterable[str]) -> bool:
-    """True when ``names`` in ``directory`` include a project manifest."""
+def _marks_project(directory: Path, names: Iterable[str], root: Path | None = None) -> bool:
+    """True when ``names`` in ``directory`` include a project manifest (``root``: _packaging_setup_script)."""
     return any(
-        name in PROJECT_ROOT_MARKERS and (name != "setup.py" or _packaging_setup_script(directory / name))
+        name in PROJECT_ROOT_MARKERS
+        and (name != "setup.py" or _packaging_setup_script(directory / name, root))
         for name in names
     )
 

@@ -226,6 +226,7 @@ def read_text(
     dir_fd: int | None = None,
     analyzable_name: bool = True,
     notes: list[str] | None = None,
+    name: str | None = None,
 ) -> str | None:
     """Read a bounded regular file without following a symlink in any path component.
 
@@ -249,7 +250,9 @@ def read_text(
     ``analyzable_name`` False, any recognised artifact: the caller then reads
     the file only because of the directory it is in, such as an image kept
     beside coding-agent rules. Limits and I/O failures are reported to callers
-    that track completeness.
+    that track completeness. ``name`` is the name the content is analyzed under
+    when it is not the file's own (a link's target, read as the link): decoding,
+    binary-artifact and NUL decisions follow it.
     """
     try:
         if max_bytes < 1:
@@ -260,7 +263,7 @@ def read_text(
             raw = fh.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise ValueError("file exceeds max_file_size")
-        return _decode_text(raw, path.name, analyzable_name, notes)
+        return _decode_text(raw, name or path.name, analyzable_name, notes)
     except (OSError, ValueError) as exc:
         if errors is not None:
             # Do not embed raw file contents or exception messages in reports.

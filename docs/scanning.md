@@ -16,13 +16,19 @@ that are never silent:
   settings and agent-definition directories, plugin roots, template paths and
   local Python modules (looked up beside the link). Findings name the link's
   path, so content reachable at two paths is reported at both, as two copies
-  would be. A directory link's target is listed at its real path; at most
-  20,000 files and directories per scan root are analyzed this way. A dangling
-  link whose own name carries no file-name signal and whose target would be
-  inside the tree hides nothing and is noted with a warning. Every other link
-  makes the scan incomplete (exit code 3): links that leave the root or do not
-  resolve, a cycle (a link inside its own target), a link or `.gitmodules` file
-  below a linked directory, and links beyond the 20,000-entry budget.
+  would be. Content is decoded and judged under the link's name (a link
+  `agent.ipynb` to a JSON file is read as a notebook). A directory link's target
+  is listed at its real path, and its files count toward `max_files`; at most
+  20,000 files and directories per scan root are analyzed this way. Evidence
+  limits keep the first items found in walk order, and a directory link's files
+  are found after its parent directory's own, so a capped evidence list can
+  differ from a copy's. A dangling link whose own name carries no file-name
+  signal and whose target would be inside the tree hides nothing and is noted
+  with a warning. Every other link makes the scan incomplete (exit code 3):
+  links that leave the root or do not resolve, a link whose target cannot be
+  inspected, a cycle (a link inside its own target), an unreadable directory, a
+  link or `.gitmodules` file below a linked directory, and links beyond the
+  20,000-entry budget.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the
@@ -107,8 +113,8 @@ that are never silent:
   exclude a known binary with an `exclude` file glob.
 * **Entries that are not regular files** (a directory, FIFO, socket or device)
   named like a file the scanner analyzes, such as `.mcp.json` or
-  `requirements.txt`, make the scan incomplete, as a symbolic link of the same
-  name does. A directory is only reported when its name is an MCP configuration
+  `requirements.txt`, make the scan incomplete, and so does a symbolic link of the
+  same name whose target is one. A directory is only reported when its name is an MCP configuration
   file name such as `.mcp.json`; directories that agent tools read as
   directories (`.roo/rules/`, `.clinerules/`, `.cursor/rules/`) are not. Its
   contents are still scanned.

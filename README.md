@@ -266,6 +266,8 @@ root make coverage incomplete (exit 3) by default. `--strict-coverage`
 (`strict_coverage: true`) records them as errors instead of warnings;
 `oversize_skip_globs` remain declared warnings. A link inside the scan root is
 analyzed as a copy of its target at the link's path; the walk never enters it.
+Cycles, links below a linked directory and links beyond 20,000 analyzed entries
+per root stay gaps.
 A file analyzed by name but unreadable as text (a NUL byte outside
 UTF-8, UTF-16 or UTF-32 with a byte-order mark) is also a gap. Non-empty
 `bin/`, `build/`, `dist/`, `vendor/` and similar directories skipped by default

@@ -66,6 +66,23 @@ second provider, test fixtures and dangling links.
   link layouts, including every one the reviews proved, against the same tree
   with its links materialized (`same_as_copy` in `tests/conftest.py`); the
   earlier design failed 33 of them.
+- A fourth review of the copy analysis proved two fail-open defects and
+  several differences from a copy; each is fixed with a regression test. The
+  target's content is decoded and judged under the link's name (a notebook,
+  an extensionless JavaScript file and a PEP 263 cookie were read under the
+  target's name), and an unreadable directory below a directory link is a gap.
+  Files below a directory link count toward `max_files`; the alias budget
+  charges each entry once and stops listing targets once spent; a directory
+  link named like an MCP configuration file is reported as a directory of that
+  name would be; a `setup.py` link marks a project by its target's content;
+  local Python modules are probed in the real directory that holds a linked
+  file's copy, and a module that is itself an in-root link counts; plugin MCP
+  paths that are file links are read in their targets; Git stores and
+  default-excluded directories below a directory link are handled as in the
+  walk; and a link whose target cannot be inspected (an unsearchable
+  directory) is a gap, not dangling. Capped evidence lists can still differ
+  from a copy's, since a directory link's files are found after its parent
+  directory's own.
 
 ### October 8 benchmark remediation: oversize and binary content
 

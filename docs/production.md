@@ -2286,9 +2286,10 @@ the checked-out commit and tree SHAs. These appear in each code finding's
 `metadata.source_snapshot`, alongside the provider, capture method and validated
 branch name when available. Missing or malformed snapshot identities and blob
 mismatches mark the scan incomplete; valid neighboring files remain usable.
-Symlinks and submodules are skipped with incomplete coverage in both modes: API mode
-skips them, and a clone reports submodules (gitlinks) through the filesystem scan of the
-checkout. Git LFS pointer files, which neither mode resolves, also make the scan
+API mode skips symlinks and submodules with incomplete coverage. A clone keeps
+its links, and the filesystem scan of the checkout analyzes a link inside the
+checkout as a copy of its target (see [scan semantics](scanning.md)) and reports
+submodules (gitlinks) as gaps. Git LFS pointer files, which neither mode resolves, also make the scan
 incomplete. Provider settings,
 CI variable names and other metadata collected separately are not part of the
 source snapshot.

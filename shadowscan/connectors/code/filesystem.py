@@ -497,8 +497,15 @@ def _dangling_inside(link: Path, resolved_root: Path) -> bool:
         target = link.resolve(strict=False)
     except (OSError, ValueError, RuntimeError):
         return False
-    inside = target == resolved_root or resolved_root in target.parents
-    return inside and not os.path.lexists(target)
+    if not (target == resolved_root or resolved_root in target.parents):
+        return False
+    try:
+        os.lstat(target)
+    except (FileNotFoundError, NotADirectoryError):
+        return True  # nothing there
+    except OSError:
+        return False  # an unsearchable directory hides whatever is there
+    return False
 
 
 # The header of an inflated loose Git object.
@@ -1306,12 +1313,13 @@ def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
 
 
 def _local_module_predicate(
-    root: Path, path: Path, proj_root: str, *, project: Path | None = None
+    root: Path, path: Path, proj_root: str, *, project: Path | None = None, source_dir: Path | None = None
 ) -> Callable[[str], bool]:
     """Return a cached check whether an import in ``path`` names a module of the scanned tree.
 
-    ``project`` is the on-disk project directory when it is not ``path``'s
-    ancestor at the depth of ``proj_root`` (a file analyzed at a link's path).
+    For a file analyzed at a link's path, ``project`` is the on-disk project
+    directory and ``source_dir`` the real directory that holds what a copy's
+    directory would (see local_module_conflict).
     """
     local_modules: dict[str, bool] = {}
 
@@ -1331,6 +1339,7 @@ def _local_module_predicate(
                 else root
                 if proj_root == "."
                 else _on_disk_project(root, path, proj_root),
+                source_dir=source_dir,
             )
         return local_modules[name]
 
@@ -1665,7 +1674,9 @@ class FilesystemConnector(BaseConnector):
         # in, and each directory link's real directory.
         self._alias_entries_left = _MAX_ALIAS_ENTRIES_TOTAL
         self._alias_origins: dict[str, tuple[Path, Path]] = {}
-        self._alias_dirs: dict[str, Path] = {}
+        self._alias_dirs: dict[str, Path] = {}  # link path -> its real target (a directory or a file)
+        # Git repository stores of the current root, walked or below a directory link.
+        self._git_stores: set[str] = set()
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
 
@@ -1920,30 +1931,17 @@ class FilesystemConnector(BaseConnector):
         # even when this source tree produces no findings (and no enrichment).
         if self.use_git and os.path.lexists(root / ".git"):
             self.check_gitlink_coverage(root)
-        git_stores: set[str] = set()
+        git_stores = self._git_stores
         for dirpath, dirnames, filenames in _walk_directories(root, walk_error, budget=walk.budget):
             walk.budget.check()
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if rel_dir != "." and _is_git_store(dirpath, dirnames, filenames):
-                git_stores.add(rel_dir)
-                if len(git_stores) <= _MAX_NAMED_GIT_STORES:
-                    self.ctx.warn(
-                        f"code.filesystem: {rel_dir}: Git repository store; its object database and index "
-                        "are not analyzed, its other files are",
-                        incomplete=False,
-                    )
-                elif len(git_stores) == _MAX_NAMED_GIT_STORES + 1:
-                    prefix = self._root_prefix(self._scan_label(root))
-                    self.ctx.warn(
-                        f"code.filesystem: {prefix}more Git repository stores are treated alike without "
-                        "being named",
-                        incomplete=False,
-                    )
+                self._note_git_store(root, rel_dir, git_stores)
             if ".gitmodules" in filenames:
                 self._check_submodule_declarations(root, rel_dir)
             proj = _nearest_root(rel_dir, roots)
-            if rel_dir != "." and _marks_project(Path(dirpath), filenames):
+            if rel_dir != "." and _marks_project(Path(dirpath), filenames, resolved_root):
                 roots.append(rel_dir)
                 proj = rel_dir
             kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk, proj)
@@ -1986,6 +1984,22 @@ class FilesystemConnector(BaseConnector):
                     return
                 yield rel, p, proj, info.st_size
             yield from linked
+
+    def _note_git_store(self, root: Path, rel_dir: str, stores: set[str]) -> None:
+        """Record a Git repository store at ``rel_dir``; the first few are named in warnings."""
+        stores.add(rel_dir)
+        if len(stores) <= _MAX_NAMED_GIT_STORES:
+            self.ctx.warn(
+                f"code.filesystem: {rel_dir}: Git repository store; its object database and index "
+                "are not analyzed, its other files are",
+                incomplete=False,
+            )
+        elif len(stores) == _MAX_NAMED_GIT_STORES + 1:
+            prefix = self._root_prefix(self._scan_label(root))
+            self.ctx.warn(
+                f"code.filesystem: {prefix}more Git repository stores are treated alike without being named",
+                incomplete=False,
+            )
 
     @staticmethod
     def _drain_aliases(walk: _WalkCounters) -> Iterator[tuple[str, Path, str, int]]:
@@ -2094,6 +2108,8 @@ class FilesystemConnector(BaseConnector):
                 if target.is_dir()
                 else self._queue_alias_file(root, resolved_root, rel, link, target, proj, walk)
             )
+            if queued is None:
+                return False  # max_files reached; the error is recorded
             if queued:
                 return True
         elif not self.index.match_file(rel) and _dangling_inside(link, resolved_root):
@@ -2122,11 +2138,12 @@ class FilesystemConnector(BaseConnector):
         target: Path,
         proj: str,
         walk: _WalkCounters,
-    ) -> bool:
+    ) -> bool | None:
         """Queue a file link's target for analysis at the link's path; False is a coverage gap.
 
         Its directory is the link's own, so local Python modules are looked up
-        beside the link, as for a copy.
+        beside the link, as for a copy. The link itself was counted toward
+        max_files, as the copy's file would be.
         """
         try:
             info = target.stat()
@@ -2139,7 +2156,11 @@ class FilesystemConnector(BaseConnector):
             return True
         real = root / target.relative_to(resolved_root)
         project = root if proj == "." else _on_disk_project(root, link, proj)
-        return self._queue_alias_entry(rel, real, proj, info.st_size, (link, project), walk)
+        self._alias_dirs[rel] = real  # a plugin manifest may name the link (see _on_disk)
+        if self._alias_entries_left <= 0:
+            return False
+        self._alias_entries_left -= 1
+        return self._queue_alias_entry(rel, real, proj, info.st_size, (link.parent, project), walk)
 
     def _queue_alias_directory(
         self,
@@ -2150,23 +2171,31 @@ class FilesystemConnector(BaseConnector):
         target: Path,
         proj: str,
         walk: _WalkCounters,
-    ) -> bool:
+    ) -> bool | None:
         """Queue every file below a directory link's target for analysis below the link's path.
 
         The target is listed at its real path; the link is never entered.
-        Exclusions, projects and every path rule apply to the link's paths, as
-        for a copy. A cycle, a link or a `.gitmodules` file below the target,
-        an unreadable directory or the alias budget is a gap for the whole link.
+        Exclusions, projects, Git stores and every path rule apply to the link's
+        paths, as for a copy, and each file counts toward max_files (None: the
+        walk must stop). A cycle, a link or a `.gitmodules` file below the
+        target, an unreadable directory or the alias budget is a gap for the
+        whole link.
         """
         target_rel = target.relative_to(resolved_root)
         shown_target = _report_name(target_rel.as_posix())
         if shown_target == "." or rel == shown_target or rel.startswith(shown_target + "/"):
             return False  # the link is inside its target: a cycle
+        if self._alias_entries_left <= 0:
+            return False  # spent: do not list another target
+        if PurePosixPath(rel).name in MCP_CONFIG_NAMES:
+            # Named like an MCP configuration file, as a copied directory would be.
+            self._skip_non_regular(walk, root, rel, "directory")
         real_top = root / target_rel
         failed: list[OSError] = []
         roots_here = [proj]
         projects = {proj: root if proj == "." else _on_disk_project(root, link, proj)}
-        entries: list[tuple[str, Path, str, int]] = []
+        entries: list[tuple[str, Path, str, int, Path]] = []
+        stores: set[str] = set()
         for dirpath, dirnames, filenames in _walk_directories(real_top, failed.append, budget=walk.budget):
             if failed or ".gitmodules" in filenames:
                 return False
@@ -2179,10 +2208,12 @@ class FilesystemConnector(BaseConnector):
             sub = Path(dirpath).relative_to(real_top).as_posix()
             alias_dir = rel if sub == "." else f"{rel}/{_report_name(sub)}"
             here = _nearest_root(alias_dir, roots_here)
-            if _marks_project(Path(dirpath), filenames):
+            if _marks_project(Path(dirpath), filenames, resolved_root):
                 roots_here.append(alias_dir)
                 here = alias_dir
                 projects[alias_dir] = Path(dirpath)
+            if _is_git_store(dirpath, dirnames, filenames):
+                stores.add(alias_dir)
             kept = []
             for name in sorted(dirnames):
                 shown = _report_name(name)
@@ -2190,6 +2221,10 @@ class FilesystemConnector(BaseConnector):
                 if (Path(dirpath) / name).is_symlink():
                     return False
                 if self._excluded(child, name):
+                    if self._disclosed_default_exclusion(child, name) and _holds_file(
+                        Path(dirpath) / name, walk.budget
+                    ):
+                        self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
                     continue
                 if name in MCP_CONFIG_NAMES:
                     self._skip_non_regular(walk, root, child, "directory")
@@ -2200,6 +2235,8 @@ class FilesystemConnector(BaseConnector):
                 if self._excluded_file(alias_rel):
                     continue
                 path = Path(dirpath) / name
+                if stores and _git_binary_part(stores, alias_rel, path):
+                    continue
                 try:
                     if path.is_symlink():
                         return False
@@ -2210,20 +2247,25 @@ class FilesystemConnector(BaseConnector):
                     if self._analyzed_name(alias_rel, name):
                         self._skip_non_regular(walk, root, alias_rel, _special_file_kind(info.st_mode))
                     continue
-                entries.append((alias_rel, path, here, info.st_size))
+                entries.append((alias_rel, path, here, info.st_size, Path(dirpath)))
+        if failed:
+            return False  # the target, or a directory below it, could not be listed
         self._alias_dirs[rel] = real_top
-        for alias_rel, path, here, size in entries:
+        for alias_rel in sorted(stores):
+            self._note_git_store(root, alias_rel, self._git_stores)
+        for alias_rel, path, here, size, directory in entries:
+            if not self._count_entry(walk, root):
+                return None
             # The real directory holds what a copy's directory would.
-            if not self._queue_alias_entry(alias_rel, path, here, size, (path, projects[here]), walk):
-                return False
+            self._queue_alias_entry(alias_rel, path, here, size, (directory, projects[here]), walk)
         return True
 
     def _queue_alias_entry(
         self, rel: str, real: Path, proj: str, size: int, origin: tuple[Path, Path], walk: _WalkCounters
     ) -> bool:
-        """Queue one file read at ``real`` and analyzed as ``rel``; False when the alias budget is spent.
+        """Queue one file read at ``real`` and analyzed as ``rel``, as the walk queues a regular file.
 
-        ``origin`` is the on-disk source path and project directory that local
+        ``origin`` is the on-disk directory and project directory that local
         Python import provenance probes for this path (see _scan_source).
         """
         name = PurePosixPath(rel).name
@@ -2232,9 +2274,6 @@ class FilesystemConnector(BaseConnector):
             return True
         if _never_read_by_name(name):
             return True
-        self._alias_entries_left -= 1
-        if self._alias_entries_left < 0:
-            return False
         walk.aliases.append((rel, real, proj, size))
         self._alias_origins[rel] = origin
         return True
@@ -2395,6 +2434,7 @@ class FilesystemConnector(BaseConnector):
         self._alias_entries_left = _MAX_ALIAS_ENTRIES_TOTAL
         self._alias_origins = {}
         self._alias_dirs = {}
+        self._git_stores = set()
         try:
             self._walk_entries(scan)
             self._resolve_plugin_mcp(scan)
@@ -2443,7 +2483,13 @@ class FilesystemConnector(BaseConnector):
                 ):
                     read_errors: list[str] = []
                     limit = self._size_limit(PurePosixPath(target).name, target)
-                    text = read_text(self._on_disk(scan, target), limit, read_errors, dir_fd=scan.root_fd)
+                    text = read_text(
+                        self._on_disk(scan, target),
+                        limit,
+                        read_errors,
+                        dir_fd=scan.root_fd,
+                        name=PurePosixPath(target).name,
+                    )
                     if text is None:
                         self.ctx.error(
                             f"{where} could not be read ({read_errors[0] if read_errors else 'missing'})"
@@ -2457,7 +2503,10 @@ class FilesystemConnector(BaseConnector):
                         parsed.add(target)
 
     def _on_disk(self, scan: _ScanState, rel: str) -> PurePosixPath:
-        """Where ``rel`` is read relative to the open root: below a directory link, in its target."""
+        """Where ``rel`` is read below the open root: a link's target, or a path in a linked directory."""
+        exact = self._alias_dirs.get(rel)
+        if exact is not None:
+            return PurePosixPath(exact.relative_to(scan.base or scan.root).as_posix())
         for parent in PurePosixPath(rel).parents:
             real = self._alias_dirs.get(parent.as_posix())
             if real is not None:
@@ -2582,6 +2631,7 @@ class FilesystemConnector(BaseConnector):
             dir_fd=root_fd,
             analyzable_name=named,
             notes=notes,
+            name=PurePosixPath(rel).name,
         )
         for note in notes or ():
             self.ctx.warn(f"code.filesystem: {rel}: {note}", incomplete=False)
@@ -2601,7 +2651,7 @@ class FilesystemConnector(BaseConnector):
             else:
                 self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
             return None
-        if path.suffix.lower() != ".ipynb":
+        if not rel.lower().endswith(".ipynb"):
             return text, None, ()
         return self._notebook_source(rel, text)
 
@@ -2972,7 +3022,9 @@ class FilesystemConnector(BaseConnector):
         is_local_module = (
             _local_module_predicate(root, file.path, file.proj_root)
             if origin is None
-            else _local_module_predicate(root, origin[0], file.proj_root, project=origin[1])
+            else _local_module_predicate(
+                root, file.path, file.proj_root, project=origin[1], source_dir=origin[0]
+            )
         )
         # Malformed trailing literals are masked through EOF;
         # preceding valid imports/code remain inspectable. A notebook's

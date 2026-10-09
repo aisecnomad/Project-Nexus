@@ -31,12 +31,17 @@ class ImportProvenanceError(ValueError):
     """Local import provenance could not be safely established."""
 
 
+class _LinkProvenanceError(ImportProvenanceError):
+    """A probed path component is a symbolic link."""
+
+
 def local_module_conflict(
     module: str,
     *,
     scan_root: Path,
     source_path: Path,
     project_root: Path,
+    source_dir: Path | None = None,
 ) -> bool:
     """Whether an absolute import might refer to repository-local Python code.
 
@@ -49,9 +54,15 @@ def local_module_conflict(
     installed, so it must not hide every import of that SDK. This is not a
     complete recreation of Python's runtime ``sys.path`` or import machinery.
 
-    Symlinks, inaccessible paths, invalid paths and limits raise explicitly;
-    callers must not interpret an error as proof of external SDK provenance.
-    The number of probes is bounded by path depth, not repository file count.
+    ``source_dir`` replaces the source's own directory for a file analyzed at
+    a link's path: the real directory that holds what a copy's directory would.
+    A module or package that is itself a link inside the scan root stands for
+    its target, as a copy would.
+
+    Other symlinks, inaccessible paths, invalid paths and limits raise
+    explicitly; callers must not interpret an error as proof of external SDK
+    provenance. The number of probes is bounded by path depth, not repository
+    file count.
     """
     if (
         not module
@@ -68,12 +79,19 @@ def local_module_conflict(
         return path
 
     root = absolute(scan_root)
-    source = absolute(source_path)
     project = absolute(project_root)
-    if not source.is_relative_to(root) or not project.is_relative_to(root):
-        raise ImportProvenanceError("import provenance path is outside the scan root")
-    if not source.is_relative_to(project):
-        raise ImportProvenanceError("source path is outside its project root")
+    if source_dir is None:
+        source = absolute(source_path)
+        if not source.is_relative_to(root) or not project.is_relative_to(root):
+            raise ImportProvenanceError("import provenance path is outside the scan root")
+        if not source.is_relative_to(project):
+            raise ImportProvenanceError("source path is outside its project root")
+        directory_of_source = source.parent
+    else:
+        directory_of_source = absolute(source_dir)
+        if not directory_of_source.is_relative_to(root) or not project.is_relative_to(root):
+            raise ImportProvenanceError("import provenance path is outside the scan root")
+    real_root = Path(os.path.realpath(root))
 
     # Validate each ancestor before probing a descendant. lstat does not follow
     # the final component, so a link is rejected before it can be traversed.
@@ -96,7 +114,7 @@ def local_module_conflict(
         except OSError as exc:
             raise ImportProvenanceError("could not inspect local import provenance") from exc
         if result is not None and stat.S_ISLNK(result):
-            raise ImportProvenanceError("local import provenance must not traverse a symbolic link")
+            raise _LinkProvenanceError("local import provenance must not traverse a symbolic link")
         modes[path] = result
         return result
 
@@ -104,16 +122,31 @@ def local_module_conflict(
     if root_mode is None or not stat.S_ISDIR(root_mode):
         raise ImportProvenanceError("local import provenance requires a directory scan root")
 
-    candidates = dict.fromkeys((root, project, project / "src", source.parent))
+    def candidate(path: Path) -> tuple[Path, int | None]:
+        """A module or package path and its mode; a link inside the root stands for its target."""
+        try:
+            return path, mode(path)
+        except _LinkProvenanceError:
+            pass
+        try:
+            target = path.resolve(strict=True)
+        except FileNotFoundError:
+            return path, None  # a dangling link: no module there, as for a copy
+        except (OSError, RuntimeError) as exc:
+            raise ImportProvenanceError("could not inspect local import provenance") from exc
+        if target != real_root and real_root not in target.parents:
+            raise ImportProvenanceError("local import provenance symbolic link leaves the scan root")
+        return target, mode(target)
+
+    candidates = dict.fromkeys((root, project, project / "src", directory_of_source))
     for directory in candidates:
         directory_mode = mode(directory)
         if directory_mode is None or not stat.S_ISDIR(directory_mode):
             continue
-        module_mode = mode(directory / f"{name}.py")
+        _, module_mode = candidate(directory / f"{name}.py")
         if module_mode is not None and stat.S_ISREG(module_mode):
             return True
-        package = directory / name
-        package_mode = mode(package)
+        package, package_mode = candidate(directory / name)
         if package_mode is None or not stat.S_ISDIR(package_mode):
             continue
         init_mode = mode(package / "__init__.py")

@@ -321,7 +321,11 @@ and the scan stays complete, even under `strict_coverage`. Any other oversize
 analyzable file makes coverage incomplete.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
-relative to it without following a link in any path component. A root that
+relative to it without following a link in any path component. A symbolic link
+inside the root is analyzed as a copy of its target at the link's path: the
+target is read at its real path, and every path rule, decoding included, sees
+the link's path. Links leaving the root, cycles, links below a linked directory
+and links beyond 20,000 analyzed entries per root make coverage incomplete. A root that
 cannot be opened this way is reported as
 `could not open the scan root safely (<reason>)` and makes the scan
 incomplete. A Python module none of whose imports can resolve to a signature
