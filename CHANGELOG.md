@@ -5,6 +5,125 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Shadow AI agent discovery benchmark
+
+- Add `tools/evaluation/benchmark_followup_corpus.json`, 24 authored synthetic
+  cases (16 positives, 8 negatives) that reproduce the shapes behind the
+  misses and false positives observed on the 87-repository benchmark: model
+  identifiers in code, LiteLLM Bedrock routes, implemented MCP servers in
+  Python, TypeScript and Go with exact `mcp-server` and `tool-use`
+  capabilities, `AnthropicBedrock`, Voyage AI, OllamaSharp,
+  `Directory.Packages.props`, Koog, LangChain4j MCP, devcontainer sample keys
+  and a code-loaded `model-settings.yml` carrying `api_base` hosts and
+  `api_key_env` names on the recall side (a loaded settings file holding model
+  identifiers only is still an open miss, recorded in `docs/evaluation.md`);
+  Rust
+  `ToolCallback` and `create_agent(`, Hugging Face host mentions, the
+  `InferenceClient` call shape, Browserbase without Stagehand, CI images,
+  documentation catalogs, a test-defined `handoff(`, `DIFY_API_KEY` and a
+  model leaderboard on the precision side. No case carries a `known_gap`
+  waiver. `make evaluate`, CI and `docs/evaluation.md` run and describe it;
+  `tests/test_evaluation.py` pins its counts. Labels are author-written
+  reproductions of public-repository shapes, not independent review.
+- Add `tools/discovery_benchmark/`, a harness that runs ShadowScan's
+  `code.filesystem` connector and other open-source code-surface discovery
+  tools (Trusera ai-bom, NuGuard, AgentDiscover, Agentic Radar, SafeDep xbom
+  and vet, Geiger, cdxgen) against the same pinned public repositories as an
+  unprivileged user with no network or credentials, normalizes their output
+  into one tool-neutral fact taxonomy and scores precision and recall at
+  repository, category and value level.
+- Add `benchmarks/shadow-ai-discovery/` with the pinned corpus (positives,
+  controls and vocabulary near-misses), session-labeled expected facts with
+  evidence pointers, the run results and the report. The labels are
+  author-written evidence, not independent human review, and the benchmark
+  covers the code surface only.
+
+### Signatures
+
+- New capability `mcp-server`: the project exposes tools to other agents over
+  MCP. The `protocol.mcp` code signal is split into server idioms that carry
+  it (`FastMCP(`, `mcp.server.Server(`, `new McpServer(`, `server.NewMCPServer(`,
+  `mcp.NewServer(`, `McpServer.sync(`, `McpServer.Create(`, `.AddMcpServer(`,
+  `[McpServerTool`, `impl ServerHandler for`, the server transports and
+  `@mcp.tool`), the ambiguous low-level `Server(` class (counted only with
+  other MCP evidence in the project) and client idioms that carry no
+  capability. `mcp-server` scores the same 5 risk points as `tool-use`, so an
+  MCP server project's default risk rises by 5; `risk_weights.capabilities`
+  accepts the new key. The default-weight digest in the tests is updated
+  and `docs/production.md` carries the migration note.
+- Model ids: every `model` pattern is anchored. The families whose prefix is
+  a common word are closed with the id's own alphabet (OpenAI's `gpt-*`,
+  `o1`/`o3`/`o4`, `chatgpt-*`, `text-embedding-*`, Cohere's `command*`,
+  `deepseek-*`), optionally followed by an Ollama/OpenRouter `:tag` or a
+  gateway `@region` pin, or gated on a generation or tier (`claude-`,
+  `sonar`), so `gpt-4-turbo-docs.md`, `command-line`, `o1ne`, `claude-code-*`
+  and `text-embedding-004` (now Gemini only) are no longer OpenAI, Cohere or
+  Anthropic ids, while every `gpt-` id (`gpt-35-turbo`, `gpt-image-1`,
+  `gpt-realtime`, `gpt-audio`, the tagged `gpt-oss:20b`) still is. The
+  `gemini-`, `grok-`, `mistral-`, `embed-`, `rerank-` and `voyage-` prefixes
+  stay open-ended. LiteLLM-style routes attribute the routed provider:
+  `bedrock/`, `vertex_ai/`, `anthropic/`, `openai/`, `gemini/`, `mistral/`,
+  `cohere/`, `cohere_chat/`, `xai/`, `deepseek/` join the providers' id
+  signals; `openrouter/`, `together_ai/`, `groq/`, `ollama/`, `ollama_chat/`,
+  `huggingface/<org>/<model>`, `perplexity/`, `cerebras/` and `voyage/` are
+  new signals at weight 0.6. A route must carry a model id (`bedrock/edition`,
+  `xai/README` and a bare `mistral/` do not match). New bare families:
+  `voyage-*` embeddings (never `rerank-*`, which is Cohere's), the Cohere
+  `command`, `command-r*`, `command-a*`, `command-light*` and `command-nightly`
+  ids, the `claude-fable-*` tier and the `deepseek-ai/<model>` Hugging Face
+  names. No family is limited to a list of generations: `deepseek-v4-*`,
+  `deepseek-flash` and `gpt-5.4` match as the next ids will.
+- Claude on cloud platforms: `AnthropicBedrock(` and `from anthropic import
+  AnthropicBedrock` attribute `provider.aws-bedrock`, `AnthropicVertex(` and
+  its import `provider.google-vertex-ai` (previously both were Anthropic
+  code evidence). Bedrock also gains `CLAUDE_CODE_USE_BEDROCK` (0.5),
+  `AWS_BEARER_TOKEN_BEDROCK` (0.6), the `BedrockRuntime*` client classes and
+  the `"bedrock-runtime"` service name, the `@anthropic-ai/bedrock-sdk`
+  package and import, and the Rust `aws-sdk-bedrock*` crates; Vertex gains
+  `CLAUDE_CODE_USE_VERTEX` and `@anthropic-ai/vertex-sdk`. The Claude model id
+  still attributes Anthropic, so Bedrock Claude ids label both providers.
+- JVM provider modules: LangChain4j `dev.langchain4j:langchain4j-<vendor>`
+  modules and `dev.langchain4j.model.<pkg>.` imports, and Spring AI
+  `spring-ai-starter-model-<vendor>` / `spring-ai-<vendor>` artifacts and
+  `org.springframework.ai.<vendor>.` imports attribute the provider
+  (Anthropic, OpenAI, Azure OpenAI, Bedrock, Vertex AI, Gemini, Cohere,
+  Hugging Face, Ollama, Mistral, Voyage AI) alongside the framework; the
+  Spring AI `spring-ai-starter-mcp*` / `spring-ai-mcp*` prefixes and
+  `dev.langchain4j:langchain4j-mcp` with `dev.langchain4j.mcp.` imports attribute
+  `protocol.mcp`.
+- Long-tail SDKs: Voyage AI import, `voyageai.Client(`, npm `voyageai` and
+  `voyage-ai-provider`, `VOYAGE_API_KEY` raised to 0.6; Ollama `OllamaSharp`
+  (NuGet and `using OllamaSharp`) and the `host.docker.internal:11434` /
+  `0.0.0.0:11434` endpoints; Hugging Face `@xenova/transformers` and the
+  `@xenova/...` / `@huggingface/...` JavaScript imports.
+- New `framework.koog` (JetBrains Koog, Kotlin): the `ai.koog` Maven group and
+  `import ai.koog.` lines; agent indicator with `tool-use`.
+- Browserbase / Stagehand split: `framework.stagehand` keeps only the agent
+  SDK (`@browserbasehq/stagehand`, `stagehand`, `stagehand-py`, their imports
+  and `new Stagehand(`); the new `platform.browserbase` owns
+  `@browserbasehq/sdk`, `browserbase`, `BROWSERBASE_API_KEY`,
+  `BROWSERBASE_PROJECT_ID` and the `browserbase.com` API hosts with
+  `browsing` and no agent indicator, so a project that only rents hosted
+  browsers is framework usage, not an agent.
+- Language gates: the Spring AI (`ToolCallback`, `ChatClient.builder(`,
+  `@Tool(`), LangChain4j (`@Tool`), Rig, LangChainGo,
+  Microsoft.Extensions.AI, Cloudflare Agents, Inngest AgentKit, Semantic
+  Kernel (.NET and Python idioms) and the Go, Java, .NET and Rust MCP server
+  idioms declare `languages`, so a Rust `pub trait ToolCallback` or a C#
+  `AddMcpServer()` string in a Python file no longer counts. Config
+  projections and `shadowscan signatures test` pass no language and are not
+  gated.
+- `provider.openai`'s bare `chat.completions.create(` / `responses.create(`
+  signal is `ambiguous`: it counts only with the openai package, import or a
+  specific OpenAI code match in the project. `provider.openai-compatible`
+  gains a weight-0.5 code signal for an `OpenAI(` / `AsyncOpenAI(` /
+  `new OpenAI({` constructor that sets `base_url` / `baseURL` (bounded to
+  the constructor's argument list) and an `ambiguous` weight-0.5 signal for
+  the `.chat.completions.create(` request shape, which counts only next to
+  such an override; a plain OpenAI SDK project stays `provider.openai` alone
+  (the `review_corpus` case `provider-call-only` forbids the second
+  provider).
+
 ### code.filesystem
 
 - Rust test modules (`tests.rs`, `*_test.rs`, `*_tests.rs`) are test paths, and a
@@ -68,52 +187,6 @@ summarizes each release for people who install and operate ShadowScan.
   recognized tool names now suppresses vendor-neutral heuristics other than
   execution sinks, as a server with recognized tools already did. MCP client
   configurations keep `tool-use` only.
-
-### CycloneDX
-
-- A finding with the `mcp-server` capability (other than an MCP
-  configuration) publishes the server it implements as a `services[]` entry in
-  group `mcp-server` (`shadowscan:mcp-server:<digest>`), with
-  `shadowscan:mcp:implementation=source`, `languages`, `transport` when the
-  code names exactly one, `tools` and `files` (capped at 20 and 10, the caps
-  disclosed as `tools-omitted`/`files-omitted` and in the `incomplete`
-  composition); the project stays an `application` component that depends on
-  it. The benchmark adapter maps the capability to the `mcp:server` fact.
-
-### Shadow AI agent discovery benchmark
-
-- Add `tools/evaluation/benchmark_followup_corpus.json`, 24 authored synthetic
-  cases (16 positives, 8 negatives) that reproduce the shapes behind the
-  misses and false positives observed on the 87-repository benchmark: model
-  identifiers in code, LiteLLM Bedrock routes, implemented MCP servers in
-  Python, TypeScript and Go with exact `mcp-server` and `tool-use`
-  capabilities, `AnthropicBedrock`, Voyage AI, OllamaSharp,
-  `Directory.Packages.props`, Koog, LangChain4j MCP, devcontainer sample keys
-  and a code-loaded `model-settings.yml` carrying `api_base` hosts and
-  `api_key_env` names on the recall side (a loaded settings file holding model
-  identifiers only is still an open miss, recorded in `docs/evaluation.md`);
-  Rust
-  `ToolCallback` and `create_agent(`, Hugging Face host mentions, the
-  `InferenceClient` call shape, Browserbase without Stagehand, CI images,
-  documentation catalogs, a test-defined `handoff(`, `DIFY_API_KEY` and a
-  model leaderboard on the precision side. No case carries a `known_gap`
-  waiver. `make evaluate`, CI and `docs/evaluation.md` run and describe it;
-  `tests/test_evaluation.py` pins its counts. Labels are author-written
-  reproductions of public-repository shapes, not independent review.
-- Add `tools/discovery_benchmark/`, a harness that runs ShadowScan's
-  `code.filesystem` connector and other open-source code-surface discovery
-  tools (Trusera ai-bom, NuGuard, AgentDiscover, Agentic Radar, SafeDep xbom
-  and vet, Geiger, cdxgen) against the same pinned public repositories as an
-  unprivileged user with no network or credentials, normalizes their output
-  into one tool-neutral fact taxonomy and scores precision and recall at
-  repository, category and value level.
-- Add `benchmarks/shadow-ai-discovery/` with the pinned corpus (positives,
-  controls and vocabulary near-misses), session-labeled expected facts with
-  evidence pointers, the run results and the report. The labels are
-  author-written evidence, not independent human review, and the benchmark
-  covers the code surface only.
-
-### code.filesystem
 
 - Model identifiers are provider evidence. Quoted literals in source files and
   notebook code cells (comments skipped where the lexer masks them) and quoted
@@ -215,94 +288,6 @@ summarizes each release for people who install and operate ShadowScan.
   connector's informational notes (`evidence not reported because ...`) as an
   incomplete scan.
 
-### Signatures
-
-- New capability `mcp-server`: the project exposes tools to other agents over
-  MCP. The `protocol.mcp` code signal is split into server idioms that carry
-  it (`FastMCP(`, `mcp.server.Server(`, `new McpServer(`, `server.NewMCPServer(`,
-  `mcp.NewServer(`, `McpServer.sync(`, `McpServer.Create(`, `.AddMcpServer(`,
-  `[McpServerTool`, `impl ServerHandler for`, the server transports and
-  `@mcp.tool`), the ambiguous low-level `Server(` class (counted only with
-  other MCP evidence in the project) and client idioms that carry no
-  capability. `mcp-server` scores the same 5 risk points as `tool-use`, so an
-  MCP server project's default risk rises by 5; `risk_weights.capabilities`
-  accepts the new key. The default-weight digest in the tests is updated
-  and `docs/production.md` carries the migration note.
-- Model ids: every `model` pattern is anchored. The families whose prefix is
-  a common word are closed with the id's own alphabet (OpenAI's `gpt-*`,
-  `o1`/`o3`/`o4`, `chatgpt-*`, `text-embedding-*`, Cohere's `command*`,
-  `deepseek-*`), optionally followed by an Ollama/OpenRouter `:tag` or a
-  gateway `@region` pin, or gated on a generation or tier (`claude-`,
-  `sonar`), so `gpt-4-turbo-docs.md`, `command-line`, `o1ne`, `claude-code-*`
-  and `text-embedding-004` (now Gemini only) are no longer OpenAI, Cohere or
-  Anthropic ids, while every `gpt-` id (`gpt-35-turbo`, `gpt-image-1`,
-  `gpt-realtime`, `gpt-audio`, the tagged `gpt-oss:20b`) still is. The
-  `gemini-`, `grok-`, `mistral-`, `embed-`, `rerank-` and `voyage-` prefixes
-  stay open-ended. LiteLLM-style routes attribute the routed provider:
-  `bedrock/`, `vertex_ai/`, `anthropic/`, `openai/`, `gemini/`, `mistral/`,
-  `cohere/`, `cohere_chat/`, `xai/`, `deepseek/` join the providers' id
-  signals; `openrouter/`, `together_ai/`, `groq/`, `ollama/`, `ollama_chat/`,
-  `huggingface/<org>/<model>`, `perplexity/`, `cerebras/` and `voyage/` are
-  new signals at weight 0.6. A route must carry a model id (`bedrock/edition`,
-  `xai/README` and a bare `mistral/` do not match). New bare families:
-  `voyage-*` embeddings (never `rerank-*`, which is Cohere's), the Cohere
-  `command`, `command-r*`, `command-a*`, `command-light*` and `command-nightly`
-  ids, the `claude-fable-*` tier and the `deepseek-ai/<model>` Hugging Face
-  names. No family is limited to a list of generations: `deepseek-v4-*`,
-  `deepseek-flash` and `gpt-5.4` match as the next ids will.
-- Claude on cloud platforms: `AnthropicBedrock(` and `from anthropic import
-  AnthropicBedrock` attribute `provider.aws-bedrock`, `AnthropicVertex(` and
-  its import `provider.google-vertex-ai` (previously both were Anthropic
-  code evidence). Bedrock also gains `CLAUDE_CODE_USE_BEDROCK` (0.5),
-  `AWS_BEARER_TOKEN_BEDROCK` (0.6), the `BedrockRuntime*` client classes and
-  the `"bedrock-runtime"` service name, the `@anthropic-ai/bedrock-sdk`
-  package and import, and the Rust `aws-sdk-bedrock*` crates; Vertex gains
-  `CLAUDE_CODE_USE_VERTEX` and `@anthropic-ai/vertex-sdk`. The Claude model id
-  still attributes Anthropic, so Bedrock Claude ids label both providers.
-- JVM provider modules: LangChain4j `dev.langchain4j:langchain4j-<vendor>`
-  modules and `dev.langchain4j.model.<pkg>.` imports, and Spring AI
-  `spring-ai-starter-model-<vendor>` / `spring-ai-<vendor>` artifacts and
-  `org.springframework.ai.<vendor>.` imports attribute the provider
-  (Anthropic, OpenAI, Azure OpenAI, Bedrock, Vertex AI, Gemini, Cohere,
-  Hugging Face, Ollama, Mistral, Voyage AI) alongside the framework; the
-  Spring AI `spring-ai-starter-mcp*` / `spring-ai-mcp*` prefixes and
-  `dev.langchain4j:langchain4j-mcp` with `dev.langchain4j.mcp.` imports attribute
-  `protocol.mcp`.
-- Long-tail SDKs: Voyage AI import, `voyageai.Client(`, npm `voyageai` and
-  `voyage-ai-provider`, `VOYAGE_API_KEY` raised to 0.6; Ollama `OllamaSharp`
-  (NuGet and `using OllamaSharp`) and the `host.docker.internal:11434` /
-  `0.0.0.0:11434` endpoints; Hugging Face `@xenova/transformers` and the
-  `@xenova/...` / `@huggingface/...` JavaScript imports.
-- New `framework.koog` (JetBrains Koog, Kotlin): the `ai.koog` Maven group and
-  `import ai.koog.` lines; agent indicator with `tool-use`.
-- Browserbase / Stagehand split: `framework.stagehand` keeps only the agent
-  SDK (`@browserbasehq/stagehand`, `stagehand`, `stagehand-py`, their imports
-  and `new Stagehand(`); the new `platform.browserbase` owns
-  `@browserbasehq/sdk`, `browserbase`, `BROWSERBASE_API_KEY`,
-  `BROWSERBASE_PROJECT_ID` and the `browserbase.com` API hosts with
-  `browsing` and no agent indicator, so a project that only rents hosted
-  browsers is framework usage, not an agent.
-- Language gates: the Spring AI (`ToolCallback`, `ChatClient.builder(`,
-  `@Tool(`), LangChain4j (`@Tool`), Rig, LangChainGo,
-  Microsoft.Extensions.AI, Cloudflare Agents, Inngest AgentKit, Semantic
-  Kernel (.NET and Python idioms) and the Go, Java, .NET and Rust MCP server
-  idioms declare `languages`, so a Rust `pub trait ToolCallback` or a C#
-  `AddMcpServer()` string in a Python file no longer counts. Config
-  projections and `shadowscan signatures test` pass no language and are not
-  gated.
-- `provider.openai`'s bare `chat.completions.create(` / `responses.create(`
-  signal is `ambiguous`: it counts only with the openai package, import or a
-  specific OpenAI code match in the project. `provider.openai-compatible`
-  gains a weight-0.5 code signal for an `OpenAI(` / `AsyncOpenAI(` /
-  `new OpenAI({` constructor that sets `base_url` / `baseURL` (bounded to
-  the constructor's argument list) and an `ambiguous` weight-0.5 signal for
-  the `.chat.completions.create(` request shape, which counts only next to
-  such an override; a plain OpenAI SDK project stays `provider.openai` alone
-  (the `review_corpus` case `provider-call-only` forbids the second
-  provider).
-
-### code.filesystem
-
 - `code.filesystem`: the catalog rule no longer discounts configuration that
   names four or more products. Three public repositories showed the cost:
   SWE-agent's `.devcontainer/sample_keys.cfg` (five provider keys, read as a
@@ -338,6 +323,43 @@ summarizes each release for people who install and operate ShadowScan.
   `X=1` lines is judged on its first 10,000 instead of marking the scan
   incomplete. `metadata.catalog_mentions`, the scan note and finding identity
   are unchanged.
+
+### CycloneDX
+
+- A finding with the `mcp-server` capability (other than an MCP
+  configuration) publishes the server it implements as a `services[]` entry in
+  group `mcp-server` (`shadowscan:mcp-server:<digest>`), with
+  `shadowscan:mcp:implementation=source`, `languages`, `transport` when the
+  code names exactly one, `tools` and `files` (capped at 20 and 10, the caps
+  disclosed as `tools-omitted`/`files-omitted` and in the `incomplete`
+  composition); the project stays an `application` component that depends on
+  it. The benchmark adapter maps the capability to the `mcp:server` fact.
+
+## 0.1.2 — 2026-10-08
+
+### Release tag lookup correction
+
+- Fix the production publication gate to query GitHub with the fully qualified
+  `refs/tags/v<version>` ref. The previous `tags/v<version>` lookup returned
+  HTTP 422 for the existing annotated tag during release preflight. The gate still
+  requires the resolved commit to equal the reviewed workflow commit.
+- Execute the gate in regression tests against the accepted API ref format,
+  including rejection of the old lookup and of missing or mismatched tags.
+- Prepare a new version because `v0.1.1` is already immutable. Its TestPyPI
+  upload and fresh installation passed; production preflight stopped before
+  any PyPI dispatch or upload. Preserve the tag and the rehearsal evidence.
+
+## 0.1.1 — 2026-10-08
+
+### October 8 release tags without a personal signing key
+
+- Release policy now permits unsigned annotated tags on the exact reviewed
+  commit; personal SSH or GPG tag signatures are optional. The default tagging
+  command disables automatic signing for that invocation.
+- Publishing continues through the existing protected GitHub Actions workflow
+  and PyPI trusted publisher, with GitHub provenance, SBOM and PyPI publish
+  attestations. Independent review, CI and CodeQL, immutable tag protections,
+  digest checks and environment approval remain required.
 
 ### October 7 release merge-rule check with an administrator readback
 
@@ -2910,32 +2932,6 @@ entry. Tenant canaries and container runtime acceptance are still required.
 - Correct README commands, formatting and discovery claims; document the active required checks and independent-review merge gate.
 - Document dependency lock maintenance, soft deadline limits, rollout evidence and remaining tenant/container acceptance.
 - Clarify that finding confidence is heuristic, that static signals and resource existence need runtime corroboration, and that field precision/recall require a held-out local corpus before risk-gate enforcement.
-
-## 0.1.2 — 2026-10-08
-
-### Release tag lookup correction
-
-- Fix the production publication gate to query GitHub with the fully qualified
-  `refs/tags/v<version>` ref. The previous `tags/v<version>` lookup returned
-  HTTP 422 for the existing annotated tag during release preflight. The gate still
-  requires the resolved commit to equal the reviewed workflow commit.
-- Execute the gate in regression tests against the accepted API ref format,
-  including rejection of the old lookup and of missing or mismatched tags.
-- Prepare a new version because `v0.1.1` is already immutable. Its TestPyPI
-  upload and fresh installation passed; production preflight stopped before
-  any PyPI dispatch or upload. Preserve the tag and the rehearsal evidence.
-
-## 0.1.1 — 2026-10-08
-
-### October 8 release tags without a personal signing key
-
-- Release policy now permits unsigned annotated tags on the exact reviewed
-  commit; personal SSH or GPG tag signatures are optional. The default tagging
-  command disables automatic signing for that invocation.
-- Publishing continues through the existing protected GitHub Actions workflow
-  and PyPI trusted publisher, with GitHub provenance, SBOM and PyPI publish
-  attestations. Independent review, CI and CodeQL, immutable tag protections,
-  digest checks and environment approval remain required.
 
 ## Earlier hardening notes — 2026-09-24
 
