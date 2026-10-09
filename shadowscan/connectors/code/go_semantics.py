@@ -89,14 +89,17 @@ def _parameter_names(source: SourceTokens, opening: int, names: set[str]) -> set
     floor = max(0, opening - 256)
     header = None
     while cursor >= floor:
+        # A newline that ends the previous line is a statement boundary too:
+        # `type Option func(...)` before this header is not its declaration,
+        # including one whose result ends in `interface{}` or `struct{}`.
+        if _ends_line(source, cursor):
+            break
         if words[cursor] == "}" and cursor in source.reverse:
             start = source.reverse[cursor]
             if start and words[start - 1] in {"struct", "interface"}:
                 cursor = start - 1
                 continue
-        # A newline that ends the previous line is a statement boundary too:
-        # `type Option func(...)` before this header is not its declaration.
-        if words[cursor] in {";", "{", "}"} or _ends_line(source, cursor):
+        if words[cursor] in {";", "{", "}"}:
             break
         if words[cursor] == "func":
             header = cursor

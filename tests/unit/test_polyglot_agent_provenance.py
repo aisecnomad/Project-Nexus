@@ -356,7 +356,16 @@ def test_go_local_receivers_and_parameters_do_not_borrow_package_identity(tmp_pa
     assert not _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
 
 
-GO_FUNC_TYPES = ["type Hook func(int)", "type Option func(*config)", "var hook func(int) error"]
+GO_FUNC_TYPES = [
+    "type Hook func(int)",
+    "type Option func(*config)",
+    "var hook func(int) error",
+    # Results that end in a struct or interface literal close with "}".
+    "type Factory func() interface{}",
+    "type Factory func() struct{}",
+    "type Factory func() map[string]interface{}",
+    "type Factory func() interface {\n\tGet() int\n}",
+]
 
 
 @pytest.mark.parametrize("declaration", GO_FUNC_TYPES)
@@ -384,6 +393,47 @@ def test_go_preceding_function_types_keep_unshadowed_package_proof(tmp_path, run
         + "\nfunc run(queue Queue) { agents.NewExecutor(ctx, model) }\n"
     )
     assert _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "type Hook func(agents int)",
+        "type Hook func(agents int) interface{}",
+        "type Hook func(agents int) struct{}",
+        "type Hook func(agents []string) map[string]interface{}",
+        "type Hook func(agents int) interface {\n\tGet() int\n}",
+    ],
+)
+def test_go_preceding_function_type_parameters_do_not_shadow_the_next_body(
+    tmp_path, run_connector, declaration
+):
+    # The function type's own parameter is not in scope in the next function.
+    source = (
+        'package main\nimport "github.com/tmc/langchaingo/agents"\n'
+        + declaration
+        + "\nfunc run() {\n\texecutor := agents.NewExecutor(agent)\n\t_ = executor\n}\n"
+    )
+    assert _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+
+
+@pytest.mark.parametrize(
+    "function, shadowed",
+    [
+        ("func run(cfg struct {\n\tA int\n}, agents Queue) {\n\tagents.NewExecutor()\n}", True),
+        ("func run(agents Queue) interface {\n\tGet() int\n} {\n\tagents.NewExecutor()\n}", True),
+        ("func run(cfg struct {\n\tA int\n}) {\n\tagents.NewExecutor(ctx, model)\n}", False),
+    ],
+)
+def test_go_headers_spanning_struct_and_interface_literals_are_read_whole(
+    tmp_path, run_connector, function, shadowed
+):
+    source = (
+        'package main\nimport "github.com/tmc/langchaingo/agents"\n'
+        "type Factory func() interface{}\n" + function + "\n"
+    )
+    agents = _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+    assert bool(agents) != shadowed
 
 
 def test_go_llms_import_does_not_bind_unrelated_agents_receiver(tmp_path, run_connector):

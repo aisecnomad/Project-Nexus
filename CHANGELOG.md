@@ -51,8 +51,10 @@ summarizes each release for people who install and operate ShadowScan.
   so a large file calling an unrelated `GetResponseAsync` no longer exhausts
   its token budget and marks the scan incomplete.
 - A Go function type declared on the preceding line, such as
-  `type Option func(...)`, no longer hides a parameter that shadows the
-  imported LangChainGo agents package.
+  `type Option func(...)` or one whose result ends in `interface{}` or
+  `struct{}`, no longer hides a parameter that shadows the imported
+  LangChainGo agents package, and its own parameters no longer shadow the
+  package in the function that follows.
 - Exclude Python comprehension results and later clauses that cannot execute
   because a literal iterable is empty or a preceding filter is false.
 - Match lifecycle observations by the complete case-insensitive device value.
