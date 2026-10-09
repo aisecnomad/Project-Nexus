@@ -575,3 +575,60 @@ MCC at least 0.75; T1 specificity at least 0.97.
 Label summary at the holdout freeze: 67 `agent`, 28 `llm` and 45 `none`.
 10 of the `none` are assistant-only, which leaves 130 repositories in the
 primary analysis.
+
+## 14. Second holdout (pre-registered before its draw)
+
+After the first holdout, ShadowScan changed again (see `CHANGELOG.md`, the
+"October 9 post-holdout changes" entries). Those changes were informed by
+the first holdout's results and the original corpus, so neither can measure
+them. This section, committed before the draw, repeats §13 on a new sample.
+
+### 14.1 Draw
+
+`holdout.py` runs with `--seed 20261010 --prefix g --subdir holdout2` on the
+same frame snapshot, strata, quotas (140), eligibility rules and two-stage
+selection. Every repository and every owner of `corpus.json`,
+`calibration.json`, `holdout.json` and `purposive.json` is excluded. There
+are no purposive sets. Identifiers are `g001`–`g140`; the manifest is
+`holdout2.json`. A stratum that cannot fill its quota is reported as it came
+out, not topped up.
+
+### 14.2 Labels
+
+As §13.2: the rubric of §4 and the annotation process of §5, unchanged.
+Annotator A runs on Claude Opus with evidence packets, in 10 batches of 14
+consecutive identifiers. Annotator B runs on Claude Sonnet without packets, in
+14 batches of 10 identifiers taken with a stride of 14. A third AI
+adjudicator, on Claude Opus, decides disagreements. Annotators see no tool
+output and work in private directories. The labels go to `labels-holdout2/`
+and are frozen and pushed before any tool runs on the second holdout. These
+are AI annotations, not human review.
+
+### 14.3 Run
+
+ShadowScan's code is frozen at the commit that adds this section; it is the
+code of `f4f78ff`. Nobody opens a second-holdout checkout to change
+ShadowScan. Every tool of §6 runs on the second holdout as in §13.3, with the
+same versions, adapters, isolation, 900 s timeout and agentic rule
+(`metadata.agentic` primary, the kind list secondary). Results go to
+`results-holdout2/`.
+
+### 14.4 Analyses and targets
+
+As §13.4. The strict rule is primary; completed scans and the evidence rule
+are secondary. The post-run blind adjudication of §9 covers every repository
+where a tool disagrees with a frozen label. The first holdout's numbers come
+from a different sample and code, so the comparison is described, not
+tested.
+
+The targets are those of §13.4, reported as met or not met and never
+adjusted:
+
+- incomplete scans at most 5%;
+- T1 MCC at least 0.80;
+- T2 MCC at least 0.75;
+- T1 specificity at least 0.97.
+
+### 14.5 Deviations
+
+None yet.

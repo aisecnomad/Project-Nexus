@@ -2,6 +2,9 @@
 
 ``python -m tools.realbench.holdout --frames tools/realbench/frames --workdir DIR --manifest OUT --log LOG``
 
+The second holdout (§14) adds ``--seed 20261010 --prefix g --subdir holdout2
+--exclude corpus.json calibration.json holdout.json``.
+
 Pre-registered in PROTOCOL.md §13 before the draw. The procedure is the scored
 draw of ``sample.py`` (same frames, strata, quotas, eligibility rules and
 two-stage selection) with three differences:
@@ -39,6 +42,8 @@ from tools.realbench.sample import (
 )
 
 HOLDOUT_SEED = 20261009
+# The second holdout (PROTOCOL.md §14) also excludes the first holdout.
+HOLDOUT2_SEED = 20261010
 HERE = Path(__file__).resolve().parent
 
 
@@ -74,6 +79,9 @@ def main(argv: list[str] | None = None) -> int:
         help="manifests whose repositories and owners are excluded",
     )
     parser.add_argument("--purposive", type=Path, default=HERE / "purposive.json")
+    parser.add_argument("--seed", type=int, default=HOLDOUT_SEED)
+    parser.add_argument("--prefix", default="h", help="identifier prefix (h001...)")
+    parser.add_argument("--subdir", default="holdout", help="checkout directory under --workdir")
     args = parser.parse_args(argv)
 
     frames = load_frames(args.frames)
@@ -90,16 +98,17 @@ def main(argv: list[str] | None = None) -> int:
         holdout: list[dict[str, Any]] = []
         for stratum, quota in QUOTAS.items():
             pools = frame_candidates(frames[stratum], stratum)
-            got = drawer.draw("holdout", stratum, pools, quota, HOLDOUT_SEED)
+            got = drawer.draw("holdout", stratum, pools, quota, args.seed)
             if len(got) < quota:
                 print(f"warning: {stratum} filled {len(got)}/{quota}", file=sys.stderr)
             holdout += got
-        drawer.place(holdout, "h", args.workdir / "holdout", HOLDOUT_SEED)
+        drawer.place(holdout, args.prefix, args.workdir / args.subdir, args.seed)
         drawer.cleanup()
     meta = {
         "created_at": started,
         "frames_sha256": frames_digest(args.frames),
-        "holdout_seed": HOLDOUT_SEED,
+        "holdout_seed": args.seed,
+        "excluded_manifests": [path.name for path in args.exclude],
         "quotas": QUOTAS,
         "excluded_repositories": len(keys),
         "excluded_owners": len(owners),
