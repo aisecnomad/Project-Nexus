@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
@@ -116,3 +117,25 @@ def test_codeowners_with_invalid_bytes_is_an_error_because_an_owner_name_may_hav
     result, report = _scan(tmp_path)
     assert result.exit_code == 3, result.output
     assert any("CODEOWNERS" in m and "ownership may be wrong" in m for m in _messages(report))
+
+
+@pytest.mark.parametrize("suffix", [b"\xff" * 20_000, b"\x01\xff"], ids=["binary-body", "control-body"])
+def test_ascii_prefix_cannot_hide_an_undecodable_or_control_character_body(tmp_path, suffix):
+    (tmp_path / "config.txt").write_bytes(b"# ordinary text\n" * 600 + suffix)
+    result, report = _scan(tmp_path)
+    assert result.exit_code == 3, result.output
+    assert report["summary"]["complete"] is False
+    assert any("config.txt" in m and "binary or undecodable" in m for m in _messages(report))
+
+
+@pytest.mark.parametrize("name", ["source.py", "source.ipynb"])
+def test_utf8_bom_does_not_allow_invalid_source_or_notebook_bytes(tmp_path, name):
+    if name.endswith(".py"):
+        source = b"# invalid comment: \xff\nimport openai\n"
+    else:
+        source = b'{"cells":[{"cell_type":"code","source":["# \xff\\nimport openai"],"metadata":{}}]}'
+    (tmp_path / name).write_bytes(b"\xef\xbb\xbf" + source)
+    result, report = _scan(tmp_path)
+    assert result.exit_code == 3, result.output
+    assert report["summary"]["complete"] is False
+    assert any(name in m and "binary or undecodable" in m for m in _messages(report))

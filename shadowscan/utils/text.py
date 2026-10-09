@@ -160,7 +160,7 @@ def _stray_nul_text(raw: bytes) -> str | None:
     return text
 
 
-# The share of replacement characters in the sniff window above which "text that is not UTF-8" is
+# The share of replacement characters in any bounded window above which "text that is not UTF-8" is
 # no longer text (random or compressed bytes are over half invalid; Latin-1 prose is a few percent).
 _MAX_REPLACED_SHARE = 0.10
 _REPLACED_ALLOWANCE = (
@@ -174,7 +174,7 @@ def _decode_utf8(raw: bytes, notes: list[str] | None, codec: str = "utf-8", *, s
     ASCII-compatible text in another encoding (Latin-1 or Windows-1252 prose) reads the same here for
     every pattern the scanner looks for, so skipping the file as a coverage gap lost everything the
     scanner would have found and hid nothing. Content that is mostly not valid UTF-8, or that holds
-    control characters other than tab, line breaks and form feed in the sniff window, is not that: it
+    control characters other than tab, line breaks and form feed anywhere, is not that: it
     stays a gap, as do EBCDIC and other encodings that write ASCII differently. ``strict`` keeps the
     gap for the files whose own runtime rejects bytes that are not valid UTF-8 and whose only other
     encodings are declared (Python sources and notebooks).
@@ -185,11 +185,14 @@ def _decode_utf8(raw: bytes, notes: list[str] | None, codec: str = "utf-8", *, s
         if strict:
             raise
         text = raw.decode(codec, errors="replace")
-        window = text[:_BINARY_SNIFF]
-        if window.count("\ufffd") > max(_REPLACED_ALLOWANCE, _MAX_REPLACED_SHARE * len(window)) or any(
-            ord(character) in _BINARY_CONTROLS for character in window
-        ):
-            raise
+        # Check the entire bounded input. An ordinary-text prefix must not
+        # conceal a binary body after the first sniff window.
+        for offset in range(0, len(text), _BINARY_SNIFF):
+            window = text[offset : offset + _BINARY_SNIFF]
+            if window.count("\ufffd") > max(_REPLACED_ALLOWANCE, _MAX_REPLACED_SHARE * len(window)) or any(
+                ord(character) in _BINARY_CONTROLS for character in window
+            ):
+                raise
         if notes is not None:
             notes.append(INVALID_UTF8_NOTE)
         return text
@@ -199,7 +202,11 @@ def _decode_text(raw: bytes, name: str, analyzable_name: bool, notes: list[str] 
     """Decode file content for analysis; None for a recognised binary artifact (``_skips_binary``)."""
     for bom, codec in _BOM_CODECS:
         if raw.startswith(bom):
-            decoded = _decode_utf8(raw, notes, codec) if codec == "utf-8-sig" else raw.decode(codec)
+            decoded = (
+                _decode_utf8(raw, notes, codec, strict=name.lower().endswith((".py", ".ipynb")))
+                if codec == "utf-8-sig"
+                else raw.decode(codec)
+            )
             # A mark does not make the rest text: a NUL in the decoded prefix
             # is still binary content under an analyzable name.
             if "\x00" in decoded[:_BINARY_SNIFF]:

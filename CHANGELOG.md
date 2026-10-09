@@ -5,6 +5,13 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+- Fixed: lossy text decoding checks every bounded window, so an ASCII prefix
+  cannot hide an invalid or control-character body. Python and notebook files
+  with a UTF-8 byte-order mark retain strict decoding of invalid bytes.
+- Fixed: real-world benchmark candidate URLs require an exact parsed GitHub
+  or GitLab hostname, safe path components and supported transport. Host-like
+  text in another site's path or query cannot create false provenance.
+
 ### Real-world benchmark follow-ups
 
 Running ShadowScan on 326 public repositories (`tools/benchmark/realworld`)

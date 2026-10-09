@@ -34,12 +34,9 @@ RESERVED_OWNERS = frozenset(
      "collections", "search", "explore", "pricing", "enterprise", "site", "customer-stories", "readme",
      "security", "trending"}
 )  # fmt: skip
-GITHUB_REPO = re.compile(
-    r"(?i)github\.com[/:]([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]+?)(?:\.git)?(?=$|[/#?\s)\]\"'>])"
-)
-GITLAB_REPO = re.compile(
-    r"(?i)gitlab\.com[/:]([A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+?)(?:\.git)?(?=$|/-/|/tree/|/blob/|[#?\s)\]\"'>])"
-)
+_REPO_SEGMENT = re.compile(r"[A-Za-z0-9._-]+")
+_GITHUB_OWNER = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
+_SCP_REPO = re.compile(r"git@([A-Za-z0-9.-]+):(.+)")
 AI_NAME = re.compile(
     r"(?i)(mcp|llm|agent|openai|anthropic|claude|gemini|gpt|langchain|langgraph|rag|ollama|copilot|genai|chatbot)"
 )
@@ -60,21 +57,52 @@ class Candidate:
 
 
 def canonical(url: str, frame: str, meta: dict[str, Any] | None = None) -> Candidate | None:
-    """Normalise a repository URL found in registry metadata or a list."""
+    """Normalise a repository URL only after validating its complete origin and path."""
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in url) or "\\" in url:
+        return None
     cleaned = url.strip().removeprefix("git+")
-    gh = GITHUB_REPO.search(cleaned)
-    if gh and gh.group(1).lower() not in RESERVED_OWNERS and gh.group(2) not in {"", ".", ".."}:
-        owner, repo = gh.group(1), gh.group(2)
-        return Candidate(f"https://github.com/{owner}/{repo}", "github.com", owner, repo, frame, meta or {})
-    gl = GITLAB_REPO.search(cleaned)
-    if gl:
-        path = gl.group(1)
-        segments = path.split("/")
-        if len(segments) >= 2 and segments[0] not in {"explore", "users", "groups", "-", "help"}:
-            return Candidate(
-                f"https://gitlab.com/{path}", "gitlab.com", segments[0], segments[-1], frame, meta or {}
-            )
-    return None
+    scp = _SCP_REPO.fullmatch(cleaned)
+    if scp:
+        cleaned = f"ssh://git@{scp.group(1)}/{scp.group(2)}"
+    elif "://" not in cleaned:
+        cleaned = "https://" + cleaned
+    try:
+        parsed = urllib.parse.urlsplit(cleaned)
+        host = parsed.hostname
+        if parsed.scheme not in {"http", "https", "ssh", "git"} or host not in {"github.com", "gitlab.com"}:
+            return None
+        if parsed.password is not None or (
+            parsed.username is not None and not (parsed.scheme == "ssh" and parsed.username == "git")
+        ):
+            return None
+        if (
+            parsed.port is not None
+            and parsed.port != {"http": 80, "https": 443, "ssh": 22, "git": 9418}[parsed.scheme]
+        ):
+            return None
+    except ValueError:
+        return None
+    path = parsed.path
+    if host == "gitlab.com":
+        for marker in ("/-/", "/tree/", "/blob/"):
+            path = path.split(marker, 1)[0]
+    segments = path.strip("/").split("/")
+    if len(segments) < 2 or any(
+        part in {"", ".", ".."} or not _REPO_SEGMENT.fullmatch(part) for part in segments
+    ):
+        return None
+    if host == "github.com":
+        segments = segments[:2]
+        if not _GITHUB_OWNER.fullmatch(segments[0]) or segments[0].lower() in RESERVED_OWNERS:
+            return None
+    elif segments[0].lower() in {"explore", "users", "groups", "-", "help"}:
+        return None
+    segments[-1] = segments[-1].removesuffix(".git")
+    if segments[-1] in {"", ".", ".."}:
+        return None
+    return Candidate(
+        f"https://{host}/{'/'.join(segments)}", host, segments[0], segments[-1], frame, meta or {}
+    )
 
 
 class Http:
@@ -278,15 +306,9 @@ def go_candidates(
                 path = json.loads(line)["Path"]
             except (ValueError, KeyError):
                 continue
-            if path.startswith("github.com/"):
-                parts = path.split("/")
-                if len(parts) < 3:
-                    continue
-                cand = canonical("/".join(["https://github.com", parts[1], parts[2]]), "go")
-            elif path.startswith("gitlab.com/"):
-                cand = canonical("https://" + path, "go")
-            else:
+            if not isinstance(path, str):
                 continue
+            cand = canonical("https://" + path, "go")
             if cand and cand.key not in seen:
                 cand.meta = {"ecosystem": "go", "module": path}
                 seen[cand.key] = cand

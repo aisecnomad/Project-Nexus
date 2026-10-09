@@ -13,6 +13,11 @@ between candidate builds, not between releases.
 
 ## Review before deployment
 
+Text decoding examines every bounded window before accepting replacement
+characters. A plain-text prefix does not exempt a binary body from incomplete
+coverage. Python and notebook inputs remain strict UTF-8 inputs when they
+carry a UTF-8 byte-order mark; invalid bytes leave a coverage gap (exit 3).
+
 Before selecting a revision, verify its final-head review record and the live
 merge rules. A versioned policy, merged pull request or passing CI does not
 establish independent human review. The [merge gate and review status](#merge-gate-and-review-status)

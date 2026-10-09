@@ -10,10 +10,71 @@ from pathlib import Path
 
 import pytest
 
-from tools.benchmark.realworld import oracle
+from tools.benchmark.realworld import frames, oracle
 
 REGISTRY = Path(oracle.__file__).parent / "registry" / "ai_registry.json"
 MANIFEST = Path(oracle.__file__).parent / "manifest.jsonl"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.example/github.com/team/repo",
+        "https://evil.example/?next=https://github.com/team/repo",
+        "https://evil.example/gitlab.com/team/repo",
+        "https://evil.example/?next=https://gitlab.com/team/repo",
+        "https://notgithub.com/team/repo",
+        "https://github.com.evil.example/team/repo",
+        "https://gitlab.com.evil.example/team/repo",
+        "https://github.com@evil.example/team/repo",
+        "https://evil.example@github.com/team/repo",
+        "https://github.com:8443/team/repo",
+        "https://gitlab.com/group/../repo",
+        "https://github.com/team/%2e%2e",
+        "https://gitlab.com/group/repo\\other",
+        "https://github.com/team/repo\n",
+        "file://github.com/team/repo",
+    ],
+)
+def test_candidate_urls_require_an_exact_allowed_host(url):
+    assert frames.canonical(url, "test") is None
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://github.com/team/repo.git", "https://github.com/team/repo"),
+        ("git+https://github.com/team/repo.git", "https://github.com/team/repo"),
+        ("git@github.com:team/repo.git", "https://github.com/team/repo"),
+        ("ssh://git@github.com/team/repo.git", "https://github.com/team/repo"),
+        ("github.com/team/repo", "https://github.com/team/repo"),
+        ("https://GITHUB.COM/team/repo/tree/main", "https://github.com/team/repo"),
+        ("https://gitlab.com/group/sub/repo.git", "https://gitlab.com/group/sub/repo"),
+        ("https://gitlab.com/group/sub/repo/-/tree/main", "https://gitlab.com/group/sub/repo"),
+    ],
+)
+def test_candidate_urls_preserve_supported_repository_forms(url, expected):
+    candidate = frames.canonical(url, "test")
+    assert candidate is not None and candidate.url == expected
+
+
+def test_go_candidates_validate_hosts_and_ignore_non_string_paths(tmp_path, monkeypatch):
+    http = frames.Http(tmp_path / "cache")
+    paths = [
+        "github.com/team/agent/v2",
+        "gitlab.com/group/repo",
+        "evil.example/github.com/team/fake-agent",
+        "github.com.evil.example/team/fake-agent",
+        "evil.example/gitlab.com/group/fake-agent",
+        {"bad": "shape"},
+    ]
+    raw = "\n".join(json.dumps({"Path": path}) for path in paths).encode()
+    monkeypatch.setattr(http, "get", lambda *args, **kwargs: raw)
+    ai, other = frames.go_candidates(http, 7, 1, "2026-01-01", "2026-02-01")
+    assert {c.url for c in [*ai, *other]} == {
+        "https://github.com/team/agent",
+        "https://gitlab.com/group/repo",
+    }
 
 
 @pytest.fixture(scope="module")
