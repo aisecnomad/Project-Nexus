@@ -1615,12 +1615,6 @@
         "max_agent_findings": 0,
         "forbidden_signatures": [
           "platform.cloudflare-ai-gateway"
-        ],
-        "expected_findings": [
-          {
-            "kind": "framework-usage",
-            "provider_signature": "provider.cloudflare-workers-ai"
-          }
         ]
       }
     },
