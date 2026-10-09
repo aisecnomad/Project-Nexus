@@ -4,6 +4,8 @@ Produces:
 
 * one ``agent`` / ``framework-usage`` finding per project (nearest manifest
   root) summarising frameworks, model providers, capabilities and evidence;
+  opt-in ``agent_granularity: source`` separately inventories unique named
+  Python constructions and their local registered-tool evidence;
 * one ``mcp-server`` finding per MCP client/server configuration file;
 * one ``agent-config`` finding per coding-agent product per project
   (Claude Code, Copilot, Cursor, Codex... including sub-agent definitions);
@@ -72,7 +74,16 @@ from shadowscan.connectors.code.catalogs import (
     configuration_document,
     project_catalog_files,
 )
+from shadowscan.connectors.code.dotnet_semantics import microsoft_tool_loop_matches
+from shadowscan.connectors.code.go_semantics import langchaingo_agent_matches
 from shadowscan.connectors.code.import_provenance import local_module_conflict
+from shadowscan.connectors.code.instruction_content import (
+    MAX_TEXT_BYTES as MAX_INSTRUCTION_TEXT_BYTES,
+)
+from shadowscan.connectors.code.instruction_content import (
+    ContentHit,
+    inspect_instruction_text,
+)
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
 from shadowscan.connectors.code.manifests import (
     Artifact,
@@ -94,6 +105,15 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
+from shadowscan.connectors.code.python_reexports import (
+    MAX_PENDING_BYTES,
+    MAX_PENDING_FILES,
+    ImportResolver,
+    PythonReexports,
+    ReexportLimitError,
+    has_local_import,
+    project_path,
+)
 from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
@@ -102,6 +122,7 @@ from shadowscan.connectors.code.semantic_config import (
     parse_agent_manifest,
     structured_code_matches,
 )
+from shadowscan.connectors.code.source_identity import named_construction_spans
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.connectors.code.source_semantics import (
     MAX_CALL_TEXT,
@@ -109,6 +130,7 @@ from shadowscan.connectors.code.source_semantics import (
     SourceNotParsed,
     bound_source_matches,
 )
+from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     DEFAULT_MAX_WALK_ENTRIES,
     _holds_file,
@@ -554,6 +576,15 @@ MAX_EXAMPLE_CREDENTIAL_EVIDENCE = 20
 # weights are halved and confidence stays inside the "likely" band.
 ENV_ONLY_WEIGHT_SCALE = 0.5
 ENV_ONLY_MAX_CONFIDENCE = 0.8
+# Paths whose evidence describes examples, documentation or generated output
+# rather than a deployed agent. Like tests, evidence in these paths is kept
+# but discounted so it does not inflate the finding.
+DOCS_WEIGHT_SCALE = 0.5
+DOCS_MAX_CONFIDENCE = 0.85
+EXAMPLE_PATH_WEIGHT_SCALE = 0.5
+EXAMPLE_PATH_MAX_CONFIDENCE = 0.85
+GENERATED_WEIGHT_SCALE = 0.4
+GENERATED_MAX_CONFIDENCE = 0.7
 # Capability implied by an MCP server's launch command; the first matching
 # group wins, so a database server launched through docker keeps code-exec.
 _MCP_CAPABILITY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -574,6 +605,7 @@ class _Project:
     languages: set[str] = field(default_factory=set)
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
     coding_agent_matches: dict[str, list[tuple[Match, str, str | None]]] = field(default_factory=dict)
+    instruction_hits: dict[str, list[ContentHit]] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
@@ -611,6 +643,11 @@ class _ScanState:
     infra_models: dict[str, list[Match]] = field(default_factory=dict)  # relpath -> model ids declared in IaC
     # project root -> (relpath, line, excerpt)
     iam_wildcards: dict[str, list[tuple[str, int, str]]] = field(default_factory=dict)
+    diff_files: frozenset[str] | None = None  # when set, only these changed files + context files are scanned
+    diff_base_ref: str | None = None  # the ref that was diffed against
+    reexports: PythonReexports = field(default_factory=PythonReexports)
+    reexport_files: list[_SourceFile] = field(default_factory=list)
+    reexport_bytes: int = 0
 
     def covered_files(self) -> frozenset[str]:
         """Files whose own MCP, manifest, workflow or IaC finding reports their evidence."""
@@ -649,6 +686,7 @@ class _SourceFile:
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
+    source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -726,6 +764,47 @@ class _ProjectEvidence:
             m.signature_id for m, _, _ in self.matches if m.signature.category != "heuristic"
         } == {"protocol.mcp"}
 
+        self.negative_contexts: dict[str, NegativeContext] = {}
+        if discount_tests:
+            for _, rel, _ in self.matches:
+                if rel not in self.negative_contexts:
+                    ctx = negative_context(rel)
+                    if ctx is not None:
+                        self.negative_contexts[rel] = ctx
+        self.docs_only = (
+            bool(self.negative_contexts)
+            and all(rel in self.negative_contexts for _, rel, _ in self.matches if not _is_test_path(rel))
+            and any(
+                self.negative_contexts.get(rel, NegativeContext("", 1.0)).reason == "documentation"
+                for _, rel, _ in self.matches
+            )
+        )
+        self.example_only = (
+            bool(self.negative_contexts)
+            and all(rel in self.negative_contexts for _, rel, _ in self.matches if not _is_test_path(rel))
+            and any(
+                self.negative_contexts.get(rel, NegativeContext("", 1.0)).reason == "example-code"
+                for _, rel, _ in self.matches
+            )
+        )
+        self.generated_only = (
+            bool(self.negative_contexts)
+            and all(rel in self.negative_contexts for _, rel, _ in self.matches if not _is_test_path(rel))
+            and any(
+                self.negative_contexts.get(rel, NegativeContext("", 1.0)).reason == "generated-code"
+                for _, rel, _ in self.matches
+            )
+        )
+        # 4a: Cross-signal corroboration — track which independent signal
+        # type categories are present so the scoring phase can reward diversity.
+        signal_types: set[str] = set()
+        for m, rel, _ in self.matches:
+            if m.signature.category != "heuristic" and not self.in_tests(rel):
+                signal_types.add(m.signal.type)
+        self.has_library_and_code = bool(signal_types & {"import", "dependency"} and signal_types & {"code"})
+        diverse_types = signal_types & {"import", "dependency", "code", "file", "domain", "env"}
+        self.has_multi_signal = len(diverse_types) >= 3
+
     def in_tests(self, rel: str) -> bool:
         return self.discount_tests and _is_test_path(rel)
 
@@ -742,6 +821,9 @@ class _ProjectEvidence:
         if match.signal.type in {"import", "dependency", "env", "name"}:
             return False
         if self.in_tests(rel) and not self.test_only:
+            return False
+        ctx = self.negative_contexts.get(rel)
+        if ctx is not None and ctx.reason == "generated-code":
             return False
         if match.extra.get("contextual_capabilities"):
             return False
@@ -761,7 +843,13 @@ class _ProjectEvidence:
         )
 
     def weight_scale(self, rel: str) -> float:
-        return (ENV_ONLY_WEIGHT_SCALE if self.env_only else 1.0) * (0.5 if self.in_tests(rel) else 1.0)
+        base = ENV_ONLY_WEIGHT_SCALE if self.env_only else 1.0
+        if self.in_tests(rel):
+            base *= 0.5
+        ctx = self.negative_contexts.get(rel)
+        if ctx is not None:
+            base *= ctx.weight_scale
+        return base
 
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
@@ -848,6 +936,87 @@ def _root_open_failure(exc: OSError | ValueError) -> str:
 def _is_test_path(rel: str) -> bool:
     parts = rel.lower().split("/")
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
+
+
+_DOCS_DIR_NAMES = frozenset({"docs", "doc", "documentation", "wiki", "guides", "tutorials"})
+
+_EXAMPLE_DIR_NAMES = frozenset(
+    {
+        "examples",
+        "example",
+        "samples",
+        "sample",
+        "demos",
+        "demo",
+        "quickstart",
+        "quickstarts",
+        "tutorial",
+        "tutorials",
+        "starter",
+        "starters",
+        "templates",
+        "boilerplate",
+        "cookbooks",
+        "cookbook",
+        "recipes",
+    }
+)
+
+_GENERATED_MARKERS = frozenset(
+    {
+        "generated",
+        "autogenerated",
+        "auto-generated",
+        "auto_generated",
+        "codegen",
+        "proto_gen",
+        "pb2",
+        "pb2_grpc",
+    }
+)
+
+_GENERATED_FILE_RE = re.compile(
+    r"(?:^|/)(?:[^/]*\.generated\.[^/]+|[^/]*\.auto\.[^/]+|[^/]*_pb2\.py|[^/]*_pb2_grpc\.py)$",
+    re.IGNORECASE,
+)
+
+
+def _is_docs_path(rel: str) -> bool:
+    parts = rel.lower().split("/")
+    return any(part in _DOCS_DIR_NAMES for part in parts[:-1])
+
+
+def _is_example_path(rel: str) -> bool:
+    parts = rel.lower().split("/")
+    return any(part in _EXAMPLE_DIR_NAMES for part in parts[:-1])
+
+
+def _is_generated_path(rel: str) -> bool:
+    lower = rel.lower()
+    parts = lower.split("/")
+    if any(part in _GENERATED_MARKERS for part in parts):
+        return True
+    return bool(_GENERATED_FILE_RE.search(lower))
+
+
+@dataclass(frozen=True, slots=True)
+class NegativeContext:
+    """A recognized context that discounts evidence without discarding it."""
+
+    reason: str
+    weight_scale: float
+    confidence_cap: float | None = None
+
+
+def negative_context(rel: str) -> NegativeContext | None:
+    """Return the strongest negative context for a file path, or None."""
+    if _is_generated_path(rel):
+        return NegativeContext("generated-code", GENERATED_WEIGHT_SCALE, GENERATED_MAX_CONFIDENCE)
+    if _is_docs_path(rel):
+        return NegativeContext("documentation", DOCS_WEIGHT_SCALE, DOCS_MAX_CONFIDENCE)
+    if _is_example_path(rel):
+        return NegativeContext("example-code", EXAMPLE_PATH_WEIGHT_SCALE, EXAMPLE_PATH_MAX_CONFIDENCE)
+    return None
 
 
 # A signature's source names its pack file (as the validator's namespace check reads it).
@@ -937,6 +1106,20 @@ def deadline_margin(remaining: float) -> float:
     engine's own sanitization before it compares completion to the deadline.
     """
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
+
+
+def _validated_include(value: Any) -> frozenset[str]:
+    """``include``: relative posix paths below a root, normalized; nothing may escape or be absolute."""
+    out: set[str] = set()
+    for item in _validated_names(value, "include"):
+        normalized = item.replace("\\", "/").strip().strip("/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        parts = [part for part in normalized.split("/") if part not in ("", ".")]
+        if not parts or ".." in parts or item.startswith(("/", "\\")) or (len(item) > 1 and item[1] == ":"):
+            raise ConnectorError("code.filesystem: include entries must be relative paths below the root")
+        out.add("/".join(parts))
+    return frozenset(out)
 
 
 def _validated_names(value: Any, key: str) -> list[str]:
@@ -1053,6 +1236,11 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
+        "include": (
+            "list of paths relative to each root that limit the walk to those files and directories; "
+            "other file contents are not read; parent directory names are listed (endpoint scans use it; "
+            "default: everything)"
+        ),
         "default_excludes": (
             "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
             "state, and build-output or vendored names such as bin, build, dist, vendor) at any depth "
@@ -1109,6 +1297,10 @@ class FilesystemConnector(BaseConnector):
             "is always reported incomplete so a triage result is never mistaken for a full scan "
             "(default false)"
         ),
+        "agent_granularity": (
+            "project (default) | source; source additionally inventories unique named straight-line "
+            "Python agent constructions by file and scoped binding; other source remains project evidence"
+        ),
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
         "account": "account label recorded on every finding (default none)",
@@ -1118,6 +1310,11 @@ class FilesystemConnector(BaseConnector):
         ),
         "provider": "provider label recorded on findings (default filesystem)",
         "metadata": "mapping merged into every finding's metadata",
+        "diff_base": (
+            "git ref to diff against (branch, tag, or SHA); only files changed since this ref are scanned, "
+            "plus manifests and environment files for cross-file context. Requires a local .git directory. "
+            "Falls back to a full scan when the ref cannot be resolved"
+        ),
     }
     shared_config_keys: ClassVar[dict[str, str]] = {}  # scans a checkout, not an export file
     offline_formats: ClassVar[str] = "n/a (path is the input)"
@@ -1151,6 +1348,11 @@ class FilesystemConnector(BaseConnector):
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
         self.triage = config_boolean(ctx.get("triage", False), "triage")
+        self.agent_granularity = ctx.get("agent_granularity", "project")
+        if ("agent_granularity" in ctx.config and ctx.config["agent_granularity"] is None) or (
+            self.agent_granularity not in ("project", "source")
+        ):
+            raise ConnectorError("code.filesystem: agent_granularity must be project or source")
         extra = _validated_names(ctx.get("exclude"), "exclude")
         self.default_excludes = config_boolean(ctx.get("default_excludes", True), "default_excludes")
         self._explicit_exclude_names = frozenset(e for e in extra if "*" not in e and "/" not in e)
@@ -1158,6 +1360,7 @@ class FilesystemConnector(BaseConnector):
             set(DEFAULT_EXCLUDES) if self.default_excludes else set(VCS_METADATA_EXCLUDES)
         ) | self._explicit_exclude_names
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
+        self.include_paths = _validated_include(ctx.get("include"))
         # Default-excluded directory names the current walk skipped, with counts.
         self._default_skipped: dict[str, int] = {}
         self.label: str | None = ctx.get("label")
@@ -1190,6 +1393,14 @@ class FilesystemConnector(BaseConnector):
             ):
                 raise ConnectorError("code.filesystem: invalid split root identity")
             self._root_ids[Path(path).expanduser().resolve()] = split_root_id
+        self.diff_base: str | None = ctx.get("diff_base")
+        if self.diff_base is not None:
+            from shadowscan.utils.git import validate_diff_base
+
+            if not isinstance(self.diff_base, str) or validate_diff_base(self.diff_base) is None:
+                raise ConnectorError(
+                    f"code.filesystem: diff_base must be a valid git ref, got {self.diff_base!r}"
+                )
         self.account: str | None = ctx.get("account")
         self.owner: str | None = ctx.get("owner")
         self.provider_override: str | None = ctx.get("provider")
@@ -1240,6 +1451,16 @@ class FilesystemConnector(BaseConnector):
     def _excluded(self, rel: str, name: str) -> bool:
         """Directory exclusion: configured names and globs."""
         return name in self.exclude_names or self._excluded_file(rel)
+
+    def _included(self, rel: str) -> bool:
+        """Whether ``rel`` is one of the configured include paths or sits below one (all, when unset)."""
+        if not self.include_paths:
+            return True
+        return any(rel == p or rel.startswith(p + "/") for p in self.include_paths)
+
+    def _leads_to_include(self, rel: str) -> bool:
+        """Whether the walk must enter directory ``rel`` to reach a configured include path."""
+        return self._included(rel) or any(p.startswith(rel + "/") for p in self.include_paths)
 
     def _excluded_file(self, rel: str) -> bool:
         """File exclusion: globs only, so a file named like an excluded directory is still scanned."""
@@ -1441,7 +1662,7 @@ class FilesystemConnector(BaseConnector):
 
     def _check_submodule_declarations(self, root: Path, rel_dir: str) -> None:
         rel = ".gitmodules" if rel_dir == "." else f"{rel_dir}/.gitmodules"
-        if self._excluded_file(rel):
+        if self._excluded_file(rel) or not self._included(rel):
             return
         try:
             text = read_policy_text(root / rel, MAX_GITMODULES_BYTES)
@@ -1508,14 +1729,17 @@ class FilesystemConnector(BaseConnector):
                 return
             dirnames[:] = kept
             proj = _nearest_root(rel_dir, roots)
-            if rel_dir != "." and _marks_project(Path(dirpath), filenames):
+            included_names = (
+                name for name in filenames if self._included(name if rel_dir == "." else f"{rel_dir}/{name}")
+            )
+            if rel_dir != "." and _marks_project(Path(dirpath), included_names):
                 roots.append(rel_dir)
                 proj = rel_dir
             for fn in sorted(filenames):
                 walk.budget.check()
                 shown = _report_name(fn)
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
-                if self._excluded_file(rel):
+                if self._excluded_file(rel) or not self._included(rel):
                     continue
                 p = Path(dirpath) / fn
                 try:
@@ -1562,6 +1786,8 @@ class FilesystemConnector(BaseConnector):
             shown = _report_name(name)
             rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
+            if not self._leads_to_include(rel):
+                continue
             if self._excluded(rel, name):
                 if self._disclosed_default_exclusion(rel, name) and _holds_file(path, walk.budget):
                     self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
@@ -1701,8 +1927,59 @@ class FilesystemConnector(BaseConnector):
                 "and content sweeps skipped; findings are a subset of a full scan",
                 incomplete=True,
             )
+        if self.diff_base is not None:
+            scan.diff_base_ref = self.diff_base
+            scan.diff_files = self._resolve_diff(root)
         self._walk(scan)
-        yield from self._emit_findings(scan)
+        self._resolve_reexport_sources(scan)
+        for f in self._emit_findings(scan):
+            if scan.diff_files is not None:
+                f.add_tag("diff-scan")
+                f.metadata["diff_scan"] = {
+                    "base_ref": scan.diff_base_ref,
+                    "changed_files": len(scan.diff_files),
+                }
+            yield f
+
+    def _resolve_diff(self, root: Path) -> frozenset[str] | None:
+        from shadowscan.utils.git import DiffError, diff_changed_files
+
+        try:
+            changed = diff_changed_files(root, self.diff_base, self.ctx)  # type: ignore[arg-type]
+        except DiffError as exc:
+            self.ctx.warn(
+                f"code.filesystem: diff-base could not be resolved ({exc}); falling back to full scan",
+                incomplete=False,
+            )
+            return None
+        self.ctx.warn(
+            f"code.filesystem: diff-base {self.diff_base!r}: {len(changed)} changed file(s)",
+            incomplete=False,
+        )
+        return changed
+
+    def _resolve_reexport_sources(self, scan: _ScanState) -> None:
+        """Bind queued consumers after all shim snapshots have been read safely."""
+        for file in scan.reexport_files:
+            if self.ctx.deadline is not None and time.monotonic() >= self.ctx.deadline:
+                self.ctx.error("code.filesystem: Python re-export analysis deadline exceeded")
+                break
+            local = _local_module_predicate(scan.root, file.path, file.proj_root)
+            with (
+                self._isolated(file.rel, "Python re-export analysis"),
+                self.index.scan_budget(seconds=scan_timeout_for_size(self.scan_timeout, len(file.text))),
+            ):
+                try:
+                    self._scan_source(
+                        scan.root,
+                        file,
+                        file.text,
+                        resolve_import=scan.reexports.resolver(file.proj_root, local),
+                    )
+                except ReexportLimitError as exc:
+                    self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
+                    self._scan_source(scan.root, file, file.text)
+        scan.reexport_files.clear()
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -1770,6 +2047,8 @@ class FilesystemConnector(BaseConnector):
         entries.sort(key=lambda entry: (_scan_priority(entry[0], entry[1].name), entry[3]))
         examined = 0
         for index, (rel, path, proj_root, size) in enumerate(entries):
+            if scan.diff_files is not None and not self._diff_included(rel, scan.diff_files):
+                continue
             budget = scan_timeout_for_size(self.scan_timeout, size)
             reserve = self._reserved_budget(rel, path, size, budget)
             if deadline is not None:
@@ -1797,9 +2076,27 @@ class FilesystemConnector(BaseConnector):
             ):
                 self._scan_file(scan, rel, path, proj_root)
 
+    @staticmethod
+    def _diff_included(rel: str, diff_files: frozenset[str]) -> bool:
+        """Whether a file should be scanned in diff mode.
+
+        Always included: files in the diff set, manifests, env files, and
+        config files whose content contextualizes code changes.
+        """
+        if rel in diff_files:
+            return True
+        name = rel.rsplit("/", 1)[-1]
+        lower = name.lower()
+        if lower.startswith(".env"):
+            return True
+        if is_manifest_name(name):
+            return True
+        return False
+
     def _scan_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
         """Run every analysis pass over one file of the walk."""
         proj = scan.projects.setdefault(proj_root, _Project(proj_root))
+        scan.reexports.note_path(proj_root, rel)
         proj.files += 1
         self.ctx.examined()
         lang = language_for_path(rel)
@@ -1833,6 +2130,16 @@ class FilesystemConnector(BaseConnector):
             cells=cells,
         )
         self._record_file_matches(file)
+        if any(rel in files for files in proj.coding_agent_files.values()):
+            # Inspect the same confined snapshot as every other analysis pass.
+            if len(text.encode("utf-8")) > MAX_INSTRUCTION_TEXT_BYTES:
+                self.ctx.warn(
+                    f"code.filesystem: {rel}: instruction content exceeds inspection limit; "
+                    "coverage incomplete",
+                    incomplete=True,
+                )
+            else:
+                proj.instruction_hits[rel] = inspect_instruction_text(text)
         if self.scan_secrets and not self.triage:
             self._detect_secrets(scan, file)
         if self._record_detection_rules(file):
@@ -2021,7 +2328,10 @@ class FilesystemConnector(BaseConnector):
             return []
         if file.safe_lines is None:
             try:
-                file.safe_lines = _redacted_source(file.text, file.structure).splitlines()
+                # Match locations count LF only. Other separators can occur
+                # inside literals (Go raw imports may contain CR) and must not
+                # shift excerpts. _excerpt strips a CR left by a CRLF ending.
+                file.safe_lines = _redacted_source(file.text, file.structure).split("\n")
             except (YAMLResourceLimitError, SanitizationLimitError) as exc:
                 self._withhold_excerpts(file.rel, exc)
                 file.structure = None
@@ -2233,7 +2543,7 @@ class FilesystemConnector(BaseConnector):
         if file.ext in _XML_EXTENSIONS:
             content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
-            if not self.triage:
+            if not self.triage and not self._defer_reexport_source(scan, file):
                 self._scan_source(scan.root, file, content_text)
         elif not is_nonexecutable:
             self._scan_config(scan, file, content_text)
@@ -2253,7 +2563,30 @@ class FilesystemConnector(BaseConnector):
             if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):
                 file.proj.configuration_files.add(file.rel)
 
-    def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> None:
+    def _defer_reexport_source(self, scan: _ScanState, file: _SourceFile) -> bool:
+        """Keep only eligible root-level Python consumers, within a fixed memory budget."""
+        if file.ext != ".py" or len(project_path(file.proj_root, file.rel).parts) != 1:
+            return False
+        scan.reexports.add(file.proj_root, file.rel, file.text)
+        local = _local_module_predicate(scan.root, file.path, file.proj_root)
+        if not has_local_import(file.text, local):
+            return False
+        size = len(file.text.encode("utf-8"))
+        if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
+            self.ctx.error(f"code.filesystem: {file.rel}: Python re-export source budget exceeded")
+            return False
+        scan.reexport_files.append(file)
+        scan.reexport_bytes += size
+        return True
+
+    def _scan_source(
+        self,
+        root: Path,
+        file: _SourceFile,
+        content_text: str,
+        *,
+        resolve_import: ImportResolver | None = None,
+    ) -> None:
         """Match the imports, code patterns and import-bound calls of a source file."""
         lang, ext = file.lang, file.ext
         is_local_module = _local_module_predicate(root, file.path, file.proj_root)
@@ -2290,7 +2623,31 @@ class FilesystemConnector(BaseConnector):
             if ignored
             else self.index.match_code(content_text, lang)
         )
-        bound, unbound = self._bound_matches(file, content_text, ignored, is_local_module)
+        bound, unbound = self._bound_matches(
+            file, content_text, ignored, is_local_module, resolve_import=resolve_import
+        )
+        if self.agent_granularity == "source" and lang == "python" and file.ext == ".py" and not unbound:
+            verified = {
+                tuple(m.extra["bound_call_span"])
+                for m in bound
+                if m.extra.get("verified_agent") and m.extra.get("bound_call_span")
+            }
+            regions: dict[tuple[int, int], ToolRegions] = {}
+            names = named_construction_spans(
+                content_text,
+                max_ast_nodes=self.max_ast_nodes,
+                verified_spans=verified,
+                tool_regions=regions,
+            )
+            file.source_agent_regions = [
+                (start, end, names[span])
+                for span, region in regions.items()
+                for start, end in (*region.bodies, *region.declarations)
+            ]
+            for m in bound:
+                span = m.extra.get("bound_call_span")
+                if span is not None and tuple(span) in verified and tuple(span) in names:
+                    m.extra["source_agent_binding"] = names[tuple(span)]
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
         # tool-calling protocol; elsewhere they are build tooling.
@@ -2309,8 +2666,10 @@ class FilesystemConnector(BaseConnector):
         content_text: str,
         ignored: list[tuple[int, int]],
         is_local_module: Callable[[str], bool],
+        *,
+        resolve_import: ImportResolver | None = None,
     ) -> tuple[list[Match], list[tuple[int, int]]]:
-        """Return bound evidence, including narrow typed-field registration for Java.
+        """Return bound evidence, including narrow Java, Go and C# proofs.
 
         Also returns the spans of ``content_text`` the Python or JavaScript
         binder did not read, where the lexical evidence stands in for it: the
@@ -2320,6 +2679,10 @@ class FilesystemConnector(BaseConnector):
         lang = file.lang
         if file.ext == ".java":
             return spring_tool_registration_matches(self.index, content_text, ignored), []
+        if lang == "go":
+            return langchaingo_agent_matches(self.index, content_text, ignored), []
+        if file.ext == ".cs":
+            return microsoft_tool_loop_matches(self.index, content_text, ignored), []
         if lang not in {"python", "javascript"}:
             return [], []
         whole = [(0, len(content_text))]
@@ -2339,6 +2702,7 @@ class FilesystemConnector(BaseConnector):
                 is_local_module=is_local_module if lang == "python" else None,
                 max_ast_nodes=self.max_ast_nodes,
                 truncated=truncated,
+                resolve_import=resolve_import,
             )
         except SourceBudgetExceeded as exc:
             # The budget is a property of the file, not of
@@ -2416,10 +2780,25 @@ class FilesystemConnector(BaseConnector):
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
             if file.lang not in {"python", "javascript"}:
-                # Other languages have lexical filtering but
-                # no import binder. Their code signatures need
-                # corroborating library evidence at emit time.
+                # Lexical candidates in these languages need
+                # corroborating library evidence at emit time;
+                # narrow import proofs are recorded separately.
                 m.extra["lexical_source"] = file.lang
+                if file.ext == ".cs" and m.signature_id == "heuristic.tool-use":
+                    # A local collection called tools is not registered model
+                    # dispatch, and may be cleared or disabled before use.
+                    # Keep the idiom for review; the C# loop proof owns the
+                    # active capability rather than this declaration's name.
+                    m.extra["contextual_capabilities"] = m.capabilities()
+                if (file.lang == "go" and m.signature_id == "framework.langchaingo") or (
+                    file.ext == ".cs" and m.signature_id == "framework.microsoft-extensions-ai"
+                ):
+                    # These languages have narrow import/receiver proofs.
+                    # A package elsewhere in the project does not bind this
+                    # receiver; defining a function tool does not configure a
+                    # model-directed loop. Retain the lexical candidate only.
+                    m.extra["verified_agent"] = False
+                    m.extra["source_capabilities"] = []
             elif m.signature.category != "framework":
                 if m.signature_id in {
                     "heuristic.tool-use",
@@ -2466,6 +2845,18 @@ class FilesystemConnector(BaseConnector):
                     # syntax remains supporting, potential evidence.
                     m.extra["source_capabilities"] = []
                 m.extra["verified_agent"] = False
+                if m.signature_id in {
+                    "heuristic.tool-use",
+                    "heuristic.code-execution",
+                    "heuristic.llm-command-execution",
+                }:
+                    bindings = {
+                        binding
+                        for start, end, binding in file.source_agent_regions
+                        if start <= m.extra.get("start", -1) < end
+                    }
+                    if bindings:
+                        m.extra["source_agent_bindings"] = sorted(bindings)
             elif (m.signature_id, id(m.signal), m.line) in bound_signals or (
                 _bundled_signature(m.signature) and not _within(m.extra.get("start", -1), unbound)
             ):
@@ -2870,6 +3261,8 @@ class FilesystemConnector(BaseConnector):
             return self._codeowners_cache[root]
         rules: list[tuple[str, list[str]]] = []
         for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
+            if not self._included(cand):
+                continue
             p = root / cand
             if p.exists() or p.is_symlink():
                 try:
@@ -3002,6 +3395,24 @@ class FilesystemConnector(BaseConnector):
         # project finding (catalog_mentions) or, without one, in a scan note.
         reported = self._anchored(observations, covered_files)
         if reported:
+            if self.agent_granularity == "source":
+                groups: dict[tuple[str, str], list[_Observation]] = {}
+                remaining: list[_Observation] = []
+                for observation in observations:
+                    match, rel, _ = observation
+                    bindings = match.extra.get("source_agent_bindings") or (
+                        [match.extra["source_agent_binding"]]
+                        if match.extra.get("source_agent_binding")
+                        else []
+                    )
+                    if bindings and rel not in covered_files:
+                        for binding in bindings:
+                            groups.setdefault((rel, binding), []).append(observation)
+                    else:
+                        remaining.append(observation)
+                for (rel, binding), source_observations in sorted(groups.items()):
+                    yield self._source_agent_finding(label, root, proj, rel, binding, source_observations)
+                observations = remaining
             yield self._project_finding(label, root, proj, observations)
         discounted = (
             bool(catalogs)
@@ -3116,6 +3527,18 @@ class FilesystemConnector(BaseConnector):
             mcp_tools=proj.mcp_tools,
         )
         f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
+        if self.agent_granularity == "source":
+            unresolved = {
+                (rel, tuple(m.extra.get("bound_call_span", (m.line,))))
+                for m, rel, _ in observations
+                if evidence.verified_indicator(m) and m.signal.type in {"code", "file"}
+            }
+            f.metadata["source_identity"] = {
+                "mode": "source",
+                "scope": "unique named straight-line Python constructions",
+                "unresolved_constructions": len(unresolved),
+                "runtime_instances": "not-enumerated",
+            }
         self._apply_project_evidence(f, evidence)
         if evidence.env_only:
             f.add_tag("env-names-only")
@@ -3126,11 +3549,106 @@ class FilesystemConnector(BaseConnector):
             f.metadata["catalog_mentions"] = catalog_metadata(catalogs)
         if evidence.test_only:
             f.add_tag("test-code-only")
+        if evidence.docs_only:
+            f.add_tag("docs-only")
+        if evidence.example_only:
+            f.add_tag("example-code-only")
+        if evidence.generated_only:
+            f.add_tag("generated-code-only")
+        if evidence.negative_contexts:
+            reasons = sorted({ctx.reason for ctx in evidence.negative_contexts.values()})
+            f.metadata["negative_contexts"] = reasons
+        # 4a: Cross-signal corroboration — when independent signal types
+        # (library + code, or 3+ types) corroborate each other, add a
+        # small synthetic evidence item so the noisy-OR rewards diversity.
+        if evidence.has_library_and_code or evidence.has_multi_signal:
+            boost = 0.15 if evidence.has_multi_signal else 0.1
+            f.add_evidence(
+                Evidence(
+                    signal="corroboration:cross-signal",
+                    description="Multiple independent signal types corroborate this finding",
+                    weight=boost,
+                    attributes={"confidence_group": "cross-signal-corroboration", "synthetic": True},
+                )
+            )
+            f.metadata["cross_signal_corroboration"] = {
+                "library_and_code": evidence.has_library_and_code,
+                "multi_signal": evidence.has_multi_signal,
+                "boost": boost,
+            }
         finalize(f, self.index)
         if evidence.env_only:
             cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
             f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
+        lowest_cap: float | None = None
+        cap_reason: str | None = None
+        if evidence.docs_only:
+            lowest_cap = DOCS_MAX_CONFIDENCE
+            cap_reason = "docs-only"
+        if evidence.example_only:
+            c = EXAMPLE_PATH_MAX_CONFIDENCE
+            if lowest_cap is None or c < lowest_cap:
+                lowest_cap = c
+                cap_reason = "example-code-only"
+        if evidence.generated_only:
+            c = GENERATED_MAX_CONFIDENCE
+            if lowest_cap is None or c < lowest_cap:
+                lowest_cap = c
+                cap_reason = "generated-code-only"
+        if lowest_cap is not None and cap_reason is not None:
+            cap_confidence(f, lowest_cap)
+            f.metadata.setdefault("confidence_cap", {})
+            f.metadata["confidence_cap"] = {"reason": cap_reason, "maximum": lowest_cap}
+        server_files = self._mcp_server_files(proj, evidence)
+        if f.kind != Kind.AGENT and server_files and "protocol.mcp" in f.frameworks:
+            # The project serves tools over MCP (an SDK plus server construction in
+            # executable code) rather than merely depending on the SDK: a tool
+            # server carries the MCP risk base, not the LLM-usage one. The
+            # resource and its identity are unchanged; only the classification is.
+            f.kind = Kind.MCP_SERVER
+            f.metadata["mcp_server_implementation"] = {"files": server_files}
         f.title = self._project_title(f, proj)
+        return f
+
+    @staticmethod
+    def _mcp_server_files(proj: _Project, evidence: _ProjectEvidence) -> list[str]:
+        """Files outside test code whose executable code constructs an MCP server."""
+        return sorted(
+            {
+                rel
+                for m, rel, _ in proj.matches
+                if m.signature_id == "heuristic.mcp-server"
+                and m.signal.type == "code"
+                and not evidence.in_tests(rel)
+            }
+        )
+
+    def _source_agent_finding(
+        self,
+        label: str,
+        root: Path,
+        proj: _Project,
+        rel: str,
+        binding: str,
+        observations: list[_Observation],
+    ) -> Finding:
+        """Inventory one static source binding without inheriting project capabilities."""
+        evidence = _ProjectEvidence(observations, discount_tests=not self.include_tests, mcp_tools={})
+        f = self._base(label, root, f"{rel}#agent:{binding}", Kind.FRAMEWORK_USAGE, "", "source-agent")
+        self._apply_project_evidence(f, evidence)
+        source_project = _Project(proj.root, files=1, languages={"python"})
+        self._attach_project_metadata(f, root, source_project, evidence)
+        f.metadata["path"] = rel
+        f.metadata["project_resource"] = f"{label}/{proj.root}" if proj.root != "." else label
+        f.metadata["source_identity"] = {
+            "schema": "python-named-construction-v1",
+            "binding": binding,
+            "runtime_instances": "not-enumerated",
+        }
+        if evidence.test_only:
+            f.add_tag("test-code-only")
+        finalize(f, self.index)
+        f.title = f"{'Agent' if f.kind == Kind.AGENT else 'Agent test construction'} in {rel}: {binding}"
         return f
 
     def _apply_project_evidence(self, f: Finding, evidence: _ProjectEvidence) -> None:
@@ -3160,6 +3678,10 @@ class FilesystemConnector(BaseConnector):
             if contextual:
                 for item in f.evidence[before:]:
                     item.attributes["capability_basis"] = "contextual-unlinked-source"
+            neg_ctx = evidence.negative_contexts.get(rel)
+            if neg_ctx is not None:
+                for item in f.evidence[before:]:
+                    item.attributes["negative_context"] = neg_ctx.reason
         if "protocol.mcp" in f.frameworks and evidence.server_tools:
             self._apply_mcp_tools(f, evidence.server_tools)
         contextual_capabilities = {
@@ -3263,6 +3785,7 @@ class FilesystemConnector(BaseConnector):
         for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
             apply_matches(f, [m], location=rel, snippet=snip)
         f.metadata["files"] = sorted(files)
+        self._inspect_instruction_files(f, proj, sig_id, files)
         posture = proj.posture.get(sig_id, [])
         if posture:
             record_posture(f, posture)
@@ -3278,6 +3801,31 @@ class FilesystemConnector(BaseConnector):
         finalize(f, self.index)
         f.kind = Kind.AGENT_CONFIG
         return f
+
+    @staticmethod
+    def _inspect_instruction_files(f: Finding, proj: _Project, sig_id: str, files: list[str]) -> None:
+        """Attach bounded content checks captured from the original confined file read."""
+        rules: dict[str, int] = {}
+        flagged: list[str] = []
+        for rel in sorted(files):
+            hits = proj.instruction_hits.get(rel, [])
+            if hits:
+                flagged.append(rel)
+            for hit in hits:
+                rules[hit.rule] = rules.get(hit.rule, 0) + 1
+                f.add_tag(hit.tag)
+                f.add_evidence(
+                    Evidence(
+                        signal=f"content:{hit.rule}",
+                        description=f"{hit.detail} in {rel}",
+                        location=f"{rel}:{hit.line}",
+                        weight=hit.weight,
+                        signature=sig_id,
+                        attributes={"category": "content", "rule": hit.rule, "tag": hit.tag},
+                    )
+                )
+        if flagged:
+            f.metadata["instruction_content"] = {"rules": dict(sorted(rules.items())), "files": flagged}
 
     @staticmethod
     def _apply_mcp_tools(f: Finding, server_tools: dict[str, str]) -> None:
@@ -3391,14 +3939,19 @@ class FilesystemConnector(BaseConnector):
             if self.index.get(sid)
         ]
         where = "repository root" if proj.root == "." else proj.root
-        what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
+        if f.kind == Kind.AGENT:
+            what = "Agent"
+        elif f.kind == Kind.MCP_SERVER:
+            what = "MCP server implementation"
+        else:
+            what = "LLM usage"
         detail = ", ".join(names) or ", ".join(provs)
         if not detail:
             # Only supporting technology (a search tool, a vector store,
             # tracing): name it rather than claim an LLM SDK.
             support = [s.name.split(" (", 1)[0] for sid in f.frameworks if (s := self.index.get(sid))]
             detail = ", ".join(support[:3]) or "LLM SDK"
-            if support and f.kind != Kind.AGENT:
+            if support and f.kind not in {Kind.AGENT, Kind.MCP_SERVER}:
                 what = "AI tooling"
         return f"{what} in {where}: {detail}"
 

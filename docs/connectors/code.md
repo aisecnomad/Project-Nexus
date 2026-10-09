@@ -16,9 +16,17 @@ for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
 ## `code.filesystem`
+
+Optional `diff_base` accepts a local Git branch, tag, or revision. It scans
+committed changes from the merge base to HEAD plus manifests, environment and
+configuration context. Findings carry `diff-scan` and `metadata.diff_scan`;
+this is a scoped change scan, not a complete repository inventory. Git paths
+retain their exact whitespace. If the revision cannot be resolved, collection
+falls back to a full scan with a warning.
+
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
-package, …); each root yields one
+package, …); by default each root yields one
 finding summarizing frameworks, model providers, capabilities, models and
 evidence. Extra findings: MCP configs (`.mcp.json`, `.cursor/mcp.json`,
 `.vscode/mcp.json`, `claude_desktop_config.json`, Codex `config.toml`,
@@ -31,20 +39,93 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
-Confidence groups cap repeated observations of the same technology. Unsupported
-dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
-languages, and framework code patterns from custom signature packs in any
+Confidence groups cap repeated observations of the same technology. Python also
+resolves absolute `from local_shim import Alias` imports through already-read
+`.py` files at the same manifest project root (or scan root without a manifest).
+These shims must contain only unconditional `from` imports and an optional
+docstring. Aliases and chains are supported; assignments, `__all__`, branches,
+star/relative imports, package collisions, cycles and consumer shadowing do not
+establish a re-exported constructor. A repository-local module with the name of
+a framework never becomes third-party framework evidence through an alias.
+No scanned code is imported or executed, and source is not reopened for this
+pass. It retains at most 4,096 consumer files / 16 MiB of source, and resolves
+at most 16 modules per chain. Each shim has a 64 KiB source and 256-export
+budget, with at most 4,096 shims per scan. Reaching a required source or chain
+budget marks the scan incomplete and preserves available per-file evidence.
+
+Packages, nested source layouts, dynamic imports, other re-exports and uncertain
+bindings remain usage evidence when ordinary signatures identify them.
+Supported Go LangChain agent constructors require the imported agent-package
+receiver, with local shadowing excluded. For Microsoft.Extensions.AI, a
+standalone function declaration is tool context; supported automatic invocation
+with concrete nonempty tools and a response call can establish an agent.
+Tool-mode type and alias names must remain unshadowed to prove automatic invocation.
+These bounded checks do not resolve arbitrary types or cross-file bindings.
+Other languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
+
+Python exception handlers and pattern-match alternatives join only bindings
+that agree across possible paths. A binding from the last visited alternative
+does not prove an agent construction. Literal unreachable alternatives can be
+excluded for supported shapes; scalar values assigned to names, computed
+subjects and uncertain control flow are not a general constant-propagation
+engine and remain conservative usage evidence.
+Constructor and registered-tool coordinates follow Python's physical line
+endings, so separators inside string literals do not hide execution evidence.
+
+Credential redaction resolves supported Go SDK import aliases against the full
+source before excerpts are cut. Excerpts use the same LF-based line positions as
+source matches, including when Go raw literals contain carriage returns.
+This is bounded lexical redaction, not arbitrary dynamic call resolution;
+reports remain confidential. See the [security policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+
+Rust ordinary strings and byte strings may span physical lines; their contents
+remain literal evidence, while code after the closing quote is still scanned.
+For `.js`, `.mjs` and `.cjs` files, an incomplete plain JavaScript lexical pass
+is retried as JSX. That interpretation is accepted only when lexical analysis
+completes: JSX text stays masked and executable expressions remain visible.
+TypeScript files keep their generic/type-assertion behavior, and `.jsx`/`.tsx`
+files retain explicit JSX analysis. A JSX retry with unclosed multiline literals,
+unbalanced tags or ambiguous source is rejected, retaining incomplete coverage.
+This lexical filter does not validate every construct against the language's
+full grammar or reinterpret an already-complete plain JavaScript pass.
+
+### Separate source identities
+
+Set `agent_granularity: source` to emit separate `source-agent` findings for
+supported import-proved Python constructors directly assigned to a unique simple
+name in a straight-line module, class or function scope in a `.py` file. Resources use the source file
+and qualified binding, so inserting unrelated lines does not change their IDs.
+Each finding receives its own constructor evidence and supported capabilities;
+it does not inherit another constructor's tools from the project aggregate.
+Local execution sinks are linked for the existing supported keyword `tools=`
+forms. Positional tool factories and later method registration remain project
+context and do not transfer execution capabilities to a source identity.
+The project finding retains remaining technology and unsupported-construction
+evidence. A project inventory approval does not approve these separate source
+resources; broad resource globs still have their explicitly configured scope.
+
+The default `agent_granularity: project` keeps existing aggregation. The source
+option does not count runtime instances and does not split notebooks, arbitrary languages,
+dynamic factories, repeated assignments, unnamed calls or uncertain control
+flow. Unsupported identities remain visible in project metadata. Renaming a
+file or binding changes the identity. Review inventory stubs and rebuild
+comparison baselines when switching modes; see
+[migration](../production.md#unreleased-review-migration).
+
+### Construction and capability evidence
 
 Python and JavaScript/TypeScript execution capabilities are attributed to supported
 registered tool bodies, direct local helpers, and recognized model-selected
 dispatch. Unused tools, unrelated helpers and turn-loop cleanup remain zero-weight
 context (`metadata.contextual_capabilities`); unresolved dynamic registration stays
 potential evidence. Literal dead branches are excluded only for supported source
-shapes. This bounded static analysis does not prove runtime reachability or follow
+shapes, including synchronous Python comprehensions with literal empty
+iterables or false filters. Calls evaluated before those clauses remain evidence.
+This bounded static analysis does not prove runtime reachability or follow
 tools across arbitrary aliases or files. Rescans can therefore lower a candidate's
 capabilities and score without a source change; see [scanning](../scanning.md) and
 [production migration notes](../production.md).
@@ -150,7 +231,7 @@ metadata path. No submodule is initialized or fetched; see the detailed
 [coverage policy](../scanning.md#coverage-policy) for scope and limitations.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
-`max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
+`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 `max_entries` defaults to 1,000,000 filesystem entries inspected during
@@ -321,6 +402,42 @@ itself an MCP document: servers passed as a JSON object in a step input (for
 example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
+
+### Limiting a walk with `include`
+
+`include` lists paths relative to each root; the walk enters only the
+directories that lead to them and reads only the files below them, with the
+usual excludes, limits and symlink policy still applied. Parent directory names
+are listed to reach selected files; unselected CODEOWNERS, setup scripts and
+submodule declarations are not read. Explicit `use_git` enrichment remains a
+separate metadata opt-in. Relative paths keep
+the directory context that file signatures expect (`.claude/skills/*/SKILL.md`
+only matches when `.claude/` is part of the relative path), which is why
+`shadowscan endpoint` scans a profile root with an include list rather than
+each location as its own root. Entries must be relative and may not escape the
+root; a bare string is rejected like `exclude`.
+
+```yaml
+connectors:
+  - name: code.filesystem
+    paths: [/home/dev]
+    include: [.claude, .cursor/mcp.json, .config/Claude/claude_desktop_config.json]
+    label: endpoint:dev-laptop
+```
+
+### Instruction-file content checks
+
+A coding-agent configuration finding inspects the instruction files it reports
+(skills, `CLAUDE.md`-style files, sub-agent definitions, rules, hooks) for
+content a rendered view hides or that executes fetched code: an HTML comment
+holding sentences, a network fetch piped into an interpreter, an inline blob
+decoded into one, and invisible or bidirectional control characters. A hit adds
+`content:<rule>` evidence naming the file and line, never an excerpt, and the
+risk tags `hidden-instructions`, `remote-code-fetch` or `invisible-text`
+(see [risk](../concepts/risk.md)); `metadata.instruction_content` lists the
+rules and files. The checks are bounded regexes; nothing is executed. They do
+not judge whether an instruction is malicious: a hidden comment may be a
+template note, and a documented installer may pipe to a shell. Read the file.
 
 ## `code.github`
 Enumerates an organization, a user or an explicit `repos:` list, fetches

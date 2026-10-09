@@ -50,6 +50,8 @@ from shadowscan.utils.redaction_assignments import (
 )
 from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credential_calls
 from shadowscan.utils.redaction_commands import (
+    _aws_configure_argv_secret_indices,
+    _redact_aws_configure,
     _redact_command_credentials,
     _redact_environment_commands,
     _redact_extended_options,
@@ -219,7 +221,7 @@ def _redact_extended(text: str, *, reread: bool = False) -> str:
     headers = _redact_cookie_headers(text)
     compact = _redact_compact_colons(headers)
     reshaped = compact != text
-    text = _redact_opaque_options(compact)
+    text = _redact_aws_configure(_redact_opaque_options(compact))
     # A bare marker that these passes leave after a sensitive key's colon
     # ('api_key : <opaque>') is read by the established mapping pass as the start
     # of a mapping value; normalize it here so that sanitizing again changes nothing.
@@ -503,6 +505,9 @@ class _Sanitizer:
             for child in item:
                 self.discover(child, depth + 1, environment=environment)
         elif isinstance(item, (list, tuple)):
+            if self.extended:
+                for index in _aws_configure_argv_secret_indices(item):
+                    self.remember(item[index])
             previous: Any = None
             for child in item:
                 # An argv option or value given as bytes is read as its text; the

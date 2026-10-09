@@ -245,11 +245,13 @@ def test_signature_index_is_cached_but_inventory_is_fresh_for_every_run(monkeypa
     inventory.write_text("agents: []\n")
     first = engine.run()
     assert first.complete and first.inventory_size == 0
+    assert first.inventory_present and first.to_dict()["inventory_present"] is True
     assert len(index_loads) == 1 and len(inventory_loads) == 2
     # Approval can change independently of the Engine; a reused Engine reads it again.
     inventory.write_text("agents:\n  - id: agent\n    owner: team\n    resources: ['repo/agent']\n")
     second = engine.run()
     assert second.complete and second.inventory_size == 1
+    assert second.inventory_present
     assert len(index_loads) == 1 and len(inventory_loads) == 3
 
 

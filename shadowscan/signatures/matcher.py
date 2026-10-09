@@ -788,6 +788,20 @@ _LANG_ALIASES = {
     "php": "php",
     "swift": "swift",
     "dart": "dart",
+    "c": "c",
+    "h": "c",
+    "cpp": "cpp",
+    "cc": "cpp",
+    "cxx": "cpp",
+    "hpp": "cpp",
+    "hxx": "cpp",
+    "hh": "cpp",
+    "ex": "elixir",
+    "exs": "elixir",
+    "elixir": "elixir",
+    "r": "r",
+    "rmd": "r",
+    "lua": "lua",
 }
 
 SOURCE_EXTENSIONS = {
@@ -813,6 +827,19 @@ SOURCE_EXTENSIONS = {
     ".php",
     ".swift",
     ".dart",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+    ".ex",
+    ".exs",
+    ".r",
+    ".rmd",
+    ".lua",
 }
 
 

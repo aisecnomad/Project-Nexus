@@ -546,6 +546,54 @@ with the `autonomous` capability, when tool use, an agent-framework user agent,
 a service or principal identity, or missing end-user attribution corroborates
 it. `tools/evaluation/corpus.json` carries regression cases for each rule.
 
+## Developer endpoints
+
+`shadowscan endpoint` scans a workstation profile at the well-known locations
+of AI client configuration instead of walking the home directory: Claude
+Desktop and Claude Code (`~/.claude.json`, `~/.claude/settings*.json`,
+`~/.claude/CLAUDE.md`, skills, agents, commands, hooks), Cursor (`~/.cursor/mcp.json`,
+rules), Windsurf, VS Code and VS Code Insiders with the Cline and Roo
+extensions, Gemini CLI, Codex CLI, Kiro, Amazon Q, GitHub Copilot CLI, Zed,
+Continue, Goose, OpenCode and a generic `~/.mcp.json`. macOS, Linux and Windows
+paths are all checked; Windows locations come from `%APPDATA%`. The full list
+is `shadowscan.endpoint.LOCATIONS`.
+
+Only the locations that exist are read, through the `code.filesystem`
+connector with its `include` option, so a profile scan has the connector's
+limits, credential detection and symlink policy: a location that is a link, or
+sits below one, is skipped. `--home DIR` inspects another profile (a mounted
+image, a fleet collection directory); `--list` prints the locations that exist
+and exits. Findings carry the resource prefix `endpoint:<hostname>`; `--label`
+replaces it, for example with an asset tag, so that merged fleet reports stay
+attributable. A profile with none of the locations is a complete, empty scan
+whose stats carry a warning, not a setup error (exit 0 unless `--fail-on`
+applies).
+
+The same client configuration inside a repository (`.mcp.json`,
+`.cursor/mcp.json`, `.claude/`) is found by `shadowscan code`; the endpoint
+command exists for the user-level copies that no repository scan sees.
+
+## Fleet merge
+
+`shadowscan merge laptop-a.json laptop-b.json -o fleet.json` combines JSON
+reports from several machines or scans into one. Findings with the same
+identity (the same object seen by the same connector, such as one workstation
+scanned twice) merge exactly as repeated observations do inside a scan:
+evidence and technologies union, the earliest `first_seen` and latest
+`last_seen` survive, the first report's metadata wins. Findings from
+different machines keep their own resources because the endpoint label
+prefixes every resource. Every finding records the reports it came from in
+`metadata.merged_from`, and `collection_scope.fleet.sources` lists each
+source with its completion state, finding count and scope fingerprint.
+
+The merged report is comparable with `shadowscan diff` only when every source
+was complete and carried a comparable collection scope; its fingerprint is
+then derived from the sources' fingerprints, so two fleet reports of the same
+machines with the same scanner and signatures compare. Otherwise the report
+says why it is not comparable. Completion follows the sources: one incomplete
+source makes the merged report incomplete (exit 3). Reports with another
+finding identity schema are refused; rescan them first.
+
 ## Comparing reports
 
 `shadowscan diff baseline.json current.json` reports new findings and substantive

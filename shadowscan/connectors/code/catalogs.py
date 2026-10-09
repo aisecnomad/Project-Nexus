@@ -108,6 +108,11 @@ _PIPELINE_NAMES = frozenset(
     }
 )
 _PIPELINE_DIRECTORIES = frozenset({".circleci", ".buildkite", ".woodpecker", ".gitlab"})
+_POLICY_FILE = re.compile(
+    r"(?:block|deny|reject|drop|firewall|acl|egress|ingress|waf|security)[_-]?"
+    r"|(?:blocklist|denylist|blacklist|allowlist|whitelist)",
+    re.IGNORECASE,
+)
 # Spring application and bootstrap configuration, including profiles (application-prod.yml).
 _SERVICE_CONFIGURATION = re.compile(r"(?:application|bootstrap)(?:-[\w.-]+)?\.(?:ya?ml|properties)")
 # Keys whose entries assign variables to a container, a job or a function. Compared without
@@ -241,6 +246,11 @@ def catalog_files(
         if types <= CATALOG_MENTION_SIGNALS and _is_data_file(rel) and rel not in configuration
     }
     catalogs = {rel for rel in mention_only if len(signatures[rel]) >= CATALOG_MIN_SIGNATURES}
+    # A file whose name indicates a blocklist or policy is a catalog even with
+    # fewer signatures: its domain/env mentions are deny rules, not usage.
+    for rel in mention_only - catalogs:
+        if signatures[rel] and _POLICY_FILE.search(PurePosixPath(rel).stem):
+            catalogs.add(rel)
     if catalogs and mention_only.issuperset(signal_types):
         # Nothing but mention-only data files names a technology here.
         return frozenset(mention_only)

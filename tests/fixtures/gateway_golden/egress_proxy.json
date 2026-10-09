@@ -33,6 +33,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -73,6 +74,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -113,6 +115,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -153,6 +156,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -193,6 +197,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -233,6 +238,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -273,6 +279,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -313,6 +320,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -353,6 +361,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -393,6 +402,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -433,6 +443,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -473,6 +484,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -513,6 +525,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -553,6 +566,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -593,6 +607,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -633,6 +648,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -673,6 +689,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -713,6 +730,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -753,6 +771,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -793,6 +812,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -833,6 +853,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -873,6 +894,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -913,6 +935,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -953,6 +976,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -993,6 +1017,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1033,6 +1058,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1073,6 +1099,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1113,6 +1140,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1153,6 +1181,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1193,6 +1222,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1233,6 +1263,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1273,6 +1304,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1313,6 +1345,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1353,6 +1386,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1393,6 +1427,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1433,6 +1468,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1473,6 +1509,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1513,6 +1550,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1553,6 +1591,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1593,6 +1632,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1633,6 +1673,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1673,6 +1714,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1713,6 +1755,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1753,6 +1796,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1793,6 +1837,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1833,6 +1878,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1873,6 +1919,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1913,6 +1960,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1953,6 +2001,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -1993,6 +2042,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2033,6 +2083,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2073,6 +2124,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2113,6 +2165,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2153,6 +2206,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2193,6 +2247,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2233,6 +2288,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2273,6 +2329,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2313,6 +2370,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2353,6 +2411,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2393,6 +2452,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null

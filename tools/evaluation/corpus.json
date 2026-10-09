@@ -1241,6 +1241,104 @@
       "assertions": {
         "max_secret_findings": 0
       }
+    },
+    {
+      "id": "py-mlflow-tracking-only",
+      "family": "framework-usage",
+      "description": "mlflow experiment tracking in a classic-ML pipeline is not Databricks model serving: no provider finding",
+      "files": {
+        "requirements.txt": "mlflow==3.4.0\ntorch==2.8.0\npandas==2.3.2\n",
+        "train.py": "import mlflow\nimport torch\n\nwith mlflow.start_run():\n    mlflow.log_metric(\"loss\", 0.1)\n    torch.save({}, \"model.pt\")\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.databricks"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "provider.databricks"
+        ]
+      }
+    },
+    {
+      "id": "py-mlflow-llm-flavor-databricks",
+      "family": "framework-usage",
+      "description": "mlflow's LangChain flavor logging a model is Databricks / Mosaic AI serving evidence",
+      "files": {
+        "deploy.py": "import mlflow\nfrom databricks import agents\n\nmlflow.langchain.log_model(chain, \"chain\")\nagents.deploy(\"catalog.schema.model\", 1)\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "provider.databricks"
+      },
+      "present": true
+    },
+    {
+      "id": "java-spring-ai-chained-builder-tools",
+      "family": "agent",
+      "description": "A ChatClient builder chain that sets a system prompt and advisors before registering concrete tools is an agent",
+      "files": {
+        "pom.xml": "<project><dependencies><dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-starter-model-openai</artifactId><version>1.0.1</version></dependency></dependencies></project>\n",
+        "src/main/java/com/acme/AssistantService.java": "package com.acme;\n\nimport org.springframework.ai.chat.client.ChatClient;\nimport org.springframework.ai.tool.annotation.Tool;\n\npublic class AssistantService {\n    private final ChatClient chatClient;\n\n    public AssistantService(ChatClient.Builder builder) {\n        this.chatClient = builder\n            .defaultSystem(\"You are the finance desk assistant.\")\n            .defaultTools(new InvoiceTools())\n            .build();\n    }\n\n    static class InvoiceTools {\n        @Tool(description = \"Approve an invoice\")\n        String approve(String id) { return id; }\n    }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.spring-ai"
+      },
+      "present": true
+    },
+    {
+      "id": "java-spring-ai-chat-only",
+      "family": "agent",
+      "description": "A ChatClient without tool registration is LLM usage, not an agent",
+      "files": {
+        "pom.xml": "<project><dependencies><dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-starter-model-openai</artifactId><version>1.0.1</version></dependency></dependencies></project>\n",
+        "src/main/java/com/acme/ChatService.java": "package com.acme;\n\nimport org.springframework.ai.chat.client.ChatClient;\n\npublic class ChatService {\n    private final ChatClient chatClient;\n\n    public ChatService(ChatClient.Builder builder) {\n        this.chatClient = builder.defaultSystem(\"Answer briefly.\").build();\n    }\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.spring-ai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "go-mcp-server-implementation",
+      "family": "mcp-server",
+      "description": "A Go program that constructs and serves an MCP server is an MCP server implementation, not LLM usage",
+      "files": {
+        "go.mod": "module example.com/ops-tools\n\ngo 1.23\n\nrequire github.com/mark3labs/mcp-go v0.40.0\n",
+        "main.go": "package main\n\nimport (\n\t\"context\"\n\n\t\"github.com/mark3labs/mcp-go/mcp\"\n\t\"github.com/mark3labs/mcp-go/server\"\n)\n\nfunc main() {\n\ts := server.NewMCPServer(\"ops-tools\", \"1.0.0\")\n\trestart := mcp.NewTool(\"restart_service\", mcp.WithDescription(\"Restart a service\"))\n\ts.AddTool(restart, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {\n\t\treturn mcp.NewToolResultText(\"ok\"), nil\n\t})\n\t_ = server.ServeStdio(s)\n}\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ts-mcp-client-only",
+      "family": "mcp-server",
+      "description": "An MCP client over stdio consumes tools; it is not a server implementation",
+      "files": {
+        "package.json": "{\"name\": \"client\", \"dependencies\": {\"@modelcontextprotocol/sdk\": \"^1.18.1\"}}\n",
+        "src/client.ts": "import { Client } from \"@modelcontextprotocol/sdk/client/index.js\";\nimport { StdioClientTransport } from \"@modelcontextprotocol/sdk/client/stdio.js\";\n\nconst transport = new StdioClientTransport({ command: \"npx\", args: [\"-y\", \"@acme/inventory-mcp\"] });\nconst client = new Client({ name: \"web\", version: \"1.0.0\" });\nawait client.connect(transport);\nconst { tools } = await client.listTools();\n"
+      },
+      "target": {
+        "kind": "mcp-server",
+        "signature": "protocol.mcp"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
     }
   ]
 }

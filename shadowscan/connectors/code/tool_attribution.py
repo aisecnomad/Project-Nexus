@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from shadowscan.connectors.code.provider_tools import python_provider_tool_literals
 from shadowscan.signatures.matcher import pattern_timeout
+from shadowscan.utils.text import python_source_lines
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _SCOPES = (*_FUNCTIONS, ast.ClassDef, ast.Lambda)
@@ -213,7 +214,7 @@ def python_tool_regions(
             current = parents.get(current)
         return None
 
-    lines = text.splitlines(keepends=True)
+    lines = python_source_lines(text)
     offsets = [0]
     for line in lines:
         offsets.append(offsets[-1] + len(line))

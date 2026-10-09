@@ -100,6 +100,7 @@ class GitHubConnector(RemoteRepositoryConnector):
         "strict_coverage": "see code.filesystem (default false)",
         "include_tests": "see code.filesystem (default false)",
         "triage": "see code.filesystem (default false)",
+        "agent_granularity": "project (default) | source; see code.filesystem",
         "use_git": (
             "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ "
             "(default false)"
@@ -242,6 +243,7 @@ class GitHubConnector(RemoteRepositoryConnector):
                 "strict_coverage",
                 "include_tests",
                 "triage",
+                "agent_granularity",
             }
         }
 

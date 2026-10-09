@@ -271,6 +271,10 @@ def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str,
     return name, pos
 
 
+# These JavaScript extensions may contain JSX without an explicit JSX suffix.
+_JSX_IN_JS_FILES = frozenset({".js", ".mjs", ".cjs"})
+
+
 def noncode_ranges(
     text: str,
     language: str | None,
@@ -282,7 +286,14 @@ def noncode_ranges(
     if language == "python":
         return _python_ranges(text)
     if language == "javascript":
-        return _javascript_ranges(text, jsx=jsx)
+        ranges, ambiguous = _javascript_ranges(text, jsx=jsx)
+        if ambiguous and not jsx and dialect in _JSX_IN_JS_FILES:
+            # Only accept the JSX interpretation when it closes completely.
+            # TypeScript retains its normal treatment of generic/type syntax.
+            jsx_ranges, jsx_ambiguous = _javascript_ranges(text, jsx=True)
+            if not jsx_ambiguous:
+                return jsx_ranges, False
+        return ranges, ambiguous
     if language in {"go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"}:
         return _other_source_ranges(text, language, dialect)
     return [], False
@@ -1137,7 +1148,8 @@ def _open_literal(
         and not (prefix == "r" or "@" in prefix or prefix.startswith("#") or triple and language == "dotnet"),
         verbatim="@" in prefix,
         interpolation=interpolation,
-        multiline=triple or quote == "`" or "@" in prefix,
+        # Ordinary Rust strings and byte strings may span physical lines.
+        multiline=triple or quote == "`" or "@" in prefix or (language == "rust" and quote == '"'),
     )
     return literal, q + len(opener)
 
