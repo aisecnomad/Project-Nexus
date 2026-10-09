@@ -509,11 +509,58 @@ def test_model_literal_pass_is_bounded_per_file(run_connector, tmp_path):
     )
     write(tmp_path, "many.py", literals + "\n")
     findings, stats = scan(run_connector, tmp_path)
-    assert not stats.errors and not stats.incomplete
+    assert not stats.errors and stats.incomplete
     assert [w for w in stats.warnings if "many.py" in w and "model identifiers" in w]
     project = _project(findings)
     assert project is not None and project.model_providers == ["provider.anthropic"]
     assert len([e for e in project.evidence if e.signal == "model:provider.anthropic"]) == 3
+
+
+def test_model_literal_after_the_limit_is_an_incomplete_scan(run_connector, tmp_path):
+    from shadowscan.connectors.code.filesystem import MAX_MODEL_LITERALS_PER_FILE
+
+    source = "\n".join(f'x{n} = "ordinary-{n}"' for n in range(MAX_MODEL_LITERALS_PER_FILE))
+    write(tmp_path, "app.py", source + '\nmodel = "claude-3-5-sonnet-20241022"\n')
+    findings, stats = scan(run_connector, tmp_path)
+    assert not findings
+    assert stats.incomplete
+    assert any("later ones were not matched" in warning for warning in stats.warnings)
+
+
+def test_exactly_the_model_literal_limit_keeps_complete_coverage(run_connector, tmp_path):
+    from shadowscan.connectors.code.filesystem import MAX_MODEL_LITERALS_PER_FILE
+
+    source = "\n".join(f'x{n} = "ordinary-{n}"' for n in range(MAX_MODEL_LITERALS_PER_FILE - 1))
+    write(tmp_path, "app.py", source + '\nmodel = "claude-3-5-sonnet-20241022"\n')
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete
+    assert _project(findings).model_providers == ["provider.anthropic"]
+
+
+@pytest.mark.parametrize("limit_kind", ["assignments", "path-literals", "references"])
+def test_catalog_analysis_limits_make_the_scan_incomplete(run_connector, tmp_path, limit_kind):
+    from shadowscan.connectors.code.catalogs import (
+        MAX_ASSIGNMENT_LINES,
+        MAX_PATH_LITERALS,
+        MAX_REFERENCES_PER_FILE,
+    )
+
+    if limit_kind == "assignments":
+        content = "OTHER_VALUE=1\n" * MAX_ASSIGNMENT_LINES + "OPENAI_API_KEY=configured\n"
+        write(tmp_path, "etc/settings.cfg", content)
+    else:
+        content = (
+            'load("a.json")\n' * MAX_PATH_LITERALS
+            if limit_kind == "path-literals"
+            else "".join(f'load("file-{n}.json")\n' for n in range(MAX_REFERENCES_PER_FILE))
+        )
+        write(tmp_path, "app.py", content + 'load("late.json")\n')
+    # Other successfully analyzed files retain their findings.
+    write(tmp_path, "requirements.txt", "openai==1.0\n")
+    findings, stats = scan(run_connector, tmp_path, scan_secrets=False)
+    assert stats.incomplete
+    assert any("catalog" in error and "limit exceeded" in error for error in stats.errors)
+    assert _project(findings).model_providers == ["provider.openai"]
 
 
 # ---------------------------------------------------------------- uncorroborated code patterns

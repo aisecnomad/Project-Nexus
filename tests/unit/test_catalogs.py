@@ -355,12 +355,13 @@ def test_the_assignment_pass_is_bounded_per_file():
     # names and cost no match: a large file is still read to its last line.
     big = "openai.timeout=30\n" * 30_000 + "OPENAI_API_KEY=sk-example\n"
     assert configuration_document("etc/llm.properties", big, None, names)
-    # A file is judged on its first MAX_ASSIGNMENT_LINES assignment lines and
-    # stops there, instead of timing out and marking the scan incomplete.
+    # A truncated negative classification must disclose the unread assignments.
     within = "KEY_X=1\n" * (MAX_ASSIGNMENT_LINES - 1) + "OPENAI_API_KEY=sk-example\n"
     assert configuration_document("etc/keys.cfg", within, None, names)
     beyond = "KEY_X=1\n" * (MAX_ASSIGNMENT_LINES * 50) + "OPENAI_API_KEY=sk-example\n"
-    assert not configuration_document("etc/keys.cfg", beyond, None, names)
+    limits = []
+    assert not configuration_document("etc/keys.cfg", beyond, None, names, limits=limits)
+    assert limits == ["catalog assignment line limit exceeded; later assignments were not read"]
 
 
 @pytest.mark.parametrize(
@@ -456,14 +457,23 @@ def test_referenced_data_files_collects_quoted_path_literals(text, expected):
 
 def test_referenced_data_files_are_bounded_per_file():
     text = "".join(f'load("file-{number}.json")\n' for number in range(MAX_REFERENCES_PER_FILE))
-    assert len(referenced_data_files(text)) == MAX_REFERENCES_PER_FILE
+    limits = []
+    assert len(referenced_data_files(text, limits=limits)) == MAX_REFERENCES_PER_FILE
+    assert limits == []
+    assert len(referenced_data_files(text + 'load("late.json")\n', limits=limits)) == MAX_REFERENCES_PER_FILE
+    assert limits == ["catalog data-file reference limit exceeded; later references were not read"]
     # Literals without a data suffix cost no match, however many a bundle holds.
     assert referenced_data_files("x = \"abc\"; y = 'def'\n" * 50_000) == set()
-    # A literal is read at most MAX_PATH_LITERALS times; the pass stops there
-    # instead of timing out and marking the scan incomplete.
+    # The bounded pass discloses unread literals instead of claiming completeness.
     repeated = 'load("a.json")\n' * (MAX_PATH_LITERALS * 250)
     assert referenced_data_files(repeated) == {"a.json"}
-    assert referenced_data_files('load("a.json")\n' * MAX_PATH_LITERALS + 'load("late.json")\n') == {"a.json"}
+    limits = []
+    assert referenced_data_files('load("a.json")\n' * MAX_PATH_LITERALS, limits=limits) == {"a.json"}
+    assert limits == []
+    assert referenced_data_files(
+        'load("a.json")\n' * MAX_PATH_LITERALS + 'load("late.json")\n', limits=limits
+    ) == {"a.json"}
+    assert limits == ["catalog data-file reference literal limit exceeded; later literals were not read"]
 
 
 def test_a_data_file_the_projects_code_loads_is_configuration():

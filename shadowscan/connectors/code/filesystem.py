@@ -2772,6 +2772,7 @@ class FilesystemConnector(BaseConnector):
                 file.ext in _MODEL_LITERAL_CONFIG_EXTENSIONS or file.name.lower().startswith(".env")
             ):
                 self._scan_model_literals(file, content_text, [], source=False)
+        catalog_limits: list[str] = []
         if not is_nonexecutable and not file.is_mcp:
             variables = self.index.match_envs_in_text(content_text)
             for m in variables:
@@ -2781,11 +2782,14 @@ class FilesystemConnector(BaseConnector):
             # A deployment or CI document is configuration however many products it names.
             parsed = None if file.structure is _NO_STRUCTURE else file.structure
             variable_names = {m.value for m in variables}
-            if configuration_document(file.rel, content_text, parsed, variable_names, file.proj_root):
+            if configuration_document(
+                file.rel, content_text, parsed, variable_names, file.proj_root, limits=catalog_limits
+            ):
                 file.proj.configuration_files.add(file.rel)
         if file.ext in LOADER_EXTENSIONS:
             # A data file that code loads by name is configuration, not a catalog.
-            file.proj.referenced_data_files.update(referenced_data_files(content_text))
+            file.proj.referenced_data_files.update(referenced_data_files(content_text, limits=catalog_limits))
+        self._file_errors(file.rel, catalog_limits)
 
     def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> list[tuple[int, int]]:
         """Match the imports, code patterns and import-bound calls of a source file.
@@ -2863,7 +2867,7 @@ class FilesystemConnector(BaseConnector):
         domain names a host, so it anchors nothing and keeps a pricing table a
         catalog. At most ``MAX_MODEL_LITERALS_PER_FILE`` literals are read per
         pass and ``MAX_MODEL_MATCHES_PER_SIGNATURE`` matches kept per
-        signature; a file with more is noted, not a coverage gap.
+        signature; unread literals leave coverage incomplete.
         """
         lowered_text = content_text.lower()
         if not any(stem in lowered_text for stem in _MODEL_STEMS):
@@ -2881,22 +2885,22 @@ class FilesystemConnector(BaseConnector):
             _MODEL_QUOTED_RE,
             content_text,
             "model identifiers",
-            MAX_MODEL_LITERALS_PER_FILE,
+            MAX_MODEL_LITERALS_PER_FILE + 1,
             in_comment if starts else None,
         )
-        limited = len(quoted) >= MAX_MODEL_LITERALS_PER_FILE
-        literals.extend((m.start(2), m.group(2)) for m in quoted)
+        limited = len(quoted) > MAX_MODEL_LITERALS_PER_FILE
+        literals.extend((m.start(2), m.group(2)) for m in quoted[:MAX_MODEL_LITERALS_PER_FILE])
         if not source:
             keyed = _finditer(
-                _MODEL_KEY_VALUE_RE, content_text, "model identifiers", MAX_MODEL_LITERALS_PER_FILE
+                _MODEL_KEY_VALUE_RE, content_text, "model identifiers", MAX_MODEL_LITERALS_PER_FILE + 1
             )
-            limited = limited or len(keyed) >= MAX_MODEL_LITERALS_PER_FILE
-            literals.extend((m.start(1), m.group(1)) for m in keyed)
+            limited = limited or len(keyed) > MAX_MODEL_LITERALS_PER_FILE
+            literals.extend((m.start(1), m.group(1)) for m in keyed[:MAX_MODEL_LITERALS_PER_FILE])
         if limited:
             self.ctx.warn(
                 f"code.filesystem: {file.rel}: model identifiers read from the first "
                 f"{MAX_MODEL_LITERALS_PER_FILE} literals only; later ones were not matched",
-                incomplete=False,
+                incomplete=True,
             )
         literals.sort()
         line_at = line_counter(content_text)

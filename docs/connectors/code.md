@@ -90,7 +90,8 @@ such as `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0` attributes both
 the route's provider and the model's vendor. Each match weighs at most 0.5
 (`model:provider.anthropic`), lists the whole id under `metadata.models`, and
 is recorded at most three times per signature per file; a file is read for
-its first 400 literals, with a note when it holds more. A model id in a source
+its first 400 literals, with incomplete coverage (exit 3) when it holds more.
+A model id in a source
 file or notebook can anchor a project finding (a Python file whose only
 evidence is `MODEL = "claude-3-5-sonnet-20241022"` is reported, tagged
 `model-ids-only`, with heuristics dropped and confidence capped at 0.6,
@@ -175,7 +176,9 @@ in the project, and published data outside those directories (`public/`,
 `static/`, `assets/`) is configuration once a build script names it. Both
 passes are bounded: a data file is judged on its first 10,000 assignment lines
 and a loader is read for its first 2,000 quoted data-file literals (at most 400
-distinct names); a file with more is judged on those rather than timing out. A
+distinct names). If unread content could change the configuration classification,
+the limit is reported as incomplete coverage (exit 3), while observed evidence
+is retained. A
 model identifier found in a data file is
 a mention like a domain or a variable name (a pricing table of model ids is a
 catalog); one selected by a manifest or IaC file still anchors. A data file

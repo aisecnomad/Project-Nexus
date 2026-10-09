@@ -275,7 +275,7 @@ def _documentation_path(rel: str) -> bool:
     return not _DOCUMENTATION_DIRECTORIES.isdisjoint(part.lower() for part in PurePosixPath(rel).parts[:-1])
 
 
-def referenced_data_files(text: str) -> set[str]:
+def referenced_data_files(text: str, *, limits: list[str] | None = None) -> set[str]:
     """Lowercased basenames and trailing relative paths of the data files ``text`` names.
 
     A quoted path literal ending in a data suffix names a file the code loads:
@@ -285,10 +285,14 @@ def referenced_data_files(text: str) -> set[str]:
     as separators) and as its basename, so ``catalog_files`` can match a file
     by either. URLs are not paths. The pattern runs under the per-input
     matching budget and reads at most ``MAX_PATH_LITERALS`` literals, keeping
-    at most ``MAX_REFERENCES_PER_FILE`` entries per text.
+    at most ``MAX_REFERENCES_PER_FILE`` entries per text. Unread content is
+    reported through ``limits`` so the connector can mark coverage incomplete.
     """
     found: set[str] = set()
-    for match in _finditer(_PATH_LITERAL, text, "data-file references", MAX_PATH_LITERALS):
+    matches = _finditer(_PATH_LITERAL, text, "data-file references", MAX_PATH_LITERALS + 1)
+    if len(matches) > MAX_PATH_LITERALS and limits is not None:
+        limits.append("catalog data-file reference literal limit exceeded; later literals were not read")
+    for match in matches[:MAX_PATH_LITERALS]:
         literal = match[1].lower().replace("\\", "/")
         parts: list[str] = []
         for part in literal.split("/"):
@@ -297,10 +301,14 @@ def referenced_data_files(text: str) -> set[str]:
             elif part:
                 parts.append(part)
         if parts:
-            found.add("/".join(parts))
-            found.add(parts[-1])
-        if len(found) >= MAX_REFERENCES_PER_FILE:
-            break
+            additions = {"/".join(parts), parts[-1]} - found
+            if len(found) + len(additions) > MAX_REFERENCES_PER_FILE:
+                if limits is not None:
+                    limits.append(
+                        "catalog data-file reference limit exceeded; later references were not read"
+                    )
+                break
+            found.update(additions)
     return found
 
 
@@ -397,22 +405,31 @@ def _configured_variables(document: Any, candidates: AbstractSet[str] = frozense
     return names
 
 
-def _assigns_in_text(text: str, env_names: AbstractSet[str]) -> bool:
+def _assigns_in_text(text: str, env_names: AbstractSet[str], limits: list[str] | None = None) -> bool:
     """Whether a line of ``text`` assigns one of ``env_names`` (``NAME=value``, ``NAME: value``).
 
     The pass runs under the per-input matching budget and reads the first
-    ``MAX_ASSIGNMENT_LINES`` assignment lines; a file with more is judged on
-    those. Lower-case keys, the bulk of a properties, INI or JSON file, are not
+    ``MAX_ASSIGNMENT_LINES`` assignment lines; a file with more has incomplete
+    classification unless a configuration assignment is already found. Lower-case
+    keys, the bulk of a properties, INI or JSON file, are not
     variable names and cost no match.
     """
-    return any(
-        match[1] in env_names
-        for match in _finditer(_ASSIGNMENT_LINE, text, "catalog assignment lines", MAX_ASSIGNMENT_LINES)
-    )
+    matches = _finditer(_ASSIGNMENT_LINE, text, "catalog assignment lines", MAX_ASSIGNMENT_LINES + 1)
+    if any(match[1] in env_names for match in matches[:MAX_ASSIGNMENT_LINES]):
+        return True
+    if len(matches) > MAX_ASSIGNMENT_LINES and limits is not None:
+        limits.append("catalog assignment line limit exceeded; later assignments were not read")
+    return False
 
 
 def configuration_document(
-    rel: str, text: str, parsed: Any, env_names: AbstractSet[str], root: str = "."
+    rel: str,
+    text: str,
+    parsed: Any,
+    env_names: AbstractSet[str],
+    root: str = ".",
+    *,
+    limits: list[str] | None = None,
 ) -> bool:
     """Whether data file ``rel`` declares what a service or a job runs with, so it is never a catalog.
 
@@ -442,7 +459,7 @@ def configuration_document(
     if not env_names:
         return False
     return not env_names.isdisjoint(_configured_variables(parsed, env_names)) or _assigns_in_text(
-        text, env_names
+        text, env_names, limits
     )
 
 

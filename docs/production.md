@@ -13,6 +13,13 @@ between candidate builds, not between releases.
 
 ## Review before deployment
 
+The model-identifier pass leaves coverage incomplete (exit 3) when a file
+exceeds its 400-literal analysis limit. Findings from the analyzed prefix
+remain available; review the unread content separately before using an
+incomplete result for an assurance decision.
+Catalog assignment and data-file reference limits likewise mark coverage
+incomplete when unread content could change the configuration classification.
+
 Before selecting a revision, verify its final-head review record and the live
 merge rules. A versioned policy, merged pull request or passing CI does not
 establish independent human review. The [merge gate and review status](#merge-gate-and-review-status)

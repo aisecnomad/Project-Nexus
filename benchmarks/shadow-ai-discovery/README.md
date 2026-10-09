@@ -162,10 +162,18 @@ scoring. Facts a tool reports outside the taxonomy are ignored, never penalized.
 
 ## Isolation and fairness
 
-* Every tool sees the same read-only checkout at the same commit.
-* Tools run as an unprivileged user through `setpriv` with a rebuilt
-  environment: no API keys, a dead proxy so outbound requests fail fast,
+* Every tool receives the same checkout at the same commit. The operator
+  must make the corpus read-only using filesystem permissions or mounts.
+* With `--as-user`, tools run through `setpriv` with a rebuilt environment:
+  no inherited API keys, a dead proxy for clients that honor proxy variables,
   telemetry opt-outs, a private `HOME` and `TMPDIR`, and a per-run timeout.
+  Without that option, including the ShadowScan-only CI workflow, commands
+  run as the invoking user.
+* The harness is not a filesystem or network sandbox. `setpriv` does not
+  confine path access, and proxy variables do not prevent direct connections.
+  Third-party tools require an externally isolated disposable runner with
+  egress disabled and no credentials or sensitive host files. Historical run
+  metadata records the process policy, not verified network isolation.
 * No LLM-backed analyzer is used anywhere, so a rerun on the same commits is
   deterministic up to tool bugs.
 * `cdxgen` warns that it can auto-execute local scripts; it is run with

@@ -5,6 +5,12 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+- Fixed: the model-identifier literal limit now marks coverage incomplete
+  when later literals were not matched. A model beyond the limit can no
+  longer produce an empty scan reported as complete.
+- Fixed: truncated catalog assignment and data-file reference analysis also
+  marks coverage incomplete while preserving the evidence already read.
+
 ### Shadow AI agent discovery benchmark
 
 - Add `tools/evaluation/benchmark_followup_corpus.json`, 24 authored synthetic

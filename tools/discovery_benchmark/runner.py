@@ -1,11 +1,13 @@
 """Run every adapter against every checkout under a scrubbed, unprivileged environment.
 
 Each (tool, repository) pair runs in its own output directory. When ``--as-user``
-names an unprivileged account, commands are wrapped in ``setpriv`` so the tool
-cannot write outside its output directory and cannot read the operator's
-credentials. The environment is rebuilt from scratch: no API keys, a dead
-proxy so outbound requests fail fast, telemetry opt-outs, a private HOME and
-TMPDIR. Repository content is never executed by the harness itself.
+names an unprivileged account, commands are wrapped in ``setpriv``. This is
+not a filesystem or network sandbox: the tool can access any path that user
+can access and can ignore proxy variables. Run third-party tools only inside
+an externally isolated disposable runner with no credentials and network
+egress disabled. The environment is rebuilt from scratch: no API keys, a dead
+proxy for clients that honor it, telemetry opt-outs, a private HOME and TMPDIR.
+Repository content is never executed by the harness itself.
 """
 
 from __future__ import annotations
