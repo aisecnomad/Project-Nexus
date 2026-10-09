@@ -23,7 +23,9 @@ The report is one JSON object with three members:
 Each event is class-conformant: `category_uid` 2 (Findings), `class_uid` 2004,
 activity Create (`activity_id` 1, `type_uid` 200401), `metadata.product`
 naming ShadowScan and its version, and `time`/`time_dt` set to the scan's end
-(epoch milliseconds and ISO 8601 UTC with a `Z` suffix). A key whose value
+(epoch milliseconds and ISO 8601 UTC with a `Z` suffix). `metadata.profiles`
+declares the `datetime` profile, which defines `time_dt` and the other `*_dt`
+attributes, so schema-validating pipelines accept them. A key whose value
 would be `null` is omitted, and a result containing NaN or infinity refuses to
 render at all.
 

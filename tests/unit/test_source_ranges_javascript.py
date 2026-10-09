@@ -466,7 +466,9 @@ def test_line_comment_does_not_hide_the_code_of_a_file_node_runs(tmp_path: Path,
 LIMIT, AMBIGUOUS, COMPLETE = "limit", "ambiguous", "complete"
 HOSTILE = {
     "tag-then-parenthesis": ("<A>(" * 62_500, LIMIT),
-    "type-arguments": ("<A<" * 83_333, LIMIT),
+    "type-arguments": ("<A< " * 62_500, LIMIT),
+    # `<<` is a shift, so only the first "<A<" is a candidate tag.
+    "shifted-type-arguments": ("<A<" * 83_333, COMPLETE),
     "unclosed-tags": ("<div " * 50_000, AMBIGUOUS),
     "unclosed-expressions": ("<a>{" * 62_500, AMBIGUOUS),
     "unterminated-comments": ("/* " * 83_334, AMBIGUOUS),

@@ -50,6 +50,6 @@ signatures:
         globs: [Brewfile, "**/Brewfile", Brewfile.lock.json, "**/Brewfile.lock.json"]
         weight: 0.3
       - type: code
-        patterns: ['^\s*brew\s+["\x27](?:ollama|aider|llm|mods|fabric|gpt4all|localai|jan|lm-studio|llamafile|claude|chatgpt)["\x27]', '^\s*cask\s+["\x27](?:ollama|lm-studio|jan|gpt4all|msty|claude|chatgpt)["\x27]']
+        patterns: ['^\s*brew\s+["''](?:ollama|aider|llm|mods|fabric|gpt4all|localai|jan|lm-studio|llamafile|claude|chatgpt)["'']', '^\s*cask\s+["''](?:ollama|lm-studio|jan|gpt4all|msty|claude|chatgpt)["'']']
         weight: 0.7
         description: AI tool formula or cask in a Brewfile

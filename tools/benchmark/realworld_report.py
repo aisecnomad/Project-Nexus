@@ -52,7 +52,11 @@ def render(results: Path) -> str:
     out(
         "Repo surface only; every case is a public repository pinned by commit "
         "(see `benchmarks/realworld/corpus.json`). Positive means the label is "
-        "`agent` or `llm`. Errors count as misses and are also shown. Read the "
+        "`agent` or `llm`. An error (an incomplete or failed scan) on a positive "
+        "repository counts as a miss. The shared scorer counts an error on a `none` "
+        "repository as a true negative, so specificity and precision in the scored "
+        "tables overstate tools that error on negatives; the section on errors on "
+        "`none` repositories gives specificity over completed scans only. Read the "
         "caveats in `benchmarks/realworld/README.md` before quoting numbers."
     )
     out("")
@@ -160,10 +164,25 @@ def render(results: Path) -> str:
         (tool, row["case"], row["note"]) for tool in tools for row in data[tool] if row["status"] == "error"
     ]
     if errors:
-        out("## Errors (counted as misses above)")
+        out("## Errors")
+        out("")
+        out("An error on an `agent` or `llm` repository is counted as a miss above; one on a")
+        out("`none` repository is counted as a true negative there (see the next section).")
         out("")
         for tool, case, note in errors:
             out(f"- {_DISPLAY.get(tool, tool)} on `{case}`: {note[:200]}")
+        out("")
+        out("## Errors on repositories with no AI (`none` label)")
+        out("")
+        out("| Tool | Errored `none` scans | Specificity over completed `none` scans |")
+        out("|---|---|---|")
+        for tool in tools:
+            negatives = [r for r in data[tool] if r["label"] == "none" and r["status"] in {"ok", "error"}]
+            errored = sum(r["status"] == "error" for r in negatives)
+            completed = [r for r in negatives if r["status"] == "ok"]
+            clean = sum(not r["detected"] for r in completed)
+            specificity = f"{clean}/{len(completed)}" if completed else "–"
+            out(f"| {_DISPLAY.get(tool, tool)} | {errored}/{len(negatives)} | {specificity} |")
         out("")
 
     out("## Noise on repositories with no AI (`none` label)")

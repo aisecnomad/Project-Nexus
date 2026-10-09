@@ -132,3 +132,43 @@ def test_fleet_rejects_malformed_statistics(tmp_path: Path):
     report["stats"][0]["errors"] = ""
     with pytest.raises(ValueError, match="diagnostics"):
         merge_reports([("broken", report)])
+
+
+def test_merge_refuses_a_reused_id_for_another_identity(tmp_path: Path):
+    # Report ids are untrusted: a copy that keeps the ids but names other
+    # resources must not fold the original findings into its own.
+    path = _report(tmp_path, "laptop-a", {".mcp.json": MCP, "crew.py": AGENT})
+    original = json.loads(path.read_text())
+    forged = json.loads(path.read_text())
+    for finding in forged["findings"]:
+        finding["resource"] = "endpoint:other/" + finding["resource"]
+    for inputs in ([("a", original), ("forged", forged)], [("forged", forged), ("a", original)]):
+        with pytest.raises(ValueError, match="another identity"):
+            merge_reports(inputs)
+    forged_path = tmp_path / "forged.json"
+    forged_path.write_text(json.dumps(forged))
+    result = CliRunner().invoke(main, ["merge", str(path), str(forged_path), "--format", "json"])
+    assert result.exit_code == 1
+    assert "another identity" in result.output
+
+
+def test_merge_names_sources_by_their_path_below_a_common_directory(tmp_path: Path):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    healthy = json.loads(path.read_text())
+    broken = json.loads(path.read_text())
+    broken["stats"][0]["errors"] = ["connector timed out"]
+    broken["summary"]["complete"] = False
+    collected = tmp_path / "collected"
+    sources = []
+    for host, report in (("host-a", healthy), ("host-b", broken)):
+        (collected / host).mkdir(parents=True)
+        (collected / host / "report.json").write_text(json.dumps(report))
+        sources.append(str(collected / host / "report.json"))
+    out = tmp_path / "fleet.json"
+    result = CliRunner().invoke(main, ["merge", *sources, "--format", "json", "-o", str(out)])
+    assert result.exit_code == 3, result.output
+    merged = json.loads(out.read_text())
+    names = ["host-a/report.json", "host-b/report.json"]
+    assert [s["name"] for s in merged["collection_scope"]["fleet"]["sources"]] == names
+    assert "host-b/report.json: scan incomplete" in merged["collection_scope"]["reason"]
+    assert merged["findings"][0]["metadata"]["merged_from"] == names

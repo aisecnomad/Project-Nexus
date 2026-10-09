@@ -9,7 +9,9 @@ remain unresolved. The caller retains its ordinary per-file evidence.
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from collections.abc import Callable
 from pathlib import PurePosixPath
 
@@ -39,6 +41,33 @@ def has_local_import(text: str, is_local: Callable[[str], bool]) -> bool:
     return any(is_local(match.group(1)) for match in _FROM.finditer(text))
 
 
+def _may_be_import_only(text: str) -> bool:
+    """Whether some statement and every other may be a ``from`` import, after an optional docstring.
+
+    Tokens are read lazily, so an ordinary module stops at its first other
+    statement. Source that does not tokenize would not parse as a shim either.
+    """
+    first = start = True
+    imports = False
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type in {tokenize.NL, tokenize.COMMENT}:
+                continue
+            if token.type == tokenize.ENDMARKER:
+                break
+            if token.type == tokenize.NEWLINE or token.exact_type == tokenize.SEMI:
+                start = True
+            elif start:
+                is_from = token.type == tokenize.NAME and token.string == "from"
+                if not (is_from or (first and token.type == tokenize.STRING)):
+                    return False
+                imports = imports or is_from
+                first = start = False
+    except (tokenize.TokenError, SyntaxError, ValueError):
+        return False
+    return imports
+
+
 class PythonReexports:
     """An import-only module graph, scoped to one scan's manifest projects."""
 
@@ -61,7 +90,10 @@ class PythonReexports:
             return
         key = (project, path.stem)
         if len(text.encode("utf-8")) > MAX_SHIM_BYTES:
-            self.limited.add(key)
+            # Only a module that may be import-only could be a shim; any other
+            # large module stays unresolved, like every other non-shim.
+            if _may_be_import_only(text):
+                self.limited.add(key)
             return
         try:
             tree = ast.parse(text)
@@ -83,10 +115,12 @@ class PythonReexports:
                 if alias.name == "*" or name in exports:
                     return
                 exports[name] = (statement.module, alias.name)
-                if len(exports) > MAX_EXPORTS:
-                    self.limited.add(key)
-                    return
         if not exports:
+            return
+        if len(exports) > MAX_EXPORTS:
+            # Counted once the whole module is known to be import-only: names
+            # an ordinary module imports before its code are not exports.
+            self.limited.add(key)
             return
         if len(self.modules) >= MAX_SHIMS:
             self.full = True

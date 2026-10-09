@@ -16,7 +16,8 @@ Mapping rules that keep the stream valid for OCSF consumers:
 * ``status_id`` is always 1 (New). ShadowScan records discovery, never a
   triage or verification state.
 * Timestamps are epoch milliseconds in ``time``/``*_time`` and ISO 8601 UTC
-  with a ``Z`` suffix in the ``*_dt`` twins; an unparseable timestamp is
+  with a ``Z`` suffix in the ``*_dt`` twins, which ``metadata.profiles``
+  declares as the ``datetime`` profile; an unparseable timestamp is
   omitted, never published as ``null`` or an invalid string.
 * A key whose value would be ``null`` is omitted.
 * Evidence snippets are capped at 200 characters; evidence attributes and
@@ -109,6 +110,9 @@ def _metadata() -> dict[str, Any]:
     return {
         "version": _OCSF_VERSION,
         "product": {"name": "ShadowScan", "version": __version__, "vendor_name": "Project Nexus"},
+        # The ``*_dt`` twins belong to the datetime profile; a validating
+        # consumer rejects or drops them unless the event declares it.
+        "profiles": ["datetime"],
     }
 
 

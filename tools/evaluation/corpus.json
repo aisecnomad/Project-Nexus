@@ -1339,6 +1339,401 @@
       "assertions": {
         "max_agent_findings": 0
       }
+    },
+    {
+      "id": "ex-bumblebee-text-generation",
+      "family": "polyglot-llm",
+      "description": "Elixir Bumblebee loading a Hugging Face model and building a text-generation serving is LLM usage",
+      "files": {
+        "mix.exs": "defmodule Briefs.MixProject do\n  use Mix.Project\n\n  def project, do: [app: :briefs, version: \"0.1.0\", deps: deps()]\n\n  defp deps do\n    [{:bumblebee, \"~> 0.6\"}, {:exla, \"~> 0.9\"}]\n  end\nend\n",
+        "lib/briefs/summarizer.ex": "defmodule Briefs.Summarizer do\n  @moduledoc \"Summarize support tickets with a local BART model.\"\n\n  def serving do\n    repo = {:hf, \"facebook/bart-large-cnn\"}\n    {:ok, model} = Bumblebee.load_model(repo)\n    {:ok, tokenizer} = Bumblebee.load_tokenizer(repo)\n    {:ok, config} = Bumblebee.load_generation_config(repo)\n    Bumblebee.Text.generation(model, tokenizer, config)\n  end\nend\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.nx-bumblebee"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ex-nx-statistics-only",
+      "family": "polyglot-llm",
+      "description": "Elixir Nx used for latency statistics is numerical computing, not LLM usage",
+      "files": {
+        "mix.exs": "defmodule Metrics.MixProject do\n  use Mix.Project\n\n  def project, do: [app: :metrics, version: \"0.1.0\", deps: [{:nx, \"~> 0.9\"}]]\nend\n",
+        "lib/metrics/stats.ex": "defmodule Metrics.Stats do\n  @moduledoc \"Latency percentiles for the dashboard.\"\n  import Nx, only: [tensor: 1]\n\n  def mean(samples), do: samples |> tensor() |> Nx.mean() |> Nx.to_number()\n\n  def spread(samples), do: samples |> tensor() |> Nx.standard_deviation() |> Nx.to_number()\nend\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.nx-bumblebee"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "framework.nx-bumblebee"
+        ]
+      }
+    },
+    {
+      "id": "ex-langchain-llm-chain",
+      "family": "polyglot-llm",
+      "description": "Elixir LangChain running an LLMChain with ChatOpenAI is LLM usage",
+      "files": {
+        "mix.exs": "defmodule Helpdesk.MixProject do\n  use Mix.Project\n\n  def project, do: [app: :helpdesk, version: \"0.1.0\", deps: [{:langchain, \"~> 0.3\"}]]\nend\n",
+        "lib/helpdesk/answer.ex": "defmodule Helpdesk.Answer do\n  alias LangChain.Chains.LLMChain\n  alias LangChain.ChatModels.ChatOpenAI\n  alias LangChain.Message\n\n  def run(question) do\n    %{llm: ChatOpenAI.new!(%{model: \"gpt-4o-mini\"})}\n    |> LLMChain.new!()\n    |> LLMChain.add_message(Message.new_user!(question))\n    |> LLMChain.run()\n  end\nend\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langchain-elixir"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ex-own-chains-module",
+      "family": "polyglot-llm",
+      "description": "An Elixir application's own Chains.Message module for retail store chains is not LangChain",
+      "files": {
+        "mix.exs": "defmodule Shop.MixProject do\n  use Mix.Project\n\n  def project, do: [app: :shop, version: \"0.1.0\", deps: [{:ecto, \"~> 3.12\"}]]\nend\n",
+        "lib/shop/chains.ex": "defmodule Shop.Chains.Message do\n  @moduledoc \"Retail chain notifications.\"\n  alias Shop.Chains.Store\n\n  def notify(%Store{} = store, text), do: {:ok, %{store: store.id, text: text}}\nend\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.langchain-elixir"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "framework.langchain-elixir"
+        ]
+      }
+    },
+    {
+      "id": "r-ellmer-ticket-classifier",
+      "family": "polyglot-llm",
+      "description": "An R package that classifies tickets through ellmer's chat_openai is LLM usage",
+      "files": {
+        "DESCRIPTION": "Package: triage\nTitle: Ticket Triage\nVersion: 0.1.0\nImports: ellmer\n",
+        "R/triage.R": "library(ellmer)\n\nclassify_ticket <- function(text) {\n  chat <- chat_openai(model = \"gpt-4o-mini\", system_prompt = \"Label the ticket as bug, question or request.\")\n  chat$chat(text)\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.r-ai"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "r-reticulate-torch-forecast",
+      "family": "polyglot-llm",
+      "description": "R reticulate calling numpy and torch tensors for a trend fit are general ML, not LLM usage",
+      "files": {
+        "DESCRIPTION": "Package: forecast\nTitle: Demand Forecast\nVersion: 0.1.0\nImports: reticulate, torch\n",
+        "R/forecast.R": "library(reticulate)\nlibrary(torch)\n\nnp <- import(\"numpy\")\n\nfit_trend <- function(series) {\n  x <- torch_tensor(seq_along(series), dtype = torch_float())\n  y <- torch_tensor(series, dtype = torch_float())\n  np$polyfit(as.numeric(x), as.numeric(y), 1L)\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.r-ai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "framework.r-ai"
+        ]
+      }
+    },
+    {
+      "id": "lua-ollama-plugin",
+      "family": "polyglot-llm",
+      "description": "A Lua plugin that requires the ollama client and generates a completion is LLM usage",
+      "files": {
+        "plugin/ask.lua": "local ollama = require(\"ollama\")\n\nlocal M = {}\n\nfunction M.ask(prompt)\n  return ollama.generate({ model = \"llama3.2\", prompt = prompt })\nend\n\nreturn M\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.lua-ai"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "lua-weather-http-plugin",
+      "family": "polyglot-llm",
+      "description": "A Lua plugin that fetches JSON from a weather API is not LLM usage",
+      "files": {
+        "plugin/weather.lua": "local http = require(\"socket.http\")\nlocal json = require(\"cjson\")\n\nlocal M = {}\n\nfunction M.today(city)\n  local body = http.request(\"https://api.weather.example/v1/today?city=\" .. city)\n  return json.decode(body)\nend\n\nreturn M\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.lua-ai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "framework.lua-ai"
+        ]
+      }
+    },
+    {
+      "id": "rs-candle-transformers-llama",
+      "family": "polyglot-llm",
+      "description": "A Rust crate depending on candle-transformers for a Llama model is LLM usage",
+      "files": {
+        "Cargo.toml": "[package]\nname = \"local-llm\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ncandle-core = \"0.8\"\ncandle-transformers = \"0.8\"\ntokenizers = \"0.20\"\n",
+        "src/main.rs": "use candle_core::{Device, Tensor};\nuse candle_transformers::models::llama::Llama;\n\nfn main() {\n    let device = Device::Cpu;\n    let _ = (Tensor::zeros(1, candle_core::DType::F32, &device), std::any::type_name::<Llama>());\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.rust-ai"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "rs-candle-core-image-filters",
+      "family": "polyglot-llm",
+      "description": "candle-core and candle-nn used for image tensor filters are a general tensor library, not LLM usage",
+      "files": {
+        "Cargo.toml": "[package]\nname = \"image-filters\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ncandle-core = \"0.8\"\ncandle-nn = \"0.8\"\n",
+        "src/lib.rs": "use candle_core::{Device, Result, Tensor};\nuse candle_nn::ops::sigmoid;\n\npub fn soften(pixels: &[f32]) -> Result<Tensor> {\n    let t = Tensor::new(pixels, &Device::Cpu)?;\n    sigmoid(&t)\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "framework.rust-ai"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "framework.rust-ai"
+        ]
+      }
+    },
+    {
+      "id": "py-mlflow-deployments-gateway-client",
+      "family": "ai-gateway",
+      "description": "A client that sends chat requests through the MLflow Deployments (AI Gateway) client is gateway usage",
+      "files": {
+        "requirements.txt": "mlflow[genai]==3.4.0\n",
+        "ask.py": "from mlflow.deployments import get_deploy_client\n\nclient = get_deploy_client(\"http://gateway:5000\")\nanswer = client.predict(endpoint=\"chat\", inputs={\"messages\": [{\"role\": \"user\", \"content\": \"Summarize the outage\"}]})\nprint(mlflow.deployments.get_deployments_target())\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "platform.mlflow-ai-gateway"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "py-mlflow-sklearn-tracking",
+      "family": "ai-gateway",
+      "description": "mlflow experiment tracking of a scikit-learn model is not MLflow AI Gateway usage",
+      "files": {
+        "requirements.txt": "mlflow==3.4.0\nscikit-learn==1.7.2\n",
+        "train.py": "import mlflow\nfrom sklearn.linear_model import LogisticRegression\n\nwith mlflow.start_run():\n    model = LogisticRegression().fit(X, y)\n    mlflow.sklearn.log_model(model, \"model\")\n    mlflow.log_metric(\"accuracy\", model.score(X, y))\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "platform.mlflow-ai-gateway"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "platform.mlflow-ai-gateway"
+        ]
+      }
+    },
+    {
+      "id": "api-gateway-route-config",
+      "family": "ai-gateway",
+      "description": "A gateway_config.yaml route table for an ordinary API gateway is not MLflow AI Gateway configuration",
+      "files": {
+        "gateway_config.yaml": "routes:\n  - id: orders\n    uri: http://orders:8080\n    predicates:\n      - Path=/orders/**\n  - id: billing\n    uri: http://billing:8080\n    predicates:\n      - Path=/billing/**\n",
+        "README.md": "# Edge gateway\n\nRoute table for the public API gateway.\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "platform.mlflow-ai-gateway"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "platform.mlflow-ai-gateway"
+        ]
+      }
+    },
+    {
+      "id": "ts-cloudflare-ai-gateway-base-url",
+      "family": "ai-gateway",
+      "description": "A Worker that points the OpenAI client at a Cloudflare AI Gateway base URL uses the gateway",
+      "files": {
+        "package.json": "{\n  \"name\": \"support-worker\",\n  \"private\": true,\n  \"dependencies\": { \"openai\": \"^5.0.0\" }\n}\n",
+        "src/index.ts": "import OpenAI from \"openai\";\n\nexport default {\n  async fetch(request: Request, env: Env): Promise<Response> {\n    const client = new OpenAI({\n      apiKey: env.OPENAI_API_KEY,\n      baseURL: `https://gateway.ai.cloudflare.com/v1/${env.ACCOUNT_ID}/support/openai`,\n    });\n    const reply = await client.chat.completions.create({ model: \"gpt-4o-mini\", messages: [{ role: \"user\", content: await request.text() }] });\n    return new Response(reply.choices[0].message.content);\n  },\n};\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "platform.cloudflare-ai-gateway"
+      },
+      "present": true,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "ts-cloudflare-workers-ai-binding",
+      "family": "ai-gateway",
+      "description": "A Worker that runs a model through the Workers AI binding uses Workers AI, not AI Gateway",
+      "files": {
+        "package.json": "{\n  \"name\": \"tagger-worker\",\n  \"private\": true,\n  \"devDependencies\": { \"wrangler\": \"^4.0.0\" }\n}\n",
+        "wrangler.toml": "name = \"tagger\"\nmain = \"src/index.ts\"\ncompatibility_date = \"2026-09-01\"\n\n[ai]\nbinding = \"AI\"\n",
+        "src/index.ts": "export default {\n  async fetch(request: Request, env: Env): Promise<Response> {\n    const text = await request.text();\n    const result = await env.AI.run(\"@cf/meta/llama-3.1-8b-instruct\", {\n      prompt: `Suggest three tags for: ${text}`,\n    });\n    return Response.json(result);\n  },\n};\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "platform.cloudflare-ai-gateway"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "platform.cloudflare-ai-gateway"
+        ]
+      }
+    },
+    {
+      "id": "py-agency-swarm-agency",
+      "family": "agent",
+      "description": "An Agency Swarm agency with a CEO delegating to a researcher agent is a multi-agent system",
+      "files": {
+        "requirements.txt": "agency-swarm==0.7.2\n",
+        "agency.py": "from agency_swarm import Agency, Agent\n\nceo = Agent(name=\"CEO\", description=\"Delegates research tasks\", instructions=\"Plan and delegate.\")\nresearcher = Agent(name=\"Researcher\", description=\"Searches the web\", tools=[])\n\nagency = Agency([ceo, [ceo, researcher]], shared_instructions=\"Be concise.\")\nagency.run_demo()\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.agency-swarm"
+      },
+      "present": true
+    },
+    {
+      "id": "py-travel-agency-dataclass",
+      "family": "agent",
+      "description": "A travel booking service with its own Agency dataclass is not Agency Swarm",
+      "files": {
+        "requirements.txt": "fastapi==0.118.0\n",
+        "booking.py": "from dataclasses import dataclass\n\n\n@dataclass\nclass Agency:\n    name: str\n    agents: list[str]\n\n\nAGENCIES = [Agency([\"Nordic Tours\"][0], [\"Ana\", \"Ben\"])]\n\n\ndef find(name: str) -> Agency | None:\n    return next((a for a in AGENCIES if a.name == name), None)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.agency-swarm"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "framework.agency-swarm"
+        ]
+      }
+    },
+    {
+      "id": "ts-rivet-graph-runner",
+      "family": "framework-usage",
+      "description": "A Node script that runs a Rivet project graph with @ironclad/rivet-node uses Rivet",
+      "files": {
+        "package.json": "{\n  \"name\": \"intake-graph\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": { \"@ironclad/rivet-node\": \"^1.20.0\" }\n}\n",
+        "run.ts": "import { runGraphInFile } from \"@ironclad/rivet-node\";\n\nconst outputs = await runGraphInFile(\"./intake.rivet-project\", {\n  graph: \"Main Graph\",\n  openAiKey: process.env.OPENAI_API_KEY,\n  inputs: { ticket: process.argv[2] ?? \"\" },\n});\nconsole.log(outputs.answer);\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "platform.rivet"
+      },
+      "present": true
+    },
+    {
+      "id": "json-build-graph-not-rivet",
+      "family": "framework-usage",
+      "description": "A JSON build graph with nodes and edges is not a Rivet project",
+      "files": {
+        "package.json": "{\n  \"name\": \"build-graph\",\n  \"private\": true,\n  \"dependencies\": { \"graphlib\": \"^2.1.8\" }\n}\n",
+        "data/build-graph.json": "{\n  \"graphs\": {\n    \"main\": {\n      \"nodes\": [ { \"id\": \"compile\" }, { \"id\": \"test\" }, { \"id\": \"package\" } ],\n      \"edges\": [ [\"compile\", \"test\"], [\"test\", \"package\"] ]\n    }\n  }\n}\n"
+      },
+      "target": {
+        "kind": "framework-usage",
+        "signature": "platform.rivet"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "platform.rivet"
+        ]
+      }
+    },
+    {
+      "id": "brewfile-developer-tools",
+      "family": "framework-usage",
+      "description": "A Brewfile that installs git, jq, PostgreSQL and an editor names no AI tool",
+      "files": {
+        "Brewfile": "tap \"homebrew/bundle\"\nbrew \"git\"\nbrew \"jq\"\nbrew \"postgresql@16\"\ncask \"visual-studio-code\"\n"
+      },
+      "target": {
+        "kind": "framework-usage"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "devin-environment-config",
+      "family": "agent-config",
+      "description": "A .devin directory with setup, lint and test commands configures the Devin coding agent",
+      "files": {
+        ".devin/config.json": "{\n  \"setup\": \"npm ci\",\n  \"lint\": \"npm run lint\",\n  \"test\": \"npm test\"\n}\n",
+        "package.json": "{\n  \"name\": \"web\",\n  \"private\": true\n}\n"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.devin"
+      },
+      "present": true
+    },
+    {
+      "id": "author-page-named-devin",
+      "family": "agent-config",
+      "description": "A team page named devin.md about an engineer called Devin is not Devin configuration",
+      "files": {
+        "team/devin.md": "# Devin Park\n\nPlatform engineer on the payments team. Ask Devin about the ledger service.\n",
+        "team/ana.md": "# Ana Silva\n\nEngineering manager.\n"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.devin"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "coding-agent.devin"
+        ]
+      }
     }
   ]
 }

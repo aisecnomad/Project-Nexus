@@ -76,7 +76,7 @@ Publication and artifact attestations do not establish deployment acceptance.
 - Confidence counts correlated evidence once, so repeated matches of one
   signal no longer inflate it; some non-code findings report lower
   confidence.
-- 232 signatures and 1,069 signals cover current agent SDKs, including Vercel
+- 232 signatures and 1,066 signals cover current agent SDKs, including Vercel
   AI SDK tool loops (AI SDK 7's `isStepCount`). Custom-pack framework patterns
   apply in every language, and detection-rule files (ShadowScan signature
   packs, Semgrep, Sigma, gitleaks) are treated as data.

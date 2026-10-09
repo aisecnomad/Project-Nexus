@@ -40,13 +40,126 @@ CS_REQUEST = 'await client.GetResponseAsync("weather", options); '
     [
         "var tool = AIFunctionFactory.Create(Greet); System.Console.WriteLine(tool.Name);",
         "var client = new FunctionInvokingChatClient(inner);",
-        "var client = inner.AsBuilder().UseFunctionInvocation().Build();",
     ],
 )
 def test_dotnet_tool_definitions_and_unconfigured_clients_are_usage(tmp_path, run_connector, body):
     findings = _scan(tmp_path, run_connector, "App.cs", _cs(body))
     assert not _agent(findings, "framework.microsoft-extensions-ai")
     assert all(not finding.capabilities for finding in findings)
+
+
+MEAI_PROJECT = (
+    '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><ImplicitUsings>enable</ImplicitUsings>'
+    '</PropertyGroup><ItemGroup><PackageReference Include="Microsoft.Extensions.AI" Version="9.5.0" />'
+    "</ItemGroup></Project>\n"
+)
+MEAI_DI_PROGRAM = (
+    "var builder = WebApplication.CreateBuilder(args);\n"
+    'builder.Services.AddChatClient(new OpenAIClient(key).GetChatClient("gpt-4o-mini").AsIChatClient())\n'
+    "    .UseFunctionInvocation();\n"
+    "builder.Services.AddSingleton<WeatherAgent>();\n"
+    "builder.Build().Run();\n"
+)
+MEAI_DI_AGENT = (
+    "using Microsoft.Extensions.AI;\n"
+    "public class WeatherAgent(IChatClient chatClient)\n{\n"
+    "    public async Task<string> Ask(string q)\n    {\n"
+    "        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(GetWeather)] };\n"
+    "        return (await chatClient.GetResponseAsync(q, options)).Text;\n"
+    "    }\n"
+    '    static string GetWeather(string city) => "sunny";\n}\n'
+)
+MEAI_CONSOLE = (
+    "using Microsoft.Extensions.AI;\n"
+    'IChatClient client = new OllamaChatClient(new Uri("http://localhost:11434"), "llama3.1")\n'
+    "    .AsBuilder().UseFunctionInvocation().Build();\n"
+    "ChatOptions options = new() { Tools = [AIFunctionFactory.Create(GetWeather)] };\n"
+    'Console.WriteLine(await client.GetResponseAsync("Weather in Paris?", options));\n'
+    'static string GetWeather(string city) => "sunny";\n'
+)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        # DI registration with an injected client; Program.cs relies on ImplicitUsings.
+        {"App.csproj": MEAI_PROJECT, "Program.cs": MEAI_DI_PROGRAM, "WeatherAgent.cs": MEAI_DI_AGENT},
+        {
+            "Program.cs": "using Microsoft.Extensions.AI;\n" + MEAI_DI_PROGRAM,
+            "WeatherAgent.cs": MEAI_DI_AGENT,
+        },
+        # Provider constructor chains and target-typed options from the SDK documentation.
+        {"Program.cs": MEAI_CONSOLE},
+        {"App.cs": _cs("var client = inner.AsBuilder().UseFunctionInvocation().Build();")},
+    ],
+)
+def test_dotnet_function_invocation_middleware_is_a_corroborated_agent_indicator(
+    tmp_path, run_connector, files
+):
+    # UseFunctionInvocation opts every response through the pipeline into the
+    # model-directed tool loop, including clients that DI injects elsewhere,
+    # which the bounded per-file proof cannot follow.
+    for name, source in files.items():
+        (tmp_path / name).write_text(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    agents = _agent(findings, "framework.microsoft-extensions-ai")
+    assert len(agents) == 1 and agents[0].capabilities == ["tool-use"]
+
+
+def test_dotnet_function_invocation_middleware_requires_library_corroboration(tmp_path, run_connector):
+    findings = _scan(tmp_path, run_connector, "Program.cs", MEAI_DI_PROGRAM)
+    assert not _agent(findings, "framework.microsoft-extensions-ai")
+    assert all(not finding.capabilities for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {
+            "Program.cs": "using Microsoft.Extensions.AI;\n"
+            "var builder = WebApplication.CreateBuilder(args);\n"
+            "builder.Services.AddSingleton<IChatClient>(sp => new FunctionInvokingChatClient(inner));\n"
+            "builder.Build().Run();\n",
+            "WeatherAgent.cs": MEAI_DI_AGENT,
+        },
+        {
+            "Helper.cs": "using Microsoft.Extensions.AI;\npublic class Helper\n{\n"
+            "    private readonly IChatClient _client;\n    private readonly ChatOptions _options;\n"
+            "    public Helper(IChatClient inner)\n    {\n"
+            "        _client = new FunctionInvokingChatClient(inner);\n"
+            "        _options = new ChatOptions { Tools = [AIFunctionFactory.Create(GetWeather)] };\n"
+            "    }\n"
+            "    public async Task<string> Ask(string q) => (await _client.GetResponseAsync(q, _options)).Text;\n"
+            '    static string GetWeather(string city) => "sunny";\n}\n',
+        },
+    ],
+)
+def test_dotnet_explicit_invoker_in_di_or_fields_is_documented_usage(tmp_path, run_connector, files):
+    # The explicit client type is not a lexical indicator, since it would override
+    # the per-file proof's rejections. Registered through DI or held in fields,
+    # it is beyond that proof; docs/connectors/code.md documents this as usage.
+    files = {"App.csproj": MEAI_PROJECT, **files}
+    for name, source in files.items():
+        (tmp_path / name).write_text(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not _agent(findings, "framework.microsoft-extensions-ai")
+    assert any("framework.microsoft-extensions-ai" in finding.frameworks for finding in findings)
+
+
+def test_dotnet_large_file_without_the_sdk_namespace_stays_complete(tmp_path, run_connector):
+    # WebRequest.GetResponseAsync shares the SDK's method name. A file that never
+    # names Microsoft.Extensions.AI cannot bind the proof, so it must not spend
+    # the proof's token budget and turn an ordinary .NET scan incomplete.
+    statement = "total += Compute(request.Alpha, request.Beta, {}) * Scale(request.Gamma, request.Delta);\n"
+    body = (
+        "".join(statement.format(i) for i in range(2600)) + "using var response = await r.GetResponseAsync();"
+    )
+    source = _cs(body, "WebRequest r, Request request", "using System.Net;")
+    assert source.count("\n") > 2500
+    assert len(polyglot_bindings._TOKEN.findall(source)) > polyglot_bindings.MAX_TOKENS
+    assert not _agent(_scan(tmp_path, run_connector, "Big.cs", source), "framework.microsoft-extensions-ai")
 
 
 @pytest.mark.parametrize(
@@ -107,6 +220,49 @@ def test_dotnet_options_retain_collection_mutation_provenance(tmp_path, run_conn
     assert findings[0].capabilities == []
     assert "tool-use" in findings[0].metadata["contextual_capabilities"]
     assert "tool-use" in findings[0].metadata["potential_capabilities"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        CS_CLIENT + "ChatOptions options = new() { Tools = [weather] }; " + CS_REQUEST,
+        CS_CLIENT
+        + "Microsoft.Extensions.AI.ChatOptions options = new() { Tools = [weather] }; "
+        + CS_REQUEST,
+        CS_CLIENT + 'await client.GetResponseAsync("weather", new() { Tools = [weather] }); ',
+        CS_CLIENT + 'await client.GetResponseAsync("weather", options: new() { Tools = [weather] }); ',
+        "FunctionInvokingChatClient client = new(inner); " + CS_OPTIONS + CS_REQUEST,
+    ],
+)
+def test_dotnet_target_typed_options_bind_tools(tmp_path, run_connector, body):
+    # The SDK documentation declares ChatOptions with target-typed new().
+    agents = _agent(_scan(tmp_path, run_connector, "App.cs", _cs(body)), "framework.microsoft-extensions-ai")
+    assert len(agents) == 1 and agents[0].capabilities == ["tool-use"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        CS_CLIENT + "ChatOptions options = new(); " + CS_REQUEST,
+        CS_CLIENT + "ChatOptions options = new() { Tools = [] }; " + CS_REQUEST,
+        CS_CLIENT
+        + "ChatOptions options = new() { Tools = [weather], ToolMode = ChatToolMode.None }; "
+        + CS_REQUEST,
+        CS_CLIENT + "Settings options = new() { Tools = [weather] }; " + CS_REQUEST,
+        CS_CLIENT + "var options = new() { Tools = [weather] }; " + CS_REQUEST,
+        CS_CLIENT + 'await client.GetResponseAsync("weather", new() { Tools = [] }); ',
+        CS_CLIENT + "await client.GetResponseAsync(new() { Tools = [weather] }); ",
+    ],
+)
+def test_dotnet_target_typed_options_need_the_sdk_type_and_tools(tmp_path, run_connector, body):
+    findings = _scan(tmp_path, run_connector, "App.cs", _cs(body))
+    assert not _agent(findings, "framework.microsoft-extensions-ai")
+
+
+def test_dotnet_target_typed_lookalike_options_do_not_borrow_sdk_identity(tmp_path, run_connector):
+    body = CS_CLIENT + "ChatOptions options = new() { Tools = [weather] }; " + CS_REQUEST
+    source = _cs(body) + "class ChatOptions { public object[] Tools; }\n"
+    assert not _agent(_scan(tmp_path, run_connector, "App.cs", source), "framework.microsoft-extensions-ai")
 
 
 def test_dotnet_tool_factory_registers_a_local_function_for_dispatch(tmp_path, run_connector):
@@ -233,6 +389,86 @@ def test_go_real_constructor_after_inert_prefix_retains_import_proof(tmp_path, r
 def test_go_local_receivers_and_parameters_do_not_borrow_package_identity(tmp_path, run_connector, body):
     source = 'package main\nimport "github.com/tmc/langchaingo/agents"\n' + body + "\n"
     assert not _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+
+
+GO_FUNC_TYPES = [
+    "type Hook func(int)",
+    "type Option func(*config)",
+    "var hook func(int) error",
+    # Results that end in a struct or interface literal close with "}".
+    "type Factory func() interface{}",
+    "type Factory func() struct{}",
+    "type Factory func() map[string]interface{}",
+    "type Factory func() interface {\n\tGet() int\n}",
+]
+
+
+@pytest.mark.parametrize("declaration", GO_FUNC_TYPES)
+@pytest.mark.parametrize(
+    "function",
+    [
+        "func run(agents Queue) { agents.NewExecutor() }",
+        "func run(\n\tagents Queue,\n) {\n\tagents.NewExecutor()\n}",
+    ],
+)
+def test_go_parameter_shadow_is_read_from_its_own_header(tmp_path, run_connector, declaration, function):
+    # A preceding function type ends at its newline; its func keyword is not
+    # the header whose parameter list shadows the imported package.
+    source = (
+        'package main\nimport "github.com/tmc/langchaingo/agents"\n' + declaration + "\n" + function + "\n"
+    )
+    assert not _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+
+
+@pytest.mark.parametrize("declaration", GO_FUNC_TYPES)
+def test_go_preceding_function_types_keep_unshadowed_package_proof(tmp_path, run_connector, declaration):
+    source = (
+        'package main\nimport "github.com/tmc/langchaingo/agents"\n'
+        + declaration
+        + "\nfunc run(queue Queue) { agents.NewExecutor(ctx, model) }\n"
+    )
+    assert _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "type Hook func(agents int)",
+        "type Hook func(agents int) interface{}",
+        "type Hook func(agents int) struct{}",
+        "type Hook func(agents []string) map[string]interface{}",
+        "type Hook func(agents int) interface {\n\tGet() int\n}",
+    ],
+)
+def test_go_preceding_function_type_parameters_do_not_shadow_the_next_body(
+    tmp_path, run_connector, declaration
+):
+    # The function type's own parameter is not in scope in the next function.
+    source = (
+        'package main\nimport "github.com/tmc/langchaingo/agents"\n'
+        + declaration
+        + "\nfunc run() {\n\texecutor := agents.NewExecutor(agent)\n\t_ = executor\n}\n"
+    )
+    assert _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+
+
+@pytest.mark.parametrize(
+    "function, shadowed",
+    [
+        ("func run(cfg struct {\n\tA int\n}, agents Queue) {\n\tagents.NewExecutor()\n}", True),
+        ("func run(agents Queue) interface {\n\tGet() int\n} {\n\tagents.NewExecutor()\n}", True),
+        ("func run(cfg struct {\n\tA int\n}) {\n\tagents.NewExecutor(ctx, model)\n}", False),
+    ],
+)
+def test_go_headers_spanning_struct_and_interface_literals_are_read_whole(
+    tmp_path, run_connector, function, shadowed
+):
+    source = (
+        'package main\nimport "github.com/tmc/langchaingo/agents"\n'
+        "type Factory func() interface{}\n" + function + "\n"
+    )
+    agents = _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+    assert bool(agents) != shadowed
 
 
 def test_go_llms_import_does_not_bind_unrelated_agents_receiver(tmp_path, run_connector):

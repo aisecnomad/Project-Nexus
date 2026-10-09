@@ -59,8 +59,9 @@ _MAX_REGEX_LENGTH = 8192
 # in which React code keeps JSX anyway.
 _TYPESCRIPT_DIALECTS = frozenset({".ts", ".tsx", ".mts", ".cts"})
 _JSX_RETRY_DIALECTS = frozenset({".js", ".mjs", ".cjs"})
-# A left shift of a name (`mask<<shift>limit`): read as JSX, its second "<" opens an element.
-_SHIFTED_NAME = re.compile(r"<<[A-Za-z]")
+# Text a JSX reading can change: a closing or self-closing tag. A plain .js file without one is never
+# read twice.
+_JSX_TAG_HINT = re.compile(r"</[A-Za-z]|/>")
 # Qt Linguist translations (<TS>) and Tiled tilesets (<tileset>) are XML documents named .ts or .tsx. Such
 # a document must open with an XML declaration or a document type declaration, which no TypeScript or
 # TSX source can start with (`<TS>expr` is a type assertion, `<TS></TS>;` a JSX statement), and a file
@@ -315,18 +316,28 @@ def noncode_ranges(
         if dialect in _JSX_RETRY_DIALECTS:
             jsx = False
         spans, incomplete = _javascript_ranges(text, jsx=jsx, typescript=typescript)
-        if incomplete and not jsx and dialect in _JSX_RETRY_DIALECTS and not _SHIFTED_NAME.search(text):
-            # React projects keep JSX in .js files, and a JSX closing tag read as code is a division
-            # followed by an unterminated regular expression. Valid JavaScript has no "<" where an
-            # expression starts, so the JSX walk is only used when it reads the whole file cleanly.
-            # Two exceptions are valid JavaScript that this walk would read as an element: the second
-            # "<" of a left shift, and a "<" after a word that can be a name in a script (`yield <a> 1`
-            # compares; see ``_ELEMENT_PREFIX_WORDS``); the retry is not used for either.
-            retried, retried_incomplete = _javascript_ranges(
-                text, jsx=True, typescript=typescript, implicit_jsx=True
-            )
+        if dialect in _JSX_RETRY_DIALECTS and (incomplete or _JSX_TAG_HINT.search(text)):
+            # React projects keep JSX in .js files. Read as plain JavaScript, a JSX closing tag is a
+            # division followed by an unterminated regular expression, and element text such as
+            # `src/*.js` opens a comment that can run to a later `*/` and hide code while the walk
+            # still completes. Read as JSX, valid script code can look like an element: `yield <a> 1`
+            # compares (``_ELEMENT_PREFIX_WORDS`` makes that reading ambiguous), and the second "<" of
+            # a left shift never opens one. When only one reading completes it is used; when both do,
+            # only what both mask stays masked, so code either reading shows stays visible.
+            try:
+                retried, retried_incomplete = _javascript_ranges(
+                    text, jsx=True, typescript=typescript, implicit_jsx=True
+                )
+            except MatchTimeoutError:
+                if incomplete:
+                    raise
+                # The plain reading completed, but the file holds tag-shaped text whose JSX reading
+                # could not be checked: it might hide code, so coverage is incomplete.
+                return spans, True
+            if incomplete:
+                return (retried, False) if not retried_incomplete else (spans, True)
             if not retried_incomplete:
-                return retried, False
+                return _common_spans(spans, retried), False
         return spans, incomplete
     if language in {"go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"}:
         return _other_source_ranges(text, language, dialect)
@@ -936,6 +947,8 @@ class _JavaScriptLexer:
                 jsx
                 and text[i] == "<"
                 and can_start_regex[-1]
+                # `<<` is one shift token, so `mask<<shift>limit` opens no element.
+                and (i == 0 or text[i - 1] != "<")
                 and (opened := _jsx_open_tag(text, i, self.budget)) is not None
             ):
                 if self.implicit_jsx and word_at >= 0 and _skip_trivia(text, word_end) == i:
@@ -1067,7 +1080,11 @@ _COMMENT_END_UNICODE = re.compile("[\n\r\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPAR
 _JAVA_UNICODE_ESCAPE = re.compile(r"(?<!\\)(\\++)u++([0-9A-Fa-f]{4})")
 # A PHP line comment also ends at a closing tag: `// note ?> html <?php code();` leaves PHP mode.
 _COMMENT_END_PHP = re.compile(r"[\n\r]|\?>")
-_RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
+# Rust raw strings: r"", byte br"" and C cr"" (Rust 1.77), with up to 255 "#".
+_RUST_RAW = re.compile(r'(?:br|rb|cr|r)(#{0,255})"')
+# A Rust character escape longer than two characters: \x7F, or \u{201C} with any "_" separators
+# (\u{1_F600}). The class excludes quotes, so scans from different quotes never overlap.
+_RUST_LONG_CHAR_ESCAPE = re.compile(r"\\x[0-9A-Fa-f]{2}|\\u\{[0-9A-Fa-f_]*+\}")
 # An F# character literal: one character, a simple escape, or a unicode/trigraph escape.
 _FSHARP_CHAR = re.compile(
     r"'(?:[^\\'\r\n]|\\(?:u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|x[0-9A-Fa-f]{2}|\d{3}|[^\r\n]))'"
@@ -1535,9 +1552,13 @@ class _SourceLexer:
                 return i + 1, False
         if quote == "'" and language == "rust":
             # A lifetime ('a or 'static) is code. Rust character literals
-            # contain exactly one character or an escaped character.
+            # contain exactly one character or one escape: \n, \x7F or \u{201C}.
             char = q + 1
-            char += 2 if char < size and text[char] == "\\" else 1
+            escape = _RUST_LONG_CHAR_ESCAPE.match(text, char)
+            if escape:
+                char = escape.end()
+            else:
+                char += 2 if char < size and text[char] == "\\" else 1
             if char >= size or text[char] != "'":
                 return i + 1, False
         if quote == '"' and language == "go":
