@@ -142,8 +142,28 @@ found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
 `__mocks__/`, `test_*.py`, `*_test.go`, `*.spec.ts`, …) has half weight and cannot
 promote a project to an *agent*; a project whose evidence is entirely test code
 is tagged `test-code-only`. Exported low-code workflows found under those paths
-follow the same rule. Set `include_tests: true` (`--include-tests`) to
-treat test code like any other source. A real-format credential under a test,
+follow the same rule.
+
+Documentation, example and generated code is discounted the same way, but never
+judged by a project's own location. Evidence under a documentation directory
+(`docs/`, `doc/`, `documentation/`, `wiki/`, `guides/`, `tutorials/`) or an
+example directory (`examples/`, `samples/`, `demos/`, `quickstart/`, `starter/`,
+`templates/`, `boilerplate/`, `cookbook/`, `recipes/`, and their singular or
+plural forms) has half weight only when that directory lies inside the file's
+project, below the directory holding its manifest. A directory that is itself a
+project root, such as `services/templates/` with its own `requirements.txt`, is a
+deployable unit and is not discounted. Generated code is recognized by file name
+only (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) and has 0.4 weight; a
+directory named `generated/` or `codegen/` is ordinary source. When all non-test
+evidence of a project is discounted, the finding is tagged `docs-only`,
+`example-code-only` or `generated-code-only` and its confidence is capped at
+0.85, 0.85 or 0.7 (`metadata.confidence_cap`); `metadata.negative_contexts` lists
+the contexts seen and each discounted evidence item carries
+`attributes.negative_context`. Discounted evidence keeps the capabilities it
+implies.
+
+Set `include_tests: true` (`--include-tests`) to treat test, documentation,
+example and generated code like any other source. A real-format credential under a test,
 fixture or `cassettes/` path is still reported as a `secret` finding, because
 recorded cassettes capture real traffic and a committed key is exposed wherever
 it lives; without `include_tests` it has half weight and the `test-code-only`
@@ -185,8 +205,11 @@ connectors:
     input: ./exports/aws.jsonl
 ```
 
-Each `code.filesystem.paths` root is a separate cache unit. Offline local directory
-inputs to `code.github` / `code.gitlab` and static exports to the four `cloud.*`
+Each `code.filesystem.paths` root is a separate cache unit. A `code.filesystem`
+scan with `diff_base` is never cached or reused: its result depends on HEAD and
+the base ref's merge base, which the working-tree fingerprint does not cover.
+Offline local directory inputs to `code.github` / `code.gitlab` and static
+exports to the four `cloud.*`
 connectors are also eligible. Live remote repositories, live cloud APIs, gateway
 logs, identity, SaaS inputs and third-party connectors are collected anew: unchanged configuration cannot
 establish that remote state is unchanged. Hashing still reads eligible inputs;
@@ -535,8 +558,11 @@ from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
 names appear. A data or prose file that only lists four or more products by
 domain or variable name (a proxy blocklist, a vendor policy, a copy of the
-signature packs) is a catalog: its mentions count only for a product with an
-import, dependency or code pattern elsewhere in the project, and the discounted
+signature packs) is a catalog, as is a shorter list whose file name has a whole
+deny-list word (`blocklist`, `denylist`, `blacklist`, `block`, `deny`,
+`firewall`, `waf`); an allowlist or egress policy permits what it names and is
+not one. A catalog's mentions count only for a product with an import,
+dependency or code pattern elsewhere in the project, and the discounted
 files are listed in `metadata.catalog_mentions` (see
 [Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers

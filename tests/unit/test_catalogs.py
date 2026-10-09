@@ -243,6 +243,42 @@ def test_policy_filename_is_catalog_below_threshold():
     assert catalog_files([*products("config/services.yaml", 3)]) == frozenset()
 
 
+@pytest.mark.parametrize(
+    "rel",
+    [
+        # An allowlist or egress policy permits the traffic it names: evidence of use.
+        "proxy/egress_allowlist.yaml",
+        "proxy/whitelist.json",
+        "net/ingress.yaml",
+        "net/egress.yaml",
+        "config/acl.yaml",
+        # Deny words inside other words are not deny lists.
+        "proxy/oracle_endpoints.yaml",
+        "config/security_agent.yaml",
+        "ui/dropdown.yaml",
+        "chain/blockchain.yaml",
+        "fab/wafer.yaml",
+        "infra/firewalls.yaml",
+    ],
+)
+def test_only_whole_deny_list_words_make_a_small_file_a_catalog(rel):
+    assert catalog_files(products(rel, 2)) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "proxy/ai-blocklist.yaml",
+        "net/deny_hosts.json",
+        "edge/waf.rules.yaml",
+        "gw/Firewall.yml",
+        "x/BLOCK.txt",
+    ],
+)
+def test_whole_deny_list_words_in_any_case_make_a_small_file_a_catalog(rel):
+    assert catalog_files(products(rel, 2)) == {rel}
+
+
 def test_a_catalog_is_judged_per_file():
     observations = [*products("a.yaml", 2), *products("b.yaml", 4), *products("src/app.py", 1)]
     assert catalog_files(observations) == {"b.yaml"}

@@ -439,6 +439,31 @@ def test_catalog_mentions_count_only_with_library_evidence(tmp_path: Path, run_c
     }
 
 
+@pytest.mark.parametrize("name", ["egress_allowlist.yaml", "oracle_endpoints.yaml", "security_agent.yaml"])
+def test_allowlists_and_partial_words_are_not_deny_lists(tmp_path: Path, run_connector, name):
+    # An egress allowlist that permits two providers is evidence of their use, and
+    # "oracle" or "security" must not read as the deny words "acl" or "security".
+    (tmp_path / "proxy").mkdir()
+    (tmp_path / "proxy" / name).write_text("hosts:\n  - api.openai.com\n  - api.anthropic.com\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    project = _project(findings)
+    assert project is not None and set(project.model_providers) == {"provider.openai", "provider.anthropic"}
+    assert "catalog_mentions" not in project.metadata
+    assert not [w for w in ctx.stats.warnings if "catalog" in w]
+
+
+def test_a_small_deny_list_is_a_catalog_and_the_note_says_why(tmp_path: Path, run_connector):
+    (tmp_path / "proxy").mkdir()
+    (tmp_path / "proxy" / "ai-blocklist.yaml").write_text(
+        "deny:\n  - api.openai.com\n  - api.anthropic.com\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and not ctx.stats.errors and not ctx.stats.incomplete
+    notes = [w for w in ctx.stats.warnings if "catalog" in w]
+    assert len(notes) == 1
+    assert "proxy/ai-blocklist.yaml" in notes[0] and "named as block or deny lists" in notes[0]
+
+
 def test_three_products_in_a_data_file_are_not_yet_a_catalog(tmp_path: Path, run_connector):
     (tmp_path / "egress.yaml").write_text("allow:\n" + "".join(f"  - {d}\n" for d in BLOCKLIST_DOMAINS[:3]))
     findings, _ = run_connector("code.filesystem", path=str(tmp_path))

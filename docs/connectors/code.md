@@ -162,8 +162,14 @@ Kubernetes-style resource (`apiVersion` and `kind`, also in a multi-document
 stream), an ECS task definition, or a data file that assigns a variable it
 names under an `env`, `environment`, `variables` or `secrets` key (as a key, or
 as the `name` or `key` of an item). A data file naming one to three products is
-configuration. The threshold of four is a judgement from the bundled corpora and
-fixtures: their multi-provider configurations name at most four products and are
+configuration, unless a whole word of its file name (split at `.`, `_` and `-`)
+names a deny rule set: `blocklist`, `denylist`, `blacklist`, `block`, `deny`,
+`firewall` or `waf` (`ai-blocklist.yaml`, `deny_hosts.json`). Such a file is a
+catalog whatever it names, and the scan note says so. An allowlist, whitelist,
+egress or ingress policy is not a deny list: it permits the traffic it names, so
+a short one is configuration and reports the products. The threshold of four
+is a judgement from the bundled corpora and fixtures: their multi-provider
+configurations name at most four products and are
 dotenv files, while blocklists and vendor policies name six to ten and the
 signature packs seven to thirty-six per file. A real routing table kept in a
 plain data file that names four or more providers by base URL, with no other
