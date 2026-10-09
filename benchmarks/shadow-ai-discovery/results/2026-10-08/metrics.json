@@ -56,6 +56,10 @@
     "error": 0,
     "missing": 0
    },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
+   },
    "seconds": {
     "median": 10.69,
     "p90": 37.65,
@@ -184,6 +188,7 @@
      "status": "ok",
      "seconds": 10.564,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -215,6 +220,7 @@
      "status": "ok",
      "seconds": 11.712,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "provider:google-gemini",
@@ -251,6 +257,7 @@
      "status": "ok",
      "seconds": 40.343,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:bedrock",
@@ -279,6 +286,7 @@
      "status": "ok",
      "seconds": 187.038,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:agno",
       "framework:autogen",
@@ -334,6 +342,7 @@
      "status": "ok",
      "seconds": 18.703,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:bedrock",
@@ -364,6 +373,7 @@
      "status": "ok",
      "seconds": 11.535,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:bedrock"
@@ -387,6 +397,7 @@
      "status": "ok",
      "seconds": 16.422,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:claude-agent-sdk",
       "provider:anthropic"
@@ -405,6 +416,7 @@
      "status": "ok",
      "seconds": 12.274,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic"
      ],
@@ -424,6 +436,7 @@
      "status": "ok",
      "seconds": 11.716,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic"
      ],
@@ -441,6 +454,7 @@
      "status": "ok",
      "seconds": 15.39,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -478,6 +492,7 @@
      "status": "ok",
      "seconds": 10.474,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:bedrock"
      ],
@@ -493,6 +508,7 @@
      "status": "ok",
      "seconds": 18.856,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:bedrock",
@@ -515,6 +531,7 @@
      "status": "ok",
      "seconds": 138.933,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:bedrock",
@@ -538,6 +555,7 @@
      "status": "ok",
      "seconds": 10.227,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:azure-openai"
      ],
@@ -556,6 +574,7 @@
      "status": "ok",
      "seconds": 13.73,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -575,6 +594,7 @@
      "status": "ok",
      "seconds": 20.423,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:deepseek",
@@ -615,6 +635,7 @@
      "status": "ok",
      "seconds": 28.65,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:browser-use",
       "provider:anthropic",
@@ -649,6 +670,7 @@
      "status": "ok",
      "seconds": 15.191,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:anthropic",
@@ -686,6 +708,7 @@
      "status": "ok",
      "seconds": 9.556,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -699,6 +722,7 @@
      "status": "ok",
      "seconds": 15.794,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:deepseek",
@@ -738,6 +762,7 @@
      "status": "ok",
      "seconds": 10.081,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langgraph",
@@ -758,6 +783,7 @@
      "status": "ok",
      "seconds": 8.841,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:haystack"
      ],
@@ -786,6 +812,7 @@
      "status": "ok",
      "seconds": 9.395,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -803,6 +830,7 @@
      "status": "ok",
      "seconds": 37.647,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:genkit",
       "framework:vercel-ai",
@@ -833,6 +861,7 @@
      "status": "ok",
      "seconds": 46.026,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp-client-config:generic",
       "provider:anthropic",
@@ -858,6 +887,7 @@
      "status": "ok",
      "seconds": 7.078,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -875,6 +905,7 @@
      "status": "ok",
      "seconds": 12.812,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langgraph"
      ],
@@ -891,6 +922,7 @@
      "status": "ok",
      "seconds": 7.685,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -904,6 +936,7 @@
      "status": "ok",
      "seconds": 51.91,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langgraph",
       "framework:litellm",
@@ -930,6 +963,7 @@
      "status": "ok",
      "seconds": 12.258,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:google-gemini"
      ],
@@ -949,6 +983,7 @@
      "status": "ok",
      "seconds": 45.894,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:google-gemini"
      ],
@@ -975,6 +1010,7 @@
      "status": "ok",
      "seconds": 13.411,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:google-gemini"
      ],
@@ -995,6 +1031,7 @@
      "status": "ok",
      "seconds": 9.261,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:huggingface"
      ],
@@ -1009,6 +1046,7 @@
      "status": "ok",
      "seconds": 12.764,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:smolagents",
       "provider:anthropic",
@@ -1039,6 +1077,7 @@
      "status": "ok",
      "seconds": 41.338,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:google-gemini",
@@ -1065,6 +1104,7 @@
      "status": "ok",
      "seconds": 9.492,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:google-gemini"
@@ -1082,6 +1122,7 @@
      "status": "ok",
      "seconds": 9.311,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -1108,6 +1149,7 @@
      "status": "ok",
      "seconds": 8.757,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -1125,6 +1167,7 @@
      "status": "ok",
      "seconds": 8.453,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain4j"
      ],
@@ -1152,6 +1195,7 @@
      "status": "ok",
      "seconds": 8.274,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:letta"
@@ -1166,6 +1210,7 @@
      "status": "ok",
      "seconds": 32.976,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:mastra",
       "framework:vercel-ai",
@@ -1213,6 +1258,7 @@
      "status": "ok",
      "seconds": 6.976,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:vercel-ai",
@@ -1237,6 +1283,7 @@
      "status": "ok",
      "seconds": 24.131,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "provider:anthropic",
@@ -1270,6 +1317,7 @@
      "status": "ok",
      "seconds": 12.554,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -1284,6 +1332,7 @@
      "status": "ok",
      "seconds": 8.224,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -1299,6 +1348,7 @@
      "status": "ok",
      "seconds": 28.954,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:semantic-kernel",
       "provider:anthropic",
@@ -1331,6 +1381,7 @@
      "status": "ok",
      "seconds": 8.492,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp-client-config:generic"
      ],
@@ -1349,6 +1400,7 @@
      "status": "ok",
      "seconds": 7.254,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "lowcode:n8n"
      ],
@@ -1365,6 +1417,7 @@
      "status": "ok",
      "seconds": 15.735,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -1384,6 +1437,7 @@
      "status": "ok",
      "seconds": 73.187,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "framework:openai-agents",
@@ -1408,6 +1462,7 @@
      "status": "ok",
      "seconds": 9.593,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -1422,6 +1477,7 @@
      "status": "ok",
      "seconds": 19.234,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -1456,6 +1512,7 @@
      "status": "ok",
      "seconds": 8.297,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai"
      ],
@@ -1496,6 +1553,7 @@
      "status": "ok",
      "seconds": 28.42,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -1508,6 +1566,7 @@
      "status": "ok",
      "seconds": 131.506,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:pydantic-ai",
       "provider:anthropic",
@@ -1546,6 +1605,7 @@
      "status": "ok",
      "seconds": 10.689,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -1577,6 +1637,7 @@
      "status": "ok",
      "seconds": 10.937,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -1592,6 +1653,7 @@
      "status": "ok",
      "seconds": 21.547,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:crewai",
@@ -1643,6 +1705,7 @@
      "status": "ok",
      "seconds": 7.752,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:spring-ai"
      ],
@@ -1664,6 +1727,7 @@
      "status": "ok",
      "seconds": 24.984,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:dspy",
       "framework:litellm",
@@ -1694,6 +1758,7 @@
      "status": "ok",
      "seconds": 18.381,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:strands",
       "mcp-client-config:generic",
@@ -1727,6 +1792,7 @@
      "status": "ok",
      "seconds": 8.038,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "lowcode:dify"
      ],
@@ -1747,6 +1813,7 @@
      "status": "ok",
      "seconds": 11.056,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -1765,6 +1832,7 @@
      "status": "ok",
      "seconds": 8.657,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchaingo"
      ],
@@ -1793,6 +1861,7 @@
      "status": "ok",
      "seconds": 8.042,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai"
      ],
@@ -1810,6 +1879,7 @@
      "status": "ok",
      "seconds": 6.529,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1820,6 +1890,7 @@
      "status": "ok",
      "seconds": 11.091,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1830,6 +1901,7 @@
      "status": "ok",
      "seconds": 10.656,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1840,6 +1912,7 @@
      "status": "ok",
      "seconds": 8.431,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1850,6 +1923,7 @@
      "status": "ok",
      "seconds": 7.593,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1860,6 +1934,7 @@
      "status": "ok",
      "seconds": 21.2,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1870,6 +1945,7 @@
      "status": "ok",
      "seconds": 10.62,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1880,6 +1956,7 @@
      "status": "ok",
      "seconds": 9.364,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1890,6 +1967,7 @@
      "status": "ok",
      "seconds": 8.207,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1900,6 +1978,7 @@
      "status": "ok",
      "seconds": 8.152,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1910,6 +1989,7 @@
      "status": "ok",
      "seconds": 7.614,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "mcp-client-config:generic"
@@ -1922,6 +2002,7 @@
      "status": "ok",
      "seconds": 9.524,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1932,6 +2013,7 @@
      "status": "ok",
      "seconds": 9.04,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:vercel-ai"
@@ -1944,6 +2026,7 @@
      "status": "ok",
      "seconds": 8.116,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1954,6 +2037,7 @@
      "status": "ok",
      "seconds": 9.558,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1964,6 +2048,7 @@
      "status": "ok",
      "seconds": 15.22,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1974,6 +2059,7 @@
      "status": "ok",
      "seconds": 8.505,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1984,6 +2070,7 @@
      "status": "ok",
      "seconds": 8.09,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -1994,6 +2081,7 @@
      "status": "ok",
      "seconds": 9.871,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -2004,6 +2092,7 @@
      "status": "ok",
      "seconds": 7.931,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -2014,6 +2103,7 @@
      "status": "ok",
      "seconds": 8.439,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "provider:bedrock"
@@ -2026,6 +2116,7 @@
      "status": "ok",
      "seconds": 13.489,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -2049,6 +2140,10 @@
     "skipped": 0,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
    },
    "seconds": {
     "median": 21.53,
@@ -2178,6 +2273,7 @@
      "status": "ok",
      "seconds": 17.409,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2209,6 +2305,7 @@
      "status": "ok",
      "seconds": 25.343,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:openai-agents"
@@ -2246,6 +2343,7 @@
      "status": "ok",
      "seconds": 148.154,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:openai-agents"
@@ -2275,6 +2373,7 @@
      "status": "ok",
      "seconds": 773.102,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langgraph",
       "framework:openai-agents",
@@ -2330,6 +2429,7 @@
      "status": "ok",
      "seconds": 36.281,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2359,6 +2459,7 @@
      "status": "ok",
      "seconds": 23.684,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:openai-agents"
@@ -2383,6 +2484,7 @@
      "status": "ok",
      "seconds": 40.83,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2400,6 +2502,7 @@
      "status": "ok",
      "seconds": 26.183,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2418,6 +2521,7 @@
      "status": "ok",
      "seconds": 32.693,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2434,6 +2538,7 @@
      "status": "ok",
      "seconds": 35.273,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2470,6 +2575,7 @@
      "status": "ok",
      "seconds": 16.12,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2484,6 +2590,7 @@
      "status": "ok",
      "seconds": 39.203,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2505,6 +2612,7 @@
      "status": "ok",
      "seconds": 485.516,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2527,6 +2635,7 @@
      "status": "ok",
      "seconds": 19.143,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2542,6 +2651,7 @@
      "status": "ok",
      "seconds": 36.309,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2560,6 +2670,7 @@
      "status": "ok",
      "seconds": 21.596,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2599,6 +2710,7 @@
      "status": "ok",
      "seconds": 84.579,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2632,6 +2744,7 @@
      "status": "ok",
      "seconds": 21.567,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2668,6 +2781,7 @@
      "status": "ok",
      "seconds": 18.326,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2681,6 +2795,7 @@
      "status": "ok",
      "seconds": 25.48,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2719,6 +2834,7 @@
      "status": "ok",
      "seconds": 20.976,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai"
      ],
@@ -2739,6 +2855,7 @@
      "status": "ok",
      "seconds": 17.907,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2766,6 +2883,7 @@
      "status": "ok",
      "seconds": 17.965,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2783,6 +2901,7 @@
      "status": "ok",
      "seconds": 115.328,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2812,6 +2931,7 @@
      "status": "ok",
      "seconds": 46.645,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2834,6 +2954,7 @@
      "status": "ok",
      "seconds": 17.527,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2850,6 +2971,7 @@
      "status": "ok",
      "seconds": 29.718,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langgraph"
      ],
@@ -2866,6 +2988,7 @@
      "status": "ok",
      "seconds": 16.279,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2879,6 +3002,7 @@
      "status": "ok",
      "seconds": 179.574,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langgraph"
      ],
@@ -2905,6 +3029,7 @@
      "status": "ok",
      "seconds": 19.135,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2923,6 +3048,7 @@
      "status": "ok",
      "seconds": 97.282,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2946,6 +3072,7 @@
      "status": "ok",
      "seconds": 25.16,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2965,6 +3092,7 @@
      "status": "ok",
      "seconds": 15.614,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -2978,6 +3106,7 @@
      "status": "ok",
      "seconds": 28.877,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3007,6 +3136,7 @@
      "status": "ok",
      "seconds": 145.281,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3028,6 +3158,7 @@
      "status": "ok",
      "seconds": 15.358,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3044,6 +3175,7 @@
      "status": "ok",
      "seconds": 18.498,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3069,6 +3201,7 @@
      "status": "ok",
      "seconds": 15.833,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langgraph"
      ],
@@ -3086,6 +3219,7 @@
      "status": "ok",
      "seconds": 15.216,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3112,6 +3246,7 @@
      "status": "ok",
      "seconds": 13.501,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3124,6 +3259,7 @@
      "status": "ok",
      "seconds": 56.273,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3170,6 +3306,7 @@
      "status": "ok",
      "seconds": 13.844,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3193,6 +3330,7 @@
      "status": "ok",
      "seconds": 52.311,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3225,6 +3363,7 @@
      "status": "ok",
      "seconds": 30.076,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3238,6 +3377,7 @@
      "status": "ok",
      "seconds": 15.217,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3252,6 +3392,7 @@
      "status": "ok",
      "seconds": 74.934,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3283,6 +3424,7 @@
      "status": "ok",
      "seconds": 13.927,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3300,6 +3442,7 @@
      "status": "ok",
      "seconds": 14.003,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "lowcode:n8n"
      ],
@@ -3314,6 +3457,7 @@
      "status": "ok",
      "seconds": 40.274,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3332,6 +3476,7 @@
      "status": "ok",
      "seconds": 286.86,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3352,6 +3497,7 @@
      "status": "ok",
      "seconds": 17.417,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3365,6 +3511,7 @@
      "status": "ok",
      "seconds": 51.57,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3398,6 +3545,7 @@
      "status": "ok",
      "seconds": 15.543,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3437,6 +3585,7 @@
      "status": "ok",
      "seconds": 69.191,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3449,6 +3598,7 @@
      "status": "ok",
      "seconds": 529.924,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -3489,6 +3639,7 @@
      "status": "ok",
      "seconds": 21.98,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3520,6 +3671,7 @@
      "status": "ok",
      "seconds": 18.509,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3534,6 +3686,7 @@
      "status": "ok",
      "seconds": 49.868,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:langgraph",
@@ -3585,6 +3738,7 @@
      "status": "ok",
      "seconds": 15.462,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3605,6 +3759,7 @@
      "status": "ok",
      "seconds": 69.656,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3634,6 +3789,7 @@
      "status": "ok",
      "seconds": 38.855,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:openai-agents"
@@ -3668,6 +3824,7 @@
      "status": "ok",
      "seconds": 23.809,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3685,6 +3842,7 @@
      "status": "ok",
      "seconds": 21.528,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3703,6 +3861,7 @@
      "status": "ok",
      "seconds": 17.808,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3730,6 +3889,7 @@
      "status": "ok",
      "seconds": 16.466,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -3746,6 +3906,7 @@
      "status": "ok",
      "seconds": 15.05,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3756,6 +3917,7 @@
      "status": "ok",
      "seconds": 26.328,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3766,6 +3928,7 @@
      "status": "ok",
      "seconds": 14.485,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3776,6 +3939,7 @@
      "status": "ok",
      "seconds": 15.284,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3786,6 +3950,7 @@
      "status": "ok",
      "seconds": 17.228,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3796,6 +3961,7 @@
      "status": "ok",
      "seconds": 15.714,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3806,6 +3972,7 @@
      "status": "ok",
      "seconds": 22.218,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3816,6 +3983,7 @@
      "status": "ok",
      "seconds": 22.079,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3826,6 +3994,7 @@
      "status": "ok",
      "seconds": 15.995,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3836,6 +4005,7 @@
      "status": "ok",
      "seconds": 14.742,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3846,6 +4016,7 @@
      "status": "ok",
      "seconds": 15.226,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3856,6 +4027,7 @@
      "status": "ok",
      "seconds": 16.537,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3866,6 +4038,7 @@
      "status": "ok",
      "seconds": 16.197,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3876,6 +4049,7 @@
      "status": "ok",
      "seconds": 15.039,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3886,6 +4060,7 @@
      "status": "ok",
      "seconds": 15.07,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3896,6 +4071,7 @@
      "status": "ok",
      "seconds": 42.473,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3906,6 +4082,7 @@
      "status": "ok",
      "seconds": 14.005,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3916,6 +4093,7 @@
      "status": "ok",
      "seconds": 16.684,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3926,6 +4104,7 @@
      "status": "ok",
      "seconds": 20.452,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3936,6 +4115,7 @@
      "status": "ok",
      "seconds": 15.242,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3946,6 +4126,7 @@
      "status": "ok",
      "seconds": 15.879,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3956,6 +4137,7 @@
      "status": "ok",
      "seconds": 31.943,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -3980,6 +4162,10 @@
     "skipped": 0,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
    },
    "seconds": {
     "median": 8.77,
@@ -4109,6 +4295,7 @@
      "status": "ok",
      "seconds": 22.658,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:rig",
       "mcp:sdk"
@@ -4141,6 +4328,7 @@
      "status": "ok",
      "seconds": 45.524,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -4186,6 +4374,7 @@
      "status": "ok",
      "seconds": 12.806,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -4214,6 +4403,7 @@
      "status": "ok",
      "seconds": 17.824,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:agno",
       "mcp:sdk",
@@ -4269,6 +4459,7 @@
      "status": "ok",
      "seconds": 7.725,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "framework:llamaindex",
@@ -4299,6 +4490,7 @@
      "status": "ok",
      "seconds": 24.39,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:claude-agent-sdk",
       "framework:vercel-ai",
@@ -4325,6 +4517,7 @@
      "status": "ok",
      "seconds": 4.38,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -4342,6 +4535,7 @@
      "status": "ok",
      "seconds": 17.147,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -4360,6 +4554,7 @@
      "status": "ok",
      "seconds": 6.188,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic"
@@ -4377,6 +4572,7 @@
      "status": "ok",
      "seconds": 11.691,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:langchain",
@@ -4414,6 +4610,7 @@
      "status": "ok",
      "seconds": 5.351,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -4428,6 +4625,7 @@
      "status": "ok",
      "seconds": 11.351,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -4450,6 +4648,7 @@
      "status": "ok",
      "seconds": 28.094,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "mcp:sdk",
@@ -4473,6 +4672,7 @@
      "status": "ok",
      "seconds": 5.064,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:llamaindex",
@@ -4489,6 +4689,7 @@
      "status": "ok",
      "seconds": 10.689,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:openai"
@@ -4508,6 +4709,7 @@
      "status": "ok",
      "seconds": 105.381,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "mcp:sdk"
@@ -4548,6 +4750,7 @@
      "status": "ok",
      "seconds": 7.657,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -4581,6 +4784,7 @@
      "status": "ok",
      "seconds": 88.092,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:ollama",
@@ -4618,6 +4822,7 @@
      "status": "ok",
      "seconds": 5.924,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -4631,6 +4836,7 @@
      "status": "ok",
      "seconds": 115.111,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:ollama",
@@ -4670,6 +4876,7 @@
      "status": "ok",
      "seconds": 13.372,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -4694,6 +4901,7 @@
      "status": "ok",
      "seconds": 4.535,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -4721,6 +4929,7 @@
      "status": "ok",
      "seconds": 5.984,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:microsoft-extensions-ai",
       "framework:semantic-kernel",
@@ -4739,6 +4948,7 @@
      "status": "ok",
      "seconds": 59.878,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:genkit",
       "framework:langchain",
@@ -4769,6 +4979,7 @@
      "status": "ok",
      "seconds": 63.781,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -4791,6 +5002,7 @@
      "status": "ok",
      "seconds": 8.924,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -4808,6 +5020,7 @@
      "status": "ok",
      "seconds": 6.833,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -4823,6 +5036,7 @@
      "status": "ok",
      "seconds": 7.301,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -4836,6 +5050,7 @@
      "status": "ok",
      "seconds": 15.342,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -4864,6 +5079,7 @@
      "status": "ok",
      "seconds": 61.951,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:google-gemini"
      ],
@@ -4883,6 +5099,7 @@
      "status": "ok",
      "seconds": 40.797,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:google-adk",
@@ -4911,6 +5128,7 @@
      "status": "ok",
      "seconds": 12.184,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:google-adk",
@@ -4931,6 +5149,7 @@
      "status": "ok",
      "seconds": 6.804,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:huggingface"
      ],
@@ -4945,6 +5164,7 @@
      "status": "ok",
      "seconds": 5.65,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:smolagents",
       "provider:anthropic",
@@ -4975,6 +5195,7 @@
      "status": "ok",
      "seconds": 9.945,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic",
@@ -4997,6 +5218,7 @@
      "status": "ok",
      "seconds": 11.074,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain"
      ],
@@ -5014,6 +5236,7 @@
      "status": "ok",
      "seconds": 5.99,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -5040,6 +5263,7 @@
      "status": "ok",
      "seconds": 4.891,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -5056,6 +5280,7 @@
      "status": "timeout",
      "seconds": 1500.164,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -5082,6 +5307,7 @@
      "status": "ok",
      "seconds": 4.786,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -5094,6 +5320,7 @@
      "status": "ok",
      "seconds": 487.292,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:mastra",
@@ -5143,6 +5370,7 @@
      "status": "ok",
      "seconds": 14.716,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:vercel-ai",
@@ -5167,6 +5395,7 @@
      "status": "ok",
      "seconds": 16.889,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:langchain",
@@ -5200,6 +5429,7 @@
      "status": "ok",
      "seconds": 11.594,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -5216,6 +5446,7 @@
      "status": "ok",
      "seconds": 4.756,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -5230,6 +5461,7 @@
      "status": "ok",
      "seconds": 26.732,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -5262,6 +5494,7 @@
      "status": "ok",
      "seconds": 8.877,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -5280,6 +5513,7 @@
      "status": "ok",
      "seconds": 4.341,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -5293,6 +5527,7 @@
      "status": "ok",
      "seconds": 39.05,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -5312,6 +5547,7 @@
      "status": "ok",
      "seconds": 8.709,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "mcp:sdk",
@@ -5335,6 +5571,7 @@
      "status": "ok",
      "seconds": 6.849,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:openai-agents",
       "provider:openai"
@@ -5348,6 +5585,7 @@
      "status": "ok",
      "seconds": 43.073,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -5382,6 +5620,7 @@
      "status": "ok",
      "seconds": 18.978,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:portkey",
       "framework:vercel-ai",
@@ -5422,6 +5661,7 @@
      "status": "failed",
      "seconds": 5.324,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -5434,6 +5674,7 @@
      "status": "ok",
      "seconds": 12.932,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:copilotkit",
       "mcp:sdk",
@@ -5474,6 +5715,7 @@
      "status": "ok",
      "seconds": 36.864,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:ollama",
@@ -5506,6 +5748,7 @@
      "status": "ok",
      "seconds": 10.635,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:llamaindex",
       "mcp:sdk"
@@ -5521,6 +5764,7 @@
      "status": "ok",
      "seconds": 56.093,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:agno",
       "framework:browser-use",
@@ -5574,6 +5818,7 @@
      "status": "ok",
      "seconds": 57.036,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:spring-ai",
       "mcp:sdk",
@@ -5595,6 +5840,7 @@
      "status": "ok",
      "seconds": 8.77,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:litellm",
@@ -5625,6 +5871,7 @@
      "status": "ok",
      "seconds": 24.164,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:copilotkit",
@@ -5660,6 +5907,7 @@
      "status": "ok",
      "seconds": 5.198,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -5677,6 +5925,7 @@
      "status": "ok",
      "seconds": 5.983,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -5695,6 +5944,7 @@
      "status": "ok",
      "seconds": 17.997,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchaingo",
       "provider:bedrock",
@@ -5723,6 +5973,7 @@
      "status": "ok",
      "seconds": 10.756,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai"
      ],
@@ -5740,6 +5991,7 @@
      "status": "ok",
      "seconds": 6.209,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5750,6 +6002,7 @@
      "status": "ok",
      "seconds": 5.553,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5760,6 +6013,7 @@
      "status": "ok",
      "seconds": 6.046,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5770,6 +6024,7 @@
      "status": "ok",
      "seconds": 6.249,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5780,6 +6035,7 @@
      "status": "ok",
      "seconds": 7.095,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5790,6 +6046,7 @@
      "status": "ok",
      "seconds": 17.24,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5800,6 +6057,7 @@
      "status": "ok",
      "seconds": 5.592,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5810,6 +6068,7 @@
      "status": "ok",
      "seconds": 5.294,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5820,6 +6079,7 @@
      "status": "ok",
      "seconds": 5.237,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5830,6 +6090,7 @@
      "status": "ok",
      "seconds": 5.044,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5840,6 +6101,7 @@
      "status": "ok",
      "seconds": 4.385,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5850,6 +6112,7 @@
      "status": "ok",
      "seconds": 5.248,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5860,6 +6123,7 @@
      "status": "ok",
      "seconds": 10.991,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5870,6 +6134,7 @@
      "status": "ok",
      "seconds": 4.318,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5880,6 +6145,7 @@
      "status": "ok",
      "seconds": 9.112,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5890,6 +6156,7 @@
      "status": "ok",
      "seconds": 5.869,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5900,6 +6167,7 @@
      "status": "ok",
      "seconds": 4.641,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5910,6 +6178,7 @@
      "status": "ok",
      "seconds": 5.157,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5920,6 +6189,7 @@
      "status": "ok",
      "seconds": 4.733,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5930,6 +6200,7 @@
      "status": "ok",
      "seconds": 4.939,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5940,6 +6211,7 @@
      "status": "ok",
      "seconds": 6.814,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5950,6 +6222,7 @@
      "status": "ok",
      "seconds": 5.487,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -5975,6 +6248,10 @@
     "skipped": 87,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
    },
    "seconds": {
     "median": null,
@@ -6104,6 +6381,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6135,6 +6413,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6170,6 +6449,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6197,6 +6477,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6251,6 +6532,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6280,6 +6562,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6302,6 +6585,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6319,6 +6603,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6337,6 +6622,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6353,6 +6639,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6389,6 +6676,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6403,6 +6691,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6424,6 +6713,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6446,6 +6736,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6461,6 +6752,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6479,6 +6771,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6518,6 +6811,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6551,6 +6845,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6587,6 +6882,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6600,6 +6896,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6638,6 +6935,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6657,6 +6955,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6684,6 +6983,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6701,6 +7001,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6730,6 +7031,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6752,6 +7054,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6768,6 +7071,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6783,6 +7087,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6796,6 +7101,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6821,6 +7127,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6839,6 +7146,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6862,6 +7170,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6881,6 +7190,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6894,6 +7204,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6923,6 +7234,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6944,6 +7256,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6960,6 +7273,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -6985,6 +7299,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7001,6 +7316,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7027,6 +7343,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7039,6 +7356,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7085,6 +7403,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7108,6 +7427,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7140,6 +7460,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7153,6 +7474,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7167,6 +7489,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7198,6 +7521,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7215,6 +7539,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7228,6 +7553,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7246,6 +7572,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7266,6 +7593,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7279,6 +7607,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7312,6 +7641,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7351,6 +7681,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7363,6 +7694,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7400,6 +7732,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7431,6 +7764,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7445,6 +7779,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7495,6 +7830,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7515,6 +7851,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7544,6 +7881,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7576,6 +7914,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7593,6 +7932,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7611,6 +7951,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7638,6 +7979,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -7654,6 +7996,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7664,6 +8007,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7674,6 +8018,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7684,6 +8029,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7694,6 +8040,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7704,6 +8051,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7714,6 +8062,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7724,6 +8073,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7734,6 +8084,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7744,6 +8095,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7754,6 +8106,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7764,6 +8117,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7774,6 +8128,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7784,6 +8139,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7794,6 +8150,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7804,6 +8161,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7814,6 +8172,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7824,6 +8183,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7834,6 +8194,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7844,6 +8205,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7854,6 +8216,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7864,6 +8227,7 @@
      "status": "skipped",
      "seconds": 0.0,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -7886,6 +8250,10 @@
     "skipped": 0,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
    },
    "seconds": {
     "median": 0.27,
@@ -8015,6 +8383,7 @@
      "status": "ok",
      "seconds": 0.315,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8046,6 +8415,7 @@
      "status": "ok",
      "seconds": 0.267,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8081,6 +8451,7 @@
      "status": "ok",
      "seconds": 0.472,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8108,6 +8479,7 @@
      "status": "ok",
      "seconds": 0.27,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8162,6 +8534,7 @@
      "status": "ok",
      "seconds": 0.271,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8191,6 +8564,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8213,6 +8587,7 @@
      "status": "ok",
      "seconds": 0.215,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8230,6 +8605,7 @@
      "status": "ok",
      "seconds": 0.322,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8248,6 +8624,7 @@
      "status": "ok",
      "seconds": 0.317,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8264,6 +8641,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8300,6 +8678,7 @@
      "status": "ok",
      "seconds": 0.281,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8314,6 +8693,7 @@
      "status": "ok",
      "seconds": 0.269,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8335,6 +8715,7 @@
      "status": "ok",
      "seconds": 0.266,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8357,6 +8738,7 @@
      "status": "ok",
      "seconds": 0.218,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8372,6 +8754,7 @@
      "status": "ok",
      "seconds": 0.223,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8390,6 +8773,7 @@
      "status": "ok",
      "seconds": 0.268,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8429,6 +8813,7 @@
      "status": "ok",
      "seconds": 0.215,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8462,6 +8847,7 @@
      "status": "ok",
      "seconds": 0.219,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8498,6 +8884,7 @@
      "status": "ok",
      "seconds": 0.219,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8511,6 +8898,7 @@
      "status": "ok",
      "seconds": 0.226,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8549,6 +8937,7 @@
      "status": "ok",
      "seconds": 0.22,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8568,6 +8957,7 @@
      "status": "ok",
      "seconds": 0.268,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8595,6 +8985,7 @@
      "status": "ok",
      "seconds": 0.216,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8612,6 +9003,7 @@
      "status": "ok",
      "seconds": 0.324,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8641,6 +9033,7 @@
      "status": "ok",
      "seconds": 0.216,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp-client-config:vscode"
      ],
@@ -8664,6 +9057,7 @@
      "status": "ok",
      "seconds": 0.269,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8680,6 +9074,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8695,6 +9090,7 @@
      "status": "ok",
      "seconds": 0.219,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8708,6 +9104,7 @@
      "status": "ok",
      "seconds": 0.27,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8733,6 +9130,7 @@
      "status": "ok",
      "seconds": 0.372,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8751,6 +9149,7 @@
      "status": "ok",
      "seconds": 0.619,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8774,6 +9173,7 @@
      "status": "ok",
      "seconds": 0.179,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8793,6 +9193,7 @@
      "status": "ok",
      "seconds": 0.169,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8806,6 +9207,7 @@
      "status": "ok",
      "seconds": 0.171,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8835,6 +9237,7 @@
      "status": "ok",
      "seconds": 0.223,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8856,6 +9259,7 @@
      "status": "ok",
      "seconds": 0.273,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8872,6 +9276,7 @@
      "status": "ok",
      "seconds": 0.265,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8897,6 +9302,7 @@
      "status": "ok",
      "seconds": 0.275,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8913,6 +9319,7 @@
      "status": "ok",
      "seconds": 0.273,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8939,6 +9346,7 @@
      "status": "ok",
      "seconds": 0.273,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -8951,6 +9359,7 @@
      "status": "ok",
      "seconds": 0.321,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp-client-config:cursor"
      ],
@@ -8998,6 +9407,7 @@
      "status": "ok",
      "seconds": 0.225,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9021,6 +9431,7 @@
      "status": "ok",
      "seconds": 0.329,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9053,6 +9464,7 @@
      "status": "ok",
      "seconds": 0.367,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9066,6 +9478,7 @@
      "status": "ok",
      "seconds": 0.219,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9080,6 +9493,7 @@
      "status": "ok",
      "seconds": 0.224,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9111,6 +9525,7 @@
      "status": "ok",
      "seconds": 0.222,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9128,6 +9543,7 @@
      "status": "ok",
      "seconds": 0.269,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9141,6 +9557,7 @@
      "status": "ok",
      "seconds": 0.322,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9159,6 +9576,7 @@
      "status": "ok",
      "seconds": 0.217,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9179,6 +9597,7 @@
      "status": "ok",
      "seconds": 0.27,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9192,6 +9611,7 @@
      "status": "ok",
      "seconds": 0.221,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9225,6 +9645,7 @@
      "status": "ok",
      "seconds": 0.276,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9264,6 +9685,7 @@
      "status": "ok",
      "seconds": 0.273,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9276,6 +9698,7 @@
      "status": "ok",
      "seconds": 0.218,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9313,6 +9736,7 @@
      "status": "ok",
      "seconds": 0.27,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9344,6 +9768,7 @@
      "status": "ok",
      "seconds": 0.22,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9358,6 +9783,7 @@
      "status": "ok",
      "seconds": 0.265,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9408,6 +9834,7 @@
      "status": "ok",
      "seconds": 0.219,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9428,6 +9855,7 @@
      "status": "ok",
      "seconds": 0.368,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9457,6 +9885,7 @@
      "status": "ok",
      "seconds": 0.232,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9489,6 +9918,7 @@
      "status": "ok",
      "seconds": 0.317,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9506,6 +9936,7 @@
      "status": "ok",
      "seconds": 0.321,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9524,6 +9955,7 @@
      "status": "ok",
      "seconds": 0.226,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9551,6 +9983,7 @@
      "status": "ok",
      "seconds": 0.271,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -9567,6 +10000,7 @@
      "status": "ok",
      "seconds": 0.28,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9577,6 +10011,7 @@
      "status": "ok",
      "seconds": 0.276,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9587,6 +10022,7 @@
      "status": "ok",
      "seconds": 0.219,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9597,6 +10033,7 @@
      "status": "ok",
      "seconds": 0.221,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9607,6 +10044,7 @@
      "status": "ok",
      "seconds": 0.27,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9617,6 +10055,7 @@
      "status": "ok",
      "seconds": 0.267,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9627,6 +10066,7 @@
      "status": "ok",
      "seconds": 0.269,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9637,6 +10077,7 @@
      "status": "ok",
      "seconds": 0.269,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9647,6 +10088,7 @@
      "status": "ok",
      "seconds": 0.229,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9657,6 +10099,7 @@
      "status": "ok",
      "seconds": 0.269,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9667,6 +10110,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9677,6 +10121,7 @@
      "status": "ok",
      "seconds": 0.373,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9687,6 +10132,7 @@
      "status": "ok",
      "seconds": 0.176,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9697,6 +10143,7 @@
      "status": "ok",
      "seconds": 0.265,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9707,6 +10154,7 @@
      "status": "ok",
      "seconds": 0.274,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9717,6 +10165,7 @@
      "status": "ok",
      "seconds": 0.267,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9727,6 +10176,7 @@
      "status": "ok",
      "seconds": 0.324,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9737,6 +10187,7 @@
      "status": "ok",
      "seconds": 0.221,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9747,6 +10198,7 @@
      "status": "ok",
      "seconds": 0.265,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9757,6 +10209,7 @@
      "status": "ok",
      "seconds": 0.167,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9767,6 +10220,7 @@
      "status": "ok",
      "seconds": 0.223,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9777,6 +10231,7 @@
      "status": "ok",
      "seconds": 0.325,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -9803,6 +10258,10 @@
     "skipped": 0,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
    },
    "seconds": {
     "median": 29.73,
@@ -9932,6 +10391,7 @@
      "status": "ok",
      "seconds": 898.063,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:cohere",
@@ -9967,6 +10427,7 @@
      "status": "ok",
      "seconds": 31.813,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -10003,6 +10464,7 @@
      "status": "ok",
      "seconds": 122.434,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -10034,6 +10496,7 @@
      "status": "ok",
      "seconds": 832.958,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:agno",
@@ -10089,6 +10552,7 @@
      "status": "ok",
      "seconds": 49.911,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "framework:llamaindex",
@@ -10119,6 +10583,7 @@
      "status": "ok",
      "seconds": 31.616,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:claude-agent-sdk",
       "framework:vercel-ai",
@@ -10144,6 +10609,7 @@
      "status": "ok",
      "seconds": 29.73,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic"
@@ -10162,6 +10628,7 @@
      "status": "ok",
      "seconds": 40.558,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic"
      ],
@@ -10183,6 +10650,7 @@
      "status": "ok",
      "seconds": 21.304,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic"
@@ -10200,6 +10668,7 @@
      "status": "ok",
      "seconds": 54.816,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:langchain",
@@ -10237,6 +10706,7 @@
      "status": "ok",
      "seconds": 12.716,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic"
      ],
@@ -10252,6 +10722,7 @@
      "status": "ok",
      "seconds": 52.93,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -10276,6 +10747,7 @@
      "status": "failed",
      "seconds": 411.555,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -10298,6 +10770,7 @@
      "status": "ok",
      "seconds": 12.521,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:llamaindex",
@@ -10314,6 +10787,7 @@
      "status": "ok",
      "seconds": 199.181,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:openai"
@@ -10333,6 +10807,7 @@
      "status": "ok",
      "seconds": 360.056,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "mcp:sdk",
@@ -10373,6 +10848,7 @@
      "status": "ok",
      "seconds": 71.814,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:browser-use",
       "framework:langchain",
@@ -10407,6 +10883,7 @@
      "status": "ok",
      "seconds": 368.666,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:anthropic",
@@ -10446,6 +10923,7 @@
      "status": "ok",
      "seconds": 73.662,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:eino",
       "provider:openai"
@@ -10459,6 +10937,7 @@
      "status": "ok",
      "seconds": 145.886,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:anthropic",
@@ -10500,6 +10979,7 @@
      "status": "ok",
      "seconds": 18.876,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -10520,6 +11000,7 @@
      "status": "ok",
      "seconds": 76.518,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:anthropic",
@@ -10548,6 +11029,7 @@
      "status": "ok",
      "seconds": 16.84,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:microsoft-extensions-ai",
       "framework:semantic-kernel",
@@ -10566,6 +11048,7 @@
      "status": "ok",
      "seconds": 265.502,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:genkit",
       "framework:langchain",
@@ -10599,6 +11082,7 @@
      "status": "ok",
      "seconds": 124.076,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:google-gemini",
@@ -10622,6 +11106,7 @@
      "status": "ok",
      "seconds": 68.94,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -10639,6 +11124,7 @@
      "status": "ok",
      "seconds": 21.016,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -10654,6 +11140,7 @@
      "status": "ok",
      "seconds": 94.84,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -10667,6 +11154,7 @@
      "status": "ok",
      "seconds": 199.852,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -10693,6 +11181,7 @@
      "status": "ok",
      "seconds": 637.162,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:google-gemini"
      ],
@@ -10717,6 +11206,7 @@
      "status": "ok",
      "seconds": 187.114,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:google-adk",
@@ -10744,6 +11234,7 @@
      "status": "ok",
      "seconds": 31.427,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:google-adk",
@@ -10764,6 +11255,7 @@
      "status": "ok",
      "seconds": 10.858,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:deepseek",
       "provider:huggingface"
@@ -10780,6 +11272,7 @@
      "status": "ok",
      "seconds": 26.929,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:litellm",
@@ -10810,6 +11303,7 @@
      "status": "ok",
      "seconds": 129.193,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic",
@@ -10836,6 +11330,7 @@
      "status": "ok",
      "seconds": 16.012,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -10852,6 +11347,7 @@
      "status": "ok",
      "seconds": 14.407,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -10878,6 +11374,7 @@
      "status": "ok",
      "seconds": 11.355,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -10894,6 +11391,7 @@
      "status": "ok",
      "seconds": 32.502,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain4j",
       "mcp:sdk",
@@ -10921,6 +11419,7 @@
      "status": "ok",
      "seconds": 9.876,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -10933,6 +11432,7 @@
      "status": "ok",
      "seconds": 1479.049,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:mastra",
@@ -10980,6 +11480,7 @@
      "status": "ok",
      "seconds": 18.154,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:vercel-ai",
@@ -11006,6 +11507,7 @@
      "status": "ok",
      "seconds": 92.67,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:langchain",
@@ -11039,6 +11541,7 @@
      "status": "ok",
      "seconds": 36.705,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -11053,6 +11556,7 @@
      "status": "ok",
      "seconds": 9.632,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -11067,6 +11571,7 @@
      "status": "ok",
      "seconds": 333.356,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -11103,6 +11608,7 @@
      "status": "ok",
      "seconds": 15.328,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -11121,6 +11627,7 @@
      "status": "ok",
      "seconds": 9.655,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -11134,6 +11641,7 @@
      "status": "ok",
      "seconds": 493.216,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -11153,6 +11661,7 @@
      "status": "ok",
      "seconds": 234.569,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "framework:openai-agents",
@@ -11177,6 +11686,7 @@
      "status": "ok",
      "seconds": 11.075,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:openai-agents",
       "provider:openai"
@@ -11190,6 +11700,7 @@
      "status": "ok",
      "seconds": 499.716,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:cohere",
@@ -11224,6 +11735,7 @@
      "status": "ok",
      "seconds": 100.405,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:agno",
       "framework:autogen",
@@ -11264,6 +11776,7 @@
      "status": "ok",
      "seconds": 68.225,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "provider:huggingface"
@@ -11278,6 +11791,7 @@
      "status": "timeout",
      "seconds": 1500.054,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -11315,6 +11829,7 @@
      "status": "ok",
      "seconds": 133.959,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:anthropic",
@@ -11349,6 +11864,7 @@
      "status": "ok",
      "seconds": 19.41,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:llamaindex",
       "mcp:sdk",
@@ -11363,6 +11879,7 @@
      "status": "ok",
      "seconds": 98.374,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:agno",
       "framework:autogen",
@@ -11414,6 +11931,7 @@
      "status": "ok",
      "seconds": 15.791,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:spring-ai",
       "mcp:sdk",
@@ -11435,6 +11953,7 @@
      "status": "ok",
      "seconds": 82.213,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:dspy",
       "framework:langchain",
@@ -11465,6 +11984,7 @@
      "status": "ok",
      "seconds": 186.265,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:haystack",
@@ -11498,6 +12018,7 @@
      "status": "ok",
      "seconds": 26.177,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:deepseek",
@@ -11516,6 +12037,7 @@
      "status": "ok",
      "seconds": 23.066,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "provider:anthropic",
@@ -11535,6 +12057,7 @@
      "status": "ok",
      "seconds": 51.496,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchaingo",
       "provider:anthropic",
@@ -11563,6 +12086,7 @@
      "status": "ok",
      "seconds": 19.663,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:deepseek",
@@ -11580,6 +12104,7 @@
      "status": "ok",
      "seconds": 24.325,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11590,6 +12115,7 @@
      "status": "ok",
      "seconds": 21.517,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11600,6 +12126,7 @@
      "status": "ok",
      "seconds": 16.58,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11610,6 +12137,7 @@
      "status": "ok",
      "seconds": 24.196,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11620,6 +12148,7 @@
      "status": "ok",
      "seconds": 161.078,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11630,6 +12159,7 @@
      "status": "ok",
      "seconds": 26.398,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11640,6 +12170,7 @@
      "status": "ok",
      "seconds": 17.639,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11650,6 +12181,7 @@
      "status": "ok",
      "seconds": 14.719,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11660,6 +12192,7 @@
      "status": "ok",
      "seconds": 15.236,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11670,6 +12203,7 @@
      "status": "ok",
      "seconds": 14.464,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11680,6 +12214,7 @@
      "status": "ok",
      "seconds": 9.252,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11690,6 +12225,7 @@
      "status": "ok",
      "seconds": 11.011,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11700,6 +12236,7 @@
      "status": "ok",
      "seconds": 21.318,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11710,6 +12247,7 @@
      "status": "ok",
      "seconds": 9.54,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11720,6 +12258,7 @@
      "status": "ok",
      "seconds": 19.551,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11730,6 +12269,7 @@
      "status": "ok",
      "seconds": 33.38,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11740,6 +12280,7 @@
      "status": "ok",
      "seconds": 9.822,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11750,6 +12291,7 @@
      "status": "ok",
      "seconds": 11.849,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11760,6 +12302,7 @@
      "status": "ok",
      "seconds": 13.53,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11770,6 +12313,7 @@
      "status": "ok",
      "seconds": 12.275,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11780,6 +12324,7 @@
      "status": "ok",
      "seconds": 12.079,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11790,6 +12335,7 @@
      "status": "ok",
      "seconds": 26.08,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -11818,6 +12364,54 @@
     "skipped": 0,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 43,
+    "repos": [
+     "0xPlaygrounds__rig",
+     "Aider-AI__aider",
+     "Azure-Samples__azure-search-openai-demo",
+     "BurntSushi__ripgrep",
+     "GoogleCloudPlatform__agent-starter-pack",
+     "JamesNK__Newtonsoft.Json",
+     "OpenInterpreter__open-interpreter",
+     "Portkey-AI__gateway",
+     "RooCodeInc__Roo-Code",
+     "SWE-agent__SWE-agent",
+     "Shubhamsaboo__awesome-llm-apps",
+     "ag2ai__ag2",
+     "agno-agi__agno",
+     "anthropics__claude-code",
+     "assafelovic__gpt-researcher",
+     "awslabs__amazon-bedrock-agent-samples",
+     "awslabs__mcp",
+     "block__goose",
+     "cline__cline",
+     "continuedev__continue",
+     "crewAIInc__crewAI-examples",
+     "deepset-ai__haystack-cookbook",
+     "firebase__genkit",
+     "github__awesome-copilot",
+     "gitlab-org__gitlab-runner",
+     "gitlab-org__modelops__applied-ml__code-suggestions__ai-assist",
+     "google-gemini__gemini-cli",
+     "google__adk-samples",
+     "jenkinsci__docker-agent",
+     "jlowin__fastmcp",
+     "langchain-ai__open_deep_research",
+     "langchain4j__langchain4j-examples",
+     "mastra-ai__mastra",
+     "microsoft__autogen",
+     "microsoft__semantic-kernel",
+     "openai__codex",
+     "openai__openai-agents-python",
+     "psf__requests",
+     "pydantic__pydantic",
+     "pydantic__pydantic-ai",
+     "stanfordnlp__dspy",
+     "strands-agents__samples",
+     "tmc__langchaingo"
+    ]
    },
    "seconds": {
     "median": 16.34,
@@ -11947,6 +12541,7 @@
      "status": "ok",
      "seconds": 196.501,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "framework:litellm",
@@ -11984,6 +12579,7 @@
      "status": "ok",
      "seconds": 38.71,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:agent-card",
       "a2a:sdk",
@@ -12021,6 +12617,7 @@
      "status": "ok",
      "seconds": 59.375,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "a2a:sdk",
       "agent-config:agents-md",
@@ -12051,6 +12648,7 @@
      "status": "ok",
      "seconds": 388.775,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "a2a:sdk",
       "agent-config:agents-md",
@@ -12108,6 +12706,7 @@
      "status": "ok",
      "seconds": 29.666,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "framework:litellm",
       "framework:llamaindex",
@@ -12138,6 +12737,7 @@
      "status": "ok",
      "seconds": 25.448,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:claude-md",
@@ -12161,6 +12761,7 @@
      "status": "ok",
      "seconds": 19.469,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:claude-md",
@@ -12179,6 +12780,7 @@
      "status": "ok",
      "seconds": 20.279,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:claude-md",
@@ -12200,6 +12802,7 @@
      "status": "ok",
      "seconds": 9.353,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills",
       "mcp:sdk",
@@ -12217,6 +12820,7 @@
      "status": "ok",
      "seconds": 30.102,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:cursor-rules",
       "agent-config:skills",
@@ -12254,6 +12858,7 @@
      "status": "ok",
      "seconds": 5.341,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "iac:bedrock"
      ],
@@ -12269,6 +12874,7 @@
      "status": "ok",
      "seconds": 36.138,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -12291,6 +12897,7 @@
      "status": "ok",
      "seconds": 230.67,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:skills",
@@ -12314,6 +12921,7 @@
      "status": "ok",
      "seconds": 5.218,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:llamaindex",
@@ -12329,6 +12937,7 @@
      "status": "ok",
      "seconds": 18.74,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:copilot-agents",
@@ -12347,6 +12956,7 @@
      "status": "ok",
      "seconds": 104.492,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-md",
@@ -12391,6 +13001,7 @@
      "status": "ok",
      "seconds": 46.193,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-md",
@@ -12427,6 +13038,7 @@
      "status": "ok",
      "seconds": 136.728,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-dir",
@@ -12470,6 +13082,7 @@
      "status": "ok",
      "seconds": 33.72,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:eino"
      ],
@@ -12484,6 +13097,7 @@
      "status": "ok",
      "seconds": 66.281,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-dir",
@@ -12523,6 +13137,7 @@
      "status": "ok",
      "seconds": 17.323,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -12542,6 +13157,7 @@
      "status": "ok",
      "seconds": 35.726,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "framework:dspy",
@@ -12572,6 +13188,7 @@
      "status": "ok",
      "seconds": 9.449,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:semantic-kernel",
       "iac:azure-openai",
@@ -12592,6 +13209,7 @@
      "status": "ok",
      "seconds": 184.045,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:gemini-md",
       "agent-config:skills",
@@ -12622,6 +13240,7 @@
      "status": "ok",
      "seconds": 51.486,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-md",
@@ -12647,6 +13266,7 @@
      "status": "ok",
      "seconds": 28.258,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:copilot-instructions",
       "mcp-client-config:generic",
@@ -12664,6 +13284,7 @@
      "status": "ok",
      "seconds": 11.809,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -12679,6 +13300,7 @@
      "status": "ok",
      "seconds": 25.561,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-md"
@@ -12692,6 +13314,7 @@
      "status": "ok",
      "seconds": 108.9,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:skills",
@@ -12718,6 +13341,7 @@
      "status": "ok",
      "seconds": 174.663,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "a2a:sdk",
       "agent-config:gemini-md",
@@ -12739,6 +13363,7 @@
      "status": "ok",
      "seconds": 112.596,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "a2a:sdk",
       "agent-config:agents-md",
@@ -12767,6 +13392,7 @@
      "status": "ok",
      "seconds": 19.052,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "a2a:sdk",
       "agent-config:gemini-md",
@@ -12786,6 +13412,7 @@
      "status": "ok",
      "seconds": 3.939,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:huggingface"
      ],
@@ -12802,6 +13429,7 @@
      "status": "ok",
      "seconds": 16.341,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:agents-md",
       "framework:browser-use",
@@ -12832,6 +13460,7 @@
      "status": "ok",
      "seconds": 113.117,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-dir",
@@ -12859,6 +13488,7 @@
      "status": "ok",
      "seconds": 8.371,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -12875,6 +13505,7 @@
      "status": "ok",
      "seconds": 10.248,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:claude-md",
       "framework:langchain",
@@ -12901,6 +13532,7 @@
      "status": "ok",
      "seconds": 6.578,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -12917,6 +13549,7 @@
      "status": "ok",
      "seconds": 15.749,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "framework:langchain4j",
       "provider:anthropic",
@@ -12944,6 +13577,7 @@
      "status": "ok",
      "seconds": 3.885,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:agents-md"
      ],
@@ -12956,6 +13590,7 @@
      "status": "ok",
      "seconds": 1061.769,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-dir",
@@ -13006,6 +13641,7 @@
      "status": "ok",
      "seconds": 7.613,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:vercel-ai",
@@ -13030,6 +13666,7 @@
      "status": "ok",
      "seconds": 65.706,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:copilot-instructions",
       "framework:autogen",
@@ -13063,6 +13700,7 @@
      "status": "ok",
      "seconds": 14.256,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:azure-openai",
       "provider:openai"
@@ -13076,6 +13714,7 @@
      "status": "ok",
      "seconds": 3.844,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md",
       "mcp:sdk"
@@ -13091,6 +13730,7 @@
      "status": "ok",
      "seconds": 148.185,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -13126,6 +13766,7 @@
      "status": "ok",
      "seconds": 10.385,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-md",
@@ -13144,6 +13785,7 @@
      "status": "ok",
      "seconds": 3.972,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "lowcode:n8n",
       "provider:ollama"
@@ -13157,6 +13799,7 @@
      "status": "ok",
      "seconds": 373.69,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:skills",
@@ -13181,6 +13824,7 @@
      "status": "ok",
      "seconds": 110.246,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:skills",
@@ -13207,6 +13851,7 @@
      "status": "ok",
      "seconds": 4.591,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:openai-agents",
       "provider:openai"
@@ -13220,6 +13865,7 @@
      "status": "ok",
      "seconds": 393.739,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:skills",
@@ -13254,6 +13900,7 @@
      "status": "ok",
      "seconds": 31.867,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:claude-md",
       "framework:agno",
@@ -13296,6 +13943,7 @@
      "status": "ok",
      "seconds": 26.438,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:skills"
      ],
@@ -13310,6 +13958,7 @@
      "status": "ok",
      "seconds": 954.507,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-dir",
@@ -13354,6 +14003,7 @@
      "status": "ok",
      "seconds": 65.453,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:roo",
@@ -13387,6 +14037,7 @@
      "status": "ok",
      "seconds": 6.963,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:llamaindex",
       "mcp:sdk",
@@ -13401,6 +14052,7 @@
      "status": "ok",
      "seconds": 81.434,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:agents-md",
       "agent-config:claude-dir",
@@ -13455,6 +14107,7 @@
      "status": "ok",
      "seconds": 13.312,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md",
       "agent-config:skills",
@@ -13476,6 +14129,7 @@
      "status": "ok",
      "seconds": 46.033,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:skills",
       "framework:dspy",
@@ -13508,6 +14162,7 @@
      "status": "ok",
      "seconds": 67.497,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "a2a:sdk",
       "agent-config:skills",
@@ -13541,6 +14196,7 @@
      "status": "ok",
      "seconds": 11.77,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "lowcode:dify"
      ],
@@ -13559,6 +14215,7 @@
      "status": "ok",
      "seconds": 10.454,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "agent-config:cursor-rules",
       "framework:litellm"
@@ -13578,6 +14235,7 @@
      "status": "ok",
      "seconds": 28.091,
      "flagged": true,
+     "incomplete": true,
      "tp": [
       "framework:langchaingo",
       "provider:anthropic",
@@ -13605,6 +14263,7 @@
      "status": "ok",
      "seconds": 6.449,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:cursor-rules",
       "framework:vercel-ai"
@@ -13622,6 +14281,7 @@
      "status": "ok",
      "seconds": 8.177,
      "flagged": false,
+     "incomplete": true,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13632,6 +14292,7 @@
      "status": "ok",
      "seconds": 4.995,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13642,6 +14303,7 @@
      "status": "ok",
      "seconds": 5.8,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13652,6 +14314,7 @@
      "status": "ok",
      "seconds": 7.946,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13662,6 +14325,7 @@
      "status": "ok",
      "seconds": 23.043,
      "flagged": false,
+     "incomplete": true,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13672,6 +14336,7 @@
      "status": "ok",
      "seconds": 8.192,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13682,6 +14347,7 @@
      "status": "ok",
      "seconds": 6.1,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13692,6 +14358,7 @@
      "status": "ok",
      "seconds": 5.298,
      "flagged": false,
+     "incomplete": true,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13702,6 +14369,7 @@
      "status": "ok",
      "seconds": 5.298,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13712,6 +14380,7 @@
      "status": "ok",
      "seconds": 4.587,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13722,6 +14391,7 @@
      "status": "ok",
      "seconds": 3.378,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13732,6 +14402,7 @@
      "status": "ok",
      "seconds": 3.943,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13742,6 +14413,7 @@
      "status": "ok",
      "seconds": 6.64,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13752,6 +14424,7 @@
      "status": "ok",
      "seconds": 3.683,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13762,6 +14435,7 @@
      "status": "ok",
      "seconds": 6.299,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "provider:huggingface"
@@ -13774,6 +14448,7 @@
      "status": "ok",
      "seconds": 10.969,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13784,6 +14459,7 @@
      "status": "ok",
      "seconds": 3.495,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13794,6 +14470,7 @@
      "status": "ok",
      "seconds": 3.837,
      "flagged": false,
+     "incomplete": true,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13804,6 +14481,7 @@
      "status": "ok",
      "seconds": 6.354,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13814,6 +14492,7 @@
      "status": "ok",
      "seconds": 4.497,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13824,6 +14503,7 @@
      "status": "ok",
      "seconds": 4.191,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13834,6 +14514,7 @@
      "status": "ok",
      "seconds": 8.613,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -13861,6 +14542,10 @@
     "skipped": 0,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
    },
    "seconds": {
     "median": 7.91,
@@ -13990,6 +14675,7 @@
      "status": "ok",
      "seconds": 87.767,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:bedrock",
@@ -14024,6 +14710,7 @@
      "status": "ok",
      "seconds": 11.947,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -14062,6 +14749,7 @@
      "status": "ok",
      "seconds": 20.386,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "mcp:sdk",
@@ -14094,6 +14782,7 @@
      "status": "ok",
      "seconds": 161.039,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:autogen",
@@ -14149,6 +14838,7 @@
      "status": "ok",
      "seconds": 13.588,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "framework:llamaindex",
@@ -14181,6 +14871,7 @@
      "status": "ok",
      "seconds": 14.461,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "mcp:sdk",
@@ -14206,6 +14897,7 @@
      "status": "ok",
      "seconds": 6.842,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic"
@@ -14228,6 +14920,7 @@
      "status": "ok",
      "seconds": 14.798,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic"
      ],
@@ -14250,6 +14943,7 @@
      "status": "ok",
      "seconds": 6.601,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic"
@@ -14267,6 +14961,7 @@
      "status": "ok",
      "seconds": 15.058,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:langchain",
@@ -14307,6 +15002,7 @@
      "status": "ok",
      "seconds": 3.184,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "iac:bedrock"
      ],
@@ -14322,6 +15018,7 @@
      "status": "ok",
      "seconds": 19.058,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -14346,6 +15043,7 @@
      "status": "ok",
      "seconds": 77.666,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "mcp:sdk",
@@ -14371,6 +15069,7 @@
      "status": "ok",
      "seconds": 3.249,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:llamaindex",
@@ -14389,6 +15088,7 @@
      "status": "ok",
      "seconds": 7.913,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:azure-openai",
@@ -14410,6 +15110,7 @@
      "status": "ok",
      "seconds": 109.047,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "framework:vercel-ai",
@@ -14452,6 +15153,7 @@
      "status": "ok",
      "seconds": 19.229,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:litellm",
@@ -14489,6 +15191,7 @@
      "status": "ok",
      "seconds": 231.193,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "provider:anthropic",
@@ -14530,6 +15233,7 @@
      "status": "ok",
      "seconds": 39.845,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -14546,6 +15250,7 @@
      "status": "ok",
      "seconds": 86.384,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:vercel-ai",
       "mcp:sdk",
@@ -14590,6 +15295,7 @@
      "status": "ok",
      "seconds": 4.479,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -14612,6 +15318,7 @@
      "status": "ok",
      "seconds": 3.476,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:dspy",
       "framework:langchain",
@@ -14640,6 +15347,7 @@
      "status": "ok",
      "seconds": 5.666,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:semantic-kernel",
       "provider:azure-openai",
@@ -14660,6 +15368,7 @@
      "status": "ok",
      "seconds": 94.105,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:genkit",
       "framework:langchain",
@@ -14693,6 +15402,7 @@
      "status": "ok",
      "seconds": 31.406,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp-client-config:generic",
       "provider:openai"
@@ -14718,6 +15428,7 @@
      "status": "ok",
      "seconds": 30.675,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -14738,6 +15449,7 @@
      "status": "ok",
      "seconds": 6.002,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -14756,6 +15468,7 @@
      "status": "ok",
      "seconds": 48.168,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:crewai"
@@ -14771,6 +15484,7 @@
      "status": "ok",
      "seconds": 35.556,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -14801,6 +15515,7 @@
      "status": "ok",
      "seconds": 149.769,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -14827,6 +15542,7 @@
      "status": "ok",
      "seconds": 71.567,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:google-adk",
@@ -14857,6 +15573,7 @@
      "status": "ok",
      "seconds": 7.653,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:google-adk",
@@ -14880,6 +15597,7 @@
      "status": "ok",
      "seconds": 2.282,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:huggingface"
      ],
@@ -14896,6 +15614,7 @@
      "status": "ok",
      "seconds": 7.21,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:litellm",
@@ -14928,6 +15647,7 @@
      "status": "ok",
      "seconds": 25.491,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic",
@@ -14953,6 +15673,7 @@
      "status": "ok",
      "seconds": 5.181,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -14971,6 +15692,7 @@
      "status": "ok",
      "seconds": 3.898,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -14999,6 +15721,7 @@
      "status": "ok",
      "seconds": 2.781,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:langgraph",
@@ -15016,6 +15739,7 @@
      "status": "ok",
      "seconds": 7.881,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain4j",
       "provider:anthropic",
@@ -15045,6 +15769,7 @@
      "status": "ok",
      "seconds": 1.983,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -15057,6 +15782,7 @@
      "status": "ok",
      "seconds": 684.831,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "framework:mastra",
@@ -15108,6 +15834,7 @@
      "status": "ok",
      "seconds": 6.092,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:anthropic",
@@ -15132,6 +15859,7 @@
      "status": "ok",
      "seconds": 30.226,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:langchain",
@@ -15167,6 +15895,7 @@
      "status": "ok",
      "seconds": 11.488,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:azure-openai",
       "provider:openai"
@@ -15182,6 +15911,7 @@
      "status": "ok",
      "seconds": 2.177,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -15196,6 +15926,7 @@
      "status": "ok",
      "seconds": 100.127,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:semantic-kernel",
@@ -15232,6 +15963,7 @@
      "status": "ok",
      "seconds": 5.467,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic"
@@ -15252,6 +15984,7 @@
      "status": "ok",
      "seconds": 2.364,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "lowcode:n8n",
       "provider:ollama"
@@ -15265,6 +15998,7 @@
      "status": "ok",
      "seconds": 308.442,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:bedrock",
       "provider:openai"
@@ -15289,6 +16023,7 @@
      "status": "ok",
      "seconds": 34.363,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm",
       "mcp:sdk",
@@ -15315,6 +16050,7 @@
      "status": "ok",
      "seconds": 2.829,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -15331,6 +16067,7 @@
      "status": "ok",
      "seconds": 317.641,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:bedrock",
@@ -15367,6 +16104,7 @@
      "status": "ok",
      "seconds": 17.518,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:crewai",
@@ -15407,6 +16145,7 @@
      "status": "ok",
      "seconds": 20.796,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "provider:huggingface",
@@ -15422,6 +16161,7 @@
      "status": "ok",
      "seconds": 62.834,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic",
@@ -15465,6 +16205,7 @@
      "status": "ok",
      "seconds": 75.726,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:azure-openai",
@@ -15499,6 +16240,7 @@
      "status": "ok",
      "seconds": 5.842,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:llamaindex"
      ],
@@ -15518,6 +16260,7 @@
      "status": "ok",
      "seconds": 34.803,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:autogen",
       "framework:crewai",
@@ -15571,6 +16314,7 @@
      "status": "ok",
      "seconds": 6.556,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:ollama",
@@ -15595,6 +16339,7 @@
      "status": "ok",
      "seconds": 16.981,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:dspy",
       "framework:langchain",
@@ -15628,6 +16373,7 @@
      "status": "ok",
      "seconds": 33.082,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "a2a:sdk",
       "framework:langchain",
@@ -15666,6 +16412,7 @@
      "status": "ok",
      "seconds": 2.896,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -15683,6 +16430,7 @@
      "status": "ok",
      "seconds": 5.092,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:litellm"
      ],
@@ -15704,6 +16452,7 @@
      "status": "ok",
      "seconds": 23.966,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:bedrock",
       "provider:huggingface",
@@ -15736,6 +16485,7 @@
      "status": "ok",
      "seconds": 7.585,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -15752,6 +16502,7 @@
      "status": "ok",
      "seconds": 11.367,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15762,6 +16513,7 @@
      "status": "ok",
      "seconds": 3.532,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15772,6 +16524,7 @@
      "status": "ok",
      "seconds": 3.248,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15782,6 +16535,7 @@
      "status": "ok",
      "seconds": 5.89,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15792,6 +16546,7 @@
      "status": "ok",
      "seconds": 45.929,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:crewai"
@@ -15804,6 +16559,7 @@
      "status": "ok",
      "seconds": 12.774,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15814,6 +16570,7 @@
      "status": "ok",
      "seconds": 4.243,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:crewai"
@@ -15826,6 +16583,7 @@
      "status": "ok",
      "seconds": 3.583,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15836,6 +16594,7 @@
      "status": "ok",
      "seconds": 5.546,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "provider:together"
@@ -15848,6 +16607,7 @@
      "status": "ok",
      "seconds": 2.427,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15858,6 +16618,7 @@
      "status": "ok",
      "seconds": 1.68,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15868,6 +16629,7 @@
      "status": "ok",
      "seconds": 1.989,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15878,6 +16640,7 @@
      "status": "ok",
      "seconds": 7.698,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15888,6 +16651,7 @@
      "status": "ok",
      "seconds": 2.236,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15898,6 +16662,7 @@
      "status": "ok",
      "seconds": 3.194,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15908,6 +16673,7 @@
      "status": "ok",
      "seconds": 10.938,
      "flagged": true,
+     "incomplete": false,
      "tp": [],
      "fp": [
       "framework:crewai"
@@ -15920,6 +16686,7 @@
      "status": "ok",
      "seconds": 2.02,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15930,6 +16697,7 @@
      "status": "ok",
      "seconds": 2.231,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15940,6 +16708,7 @@
      "status": "ok",
      "seconds": 4.186,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15950,6 +16719,7 @@
      "status": "ok",
      "seconds": 3.739,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15960,6 +16730,7 @@
      "status": "ok",
      "seconds": 3.334,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15970,6 +16741,7 @@
      "status": "ok",
      "seconds": 12.987,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -15992,6 +16764,10 @@
     "skipped": 0,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
    },
    "seconds": {
     "median": 0.27,
@@ -16121,6 +16897,7 @@
      "status": "ok",
      "seconds": 0.419,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16152,6 +16929,7 @@
      "status": "ok",
      "seconds": 0.334,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16187,6 +16965,7 @@
      "status": "ok",
      "seconds": 0.269,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16214,6 +16993,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md",
       "agent-config:cursor-rules"
@@ -16269,6 +17049,7 @@
      "status": "ok",
      "seconds": 0.221,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16298,6 +17079,7 @@
      "status": "ok",
      "seconds": 0.22,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md"
      ],
@@ -16321,6 +17103,7 @@
      "status": "ok",
      "seconds": 0.271,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:claude-md",
@@ -16339,6 +17122,7 @@
      "status": "ok",
      "seconds": 0.318,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md"
      ],
@@ -16358,6 +17142,7 @@
      "status": "ok",
      "seconds": 0.285,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills"
      ],
@@ -16375,6 +17160,7 @@
      "status": "ok",
      "seconds": 0.22,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:cursor-rules",
       "agent-config:skills",
@@ -16412,6 +17198,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16426,6 +17213,7 @@
      "status": "ok",
      "seconds": 0.235,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16447,6 +17235,7 @@
      "status": "ok",
      "seconds": 0.296,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16469,6 +17258,7 @@
      "status": "ok",
      "seconds": 0.369,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16484,6 +17274,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16502,6 +17293,7 @@
      "status": "ok",
      "seconds": 0.327,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md",
       "agent-config:goose"
@@ -16542,6 +17334,7 @@
      "status": "ok",
      "seconds": 0.326,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md",
       "agent-config:skills"
@@ -16576,6 +17369,7 @@
      "status": "ok",
      "seconds": 0.322,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:clinerules",
@@ -16613,6 +17407,7 @@
      "status": "ok",
      "seconds": 0.322,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16626,6 +17421,7 @@
      "status": "ok",
      "seconds": 0.317,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:skills"
@@ -16665,6 +17461,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16684,6 +17481,7 @@
      "status": "ok",
      "seconds": 0.28,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16711,6 +17509,7 @@
      "status": "ok",
      "seconds": 0.367,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16728,6 +17527,7 @@
      "status": "ok",
      "seconds": 0.268,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills"
      ],
@@ -16758,6 +17558,7 @@
      "status": "ok",
      "seconds": 0.469,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills",
       "mcp-client-config:vscode"
@@ -16781,6 +17582,7 @@
      "status": "ok",
      "seconds": 0.27,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16797,6 +17599,7 @@
      "status": "ok",
      "seconds": 0.319,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16812,6 +17615,7 @@
      "status": "ok",
      "seconds": 0.205,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16825,6 +17629,7 @@
      "status": "ok",
      "seconds": 0.267,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills"
      ],
@@ -16853,6 +17658,7 @@
      "status": "ok",
      "seconds": 0.373,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:gemini-md"
      ],
@@ -16872,6 +17678,7 @@
      "status": "ok",
      "seconds": 0.328,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills"
      ],
@@ -16896,6 +17703,7 @@
      "status": "ok",
      "seconds": 0.317,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:gemini-md"
      ],
@@ -16916,6 +17724,7 @@
      "status": "ok",
      "seconds": 0.323,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16929,6 +17738,7 @@
      "status": "ok",
      "seconds": 0.318,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16958,6 +17768,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:cursor-rules",
@@ -16982,6 +17793,7 @@
      "status": "ok",
      "seconds": 0.23,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -16998,6 +17810,7 @@
      "status": "ok",
      "seconds": 0.271,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md"
      ],
@@ -17024,6 +17837,7 @@
      "status": "ok",
      "seconds": 0.275,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17040,6 +17854,7 @@
      "status": "ok",
      "seconds": 0.275,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17066,6 +17881,7 @@
      "status": "ok",
      "seconds": 0.318,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17078,6 +17894,7 @@
      "status": "ok",
      "seconds": 0.219,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:claude-md",
@@ -17125,6 +17942,7 @@
      "status": "ok",
      "seconds": 0.226,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17148,6 +17966,7 @@
      "status": "ok",
      "seconds": 0.22,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17180,6 +17999,7 @@
      "status": "ok",
      "seconds": 0.186,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17193,6 +18013,7 @@
      "status": "ok",
      "seconds": 0.186,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md"
      ],
@@ -17208,6 +18029,7 @@
      "status": "ok",
      "seconds": 0.23,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17239,6 +18061,7 @@
      "status": "ok",
      "seconds": 0.239,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md",
       "mcp-client-config:claude-code"
@@ -17257,6 +18080,7 @@
      "status": "ok",
      "seconds": 0.273,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17270,6 +18094,7 @@
      "status": "ok",
      "seconds": 0.226,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17288,6 +18113,7 @@
      "status": "ok",
      "seconds": 0.268,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills"
      ],
@@ -17311,6 +18137,7 @@
      "status": "ok",
      "seconds": 0.28,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17324,6 +18151,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17357,6 +18185,7 @@
      "status": "ok",
      "seconds": 0.224,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md"
      ],
@@ -17397,6 +18226,7 @@
      "status": "ok",
      "seconds": 0.218,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills"
      ],
@@ -17409,6 +18239,7 @@
      "status": "ok",
      "seconds": 0.22,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-dir",
       "agent-config:skills"
@@ -17449,6 +18280,7 @@
      "status": "ok",
      "seconds": 0.273,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:roo",
       "agent-config:skills"
@@ -17481,6 +18313,7 @@
      "status": "ok",
      "seconds": 0.222,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17495,6 +18328,7 @@
      "status": "ok",
      "seconds": 0.267,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17545,6 +18379,7 @@
      "status": "ok",
      "seconds": 0.226,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:claude-md"
      ],
@@ -17566,6 +18401,7 @@
      "status": "ok",
      "seconds": 0.37,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:skills"
      ],
@@ -17596,6 +18432,7 @@
      "status": "ok",
      "seconds": 0.317,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17628,6 +18465,7 @@
      "status": "ok",
      "seconds": 0.379,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17645,6 +18483,7 @@
      "status": "ok",
      "seconds": 0.222,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:cursor-rules"
      ],
@@ -17664,6 +18503,7 @@
      "status": "ok",
      "seconds": 0.321,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -17691,6 +18531,7 @@
      "status": "ok",
      "seconds": 0.366,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "agent-config:cursor-rules"
      ],
@@ -17708,6 +18549,7 @@
      "status": "ok",
      "seconds": 0.327,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17718,6 +18560,7 @@
      "status": "ok",
      "seconds": 0.319,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17728,6 +18571,7 @@
      "status": "ok",
      "seconds": 0.276,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17738,6 +18582,7 @@
      "status": "ok",
      "seconds": 0.219,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17748,6 +18593,7 @@
      "status": "ok",
      "seconds": 0.272,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17758,6 +18604,7 @@
      "status": "ok",
      "seconds": 0.276,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17768,6 +18615,7 @@
      "status": "ok",
      "seconds": 0.217,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17778,6 +18626,7 @@
      "status": "ok",
      "seconds": 0.281,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17788,6 +18637,7 @@
      "status": "ok",
      "seconds": 0.287,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17798,6 +18648,7 @@
      "status": "ok",
      "seconds": 0.222,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17808,6 +18659,7 @@
      "status": "ok",
      "seconds": 0.27,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17818,6 +18670,7 @@
      "status": "ok",
      "seconds": 0.374,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17828,6 +18681,7 @@
      "status": "ok",
      "seconds": 0.222,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17838,6 +18692,7 @@
      "status": "ok",
      "seconds": 0.271,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17848,6 +18703,7 @@
      "status": "ok",
      "seconds": 0.276,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17858,6 +18714,7 @@
      "status": "ok",
      "seconds": 0.276,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17868,6 +18725,7 @@
      "status": "ok",
      "seconds": 0.273,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17878,6 +18736,7 @@
      "status": "ok",
      "seconds": 0.224,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17888,6 +18747,7 @@
      "status": "ok",
      "seconds": 0.319,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17898,6 +18758,7 @@
      "status": "ok",
      "seconds": 0.218,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17908,6 +18769,7 @@
      "status": "ok",
      "seconds": 0.22,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17918,6 +18780,7 @@
      "status": "ok",
      "seconds": 0.27,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -17942,6 +18805,10 @@
     "skipped": 0,
     "error": 0,
     "missing": 0
+   },
+   "incomplete_runs": {
+    "count": 0,
+    "repos": []
    },
    "seconds": {
     "median": 1.74,
@@ -18071,6 +18938,7 @@
      "status": "ok",
      "seconds": 0.345,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18102,6 +18970,7 @@
      "status": "ok",
      "seconds": 4.581,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -18138,6 +19007,7 @@
      "status": "ok",
      "seconds": 31.234,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:openai"
@@ -18166,6 +19036,7 @@
      "status": "ok",
      "seconds": 149.852,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -18221,6 +19092,7 @@
      "status": "ok",
      "seconds": 3.274,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18250,6 +19122,7 @@
      "status": "ok",
      "seconds": 2.534,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:bedrock",
@@ -18273,6 +19146,7 @@
      "status": "ok",
      "seconds": 3.237,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18290,6 +19164,7 @@
      "status": "ok",
      "seconds": 1.029,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18308,6 +19183,7 @@
      "status": "ok",
      "seconds": 2.035,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic"
      ],
@@ -18325,6 +19201,7 @@
      "status": "ok",
      "seconds": 6.078,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "mcp:sdk",
@@ -18362,6 +19239,7 @@
      "status": "ok",
      "seconds": 0.174,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18376,6 +19254,7 @@
      "status": "ok",
      "seconds": 5.493,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain"
@@ -18398,6 +19277,7 @@
      "status": "ok",
      "seconds": 92.833,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "mcp:sdk",
@@ -18421,6 +19301,7 @@
      "status": "ok",
      "seconds": 0.175,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain"
      ],
@@ -18437,6 +19318,7 @@
      "status": "ok",
      "seconds": 2.506,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:openai"
@@ -18456,6 +19338,7 @@
      "status": "ok",
      "seconds": 6.951,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -18496,6 +19379,7 @@
      "status": "ok",
      "seconds": 15.136,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:anthropic",
@@ -18530,6 +19414,7 @@
      "status": "ok",
      "seconds": 0.575,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -18567,6 +19452,7 @@
      "status": "ok",
      "seconds": 3.179,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18580,6 +19466,7 @@
      "status": "ok",
      "seconds": 1.89,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18618,6 +19505,7 @@
      "status": "ok",
      "seconds": 2.079,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain"
@@ -18638,6 +19526,7 @@
      "status": "ok",
      "seconds": 0.271,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18665,6 +19554,7 @@
      "status": "ok",
      "seconds": 0.178,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18682,6 +19572,7 @@
      "status": "ok",
      "seconds": 21.691,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:openai",
@@ -18712,6 +19603,7 @@
      "status": "ok",
      "seconds": 8.614,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -18735,6 +19627,7 @@
      "status": "ok",
      "seconds": 2.485,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18751,6 +19644,7 @@
      "status": "ok",
      "seconds": 3.226,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain"
      ],
@@ -18767,6 +19661,7 @@
      "status": "ok",
      "seconds": 3.174,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18780,6 +19675,7 @@
      "status": "ok",
      "seconds": 30.285,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:anthropic",
@@ -18806,6 +19702,7 @@
      "status": "ok",
      "seconds": 1.147,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18824,6 +19721,7 @@
      "status": "ok",
      "seconds": 27.928,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18847,6 +19745,7 @@
      "status": "ok",
      "seconds": 3.103,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain"
      ],
@@ -18867,6 +19766,7 @@
      "status": "ok",
      "seconds": 0.216,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -18880,6 +19780,7 @@
      "status": "ok",
      "seconds": 2.135,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "provider:azure-openai",
@@ -18910,6 +19811,7 @@
      "status": "ok",
      "seconds": 20.787,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk",
       "provider:anthropic",
@@ -18934,6 +19836,7 @@
      "status": "ok",
      "seconds": 0.58,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain"
      ],
@@ -18951,6 +19854,7 @@
      "status": "ok",
      "seconds": 0.573,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain",
       "mcp:sdk"
@@ -18977,6 +19881,7 @@
      "status": "ok",
      "seconds": 0.321,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain"
      ],
@@ -18994,6 +19899,7 @@
      "status": "ok",
      "seconds": 1.903,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "mcp:sdk"
      ],
@@ -19023,6 +19929,7 @@
      "status": "ok",
      "seconds": 0.18,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19035,6 +19942,7 @@
      "status": "ok",
      "seconds": 0.757,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19081,6 +19989,7 @@
      "status": "ok",
      "seconds": 0.115,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19104,6 +20013,7 @@
      "status": "ok",
      "seconds": 9.734,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:openai"
@@ -19137,6 +20047,7 @@
      "status": "ok",
      "seconds": 3.124,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -19151,6 +20062,7 @@
      "status": "ok",
      "seconds": 0.174,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19165,6 +20077,7 @@
      "status": "ok",
      "seconds": 21.518,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:openai"
@@ -19197,6 +20110,7 @@
      "status": "ok",
      "seconds": 0.466,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19214,6 +20128,7 @@
      "status": "ok",
      "seconds": 0.221,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19227,6 +20142,7 @@
      "status": "ok",
      "seconds": 4.831,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -19246,6 +20162,7 @@
      "status": "ok",
      "seconds": 37.045,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -19267,6 +20184,7 @@
      "status": "ok",
      "seconds": 0.33,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19280,6 +20198,7 @@
      "status": "ok",
      "seconds": 5.562,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -19314,6 +20233,7 @@
      "status": "ok",
      "seconds": 0.17,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19353,6 +20273,7 @@
      "status": "ok",
      "seconds": 10.973,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19365,6 +20286,7 @@
      "status": "ok",
      "seconds": 59.073,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:anthropic",
       "provider:openai",
@@ -19403,6 +20325,7 @@
      "status": "ok",
      "seconds": 0.215,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19434,6 +20357,7 @@
      "status": "ok",
      "seconds": 2.224,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19448,6 +20372,7 @@
      "status": "ok",
      "seconds": 10.423,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:crewai",
       "framework:langchain",
@@ -19499,6 +20424,7 @@
      "status": "ok",
      "seconds": 0.703,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19519,6 +20445,7 @@
      "status": "ok",
      "seconds": 12.68,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "provider:openai"
      ],
@@ -19549,6 +20476,7 @@
      "status": "ok",
      "seconds": 6.785,
      "flagged": true,
+     "incomplete": false,
      "tp": [
       "framework:langchain"
      ],
@@ -19582,6 +20510,7 @@
      "status": "ok",
      "seconds": 0.176,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19599,6 +20528,7 @@
      "status": "ok",
      "seconds": 1.715,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19617,6 +20547,7 @@
      "status": "ok",
      "seconds": 1.377,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19644,6 +20575,7 @@
      "status": "ok",
      "seconds": 0.18,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [
@@ -19660,6 +20592,7 @@
      "status": "ok",
      "seconds": 0.179,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19670,6 +20603,7 @@
      "status": "ok",
      "seconds": 1.737,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19680,6 +20614,7 @@
      "status": "ok",
      "seconds": 0.519,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19690,6 +20625,7 @@
      "status": "ok",
      "seconds": 2.555,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19700,6 +20636,7 @@
      "status": "ok",
      "seconds": 0.187,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19710,6 +20647,7 @@
      "status": "ok",
      "seconds": 1.977,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19720,6 +20658,7 @@
      "status": "ok",
      "seconds": 1.535,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19730,6 +20669,7 @@
      "status": "ok",
      "seconds": 0.998,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19740,6 +20680,7 @@
      "status": "ok",
      "seconds": 0.318,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19750,6 +20691,7 @@
      "status": "ok",
      "seconds": 0.136,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19760,6 +20702,7 @@
      "status": "ok",
      "seconds": 0.122,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19770,6 +20713,7 @@
      "status": "ok",
      "seconds": 0.271,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19780,6 +20724,7 @@
      "status": "ok",
      "seconds": 0.123,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19790,6 +20735,7 @@
      "status": "ok",
      "seconds": 0.168,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19800,6 +20746,7 @@
      "status": "ok",
      "seconds": 0.419,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19810,6 +20757,7 @@
      "status": "ok",
      "seconds": 5.309,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19820,6 +20768,7 @@
      "status": "ok",
      "seconds": 0.225,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19830,6 +20779,7 @@
      "status": "ok",
      "seconds": 0.123,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19840,6 +20790,7 @@
      "status": "ok",
      "seconds": 0.873,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19850,6 +20801,7 @@
      "status": "ok",
      "seconds": 0.326,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19860,6 +20812,7 @@
      "status": "ok",
      "seconds": 0.369,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],
@@ -19870,6 +20823,7 @@
      "status": "ok",
      "seconds": 5.82,
      "flagged": false,
+     "incomplete": false,
      "tp": [],
      "fp": [],
      "fn": [],

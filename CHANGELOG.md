@@ -339,7 +339,12 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   clean (43 of 87 ShadowScan runs in the 2026-10-09 baseline were
   incomplete), and `compare` fails when a repository complete in the
   baseline becomes incomplete. `compare --baseline-runs` reads the flag from
-  the `runs.json` of metrics scored before it was recorded.
+  the `runs.json` of metrics scored before it was recorded. The committed
+  2026-10-08 and 2026-10-09 `metrics.json` and REPORT.md are re-scored and
+  re-rendered from their `runs.json`: they mark the controls psf/requests,
+  ripgrep and Newtonsoft.Json and the near-miss jenkinsci/docker-agent
+  incomplete instead of clean, and the benchmark README discloses the 43
+  incomplete runs next to its results tables. No other number changed.
 - Fixed: a dispatched benchmark run of some repositories (`--repos`) is scored
   and compared over those repositories only. The unselected ones were scored
   as missing, so the gate always reported a recall regression. Its REPORT.md

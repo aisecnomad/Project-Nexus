@@ -803,6 +803,51 @@ def test_subset_metrics_over_every_repository_match_the_scored_totals() -> None:
         assert whole["repo_level"]["recall"] == tool["repo_level"]["recall"], tool_id
 
 
+BENCHMARK_ROOT = Path(__file__).resolve().parents[2] / "benchmarks" / "shadow-ai-discovery"
+
+
+def _report_table(text: str, heading: str) -> tuple[list[str], list[list[str]]]:
+    section = text.split(f"## {heading}\n", 1)[1].split("\n## ", 1)[0]
+    lines = [line for line in section.splitlines() if line.startswith("| ")]
+    header, *rows = ([cell.strip() for cell in line.strip().strip("|").split("|")] for line in lines)
+    return header, rows
+
+
+@pytest.mark.parametrize(
+    "run_dir",
+    sorted(p.parent for p in (BENCHMARK_ROOT / "results").glob("*/runs.json")),
+    ids=lambda p: p.name,
+)
+def test_committed_results_never_show_an_incomplete_run_as_complete(run_dir: Path) -> None:
+    # Every incomplete run recorded in a published runs.json (ShadowScan exit 3)
+    # is flagged in its metrics.json and marked in its REPORT.md, so a control
+    # whose scan left content unread is never published as a clean negative.
+    runs = json.loads((run_dir / "runs.json").read_text(encoding="utf-8"))
+    metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    text = (run_dir / "REPORT.md").read_text(encoding="utf-8")
+    recorded = {(r["tool"], r["repo"]) for r in runs["results"] if (r.get("detail") or {}).get("incomplete")}
+    repo_ids = {repo.path: repo.id for repo in load_corpus(BENCHMARK_ROOT / "corpus.json").repos}
+    headline_header, headline = _report_table(text, "Headline")
+    tables = [
+        _report_table(text, h)
+        for h in ("Near-miss and control repositories", "Per-repository results (positives)")
+    ]
+    for tool_id, tool in metrics["tools"].items():
+        flagged = {repo_id for repo_id, per in tool["per_repo"].items() if per["incomplete"]}
+        assert flagged == {repo for t, repo in recorded if t == tool_id}, tool_id
+        assert tool["incomplete_runs"] == {"count": len(flagged), "repos": sorted(flagged)}, tool_id
+        row = next((r for r in headline if r[0].startswith(f"{tool['name']} (")), None)
+        if row is None:  # skipped on every repository
+            assert not flagged
+            continue
+        assert row[headline_header.index("Incomplete runs")] == str(len(flagged)), tool_id
+        for header, rows in tables:
+            column = header.index(tool["name"])
+            for cells in rows:
+                repo_id = repo_ids[cells[0]]
+                assert cells[column].endswith(" (incomplete)") == (repo_id in flagged), (tool_id, repo_id)
+
+
 def test_shadowscan_slug_mapping_prefers_exact_taxonomy_values() -> None:
     from tools.discovery_benchmark.adapters.shadowscan import _slug_facts
 

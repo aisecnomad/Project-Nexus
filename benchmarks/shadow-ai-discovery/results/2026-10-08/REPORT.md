@@ -10,19 +10,19 @@ Tools skipped in this run:
 
 ## Headline
 
-| Tool | Declared categories | In-scope value P / R / F1 | In-scope category P / R / F1 | All-category value F1 | Positives detected | Controls flagged | Near-misses flagged | Seconds median / p90 / max | Runs |
-|---|---|---|---|---|---|---|---|---|---|
-| ShadowScan (Project Nexus) (0.1.2) | a2a, agent-config, framework, iac, lowcode, mcp, mcp-client-config, provider | 97% / 86% / 91% | 97% / 95% / 96% | 91% | 65/65 | 0/10 | 1/12 | 16.34 / 148.19 / 1061.77 | 0 failed, 0 timed out |
-| NuGuard (sbom generate) (0.9.15) | a2a, framework, iac, lowcode, mcp, provider | 96% / 62% / 75% | 98% / 81% / 89% | 69% | 59/65 | 0/10 | 0/12 | 29.73 / 333.36 / 1479.05 | 1 failed, 1 timed out |
-| Trusera ai-bom (3.6.0) | a2a, framework, iac, lowcode, mcp, mcp-client-config, provider | 79% / 47% / 59% | 92% / 83% / 87% | 54% | 61/65 | 3/10 | 1/12 | 7.91 / 87.77 / 684.83 | 0 failed, 0 timed out |
-| SafeDep vet (ai discover) (v1.20.0) | agent-config, mcp-client-config | 92% / 43% / 59% | 100% / 62% / 76% | 11% | 30/65 | 0/10 | 0/12 | 0.27 / 0.33 / 0.47 | 0 failed, 0 timed out |
-| cdxgen (CycloneDX) (12.8.5) | a2a, framework, mcp, provider | 100% / 35% / 51% | 100% / 74% / 85% | 45% | 50/65 | 0/10 | 0/12 | 8.77 / 45.52 / 487.29 | 1 failed, 1 timed out |
-| AgentDiscover (2.9.5) | framework, mcp, mcp-client-config, provider | 96% / 27% / 42% | 92% / 54% / 68% | 37% | 56/65 | 0/10 | 3/12 | 10.69 / 37.65 / 187.04 | 0 failed, 0 timed out |
-| SafeDep xbom (v0.0.3) | a2a, framework, mcp, provider | 99% / 10% / 19% | 100% / 32% / 49% | 16% | 35/65 | 0/10 | 0/12 | 1.74 / 20.79 / 149.85 | 0 failed, 0 timed out |
-| Agentic Radar (0.14.1) | framework, lowcode, mcp | 71% / 6% / 10% | 100% / 17% / 29% | 3% | 12/65 | 0/10 | 0/12 | 21.53 / 84.58 / 773.1 | 0 failed, 0 timed out |
-| Geiger (0.4.0) | agent-config, mcp-client-config | 100% / 2% / 3% | 100% / 4% / 7% | 0% | 2/65 | 0/10 | 0/12 | 0.27 / 0.32 / 0.62 | 0 failed, 0 timed out |
+| Tool | Declared categories | In-scope value P / R / F1 | In-scope category P / R / F1 | All-category value F1 | Positives detected | Controls flagged | Near-misses flagged | Seconds median / p90 / max | Runs | Incomplete runs |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ShadowScan (Project Nexus) (0.1.2) | a2a, agent-config, framework, iac, lowcode, mcp, mcp-client-config, provider | 97% / 86% / 91% | 97% / 95% / 96% | 91% | 65/65 | 0/10 | 1/12 | 16.34 / 148.19 / 1061.77 | 0 failed, 0 timed out | 43 |
+| NuGuard (sbom generate) (0.9.15) | a2a, framework, iac, lowcode, mcp, provider | 96% / 62% / 75% | 98% / 81% / 89% | 69% | 59/65 | 0/10 | 0/12 | 29.73 / 333.36 / 1479.05 | 1 failed, 1 timed out | 0 |
+| Trusera ai-bom (3.6.0) | a2a, framework, iac, lowcode, mcp, mcp-client-config, provider | 79% / 47% / 59% | 92% / 83% / 87% | 54% | 61/65 | 3/10 | 1/12 | 7.91 / 87.77 / 684.83 | 0 failed, 0 timed out | 0 |
+| SafeDep vet (ai discover) (v1.20.0) | agent-config, mcp-client-config | 92% / 43% / 59% | 100% / 62% / 76% | 11% | 30/65 | 0/10 | 0/12 | 0.27 / 0.33 / 0.47 | 0 failed, 0 timed out | 0 |
+| cdxgen (CycloneDX) (12.8.5) | a2a, framework, mcp, provider | 100% / 35% / 51% | 100% / 74% / 85% | 45% | 50/65 | 0/10 | 0/12 | 8.77 / 45.52 / 487.29 | 1 failed, 1 timed out | 0 |
+| AgentDiscover (2.9.5) | framework, mcp, mcp-client-config, provider | 96% / 27% / 42% | 92% / 54% / 68% | 37% | 56/65 | 0/10 | 3/12 | 10.69 / 37.65 / 187.04 | 0 failed, 0 timed out | 0 |
+| SafeDep xbom (v0.0.3) | a2a, framework, mcp, provider | 99% / 10% / 19% | 100% / 32% / 49% | 16% | 35/65 | 0/10 | 0/12 | 1.74 / 20.79 / 149.85 | 0 failed, 0 timed out | 0 |
+| Agentic Radar (0.14.1) | framework, lowcode, mcp | 71% / 6% / 10% | 100% / 17% / 29% | 3% | 12/65 | 0/10 | 0/12 | 21.53 / 84.58 / 773.1 | 0 failed, 0 timed out | 0 |
+| Geiger (0.4.0) | agent-config, mcp-client-config | 100% / 2% / 3% | 100% / 4% / 7% | 0% | 2/65 | 0/10 | 0/12 | 0.27 / 0.32 / 0.62 | 0 failed, 0 timed out | 0 |
 
-In-scope metrics count only the categories a tool declares; the all-category value F1 charges every tool for every expected fact in the corpus. Repository-level detection counts a repository as flagged when the tool reports any in-scope fact.
+In-scope metrics count only the categories a tool declares; the all-category value F1 charges every tool for every expected fact in the corpus. Repository-level detection counts a repository as flagged when the tool reports any in-scope fact. An incomplete run (ShadowScan exit 3) left content unread: its facts are a lower bound, and its cells below are marked (incomplete), so a clean cell there is not a clean result.
 
 ## Value-level F1 by category
 
@@ -44,14 +44,14 @@ Cells read F1 (true positives / false positives / false negatives).
 
 | Repository | Class | ShadowScan (Project Nexus) | NuGuard (sbom generate) | Trusera ai-bom | SafeDep vet (ai discover) | cdxgen (CycloneDX) | AgentDiscover | SafeDep xbom | Agentic Radar | Geiger |
 |---|---|---|---|---|---|---|---|---|---|---|
-| BurntSushi/ripgrep | control | clean | clean | clean | clean | clean | clean | clean | clean | clean |
+| BurntSushi/ripgrep | control | clean (incomplete) | clean | clean | clean | clean | clean | clean | clean | clean |
 | encode/httpx | control | clean | clean | clean | clean | clean | clean | clean | clean | clean |
 | expressjs/express | control | clean | clean | clean | clean | clean | clean | clean | clean | clean |
 | google/gson | control | clean | clean | clean | clean | clean | clean | clean | clean | clean |
-| JamesNK/Newtonsoft.Json | control | clean | clean | framework:crewai | clean | clean | clean | clean | clean | clean |
+| JamesNK/Newtonsoft.Json | control | clean (incomplete) | clean | framework:crewai | clean | clean | clean | clean | clean | clean |
 | lodash/lodash | control | clean | clean | clean | clean | clean | clean | clean | clean | clean |
 | pallets/flask | control | clean | clean | framework:crewai | clean | clean | clean | clean | clean | clean |
-| psf/requests | control | clean | clean | clean | clean | clean | clean | clean | clean | clean |
+| psf/requests | control | clean (incomplete) | clean | clean | clean | clean | clean | clean | clean | clean |
 | spf13/cobra | control | clean | clean | provider:together | clean | clean | clean | clean | clean | clean |
 | terraform-aws-modules/terraform-aws-vpc | control | clean | clean | clean | clean | clean | clean | clean | clean | clean |
 | autowp/arduino-mcp2515 | nearmiss | clean | clean | clean | clean | clean | mcp-client-config:generic | clean | clean | clean |
@@ -61,7 +61,7 @@ Cells read F1 (true positives / false positives / false negatives).
 | faisalman/ua-parser-js | nearmiss | provider:huggingface | clean | clean | clean | clean | clean | clean | clean | clean |
 | Farama-Foundation/Gymnasium | nearmiss | clean | clean | framework:crewai | clean | clean | clean | clean | clean | clean |
 | Hannibal046/Awesome-LLM | nearmiss | clean | clean | clean | clean | clean | clean | clean | clean | clean |
-| jenkinsci/docker-agent | nearmiss | clean | clean | clean | clean | clean | clean | clean | clean | clean |
+| jenkinsci/docker-agent | nearmiss | clean (incomplete) | clean | clean | clean | clean | clean | clean | clean | clean |
 | jpadilla/pyjwt | nearmiss | clean | clean | clean | clean | clean | clean | clean | clean | clean |
 | makew0rld/amfora | nearmiss | clean | clean | clean | clean | clean | clean | clean | clean | clean |
 | PrismarineJS/bedrock-protocol | nearmiss | clean | clean | clean | clean | clean | provider:bedrock | clean | clean | clean |
@@ -71,70 +71,70 @@ Cells read F1 (true positives / false positives / false negatives).
 
 | Repository | Expected | ShadowScan (Project Nexus) | NuGuard (sbom generate) | Trusera ai-bom | SafeDep vet (ai discover) | cdxgen (CycloneDX) | AgentDiscover | SafeDep xbom | Agentic Radar | Geiger |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 0xPlaygrounds/rig | 20 | 19/1/2 | 8/2/12 | 5/1/15 | 0/0/20 | 2/0/18 | 0/0/20 | 0/0/20 | 0/0/20 | 0/0/20 |
+| 0xPlaygrounds/rig | 20 | 19/1/2 (incomplete) | 8/2/12 | 5/1/15 | 0/0/20 | 2/0/18 | 0/0/20 | 0/0/20 | 0/0/20 | 0/0/20 |
 | a2aproject/a2a-samples | 24 | 23/0/2 | 19/0/5 | 16/1/8 | 0/0/24 | 17/0/7 | 4/0/20 | 4/0/20 | 0/1/24 | 0/0/24 |
-| ag2ai/ag2 | 16 | 15/1/1 | 10/2/6 | 7/3/9 | 0/0/16 | 10/0/6 | 6/0/10 | 2/0/14 | 0/1/16 | 0/0/16 |
-| agno-agi/agno | 43 | 41/1/2 | 27/0/16 | 23/0/20 | 2/0/41 | 3/0/40 | 10/0/33 | 7/0/36 | 3/0/40 | 0/0/43 |
-| Aider-AI/aider | 18 | 13/0/5 | 11/0/7 | 6/1/12 | 0/0/18 | 4/0/14 | 4/0/14 | 0/0/18 | 0/0/18 | 0/0/18 |
+| ag2ai/ag2 | 16 | 15/1/1 (incomplete) | 10/2/6 | 7/3/9 | 0/0/16 | 10/0/6 | 6/0/10 | 2/0/14 | 0/1/16 | 0/0/16 |
+| agno-agi/agno | 43 | 41/1/2 (incomplete) | 27/0/16 | 23/0/20 | 2/0/41 | 3/0/40 | 10/0/33 | 7/0/36 | 3/0/40 | 0/0/43 |
+| Aider-AI/aider | 18 | 13/0/5 (incomplete) | 11/0/7 | 6/1/12 | 0/0/18 | 4/0/14 | 4/0/14 | 0/0/18 | 0/0/18 | 0/0/18 |
 | anthropics/anthropic-quickstarts | 11 | 9/0/2 | 5/0/6 | 4/1/7 | 1/0/10 | 3/0/8 | 2/0/9 | 3/0/8 | 0/1/11 | 0/0/11 |
 | anthropics/claude-agent-sdk-python | 6 | 5/0/1 | 2/0/4 | 2/3/4 | 3/0/3 | 0/0/6 | 2/0/4 | 0/0/6 | 0/0/6 | 0/0/6 |
-| anthropics/claude-code | 7 | 6/1/1 | 1/1/6 | 1/2/6 | 1/0/6 | 0/0/7 | 1/0/6 | 0/0/7 | 0/0/7 | 0/0/7 |
+| anthropics/claude-code | 7 | 6/1/1 (incomplete) | 1/1/6 | 1/2/6 | 1/0/6 | 0/0/7 | 1/0/6 | 0/0/7 | 0/0/7 | 0/0/7 |
 | anthropics/skills | 5 | 3/0/2 | 2/0/3 | 2/0/3 | 1/0/4 | 2/0/3 | 1/0/4 | 1/0/4 | 0/0/5 | 0/0/5 |
-| assafelovic/gpt-researcher | 25 | 24/0/1 | 19/0/6 | 13/2/12 | 3/0/22 | 8/0/17 | 8/0/17 | 3/0/22 | 0/0/25 | 0/0/25 |
+| assafelovic/gpt-researcher | 25 | 24/0/1 (incomplete) | 19/0/6 | 13/2/12 | 3/0/22 | 8/0/17 | 8/0/17 | 3/0/22 | 0/0/25 | 0/0/25 |
 | aws-ia/terraform-aws-bedrock | 3 | 1/0/2 | 1/0/2 | 1/0/2 | 0/0/3 | 0/0/3 | 1/0/2 | 0/0/3 | 0/0/3 | 0/0/3 |
-| awslabs/amazon-bedrock-agent-samples | 10 | 8/0/2 | 8/1/2 | 6/1/4 | 0/0/10 | 6/0/4 | 3/0/7 | 2/0/8 | 0/0/10 | 0/0/10 |
-| awslabs/mcp | 11 | 10/0/1 | 0/0/11 (tool reported failure) | 5/1/6 | 0/0/11 | 4/0/7 | 3/0/8 | 3/0/8 | 0/0/11 | 0/0/11 |
+| awslabs/amazon-bedrock-agent-samples | 10 | 8/0/2 (incomplete) | 8/1/2 | 6/1/4 | 0/0/10 | 6/0/4 | 3/0/7 | 2/0/8 | 0/0/10 | 0/0/10 |
+| awslabs/mcp | 11 | 10/0/1 (incomplete) | 0/0/11 (tool reported failure) | 5/1/6 | 0/0/11 | 4/0/7 | 3/0/8 | 3/0/8 | 0/0/11 | 0/0/11 |
 | Azure-Samples/azure-openai-terraform-deployment-sample | 4 | 4/0/0 | 3/0/1 | 3/1/1 | 0/0/4 | 3/0/1 | 1/1/3 | 1/0/3 | 0/0/4 | 0/0/4 |
-| Azure-Samples/azure-search-openai-demo | 7 | 7/0/0 | 2/0/5 | 3/1/4 | 0/0/7 | 2/0/5 | 1/0/6 | 2/0/5 | 0/0/7 | 0/0/7 |
-| block/goose | 28 | 26/2/3 | 13/0/15 | 7/1/21 | 2/0/26 | 2/0/26 | 3/0/25 | 1/0/27 | 0/0/28 | 0/0/28 |
+| Azure-Samples/azure-search-openai-demo | 7 | 7/0/0 (incomplete) | 2/0/5 | 3/1/4 | 0/0/7 | 2/0/5 | 1/0/6 | 2/0/5 | 0/0/7 | 0/0/7 |
+| block/goose | 28 | 26/2/3 (incomplete) | 13/0/15 | 7/1/21 | 2/0/26 | 2/0/26 | 3/0/25 | 1/0/27 | 0/0/28 | 0/0/28 |
 | browser-use/browser-use | 22 | 20/1/2 | 11/0/11 | 10/2/12 | 2/0/20 | 0/0/22 | 7/0/15 | 3/0/19 | 0/0/22 | 0/0/22 |
-| cline/cline | 25 | 25/1/1 | 8/0/17 | 5/3/20 | 3/0/22 | 3/0/22 | 5/0/20 | 1/0/24 | 0/0/25 | 0/0/25 |
+| cline/cline | 25 | 25/1/1 (incomplete) | 8/0/17 | 5/3/20 | 3/0/22 | 3/0/22 | 5/0/20 | 1/0/24 | 0/0/25 | 0/0/25 |
 | cloudwego/eino | 2 | 1/0/1 | 2/0/0 | 1/1/1 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 |
-| continuedev/continue | 27 | 26/0/1 | 14/1/13 | 11/4/16 | 2/0/25 | 4/0/23 | 3/0/24 | 0/0/27 | 0/0/27 | 0/0/27 |
-| crewAIInc/crewAI-examples | 8 | 8/0/0 | 7/0/1 | 7/1/1 | 0/0/8 | 6/0/2 | 3/0/5 | 2/0/6 | 1/0/7 | 0/0/8 |
-| deepset-ai/haystack-cookbook | 16 | 14/1/2 | 7/0/9 | 4/0/12 | 0/0/16 | 0/0/16 | 1/0/15 | 0/0/16 | 0/0/16 | 0/0/16 |
+| continuedev/continue | 27 | 26/0/1 (incomplete) | 14/1/13 | 11/4/16 | 2/0/25 | 4/0/23 | 3/0/24 | 0/0/27 | 0/0/27 | 0/0/27 |
+| crewAIInc/crewAI-examples | 8 | 8/0/0 (incomplete) | 7/0/1 | 7/1/1 | 0/0/8 | 6/0/2 | 3/0/5 | 2/0/6 | 1/0/7 | 0/0/8 |
+| deepset-ai/haystack-cookbook | 16 | 14/1/2 (incomplete) | 7/0/9 | 4/0/12 | 0/0/16 | 0/0/16 | 1/0/15 | 0/0/16 | 0/0/16 | 0/0/16 |
 | dotnet/ai-samples | 6 | 4/1/2 | 5/0/1 | 3/1/3 | 0/0/6 | 5/0/1 | 0/0/6 | 0/0/6 | 0/0/6 | 0/0/6 |
-| firebase/genkit | 18 | 15/0/3 | 13/2/5 | 9/2/9 | 1/0/17 | 9/0/9 | 12/0/6 | 3/0/15 | 0/0/18 | 0/0/18 |
-| github/awesome-copilot | 11 | 8/0/3 | 3/0/8 | 2/0/9 | 2/0/9 | 0/0/11 | 4/1/7 | 1/0/10 | 0/0/11 | 1/0/10 |
+| firebase/genkit | 18 | 15/0/3 (incomplete) | 13/2/5 | 9/2/9 | 1/0/17 | 9/0/9 | 12/0/6 | 3/0/15 | 0/0/18 | 0/0/18 |
+| github/awesome-copilot | 11 | 8/0/3 (incomplete) | 3/0/8 | 2/0/9 | 2/0/9 | 0/0/11 | 4/1/7 | 1/0/10 | 0/0/11 | 1/0/10 |
 | github/github-mcp-server | 5 | 3/0/2 | 1/0/4 | 1/2/4 | 0/0/5 | 1/0/4 | 1/0/4 | 0/0/5 | 0/0/5 | 0/0/5 |
 | gitlab-org/duo-workflow/duo-workflow-service | 4 | 4/0/0 | 4/0/0 | 3/1/1 | 0/0/4 | 4/0/0 | 1/0/3 | 1/0/3 | 1/0/3 | 0/0/4 |
-| gitlab-org/gitlab-runner | 2 | 2/0/0 | 0/0/2 | 0/1/2 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 |
-| gitlab-org/modelops/applied-ml/code-suggestions/ai-assist | 14 | 12/0/2 | 10/0/4 | 7/3/7 | 1/1/13 | 8/0/6 | 9/0/5 | 3/0/11 | 1/0/13 | 0/0/14 |
-| google-gemini/gemini-cli | 7 | 6/1/1 | 1/1/6 | 1/4/6 | 1/0/6 | 1/0/6 | 1/0/6 | 0/0/7 | 0/0/7 | 0/0/7 |
-| google/adk-samples | 12 | 11/0/2 | 7/0/5 | 6/1/6 | 1/0/11 | 6/0/6 | 1/0/11 | 0/0/12 | 0/0/12 | 0/0/12 |
-| GoogleCloudPlatform/agent-starter-pack | 8 | 8/0/0 | 6/0/2 | 6/2/2 | 1/0/7 | 5/0/3 | 1/0/7 | 1/0/7 | 0/0/8 | 0/0/8 |
+| gitlab-org/gitlab-runner | 2 | 2/0/0 (incomplete) | 0/0/2 | 0/1/2 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 | 0/0/2 |
+| gitlab-org/modelops/applied-ml/code-suggestions/ai-assist | 14 | 12/0/2 (incomplete) | 10/0/4 | 7/3/7 | 1/1/13 | 8/0/6 | 9/0/5 | 3/0/11 | 1/0/13 | 0/0/14 |
+| google-gemini/gemini-cli | 7 | 6/1/1 (incomplete) | 1/1/6 | 1/4/6 | 1/0/6 | 1/0/6 | 1/0/6 | 0/0/7 | 0/0/7 | 0/0/7 |
+| google/adk-samples | 12 | 11/0/2 (incomplete) | 7/0/5 | 6/1/6 | 1/0/11 | 6/0/6 | 1/0/11 | 0/0/12 | 0/0/12 | 0/0/12 |
+| GoogleCloudPlatform/agent-starter-pack | 8 | 8/0/0 (incomplete) | 6/0/2 | 6/2/2 | 1/0/7 | 5/0/3 | 1/0/7 | 1/0/7 | 0/0/8 | 0/0/8 |
 | huggingface/agents-course | 2 | 1/1/1 | 2/2/0 | 1/1/1 | 0/0/2 | 1/0/1 | 1/0/1 | 0/0/2 | 0/0/2 | 0/0/2 |
 | huggingface/smolagents | 18 | 14/0/4 | 9/0/9 | 9/1/9 | 0/0/18 | 4/0/14 | 5/0/13 | 3/0/15 | 0/0/18 | 0/0/18 |
-| jlowin/fastmcp | 10 | 10/1/1 | 4/1/6 | 3/2/7 | 3/1/7 | 4/0/6 | 3/1/7 | 3/0/7 | 0/0/10 | 0/0/10 |
+| jlowin/fastmcp | 10 | 10/1/1 (incomplete) | 4/1/6 | 3/2/7 | 3/1/7 | 4/0/6 | 3/1/7 | 3/0/7 | 0/0/10 | 0/0/10 |
 | langchain-ai/chat-langchain | 5 | 5/0/0 | 5/0/0 | 5/1/0 | 0/0/5 | 1/0/4 | 2/0/3 | 1/0/4 | 0/0/5 | 0/0/5 |
-| langchain-ai/open_deep_research | 14 | 12/0/2 | 11/0/3 | 6/1/8 | 1/0/13 | 10/0/4 | 5/0/9 | 2/0/12 | 0/0/14 | 0/0/14 |
+| langchain-ai/open_deep_research | 14 | 12/0/2 (incomplete) | 11/0/3 | 6/1/8 | 1/0/13 | 10/0/4 | 5/0/9 | 2/0/12 | 0/0/14 | 0/0/14 |
 | langchain-ai/react-agent | 5 | 5/0/0 | 5/0/0 | 4/0/1 | 0/0/5 | 5/0/0 | 3/0/2 | 1/0/4 | 1/0/4 | 0/0/5 |
-| langchain4j/langchain4j-examples | 15 | 11/0/4 | 11/0/4 | 4/1/11 | 0/0/15 | timeout | 1/0/14 | 1/1/14 | 0/0/15 | 0/0/15 |
+| langchain4j/langchain4j-examples | 15 | 11/0/4 (incomplete) | 11/0/4 | 4/1/11 | 0/0/15 | timeout | 1/0/14 | 1/1/14 | 0/0/15 | 0/0/15 |
 | letta-ai/letta | 1 | 1/0/0 | 0/0/1 | 0/0/1 | 0/0/1 | 0/0/1 | 0/1/1 | 0/0/1 | 0/0/1 | 0/0/1 |
-| mastra-ai/mastra | 35 | 34/1/2 | 12/0/23 | 11/3/24 | 4/0/31 | 4/0/31 | 4/0/31 | 0/0/35 | 0/0/35 | 1/0/34 |
+| mastra-ai/mastra | 35 | 34/1/2 (incomplete) | 12/0/23 | 11/3/24 | 4/0/31 | 4/0/31 | 4/0/31 | 0/0/35 | 0/0/35 | 1/0/34 |
 | mckaywrigley/chatbot-ui | 12 | 10/0/2 | 8/1/4 | 8/0/4 | 0/0/12 | 3/0/9 | 5/0/7 | 0/0/12 | 0/0/12 | 0/0/12 |
-| microsoft/autogen | 21 | 15/0/6 | 16/0/5 | 12/1/9 | 0/0/21 | 16/0/5 | 8/0/13 | 2/0/19 | 0/0/21 | 0/0/21 |
+| microsoft/autogen | 21 | 15/0/6 (incomplete) | 16/0/5 | 12/1/9 | 0/0/21 | 16/0/5 | 8/0/13 | 2/0/19 | 0/0/21 | 0/0/21 |
 | microsoft/magentic-ui | 2 | 2/0/0 | 1/0/1 | 2/1/0 | 0/0/2 | 1/0/1 | 1/0/1 | 1/0/1 | 0/0/2 | 0/0/2 |
 | microsoft/playwright-mcp | 3 | 2/0/1 | 0/0/3 | 0/0/3 | 1/0/2 | 0/0/3 | 1/0/2 | 0/0/3 | 0/0/3 | 0/0/3 |
-| microsoft/semantic-kernel | 20 | 17/2/3 | 16/3/4 | 11/3/9 | 0/0/20 | 15/0/5 | 5/0/15 | 2/0/18 | 0/0/20 | 0/0/20 |
+| microsoft/semantic-kernel | 20 | 17/2/3 (incomplete) | 16/3/4 | 11/3/9 | 0/0/20 | 15/0/5 | 5/0/15 | 2/0/18 | 0/0/20 | 0/0/20 |
 | modelcontextprotocol/servers | 6 | 5/0/1 | 1/0/5 | 2/1/4 | 2/0/4 | 1/0/5 | 1/0/5 | 0/0/6 | 0/0/6 | 0/0/6 |
 | n8n-io/self-hosted-ai-starter-kit | 2 | 2/0/0 | 0/0/2 | 2/0/0 | 0/0/2 | 0/0/2 | 1/0/1 | 0/0/2 | 1/0/1 | 0/0/2 |
-| openai/codex | 7 | 7/1/1 | 1/0/6 | 2/2/5 | 0/0/7 | 1/0/6 | 1/0/6 | 1/0/6 | 0/0/7 | 0/0/7 |
-| openai/openai-agents-python | 9 | 8/1/1 | 6/0/3 | 4/2/5 | 1/1/8 | 3/0/6 | 5/0/4 | 1/0/8 | 0/0/9 | 0/0/9 |
+| openai/codex | 7 | 7/1/1 (incomplete) | 1/0/6 | 2/2/5 | 0/0/7 | 1/0/6 | 1/0/6 | 1/0/6 | 0/0/7 | 0/0/7 |
+| openai/openai-agents-python | 9 | 8/1/1 (incomplete) | 6/0/3 | 4/2/5 | 1/1/8 | 3/0/6 | 5/0/4 | 1/0/8 | 0/0/9 | 0/0/9 |
 | openai/openai-cs-agents-demo | 2 | 2/0/0 | 2/0/0 | 1/1/1 | 0/0/2 | 2/0/0 | 1/0/1 | 0/0/2 | 0/0/2 | 0/0/2 |
-| OpenInterpreter/open-interpreter | 22 | 13/0/9 | 8/0/14 | 5/1/17 | 0/0/22 | 1/0/21 | 1/0/21 | 1/0/21 | 0/0/22 | 0/0/22 |
-| Portkey-AI/gateway | 28 | 25/1/3 | 15/0/13 | 11/0/17 | 1/0/27 | 3/0/25 | 1/0/27 | 0/0/28 | 0/0/28 | 0/0/28 |
-| pydantic/pydantic | 1 | 1/1/0 | 0/1/1 | 0/2/1 | 1/0/0 | 0/0/1 (tool reported failure) | 0/0/1 | 0/0/1 | 0/0/1 | 0/0/1 |
-| pydantic/pydantic-ai | 26 | 26/2/1 | timeout | 8/2/18 | 2/1/24 | 11/0/15 | 12/0/14 | 3/0/23 | 1/1/25 | 0/0/26 |
-| RooCodeInc/Roo-Code | 20 | 18/0/3 | 8/1/12 | 6/1/14 | 2/0/18 | 3/0/17 | 0/0/20 | 0/0/20 | 0/0/20 | 0/0/20 |
+| OpenInterpreter/open-interpreter | 22 | 13/0/9 (incomplete) | 8/0/14 | 5/1/17 | 0/0/22 | 1/0/21 | 1/0/21 | 1/0/21 | 0/0/22 | 0/0/22 |
+| Portkey-AI/gateway | 28 | 25/1/3 (incomplete) | 15/0/13 | 11/0/17 | 1/0/27 | 3/0/25 | 1/0/27 | 0/0/28 | 0/0/28 | 0/0/28 |
+| pydantic/pydantic | 1 | 1/1/0 (incomplete) | 0/1/1 | 0/2/1 | 1/0/0 | 0/0/1 (tool reported failure) | 0/0/1 | 0/0/1 | 0/0/1 | 0/0/1 |
+| pydantic/pydantic-ai | 26 | 26/2/1 (incomplete) | timeout | 8/2/18 | 2/1/24 | 11/0/15 | 12/0/14 | 3/0/23 | 1/1/25 | 0/0/26 |
+| RooCodeInc/Roo-Code | 20 | 18/0/3 (incomplete) | 8/1/12 | 6/1/14 | 2/0/18 | 3/0/17 | 0/0/20 | 0/0/20 | 0/0/20 | 0/0/20 |
 | run-llama/llama_deploy | 3 | 3/0/0 | 3/0/0 | 1/3/2 | 0/0/3 | 2/0/1 | 1/0/2 | 0/0/3 | 0/0/3 | 0/0/3 |
-| Shubhamsaboo/awesome-llm-apps | 39 | 36/0/4 | 26/0/13 | 21/1/18 | 0/0/39 | 13/0/26 | 12/0/27 | 5/0/34 | 3/0/36 | 0/0/39 |
+| Shubhamsaboo/awesome-llm-apps | 39 | 36/0/4 (incomplete) | 26/0/13 | 21/1/18 | 0/0/39 | 13/0/26 | 12/0/27 | 5/0/34 | 3/0/36 | 0/0/39 |
 | spring-projects/spring-ai-examples | 9 | 7/0/2 | 5/0/4 | 3/2/6 | 1/0/8 | 5/0/4 | 1/0/8 | 0/0/9 | 0/0/9 | 0/0/9 |
-| stanfordnlp/dspy | 18 | 15/0/3 | 9/0/9 | 9/2/9 | 1/0/17 | 6/0/12 | 6/0/12 | 1/0/17 | 0/0/18 | 0/0/18 |
-| strands-agents/samples | 21 | 15/0/6 | 12/0/9 | 8/2/13 | 0/0/21 | 7/0/14 | 5/0/16 | 1/0/20 | 0/1/21 | 0/0/21 |
+| stanfordnlp/dspy | 18 | 15/0/3 (incomplete) | 9/0/9 | 9/2/9 | 1/0/17 | 6/0/12 | 6/0/12 | 1/0/17 | 0/0/18 | 0/0/18 |
+| strands-agents/samples | 21 | 15/0/6 (incomplete) | 12/0/9 | 8/2/13 | 0/0/21 | 7/0/14 | 5/0/16 | 1/0/20 | 0/1/21 | 0/0/21 |
 | svcvit/Awesome-Dify-Workflow | 6 | 1/0/5 | 4/0/2 | 0/0/6 | 0/0/6 | 0/0/6 | 1/0/5 | 0/0/6 | 0/0/6 | 0/0/6 |
-| SWE-agent/SWE-agent | 7 | 2/0/5 | 3/0/4 | 1/1/6 | 1/0/6 | 0/0/7 | 0/0/7 | 0/0/7 | 0/0/7 | 0/0/7 |
-| tmc/langchaingo | 16 | 16/0/0 | 11/0/5 | 4/3/12 | 0/0/16 | 4/0/12 | 1/0/15 | 0/0/16 | 0/0/16 | 0/0/16 |
+| SWE-agent/SWE-agent | 7 | 2/0/5 (incomplete) | 3/0/4 | 1/1/6 | 1/0/6 | 0/0/7 | 0/0/7 | 0/0/7 | 0/0/7 | 0/0/7 |
+| tmc/langchaingo | 16 | 16/0/0 (incomplete) | 11/0/5 | 4/3/12 | 0/0/16 | 4/0/12 | 1/0/15 | 0/0/16 | 0/0/16 | 0/0/16 |
 | vercel/ai-chatbot | 5 | 2/0/3 | 3/0/2 | 0/0/5 | 1/0/4 | 1/0/4 | 1/0/4 | 0/0/5 | 0/0/5 | 0/0/5 |
 
 Cells read true positives / false positives / false negatives at value level, all categories.

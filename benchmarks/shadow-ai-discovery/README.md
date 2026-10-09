@@ -222,12 +222,15 @@ incomplete run (ShadowScan exit 3, `detail.incomplete` in `runs.json`) read
 less than the whole repository: `score` keeps its facts, records it under
 `incomplete_runs` and in `per_repo`, and REPORT.md marks its cells
 `(incomplete)`, so an incomplete control is never shown as a clean negative.
-Metrics scored before incompleteness was recorded (the committed 2026-10-08
-and 2026-10-09 `metrics.json`) take it from their `runs.json` through
-`--baseline-runs`; without it, a run with incomplete repositories fails the
-gate rather than passing unchecked. A partial run (`run --repos`) is scored
-and compared with the same `--repos`, so the repositories it did not run are
-neither missing facts nor a recall drop. Improvements and newly clean
+Metrics scored before incompleteness was recorded take it from their
+`runs.json` through `--baseline-runs`; without it, a run with incomplete
+repositories fails the gate rather than passing unchecked. The committed
+2026-10-08 and 2026-10-09 `metrics.json` and REPORT.md were re-scored and
+re-rendered from their `runs.json` to carry it (2026-10-08 against the corpus
+as labeled when it was published); no other number changed. A partial run
+(`run --repos`) is scored and compared with the same `--repos`, so the
+repositories it did not run are neither missing facts nor a recall drop, and
+its REPORT.md lists only those repositories. Improvements and newly clean
 negatives are printed but never fail the gate. The workflow
 `.github/workflows/benchmark.yml` runs ShadowScan alone on the pinned corpus
 weekly and on demand, with read-only permissions and no third-party tools, and
@@ -252,6 +255,14 @@ and scored against the same labels. This directory is the baseline that
 | MCP F1 (`mcp:sdk`, `mcp:server`) | 75% | 99% |
 | Provider F1 | 91% | 96% |
 | Positives detected, controls and near-misses flagged | 65/65, 0/10, 1/12 | 65/65, 0/10, 0/12 |
+| Incomplete runs (exit 3) | 43/87 | 43/87 |
+
+In both runs 43 of the 87 ShadowScan scans were incomplete (exit 3: the
+scanner reported incomplete coverage), among them the controls psf/requests,
+BurntSushi/ripgrep and JamesNK/Newtonsoft.Json and the near-miss
+jenkinsci/docker-agent. Facts from an incomplete scan are a lower bound, so
+the negatives flagged (0/10 and 0/12 on 2026-10-09) are a lower bound too;
+REPORT.md marks every incomplete cell `(incomplete)`.
 
 What changed and how to read it:
 
@@ -301,6 +312,12 @@ precision / recall / F1, repository-level detection and negatives flagged:
 | SafeDep xbom 0.0.3 | four | 99% / 10% / 19% | 35/65 | 0/10 and 0/12 |
 | Agentic Radar 0.14.1 | three | 71% / 6% / 10% | 12/65 | 0/10 and 0/12 |
 | Geiger 0.4.0 | two | 100% / 2% / 3% | 2/65 | 0/10 and 0/12 |
+
+43 of the 87 ShadowScan scans in this run were incomplete (exit 3), among them
+the controls psf/requests, BurntSushi/ripgrep and JamesNK/Newtonsoft.Json and
+the near-miss jenkinsci/docker-agent, so its 0/10 and 1/12 are lower bounds on
+the negatives it flags. Only the ShadowScan adapter records incompleteness, so
+the other rows cannot show it.
 
 How to read this honestly:
 
