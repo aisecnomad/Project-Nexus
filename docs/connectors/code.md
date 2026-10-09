@@ -372,8 +372,8 @@ the definition is still listed by its file name. A one-line plain value that
 contains `: ` (`description: Use this agent when: ...`), as generated agent
 definitions write them, is not valid YAML but is read by coding agents, which
 quote it and parse again. So does the scanner, through the same strict loader:
-the definition is read and the warning `agent definition front matter needed its
-plain values quoted to parse` records it. Repeated fields, explicit tags and
+the definition is read and the warning `agent definition front matter quoted to
+parse (a plain value contained ': ')` records it. Repeated fields, explicit tags and
 structure that quoting cannot repair stay errors.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded

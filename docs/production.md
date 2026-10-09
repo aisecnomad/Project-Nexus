@@ -1046,16 +1046,24 @@ is not part of its identity.
 - **Fewer incomplete scans.** Each of these used to end a scan with exit 3 and
   is now read exactly:
   - source lexing: ordinary strings that span lines in Rust, PHP and F#; PHP 8
-    attributes (`#[...]`, which are code, not comments; in PHP before 8 a `#[` line is a comment); F# type variables
+    attributes (`#[...]`, which are code, not comments; in PHP before 8 a `#[` line is a
+    comment, so a file with `#[` is lexed both ways and only what both readings mask
+    stays masked, unless one reading leaves a string open at the end of the file); F# type variables
     (`'T`) and primed names; C# verbatim strings that open with an escaped
     quote (`@"""x"" y"`); JSX in `.js`, `.mjs` and `.cjs` files, tried when the
-    plain walk is ambiguous and used only if it reads the whole file cleanly;
+    plain walk is ambiguous and used only if it reads the whole file cleanly
+    (never after `yield` or `await`, which are names in a script, nor in a file
+    with a left shift such as `mask<<shift>limit`: the scan stays incomplete);
     the TypeScript non-null assertion before a division (`idle! / step`); and
-    Qt Linguist translations named `.ts`, which are XML. A construct that is
+    Qt Linguist translations and Tiled tilesets named `.ts` or `.tsx`, which are
+    XML: only a file that opens with an XML declaration or a document type
+    declaration and parses as well-formed XML with a `TS` or `tileset` root is
+    masked whole. A construct that is
     still ambiguous (a string left open, Ruby strings that span lines, heredoc
     interpolation) stays incomplete.
   - file contents: text that is not valid UTF-8 and holds no NUL byte, and
-    large UTF-8 text with a few stray NUL bytes, are analyzed instead of skipped
+    large UTF-8 text with a few stray NUL bytes (removed before analysis, as bash
+    removes them from a script), are analyzed instead of skipped
     (see [scan semantics](scanning.md)); each adds a warning that leaves the
     scan complete (one warning per kind; `strict_coverage` makes each noted file a gap, and a
     `CODEOWNERS` file with replaced bytes is an error). Dense NUL content, text mixed with other control characters
@@ -1070,8 +1078,11 @@ is not part of its identity.
   Because files that used to be skipped are now analyzed, a repository can gain
   findings, including credentials, that earlier builds could not see.
 - **Less false evidence.** The `mcp.<vendor>.<tld>` host form of `protocol.mcp`
-  now ends in one of a short list of common top-level domains, so a dotted identifier such as the
-  translation key `mcp.translator.translatekey` is no longer an MCP endpoint. A
+  now ends in a country-code domain (except two-letter codes that are common file
+  extensions or property names, such as `py`, `md`, `rs`, `pl`, `ps`, `id` and `in`)
+  or one of a list of generic top-level domains (`host` is left out), so a dotted
+  identifier such as the translation key `mcp.translator.translatekey` is no longer
+  an MCP endpoint while `mcp.example.de` still is. A
   host on a line of a hosts file, ad-block list, resolver configuration or
   Clash/Surge-style rule list (`0.0.0.0 chatgpt.com`, `||api.openai.com^`,
   `address=/api.openai.com/0.0.0.0`, `DOMAIN-SUFFIX,openai.com,PROXY`) routes or
@@ -2471,9 +2482,10 @@ Redaction and lexing changes to review:
   `agent_flow`.
 - **Lexer.** Brace-less JSX elements as attribute values
   (`description=<div>…</div>`, `title=<span>…</span>`, self-closing
-  `icon=<Plus/>`) are now lexed completely, and plain `.js`/`.mjs`/`.cjs`
-  files are lexed with JSX enabled (closing tags after expressions no
-  longer read as ambiguous regex-vs-division); repositories that reported
+  `icon=<Plus/>`) are now lexed completely, and JSX is tried in plain
+  `.js`/`.mjs`/`.cjs` files when the plain walk is ambiguous (closing tags
+  after expressions no longer read as ambiguous regex-vs-division; see the
+  real-world benchmark follow-ups for when it is not used); repositories that reported
   `incomplete source lexical analysis` for such files scan complete and may
   gain findings there.
 - **Credential pass on large files.** The per-execution regex allowance

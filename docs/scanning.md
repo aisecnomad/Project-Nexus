@@ -39,13 +39,16 @@ that are never silent:
   file is analyzed in full and the scan stays complete; the warning `is not
   valid UTF-8, the bytes that are not were replaced` records it (one warning
   per kind, listing the first files; `strict_coverage` makes each file a gap
-  instead). Content in which more than four characters and more than a tenth of the
-  first 8 KiB are not valid UTF-8, or that holds a control character other than tab, line
-  break or form feed there, is not text and stays a gap. A file of at
+  instead). Content in which any 8 KiB window has more than four characters,
+  and more than a tenth of the window, that are not valid UTF-8, or that holds a
+  control character other than tab, line break or form feed anywhere, is not
+  text and stays a gap. A file of at
   least 512 bytes that is valid UTF-8, has at most one NUL byte in 200 and holds
   no other control character in its first 8 KiB (a TypeScript cache key joined
   with a literal NUL) is read as text too, with the warning `stray NUL bytes in
-  text, read as text`. Any other file the scanner
+  text, read as text`. Its NUL bytes are removed before it is analyzed, as bash
+  removes them from a script, so a NUL cannot split a host or variable name
+  (`api.open<NUL>ai.com` is matched as `api.openai.com`). Any other file the scanner
   analyzes by name (source, configuration, documents, `.env`, extensionless
   files) that has a NUL byte in its first 8 KiB, or that its declared codec
   cannot decode or does not read as ASCII where the bytes are ASCII (UTF-16 or

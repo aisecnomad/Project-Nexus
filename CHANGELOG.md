@@ -189,10 +189,11 @@ author-written and not independent review.
 
 - The JS/TS/TSX lexer now lexes brace-less JSX elements as attribute values
   (`title=<span>…</span>`), a legal construct that marked real repositories
-  incomplete, and JSX is lexed in plain `.js`/`.mjs`/`.cjs` files too
+  incomplete, and JSX is tried in plain `.js`/`.mjs`/`.cjs` files too
   (React-in-.js is routine; a closing tag after an expression previously
-  tripped the regex-vs-division ambiguity). Malformed JSX still fails
-  closed.
+  tripped the regex-vs-division ambiguity) when the plain walk is ambiguous;
+  see "Real-world benchmark follow-ups: fail-closed corrections". Malformed
+  JSX still fails closed.
 - Credential detection scales its per-execution regex allowance linearly
   with declared input size (`LINEAR_SECONDS_PER_MILLION_CHARS`, floor
   0.1 s, always inside the per-file wall budget), so keyword-dense
@@ -309,6 +310,39 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
 - Added: `protocol.mcp` recognizes JSON-RPC method dispatch without an SDK, and
   `coding-agent.claude-code` recognizes `.claude/launch.json`,
   `.claude/rules/*.md`, `.claude/output-styles/*.md` and the plugin manifests.
+
+### Real-world benchmark follow-ups: fail-closed corrections
+
+Review of the changes above found inputs that made a scan of real AI use look
+complete and empty. Each has a regression test; finding IDs are unchanged.
+
+- Fixed: stray NUL bytes read as text were left in the analyzed text, so
+  `api.open<NUL>ai.com` or `OPENAI_<NUL>API_KEY` in a shell script, which bash
+  runs as `api.openai.com` and `OPENAI_API_KEY`, matched nothing. They are now
+  removed before analysis (line numbers are unchanged).
+- Fixed: the JSX walk read valid JavaScript as elements and masked the code
+  between them: `yield <a> 1` and `await <a> 1` in a script (where both words
+  are names) and the second `<` of a left shift (`mask<<shift>limit`). In
+  `.js`, `.mjs` and `.cjs` files JSX is now only tried when the plain walk is
+  ambiguous, and not used after `yield` or `await` or in a file with such a
+  shift; the scan then stays incomplete. Before, the code connector lexed
+  these files as JSX from the start.
+- Fixed: a `.ts` or `.tsx` file that started with `<TS>` or `<tileset` was
+  masked whole as a Qt translation or Tiled tileset, although `<TS>expr` is a
+  type assertion and `<TS></TS>` a JSX element. Only a file that opens with an
+  XML declaration or a document type declaration, has its root's closing tag
+  at the end, and parses as well-formed XML with that root (a document that
+  declares entities is not parsed) is treated as one.
+- Fixed: `#[` in PHP was always read as an attribute, so a PHP 7 comment such
+  as `#[TODO] don't call this` opened a string that masked the code after it.
+  A PHP file with `#[` is now lexed both as PHP 8 and as PHP before 8 reads
+  it; a reading that leaves a string open at the end of the file is not used,
+  and otherwise only what both readings mask stays masked.
+- Changed: the `mcp.<vendor>.<tld>` host form of `protocol.mcp` matches
+  country-code domains again (except two-letter codes that are common file
+  extensions or property names, such as `py`, `md`, `rs`, `pl`, `ps`, `id` and
+  `in`) and more generic ones (`page`, `live`, `info`, `biz`, `pro`, `space`
+  and others), so `mcp.example.de` is an MCP endpoint again.
 
 ## 0.1.2 — 2026-10-08
 
