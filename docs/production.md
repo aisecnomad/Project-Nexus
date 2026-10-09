@@ -975,19 +975,38 @@ their own evidence and cannot be inferred from a passing CI run.
 
 ### October 9 endpoint and fleet completeness corrections
 
-Endpoint discovery stops with an incomplete report (exit 3) if any known
-configuration location cannot be inspected safely. Missing locations remain
-normal; symbolic links, non-regular objects and denied access are coverage
-failures. Instruction checks reuse the original confined file snapshot and
-mark inspection beyond 512 KiB incomplete.
+Endpoint discovery marks the report incomplete (exit 3) if any known
+configuration location cannot be inspected safely; the other locations are
+still scanned and reported. Missing locations remain normal; symbolic links,
+non-regular objects and denied access are coverage failures. Instruction
+checks reuse the original confined file snapshot and mark inspection beyond
+512 KiB incomplete.
+
+Rescan endpoint baselines produced by an earlier candidate. Windows locations
+now come from the profile's own `AppData/Roaming`: a mounted Windows profile
+scanned with `--home` gains its Claude Desktop and VS Code findings, and a
+scan that ran with `APPDATA` set loses the operator's configuration it had
+attributed to the target. The command covers every `endpoint.inventory`
+configuration file and uses the same include list for every profile, so the
+collection scope fingerprint changes once and then stays stable as clients
+come and go; empty profiles are comparable in fleet diffs. `--incremental` is
+ignored for endpoint scans because fingerprinting would read the whole
+profile. Hidden HTML comments longer than 4,000 bytes or never closed now add
+the `hidden-instructions` tag, and emoji joiners no longer add
+`invisible-text`, so `shadowscan diff` can show those findings as changed.
 
 Fleet inputs must preserve completion statistics, matching summary counts and
 valid collection fingerprints. Combining an incomplete or truncated report
 with a healthy one does not restore completeness. When duplicate observations
 have different assessments, the highest source risk is retained, and a shadow
 observation remains shadow. Source risk policies are not silently replaced by
-the merging workstation's defaults. Rescan to replace baselines produced by
-an earlier candidate; these safeguards do not establish field validation.
+the merging workstation's defaults. A finding id that another report uses for
+a finding with another identity is refused (exit 1) instead of merged, and
+sources are named by their path below the reports' common directory. Machines
+that share a host name and home path, such as clones of one VM image, still
+produce the same identities: give each a distinct `--label`. Rescan to replace
+baselines produced by an earlier candidate; these safeguards do not establish
+field validation.
 
 ### October 8 classification and risk follow-ups
 

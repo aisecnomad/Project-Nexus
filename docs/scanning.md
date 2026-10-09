@@ -553,25 +553,53 @@ of AI client configuration instead of walking the home directory: Claude
 Desktop and Claude Code (`~/.claude.json`, `~/.claude/settings*.json`,
 `~/.claude/CLAUDE.md`, skills, agents, commands, hooks), Cursor (`~/.cursor/mcp.json`,
 rules), Windsurf, VS Code and VS Code Insiders with the Cline and Roo
-extensions, Gemini CLI, Codex CLI, Kiro, Amazon Q, GitHub Copilot CLI, Zed,
-Continue, Goose, OpenCode and a generic `~/.mcp.json`. macOS, Linux and Windows
-paths are all checked; Windows locations come from `%APPDATA%`. The full list
-is `shadowscan.endpoint.LOCATIONS`.
+extensions (also inside Cursor), Gemini CLI, Codex CLI, Kiro, Amazon Q, GitHub
+Copilot CLI, Zed, Continue, Goose, OpenCode, LM Studio, Aider, OpenClaw and a
+generic `~/.mcp.json`. macOS, Linux and Windows paths are all checked; the
+Windows ones are the profile's own `AppData/Roaming`, never the scanning
+process's `%APPDATA%`, so `--home` on a mounted Windows profile reads that
+profile's Claude Desktop and VS Code configuration. The full list is
+`shadowscan.endpoint.LOCATIONS`; it includes every configuration file the
+`endpoint.inventory` connector reads.
 
-Only the locations that exist are read, through the `code.filesystem`
-connector with its `include` option, so a profile scan has the connector's
-limits, credential detection and symlink policy: a location that is a link, or
-sits below one, is skipped. `--home DIR` inspects another profile (a mounted
-image, a fleet collection directory); `--list` prints the locations that exist
-and exits. Findings carry the resource prefix `endpoint:<hostname>`; `--label`
+The profile is read through the `code.filesystem` connector with its
+`include` option, walked only along the known locations, so a profile scan has
+the connector's limits, credential detection and symlink policy. The include
+list is the same for every profile, so the collection scope of a workstation
+stays comparable when clients are configured or removed: `shadowscan diff`
+reports them as new or resolved findings. A location that is a link, sits
+below one, or cannot be inspected is not read and makes the scan incomplete
+(exit 3); every other location is still read and reported. The default profile
+is the current user's home with symbolic links resolved (`$HOME` is trusted as
+`--home` is), so a home below a linked `/home` works. `--home DIR` inspects
+another profile (a mounted image, a fleet collection directory); `--list`
+prints the locations that exist and exits (exit 3 if one could not be
+inspected). Findings carry the resource prefix `endpoint:<hostname>`; `--label`
 replaces it, for example with an asset tag, so that merged fleet reports stay
 attributable. A profile with none of the locations is a complete, empty scan
 whose stats carry a warning, not a setup error (exit 0 unless `--fail-on`
-applies).
+applies). `--incremental` does not apply: fingerprinting the profile would
+read every file in it, so an endpoint scan always runs in full.
 
 The same client configuration inside a repository (`.mcp.json`,
 `.cursor/mcp.json`, `.claude/`) is found by `shadowscan code`; the endpoint
 command exists for the user-level copies that no repository scan sees.
+
+`shadowscan endpoint` and the [`endpoint.inventory`](connectors/endpoint.md#endpointinventory)
+connector read the same configuration files for different purposes, and their
+findings have different identities, so one profile scanned both ways is not
+deduplicated in a merged report. `endpoint.inventory` is the device
+inventory: endpoint-surface findings per client and MCP configuration, editor
+and browser extensions, local models and shell history, linked to
+`runtime.processes`. It also reports a client whose directory exists
+(`~/.copilot`, `~/.kiro`, the OpenClaw workspace); `shadowscan endpoint` does
+not walk those directories, which hold session logs, caches and agent memory,
+and reads only the configuration files in them. `shadowscan endpoint` is a
+code scan of the configuration and instruction files themselves: code-surface
+findings with the code connector's MCP, coding-agent and credential
+signatures and the instruction-content checks. Use the inventory for asset
+and lifecycle tracking, and the endpoint command to review what the
+configured agents are told to do and can reach.
 
 ## Fleet merge
 
@@ -584,7 +612,17 @@ evidence and technologies union, the earliest `first_seen` and latest
 different machines keep their own resources because the endpoint label
 prefixes every resource. Every finding records the reports it came from in
 `metadata.merged_from`, and `collection_scope.fleet.sources` lists each
-source with its completion state, finding count and scope fingerprint.
+source with its completion state, finding count and scope fingerprint. A
+source is named by its path below the reports' common directory
+(`host-a/report.json` for reports collected as `<host>/report.json`), or by
+its file name when the reports share a directory.
+
+Report files are untrusted input. A finding id that another report already
+uses for a finding with another identity (resource, connector, account and
+the other identity fields) is refused (exit 1) rather than merged. Machines
+that share a host name and home directory, such as clones of one VM image,
+produce the same identities and merge as one machine scanned twice; give each
+a distinct `--label`, such as its asset tag.
 
 The merged report is comparable with `shadowscan diff` only when every source
 was complete and carried a comparable collection scope; its fingerprint is

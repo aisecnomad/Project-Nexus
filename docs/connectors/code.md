@@ -407,7 +407,9 @@ the directory context that file signatures expect (`.claude/skills/*/SKILL.md`
 only matches when `.claude/` is part of the relative path), which is why
 `shadowscan endpoint` scans a profile root with an include list rather than
 each location as its own root. Entries must be relative and may not escape the
-root; a bare string is rejected like `exclude`.
+root; a bare string is rejected like `exclude`. A scan with `include` is never
+served from the incremental cache: fingerprinting the root would read every
+file below it, so such a scan always runs in full.
 
 ```yaml
 connectors:
@@ -422,8 +424,10 @@ connectors:
 A coding-agent configuration finding inspects the instruction files it reports
 (skills, `CLAUDE.md`-style files, sub-agent definitions, rules, hooks) for
 content a rendered view hides or that executes fetched code: an HTML comment
-holding sentences, a network fetch piped into an interpreter, an inline blob
-decoded into one, and invisible or bidirectional control characters. A hit adds
+holding sentences (however long, or never closed, which hides the rest of the
+file), a network fetch piped into an interpreter, an inline blob decoded into
+one, and invisible or bidirectional control characters (a zero-width joiner
+inside an emoji sequence is not counted). A hit adds
 `content:<rule>` evidence naming the file and line, never an excerpt, and the
 risk tags `hidden-instructions`, `remote-code-fetch` or `invisible-text`
 (see [risk](../concepts/risk.md)); `metadata.instruction_content` lists the

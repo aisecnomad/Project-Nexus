@@ -89,7 +89,35 @@ summarizes each release for people who install and operate ShadowScan.
 ### Endpoint, fleet and instruction-content corrections
 
 - Endpoint profile discovery fails incomplete (exit 3) when a known location
-  cannot be inspected safely, including symbolic links and denied access.
+  cannot be inspected safely, including symbolic links and denied access. The
+  other locations are still scanned and reported in the same incomplete
+  report; before, one linked file (a stow-managed `~/.claude/settings.json`)
+  discarded the whole profile.
+- `shadowscan endpoint` reads Windows locations from the profile's own
+  `AppData/Roaming`, never from the scanning process's `%APPDATA%`. A mounted
+  Windows profile scanned with `--home` was reported complete and empty while
+  its Claude Desktop or VS Code configuration went unread, and with `APPDATA`
+  set the operator's own configuration was reported under the target's label.
+- `shadowscan endpoint` covers every configuration file location of
+  `endpoint.inventory` (LM Studio, Aider, OpenClaw, Goose on Windows, Cline and
+  Roo inside Cursor). Its include list no longer depends on which locations
+  exist, so a profile without AI clients gets a comparable collection scope
+  (a fleet including one stayed non-comparable and `shadowscan diff` exited 3),
+  and a client configured or removed later is a new or resolved finding rather
+  than a scope change. The default profile resolves symbolic links in `$HOME`.
+  `docs/scanning.md` describes how the command relates to `endpoint.inventory`.
+- A `code.filesystem` scan with `include` is no longer served from the
+  incremental cache: fingerprinting the root read and hashed every file below
+  it, so `shadowscan endpoint --incremental` read the whole home directory.
+- `shadowscan merge` refuses a finding id that another report uses for a
+  finding with another identity (exit 1); a report that reused ids could fold
+  other machines' findings into its own. Sources are named by their path below
+  the reports' common directory, so `<host>/report.json` collections stay
+  attributable.
+- The hidden-comment check reports HTML comments of any length, and a comment
+  that is never closed, which before were skipped beyond 4,000 bytes. A
+  zero-width joiner inside an emoji sequence no longer counts as invisible
+  text.
 - Instruction content checks inspect the original confined file snapshot;
   exceeding their 512 KiB budget marks coverage incomplete.
 - Fleet merging validates source completion, counts and collection fingerprints.

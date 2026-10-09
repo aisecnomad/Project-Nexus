@@ -330,8 +330,10 @@ checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
-`include` limits local filesystem collection to named relative paths below each root.
-Endpoint profile discovery uses it and reports unsafe or unreadable known locations as incomplete.
+`include` limits local filesystem collection to named relative paths below each root;
+such a scan always runs in full, without the incremental cache.
+Endpoint profile discovery uses it and reports unsafe or unreadable known locations as
+incomplete while still scanning the others.
 `metadata` is a mapping merged into every finding's metadata. The walk skips a
 built-in list of directory names (`bin`, `build`, `dist`, `vendor`,
 `node_modules`, virtualenvs, caches, ...); a skipped non-empty `bin`, `build`,
