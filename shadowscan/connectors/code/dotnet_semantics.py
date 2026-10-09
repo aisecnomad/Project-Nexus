@@ -156,7 +156,7 @@ class _Proof:
         result = resolved.removeprefix(prefix) if resolved.startswith(prefix) else ""
         return (result if result in _TYPES or result == "AIFunctionFactory.Create" else ""), end
 
-    def expr(self, start: int, end: int, depth: int = 0) -> _Value | None:
+    def expr(self, start: int, end: int, depth: int = 0, target: str = "") -> _Value | None:
         pattern_timeout()
         if depth > 24:
             raise MatchTimeoutError("C# import proof expression nesting budget exceeded")
@@ -171,7 +171,7 @@ class _Proof:
             values = [self.expr(a, b, depth + 1) for a, b in source.args(start)]
             return _Value("tools", any(value is not None and value.kind == "tool" for value in values))
         if words[start] == "new":
-            value = self.construct(start + 1, end, depth + 1)
+            value = self.construct(start + 1, end, depth + 1, target)
             name, cursor = self.type_name(start + 1)
             if name in {"FunctionInvokingChatClient", "ChatClientBuilder"} and cursor in source.pairs:
                 return self.chain(value, source.pairs[cursor] + 1, end)
@@ -206,9 +206,12 @@ class _Proof:
             cursor = source.pairs[opening] + 1
         return value if cursor == end and invoked and value is not None and value.kind == "invoker" else None
 
-    def construct(self, start: int, end: int, depth: int) -> _Value | None:
+    def construct(self, start: int, end: int, depth: int, target: str = "") -> _Value | None:
         words, source = self.words, self.source
         name, cursor = self.type_name(start)
+        if not name and words[start : start + 1] == ["("]:
+            # Target-typed new() constructs the declared or parameter type.
+            name, cursor = target, start
         if name in {"FunctionInvokingChatClient", "ChatClientBuilder"} and words[cursor : cursor + 1] == [
             "("
         ]:
@@ -284,6 +287,17 @@ class _Proof:
             result[words[cursor]] = _Value(kind) if kind else None
         return result
 
+    def declared_type(self, last: int) -> str:
+        """The SDK type a local declaration ending at ``last`` names, if any."""
+        words = self.words
+        if last < 0 or not IDENTIFIER.fullmatch(words[last]):
+            return ""
+        start = last
+        while start >= 2 and words[start - 1] == "." and IDENTIFIER.fullmatch(words[start - 2]):
+            start -= 2
+        name, end = self.type_name(start)
+        return name if end == last + 1 else ""
+
     def assignment(self, position: int) -> None:
         words, source = self.words, self.source
         if not position or not IDENTIFIER.fullmatch(words[position - 1]):
@@ -292,7 +306,7 @@ class _Proof:
         while cursor < len(words) and words[cursor] not in {";", ",", "}"}:
             end = source.pairs.get(cursor, cursor) + 1
             cursor = end
-        value = self.expr(position + 1, end)
+        value = self.expr(position + 1, end, target=self.declared_type(position - 2))
         conditional = self.inside(position, self.uncertain_starts, self.uncertain)
         target = words[position - 1]
         if position >= 3 and words[position - 2] == ".":
@@ -364,7 +378,7 @@ class _Proof:
         a, b = args[1]
         if words[a : a + 2] == ["options", ":"]:
             a += 2
-        options = self.expr(a, b)
+        options = self.expr(a, b, target="ChatOptions")
         return (
             options is not None
             and options.kind == "options"

@@ -187,6 +187,49 @@ def test_dotnet_options_retain_collection_mutation_provenance(tmp_path, run_conn
     assert "tool-use" in findings[0].metadata["potential_capabilities"]
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        CS_CLIENT + "ChatOptions options = new() { Tools = [weather] }; " + CS_REQUEST,
+        CS_CLIENT
+        + "Microsoft.Extensions.AI.ChatOptions options = new() { Tools = [weather] }; "
+        + CS_REQUEST,
+        CS_CLIENT + 'await client.GetResponseAsync("weather", new() { Tools = [weather] }); ',
+        CS_CLIENT + 'await client.GetResponseAsync("weather", options: new() { Tools = [weather] }); ',
+        "FunctionInvokingChatClient client = new(inner); " + CS_OPTIONS + CS_REQUEST,
+    ],
+)
+def test_dotnet_target_typed_options_bind_tools(tmp_path, run_connector, body):
+    # The SDK documentation declares ChatOptions with target-typed new().
+    agents = _agent(_scan(tmp_path, run_connector, "App.cs", _cs(body)), "framework.microsoft-extensions-ai")
+    assert len(agents) == 1 and agents[0].capabilities == ["tool-use"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        CS_CLIENT + "ChatOptions options = new(); " + CS_REQUEST,
+        CS_CLIENT + "ChatOptions options = new() { Tools = [] }; " + CS_REQUEST,
+        CS_CLIENT
+        + "ChatOptions options = new() { Tools = [weather], ToolMode = ChatToolMode.None }; "
+        + CS_REQUEST,
+        CS_CLIENT + "Settings options = new() { Tools = [weather] }; " + CS_REQUEST,
+        CS_CLIENT + "var options = new() { Tools = [weather] }; " + CS_REQUEST,
+        CS_CLIENT + 'await client.GetResponseAsync("weather", new() { Tools = [] }); ',
+        CS_CLIENT + "await client.GetResponseAsync(new() { Tools = [weather] }); ",
+    ],
+)
+def test_dotnet_target_typed_options_need_the_sdk_type_and_tools(tmp_path, run_connector, body):
+    findings = _scan(tmp_path, run_connector, "App.cs", _cs(body))
+    assert not _agent(findings, "framework.microsoft-extensions-ai")
+
+
+def test_dotnet_target_typed_lookalike_options_do_not_borrow_sdk_identity(tmp_path, run_connector):
+    body = CS_CLIENT + "ChatOptions options = new() { Tools = [weather] }; " + CS_REQUEST
+    source = _cs(body) + "class ChatOptions { public object[] Tools; }\n"
+    assert not _agent(_scan(tmp_path, run_connector, "App.cs", source), "framework.microsoft-extensions-ai")
+
+
 def test_dotnet_tool_factory_registers_a_local_function_for_dispatch(tmp_path, run_connector):
     body = CS_CLIENT + "var weather = AIFunctionFactory.Create(Greet); " + CS_OPTIONS + CS_REQUEST
     findings = _scan(tmp_path, run_connector, "App.cs", _cs(body, "IChatClient inner"))

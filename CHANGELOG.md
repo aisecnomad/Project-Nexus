@@ -43,6 +43,10 @@ summarizes each release for people who install and operate ShadowScan.
   agent indicator with tool use, still requiring matching import or dependency
   evidence. Dependency-injected clients, provider constructor chains and
   target-typed options remain agents, as before these corrections.
+- The C# tool-loop proof reads target-typed `new()` in a local declaration of
+  an SDK type and in a response call's options argument, so an explicit
+  `FunctionInvokingChatClient` with `ChatOptions options = new() { Tools = ... }`
+  remains an agent.
 - C# files that never name `Microsoft.Extensions.AI` skip the tool-loop proof,
   so a large file calling an unrelated `GetResponseAsync` no longer exhausts
   its token budget and marks the scan incomplete.
