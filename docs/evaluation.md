@@ -122,8 +122,10 @@ with an MCP client config, a Terraform Bedrock agent module, a CrewAI crew
 with YAML agents, a Semantic Kernel console app, a LangChainGo service, an
 n8n export, a Claude Code project with subagents and `.mcp.json`, an M365
 declarative agent package, a Spring AI app, an OpenAI tool loop script, a
-Dify DSL export, a LiteLLM proxy worker, a Pydantic AI notebook and an OpenAI
-Agents SDK worker as positives; and, as negatives, repositories that share
+Dify DSL export, a LiteLLM proxy worker, a Pydantic AI notebook, an OpenAI
+Agents SDK worker, an ASP.NET API that registers a Microsoft.Extensions.AI
+function-invoking client through dependency injection, and a
+Microsoft.Extensions.AI console tool loop as positives; and, as negatives, repositories that share
 vocabulary with agents without using any LLM: insurance agents with a
 supervisor role, a ChatGPT usage policy in prose, a Minecraft Bedrock server,
 a generated API client, text splitters without a model, a scikit-learn
@@ -152,7 +154,7 @@ precision rule documented in docs/scanning.md. Binary-correct cases can still
 contain off-target findings or vendor attribution. The separate authored
 attribution suite below checks those aspects. Like the other corpora, this one
 is author-written: the authors chose the frameworks, the file layouts and the
-distractors, so its rates describe these 31 cases only and are not a field
+distractors, so its rates describe these 33 cases only and are not a field
 precision estimate.
 
 `tools/evaluation/attribution_corpus.json` contains 24 short, handwritten

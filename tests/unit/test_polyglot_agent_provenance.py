@@ -40,11 +40,75 @@ CS_REQUEST = 'await client.GetResponseAsync("weather", options); '
     [
         "var tool = AIFunctionFactory.Create(Greet); System.Console.WriteLine(tool.Name);",
         "var client = new FunctionInvokingChatClient(inner);",
-        "var client = inner.AsBuilder().UseFunctionInvocation().Build();",
     ],
 )
 def test_dotnet_tool_definitions_and_unconfigured_clients_are_usage(tmp_path, run_connector, body):
     findings = _scan(tmp_path, run_connector, "App.cs", _cs(body))
+    assert not _agent(findings, "framework.microsoft-extensions-ai")
+    assert all(not finding.capabilities for finding in findings)
+
+
+MEAI_PROJECT = (
+    '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><ImplicitUsings>enable</ImplicitUsings>'
+    '</PropertyGroup><ItemGroup><PackageReference Include="Microsoft.Extensions.AI" Version="9.5.0" />'
+    "</ItemGroup></Project>\n"
+)
+MEAI_DI_PROGRAM = (
+    "var builder = WebApplication.CreateBuilder(args);\n"
+    'builder.Services.AddChatClient(new OpenAIClient(key).GetChatClient("gpt-4o-mini").AsIChatClient())\n'
+    "    .UseFunctionInvocation();\n"
+    "builder.Services.AddSingleton<WeatherAgent>();\n"
+    "builder.Build().Run();\n"
+)
+MEAI_DI_AGENT = (
+    "using Microsoft.Extensions.AI;\n"
+    "public class WeatherAgent(IChatClient chatClient)\n{\n"
+    "    public async Task<string> Ask(string q)\n    {\n"
+    "        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(GetWeather)] };\n"
+    "        return (await chatClient.GetResponseAsync(q, options)).Text;\n"
+    "    }\n"
+    '    static string GetWeather(string city) => "sunny";\n}\n'
+)
+MEAI_CONSOLE = (
+    "using Microsoft.Extensions.AI;\n"
+    'IChatClient client = new OllamaChatClient(new Uri("http://localhost:11434"), "llama3.1")\n'
+    "    .AsBuilder().UseFunctionInvocation().Build();\n"
+    "ChatOptions options = new() { Tools = [AIFunctionFactory.Create(GetWeather)] };\n"
+    'Console.WriteLine(await client.GetResponseAsync("Weather in Paris?", options));\n'
+    'static string GetWeather(string city) => "sunny";\n'
+)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        # DI registration with an injected client; Program.cs relies on ImplicitUsings.
+        {"App.csproj": MEAI_PROJECT, "Program.cs": MEAI_DI_PROGRAM, "WeatherAgent.cs": MEAI_DI_AGENT},
+        {
+            "Program.cs": "using Microsoft.Extensions.AI;\n" + MEAI_DI_PROGRAM,
+            "WeatherAgent.cs": MEAI_DI_AGENT,
+        },
+        # Provider constructor chains and target-typed options from the SDK documentation.
+        {"Program.cs": MEAI_CONSOLE},
+        {"App.cs": _cs("var client = inner.AsBuilder().UseFunctionInvocation().Build();")},
+    ],
+)
+def test_dotnet_function_invocation_middleware_is_a_corroborated_agent_indicator(
+    tmp_path, run_connector, files
+):
+    # UseFunctionInvocation opts every response through the pipeline into the
+    # model-directed tool loop, including clients that DI injects elsewhere,
+    # which the bounded per-file proof cannot follow.
+    for name, source in files.items():
+        (tmp_path / name).write_text(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    agents = _agent(findings, "framework.microsoft-extensions-ai")
+    assert len(agents) == 1 and agents[0].capabilities == ["tool-use"]
+
+
+def test_dotnet_function_invocation_middleware_requires_library_corroboration(tmp_path, run_connector):
+    findings = _scan(tmp_path, run_connector, "Program.cs", MEAI_DI_PROGRAM)
     assert not _agent(findings, "framework.microsoft-extensions-ai")
     assert all(not finding.capabilities for finding in findings)
 

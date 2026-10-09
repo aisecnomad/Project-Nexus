@@ -2309,12 +2309,16 @@ class FilesystemConnector(BaseConnector):
                     # active capability rather than this declaration's name.
                     m.extra["contextual_capabilities"] = m.capabilities()
                 if (file.lang == "go" and m.signature_id == "framework.langchaingo") or (
-                    file.ext == ".cs" and m.signature_id == "framework.microsoft-extensions-ai"
+                    file.ext == ".cs"
+                    and m.signature_id == "framework.microsoft-extensions-ai"
+                    and not m.signal.agent_indicator
                 ):
                     # These languages have narrow import/receiver proofs.
                     # A package elsewhere in the project does not bind this
                     # receiver; defining a function tool does not configure a
                     # model-directed loop. Retain the lexical candidate only.
+                    # Function invocation middleware does configure that loop
+                    # and stays a corroborated lexical indicator.
                     m.extra["verified_agent"] = False
                     m.extra["source_capabilities"] = []
             elif m.signature.category != "framework":

@@ -39,6 +39,10 @@ summarizes each release for people who install and operate ShadowScan.
   invocation and Go agent construction without claiming runtime execution.
   Shadowed C# tool-mode names cannot borrow an SDK type or alias's automatic
   invocation meaning.
+- Keep Microsoft.Extensions.AI `UseFunctionInvocation()` middleware as an
+  agent indicator with tool use, still requiring matching import or dependency
+  evidence. Dependency-injected clients, provider constructor chains and
+  target-typed options remain agents, as before these corrections.
 - Exclude Python comprehension results and later clauses that cannot execute
   because a literal iterable is empty or a preceding filter is false.
 - Match lifecycle observations by the complete case-insensitive device value.

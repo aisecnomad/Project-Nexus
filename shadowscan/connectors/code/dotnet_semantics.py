@@ -3,8 +3,9 @@
 Import/namespace aliases, typed parameters, local assignments and block scopes
 bind the client, options and actual AIFunction objects. A tool definition alone
 is supporting framework evidence. Only a function-invoking client receiving
-known nonempty tools through a response call establishes an agent. Dynamic
-factories, fields and cross-file flows remain candidates, not proof.
+known nonempty tools through a response call establishes an agent here. Dynamic
+factories, fields and cross-file flows remain candidates, not proof; the
+lexical UseFunctionInvocation signal covers them with corroboration.
 """
 
 from __future__ import annotations

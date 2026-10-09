@@ -851,6 +851,10 @@ comprehension clauses. Supported .NET automatic invocation and Go agent
 constructors retain import-bound positive evidence. These are static candidate
 classifications and do not establish deployed execution. Unknown dynamic
 bindings remain potential or framework-usage evidence.
+Microsoft.Extensions.AI `UseFunctionInvocation()` middleware remains an agent
+indicator with tool use when import or dependency evidence corroborates it, so
+projects that register the function-invoking client through dependency
+injection keep their agent classification.
 C# tool-mode expressions whose type or alias name is locally shadowed also
 remain unproven; a lookalike `Auto` member cannot establish automatic invocation.
 
