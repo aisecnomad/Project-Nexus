@@ -118,7 +118,7 @@ def apply_matches(
     finding: Finding,
     matches: Iterable[Match],
     location: str | None = None,
-    snippet: str | None = None,
+    snippet: str | Callable[[], str | None] | None = None,
     max_evidence_per_signature: int = 12,
     weight_scale: float = 1.0,
     capabilities: bool = True,
@@ -139,8 +139,14 @@ def apply_matches(
     signature is listed under ``metadata.potential_frameworks`` or
     ``metadata.potential_providers`` instead, for a code pattern without the
     library's import or dependency, or a mention too weak to establish.
+
+    ``snippet`` may be a callable: it is invoked once, and only when the
+    per-signature evidence quota retains a match, so an excerpt that reaches
+    no report is never produced.
     """
     counts: dict[str, int] = finding.metadata.setdefault("_evidence_counts", {})
+    producer = snippet if callable(snippet) else None
+    excerpt: str | None = None if callable(snippet) else snippet
     indicators = 0
     for m in matches:
         sig = m.signature
@@ -172,6 +178,8 @@ def apply_matches(
         counts[key] = counts.get(key, 0) + 1
         if counts[key] > max_evidence_per_signature:
             continue
+        if producer is not None:
+            excerpt, producer = producer(), None
         value = m.value
         if m.signal.type == "secret":
             value = redact(value)
@@ -183,7 +191,7 @@ def apply_matches(
                 signal=f"{m.signal.type}:{sig.id}",
                 description=describe_match(m).replace(m.value, value) if m.value else describe_match(m),
                 location=loc,
-                snippet=snippet,
+                snippet=excerpt,
                 weight=max(0.0, min(1.0, m.weight * weight_scale)),
                 signature=sig.id,
                 attributes={"category": sig.category, "value": value},

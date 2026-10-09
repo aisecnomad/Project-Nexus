@@ -79,7 +79,8 @@ from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import SOURCE_EXTENSIONS, _finditer
 
-Observation = tuple[Match, str, str | None]  # match, relpath, snippet
+# The snippet is text, an excerpt the connector produces on demand, or none.
+Observation = tuple[Match, str, Any]  # match, relpath, snippet
 
 # Distinct signatures one data file must name before it reads as a list.
 CATALOG_MIN_SIGNATURES = 4

@@ -29,7 +29,7 @@ Offline input: n/a (path is the input).
 | `max_entries` | stop after this many filesystem entries inspected during directory enumeration, including directories, skipped entries and coverage probes (default 1000000); exhaustion is incomplete |
 | `max_notebook_size` | bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even when saved outputs make the file larger than max\_file\_size (default 20 MiB); outputs of such a notebook are not scanned for credentials |
 | `max_ast_nodes` | Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger file keeps its lexical evidence and is reported as partially analyzed: a warning under test paths, an error elsewhere |
-| `scan_timeout` | matching budget in seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan\_timeout when higher |
+| `scan_timeout` | matching budget in CPU seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan\_timeout when higher; elapsed time ends a file at four times the budget |
 | `scan_secrets` | detect provider credentials (default true) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |

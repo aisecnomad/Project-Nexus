@@ -435,7 +435,10 @@ framework patterns are kept as lexical evidence, which counts toward an agent
 only when the same library is imported or declared as a dependency, as in a
 language without a binder, and the scan records the warning `import-bound
 analysis skipped (source did not parse); lexical evidence retained` without
-becoming incomplete. The same lexical evidence stands in for a notebook cell
+becoming incomplete. The warning is recorded for a module that imports
+something a signature can bind; a module whose imports cannot bind any
+signature is not parsed (the binder could find nothing in it), so its syntax
+is not checked. The same lexical evidence stands in for a notebook cell
 that does not parse, and when a binder budget is exhausted; that scan is
 incomplete.
 

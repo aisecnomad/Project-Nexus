@@ -235,6 +235,7 @@ def _index(pattern="token"):
 def test_manifest_regex_respects_outer_input_deadline(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(matcher_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(matcher_module.time, "thread_time", lambda: clock[0])
     with pytest.raises(MatchTimeoutError, match="input execution budget"), _index().scan_budget(seconds=0.1):
         clock[0] = 0.2
         parse_manifest("Dockerfile", "FROM python:3.12\n")
@@ -568,3 +569,21 @@ def test_manifest_line_index_and_dockerfile_dedupe():
     assert result is not None and not result.errors
     env = [a for a in result.artifacts if a.kind == "env"]
     assert len(env) == 4000 and env[-1].line == 4000
+
+
+def test_shared_document_equals_a_fresh_parse_and_is_refused_for_jsonc(tmp_path, run_connector):
+    from shadowscan.utils.jsonc import load_json_lenient_marked
+
+    text = json.dumps({"dependencies": {"openai": "^4.0.0"}, "scripts": {"mcp": "npx -y @scope/server"}})
+    document, strict = load_json_lenient_marked(text)
+    assert strict
+    for name in ("package.json", "composer.json"):
+        assert parse_manifest(name, text, document) == parse_manifest(name, text)
+    # Comments are tolerated by the shared parse but not by the manifest
+    # parser: the connector never hands such a document over.
+    commented = "// generated\n" + text
+    assert load_json_lenient_marked(commented) == (document, False)
+    assert parse_manifest("package.json", commented).errors == ["invalid JSON"]
+    (tmp_path / "package.json").write_text(commented)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.errors == ["code.filesystem: package.json: invalid JSON"]

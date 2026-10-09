@@ -423,10 +423,10 @@ def test_file_count_limit_marks_scan_incomplete(tmp_path, run_connector):
 def test_regex_timeout_isolates_file_and_preserves_neighbor(tmp_path, index, monkeypatch):
     original = index.match_imports
 
-    def fail_one(text, language):
+    def fail_one(text, language, **options):
         if "HOSTILE_INPUT" in text:
             raise TimeoutError("test matching budget")
-        return original(text, language)
+        return original(text, language, **options)
 
     monkeypatch.setattr(index, "match_imports", fail_one)
     (tmp_path / "a.py").write_text("HOSTILE_INPUT")

@@ -155,6 +155,8 @@ from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
 from shadowscan.signatures.matcher import (
     SOURCE_EXTENSIONS,
+    WALL_BUDGET_FACTOR,
+    LiteralScan,
     MatchTimeoutError,
     _finditer,
     language_for_path,
@@ -174,6 +176,7 @@ from shadowscan.utils.git import (
     run_bounded_metadata,
 )
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
+from shadowscan.utils.jsonc import load_json_lenient_marked as _load_json_lenient_marked
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError
@@ -602,15 +605,54 @@ _MCP_CAPABILITY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 @dataclass
+class _ExcerptSource:
+    """The text one file's excerpts are cut from, redacted once its analysis ends.
+
+    Excerpt lines are cut at emit time for the evidence a report keeps, from
+    the redacted lines of the file. Whether redaction exceeds a sanitization
+    limit is known only by redacting, so every file that recorded excerpted
+    evidence is redacted when its analysis ends (see ``_settle_excerpts``),
+    as the eager excerpts were, and its text is then dropped. ``structure``
+    is the credential context of ``_structured_context``; None withholds
+    every excerpt of the file.
+    """
+
+    rel: str
+    path: Path
+    text: str | None
+    structure: Any
+    safe_lines: list[str] | None = None  # redacted lines, produced when an excerpt first needs them
+    wanted: bool = False  # a recorded match asked for an excerpt of this file
+
+
+class _LazyExcerpt:
+    """One excerpt line, cut and sanitized only when a report retains its evidence."""
+
+    __slots__ = ("connector", "line", "source")
+
+    def __init__(self, connector: FilesystemConnector, source: _ExcerptSource, line: int | None) -> None:
+        self.connector = connector
+        self.source = source
+        self.line = line
+
+    def __call__(self) -> str:
+        return sanitize_text(_excerpt(self.connector._redacted_lines_of(self.source), self.line or 1))
+
+
+# A recorded snippet: text, an excerpt produced on demand, or none.
+_Snippet = str | _LazyExcerpt | None
+
+
+@dataclass
 class _Project:
     root: str  # relative posix path ("." for scan root)
     files: int = 0
-    matches: list[tuple[Match, str, str | None]] = field(default_factory=list)  # match, relpath, snippet
+    matches: list[tuple[Match, str, _Snippet]] = field(default_factory=list)  # match, relpath, snippet
     example_credentials: list[tuple[Match, str, str]] = field(default_factory=list)  # match, relpath, reason
     deps: list[Dep] = field(default_factory=list)
     languages: set[str] = field(default_factory=set)
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
-    coding_agent_matches: dict[str, list[tuple[Match, str, str | None]]] = field(default_factory=dict)
+    coding_agent_matches: dict[str, list[tuple[Match, str, _Snippet]]] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
@@ -683,7 +725,10 @@ class _SourceFile:
     # Credential context for excerpt redaction (see _structured_context).
     # None withholds every excerpt of the file.
     structure: Any = None
-    safe_lines: list[str] | None = None  # redacted lines, produced when an excerpt first needs them
+    structure_strict: bool = False  # the structure is the strict-JSON parse of the text
+    # The text and context excerpts are cut from; created with the file (see _ExcerptSource).
+    excerpts: _ExcerptSource = field(default_factory=lambda: _ExcerptSource("", Path(), None, None))
+    literals: LiteralScan | None = None  # the signature literals found in ``text``, scanned once
     card_kind: str | None = None  # agent manifest kind suggested by the path
     card_valid: bool = False
     card_incomplete: bool = False  # a recognizable card that misses required declarations
@@ -701,7 +746,7 @@ class _SourceFile:
         return self.path.suffix.lower()
 
 
-_Observation = tuple[Match, str, str | None]  # match, relpath, snippet
+_Observation = tuple[Match, str, _Snippet]  # match, relpath, snippet
 
 
 def _mention(m: Match) -> bool:
@@ -1488,8 +1533,9 @@ class FilesystemConnector(BaseConnector):
             "paths, an error elsewhere"
         ),
         "scan_timeout": (
-            "matching budget in seconds per file up to 256 KiB (default 2); one more budget per further "
-            "256 KiB, capped at 10 seconds or scan_timeout when higher"
+            "matching budget in CPU seconds per file up to 256 KiB (default 2); one more budget per further "
+            "256 KiB, capped at 10 seconds or scan_timeout when higher; elapsed time ends a file at four "
+            "times the budget"
         ),
         "scan_secrets": "detect provider credentials (default true)",
         "use_git": (
@@ -2174,8 +2220,18 @@ class FilesystemConnector(BaseConnector):
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         scan = _ScanState(root, self._scan_label(root))
-        self._walk(scan)
-        yield from self._emit_findings(scan)
+        try:
+            self._walk(scan)
+            yield from self._emit_findings(scan)
+        finally:
+            # Closed whether or not the emit completes.
+            self._close_root(scan)
+
+    @staticmethod
+    def _close_root(scan: _ScanState) -> None:
+        if scan.root_fd >= 0:
+            os.close(scan.root_fd)
+        scan.root_fd = -1
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -2215,9 +2271,6 @@ class FilesystemConnector(BaseConnector):
             self._walk_entries(scan)
         except _WalkLimitError as exc:
             self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
-        finally:
-            os.close(scan.root_fd)
-            scan.root_fd = -1
         self._report_default_excluded(scan)
         skipped_fixtures = self.skipped_oversize_test_fixtures - fixtures_before
         if skipped_fixtures:
@@ -2236,9 +2289,12 @@ class FilesystemConnector(BaseConnector):
         examined = 0
         for rel, path, proj_root, size in entries:
             budget = scan_timeout_for_size(self.scan_timeout, size)
+            wall_cap = budget * WALL_BUDGET_FACTOR
             reserve = self._reserved_budget(rel, path, size, budget)
             if deadline is not None:
                 remaining = deadline - time.monotonic()
+                # The wall cap never runs into the connector deadline's margin.
+                wall_cap = max(budget, min(wall_cap, remaining - margin))
                 if remaining < reserve + margin:
                     if remaining > margin + self.scan_timeout:
                         # Only this file's size-scaled budget does not fit; the
@@ -2258,7 +2314,7 @@ class FilesystemConnector(BaseConnector):
             examined += 1
             with (
                 self._isolated(rel, "file analysis", _file_failure_reason),
-                self.index.scan_budget(seconds=budget),
+                self.index.scan_budget(seconds=budget, wall_seconds=wall_cap),
             ):
                 self._scan_file(scan, rel, path, proj_root)
 
@@ -2290,28 +2346,37 @@ class FilesystemConnector(BaseConnector):
             lang="python" if path.suffix.lower() == ".ipynb" else lang,
             file_matches=file_matches,
             raw_notebook=raw_notebook,
-            structure=self._structure_for(rel, text),
             cells=cells,
         )
-        self._record_file_matches(file)
-        if self.scan_secrets:
-            self._detect_secrets(scan, file)
-        if self._record_detection_rules(file):
-            # A rule pack lists the names and hosts it detects. Its content
-            # is data, not usage or configuration of those products.
-            return
-        self._detect_mcp(file)
+        file.structure, file.structure_strict = self._structure_for(rel, text)
+        file.excerpts = _ExcerptSource(rel, path, text, file.structure)
+        try:
+            if file.ext in SOURCE_EXTENSIONS:
+                # One literal scan serves the credential, import and code passes of
+                # a source file. Other files run the credential pass alone, whose
+                # own few literals are cheaper than the union.
+                file.literals = self.index.literal_scan(text, file.lang)
+            self._record_file_matches(file)
+            if self.scan_secrets:
+                self._detect_secrets(scan, file)
+            if self._record_detection_rules(file):
+                # A rule pack lists the names and hosts it detects. Its content
+                # is data, not usage or configuration of those products.
+                return
+            self._detect_mcp(file)
 
-        # 2. manifests (dependencies, images, env names, IaC types)
-        self._scan_manifest(scan, file)
-        if file.ext in _IAC_EXTENSIONS and not file.is_mcp:
-            self._scan_iac(scan, file)
+            # 2. manifests (dependencies, images, env names, IaC types)
+            self._scan_manifest(scan, file)
+            if file.ext in _IAC_EXTENSIONS and not file.is_mcp:
+                self._scan_iac(scan, file)
 
-        # 3. source & config content
-        self._scan_content(scan, file)
+            # 3. source & config content
+            self._scan_content(scan, file)
 
-        # 4. special files
-        self._record_special_files(scan, file)
+            # 4. special files
+            self._record_special_files(scan, file)
+        finally:
+            self._settle_excerpts(file)
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
@@ -2403,16 +2468,18 @@ class FilesystemConnector(BaseConnector):
             return None
         return text, raw_notebook, tuple(spans)
 
-    def _structure_for(self, rel: str, text: str) -> Any:
+    def _structure_for(self, rel: str, text: str) -> tuple[Any, bool]:
         """Parse the credential context of a structured file; None withholds its excerpts.
 
         Structured files are parsed now so a resource-limit or integrity
         failure (duplicate fields, non-finite numbers) reaches the per-file
         boundary. Redacting the text for excerpts waits until a match needs
-        one, which most files never do.
+        one, which most files never do. The flag says the document is the
+        strict-JSON parse of the text, which the manifest parsers may reuse.
         """
+        strict: list[bool] = []
         try:
-            return _structured_context(rel, text)
+            return _structured_context(rel, text, strict), bool(strict)
         except (
             JSONIntegrityError,
             YAMLIntegrityError,
@@ -2423,7 +2490,16 @@ class FilesystemConnector(BaseConnector):
             # structured context none of this file's excerpts can
             # safely be emitted.
             self._withhold_excerpts(rel, exc, "parsing")
+            return None, False
+
+    @staticmethod
+    def _parsed_document(file: _SourceFile, suffixes: tuple[str, ...], *, strict: bool = False) -> Any:
+        """Return the file's parsed document for a consumer of ``suffixes`` files, or None to parse again."""
+        if file.structure is None or file.structure is _NO_STRUCTURE or not file.rel.endswith(suffixes):
             return None
+        if strict and not file.structure_strict:
+            return None
+        return file.structure
 
     def _withhold_excerpts(self, rel: str, exc: Exception, stage: str = "sanitization") -> None:
         self.ctx.error(
@@ -2437,19 +2513,49 @@ class FilesystemConnector(BaseConnector):
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
-        if file.structure is None:
+        lines = self._redacted_lines_of(file.excerpts)
+        if file.excerpts.structure is None:
+            file.structure = None
+        return lines
+
+    def _redacted_lines_of(self, source: _ExcerptSource) -> list[str]:
+        """Return the redacted lines of ``source``, redacting on first use."""
+        if source.structure is None:
             return []
-        if file.safe_lines is None:
+        if source.safe_lines is None:
             try:
-                file.safe_lines = _redacted_source(file.text, file.structure).splitlines()
+                source.safe_lines = _redacted_source(source.text or "", source.structure).splitlines()
             except (YAMLResourceLimitError, SanitizationLimitError) as exc:
-                self._withhold_excerpts(file.rel, exc)
-                file.structure = None
-                file.safe_lines = []
-        return file.safe_lines
+                self._withhold_excerpts(source.rel, exc)
+                source.structure = None
+                source.safe_lines = []
+            source.text = None  # the redacted lines are all an excerpt needs
+        return source.safe_lines
+
+    def _settle_excerpts(self, file: _SourceFile) -> None:
+        """Redact a file that recorded excerpted evidence, as the eager excerpts did, to surface limit errors.
+
+        Whether a sanitization limit is exceeded is known only by redacting.
+        A scan whose only such failure is in a file whose matches are all
+        dropped later must still be incomplete, so every file that recorded
+        a match with an excerpt is redacted when its analysis ends; the
+        redacted lines then serve its emit-time excerpts.
+        """
+        source = file.excerpts
+        if source.wanted and source.safe_lines is None and source.structure is not None:
+            self._redacted_lines(file)
+        source.text = None  # the redacted lines are all an excerpt needs
 
     def _file_excerpt(self, file: _SourceFile, line_number: int | None, secret: str | None = None) -> str:
         return _excerpt(self._redacted_lines(file), line_number or 1, secret)
+
+    def _lazy_excerpt(self, file: _SourceFile, line_number: int | None) -> _Snippet:
+        """Return the excerpt of ``line_number`` as a callable, produced only if a report keeps the match."""
+        source = file.excerpts
+        if source.structure is None:
+            return ""
+        source.wanted = True
+        return _LazyExcerpt(self, source, line_number)
 
     def _record_file_matches(self, file: _SourceFile) -> None:
         """Record file-name evidence; MCP file names wait for a parsed configuration."""
@@ -2515,7 +2621,7 @@ class FilesystemConnector(BaseConnector):
                     f"code.filesystem: {file.rel}: notebook excerpt sanitization incomplete; "
                     "excerpts withheld"
                 )
-        for m in self.index.match_secrets(raw):
+        for m in self.index.match_secrets(raw, scan=file.literals):
             if (m.signature_id, m.value) in skip_values:
                 continue
             key = (m.signature_id, m.value, m.line)
@@ -2540,12 +2646,13 @@ class FilesystemConnector(BaseConnector):
         is client-specific (Cline and Roo honour it, Claude Code does not) and comes
         from the repository, so honouring it here would let a repository hide a server.
         """
-        file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text) or (
+        document = self._parsed_document(file, (*_JSON_SUFFIXES, ".toml"))
+        file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text, document) or (
             file.name.lower() == "server.json" and '"mcpServers"' in file.text
         )
         if file.is_mcp:
             mcp_errors: list[str] = []
-            file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors)
+            file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors, document)
             self._file_errors(file.rel, dict.fromkeys(mcp_errors))
             dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             if not file.mcp_servers and not mcp_errors and not dedicated:
@@ -2583,7 +2690,7 @@ class FilesystemConnector(BaseConnector):
             proj.detection_rule_files.append(file.rel)
         return True
 
-    def _record_content(self, file: _SourceFile, m: Match, snippet: str | None) -> None:
+    def _record_content(self, file: _SourceFile, m: Match, snippet: _Snippet) -> None:
         # A bare key or matching filename is not evidence of a
         # configured server when the entries are all empty.
         if m.signature_id != "protocol.mcp" or not file.is_mcp or file.mcp_active:
@@ -2597,7 +2704,7 @@ class FilesystemConnector(BaseConnector):
         )
         if not may_be_manifest:
             return
-        manifest = parse_manifest(rel, file.text)
+        manifest = parse_manifest(rel, file.text, self._parsed_document(file, (".json",), strict=True))
         if not manifest:
             return
         self._file_errors(rel, dict.fromkeys(manifest.errors))
@@ -2668,9 +2775,9 @@ class FilesystemConnector(BaseConnector):
         if not is_nonexecutable and not file.is_mcp:
             variables = self.index.match_envs_in_text(content_text)
             for m in variables:
-                self._record_content(file, m, self._file_excerpt(file, m.line))
+                self._record_content(file, m, self._lazy_excerpt(file, m.line))
             for m in self.index.match_domains_in_text(content_text):
-                self._record_content(file, m, self._file_excerpt(file, m.line))
+                self._record_content(file, m, self._lazy_excerpt(file, m.line))
             # A deployment or CI document is configuration however many products it names.
             parsed = None if file.structure is _NO_STRUCTURE else file.structure
             variable_names = {m.value for m in variables}
@@ -2698,22 +2805,15 @@ class FilesystemConnector(BaseConnector):
             ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
         if ambiguous:
             self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
-        imports = (
-            self.index.match_imports(content_text, lang, ignore_spans=ignored)
-            if ignored
-            else self.index.match_imports(content_text, lang)
-        )
+        literals = file.literals
+        imports = self.index.match_imports(content_text, lang, ignore_spans=ignored, scan=literals)
         for m in imports:
             if lang == "python":
                 imported = re.match(r"\s*(?:from|import)\s+([A-Za-z_]\w*(?:\.\w+)*)", m.value)
                 if imported and is_local_module(imported.group(1)):
                     continue
-            self._record_content(file, m, self._file_excerpt(file, m.line))
-        code_matches = (
-            self.index.match_code(content_text, lang, ignore_spans=ignored)
-            if ignored
-            else self.index.match_code(content_text, lang)
-        )
+            self._record_content(file, m, self._lazy_excerpt(file, m.line))
+        code_matches = self.index.match_code(content_text, lang, ignore_spans=ignored, scan=literals)
         bound, unbound = self._bound_matches(file, content_text, ignored, is_local_module)
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
@@ -2736,7 +2836,7 @@ class FilesystemConnector(BaseConnector):
             # the flag tells emit-time corroboration (_uncorroborated_signatures)
             # it apart from a lexical match of the same pattern.
             recorded = replace(m, extra={**m.extra, "import_bound": True}) if m.signal.type == "code" else m
-            self._record_content(file, recorded, self._file_excerpt(file, m.line))
+            self._record_content(file, recorded, self._lazy_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
             self._register_mcp_tools(file, ignored)
             self._record_mcp_server_constructions(file, code_matches, bound)
@@ -2828,7 +2928,7 @@ class FilesystemConnector(BaseConnector):
                     m.extra["model_literal"] = True
                     if not source:
                         m.extra["data_mention"] = True
-                    self._record_content(file, m, self._file_excerpt(file, line))
+                    self._record_content(file, m, self._lazy_excerpt(file, line))
 
     def _bound_matches(
         self,
@@ -3020,7 +3120,7 @@ class FilesystemConnector(BaseConnector):
                 # still takes effect, corroborated at emit time. So is every
                 # framework pattern in source the binder could not read.
                 m.extra["lexical_source"] = file.lang
-            self._record_content(file, m, self._file_excerpt(file, m.line))
+            self._record_content(file, m, self._lazy_excerpt(file, m.line))
 
     def _register_mcp_tools(self, file: _SourceFile, ignored: list[tuple[int, int]]) -> None:
         """Remember the MCP tool names a source file registers, bounded per project."""
@@ -3106,12 +3206,18 @@ class FilesystemConnector(BaseConnector):
         rel = file.rel
         config_errors: list[str] = []
         config_limits: list[str] = []
+        document = (
+            self._parsed_document(file, (".json", ".jsonc", ".toml", *_YAML_SUFFIXES))
+            if content_text is file.text
+            else None
+        )
         structured = structured_code_matches(
             self.index,
             rel,
             content_text,
             errors=config_errors,
             limit_errors=config_limits,
+            documents=None if document is None else [document],
         )
         # Unknown content, not a syntax error: fail closed.
         self._file_errors(rel, config_limits)
@@ -3230,8 +3336,9 @@ class FilesystemConnector(BaseConnector):
         proj.seen.add(key)
         proj.example_credentials.append((m, rel, reason))
 
-    def _record(self, proj: _Project, m: Match, rel: str, snippet: str | None) -> None:
-        snippet = sanitize_text(snippet) if snippet is not None else None
+    def _record(self, proj: _Project, m: Match, rel: str, snippet: _Snippet) -> None:
+        if isinstance(snippet, str):
+            snippet = sanitize_text(snippet)
         if m.signature.category == "identity-app":
             return  # identity-app signatures describe OAuth/SaaS apps, not code
         # A manifest artifact and the generic text pass can observe the same
@@ -3332,7 +3439,8 @@ class FilesystemConnector(BaseConnector):
                 self._record(proj, m, rel, f"module: {art.value}")
 
     @staticmethod
-    def _looks_like_mcp_config(rel: str, name: str, text: str) -> bool:
+    def _looks_like_mcp_config(rel: str, name: str, text: str, document: Any = None) -> bool:
+        """Whether a file is an MCP client or registry configuration; ``document`` is its parse if held."""
         lower = name.lower()
         # Cookiecutter template paths and compiled agentic-workflow lock files are
         # not client configuration. Other GitHub Actions workflows are parsed for
@@ -3342,10 +3450,13 @@ class FilesystemConnector(BaseConnector):
         if lower == "server.json":
             # A generic service can use this filename. The MCP registry format
             # has a name and structured package or remote transport records.
-            try:
-                data = _load_json_lenient(text)
-            except (ValueError, RecursionError):
-                return False
+            if document is not None:
+                data = document
+            else:
+                try:
+                    data = _load_json_lenient(text)
+                except (ValueError, RecursionError):
+                    return False
             if not isinstance(data, dict):
                 return False
             explicit = data.get("mcpServers", data.get("mcp_servers"))
@@ -4624,8 +4735,11 @@ def _without_xml_comments(text: str) -> str:
 _NO_STRUCTURE = object()
 
 
-def _structured_context(rel: str, text: str) -> Any:
+def _structured_context(rel: str, text: str, strict_json: list[bool] | None = None) -> Any:
     """Parse the structure that supplies credential context for excerpt redaction.
+
+    ``strict_json`` receives True when a JSON document was accepted by the
+    strict decoder (no comments or trailing commas were stripped).
 
     Returns ``_NO_STRUCTURE`` for plain text and for structured files whose
     syntax or shape the dedicated parser rejects; lexical redaction then
@@ -4640,7 +4754,10 @@ def _structured_context(rel: str, text: str) -> Any:
     """
     try:
         if rel.endswith(_JSON_SUFFIXES):
-            return _load_json_lenient(text)
+            document, strict = _load_json_lenient_marked(text)
+            if strict and strict_json is not None:
+                strict_json.append(True)
+            return document
         if rel.endswith(".toml"):
             return tomllib.loads(text)
         if rel.endswith(_YAML_SUFFIXES):

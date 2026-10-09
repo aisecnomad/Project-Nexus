@@ -13,6 +13,35 @@ summarizes each release for people who install and operate ShadowScan.
   ends in a file extension (`sonar-project.properties`, `gpt-4-notes.md`) is never
   read as a model identifier.
 
+- Throughput: excerpt lines are cut at emit time for the evidence a report
+  keeps. Every file that recorded excerpted evidence is still redacted when
+  its analysis ends, so a sanitization limit in a file whose matches are all
+  dropped keeps the `structured sanitization incomplete ...; excerpts
+  withheld` error and the incomplete scan (exit 3). The Python import binder walks
+  a module only when one bounded pass over its import statements finds a
+  module a signature can bind (a module that cannot bind is still parsed, so a
+  file that does not parse keeps its `source did not parse` warning and its
+  lexical framework evidence), and the JavaScript binder skips the call scan
+  when no import resolves to a signature (its lexer still runs: the regex
+  passes need its comment and string spans, which are their ignore ranges).
+  The Python gate keeps the binder for any line naming `import` or `from`
+  that is continued with a backslash, holds a form feed or joins statements
+  with `;`. The import, code and credential passes of a source file share one
+  literal scan and one case-folded copy. A structured file is parsed once: the
+  manifest (`package.json`, `composer.json` when strict JSON), configuration
+  and MCP passes reuse the document instead of parsing the text again, and
+  parse failures stay reported where they were. Findings are unchanged; a
+  determinism test compares two scans of a tree.
+- Follow-up, not implemented: an opt-in process pool (`workers`) for
+  `code.filesystem`. It needs in-order application of per-file results, a
+  signature index and confined root descriptor per worker, crash and
+  deadline handling that fails closed, and credential values crossing process
+  pipes; see `docs/scanning.md`.
+- The per-file matching budget (`scan_timeout`) is CPU time of the analyzing
+  thread, with an absolute elapsed-time cap of four times the budget clipped to
+  the connector deadline, so a scanner descheduled on a busy host no longer
+  fails ordinary files with `MatchTimeoutError`; the diagnostic reports both
+  figures (`cpu 2.01s of 2.00s, wall 2.40s of 8.00s`).
 - Implemented MCP servers are first-class: a Python or JavaScript server
   construction is import-bound (`FastMCP(`, `Server(` from `mcp.server` and
   `mcp.server.lowlevel`, `new McpServer(` and `new Server(` from

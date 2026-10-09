@@ -326,13 +326,17 @@ def parse_conda_env(text: str) -> ManifestResult:
 _NPM_ALIAS = re.compile(r"(?i:npm:)((?:@[A-Za-z0-9._~!'()*-]+/)?[A-Za-z0-9._~!'()*-]+)(?:@.*)?")
 
 
-def parse_package_json(text: str) -> ManifestResult:
+def parse_package_json(text: str, document: Any = None) -> ManifestResult:
+    """Parse a ``package.json``; ``document`` is its strict-JSON parse when the caller already has one."""
     res = ManifestResult()
-    try:
-        data = strict_json_loads(text)
-    except ValueError:
-        res.errors.append("invalid JSON")
-        return res
+    if document is not None:
+        data = document
+    else:
+        try:
+            data = strict_json_loads(text)
+        except ValueError:
+            res.errors.append("invalid JSON")
+            return res
     data = _mapping(data, res, "document")
     for section, dev in (
         ("dependencies", False),
@@ -667,13 +671,17 @@ def parse_gemfile(text: str) -> ManifestResult:
     return res
 
 
-def parse_composer(text: str) -> ManifestResult:
+def parse_composer(text: str, document: Any = None) -> ManifestResult:
+    """Parse a ``composer.json``; ``document`` is its strict-JSON parse when the caller already has one."""
     res = ManifestResult()
-    try:
-        data = strict_json_loads(text)
-    except ValueError:
-        res.errors.append("invalid JSON")
-        return res
+    if document is not None:
+        data = document
+    else:
+        try:
+            data = strict_json_loads(text)
+        except ValueError:
+            res.errors.append("invalid JSON")
+            return res
     data = _mapping(data, res, "document")
     for section, dev in (("require", False), ("require-dev", True)):
         for name, spec in _mapping(data.get(section), res, section).items():
@@ -1091,10 +1099,14 @@ def parse_modelfile(text: str) -> ManifestResult:
     return res
 
 
-def parse_manifest(relpath: str, text: str) -> ManifestResult | None:
-    """Parse untrusted input, reporting malformed input without losing the scan."""
+def parse_manifest(relpath: str, text: str, document: Any = None) -> ManifestResult | None:
+    """Parse untrusted input, reporting malformed input without losing the scan.
+
+    ``document`` is the strict-JSON parse of ``text`` when the caller already
+    holds one (``package.json``, ``composer.json``); it is parsed again otherwise.
+    """
     try:
-        result = _parse_manifest(relpath, text)
+        result = _parse_manifest(relpath, text, document)
     except (ValueError, TypeError, AttributeError, RecursionError, yaml.YAMLError) as exc:
         return ManifestResult(errors=[f"manifest parsing failed ({type(exc).__name__})"])
     if result is not None:
@@ -1102,7 +1114,7 @@ def parse_manifest(relpath: str, text: str) -> ManifestResult | None:
     return result
 
 
-def _parse_manifest(relpath: str, text: str) -> ManifestResult | None:
+def _parse_manifest(relpath: str, text: str, document: Any = None) -> ManifestResult | None:
     """Dispatch on file name / extension. Returns None when the file is not a manifest."""
     p = PurePosixPath(relpath.replace("\\", "/"))
     name = p.name
@@ -1125,7 +1137,7 @@ def _parse_manifest(relpath: str, text: str) -> ManifestResult | None:
     if lower in {"environment.yml", "environment.yaml", "conda.yaml", "conda.yml"}:
         return parse_conda_env(text)
     if lower == "package.json":
-        return parse_package_json(text)
+        return parse_package_json(text, document)
     if lower == "go.mod":
         return parse_go_mod(text)
     if lower == "cargo.toml":
@@ -1144,7 +1156,7 @@ def _parse_manifest(relpath: str, text: str) -> ManifestResult | None:
     if lower == "gemfile":
         return parse_gemfile(text)
     if lower == "composer.json":
-        return parse_composer(text)
+        return parse_composer(text, document)
     if (
         lower == "dockerfile"
         or lower.startswith("dockerfile.")

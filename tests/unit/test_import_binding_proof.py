@@ -116,6 +116,8 @@ def _compare(
     """Return the proof's verdict and the binder's results with and without it, unbudgeted."""
     verdicts: list[bool] = []
     proof = source_semantics._python_bindable
+    # The regex gate would skip the proof for most files; it is compared separately.
+    monkeypatch.setattr(source_semantics, "_GATE_BINDERS", False)
 
     def recorded(index: SignatureIndex, tree: ast.AST) -> bool:
         verdicts.append(proof(index, tree))
@@ -364,11 +366,61 @@ def test_default_budget_applies_only_when_a_binding_can_resolve(index):
         bound_source_matches(index, OPENAI_MODULE, "python", [])
 
 
-@pytest.mark.parametrize("text", ["def broken(:\n    pass\n", "!pip install openai\nimport openai\n"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "def broken(:\n    pass\n",
+        "def broken(:\n    pass\nimport os\n",  # no import can bind: the gate skips the binder, not the parse
+        "def broken(:\n    pass\nfrom openai import OpenAI\n",
+        "!pip install openai\nimport openai\n",
+    ],
+)
 def test_source_that_does_not_parse_is_reported_not_returned_as_empty(index, text):
     # An empty list would be indistinguishable from a file with no bound evidence.
     with pytest.raises(SourceNotParsed, match="source did not parse"):
         bound_source_matches(index, text, "python", [])
+
+
+def test_source_that_cannot_bind_is_parsed_but_not_walked(index, monkeypatch):
+    # No import names a module a signature can bind: the file still has to
+    # parse (a syntax error is reported as before), but the proof, the binder
+    # visitor and the budgets that follow them are skipped.
+    text = "import os\n" + "x = os.path.join('a')\n" * 10
+    assert not source_semantics.python_may_bind(index, text)
+    walked: list[str] = []
+    monkeypatch.setattr(source_semantics, "_python_bindable", lambda *a: walked.append("proof") or True)
+    monkeypatch.setattr(source_semantics, "_PythonBindings", lambda *a: walked.append("visitor"))
+    assert bound_source_matches(index, text, "python", []) == []
+    assert walked == []
+    with pytest.raises(SourceNotParsed, match="source did not parse"):
+        bound_source_matches(index, 'import os\nprint "legacy"\n', "python", [])
+    assert walked == []
+
+
+def test_unparsed_file_without_bindable_imports_keeps_its_lexical_framework_evidence(tmp_path):
+    # Python 2 source next to a LangChain dependency: no import can bind, the
+    # file does not parse, and the bundled AgentExecutor pattern stays lexical
+    # evidence (an unbound file is not one proven free of bindings).
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / "requirements.txt").write_text("langchain==0.2.0\nrequests\n")
+    (repository / "legacy_tool.py").write_text(
+        'import os\nimport sys\n\nprint "starting legacy agent"\n\n'
+        "def run(tools):\n    executor = AgentExecutor(agent=None, tools=tools)\n    return executor\n"
+    )
+    report = tmp_path / "report.json"
+    result = CliRunner().invoke(main, ["code", str(repository), "--format", "json", "-o", str(report)])
+    assert result.exit_code == 0
+    document = json.loads(report.read_text())
+    assert document["stats"][0]["warnings"] == [
+        "code.filesystem: legacy_tool.py: import-bound analysis skipped (source did not parse); "
+        "lexical evidence retained"
+    ]
+    agents = [finding for finding in document["findings"] if finding["kind"] == "agent"]
+    assert [finding["title"] for finding in agents] == ["Agent in repository root: LangChain"]
+    assert any(
+        evidence["description"].endswith("LangChain: AgentExecutor(") for evidence in agents[0]["evidence"]
+    )
 
 
 def test_nesting_budget_applies_only_when_a_binding_can_resolve(index):

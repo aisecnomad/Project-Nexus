@@ -60,7 +60,17 @@ def load_json_lenient(text: str) -> Any:
     the JSONC path, which must never turn ambiguous repository input into an
     apparently valid configuration.
     """
+    return load_json_lenient_marked(text)[0]
+
+
+def load_json_lenient_marked(text: str) -> tuple[Any, bool]:
+    """Parse as ``load_json_lenient`` and also say whether the text is strict JSON.
+
+    A caller that shares the document with a strict-only consumer (a
+    ``package.json`` parser) hands it over only when the flag is true, so a
+    file with comments is still refused there as it is when parsed alone.
+    """
     try:
-        return strict_json_loads(text)
+        return strict_json_loads(text), True
     except json.JSONDecodeError:
-        return strict_json_loads(strip_json_comments(text))
+        return strict_json_loads(strip_json_comments(text)), False

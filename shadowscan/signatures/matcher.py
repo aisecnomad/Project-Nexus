@@ -25,9 +25,62 @@ import regex
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
 from shadowscan.utils.redaction import sanitize_text
 
-_SCAN_DEADLINE: ContextVar[float | None] = ContextVar("signature_scan_deadline", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
 DEFAULT_SCAN_BUDGET_SECONDS = 2.0
+# An input's budget is CPU time of the matching thread; a thread that merely
+# waited for the scheduler has not spent it. Wall time still ends the input
+# once it exceeds this multiple of the budget, so hostile input fails fast.
+WALL_BUDGET_FACTOR = 4.0
+
+
+class _ScanBudget:
+    """The execution budget of one input: a CPU allowance and an absolute wall-clock cap."""
+
+    __slots__ = (
+        "cpu_deadline",
+        "cpu_seconds",
+        "cpu_started",
+        "wall_deadline",
+        "wall_seconds",
+        "wall_started",
+    )
+
+    def __init__(self, cpu_seconds: float, wall_seconds: float, outer: _ScanBudget | None) -> None:
+        self.cpu_seconds, self.wall_seconds = cpu_seconds, wall_seconds
+        self.cpu_started, self.wall_started = time.thread_time(), time.monotonic()
+        self.cpu_deadline = self.cpu_started + cpu_seconds
+        self.wall_deadline = self.wall_started + wall_seconds
+        if outer is not None:
+            # A nested budget never outlives the one it runs under; the
+            # diagnostic then describes the budget that actually ended it.
+            if outer.cpu_deadline < self.cpu_deadline:
+                self.cpu_deadline, self.cpu_seconds, self.cpu_started = (
+                    outer.cpu_deadline,
+                    outer.cpu_seconds,
+                    outer.cpu_started,
+                )
+            if outer.wall_deadline < self.wall_deadline:
+                self.wall_deadline, self.wall_seconds, self.wall_started = (
+                    outer.wall_deadline,
+                    outer.wall_seconds,
+                    outer.wall_started,
+                )
+
+    def remaining(self) -> float:
+        """Seconds left: the smaller of the CPU allowance and the wall cap."""
+        return min(self.cpu_deadline - time.thread_time(), self.wall_deadline - time.monotonic())
+
+    def exhausted(self) -> str:
+        """Describe the spent budget for a diagnostic (static text, nothing from the input)."""
+        cpu = time.thread_time() - self.cpu_started
+        wall = time.monotonic() - self.wall_started
+        return (
+            f"signature matching exceeded the input execution budget (cpu {cpu:.2f}s of "
+            f"{self.cpu_seconds:.2f}s, wall {wall:.2f}s of {self.wall_seconds:.2f}s)"
+        )
+
+
+_SCAN_BUDGET: ContextVar[_ScanBudget | None] = ContextVar("signature_scan_budget", default=None)
 # A briefly busy worker can exhaust several regex wall-clock attempts before
 # this thread has used its own 100 ms CPU allowance. Keep retries finite and
 # inside the original per-pattern CPU and per-input wall deadlines.
@@ -39,23 +92,23 @@ class MatchTimeoutError(RuntimeError):
 
 
 def _remaining_timeout() -> float:
-    deadline = _SCAN_DEADLINE.get()
-    remaining = (
-        REGEX_TIMEOUT_SECONDS if deadline is None else min(REGEX_TIMEOUT_SECONDS, deadline - time.monotonic())
-    )
+    budget = _SCAN_BUDGET.get()
+    if budget is None:
+        return REGEX_TIMEOUT_SECONDS
+    remaining = budget.remaining()
     if remaining <= 0:
-        raise MatchTimeoutError("signature matching exceeded the input execution budget")
-    return remaining
+        raise MatchTimeoutError(budget.exhausted())
+    return min(REGEX_TIMEOUT_SECONDS, remaining)
 
 
 def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
     """Cap external pattern calls by the active per-input execution budget."""
-    deadline = _SCAN_DEADLINE.get()
-    if deadline is None:
+    budget = _SCAN_BUDGET.get()
+    if budget is None:
         return default
-    remaining = deadline - time.monotonic()
+    remaining = budget.remaining()
     if remaining <= 0:
-        raise MatchTimeoutError("signature matching exceeded the input execution budget")
+        raise MatchTimeoutError(budget.exhausted())
     return min(default, remaining)
 
 
@@ -696,6 +749,37 @@ class _RegexPlan:
         self.folded_literals = tuple(self.folded_first)
 
 
+class LiteralScan:
+    """The required literals of the import, code and secret plans found in one text, scanned once.
+
+    ``present`` holds True for every distinct plain first-group literal of the
+    three plans that occurs in ``text``; ``folded_present`` does the same for
+    the case-folded literals in the one casefolded copy, ``folded_text``. Each
+    pass reads its own plan's literals out of these sets, so the text is
+    scanned once for the union of the plans' literals instead of once per
+    plan, and casefolded at most once. Both dicts also serve as the memo of
+    the remaining literal groups, as the per-pass sets did, so after a pass
+    they hold False for the remaining-group literals it found absent.
+    """
+
+    __slots__ = ("folded_present", "folded_text", "present", "text")
+
+    def __init__(self, text: str, plans: Sequence[_RegexPlan]) -> None:
+        self.text = text
+        plain: dict[str, None] = {}
+        folded: dict[str, None] = {}
+        for plan in plans:
+            plain.update(dict.fromkeys(plan.plain_literals))
+            folded.update(dict.fromkeys(plan.folded_literals))
+        self.present = {literal: True for literal in plain if literal in text}
+        self.folded_text: str | None = _fold(text) if folded else None
+        self.folded_present = (
+            {literal: True for literal in folded if literal in self.folded_text}
+            if self.folded_text is not None
+            else {}
+        )
+
+
 class _PlainHostCandidates:
     """Domain suffixes and regexes bucketed by what a matching plain host must contain.
 
@@ -973,23 +1057,31 @@ class SignatureIndex:
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     @contextmanager
-    def scan_budget(self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS) -> Iterator[None]:
-        """Share one deadline across all signature operations for an input file.
+    def scan_budget(
+        self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS, *, wall_seconds: float | None = None
+    ) -> Iterator[None]:
+        """Share one execution budget across all signature operations for an input file.
 
+        ``seconds`` is CPU time of the calling thread, so a thread descheduled
+        under contention does not fail its input. ``wall_seconds`` (default
+        ``WALL_BUDGET_FACTOR`` times the budget) is an absolute cap on elapsed
+        time, so hostile input and the connector deadline still end it.
         Individual regex executions are also preempted by the regex engine. An
-        elapsed deadline always raises, including after non-matching work.
+        exhausted budget always raises, including after non-matching work.
         """
         if not 0 < seconds <= 60:
             raise ValueError("signature scan budget must be greater than zero and at most 60 seconds")
-        deadline = time.monotonic() + seconds
-        outer = _SCAN_DEADLINE.get()
-        token = _SCAN_DEADLINE.set(min(deadline, outer) if outer is not None else deadline)
+        if wall_seconds is None:
+            wall_seconds = seconds * WALL_BUDGET_FACTOR
+        elif not seconds <= wall_seconds <= 60 * WALL_BUDGET_FACTOR:
+            raise ValueError("signature scan wall cap must be at least the budget and at most 240 seconds")
+        token = _SCAN_BUDGET.set(_ScanBudget(seconds, wall_seconds, _SCAN_BUDGET.get()))
         try:
             _remaining_timeout()
             yield
             _remaining_timeout()
         finally:
-            _SCAN_DEADLINE.reset(token)
+            _SCAN_BUDGET.reset(token)
 
     # ------------------------------------------------------------- matchers
     def match_dependency(self, ecosystem: str, name: str) -> list[Match]:
@@ -1012,13 +1104,34 @@ class SignatureIndex:
     @contextmanager
     def _input_budget(self) -> Iterator[None]:
         """Preserve a caller's explicit budget or open the default input budget."""
-        if _SCAN_DEADLINE.get() is not None:
+        if _SCAN_BUDGET.get() is not None:
             _remaining_timeout()
             yield
             _remaining_timeout()
             return
         with self.scan_budget():
             yield
+
+    def _regex_plan(self, signal_type: str, language: str | None) -> _RegexPlan:
+        plan = self._regex_plans.get((signal_type, language))
+        if plan is None:
+            plan = self._regex_plans[(signal_type, language)] = _RegexPlan(self, signal_type, language)
+        return plan
+
+    def literal_scan(self, text: str, language: str | None) -> LiteralScan:
+        """Scan ``text`` once for the literals of its import, code and secret plans.
+
+        Pass the result to ``match_imports``, ``match_code`` and
+        ``match_secrets`` for the same text; each then runs exactly the
+        patterns it would have selected from its own scan.
+        """
+        plans = (
+            self._regex_plan("import", language),
+            self._regex_plan("code", language),
+            self._regex_plan("secret", None),
+        )
+        with self._input_budget():
+            return LiteralScan(text, plans)
 
     def _match_regex_signals(
         self,
@@ -1027,11 +1140,12 @@ class SignatureIndex:
         language: str | None = None,
         max_per_signal: int = 3,
         ignore_spans: Sequence[tuple[int, int]] = (),
+        scan: LiteralScan | None = None,
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
         with self._input_budget():
             return self._match_regex_signals_with_budget(
-                signal_type, text, language, max_per_signal, ignore_spans
+                signal_type, text, language, max_per_signal, ignore_spans, scan
             )
 
     def _match_regex_signals_with_budget(
@@ -1041,6 +1155,7 @@ class SignatureIndex:
         language: str | None,
         max_per_signal: int,
         ignore_spans: Sequence[tuple[int, int]],
+        scan: LiteralScan | None = None,
     ) -> list[Match]:
         out: list[Match] = []
         # Ignore matches beginning inside comments and literals before applying
@@ -1057,20 +1172,33 @@ class SignatureIndex:
         # in the text. One scan over the distinct first-group literals selects
         # the candidates; their remaining groups are checked with a memo. The
         # casefolded text is built only when a case-insensitive pattern needs it.
-        plan = self._regex_plans.get((signal_type, language))
-        if plan is None:
-            plan = self._regex_plans[(signal_type, language)] = _RegexPlan(self, signal_type, language)
-        present = {literal: True for literal in plan.plain_literals if literal in text}
+        plan = self._regex_plan(signal_type, language)
         candidates = set(plan.unhinted)
-        for literal in present:
-            candidates.update(plan.plain_first[literal])
         folded_text: str | None = None
         folded_present: dict[str, bool] = {}
-        if plan.folded_literals:
-            folded_text = _fold(text)
-            folded_present = {literal: True for literal in plan.folded_literals if literal in folded_text}
-            for literal in folded_present:
-                candidates.update(plan.folded_first[literal])
+        if scan is not None and scan.text is text:
+            # A shared scan holds the union of the plans' literals; a plan's
+            # candidates are the entries its own literals hit. The dicts also
+            # memoise the remaining groups, so an absent literal is a False
+            # entry, not a missing one.
+            present = scan.present
+            for literal in plan.plain_literals:
+                if present.get(literal):
+                    candidates.update(plan.plain_first[literal])
+            if plan.folded_literals:
+                folded_text, folded_present = scan.folded_text, scan.folded_present
+                for literal in plan.folded_literals:
+                    if folded_present.get(literal):
+                        candidates.update(plan.folded_first[literal])
+        else:
+            present = {literal: True for literal in plan.plain_literals if literal in text}
+            for literal in present:
+                candidates.update(plan.plain_first[literal])
+            if plan.folded_literals:
+                folded_text = _fold(text)
+                folded_present = {literal: True for literal in plan.folded_literals if literal in folded_text}
+                for literal in folded_present:
+                    candidates.update(plan.folded_first[literal])
         current: int | None = None
         hits = 0
         for number in sorted(candidates):
@@ -1131,19 +1259,21 @@ class SignatureIndex:
         text: str,
         language: str | None,
         ignore_spans: Sequence[tuple[int, int]] = (),
+        scan: LiteralScan | None = None,
     ) -> list[Match]:
-        return self._match_regex_signals("import", text, language, ignore_spans=ignore_spans)
+        return self._match_regex_signals("import", text, language, ignore_spans=ignore_spans, scan=scan)
 
     def match_code(
         self,
         text: str,
         language: str | None = None,
         ignore_spans: Sequence[tuple[int, int]] = (),
+        scan: LiteralScan | None = None,
     ) -> list[Match]:
-        return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
+        return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans, scan=scan)
 
-    def match_secrets(self, text: str) -> list[Match]:
-        matches = self._match_regex_signals("secret", text, None, max_per_signal=5)
+    def match_secrets(self, text: str, scan: LiteralScan | None = None) -> list[Match]:
+        matches = self._match_regex_signals("secret", text, None, max_per_signal=5, scan=scan)
         keep = keep_secret_matches([(m.signature_id, m.value, m.line) for m in matches])
         return [match for match, kept in zip(matches, keep, strict=True) if kept]
 

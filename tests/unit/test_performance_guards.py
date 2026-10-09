@@ -26,6 +26,8 @@ from shadowscan.engine import Engine
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import (
     _HOST_TOKEN_RX,
+    WALL_BUDGET_FACTOR,
+    MatchTimeoutError,
     keep_file_matches,
     keep_secret_matches,
     language_for_path,
@@ -33,7 +35,7 @@ from shadowscan.signatures.matcher import (
     required_literal,
     required_literals,
 )
-from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize_text
 
 REPO = Path(__file__).resolve().parents[2]
 LANGCHAIN = "from langchain import agents\n"
@@ -168,9 +170,9 @@ def test_scan_tree_opens_a_size_scaled_budget_per_file(tmp_path, index, monkeypa
     recorded: list[float] = []
     original = SignatureIndex.scan_budget
 
-    def scan_budget(self, seconds=2.0):
+    def scan_budget(self, seconds=2.0, **options):
         recorded.append(seconds)
-        return original(self, seconds=seconds)
+        return original(self, seconds=seconds, **options)
 
     monkeypatch.setattr(SignatureIndex, "scan_budget", scan_budget)
     ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False, "scan_timeout": 1.0}, index=index)
@@ -673,3 +675,319 @@ def test_one_large_file_that_does_not_fit_is_skipped_without_ending_the_walk(tmp
     )
     assert ctx.stats.objects_examined >= 1 and ctx.stats.incomplete
     assert any("framework.langchain" in finding.frameworks for finding in findings)
+
+
+# ------------------------------------------------------------ lazy excerpts
+def _count_redactions(monkeypatch) -> list[str]:
+    """Record the files whose whole text is redacted for excerpts."""
+    redacted: list[str] = []
+    original = filesystem_module._redacted_source
+
+    def counting(text, structure):
+        redacted.append(text)
+        return original(text, structure)
+
+    monkeypatch.setattr(filesystem_module, "_redacted_source", counting)
+    return redacted
+
+
+def test_dropped_matches_redact_their_file_once_and_emit_nothing(tmp_path, index, monkeypatch):
+    # A code pattern without the library's import anywhere in the project is
+    # uncorroborated: nothing is reported. The file is still redacted once when
+    # its analysis ends, only so a sanitization limit fails the scan closed.
+    (tmp_path / "shape.py").write_text("response = client.chat.completions.create(model=model)\n")
+    redacted = _count_redactions(monkeypatch)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = FilesystemConnector(ctx).run()
+    assert not any(f.resource_type == "project" for f in findings)
+    assert len(redacted) == 1
+    assert not ctx.stats.errors
+
+
+def test_sanitization_limit_marks_the_scan_incomplete_even_when_every_match_is_dropped(
+    tmp_path, index, monkeypatch
+):
+    # Whether redaction exceeds a limit is known only by redacting. A file that
+    # recorded excerpted evidence is redacted when its analysis ends, so the
+    # limit error is recorded, and the scan incomplete, exactly as the eager
+    # excerpts did, even when no match of the file reaches the report.
+    (tmp_path / "shape.py").write_text("response = client.chat.completions.create(model=model)\n")
+    attempted: list[str] = []
+
+    def failing(text, structure):
+        attempted.append(text)
+        raise SanitizationLimitError("credential replacement work limit exceeded")
+
+    monkeypatch.setattr(filesystem_module, "_redacted_source", failing)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = FilesystemConnector(ctx).run()
+    assert not any(f.resource_type == "project" for f in findings)
+    assert len(attempted) == 1
+    assert ctx.stats.errors == [
+        "code.filesystem: shape.py: structured sanitization incomplete (SanitizationLimitError); "
+        "excerpts withheld"
+    ]
+    assert ctx.stats.incomplete
+
+
+def test_sanitization_limit_on_a_retained_file_withholds_its_excerpts(tmp_path, index, monkeypatch):
+    (tmp_path / "agent.py").write_text(LANGCHAIN + "agent = agents.AgentExecutor()\n")
+
+    def failing(text, structure):
+        raise SanitizationLimitError("credential replacement work limit exceeded")
+
+    monkeypatch.setattr(filesystem_module, "_redacted_source", failing)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = FilesystemConnector(ctx).run()
+    project = next(f for f in findings if f.resource_type == "project")
+    assert "framework.langchain" in project.frameworks
+    assert all(not e.snippet for e in project.evidence)
+    assert ctx.stats.errors == [
+        "code.filesystem: agent.py: structured sanitization incomplete (SanitizationLimitError); "
+        "excerpts withheld"
+    ]
+    assert ctx.stats.incomplete
+
+
+def test_retained_evidence_is_excerpted_once_per_file_and_sanitized(tmp_path, index, monkeypatch):
+    secret = "sk-proj-aP9rVv3qN4zY7bC2hJ8Lm5Qw6Dt0KsX1eR7uT4p"
+    (tmp_path / "agent.py").write_text(
+        f"from crewai import Agent  # token {secret}\nfrom crewai import Task\nagent = Agent()\n"
+    )
+    redacted = _count_redactions(monkeypatch)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = FilesystemConnector(ctx).run()
+    project = next(f for f in findings if f.resource_type == "project")
+    # The credential observation keeps no excerpt on the project finding, as before.
+    snippets = [e.snippet for e in project.evidence if not e.signal.startswith("secret:")]
+    assert len(snippets) >= 3 and all(snippet for snippet in snippets)
+    assert secret not in json.dumps([f.to_dict() for f in findings])
+    assert len(redacted) == 1  # several retained matches, one redaction of the file
+
+
+def test_shared_literal_scan_equals_the_per_pass_scan(index):
+    for name, text in _corpus_texts():
+        language = language_for_path(name.rsplit(":", 1)[-1])
+        with index.scan_budget(seconds=60):
+            scan = index.literal_scan(text, language)
+            shared = (
+                _flatten(index.match_code(text, language, scan=scan)),
+                _flatten(index.match_imports(text, language, scan=scan)),
+                _flatten(index.match_secrets(text, scan=scan)),
+            )
+            separate = (
+                _flatten(index.match_code(text, language)),
+                _flatten(index.match_imports(text, language)),
+                _flatten(index.match_secrets(text)),
+            )
+        assert shared == separate, name
+
+
+def test_shared_literal_scan_keeps_overlapping_literals(monkeypatch):
+    from shadowscan.signatures.loader import signature_from_dict
+
+    def signature(sig_id, pattern):
+        return signature_from_dict(
+            {"id": sig_id, "category": "framework", "signals": [{"type": "code", "patterns": [pattern]}]}
+        )
+
+    # One literal is a prefix of another, one is nested inside a third, one is
+    # case-insensitive: every pattern whose literal occurs must still run.
+    custom = SignatureIndex(
+        [
+            signature("custom.short", r"openai\("),
+            signature("custom.long", r"openai\.chat\.create"),
+            signature("custom.inner", r"penai\.ch"),
+            signature("custom.folded", r"(?i)OPENAI\.CHAT"),
+            signature("custom.absent", r"anthropic\.messages"),
+        ]
+    )
+    text = "x = openai(1)\ny = openai.chat.create()\n"
+    scan = custom.literal_scan(text, "python")
+    assert set(scan.present) == {"openai(", "openai.chat.create", "penai.ch"}
+    assert set(scan.folded_present) == {"openai.chat"}
+    with custom.scan_budget(seconds=60):
+        found = sorted(m.signature_id for m in custom.match_code(text, "python", scan=scan))
+    assert found == ["custom.folded", "custom.inner", "custom.long", "custom.short"]
+    assert found == sorted(m.signature_id for m in custom.match_code(text, "python"))
+
+
+def test_shared_literal_scan_memo_of_an_absent_literal_selects_no_candidate(monkeypatch):
+    from shadowscan.signatures import matcher
+    from shadowscan.signatures.loader import signature_from_dict
+
+    def signature(sig_id, signal_type, pattern):
+        return signature_from_dict(
+            {"id": sig_id, "category": "framework", "signals": [{"type": signal_type, "patterns": [pattern]}]}
+        )
+
+    # The import pass memoises ``beta`` (a remaining-group literal) as absent;
+    # the code pass, whose own first-group literal it is, must not read that
+    # memo entry as presence and run a pattern that cannot match.
+    custom = SignatureIndex(
+        [signature("custom.pair", "import", r"alpha.*beta"), signature("custom.single", "code", r"beta\s*=")]
+    )
+    text = "x = alpha here\n"
+    attempted: list[str] = []
+    original = matcher._finditer
+
+    def recording(rx, *args, **options):
+        attempted.append(rx.pattern)
+        return original(rx, *args, **options)
+
+    monkeypatch.setattr(matcher, "_finditer", recording)
+    with custom.scan_budget(seconds=60):
+        scan = custom.literal_scan(text, "python")
+        assert custom.match_imports(text, "python", scan=scan) == []
+        assert scan.present == {"alpha": True, "beta": False}
+        assert custom.match_code(text, "python", scan=scan) == []
+    assert attempted == []
+
+
+# ------------------------------------------------------------- binder gates
+def _binder_sources() -> list[tuple[str, str, str]]:
+    """Fixture and corpus sources (which bind) and the connector's own modules (which do not)."""
+    sources = []
+    for name, text in _corpus_texts():
+        language = language_for_path(name.rsplit(":", 1)[-1])
+        if language in {"python", "javascript"}:
+            sources.append((name, text, language))
+    for path in sorted((REPO / "shadowscan" / "connectors" / "code").glob("*.py")):
+        sources.append((path.relative_to(REPO).as_posix(), path.read_text(encoding="utf-8"), "python"))
+    return sources
+
+
+def test_binder_gates_are_lossless_on_every_fixture_source(index, monkeypatch):
+    from shadowscan.connectors.code import source_semantics
+
+    sources = _binder_sources()
+    assert len(sources) > 40
+    gated = skipped = 0
+    for name, text, language in sources:
+        ignored, _ = filesystem_module.noncode_ranges(text, language, "." + name.rsplit(".", 1)[-1])
+        results = []
+        for gate in (True, False):
+            monkeypatch.setattr(source_semantics, "_GATE_BINDERS", gate)
+            try:
+                with index.scan_budget(seconds=60):
+                    found = source_semantics.bound_source_matches(index, text, language, list(ignored))
+                results.append(_flatten(found))
+            except Exception as exc:  # noqa: BLE001 - the two runs must fail alike
+                results.append(type(exc).__name__)
+        assert results[0] == results[1], name  # the gate skips the walk, never the parse
+        if language == "python":
+            monkeypatch.setattr(source_semantics, "_GATE_BINDERS", True)
+            gated += 1
+            skipped += not source_semantics.python_may_bind(index, text)
+    assert 0 < skipped < gated
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("import os\nos.path.join('a')\n", False),
+        ("print('openai')\n", False),  # no import statement at all
+        ("import openai\nopenai.OpenAI()\n", True),
+        ("from langchain.agents import AgentExecutor\n", True),
+        ("import langchain.agents\nx = langchain.agents.AgentExecutor()\n", True),
+        ("from openai \\\n    import OpenAI\n", True),  # backslash continuation before ``import``
+        ("from\x0copenai\x0cimport OpenAI\n", True),  # form feeds as whitespace
+        ("import \\\n    openai\n", True),
+        ("from os \\\n    import path\n", True),  # a continued import line keeps the binder
+        ("import os; from openai import OpenAI\n", True),
+        ("import os\nx = 1; y = 2\n", False),  # a ``;`` on a line without an import is modelled
+        ("import os\n" + "from a import (\n" + "    b,\n" * 3000 + ")\n", True),  # unbounded: kept
+    ],
+)
+def test_python_binder_gate_follows_import_statements(index, text, expected):
+    from shadowscan.connectors.code.source_semantics import python_may_bind
+
+    assert python_may_bind(index, text) is expected
+
+
+# ------------------------------------------------------- CPU-aware budgets
+def _fake_budget_clocks(monkeypatch) -> dict[str, float]:
+    clocks = {"wall": 1000.0, "cpu": 10.0}
+    matcher = filesystem_module.MatchTimeoutError.__module__
+    monkeypatch.setattr(f"{matcher}.time.monotonic", lambda: clocks["wall"])
+    monkeypatch.setattr(f"{matcher}.time.thread_time", lambda: clocks["cpu"])
+    return clocks
+
+
+@pytest.mark.production_budgets
+def test_a_descheduled_thread_keeps_its_input_budget(index, monkeypatch):
+    clocks = _fake_budget_clocks(monkeypatch)
+    with index.scan_budget(seconds=2.0):
+        clocks["wall"] += 2.0 * WALL_BUDGET_FACTOR - 0.5  # waited, within the wall cap
+        clocks["cpu"] += 0.5
+        assert index.match_imports("from crewai import Agent", "python")
+
+
+@pytest.mark.production_budgets
+@pytest.mark.parametrize("spent", ["cpu", "wall"])
+def test_input_budget_fails_on_cpu_or_the_wall_cap_and_reports_both(index, monkeypatch, spent):
+    clocks = _fake_budget_clocks(monkeypatch)
+    with (
+        pytest.raises(
+            MatchTimeoutError, match=r"input execution budget \(cpu .*s of 2\.00s, wall .*s of 8\.00s\)"
+        ),
+        index.scan_budget(seconds=2.0),
+    ):
+        clocks[spent] += 2.0 * WALL_BUDGET_FACTOR if spent == "wall" else 2.0
+        index.match_imports("from crewai import Agent", "python")
+
+
+def test_nested_budget_never_outlives_the_outer_one(index, monkeypatch):
+    clocks = _fake_budget_clocks(monkeypatch)
+    # The inner budget is clipped to the outer one, and the diagnostic names
+    # the budget that ended the input: the outer second, not the inner five.
+    with (
+        pytest.raises(MatchTimeoutError, match=r"cpu 1\.10s of 1\.00s"),
+        index.scan_budget(seconds=1.0),
+    ):
+        clocks["cpu"] += 0.9
+        with index.scan_budget(seconds=5.0):
+            clocks["cpu"] += 0.2
+            index.match_imports("from crewai import Agent", "python")
+
+
+def test_wall_cap_is_validated():
+    with (
+        pytest.raises(ValueError, match="wall cap"),
+        SignatureIndex([]).scan_budget(seconds=2, wall_seconds=1),
+    ):
+        pass
+
+
+def test_scan_tree_opens_a_wall_cap_within_the_connector_deadline(tmp_path, index, monkeypatch):
+    (tmp_path / "small.py").write_text(LANGCHAIN)
+    recorded: list[tuple[float, float | None]] = []
+    original = SignatureIndex.scan_budget
+
+    def scan_budget(self, seconds=2.0, wall_seconds=None):
+        recorded.append((seconds, wall_seconds))
+        return original(self, seconds=seconds, wall_seconds=wall_seconds)
+
+    monkeypatch.setattr(SignatureIndex, "scan_budget", scan_budget)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    FilesystemConnector(ctx).run()
+    assert (2.0, 2.0 * WALL_BUDGET_FACTOR) in recorded
+    recorded.clear()
+    clock = _fake_clock(monkeypatch, step=0.0)
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 5.0
+    )
+    FilesystemConnector(ctx).run()
+    # 5 s remain less the 0.25 s margin: the cap is clipped below the 8 s default.
+    assert recorded[0][0] == 2.0 and 2.0 <= recorded[0][1] <= 5.0 - DEADLINE_MARGIN_MIN_SECONDS
+
+
+# -------------------------------------------------------------- determinism
+def test_two_scans_of_a_tree_produce_identical_findings_and_diagnostics(index, fixtures):
+    def scan():
+        ctx = ConnectorContext(config={"path": str(fixtures / "sample_repo"), "use_git": False}, index=index)
+        findings = FilesystemConnector(ctx).run()
+        return [f.to_dict() for f in findings], ctx.stats.errors, ctx.stats.warnings, ctx.stats.incomplete
+
+    first, second = scan(), scan()
+    assert first[0] and first == second

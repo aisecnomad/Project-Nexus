@@ -125,6 +125,16 @@ evidence there. Deciding that is linear in the module and matches at most
 A large module that does import such a library, or has more imports than that,
 still reports
 `import-bound analysis skipped (source binding AST limit exceeded); lexical evidence retained`.
+Before the module's tree is walked, one bounded pass over its `import` and
+`from ... import` statements checks whether any names a module that a signature's
+import pattern can bind (directly, or through an attribute of the imported
+module); a module whose imports cannot is parsed but not walked, so a syntax
+error in it is still reported as `import-bound analysis skipped (source did not
+parse); lexical evidence retained`. A JavaScript or TypeScript file whose
+imports and `require` calls resolve to no signature skips the call scan the
+same way (its lexer still runs, since the regex passes need the comment and
+string spans it produces). The bound evidence and the diagnostics are identical
+either way; a test compares both paths over every fixture source.
 
 The JavaScript and TypeScript lexer that masks comments, strings and JSX text
 has a look-ahead allowance of its own: a fixed floor plus four characters of
@@ -331,6 +341,37 @@ boundary while remaining capped at 10 seconds, or at `scan_timeout` when that
 is higher. A 900 KB JSON index gets 8 seconds by default and a pathological
 file still fails fast. An exhausted budget marks the file's analysis incomplete
 and the scan incomplete.
+
+The budget is CPU time of the thread analyzing the file, not elapsed time: a
+scanner descheduled behind other processes on a busy host (a benchmark running
+several scans on four CPUs) has not spent it, so ordinary files no longer fail
+with `MatchTimeoutError` under contention alone. Elapsed time still ends the
+file once it reaches four times the budget (8 seconds for a 2-second budget),
+clipped to the remaining connector deadline less its safety margin, so hostile
+input and the connector deadline fail fast as before. The diagnostic reports
+both: `file analysis incomplete (MatchTimeoutError: signature matching exceeded
+the input execution budget (cpu 2.01s of 2.00s, wall 2.40s of 8.00s))`; a wall
+figure far above the CPU figure says the host was contended, not the file
+expensive.
+
+Excerpts are cut at emit time, for the evidence a report keeps, from the
+file's redacted lines. Whether redaction exceeds a sanitization limit is known
+only by redacting, so every file that recorded excerpted evidence is still
+redacted when its analysis ends, and a `structured sanitization incomplete ...;
+excerpts withheld` error marks the scan incomplete even when none of that
+file's matches reaches the report. The file's text is then dropped; nothing is
+written anywhere.
+
+The JavaScript and TypeScript lexer runs on every such file, whether or not
+its imports can bind a signature: the comment and string spans it produces are
+the ignore ranges of the regex passes.
+
+The scan is single-process. A process pool (an opt-in `workers` option) is not
+implemented: findings must be applied in submission order so deduplication and
+emit order stay deterministic; each worker would need its own signature index
+and its own confined root descriptor; a crashed worker must fail its file
+closed while the connector deadline stays in the parent; and credential values
+would cross process pipes. No speedup is claimed for it.
 
 IAM wildcard and agent-definition front-matter parsing use this same bounded
 matching mechanism. The matching budget does not replace an external process
