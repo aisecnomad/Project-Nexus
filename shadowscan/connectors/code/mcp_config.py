@@ -152,15 +152,31 @@ def _holds_placeholder(value: Any) -> bool:
     return False
 
 
+# Top-level keys that hold a client configuration's MCP servers (see _mcp_server_entries).
+_MCP_CONTAINER_KEYS = ("mcpServers", "mcp_servers", "servers", "mcp")
+
+
 def _is_workflow(document: Any) -> bool:
     """Whether a YAML document has a GitHub Actions workflow's shape: a trigger and a jobs table.
 
-    PyYAML reads the unquoted `on:` key as the YAML 1.1 boolean true.
+    PyYAML reads the unquoted `on:` key as the YAML 1.1 boolean true. Every job
+    runs steps or calls a reusable workflow. A document that also lists MCP
+    servers at the top level is a client configuration, whatever else it holds.
     """
-    return (
+    if not (
         isinstance(document, dict)
         and isinstance(document.get("jobs"), dict)
         and ("on" in document or True in document)
+    ):
+        return False
+    jobs = document["jobs"]
+    return (
+        bool(jobs)
+        and all(
+            isinstance(job, dict) and (isinstance(job.get("steps"), list) or isinstance(job.get("uses"), str))
+            for job in jobs.values()
+        )
+        and not any(key in document for key in _MCP_CONTAINER_KEYS)
     )
 
 
@@ -244,6 +260,35 @@ def _load_yaml_mcp_document(text: str, errors: list[str]) -> Any:
         if not _is_workflow(document):
             raise
     return _embedded_workflow_mcp(document, errors) if _is_workflow(document) else document
+
+
+def plugin_mcp_paths(text: str) -> list[str]:
+    """The configuration files a plugin manifest names for its MCP servers (`"mcpServers": "./.mcp.json"`)."""
+    try:
+        data = _load_json_lenient(text)
+    except (ValueError, RecursionError):
+        return []
+    value = data.get("mcpServers") if isinstance(data, dict) else None
+    if isinstance(value, str) and _is_path_reference(value):
+        return [value]
+    if isinstance(value, list) and _is_path_reference(value):
+        return [str(item) for item in value]
+    return []
+
+
+def parse_plugin_mcp_file(rel: str, text: str, errors: list[str]) -> list[dict[str, Any]]:
+    """Parse a file a plugin manifest names: a client configuration, or a bare table of servers."""
+    try:
+        data = _load_json_lenient(text)
+    except (ValueError, RecursionError):
+        errors.append("invalid MCP configuration syntax")
+        return []
+    if not isinstance(data, dict):
+        errors.append("MCP configuration must be an object")
+        return []
+    if not any(key in data for key in _MCP_CONTAINER_KEYS):
+        data = {"mcpServers": data}
+    return _parse_mcp_servers(rel, json.dumps(data), errors)
 
 
 def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:

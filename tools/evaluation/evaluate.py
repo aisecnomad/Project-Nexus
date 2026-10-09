@@ -398,6 +398,13 @@ def _case_source(value: Any, files: dict[str, str], where: str) -> dict[str, Any
     return source
 
 
+_INFORMATIONAL_NOTES = ("; not reported as AI use",)
+
+
+def _informational(warning: str) -> bool:
+    return warning.endswith(_INFORMATIONAL_NOTES) or "(report_generic_credentials reports them)" in warning
+
+
 def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str, Any]]]:
     ctx = ConnectorContext(
         config={
@@ -414,9 +421,10 @@ def _scan_case(case: Case, root: Path, index: Any) -> tuple[float, list[dict[str
     started = time.perf_counter()
     findings = FilesystemConnector(ctx).run()
     elapsed = time.perf_counter() - started
-    # The default-exclude notice is informational (it never marks a scan
-    # incomplete); every other warning still invalidates the evaluation.
-    warnings = list(ctx.stats.warnings) if ctx.stats else []
+    # Notes that a product was only named in data, or that a generic credential
+    # outside AI projects was not reported, describe what the scan decided, not
+    # a gap; every other warning still invalidates the evaluation.
+    warnings = [w for w in ctx.stats.warnings if not _informational(w)] if ctx.stats else []
     if ctx.stats is None or ctx.stats.incomplete or ctx.stats.skipped or ctx.stats.errors or warnings:
         raise RuntimeError(
             f"{case.id}: scan incomplete: "

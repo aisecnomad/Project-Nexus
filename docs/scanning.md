@@ -178,8 +178,10 @@ agent manifest fixture) is a warning rather than a coverage gap, as the
 import-bound analysis limits in test code already are; `include_tests` or
 `strict_coverage` keeps it incomplete. The same holds for binary content, a
 parser or sanitization resource limit, and the analysis an oversize test file
-skips; its credentials are still scanned. The test directory names include
-`test_resources` and `test-resources`.
+skips; its credentials are still scanned. An MCP configuration is the
+exception: its finding is not discounted in test code, so an issue in it keeps
+the scan incomplete. The test directory names include `test_resources` and
+`test-resources`.
 
 ## Incremental scans
 

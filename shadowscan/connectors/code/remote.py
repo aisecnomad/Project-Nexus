@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.code.filesystem import FilesystemConnector
+from shadowscan.connectors.code.filesystem import FilesystemConnector, _with_agent_profile
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.models import Finding
 from shadowscan.utils.git import (
@@ -414,7 +414,8 @@ class RemoteRepositoryConnector(BaseConnector):
                     return
             yield from self._scan_local(repo, local)
             if not offline:
-                yield from remote_findings(repo)
+                for finding in remote_findings(repo):
+                    yield _with_agent_profile(finding)
         except HttpError as exc:
             self.ctx.warn(f"{self.name}: {full}: {exc}", incomplete=True)
         except Exception as exc:  # noqa: BLE001 - one repository's failure is an error, not the scan's end

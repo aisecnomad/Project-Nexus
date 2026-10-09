@@ -840,8 +840,10 @@ and title out), but kinds, titles, scores and counts do:
   pattern matched is no longer reported in a project without AI findings, and
   is titled `Hard-coded credential in …`. This is a credential-policy change:
   set `report_generic_credentials: true` to keep reporting every one, for
-  example when a policy gate counts `secret` findings. Credentials in a
-  provider's format are unaffected.
+  example when a policy gate counts `secret` findings. A note names the files
+  left out. Credentials in a provider's format, including GitHub tokens and
+  AWS access keys, are unaffected, and a credential in a project related to
+  an AI project (enclosing it or inside it) is still reported.
 - **Mentions.** Products named only in data files, feeds or prose and link
   fields no longer establish a project finding, so some projects disappear
   from reports. The scan names the files in a note (a warning; the scan

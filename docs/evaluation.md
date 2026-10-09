@@ -6,7 +6,9 @@ network requests. It invokes the same `code.filesystem` connector and bundled
 signature index used by a normal scan, with Git enrichment disabled and secret
 scanning enabled. A warning, partial scan, skipped connector, or unstable
 repeated scan stops evaluation instead of counting missing detections as true
-negatives.
+negatives. Two notes are exempt because they record a decision, not a gap: that
+a project only named products in data or prose, and that credentials only the
+generic pattern matched were left out of a project without AI findings.
 
 Corpus paths must identify distinct files and directories under conservative
 case-folded, Unicode-normalized comparison. A file cannot also be a parent

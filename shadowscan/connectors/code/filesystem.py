@@ -82,7 +82,12 @@ from shadowscan.connectors.code.manifests import (
     manifest_comment_projection,
     parse_manifest,
 )
-from shadowscan.connectors.code.mcp_config import _mcp_client_for, _parse_mcp_servers
+from shadowscan.connectors.code.mcp_config import (
+    _mcp_client_for,
+    _parse_mcp_servers,
+    parse_plugin_mcp_file,
+    plugin_mcp_paths,
+)
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -600,6 +605,8 @@ class _ScanState:
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
     # relpath, parsed servers
     mcp_files: list[tuple[str, list[dict[str, Any]]]] = field(default_factory=list)
+    # Plugin manifests and the MCP configuration files each names (see _resolve_plugin_mcp).
+    plugin_mcp_refs: list[tuple[str, list[str]]] = field(default_factory=list)
     # relpath, text, kind, project root
     card_files: list[tuple[str, str, str, str]] = field(default_factory=list)
     workflow_files: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)
@@ -869,9 +876,10 @@ def _is_test_path(rel: str) -> bool:
     return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
 
 
-# Tabular, markup and feed files list or link to products: a host or variable
-# name there is a mention, not a call or a configured endpoint.
-_DATA_MARKUP_EXTENSIONS = frozenset({".csv", ".tsv", ".html", ".htm", ".rss", ".atom", ".svg"})
+# Tabular and feed files list or link to products: a host or variable name
+# there is a mention, not a call or a configured endpoint. HTML and SVG can
+# hold scripts, which are code.
+_DATA_MARKUP_EXTENSIONS = frozenset({".csv", ".tsv", ".rss", ".atom"})
 _FEED_ROOT = re.compile(r"<(?:rss|feed)\b")
 _KEYED_EXTENSIONS = frozenset({".json", ".jsonc", ".json5", ".yaml", ".yml", ".toml"})
 # Keys whose value is prose about something, or a link to its pages, rather than a setting.
@@ -893,31 +901,50 @@ _LINK_KEYS = frozenset(
 # `"key":`, `key:` (YAML, also as a list item) or `key =` (TOML) at the start of a line.
 _LINE_KEY = re.compile(r"""^\s*(?:-\s+)?["']?([A-Za-z_][\w.-]{0,63})["']?\s*[:=]""")
 _URL = re.compile(r"""https?://[^\s"'<>()\\]{1,2048}""")
-# A URL that calls a service rather than linking to its pages.
-_API_URL = re.compile(
-    r"https?://(?:[^/]*\b(?:api|mcp|hooks|gateway|inference|bedrock-runtime)\b[^/]*"
-    r"|[^/]+/(?:[^?#]*/)?(?:api|v\d+|chat/completions|completions|embeddings|messages|mcp|sse|openai/deployments)\b)",
+# A URL that calls a service rather than linking to its pages: an API, inference or
+# gateway host (`api.`, `googleapis.com`, an Azure OpenAI or AI Foundry resource), or
+# an API path (`/v1`, `/v1beta`, `/api`, `/chat/completions`, `/models`, `/mcp`).
+_API_HOST = re.compile(
+    r"(?:^|[.-])(?:api|apis|inference|gateway|endpoints?|mcp|hooks|bedrock-runtime|aiplatform"
+    r"|generativelanguage)(?:[.-]|$)|googleapis\.com$|\.(?:openai|cognitiveservices)\.azure\.com$"
+    r"|\.services\.ai\.azure\.com$|\.inference\.ai\.azure\.com$",
     re.IGNORECASE,
 )
+_API_PATH = re.compile(
+    r"/(?:api|v\d+[a-z0-9]*|chat|completions|embeddings|messages|models|mcp|sse|deployments|openai|inference"
+    r"|responses)(?:[/?#:]|$)",
+    re.IGNORECASE,
+)
+# More occurrences of one name than this in a file are not judged one by one.
+_MAX_MENTION_OCCURRENCES = 256
 
 
 def _calls_api(line: str, host: str) -> bool:
     """Whether a URL on ``line`` that contains ``host`` calls an API."""
     host = host.lower()
-    return any(host in url.lower() and _API_URL.match(url) for url in _URL.findall(line))
+    for url in _URL.findall(line):
+        if host not in url.lower():
+            continue
+        authority, _, path = url.split("://", 1)[1].partition("/")
+        url_host = authority.rsplit("@", 1)[-1].split(":", 1)[0]
+        if _API_HOST.search(url_host) or _API_PATH.search("/" + path):
+            return True
+    return False
 
 
 class _Mentions:
     """Decide whether a host or variable-name match in one file only names a product.
 
-    A mention is a match in a tabular, markup or feed file, or under a prose or
+    A mention is an occurrence in a tabular or feed file, or under a prose or
     link key of a JSON, YAML or TOML file, that is not part of a URL calling an
-    API. A mention is still evidence, but it cannot by itself establish AI use
-    (see ``_anchored``): a market map, a crawler list or a package's homepage
-    names a product without using it.
+    API. A name is a mention only when every occurrence in the file is: a
+    homepage link does not hide the configured base URL below it. A mention is
+    still evidence, but it cannot by itself establish AI use (see
+    ``_anchored``): a market map, a crawler list or a package's homepage names
+    a product without using it.
     """
 
-    __slots__ = ("data_file", "keyed", "lines")
+    __slots__ = ("data_file", "folded", "keyed", "text")
 
     def __init__(self, file: _SourceFile, text: str) -> None:
         head = text[:4096].lstrip().lower()
@@ -925,12 +952,37 @@ class _Mentions:
             file.ext == ".xml" and _FEED_ROOT.search(head) is not None
         )
         self.keyed = file.ext in _KEYED_EXTENSIONS
-        self.lines = text.splitlines() if self.data_file or self.keyed else []
+        self.text = text
+        self.folded: str | None = None
 
     def mention(self, m: Match) -> bool:
-        if not (self.data_file or self.keyed) or m.signal.type not in {"domain", "env"} or not m.line:
+        if not (self.data_file or self.keyed) or m.signal.type not in {"domain", "env"} or not m.value:
             return False
-        line = self.lines[m.line - 1] if m.line <= len(self.lines) else ""
+        if m.signal.type == "domain":
+            if self.folded is None:
+                self.folded = self.text.lower()
+            haystack, needle = self.folded, re.escape(m.value.lower())
+            pattern = rf"(?<![a-z0-9-]){needle}(?![a-z0-9-])"
+        else:
+            haystack, needle = self.text, re.escape(m.value)
+            pattern = rf"(?<![A-Za-z0-9_]){needle}(?![A-Za-z0-9_])"
+        seen = 0
+        for occurrence in re.finditer(pattern, haystack):
+            seen += 1
+            if seen > _MAX_MENTION_OCCURRENCES:
+                return False
+            if not self._mention_line(self._line_at(occurrence.start()), m):
+                return False
+        return seen > 0
+
+    def _line_at(self, offset: int) -> str:
+        """The line holding ``offset``; CR, LF and CRLF all end a line."""
+        text = self.text
+        start = max(text.rfind("\n", 0, offset), text.rfind("\r", 0, offset)) + 1
+        ends = [end for end in (text.find("\n", offset), text.find("\r", offset)) if end >= 0]
+        return text[start : min(ends) if ends else len(text)]
+
+    def _mention_line(self, line: str, m: Match) -> bool:
         calls = m.signal.type == "domain" and _calls_api(line, m.value)
         if self.data_file:
             return not calls
@@ -947,7 +999,24 @@ class _Mentions:
 # by the tools it registers (``mcp_tools``).
 _MCP_CLIENT_CALL = re.compile(
     r"\b(?:MultiServerMCPClient|stdio_client|streamablehttp_client|sse_client|MCPServerStdio"
-    r"|MCPServerStreamableHttp|MCPServerSse|McpToolset|MCPClient)\s*\("
+    r"|MCPServerStreamableHttp|MCPServerSse|McpToolset|MCPClient|ClientSession|StdioClientTransport"
+    r"|StreamableHTTPClientTransport|SSEClientTransport|experimental_createMCPClient)\b"
+    r"|modelcontextprotocol/sdk/client|\bmcp\.client\b|langchain_mcp_adapters|@langchain/mcp-adapters"
+)
+# Agent protocols and hosted agent services: using one builds, serves or calls an agent.
+_AGENT_TECHNOLOGIES = frozenset(
+    {
+        "protocol.a2a",
+        "cloud.aws-bedrock-agents",
+        "cloud.azure-ai-foundry-agents",
+        "cloud.gcp-vertex-agent-engine",
+        "cloud.kubernetes-agent-workloads",
+        "cloud.oci-generative-ai-agents",
+        "platform.agent-hosting-misc",
+        "platform.m365-declarative-agent",
+        "platform.openai-agent-builder",
+        "platform.salesforce-agentforce",
+    }
 )
 # CI configuration that runs a coding agent unattended, with the job's token,
 # rather than assisting a developer at a workstation.
@@ -957,6 +1026,27 @@ _CI_CONFIGURATION = re.compile(
 )
 # Evidence that names a coding agent without configuring it (see _MENTION_SIGNALS).
 _CI_MENTION_PREFIXES = ("env:", "name:")
+
+
+# Token formats the generic credential signature also matches: a GitHub token
+# or an AWS access key is a credential wherever it is.
+_PREFIXED_TOKEN = re.compile(r"\b(?:ghp_[A-Za-z0-9]{36}|AKIA[A-Z0-9]{16})\b")
+
+
+def _generic_only(hits: Iterable[tuple[Match, Any]]) -> bool:
+    """Whether only the generic assignment pattern matched these credentials, with no provider format."""
+    return all(m.signature_id == GENERIC_CREDENTIAL and not _PREFIXED_TOKEN.search(m.value) for m, _ in hits)
+
+
+def _related_projects(first: str, second: str) -> bool:
+    """Whether two project roots are the same, or one holds the other."""
+    return (
+        first == second
+        or first == "."
+        or second == "."
+        or first.startswith(second + "/")
+        or second.startswith(first + "/")
+    )
 
 
 def _evidence_file(location: str | None) -> str:
@@ -987,7 +1077,11 @@ def agent_profile(finding: Finding) -> tuple[str, bool]:
             return "tool-loop", True
         return "framework-agent", True
     if finding.kind == Kind.MCP_SERVER:
-        return ("mcp-server" if finding.resource_type == "project" else "mcp-client-config"), True
+        # A registry manifest (server.json) describes the repository's own server.
+        own_server = finding.resource_type == "project" or PurePosixPath(
+            str(metadata.get("path", ""))
+        ).name == ("server.json")
+        return ("mcp-server" if own_server else "mcp-client-config"), True
     if finding.kind == Kind.AGENT_CONFIG:
         in_ci = any(
             _CI_CONFIGURATION.search(_evidence_file(item.location))
@@ -1008,6 +1102,8 @@ def agent_profile(finding: Finding) -> tuple[str, bool]:
     if finding.kind == Kind.FRAMEWORK_USAGE:
         if metadata.get("mcp_client"):
             return "mcp-client", True
+        if _AGENT_TECHNOLOGIES & set(finding.frameworks):
+            return "agent-integration", True
         return "llm-integration", False
     return finding.kind.value, False
 
@@ -1945,12 +2041,48 @@ class FilesystemConnector(BaseConnector):
         self._default_skipped = {}
         try:
             self._walk_entries(scan)
+            self._resolve_plugin_mcp(scan)
         except _WalkLimitError as exc:
             self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
         finally:
             os.close(scan.root_fd)
             scan.root_fd = -1
         self._report_default_excluded(scan)
+
+    def _resolve_plugin_mcp(self, scan: _ScanState) -> None:
+        """Parse the MCP configuration files plugin manifests name; one that is not in the tree is a gap.
+
+        A path is relative to the plugin root, the directory holding
+        `.claude-plugin/`. The file is read relative to the open scan root
+        without following a link, and parsed as a client configuration or as a
+        bare table of servers. A file the walk already parsed as MCP
+        configuration is not parsed twice.
+        """
+        parsed = {rel for rel, _ in scan.mcp_files}
+        for manifest, paths in scan.plugin_mcp_refs:
+            directory = PurePosixPath(manifest).parent
+            plugin_root = directory.parent if directory.name == ".claude-plugin" else directory
+            for path in paths:
+                target = os.path.normpath((plugin_root / path).as_posix()).replace(os.sep, "/")
+                where = f"code.filesystem: {manifest}: MCP configuration {path!r}"
+                if path.startswith("/") or target == ".." or target.startswith("../"):
+                    self.ctx.error(f"{where} is outside the scanned tree")
+                    continue
+                if target in parsed:
+                    continue
+                read_errors: list[str] = []
+                text = read_text(PurePosixPath(target), self.max_file_size, read_errors, dir_fd=scan.root_fd)
+                if text is None:
+                    self.ctx.error(
+                        f"{where} could not be read ({read_errors[0] if read_errors else 'missing'})"
+                    )
+                    continue
+                errors: list[str] = []
+                servers = parse_plugin_mcp_file(target, text, errors)
+                self._file_errors(target, dict.fromkeys(errors), test_policy=False)
+                if servers:
+                    scan.mcp_files.append((target, servers))
+                    parsed.add(target)
 
     def _walk_entries(self, scan: _ScanState) -> None:
         """Start each file only while its matching budget fits before the connector deadline."""
@@ -2033,6 +2165,8 @@ class FilesystemConnector(BaseConnector):
             # is data, not usage or configuration of those products.
             return
         self._detect_mcp(file)
+        if file.name.lower() == "plugin.json" and (paths := plugin_mcp_paths(file.text)):
+            scan.plugin_mcp_refs.append((rel, paths))
 
         # 2. manifests (dependencies, images, env names, IaC types)
         self._scan_manifest(scan, file)
@@ -2230,7 +2364,7 @@ class FilesystemConnector(BaseConnector):
         # A resource limit is an analysis limit: test code follows the test-code policy.
         self._file_errors(rel, [f"structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"])
 
-    def _file_errors(self, rel: str, issues: Iterable[str]) -> None:
+    def _file_errors(self, rel: str, issues: Iterable[str], *, test_policy: bool = True) -> None:
         """Record each issue a parser or validator reported for ``rel``.
 
         Test code follows the test-code policy for analysis limits: suites keep
@@ -2238,7 +2372,7 @@ class FilesystemConnector(BaseConnector):
         discounted, so an issue there is a warning (incomplete only under
         ``strict_coverage``) unless test code is included.
         """
-        test_code = not self.include_tests and _is_test_path(rel)
+        test_code = test_policy and not self.include_tests and _is_test_path(rel)
         for issue in issues:
             message = f"code.filesystem: {rel}: {issue}"
             if test_code:
@@ -2357,7 +2491,8 @@ class FilesystemConnector(BaseConnector):
         if file.is_mcp:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors)
-            self._file_errors(file.rel, dict.fromkeys(mcp_errors))
+            # An MCP finding is not discounted in test code, so neither is a gap in it.
+            self._file_errors(file.rel, dict.fromkeys(mcp_errors), test_policy=False)
             dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             if not file.mcp_servers and not mcp_errors and not dedicated:
                 # The content heuristic (an "mcp" and a "servers" key anywhere
@@ -2826,19 +2961,33 @@ class FilesystemConnector(BaseConnector):
                     wildcards=scan.iam_wildcards.get(scan.infra_project.get(rel, ""), []),
                     models=scan.infra_models.get(rel, []),
                 )
+        suppressed: list[str] = []
         for rel, hits in scan.secret_hits.items():
             with self._isolated(rel, "credential analysis"):
+                owner = self._owning_project(scan, rel)
                 if (
                     not self.report_generic_credentials
-                    and all(m.signature_id == GENERIC_CREDENTIAL for m, _ in hits)
-                    and self._owning_project(scan, rel) not in ai_projects
+                    and _generic_only(hits)
+                    and not any(_related_projects(owner, project) for project in ai_projects)
                 ):
                     # A password or token that only the generic pattern matched,
-                    # with no AI use in its project, is not AI inventory.
+                    # with no AI use in its project, an ancestor or a descendant,
+                    # is not AI inventory.
+                    suppressed.append(rel)
                     continue
                 f = self._secret_finding(label, root, rel, hits)
                 if f:
                     yield f
+        if suppressed:
+            listed = ", ".join(sorted(suppressed)[:5]) + (
+                f" and {len(suppressed) - 5} more" if len(suppressed) > 5 else ""
+            )
+            self.ctx.warn(
+                f"code.filesystem: {self._root_prefix(label)}{len(suppressed)} file(s) hold credentials that "
+                f"only the generic assignment pattern matched, in projects without AI findings; not reported "
+                f"(report_generic_credentials reports them): {listed}",
+                incomplete=False,
+            )
 
     @staticmethod
     def _owning_project(scan: _ScanState, rel: str) -> str:
@@ -3392,7 +3541,7 @@ class FilesystemConnector(BaseConnector):
                 f.kind = Kind.MCP_SERVER
             elif any(
                 m.signature_id == "protocol.mcp"
-                and m.signal.type == "code"
+                and m.signal.type in {"code", "import"}
                 and not evidence.in_tests(rel)
                 and _MCP_CLIENT_CALL.search(m.value)
                 for m, rel, _ in evidence.matches
@@ -3556,6 +3705,7 @@ class FilesystemConnector(BaseConnector):
         """Derive MCP server capabilities from the tool names it registers."""
         tools = sorted(server_tools)
         f.metadata["mcp_tools"] = tools[:50]
+        f.metadata["mcp_tool_count"] = len(tools)
         implied: dict[str, list[str]] = {}
         for tool in tools:
             for capability in mcp_tool_capabilities(tool):
@@ -3666,10 +3816,11 @@ class FilesystemConnector(BaseConnector):
         if f.kind == Kind.MCP_SERVER:
             # The tool names keep one server's title apart from another's.
             tools = f.metadata.get("mcp_tools") or []
-            listed = ", ".join(tools[:3]) + (", …" if len(tools) > 3 else "")
-            plural = "tool" if len(tools) == 1 else "tools"
+            count = int(f.metadata.get("mcp_tool_count") or len(tools))
+            listed = ", ".join(tools[:3]) + (", …" if count > 3 else "")
+            plural = "tool" if count == 1 else "tools"
             protocol = ", ".join(names) or "Model Context Protocol"
-            return f"MCP server in {where}: {protocol} ({len(tools)} {plural}: {listed})"
+            return f"MCP server in {where}: {protocol} ({count} {plural}: {listed})"
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
         detail = ", ".join(names) or ", ".join(provs)
         if not detail:
@@ -3976,7 +4127,7 @@ class FilesystemConnector(BaseConnector):
         if not hits:
             return None
         # A generic assignment pattern names no provider: say what was found.
-        generic = all(m.signature_id == GENERIC_CREDENTIAL for m, _ in hits)
+        generic = _generic_only(hits)
         title = f"{'Hard-coded credential' if generic else 'LLM provider credential'} in {rel}"
         f = self._base(label, root, rel, Kind.SECRET, title, "file")
         # Test, fixture and recorded-cassette paths follow the project test-code

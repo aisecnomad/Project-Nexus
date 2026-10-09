@@ -71,6 +71,24 @@ regression test.
   `report_generic_credentials` option (code.filesystem, code.github,
   code.gitlab) reports it everywhere, as before. Credentials with a provider
   format are reported wherever they are.
+- An independent review found inputs where these changes dropped real
+  evidence; each is fixed with a regression test. A name is a mention only
+  when every occurrence in the file is, judged on its own line (CR, LF and
+  CRLF); HTML and SVG are not data files; API hosts such as `googleapis.com`
+  and Azure OpenAI resources, and paths such as `/v1beta` and `/models`, are
+  configuration. GitHub tokens and AWS keys, which the generic signature also
+  matches, are reported wherever they are; a generic credential counts as
+  part of an AI project when its own, an enclosing or a nested project has AI
+  findings; the files left out are named in a note. A YAML document with a
+  top-level MCP table is never read as a workflow, plugin MCP paths are
+  resolved and parsed (a missing or outside path is a gap), and MCP
+  configuration errors under test paths stay gaps. MCP client imports
+  (`@modelcontextprotocol/sdk/client`, `mcp.client`, `ClientSession`) and
+  agent protocols or hosted agent services (`agent-integration`) are agentic,
+  a registry `server.json` is an `mcp-server`, an MCP server title counts every
+  tool, and provider-side `code.github` and `code.gitlab` findings carry the
+  agent profile too. `make evaluate` accepts the mention and credential notes,
+  which describe a decision rather than a gap.
 
 ### October 8 benchmark remediation: lexing and configuration parsing
 

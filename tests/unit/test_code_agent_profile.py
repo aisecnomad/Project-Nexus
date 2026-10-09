@@ -172,7 +172,9 @@ def test_generic_credential_outside_ai_projects_is_not_reported(tmp_path: Path, 
     findings, ctx = _scan(tmp_path, run_connector, {"settings.py": GENERIC_CREDENTIAL})
     assert findings == []
     assert not ctx.stats.incomplete
-    assert not ctx.stats.warnings
+    # Never silent: a note names the file, never the value.
+    (note,) = ctx.stats.warnings
+    assert "settings.py" in note and "pR7xL2qN9vB4mK8sT3wZ" not in note
 
 
 def test_generic_credentials_can_be_reported_everywhere(tmp_path: Path, run_connector) -> None:

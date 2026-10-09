@@ -82,17 +82,21 @@ catalogs, the scan names those files in a note (a warning that does not make the
 scan incomplete) so the discount is never silent.
 
 A product named in data or prose is not used there either, whatever the count.
-A domain or environment-variable name in a tabular, markup or feed file (CSV,
-TSV, HTML, SVG, an RSS or Atom feed), or under a prose or link key of a JSON,
-YAML or TOML file (`description`, `summary`, `title`, `homepage`, `url`,
-`docs`, `logo`, …), is a *mention*: a market map, a crawler list, an app
-catalogue's blurb or a package's homepage. A mention is kept as evidence of a
-project that has AI findings, but cannot establish one. A URL that calls an
-API (an `api.`, `gateway.` or `inference.` host, or a path such as `/v1`,
-`/api`, `/chat/completions` or `/mcp`) is configuration wherever it appears,
-and so is any other key: `endpoint`, `base_url` and the like. When mentions are
-all that a project has, the scan names those files in a note (a warning that
-does not make the scan incomplete).
+A domain or environment-variable name in a tabular or feed file (CSV, TSV, an
+RSS or Atom feed), or under a prose or link key of a JSON, YAML or TOML file
+(`description`, `summary`, `title`, `homepage`, `url`, `docs`, `logo`, …), is
+a *mention*: a market map, a crawler list, an app catalogue's blurb or a
+package's homepage. A name is a mention only when every occurrence of it in the
+file is, each judged on its own line, so a homepage link does not hide the
+configured base URL below it. A mention is kept as evidence of a project that
+has AI findings, but cannot establish one. HTML and SVG can hold scripts, so
+they are never data. A URL that calls an API is configuration wherever it
+appears: an API, gateway or inference host (`api.`, `googleapis.com`, an Azure
+OpenAI or AI Foundry resource such as `contoso.openai.azure.com`), or an API
+path such as `/v1`, `/v1beta`, `/api`, `/chat/completions`, `/models` or
+`/mcp`. So is a name under any other key: `endpoint`, `base_url` and the like.
+When mentions are all that a project has, the scan names those files in a note
+(a warning that does not make the scan incomplete).
 
 Every code finding states what it describes for policy in
 `metadata.agent_type`, and whether that is agentic in `metadata.agentic`. The
@@ -104,9 +108,11 @@ kind is unchanged; these fields summarise it:
 | `tool-loop` | `agent` | yes | an agent without an agent framework: the program's own loop dispatches the tools a model selects |
 | `agent-definition` | `agent` | yes | an agent manifest or card (A2A, M365, CrewAI, LangGraph) |
 | `mcp-server` | `mcp-server` | yes | source that registers MCP tools for whichever agent connects |
+| `mcp-server` | `mcp-server` | yes | an MCP registry manifest (`server.json`) for the repository's own server |
 | `mcp-client-config` | `mcp-server` | yes | an MCP client configuration that hands servers' tools to a model |
-| `mcp-client` | `framework-usage` | yes | source outside tests that loads MCP servers' tools for a model (`MultiServerMCPClient`, `stdio_client`, `MCPServerStdio`, `McpToolset`, …) |
-| `ci-agent` | `agent-config` | yes | a coding agent that CI runs unattended (a workflow, `.gitlab-ci.yml`, `Jenkinsfile`, …) |
+| `mcp-client` | `framework-usage` | yes | source outside tests that builds an MCP client (`MultiServerMCPClient`, `stdio_client`, `ClientSession`, `StdioClientTransport`, `MCPServerStdio`, `McpToolset`, or an import of `@modelcontextprotocol/sdk/client` or `mcp.client`) |
+| `agent-integration` | `framework-usage` | yes | an agent protocol or hosted agent service without an agent framework: A2A, Bedrock Agents, Azure AI Foundry Agents, Vertex AI Agent Engine, OCI Generative AI Agents, M365 declarative agents, Agentforce, OpenAI Agent Builder |
+| `ci-agent` | `agent-config` | yes | coding-agent evidence that configures it in a CI file (a GitHub workflow, `.gitlab-ci.yml`, `Jenkinsfile`, …), so CI runs it unattended |
 | `coding-assistant-config` | `agent-config` | no | a coding assistant's instructions or settings (`CLAUDE.md`, `.cursorrules`, `AGENTS.md`) |
 | `ai-workflow` | `workflow` | if it has agent nodes or tool-use, autonomous or multi-agent capabilities | an exported low-code flow |
 | `agent-infrastructure` / `ai-infrastructure` | `infra` | agent resources only | IaC that declares an agent (Bedrock, Foundry, Vertex) or other AI resources |
@@ -118,10 +124,14 @@ and the title `MCP server in <project>: <protocol> (<n> tools: a, b, c, …)`.
 A server is not an agent itself; an agent framework in the same project still
 makes it an `agent`.
 
-A credential with a provider-specific format is reported wherever it is. One
-that only the generic assignment pattern matched (`DB_PASSWORD = "…"`, no
-provider prefix) is titled `Hard-coded credential in <file>`, and is reported
-only in a project with another AI finding: elsewhere it is not AI inventory.
+A credential with a provider-specific format, including a GitHub token or an
+AWS access key, is reported wherever it is. One that only the generic
+assignment pattern matched (`DB_PASSWORD = "…"`, no provider prefix) is titled
+`Hard-coded credential in <file>`, and is reported only when its project, an
+enclosing project or a project inside it has another AI finding: a root `.env`
+that an AI sub-project reads, or a sub-project of an AI repository. Elsewhere
+it is not AI inventory, and a note (a warning that does not make the scan
+incomplete) names the files left out, never their values.
 `report_generic_credentials: true` reports it in every project.
 
 Ordinary Spring `ChatClient` and LangChain4j `AiServices` construction, and
@@ -285,11 +295,18 @@ other value, or keys that only collide after YAML 1.1 reads them (`on` and
 `true`), stays an integrity error. A GitHub Actions workflow is recognised by
 its `jobs` table and trigger wherever it is kept, so an example under
 `examples/workflows/` has its embedded MCP settings parsed like one under
-`.github/workflows/`. An Actions expression outside a JSON string in those
+`.github/workflows/`; every job must run steps or call a reusable workflow, and
+a document that also lists MCP servers at the top level is read as a client
+configuration. An Actions expression outside a JSON string in those
 settings stands for a placeholder; one inside the server table keeps the scan
 incomplete, because the servers depend on a value rendered at run time. A
 plugin manifest (`plugin.json`) may name the files that hold its MCP servers
-instead of listing them; those files are scanned on their own. A notebook larger than
+instead of listing them. Each path is resolved from the plugin root (the
+directory holding `.claude-plugin/`), read without following a link and parsed
+as a client configuration or a bare table of servers; a path outside the
+scanned tree, or one that cannot be read or parsed, keeps the scan incomplete.
+A parse or validation issue in an MCP configuration keeps the scan incomplete
+under a test path too, since its finding is not discounted there. A notebook larger than
 `max_file_size` because of saved outputs is analyzed by its code cells up to
 `max_notebook_size` (default 20 MiB); its outputs are then not scanned for
 credentials, which leaves coverage incomplete unless `scan_secrets` is off.
