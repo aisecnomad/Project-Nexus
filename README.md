@@ -422,7 +422,7 @@ turns shadow findings into card skeletons for review. See
 
 ```bash
 pip install -e ".[cloud,dev]"
-python -m shadowscan.signatures.validate
+python -m shadowscan. signatures.validate
 ruff check shadowscan tests tools
 ruff format --check shadowscan tests tools
 mypy shadowscan tools
@@ -460,7 +460,7 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
   cannot authenticate reviewer independence or manufacture tenant acceptance.
 - **Release-evidence workflow:** The
   [workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml) builds a candidate wheel and retains
-  hashes, a runtime dependency SBOM and provenance after the selected commit
+  hashes, a runtime dependency SBOM, and provenance after the selected commit
   passes CI and CodeQL. This does not establish deployment acceptance. It
   uploads to PyPI only when the maintainer dispatches it with `publish` set and
   approves the protected environment; it never creates a GitHub release.
@@ -471,17 +471,10 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
   as `NexusShadowScan`. Confirm publication and artifact identity on
   [PyPI](https://pypi.org/project/NexusShadowScan/0.1.2/) and the
   [GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2).
-  The package classifier is `Development Status :: 3 - Alpha`.
+  The package classifier is `Development Status:: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Project-Nexus/tree/main/archive/reviews) are AI-assisted, not third-party reviews.
-* **Independent review.** [PR #159](https://github.com/aisecnomad/Project-Nexus/pull/159#pullrequestreview-5458962521)
-  received a non-author approval from `immanueldahunsi-Project-Nexus` after merge.
-  Its reviewed source tree matches the `0.1.1` candidate. That approval does not
-  cover later changes; each release candidate requires independent review. See
-  the [review and merge policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy). The
-  intended branch ruleset is versioned in
-  [.github/rulesets/require-ci-and-review.json](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/rulesets/require-ci-and-review.json).
 * **Recommendation.** Review the revision yourself or have it reviewed, then
   pin that full commit SHA as shown below. Review state cannot be established
   from a checkout; verify it with the commands in
