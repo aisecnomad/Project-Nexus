@@ -1849,11 +1849,13 @@ class FilesystemConnector(BaseConnector):
         """Return the subdirectories of ``dirpath`` the walk descends into, in name order.
 
         None means the walk must stop: a directory link reached ``max_files``
-        or the connector deadline (see ``_skip_link``).
+        or the connector deadline (see ``_skip_link``). Directory-link checks
+        are listing work, so they also stop at ``walk.enumerate_until``.
         """
         kept = []
         for name in sorted(dirnames):
             walk.budget.check()
+            _check_enumeration_time(walk)
             shown = _report_name(name)
             rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name

@@ -217,7 +217,8 @@ author-written and not independent review.
   of the time in which a file can still start (`connector deadline: listing
   stopped after N entries`), so a large tree or a slow filesystem still
   scans the entries it listed instead of spending the deadline on
-  enumeration. A root that starts when no file can start any more lists
+  enumeration. Checks of file and directory links are listing work and stop
+  with it. A root that starts when no file can start any more lists
   nothing (`listing stopped after 0 entries`), so a later root of a
   multi-root or organization scan cannot run the connector past its deadline
   and discard the earlier roots' findings. The scan stays incomplete
