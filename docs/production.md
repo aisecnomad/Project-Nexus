@@ -1146,6 +1146,39 @@ to a `base_url` override, so provider lists and confidence may differ from an
 earlier candidate's report. Finding IDs are unchanged. These are detection
 corrections, not evidence of change in the scanned repositories.
 
+### October 8 corroboration rules: findings that disappear or shrink
+
+Review `shadowscan diff` output before accepting a baseline from this
+candidate: whole project findings can disappear, and others lose frameworks
+or providers, without any repository change. Four kinds of evidence no longer
+establish a technology on their own: a lexical code pattern whose signature
+has no import, dependency, file-name, image, IaC, model, bound-call,
+configuration or mention of weight 0.3 or more anywhere in the project; a
+signature known only from mentions below weight 0.3 (`huggingface.co` in a
+comment); a host, variable, display name, model id or CI image under a test
+path while `include_tests` is off; and a container image that runs a CI job
+(`.github/workflows/`, `.gitlab-ci.yml` and the like), which also no longer
+produces an `infra` finding. The evidence is kept, but such a signature moves
+from `frameworks[]` or `model_providers[]` to `metadata.potential_frameworks`
+or `metadata.potential_providers`, adds no capability and does not title the
+finding. A project whose only evidence is of these kinds yields no project
+finding; the scan instead records a warning, "evidence not reported because
+nothing in the project establishes a technology on its own", that names up to
+five of its files. That warning does not mark the scan incomplete, so the exit
+code does not change. Finding IDs are unchanged, so `diff` reports these
+findings as resolved and the shrunk ones as changed, and policy filters or
+`--fail-on` thresholds keyed on `frameworks[]` or `model_providers[]` stop
+matching them. Before accepting the baseline, take every finding that `diff`
+reports as resolved, or that lost a framework or provider. Find its project in
+the new report's `metadata.potential_*` lists and in the warnings that name
+files. Open those files and decide whether the project really uses the
+product, for example a vendored SDK without a manifest entry or an
+integration test that is in scope. Keep a finding you confirm under manual
+review, or re-scan with `include_tests: true` when test code is in scope.
+Record the rest as detection corrections, not remediation. These rules come
+from the author-written benchmark and its regression cases; they are not
+field-validated.
+
 ### October 7 distribution rename and PyPI publication
 
 The distribution is renamed from `project-nexus-shadowscan` to
