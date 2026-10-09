@@ -98,15 +98,27 @@ def test_engine_keeps_results_returned_before_the_deadline(tmp_path, index, monk
     assert any("framework.langchain" in finding.frameworks for finding in result.findings)
 
 
-def test_root_starting_inside_the_margin_records_the_error_for_every_file(tmp_path, index, monkeypatch):
+def test_root_starting_inside_the_margin_lists_nothing_and_records_one_error(tmp_path, index, monkeypatch):
+    # 1 s left: less than the 0.25 s margin plus a 2 s matching budget, so no
+    # file can start and the root's directories are never read.
     _tree(tmp_path, count=3)
     clock = _fake_clock(monkeypatch, step=1.0)
+    listed: list[str] = []
+    walk_directories = filesystem_module._walk_directories
+
+    def recorded_walk_directories(top, onerror, *, budget=None):
+        for dirpath, dirnames, filenames in walk_directories(top, onerror, budget=budget):
+            listed.append(dirpath)
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(filesystem_module, "_walk_directories", recorded_walk_directories)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 1.0
     )
     findings = FilesystemConnector(ctx).run()
-    assert not findings and ctx.stats.objects_examined == 0
-    assert len(ctx.stats.errors) == 1 and "after 0 of 3 files" in ctx.stats.errors[0]
+    assert not findings and ctx.stats.objects_examined == 0 and not listed
+    assert len(ctx.stats.errors) == 1
+    assert "connector deadline: listing stopped after 0 entries; results incomplete" in ctx.stats.errors[0]
 
 
 def test_deadline_remainder_is_exact_within_max_files(tmp_path, index, monkeypatch):
@@ -147,6 +159,54 @@ def test_listing_stops_in_time_to_scan_the_listed_files(tmp_path, index, monkeyp
     assert len(ctx.stats.errors) == 1
     assert re.search(r"connector deadline: listing stopped after 9 entries", ctx.stats.errors[0])
     assert any("framework.langchain" in finding.frameworks for finding in findings)
+
+
+def test_root_without_time_to_scan_lists_nothing_and_keeps_earlier_roots(tmp_path, index, monkeypatch):
+    # The first root stops starting files at 1008.15 (10 s deadline, 0.5 s
+    # margin, 2 s matching budget), so the second root starts with 1.85 s
+    # left: less than its 0.25 s margin plus a matching budget, so none of
+    # its files can start. Listing it anyway would only spend the margin, and
+    # sorting what it listed (charged per sort key, as listing is per entry)
+    # would cross the deadline, so the engine would discard the first root's
+    # findings with the whole connector.
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    _tree(first)
+    for number in range(400):
+        (second / f"data_{number}.txt").write_text("x")
+    clock = _fake_clock(monkeypatch, step=1.0)
+    deadline = clock[0] + 10.0
+    second_listed_at: list[float] = []
+    count_entry = FilesystemConnector._count_entry
+    scan_priority = filesystem_module._scan_priority
+
+    def slow_count_entry(self, walk, root):
+        clock[0] += 0.01
+        if Path(root).name == "second":
+            second_listed_at.append(clock[0])
+        return count_entry(self, walk, root)
+
+    def slow_scan_priority(rel, name):
+        clock[0] += 0.005
+        return scan_priority(rel, name)
+
+    monkeypatch.setattr(FilesystemConnector, "_count_entry", slow_count_entry)
+    monkeypatch.setattr(filesystem_module, "_scan_priority", slow_scan_priority)
+    cfg = ScanConfig(
+        connectors=[
+            ConnectorSpec("code.filesystem", {"paths": [str(first), str(second)], "use_git": False}),
+        ],
+        connector_timeout_seconds=10.0,
+        parallel=1,
+    )
+    result = Engine(cfg, index).run()
+    stats = result.stats[0]
+    assert not result.complete and not stats.skipped
+    assert all(at < deadline - DEADLINE_MARGIN_MIN_SECONDS for at in second_listed_at)
+    assert any("deadline reached after 8 of 10 files" in error for error in stats.errors)
+    assert any("connector deadline: listing stopped after 0 entries" in error for error in stats.errors)
+    assert any("framework.langchain" in finding.frameworks for finding in result.findings)
 
 
 def test_cancellation_mid_walk_is_not_reported_per_file(tmp_path, index, monkeypatch):

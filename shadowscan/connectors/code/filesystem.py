@@ -1158,11 +1158,12 @@ def enumeration_deadline(now: float, deadline: float, margin: float, scan_timeou
     deadline must not spend it all on listing, leaving no file scanned.
     Listing takes ``ENUMERATION_DEADLINE_SHARE`` of the time in which a
     file's matching budget still fits before the margin. When no file can
-    start any more, listing only counts the remainder for the deadline
-    diagnostic, until half the margin is left.
+    start any more, nothing is listed: listing and sorting entries that
+    cannot be scanned would only spend the margin, and a result that then
+    arrives after the deadline is discarded with the earlier roots' findings.
     """
     window = deadline - margin - scan_timeout - now
-    return now + ENUMERATION_DEADLINE_SHARE * window if window > 0 else deadline - margin / 2
+    return now + ENUMERATION_DEADLINE_SHARE * window if window > 0 else now
 
 
 def _check_enumeration_time(walk: _WalkCounters) -> None:
@@ -1783,6 +1784,9 @@ class FilesystemConnector(BaseConnector):
         # even when this source tree produces no findings (and no enrichment).
         if self.use_git and os.path.lexists(root / ".git"):
             self.check_gitlink_coverage(root)
+        # A root that starts when no file can start any more does not even
+        # read its top directory.
+        _check_enumeration_time(walk)
         for dirpath, dirnames, filenames in _walk_directories(root, walk_error, budget=walk.budget):
             walk.budget.check()
             _check_enumeration_time(walk)

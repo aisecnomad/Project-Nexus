@@ -480,7 +480,13 @@ entry for the link directories. The walk lists a root's entries before it
 scans them in priority order; listing stops after half of the time in which a
 file can still start, with the error `connector deadline: listing stopped
 after N entries`, so the listed files are still scanned and their findings
-kept. The scan is incomplete (exit 3).
+kept. The scan is incomplete (exit 3). A root that starts when no file can
+start any more, such as a late repository of an organization scan, lists
+nothing (`after 0 entries`), so it cannot run the connector past its deadline
+and discard the findings of the roots scanned before it. A tree whose listing
+alone takes more than that half is reported incomplete even when the former
+interleaved walk would have finished in time; raise
+`connector_timeout_seconds` for such a tree.
 
 YAML manifest artifact matching uses a shared one-second deadline and gives
 each bounded line chunk no more than the remaining manifest pattern budget.

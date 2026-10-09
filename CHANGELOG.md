@@ -212,10 +212,15 @@ author-written and not independent review.
   largest, lowest-signal tail first, and the deadline diagnostic now
   reports the exact remainder (never "at least N"). Listing stops after half
   of the time in which a file can still start (`connector deadline: listing
-  stopped after N entries`), so a large tree, a slow filesystem or a root
-  inheriting a nearly spent deadline still scans the entries it listed
-  instead of spending the deadline on enumeration. The scan stays
-  incomplete (exit 3).
+  stopped after N entries`), so a large tree or a slow filesystem still
+  scans the entries it listed instead of spending the deadline on
+  enumeration. A root that starts when no file can start any more lists
+  nothing (`listing stopped after 0 entries`), so a later root of a
+  multi-root or organization scan cannot run the connector past its deadline
+  and discard the earlier roots' findings. The scan stays incomplete
+  (exit 3). Rollout: a tree whose listing alone takes more than that half is
+  now reported incomplete even when the former interleaved walk would have
+  finished; raise `connector_timeout_seconds` for it.
 
 ### Classification and precision
 
