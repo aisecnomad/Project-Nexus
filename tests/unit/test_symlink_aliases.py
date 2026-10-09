@@ -54,12 +54,13 @@ def test_dangling_link_outside_the_tree_stays_a_gap(tmp_path: Path, run_connecto
 
 
 def test_link_in_test_code_follows_the_test_code_policy(tmp_path: Path, run_connector) -> None:
-    # A configuration alias whose name is read differently is a gap elsewhere (see below).
-    _write(tmp_path, {"tests/data/settings.yml": "model: gpt-4o\n"})
-    _link(tmp_path, "tests/links/docker-compose.yml", "../data/settings.yml")
+    # Covered as it would be outside test code (same name, project and directory
+    # rules); only its test classification differs from the target's.
+    _write(tmp_path, {"config/settings.yml": "model: gpt-4o\n"})
+    _link(tmp_path, "tests/links/settings.yml", "../../config/settings.yml")
     _, ctx = _scan(run_connector, tmp_path)
     assert not ctx.stats.incomplete
-    assert any("symbolic link tests/links/docker-compose.yml in test code" in w for w in ctx.stats.warnings)
+    assert any("symbolic link tests/links/settings.yml in test code" in w for w in ctx.stats.warnings)
     _, strict = _scan(run_connector, tmp_path, strict_coverage=True)
     assert strict.stats.incomplete
 
@@ -77,9 +78,8 @@ def test_directory_link_between_test_fixtures_is_covered(tmp_path: Path, run_con
         ("docs/guide/README.md", "../../README.md"),
         ("PLAN-video.md", "docs/plans/2026-05-24-video.md"),
         ("providers/azure/models/codestral.toml", "../../mistral/models/codestral.toml"),
-        ("providers/azure/models/gpt.toml", "../../openai/models/gpt-4o.toml"),
     ],
-    ids=["readme", "plan", "same-name-config", "different-name-config"],
+    ids=["readme", "plan", "same-name-config"],
 )
 def test_document_and_same_name_configuration_aliases_are_covered(
     tmp_path: Path, run_connector, link: str, target: str
@@ -91,19 +91,32 @@ def test_document_and_same_name_configuration_aliases_are_covered(
     assert not ctx.stats.incomplete, ctx.stats.warnings
 
 
-def test_document_alias_into_another_project_is_covered(tmp_path: Path, run_connector) -> None:
-    # A document yields credentials and file-name signals only, reported at the real file.
-    _write(
-        tmp_path,
-        {
-            "apps/a/package.json": '{"name": "a"}',
-            "packages/b/package.json": '{"name": "b"}',
-            "packages/b/README.md": "# b\n",
-        },
-    )
-    _link(tmp_path, "apps/a/README.md", "../../packages/b/README.md")
+def test_document_alias_into_an_enclosing_project_is_covered(tmp_path: Path, run_connector) -> None:
+    # A generic credential in the enclosing project's file is reported wherever
+    # the alias's would be (see test_symlink_review_fixes for a sibling project).
+    _write(tmp_path, {"README.md": "# repo\n", "apps/a/package.json": '{"name": "a"}'})
+    _link(tmp_path, "apps/a/README.md", "../../README.md")
     _, ctx = _scan(run_connector, tmp_path)
     assert not ctx.stats.incomplete, ctx.stats.warnings
+
+
+@pytest.mark.parametrize(
+    ("link", "target"),
+    [
+        ("providers/azure/models/gpt.toml", "../../openai/models/gpt-4o.toml"),
+        ("app/package.json", "composer.json"),
+    ],
+    ids=["different-name-config", "different-manifest"],
+)
+def test_configuration_alias_with_another_name_is_a_gap(
+    tmp_path: Path, run_connector, link: str, target: str
+) -> None:
+    # Parsers dispatch on the exact file name (package.json, composer.json, plugin.json).
+    real = os.path.normpath((Path(link).parent / target).as_posix())
+    _write(tmp_path, {real: '{"name": "x"}\n' if real.endswith(".json") else "name = 'x'\n"})
+    _link(tmp_path, link, target)
+    _, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete
 
 
 def test_shared_skill_directory_under_codex_is_covered(tmp_path: Path, run_connector) -> None:

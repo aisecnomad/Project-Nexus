@@ -49,19 +49,27 @@ followed; each new rule decides from real paths and has a regression test.
   configuration alias with the same file name are covered like source aliases.
 - A dangling link inside the tree, whose name carries no file-name signal, is
   noted with a warning; a dangling `.mcp.json` stays a gap.
-- A link in test code whose target is in the tree and read at its real path
-  follows the test-code policy, unless its name adds a file-name signal
-  (`tests/CLAUDE.md`). A link into excluded content (`node_modules`, `build`)
-  stays a gap.
+- A link in test code follows the test-code policy when it would be covered
+  outside test code, apart from its test classification: same file type,
+  project and directory rules, a target that is read, and no file-name signal
+  only the link's name adds (`tests/CLAUDE.md`). A link into excluded content
+  (`node_modules`, `build`), to another file type, or a directory link whose
+  files would be read differently (`tests/fixtures/.claude`) stays a gap.
 - An independent review found aliases these rules called covered while the
   alias path would have been read differently; each is a gap again, with a
   regression test. Alias and real paths must agree on every rule that reads a
   parent directory: coding-agent settings and their permission checks
   (`.claude`, `.codex`, `.gemini`, goose, OpenClaw), the MCP client a
-  configuration belongs to, catalog and pipeline classification, workflows,
-  CI files, agent definitions, agent manifests and test classification. A
+  configuration belongs to, plugin manifest directories (`.claude-plugin`,
+  `.codex-plugin`), catalog and pipeline classification, workflows, CI files,
+  agent definitions, agent manifests and test classification; coding-agent
+  instruction aliases (`CLAUDE.md -> AGENTS.md`) are compared the same way. A
   document alias needs a target the walk reads as it would read the alias
-  (`README.md -> docs/index.rst` is a gap). Alias enumeration has a total
+  (`README.md -> docs/index.rst` is a gap), in the alias's own project or, when
+  the alias carries no file-name signal, an enclosing one: generic credentials
+  are reported by project. A configuration alias needs the same file name,
+  since parsers dispatch on it (`package.json -> composer.json` and
+  `plugin.json -> manifest.json` are gaps). Alias enumeration has a total
   budget of 20,000 entries per scan root, so a link farm is a gap rather than
   a slow scan, and alias paths escape undecodable names as the walk does.
 
@@ -93,7 +101,9 @@ code the scanner failed to read. Each change has a regression test.
   an independent review showed that padding a test file then hid its MCP
   server and client evidence, so it was replaced. Binary content in test code
   is a gap again. When an excerpt cannot be sanitized within its limits, the
-  excerpts are withheld with a warning; the file's findings are kept.
+  excerpts are withheld with a warning; the file's findings are kept, IAM
+  wildcard grants included (found in the raw text, reported without an
+  excerpt).
   Notebook outputs are always scanned for credentials. `test_resources` and
   `test-resources` are test directories.
 - WebP, WAV and AVI (RIFF), Ogg, FLAC, MP3 (ID3), TIFF and ICO content is a
@@ -106,9 +116,12 @@ code the scanner failed to read. Each change has a regression test.
 - A Git repository kept in the tree under another name (a bare `name.git`
   fixture, a test's `dotGit`) is recognised by a valid `HEAD`, `objects/` and
   `refs/` and only Git's own entries. Only its binary formats are skipped,
-  each verified by path and leading bytes (zlib loose objects, packs and their
-  indexes, commit graphs, the index); hooks and every other file in it are
-  analyzed, so a directory shaped like a store cannot hide source.
+  each verified by path and content: a loose object must inflate to a Git
+  object header, and packs, pack indexes and their companions, commit graphs
+  and the index must start with their signature and binary version. Hooks and
+  every other file in it are analyzed, so a directory shaped like a store
+  cannot hide source. Stores are found by walking up each path, and at most
+  five are named in warnings per root.
 
 ### October 8 benchmark remediation: classification and precision
 
@@ -164,13 +177,20 @@ regression test.
   which describe a decision rather than a gap.
 - A second review found that judging mentions searched the whole file once
   per name, so a 750 KB catalog of 30,000 names timed the scan out. Each name
-  is judged once per file, and searches stop at 64 MiB of text per file; a
-  name beyond that is evidence, never a mention. The MCP configuration files
-  plugin manifests name are read once each, up to the walk's size limit for
-  their type, before the connector deadline, and a failure in one is that
-  file's error, not the scan's. A credential is titled `LLM provider
-  credential` only when a provider signature matched it; a GitHub token alone
-  is a `Hard-coded credential`.
+  is judged once per file, each occurrence on its line clipped to 2,100
+  characters around it, and the work, searches and lines alike, stops at
+  64 MiB of text per file; a name beyond that is evidence, never a mention, as
+  is an occurrence more than 4 KiB from the start of its line in a keyed file.
+  The MCP configuration files plugin manifests name are read once each, up to
+  the walk's size limit for their type, before the connector deadline, and a
+  failure in one is that file's error, not the scan's; paths in a Codex
+  `.codex-plugin/plugin.json` are relative to the plugin root, as in Claude
+  Code's `.claude-plugin/`. A credential is titled `LLM provider credential`
+  only when an AI provider or AI service signature matched it; a GitHub token
+  or AWS key alone is a `Hard-coded credential`. Finding a file's project and
+  whether it is related to an AI project walks up its path instead of
+  comparing every project, which a repository of 12,000 small projects had
+  made quadratic after the last deadline check.
 
 ### October 8 benchmark remediation: lexing and configuration parsing
 

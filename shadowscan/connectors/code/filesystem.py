@@ -55,6 +55,7 @@ import stat
 import subprocess
 import time
 import tomllib
+import zlib
 from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
@@ -490,6 +491,8 @@ _MAX_ALIAS_ENTRIES_TOTAL = 20_000
 
 
 _MCP_TABLE_EXTENSIONS = frozenset({".json", ".jsonc", ".json5", ".yaml", ".yml", ".toml"})
+# Directories that hold a plugin manifest (Claude Code, Codex); see _resolve_plugin_mcp.
+_PLUGIN_MANIFEST_DIRS = frozenset({".claude-plugin", ".codex-plugin"})
 
 
 def _path_semantics(rel: str) -> tuple[Any, ...]:
@@ -503,10 +506,13 @@ def _path_semantics(rel: str) -> tuple[Any, ...]:
     classification sets evidence weight. Every rule that reads a parent
     directory belongs here.
     """
-    parts = PurePosixPath(rel).parts
+    path = PurePosixPath(rel)
+    parts = path.parts
     return (
         _is_test_path(rel),
         agent_manifest_kind(rel),
+        # A plugin manifest's MCP paths are relative to the directory above these.
+        path.parent.name if path.parent.name in _PLUGIN_MANIFEST_DIRS else None,
         any(d in rel for d in _AGENT_DEFINITION_DIRS),
         ".github/workflows/" in rel,
         ".github" in parts and "workflows" in parts,
@@ -520,28 +526,14 @@ def _path_semantics(rel: str) -> tuple[Any, ...]:
     )
 
 
-def _same_path_semantics(first: str, second: str) -> bool:
-    """Whether two paths of the same content are analyzed alike, apart from their file-name signals."""
-    return _path_semantics(first) == _path_semantics(second)
+def _same_path_semantics(first: str, second: str, *, ignore_test: bool = False) -> bool:
+    """Whether two paths of the same content are analyzed alike, apart from their file-name signals.
 
-
-def _configuration_semantics(rel: str) -> tuple[Any, ...]:
-    """What a data file's name and directories decide about its analysis, apart from file-name signals.
-
-    Manifests, dependency and deployment files, pipeline and service
-    configuration (never catalogs), MCP client configuration names, `.env`
-    files and agent manifests are each read by name; two paths with equal
-    values here are analyzed alike for the same content.
+    ``ignore_test`` compares everything but test classification (see the
+    test-code link rule in ``_skip_link``).
     """
-    name = PurePosixPath(rel).name.lower()
-    return (
-        is_manifest_name(PurePosixPath(rel).name),
-        _is_data_file(rel),
-        name in MCP_CONFIG_NAMES or name in _DEDICATED_MCP_CONFIG_NAMES or name == "server.json",
-        name.startswith(".env"),
-        name.endswith((".lock.yml", ".lock.yaml")) or "{{" in rel,
-        agent_manifest_kind(rel),
-    )
+    skip = 1 if ignore_test else 0
+    return _path_semantics(first)[skip:] == _path_semantics(second)[skip:]
 
 
 def _dangling_inside(link: Path, resolved_root: Path) -> bool:
@@ -554,35 +546,67 @@ def _dangling_inside(link: Path, resolved_root: Path) -> bool:
     return inside and not os.path.lexists(target)
 
 
-# Git's binary formats inside a store, by path below it and leading bytes: loose
-# objects (zlib), packs, pack indexes and their companions, commit graphs, the index.
-_GIT_BINARY_PARTS: tuple[tuple[re.Pattern[str], tuple[bytes, ...]], ...] = (
-    (re.compile(r"objects/[0-9a-f]{2}/(?:[0-9a-f]{38}|[0-9a-f]{62})"), (b"\x78",)),
-    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.pack"), (b"PACK",)),
-    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.idx"), (b"\xfftOc",)),
-    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.rev"), (b"RIDX",)),
-    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.bitmap"), (b"BITM",)),
-    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.mtimes"), (b"MTME",)),
-    (re.compile(r"objects/info/(?:commit-graph|commit-graphs/graph-[0-9a-f]{40,64}\.graph)"), (b"CGPH",)),
-    (re.compile(r"objects/(?:pack/)?multi-pack-index"), (b"MIDX",)),
-    (re.compile(r"index"), (b"DIRC",)),
+# The header of an inflated loose Git object.
+_GIT_OBJECT_HEADER = re.compile(rb"(?:blob|tree|commit|tag) \d{1,20}\x00")
+
+
+def _git_loose_object(head: bytes) -> bool:
+    """Whether ``head`` starts a zlib stream that inflates to a Git object header."""
+    if len(head) < 2 or head[0] != 0x78 or ((head[0] << 8) | head[1]) % 31:
+        return False
+    try:
+        inflated = zlib.decompressobj().decompress(head, 64)
+    except zlib.error:
+        return False
+    return _GIT_OBJECT_HEADER.match(inflated) is not None
+
+
+def _git_magic(*prefixes: bytes) -> Callable[[bytes], bool]:
+    """A check for a format's signature followed by its binary version field."""
+    return lambda head: head.startswith(prefixes)
+
+
+_PACK_NAME = r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})"
+# Git's binary formats inside a store, by path below it and leading bytes (each
+# format's signature and version, which text cannot hold): loose objects (zlib),
+# packs, pack indexes and their companions, commit graphs, the index.
+_GIT_BINARY_PARTS: tuple[tuple[re.Pattern[str], Callable[[bytes], bool]], ...] = (
+    (re.compile(r"objects/[0-9a-f]{2}/(?:[0-9a-f]{38}|[0-9a-f]{62})"), _git_loose_object),
+    (re.compile(_PACK_NAME + r"\.pack"), _git_magic(b"PACK\x00\x00\x00\x02", b"PACK\x00\x00\x00\x03")),
+    (re.compile(_PACK_NAME + r"\.idx"), _git_magic(b"\xfftOc\x00\x00\x00\x02")),
+    (re.compile(_PACK_NAME + r"\.rev"), _git_magic(b"RIDX\x00\x00\x00\x01")),
+    (re.compile(_PACK_NAME + r"\.bitmap"), _git_magic(b"BITM\x00\x01")),
+    (re.compile(_PACK_NAME + r"\.mtimes"), _git_magic(b"MTME\x00\x00\x00\x01")),
+    (
+        re.compile(r"objects/info/(?:commit-graph|commit-graphs/graph-[0-9a-f]{40,64}\.graph)"),
+        _git_magic(b"CGPH\x01\x01", b"CGPH\x01\x02"),
+    ),
+    (re.compile(r"objects/(?:pack/)?multi-pack-index"), _git_magic(b"MIDX\x01\x01", b"MIDX\x01\x02")),
+    (
+        re.compile(r"index"),
+        _git_magic(b"DIRC\x00\x00\x00\x02", b"DIRC\x00\x00\x00\x03", b"DIRC\x00\x00\x00\x04"),
+    ),
 )
+# Git repository stores named one by one in each scan root's warnings; the rest are counted.
+_MAX_NAMED_GIT_STORES = 5
 
 
-def _git_binary_part(stores: list[str], rel: str, path: Path) -> bool:
+def _git_binary_part(stores: AbstractSet[str], rel: str, path: Path) -> bool:
     """Whether ``rel`` is binary Git content of a store: a known path whose leading bytes match its format.
 
     Only these are skipped; any other file in a store, a hook or a ref
-    included, is analyzed like a file anywhere else.
+    included, is analyzed like a file anywhere else. The store is found by
+    walking up ``rel``, so the cost does not grow with the number of stores.
     """
-    for store in stores:
-        if not rel.startswith(store + "/"):
+    for parent in PurePosixPath(rel).parents:
+        store = parent.as_posix()
+        if store == "." or store not in stores:
             continue
         below = rel[len(store) + 1 :]
-        for pattern, magic in _GIT_BINARY_PARTS:
+        for pattern, verified in _GIT_BINARY_PARTS:
             if pattern.fullmatch(below):
-                head = read_head(path, 8)
-                return head is not None and head.startswith(magic)
+                head = read_head(path, 256)
+                return head is not None and verified(head)
         return False
     return False
 
@@ -1030,9 +1054,17 @@ _API_PATH = re.compile(
 )
 # More occurrences of one name than this in a file are not judged one by one.
 _MAX_MENTION_OCCURRENCES = 256
-# Characters searched for mentions in one file, over all names; names beyond it
-# are evidence, not mentions. A file naming thousands of variables stays linear.
+# Characters searched for mentions in one file, over all names and occurrences;
+# names beyond it are evidence, not mentions. A file naming thousands of
+# variables or hosts on one long line stays linear.
 _MENTION_SEARCH_BUDGET = 64 * 1024 * 1024
+# An occurrence is judged on its line, clipped to this many characters on each
+# side: a URL is at most 2,048 characters after its scheme (``_URL``), so the
+# URL holding an occurrence is inside the window.
+_MENTION_WINDOW = 2_100
+# A key is read at the start of the occurrence's line, at most this far back; a
+# longer line has no known key, so the occurrence is evidence.
+_MENTION_KEY_REACH = 4_096
 
 
 def _calls_api(line: str, host: str) -> bool:
@@ -1060,7 +1092,7 @@ class _Mentions:
     a product without using it.
     """
 
-    __slots__ = ("budget", "data_file", "decided", "folded", "keyed", "text")
+    __slots__ = ("budget", "data_file", "decided", "keyed", "text")
 
     def __init__(self, file: _SourceFile, text: str) -> None:
         head = text[:4096].lstrip().lower()
@@ -1069,7 +1101,6 @@ class _Mentions:
         )
         self.keyed = file.ext in _KEYED_EXTENSIONS
         self.text = text
-        self.folded: str | None = None
         self.budget = _MENTION_SEARCH_BUDGET
         self.decided: dict[tuple[str, str], bool] = {}
 
@@ -1086,34 +1117,48 @@ class _Mentions:
 
     def _every_occurrence_mentions(self, m: Match) -> bool:
         if m.signal.type == "domain":
-            if self.folded is None:
-                self.folded = self.text.lower()
-            haystack, needle = self.folded, re.escape(m.value.lower())
-            pattern = rf"(?<![a-z0-9-]){needle}(?![a-z0-9-])"
+            needle = re.escape(m.value)
+            pattern = re.compile(rf"(?<![a-z0-9-]){needle}(?![a-z0-9-])", re.IGNORECASE | re.ASCII)
         else:
-            haystack, needle = self.text, re.escape(m.value)
-            pattern = rf"(?<![A-Za-z0-9_]){needle}(?![A-Za-z0-9_])"
+            needle = re.escape(m.value)
+            pattern = re.compile(rf"(?<![A-Za-z0-9_]){needle}(?![A-Za-z0-9_])")
         seen = 0
-        for occurrence in re.finditer(pattern, haystack):
+        for occurrence in pattern.finditer(self.text):
             seen += 1
             if seen > _MAX_MENTION_OCCURRENCES:
                 return False
-            if not self._mention_line(self._line_at(occurrence.start()), m):
-                return False
+            segment, head, cost = self._context(occurrence.start(), occurrence.end())
+            self.budget -= cost
+            if self.budget < 0 or not self._mention_line(segment, head, m):
+                return False  # out of budget: evidence, never a mention
         return seen > 0
 
-    def _line_at(self, offset: int) -> str:
-        """The line holding ``offset``; CR, LF and CRLF all end a line."""
-        text = self.text
-        start = max(text.rfind("\n", 0, offset), text.rfind("\r", 0, offset)) + 1
-        ends = [end for end in (text.find("\n", offset), text.find("\r", offset)) if end >= 0]
-        return text[start : min(ends) if ends else len(text)]
+    def _context(self, start: int, end: int) -> tuple[str, str | None, int]:
+        """The occurrence's line, clipped to ``_MENTION_WINDOW``; its head, if within reach; the cost.
 
-    def _mention_line(self, line: str, m: Match) -> bool:
-        calls = m.signal.type == "domain" and _calls_api(line, m.value)
+        CR, LF and CRLF all end a line.
+        """
+        text = self.text
+        reach = max(0, start - _MENTION_KEY_REACH)
+        before = max(text.rfind("\n", reach, start), text.rfind("\r", reach, start))
+        if before >= 0 or reach == 0:
+            line_start, head_known = before + 1, True
+        else:
+            line_start, head_known = reach, False
+        limit = min(len(text), end + _MENTION_WINDOW)
+        ends = [found for found in (text.find("\n", end, limit), text.find("\r", end, limit)) if found >= 0]
+        line_end = min(ends) if ends else limit
+        window_start = max(line_start, start - _MENTION_WINDOW)
+        head = text[line_start : min(line_end, line_start + 256)] if head_known else None
+        return text[window_start:line_end], head, (start - reach) + (line_end - window_start)
+
+    def _mention_line(self, segment: str, head: str | None, m: Match) -> bool:
+        calls = m.signal.type == "domain" and _calls_api(segment, m.value)
         if self.data_file:
             return not calls
-        key = _LINE_KEY.match(line)
+        if head is None:
+            return False
+        key = _LINE_KEY.match(head)
         name = key.group(1).lower() if key else ""
         if name in _PROSE_KEYS:
             return True
@@ -1170,15 +1215,22 @@ def _generic_only(hits: Iterable[tuple[Match, Any]]) -> bool:
     return all(m.signature_id == GENERIC_CREDENTIAL and not _PREFIXED_TOKEN.search(m.value) for m, _ in hits)
 
 
-def _related_projects(first: str, second: str) -> bool:
-    """Whether two project roots are the same, or one holds the other."""
-    return (
-        first == second
-        or first == "."
-        or second == "."
-        or first.startswith(second + "/")
-        or second.startswith(first + "/")
-    )
+def _ai_relation(ai_projects: set[str]) -> Callable[[str], bool]:
+    """Whether a project is, holds or is held by one of ``ai_projects`` (the root holds all), in O(depth)."""
+    lineage = {
+        parent.as_posix()
+        for project in ai_projects
+        for parent in (PurePosixPath(project), *PurePosixPath(project).parents)
+    }
+
+    def related(owner: str) -> bool:
+        if not ai_projects:
+            return False
+        if owner == "." or "." in ai_projects or owner in lineage:
+            return True  # the root, an AI project or one that encloses one
+        return any(parent.as_posix() in ai_projects for parent in PurePosixPath(owner).parents)
+
+    return related
 
 
 def _evidence_file(location: str | None) -> str:
@@ -1759,26 +1811,35 @@ class FilesystemConnector(BaseConnector):
         )
 
     def _link_target_is_scanned(
-        self, rel: str, target: Path, root: Path, walk: _WalkCounters | None = None
+        self,
+        rel: str,
+        target: Path,
+        root: Path,
+        walk: _WalkCounters | None = None,
+        *,
+        ignore_test: bool = False,
     ) -> bool:
         """Whether skipping the (never followed) link at ``rel`` loses no coverage.
 
         Coverage is kept when nothing would ever be read at the alias path, or
         when the real target is walked and analyzed with the same semantics the
         alias path would have had: same project, same test classification, same
-        source type and no file-name signal that only the alias name carries.
-        Directory links, links into excluded or unread content and config or
-        document aliases (whose parsing can depend on their path) are gaps. A
-        coding-agent instruction document linked to another one is the exception:
-        the target keeps the alias's project and test classification.
+        directory rules (``_same_path_semantics``), same source type and no
+        file-name signal that only the alias name carries. A configuration
+        alias needs the same file name, since parsers dispatch on it. A
+        document alias may point into its own project or an enclosing one.
+        Directory links and links into excluded or unread content are gaps. A
+        coding-agent instruction document linked to another one keeps its
+        alias-only file-name signal out of the comparison. ``ignore_test``
+        compares everything but test classification (the test-code link rule).
         """
         relative = target.relative_to(root)
         target_rel = relative.as_posix()
         budget = walk.budget if walk is not None else None
+        cache = walk.project_roots if walk is not None else None
         if target.is_dir():
-            # A directory alias changes every descendant's path. Even an
-            # included target cannot prove that path-based signals at the
-            # alias were assessed without walking the link (which we forbid).
+            # A directory alias changes every descendant's path; see
+            # _directory_alias_covered, which lists the target instead.
             return False
         link_name = PurePosixPath(rel).name
         link_ext = Path(link_name).suffix.lower()
@@ -1794,20 +1855,23 @@ class FilesystemConnector(BaseConnector):
                 return False
         if not target.is_file() or self._excluded_file(target_rel) or _never_read_by_name(target.name):
             return False
+        if not _same_path_semantics(rel, target_rel, ignore_test=ignore_test):
+            return False
+        same_tests = ignore_test or _is_test_path(rel) == _is_test_path(target_rel)
+        alias_project = _project_root(root, rel, cache, budget=budget)
+        target_project = _project_root(root, target_rel, cache, budget=budget)
         # Coding-agent instruction aliases (CLAUDE.md -> AGENTS.md) are the
         # same document family. The real file is scanned and the alias hides no
         # second agent definition, so the alias-only file-name signal is not a
-        # gap. Project ownership and test classification must still match.
-        if _is_coding_agent_doc(link_name) and _is_coding_agent_doc(target.name):
-            return _project_root(root, rel, budget=budget) == _project_root(
-                root, target_rel, budget=budget
-            ) and _is_test_path(rel) == _is_test_path(target_rel)
+        # gap. Project ownership, test classification and directories match.
+        # In test code the alias-only signal is not excused: `tests/CLAUDE.md`
+        # would add test evidence of a coding agent.
+        if _is_coding_agent_doc(link_name) and _is_coding_agent_doc(target.name) and not ignore_test:
+            return alias_project == target_project and same_tests
         target_ext = Path(target.name).suffix.lower()
-        # A document is read for credentials and its file-name signals only, so a
-        # document alias (`docs/README.md -> ../README.md`) is equivalent; so is a
-        # configuration alias with the same file name, whose parsing depends on
-        # the name and on directories that file-name signals and
-        # _same_path_semantics compare.
+        target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
+        if not alias_signals <= target_signals:
+            return False  # file-name signatures apply to the alias but not the real file
         document = (
             link_ext in _DOCUMENT_EXTENSIONS
             and target_ext in _DOCUMENT_EXTENSIONS
@@ -1815,38 +1879,28 @@ class FilesystemConnector(BaseConnector):
             and not is_manifest_name(target.name)
             and not _is_coding_agent_doc(target.name)
         )
-        configuration = (
-            link_ext in _DATA_DOCUMENT_EXTENSIONS
-            and target_ext == link_ext
-            and _configuration_semantics(rel) == _configuration_semantics(target_rel)
-        )
         if document:
-            # A document yields credentials and file-name signals only; the
-            # credential finding is the real file's wherever its project is.
-            # The target must be read as the alias would be: `.rst` is not.
-            target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
-            return (
-                _analyzed_by_name(link_name) == _analyzed_by_name(target.name)
-                and _same_path_semantics(rel, target_rel)
-                and alias_signals <= target_signals
+            # A document yields credentials and file-name signals only, and the
+            # target must be read as the alias would be (`.rst` is not). A
+            # generic credential is reported where its project, or one it
+            # encloses or is enclosed by, has AI findings: a target in the
+            # alias's project or an enclosing one is reported at least as often.
+            # File-name evidence is recorded in the target's project, so an
+            # alias that carries any stays in its own project.
+            enclosing = target_project == "." or alias_project.startswith(target_project + "/")
+            return _analyzed_by_name(link_name) == _analyzed_by_name(target.name) and (
+                alias_project == target_project or (enclosing and not alias_signals)
             )
-        if configuration:
-            if not _same_path_semantics(rel, target_rel):
-                return False
-        # Other source aliases are equivalent without opening the link; other
-        # config and document parsing can depend on the file name and directory.
+        if link_ext in _DATA_DOCUMENT_EXTENSIONS:
+            if link_name != target.name:
+                return False  # manifests, plugin and settings files are parsed by name
         elif link_ext not in SOURCE_EXTENSIONS or target_ext != link_ext:
+            # Other source aliases are equivalent without opening the link; other
+            # parsing can depend on the file name.
             return False
         # The real path must keep the alias's project ownership and evidence
         # weight; another project or a test directory would change both.
-        cache = walk.project_roots if walk is not None else None
-        if _project_root(root, rel, cache, budget=budget) != _project_root(
-            root, target_rel, cache, budget=budget
-        ) or _is_test_path(rel) != _is_test_path(target_rel):
-            return False
-        # File-name signatures can apply to the alias but not the real file.
-        target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
-        return alias_signals <= target_signals
+        return alias_project == target_project and same_tests
 
     def check_gitlink_coverage(self, root: Path) -> None:
         """Check committed gitlinks where Git is authorized: a clone or use_git=True.
@@ -1979,18 +2033,26 @@ class FilesystemConnector(BaseConnector):
         # even when this source tree produces no findings (and no enrichment).
         if self.use_git and os.path.lexists(root / ".git"):
             self.check_gitlink_coverage(root)
-        git_stores: list[str] = []
+        git_stores: set[str] = set()
         for dirpath, dirnames, filenames in _walk_directories(root, walk_error, budget=walk.budget):
             walk.budget.check()
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if rel_dir != "." and _is_git_store(dirpath, dirnames, filenames):
-                git_stores.append(rel_dir)
-                self.ctx.warn(
-                    f"code.filesystem: {rel_dir}: Git repository store; its object database and index are "
-                    "not analyzed, its other files are",
-                    incomplete=False,
-                )
+                git_stores.add(rel_dir)
+                if len(git_stores) <= _MAX_NAMED_GIT_STORES:
+                    self.ctx.warn(
+                        f"code.filesystem: {rel_dir}: Git repository store; its object database and index "
+                        "are not analyzed, its other files are",
+                        incomplete=False,
+                    )
+                elif len(git_stores) == _MAX_NAMED_GIT_STORES + 1:
+                    prefix = self._root_prefix(self._scan_label(root))
+                    self.ctx.warn(
+                        f"code.filesystem: {prefix}more Git repository stores are treated alike without "
+                        "being named",
+                        incomplete=False,
+                    )
             if ".gitmodules" in filenames:
                 self._check_submodule_declarations(root, rel_dir)
             kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
@@ -2143,20 +2205,20 @@ class FilesystemConnector(BaseConnector):
                 root, "dangling", f"skipped dangling symbolic link {rel}; its target is not in the tree"
             )
             return True
-        target_signals = (
-            {
-                (m.signature.id, id(m.signal))
-                for m in self.index.match_file(target.relative_to(resolved_root).as_posix())
-            }
-            if target is not None and target.is_file()
-            else set()
-        )
+        # A link in test code is covered when it would be covered anywhere else,
+        # apart from its test classification: its evidence would only be weaker.
         if (
             target is not None
-            and alias_signals <= target_signals
             and not self.include_tests
             and _is_test_path(rel)
-            and self._target_walked(link.name, target, resolved_root)
+            and (
+                (
+                    not named
+                    and self._directory_alias_covered(rel, target, resolved_root, walk, ignore_test=True)
+                )
+                if target.is_dir()
+                else self._link_target_is_scanned(rel, target, resolved_root, walk, ignore_test=True)
+            )
         ):
             # The target is inside the tree and analyzed at its real path.
             self._link_note(
@@ -2177,34 +2239,15 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
         return True
 
-    def _target_walked(self, link_name: str, target: Path, root: Path) -> bool:
-        """Whether the walk reads a link's target at its real path as it would read the link's name.
-
-        A directory target must not be excluded, nor any directory above it; a
-        file target must also be read by name, as the link's name would be.
-        """
-        target_rel = target.relative_to(root).as_posix()
-        parts = PurePosixPath(target_rel).parts
-        directories = parts if target.is_dir() else parts[:-1]
-        for depth, name in enumerate(directories, start=1):
-            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
-                return False
-        if target.is_dir():
-            return True
-        return (
-            target.is_file()
-            and not self._excluded_file(target_rel)
-            and not _never_read_by_name(target.name)
-            and (_analyzed_by_name(target.name) or not _analyzed_by_name(link_name))
-        )
-
     def _link_note(self, root: Path, kind: str, message: str, *, incomplete: bool = False) -> None:
         """Note one link of each kind per root; a hostile tree cannot fill the report with link names."""
         if (root, kind) not in self._link_notes:
             self._link_notes.add((root, kind))
             self.ctx.warn(f"code.filesystem: {message}", incomplete=incomplete)
 
-    def _directory_alias_covered(self, rel: str, target: Path, root: Path, walk: _WalkCounters) -> bool:
+    def _directory_alias_covered(
+        self, rel: str, target: Path, root: Path, walk: _WalkCounters, *, ignore_test: bool = False
+    ) -> bool:
         """Whether a link to a directory in the tree loses no coverage, enumerating the target, not the link.
 
         The target must be walked in the same project, with the same test
@@ -2226,7 +2269,7 @@ class FilesystemConnector(BaseConnector):
         project = _project_root(root, rel, cache, budget=budget)
         if project != _project_root(root, f"{target_rel}/_", cache, budget=budget):
             return False
-        if _is_test_path(f"{rel}/_") != _is_test_path(f"{target_rel}/_"):
+        if not ignore_test and _is_test_path(f"{rel}/_") != _is_test_path(f"{target_rel}/_"):
             return False
         failed: list[OSError] = []
         records: list[tuple[str, list[Match]]] = []
@@ -2265,7 +2308,7 @@ class FilesystemConnector(BaseConnector):
                     return False
                 if excluded or _never_read_by_name(name):
                     continue
-                if not _same_path_semantics(alias_rel, real_rel):
+                if not _same_path_semantics(alias_rel, real_rel, ignore_test=ignore_test):
                     return False
                 real_matches = self.index.match_file(real_rel)
                 real_keys = {(m.signature.id, id(m.signal)) for m in real_matches}
@@ -2463,7 +2506,7 @@ class FilesystemConnector(BaseConnector):
         """Parse the MCP configuration files plugin manifests name; one that is not in the tree is a gap.
 
         A path is relative to the plugin root, the directory holding
-        `.claude-plugin/`. The file is read relative to the open scan root
+        `.claude-plugin/` or `.codex-plugin/`. The file is read relative to the open scan root
         without following a link, and parsed as a client configuration or as a
         bare table of servers. A file the walk already parsed as MCP
         configuration is not parsed twice.
@@ -2473,7 +2516,7 @@ class FilesystemConnector(BaseConnector):
         deadline = self.ctx.deadline
         for manifest, paths in scan.plugin_mcp_refs:
             directory = PurePosixPath(manifest).parent
-            plugin_root = directory.parent if directory.name == ".claude-plugin" else directory
+            plugin_root = directory.parent if directory.name in _PLUGIN_MANIFEST_DIRS else directory
             for path in paths:
                 target = os.path.normpath((plugin_root / path).as_posix()).replace(os.sep, "/")
                 where = f"code.filesystem: {manifest}: MCP configuration {path!r}"
@@ -2956,14 +2999,18 @@ class FilesystemConnector(BaseConnector):
     def _scan_iac(self, scan: _ScanState, file: _SourceFile) -> None:
         """Collect wildcard IAM grants and declared model ids for the infrastructure findings."""
         rel, text = file.rel, file.text
-        # Excerpts come from the redacted source, which is only
-        # produced for files that actually contain a wildcard.
+        # Grants are found in the raw text; excerpts come from the redacted
+        # source, produced only for files that contain a wildcard, and are
+        # empty when it is withheld.
         if _IAM_WILDCARD_RE.search(text, timeout=_pattern_timeout(), concurrent=False):
-            for number, line_text in enumerate(self._redacted_lines(file), start=1):
+            safe_lines = self._redacted_lines(file)
+            for number, line_text in enumerate(text.splitlines(), start=1):
                 if _IAM_WILDCARD_RE.search(line_text, timeout=_pattern_timeout(), concurrent=False):
                     wildcard_hits = scan.iam_wildcards.setdefault(file.proj_root, [])
-                    if len(wildcard_hits) < 20:
-                        wildcard_hits.append((rel, number, truncate(line_text.strip(), 160) or ""))
+                    if len(wildcard_hits) >= 20:
+                        break
+                    excerpt = safe_lines[number - 1] if number <= len(safe_lines) else ""
+                    wildcard_hits.append((rel, number, truncate(excerpt.strip(), 160) or ""))
         if rel in scan.infra_files:
             scan.infra_project[rel] = file.proj_root
             line_at = line_counter(text)
@@ -3391,17 +3438,14 @@ class FilesystemConnector(BaseConnector):
                     wildcards=scan.iam_wildcards.get(scan.infra_project.get(rel, ""), []),
                     models=scan.infra_models.get(rel, []),
                 )
+        related_to_ai = _ai_relation(ai_projects)
         suppressed: list[str] = []
         for rel, hits in scan.secret_hits.items():
             if self._emission_due():
                 break
             with self._isolated(rel, "credential analysis"):
                 owner = self._owning_project(scan, rel)
-                if (
-                    not self.report_generic_credentials
-                    and _generic_only(hits)
-                    and not any(_related_projects(owner, project) for project in ai_projects)
-                ):
+                if not self.report_generic_credentials and _generic_only(hits) and not related_to_ai(owner):
                     # A password or token that only the generic pattern matched,
                     # with no AI use in its project, an ancestor or a descendant,
                     # is not AI inventory.
@@ -3423,16 +3467,13 @@ class FilesystemConnector(BaseConnector):
 
     @staticmethod
     def _owning_project(scan: _ScanState, rel: str) -> str:
-        """The deepest project root that is ``rel`` or holds it."""
-        owner, depth = ".", 0
-        for project_root in scan.projects:
-            if (
-                project_root != "."
-                and (rel == project_root or rel.startswith(project_root + "/"))
-                and len(project_root) > depth
-            ):
-                owner, depth = project_root, len(project_root)
-        return owner
+        """The deepest project root that is ``rel`` or holds it; O(depth), not O(projects)."""
+        path = PurePosixPath(rel)
+        for candidate in (path, *path.parents):
+            key = candidate.as_posix()
+            if key != "." and key in scan.projects:
+                return key
+        return "."
 
     def _emit_projects(self, scan: _ScanState, project_findings: dict[str, Finding]) -> Iterator[Finding]:
         """Yield coding-agent findings and hold each project finding in ``project_findings``."""

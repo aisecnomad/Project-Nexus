@@ -865,8 +865,9 @@ reported. Re-scan before comparing completeness or memory use:
   findings are kept.
 - **Credentials.** A credential signal that reaches 256 matches in one file
   marks the scan incomplete instead of stopping silently. A credential is
-  titled `LLM provider credential` only when a provider signature matched it;
-  a policy that keys on the title sees GitHub tokens as `Hard-coded credential`.
+  titled `LLM provider credential` only when an AI provider or AI service
+  signature matched it; a policy that keys on the title sees GitHub tokens and
+  AWS keys alone as `Hard-coded credential`.
 - **Deadline.** A scan that reaches the connector deadline while reporting
   findings keeps the findings already built and is incomplete, instead of the
   engine discarding all of them. Large repositories may still need a higher
@@ -876,14 +877,16 @@ reported. Re-scan before comparing completeness or memory use:
   code no longer make a scan incomplete when they lose no coverage (see the
   [coverage policy](scanning.md#coverage-policy)). The alias and real paths
   must agree on every rule that reads a directory name, so a link named
-  `.claude`, `.codex` or `.gemini` stays a gap, and a link to content the walk
-  does not read stays a gap. A covered skill-directory link adds its
+  `.claude`, `.codex`, `.gemini` or `.claude-plugin`, in test code too, stays a
+  gap; so do a link to content the walk does not read, a configuration alias
+  with another file name, and a document alias into a sibling project. A covered skill-directory link adds its
   alias-path file-name evidence, so a coding-agent configuration finding can
   gain files.
 - **Text and Git stores.** JavaScript and TypeScript sources with a NUL in a
   string literal and text in a legacy code page are analyzed (the latter with
   a warning). In a Git repository kept under another name, only its verified
-  binary formats are skipped, with a warning; its other files are analyzed.
+  binary formats are skipped (a loose object must inflate to a Git object
+  header), with a warning; its other files are analyzed.
   Common media formats (WebP, Ogg, FLAC, MP3, TIFF, ICO) are binary artifacts.
 
 ### October 7 distribution rename and PyPI publication

@@ -18,14 +18,19 @@ that are never silent:
   its alias-only file name is not reported separately. A document alias
   (`docs/guide/README.md -> ../../README.md`, a Markdown, text or
   reStructuredText file) whose target the walk reads as it would read the
-  alias, and a configuration alias with the same file name, are covered on the
-  same terms: a document is read only for credentials and file-name signals,
-  and configuration parsing depends on the name and on directories. Alias and
+  alias, in the alias's project or (when the alias's own name carries no
+  file-name signal) an enclosing one, is covered: a document is read only for
+  credentials and file-name signals, and a generic credential is reported
+  wherever an enclosing project's would be. A configuration alias with the same
+  file name, in the same project, is covered on the same terms as a source
+  alias; parsers dispatch on the file name, so another name is a gap. Alias and
   real paths must agree on every rule that reads a directory name: agent
   definitions, workflows, CI files, agent manifests, coding-agent settings and
   their permission checks (`.claude`, `.codex`, `.gemini`, goose, OpenClaw),
-  the MCP client a configuration belongs to, pipeline and catalog
-  classification, and test classification. A directory link into the same
+  the MCP client a configuration belongs to, plugin manifest directories
+  (`.claude-plugin`, `.codex-plugin`), pipeline and catalog classification, and
+  test classification; instruction-document aliases are compared the same
+  way. A directory link into the same
   project, such as a skill directory shared between coding agents
   (`.claude/skills -> ../.agents/skills`), is covered when the link's own name
   carries no file-name signal and every file below the target (at most 2,000,
@@ -36,9 +41,8 @@ that are never silent:
   stops at 20,000 entries per scan root, after which directory links are gaps.
   A dangling link whose own name carries no file-name signal and whose target
   would be inside the tree hides nothing and is noted with a warning. A link
-  under a test path whose target is in the tree and read at its real path (not
-  excluded, and read by name as the link would be), and whose name adds no
-  file-name signal, follows the test-code policy. Every other link makes
+  under a test path that these rules would cover apart from its test
+  classification follows the test-code policy. Every other link makes
   the scan incomplete (exit code 3): directory links into another project, a
   test directory or an agent-definition directory; other configuration
   aliases, whose parsing can depend on their path; aliases into another
@@ -80,10 +84,11 @@ that are never silent:
   contains a non-ASCII character, such text stays a gap. A Git repository kept
   in the tree under another name (a bare `name.git` fixture, a test's
   `dotGit`) is recognised by a valid `HEAD`, `objects/` and `refs/` and nothing
-  but Git's own entries, and noted with a warning. Only its binary formats are
-  skipped, each verified by path and leading bytes (zlib loose objects, packs
-  and their indexes, commit graphs, the index); its hooks and other files are
-  analyzed. Binary content under a test path is a gap like anywhere else. A
+  but Git's own entries, and noted with a warning (five per root by name).
+  Only its binary formats are skipped, each verified by path and content: a
+  loose object must inflate to a Git object header, and packs, their indexes
+  and companions, commit graphs and the index must start with their signature
+  and binary version. Its hooks and other files are analyzed. Binary content under a test path is a gap like anywhere else. A
   compiled or packed artifact with no file extension and a known header (ELF,
   Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG, GIF, PDF,
   WebP and other RIFF media, Ogg, FLAC, MP3, TIFF, ICO) is skipped quietly, as
@@ -209,7 +214,8 @@ file over `max_data_file_size` stay gaps, since test evidence is still
 reported. An MCP configuration is the other exception: its finding is not
 discounted in test code, so an issue in it keeps the scan incomplete. When an
 excerpt cannot be sanitized within its limits, anywhere, the excerpts are
-withheld with a warning and the findings kept. The test directory names include `test_resources` and
+withheld with a warning and the findings kept; evidence is still found in the
+raw text and reported without an excerpt. The test directory names include `test_resources` and
 `test-resources`.
 
 ## Incremental scans
