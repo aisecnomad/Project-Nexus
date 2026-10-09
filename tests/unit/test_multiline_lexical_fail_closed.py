@@ -34,24 +34,12 @@ from shadowscan.connectors.code.source_ranges import noncode_ranges
             "docs = %q{AiServices.builder(example)\n",
             "framework.langchain4j",
         ),
-        (
-            "sample.rb",
-            "docs = %Q{#{AiServices.builder(example)}}\n",
-            "framework.langchain4j",
-        ),
-        (
-            "sample.rb",
-            "docs = %Q|#{AiServices.builder(example)}|\n",
-            "framework.langchain4j",
-        ),
     ],
     ids=[
         "ruby-unclosed-heredoc",
         "php-unclosed-heredoc",
         "rust-unclosed-raw-string",
         "ruby-unclosed-percent-string",
-        "ruby-interpolated-percent-string",
-        "ruby-interpolated-nonpaired-percent-string",
     ],
 )
 def test_ambiguous_multiline_source_retains_neighbor_and_fails_closed(

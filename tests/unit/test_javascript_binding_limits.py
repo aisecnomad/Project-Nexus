@@ -8,6 +8,8 @@ from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.connectors.code.source_semantics import (
     MAX_BOUND_CALLS,
     MAX_CALL_TEXT,
+    MAX_FILE_CALL_TEXT,
+    MAX_LONG_CALL_TEXT,
     SourceBudgetExceeded,
     bound_source_matches,
 )
@@ -45,12 +47,11 @@ def test_call_text_limit_analyzes_only_that_call_partially(index, tmp_path, run_
     request = "OpenAI.chat.completions.create({ tools: [lookup] "
     balanced = _matches(index, IMPORT + request + "})\n")
     assert ("provider.openai", "code", 2) in balanced  # a request offering tools
-    # A call longer than the limit is read from its first MAX_CALL_TEXT
-    # characters, as the Python binder reads one: the binder keeps running and
-    # the file's other calls keep their evidence, where it used to discard every
-    # bound call of the file. An option past the limit is unread, so the scan
-    # stays incomplete, as it was.
-    over_limit = IMPORT + request + "x" * MAX_CALL_TEXT + "\n})\n" + request + "})\n"
+    # A call longer than the limit is read from its first MAX_LONG_CALL_TEXT
+    # characters: the binder keeps running and the file's other calls keep
+    # their evidence, where it used to discard every bound call of the file.
+    # An option past the limit is unread, so the scan stays incomplete.
+    over_limit = IMPORT + request + "x" * MAX_LONG_CALL_TEXT + "\n})\n" + request + "})\n"
     ignored, _ = noncode_ranges(over_limit, "javascript")
     truncated: list[int] = []
     found = bound_source_matches(index, over_limit, "javascript", ignored, truncated=truncated)
@@ -62,7 +63,7 @@ def test_call_text_limit_analyzes_only_that_call_partially(index, tmp_path, run_
     )
     assert context.stats.incomplete
     gaps = [error for error in context.stats.errors if "app.js" in error]
-    assert len(gaps) == 1 and "line 2" in gaps[0] and f"first {MAX_CALL_TEXT} characters" in gaps[0]
+    assert len(gaps) == 1 and "line 2" in gaps[0] and f"first {MAX_LONG_CALL_TEXT} characters" in gaps[0]
     assert "coverage is incomplete" in gaps[0]
     assert any(
         e.location == "app.js:4" and e.signal.startswith("code:") for f in findings for e in f.evidence
@@ -70,7 +71,9 @@ def test_call_text_limit_analyzes_only_that_call_partially(index, tmp_path, run_
 
 
 def test_call_text_limit_in_test_code_follows_the_test_discount(tmp_path, run_connector):
-    over_limit = IMPORT + "OpenAI.chat.completions.create({ tools: [lookup] " + "x" * MAX_CALL_TEXT + "})\n"
+    over_limit = (
+        IMPORT + "OpenAI.chat.completions.create({ tools: [lookup] " + "x" * MAX_LONG_CALL_TEXT + "})\n"
+    )
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "app.test.js").write_text(over_limit)
     for strict in (False, True):
@@ -91,16 +94,44 @@ def test_unbalanced_call_at_the_end_of_the_source_is_partial(index):
     assert truncated == [2]
 
 
-def test_long_genkit_flow_keeps_the_files_bound_evidence(tmp_path, run_connector):
-    # A Genkit flow body is the argument of defineFlow: real flows pass 8 KiB.
-    steps = "".join(f"    const step{number} = await fetch(`/api/{number}`);\n" for number in range(200))
-    source = (
+def _flow(steps: int) -> str:
+    body = "".join(f"    const step{number} = await fetch(`/api/{number}`);\n" for number in range(steps))
+    return (
         'import { genkit, z } from "genkit";\nimport { googleAI } from "@genkit-ai/googleai";\n\n'
         "const ai = genkit({ plugins: [googleAI()] });\n\n"
         'export const menuFlow = ai.defineFlow({ name: "menu" }, async (input) => {\n'
-        + steps
+        + body
         + "    return input;\n});\n"
     )
+
+
+def test_flow_longer_than_the_old_window_is_read_whole(tmp_path, run_connector):
+    # A Genkit flow body is the argument of defineFlow: real flows pass 8 KiB.
+    # The post-change holdout had agents built by calls of thousands of lines.
+    source = _flow(200)
+    assert len(source) > MAX_CALL_TEXT
+    (tmp_path / "flow.ts").write_text(source)
+    _, context = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not context.stats.incomplete, context.stats.errors
+
+
+def test_call_text_allowance_falls_back_to_the_short_window(index):
+    # Long calls draw on the file's allowance; once it is spent, calls are read
+    # from MAX_CALL_TEXT characters, so the binder's total work stays bounded.
+    long_call = "OpenAI.chat.completions.create({ model: 'm' " + " " * (MAX_LONG_CALL_TEXT - 100) + "})\n"
+    spent = MAX_FILE_CALL_TEXT // (MAX_LONG_CALL_TEXT - 50) + 1
+    short_but_long = "OpenAI.chat.completions.create({ model: 'm' " + " " * 2 * MAX_CALL_TEXT + "})\n"
+    text = IMPORT + long_call * spent + short_but_long
+    ignored, _ = noncode_ranges(text, "javascript")
+    truncated: list[int] = []
+    bound_source_matches(index, text, "javascript", ignored, truncated=truncated)
+    assert truncated[-1] == spent + 2
+    assert 2 not in truncated  # the first long call was read whole
+
+
+def test_long_genkit_flow_keeps_the_files_bound_evidence(tmp_path, run_connector):
+    source = _flow(3_000)
+    assert len(source) > MAX_LONG_CALL_TEXT
     (tmp_path / "flow.ts").write_text(source)
     findings, context = run_connector(
         "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False

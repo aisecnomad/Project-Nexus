@@ -982,6 +982,9 @@ class _Literal:
     # string whose quote did not open where an expression starts may be a
     # stray quote of a construct the lexer does not parse (see _expression_start).
     guarded: bool = False
+    # Ruby percent literals with paired delimiters nest: %w[a [b] c] closes at the last `]`.
+    opener: str = ""
+    depth: int = 1
 
 
 @dataclass
@@ -1045,42 +1048,117 @@ def _comment_end_pattern(language: str, dialect: str | None) -> re.Pattern[str]:
     return _COMMENT_END_CR
 
 
-def _ruby_percent_delimiter(text: str, start: int) -> bool:
-    if start + 2 >= len(text) or not text.startswith(("%q", "%Q"), start):
-        return False
-    delimiter = text[start + 2]
-    # Ruby's percent strings need an immediately following non-alphanumeric
-    # delimiter. Do not interpret an adjacent identifier/modulo as a string.
-    if start and (text[start - 1].isalnum() or text[start - 1] in "_$.)]}"):
-        return False
-    return delimiter.isascii() and not delimiter.isalnum() and not delimiter.isspace() and delimiter != "\\"
+# Percent literal types whose text interpolates `#{...}`; %q, %w, %i and %s are literal text.
+_RUBY_PERCENT_TYPES = frozenset("qQwWiIrsx")
+_RUBY_PERCENT_INTERPOLATING = frozenset("QWIrx")
+# Keywords after which a `/` or `%` starts a literal rather than an operator.
+_RUBY_OPERAND_KEYWORDS = frozenset(
+    [
+        "and",
+        "begin",
+        "case",
+        "do",
+        "else",
+        "elsif",
+        "if",
+        "in",
+        "not",
+        "or",
+        "print",
+        "puts",
+        "raise",
+        "return",
+        "then",
+        "unless",
+        "until",
+        "when",
+        "while",
+        "yield",
+    ]
+)
+_RUBY_IDENTIFIER_END = re.compile(r"[A-Za-z0-9_]*[?!]?\Z")
 
 
-def _ruby_percent_string_end(text: str, start: int) -> tuple[int, bool]:
-    """Return end and certainty for delimited %q/%Q Ruby strings.
+def _ruby_operand_start(text: str, start: int) -> bool:
+    """Whether a `/` or `%` at ``start`` begins a literal, by Ruby's own rule.
 
-    %q is inert even when it contains interpolation syntax. %Q can contain
-    executable interpolation; mask through EOF and mark incomplete instead of
-    claiming a code finding or a complete scan without parsing that expression.
+    It does after an operator, an opening bracket, a line break or a keyword
+    such as ``when``, and after a command name set off by white space when the
+    next character is not white space (``line.split /,/``). After a value (a name
+    without that space, a number, a closing bracket) it divides. A symbol
+    (``:/``), a method name (``.%``, ``def /``) and a global (``$/``) are code.
     """
-    opener = text[start + 2]
+    if start and text[start - 1] in ":.$":
+        return False
+    j = start - 1
+    while j >= 0 and start - j <= 4096 and text[j] in " \t":
+        j -= 1
+    if j < 0 or text[j] in "\r\n":
+        return True
+    char = text[j]
+    if char in _EXPRESSION_START_CHARS or (
+        char == "?" and not (j and (text[j - 1].isalnum() or text[j - 1] == "_"))
+    ):
+        return True
+    if not (char.isalnum() or char in "_?!"):
+        return False
+    word = _RUBY_IDENTIFIER_END.search(text, max(0, j - 63), j + 1)
+    name = word.group() if word is not None else ""
+    before = text[j - len(name)] if j >= len(name) else ""
+    if (before and before in "@$") or (before == ":" and text[j - len(name) - 1 : j - len(name)] != ":"):
+        return False  # an instance or global variable, or a symbol, is a value
+    if name in _RUBY_OPERAND_KEYWORDS and before != ".":
+        return True
+    if not name or name[0].isdigit() or name == "def":
+        return False
+    following = text[start + 1] if start + 1 < len(text) else ""
+    return j < start - 1 and following not in " \t\r\n="
+
+
+def _ruby_percent_literal(text: str, start: int) -> tuple[str, str, str, int] | None:
+    """(opener, closer, interpolation, text start) of a percent literal at ``start``, or None."""
+    kind = text[start + 1] if start + 1 < len(text) else ""
+    if kind in _RUBY_PERCENT_TYPES:
+        at = start + 2
+        # A typed literal needs a delimiter right after its letter; after a value it is modulo (`x%w`).
+        if start and (text[start - 1].isalnum() or text[start - 1] in "_$.)]}"):
+            return None
+    else:
+        at = start + 1
+        kind = "Q"
+        if not _ruby_operand_start(text, start):
+            return None
+    if at >= len(text):
+        return None
+    opener = text[at]
+    if not opener.isascii() or opener.isalnum() or opener.isspace() or opener in "\\=":
+        return None
     closer = _RUBY_PERCENT_PAIRS.get(opener, opener)
-    depth = 1
-    i = start + 3
-    while i < len(text):
-        if text[i] == "\\":
-            i += 2
-            continue
-        if text.startswith("#{", i) and text[start + 1] == "Q":
-            return len(text), False
-        if opener != closer and text[i] == opener:
-            depth += 1
-        elif text[i] == closer:
-            depth -= 1
-            if depth == 0:
-                return i + 1, True
-        i += 1
-    return len(text), False
+    interpolation = "#{" if kind in _RUBY_PERCENT_INTERPOLATING else ""
+    return (opener if opener != closer else ""), closer, interpolation, at + 1
+
+
+def _ruby_character_end(text: str, start: int) -> int | None:
+    """End of a character literal (``?a``, ``?"``, ``?\\n``) at ``start``; None for a ternary or method."""
+    size = len(text)
+    if start + 1 >= size or text[start + 1].isspace():
+        return None
+    if start and (text[start - 1].isalnum() or text[start - 1] in "_)]}\"'`$@"):
+        return None
+    end = start + 2
+    if text[start + 1] == "\\":
+        escape = _RUBY_CHARACTER_ESCAPE.match(text, start + 2)
+        end = escape.end() if escape else min(size, start + 3)
+    if end < size and (text[end].isalnum() or text[end] == "_"):
+        return None
+    return end
+
+
+_RUBY_CHARACTER_ESCAPE = re.compile(
+    r"u\{[0-9A-Fa-f ]{1,40}\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{1,2}|[0-7]{1,3}|(?:[CM]-\\?|c\\?)+.|.", re.S
+)
+_RUBY_SINGLETON = re.compile(r"\bclass[ \t]*\Z")
+_RUBY_DATA_SECTION = re.compile(r"__END__(?:\r?\n|\Z)")
 
 
 def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple[list[tuple[int, int]], bool]:
@@ -1277,7 +1355,7 @@ def _open_literal(
         interpolation = "\\" + prefix + "(" if prefix.startswith("#") else "\\("
     elif language == "dotnet" and "$" in prefix:
         interpolation = "{"
-    elif language == "ruby" and quote == '"':
+    elif language == "ruby" and quote in '"`':
         interpolation = "#{"
     elif language == "php" and quote in '"`':
         interpolation = _PHP_INTERPOLATION
@@ -1422,6 +1500,12 @@ class _SourceLexer:
                 i += 2
             elif mode.escaped and text[i] == "\\":
                 i = min(size, i + 2)
+            elif mode.opener and text[i] == mode.opener:
+                mode.depth += 1
+                i += 1
+            elif mode.depth > 1 and text.startswith(mode.close, i):
+                mode.depth -= 1
+                i += 1
             elif text.startswith(mode.close, i):
                 end = i + len(mode.close)
                 self.spans.append((mode.start, end))
@@ -1483,7 +1567,11 @@ class _SourceLexer:
                 if (at - 1 - before) % 2:
                     search_from = found.end()
                     continue
-            close = _interpolation_end(text, found.end(), end, self.language)
+            close = (
+                self._ruby_interpolation_close(found.end(), end)
+                if self.language == "ruby"
+                else _interpolation_end(text, found.end(), end, self.language)
+            )
             if close is None:
                 self.incomplete = True
                 break
@@ -1491,12 +1579,34 @@ class _SourceLexer:
             masked_from = search_from = close
         self.spans.append((masked_from, end))
 
+    def _ruby_interpolation_close(self, start: int, end: int) -> int | None:
+        """Offset of the ``}`` closing the Ruby interpolation whose body starts at ``start``, or None.
+
+        The body is lexed as code by a walk bounded to ``end`` (the line), so
+        strings, regular expressions and nested interpolations inside it are
+        read as they are elsewhere. A body that does not close by ``end``, or
+        that opens a here-document, needs parsing: None.
+        """
+        walk = _SourceLexer(self.text, self.language, self.dialect)
+        walk.size = end
+        walk.modes = [_Literal(start, "\0", escaped=False, multiline=True), _Expression("}")]
+        i = start
+        while i < end and len(walk.modes) > 1 and not walk.stopped:
+            mode = walk.modes[-1]
+            i = walk._literal(i, mode) if isinstance(mode, _Literal) else walk._code(i, mode)
+        if len(walk.modes) != 1 or walk.stopped or walk.heredocs or walk.incomplete:
+            return None
+        self.spans.extend(span for span in walk.spans if span[1] < i)  # literals inside the expression
+        return i - 1
+
     def _quote(self, i: int, q: int, prefix: str) -> tuple[int, bool]:
         """Handle the quote at ``q``; return the next index and whether a literal opened."""
         text, size, language = self.text, self.size, self.language
         quote = text[q]
-        if quote == "`" and language not in {"go", "php"}:
-            return i + 1, False
+        if quote == "`" and (
+            language not in {"go", "php", "ruby"} or (language == "ruby" and i and text[i - 1] in ":.")
+        ):
+            return i + 1, False  # Ruby's :` and .` name the command method
         if quote == "'" and language == "rust":
             # A lifetime ('a or 'static) is code. Rust character literals
             # contain exactly one character or an escape: `'\n'`, `'\x7f'` or
@@ -1606,15 +1716,45 @@ class _SourceLexer:
 
             if language == "ruby" and text.startswith("<<", i):
                 heredoc = _RUBY_HEREDOC.match(text, i)
+                # `items<<value` appends: a bare marker opens a here-document only
+                # after white space or an operator.
+                if (
+                    heredoc
+                    and heredoc.group(0)[2] not in "-~'\""
+                    and i
+                    and (
+                        text[i - 1].isalnum()
+                        or text[i - 1] in "_)]}"
+                        or _RUBY_SINGLETON.search(text, max(0, i - 16), i)
+                    )
+                ):
+                    heredoc = None  # `class << self` opens a singleton class
                 if heredoc:
                     # A single-quoted marker (`<<~'SQL'`) makes the text literal.
                     heredocs.append((heredoc.group(2), heredoc.group(1) != "'"))
                     i = heredoc.end()
                     continue
 
-            if language == "ruby" and _ruby_percent_delimiter(text, i):
-                i = self._mask(i, *_ruby_percent_string_end(text, i))
-                continue
+            if language == "ruby":
+                char = text[i]
+                if char == "$" and i + 1 < size and not (text[i + 1].isalnum() or text[i + 1] in "_{"):
+                    i += 2  # a punctuation global: $" $' $/ $; $~
+                    continue
+                if char == "?" and (end := _ruby_character_end(text, i)) is not None:
+                    spans.append((i, end))
+                    i = end
+                    continue
+                if char == "_" and (i == 0 or text[i - 1] == "\n") and _RUBY_DATA_SECTION.match(text, i):
+                    return self._mask(i, size, True)  # the rest of the file is data
+                if char == "%" and (percent := _ruby_percent_literal(text, i)) is not None:
+                    opener, closer, interpolation, body = percent
+                    self.modes.append(
+                        _Literal(i, closer, interpolation=interpolation, multiline=True, opener=opener)
+                    )
+                    return body
+                if char == "/" and _ruby_operand_start(text, i):
+                    self.modes.append(_Literal(i, "/", interpolation="#{", multiline=True))
+                    return i + 1
 
             if language == "php" and text.startswith("<<<", i):
                 heredoc = _PHP_HEREDOC.match(text, i)

@@ -179,7 +179,7 @@ def test_long_bound_agent_calls_are_read_partially(tmp_path, run_connector, suff
     # the unread options leave the scan incomplete as before.
     (tmp_path / f"app{suffix}").write_text(
         'import { Agent } from "@openai/agents";\n'
-        'const worker = new Agent({name: "worker", instructions: "' + "x" * 9000 + '"});\n'
+        'const worker = new Agent({name: "worker", instructions: "' + "x" * 140_000 + '"});\n'
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False)
     assert ctx.stats.incomplete

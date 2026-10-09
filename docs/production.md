@@ -812,6 +812,14 @@ changes below are not measured on fresh data.
   model. Such projects were `framework-usage` findings. Only a feedback loop
   adds the `autonomous` capability. Review policies that gate on `agent`
   findings or on `agentic`.
+- **Fewer incomplete scans of Ruby and long JavaScript calls.** Ruby regular
+  expressions, percent literals, command strings, character literals and
+  here-document interpolation are now read; their text is masked and their
+  interpolated code is matched, so a repository can gain evidence that was
+  masked before. A JavaScript call is read up to 131,072 characters within a
+  per-file allowance, and up to 1,000 agent definitions are listed per
+  project (detailed for the first 50). The limit errors now name the new
+  values. Finding identity is unchanged.
 
 ### October 8 benchmark remediation
 

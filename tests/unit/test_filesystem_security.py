@@ -597,10 +597,29 @@ def test_agent_definition_and_manifest_aggregates_are_bounded(tmp_path, index):
     (tmp_path / "secrets.env").write_text(f"OPENAI_API_KEY={SECRET}\n")
     findings, ctx = _scan(index, tmp_path)
     project = next(f for f in findings if f.resource_type == "project")
-    assert len(project.metadata["agent_definitions"]) == 50
-    assert all(len(d["tools"]) == 50 for d in project.metadata["agent_definitions"])
-    assert any("agent definition limit" in e for e in ctx.stats.errors)
+    # Every definition is kept; past the first 50 only the file, name and mode.
+    definitions = project.metadata["agent_definitions"]
+    assert len(definitions) == 60
+    assert all(len(d["tools"]) == 50 for d in definitions[:50])
+    assert all(set(d) <= {"file", "name", "permissionMode", "mode"} for d in definitions[50:])
+    assert not any("agent definition limit" in e for e in ctx.stats.errors)
     assert any(f.kind == Kind.SECRET for f in findings)
+
+
+def test_agent_definitions_past_the_limit_mark_the_scan_incomplete(tmp_path, index, monkeypatch):
+    from shadowscan.connectors.code import filesystem
+
+    monkeypatch.setattr(filesystem, "_MAX_AGENT_DEFINITIONS", 55)
+    agents = tmp_path / ".claude" / "agents"
+    agents.mkdir(parents=True)
+    for i in range(60):
+        (agents / f"a{i:02d}.md").write_text("---\nname: a\n---\nbody\n")
+    (tmp_path / "app.py").write_text("import openai\n")
+    findings, ctx = _scan(index, tmp_path)
+    project = next(f for f in findings if f.resource_type == "project")
+    assert len(project.metadata["agent_definitions"]) == 55
+    assert ctx.stats.incomplete
+    assert sum("agent definition limit (55)" in e for e in ctx.stats.errors) == 5
 
 
 def _run(index, root, **config):

@@ -117,6 +117,8 @@ from shadowscan.connectors.code.semantic_config import (
 from shadowscan.connectors.code.source_ranges import JSX_DIALECTS, noncode_ranges
 from shadowscan.connectors.code.source_semantics import (
     MAX_CALL_TEXT,
+    MAX_FILE_CALL_TEXT,
+    MAX_LONG_CALL_TEXT,
     SourceBudgetExceeded,
     SourceNotParsed,
     bound_source_matches,
@@ -3276,7 +3278,8 @@ class FilesystemConnector(BaseConnector):
             lines = ", ".join(str(line) for line in truncated[:10])
             message = (
                 f"code.filesystem: {file.rel}: import-bound call at line {lines} analyzed from its first "
-                f"{MAX_CALL_TEXT} characters; options after them were not read, so coverage is incomplete"
+                f"{MAX_LONG_CALL_TEXT} characters ({MAX_CALL_TEXT} once {MAX_FILE_CALL_TEXT} of the file's "
+                "call text are read); options after them were not read, so coverage is incomplete"
             )
             if not self.include_tests and _is_test_path(file.rel):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
@@ -3463,7 +3466,10 @@ class FilesystemConnector(BaseConnector):
                     "definition skipped"
                 )
             else:
-                file.proj.agent_defs.append(self._parse_agent_definition(rel, file.text))
+                definition = self._parse_agent_definition(rel, file.text)
+                if len(file.proj.agent_defs) >= _MAX_DETAILED_AGENT_DEFINITIONS:
+                    definition = {key: definition[key] for key in _SUMMARY_AGENT_FIELDS if key in definition}
+                file.proj.agent_defs.append(definition)
 
     # ------------------------------------------------------------------ emit
     def _emit_findings(self, scan: _ScanState) -> Iterator[Finding]:
@@ -4262,7 +4268,8 @@ class FilesystemConnector(BaseConnector):
         posture = proj.posture.get(sig_id, [])
         if posture:
             record_posture(f, posture)
-        defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
+        listed = set(files)
+        defs = [d for d in proj.agent_defs if d["file"] in listed]
         if defs:
             f.metadata["agent_definitions"] = defs
             f.add_capability("multi-agent")
@@ -4813,7 +4820,12 @@ def _quote_glob_values(front_matter: str) -> str:
 
 
 _MAX_CARD_FILES = 200
-_MAX_AGENT_DEFINITIONS = 50
+# Agent definitions kept per project. The first _MAX_DETAILED_AGENT_DEFINITIONS
+# keep their parsed fields; later ones keep their file, name and permission mode,
+# which bounds the finding's metadata while a large collection stays complete.
+_MAX_AGENT_DEFINITIONS = 1_000
+_MAX_DETAILED_AGENT_DEFINITIONS = 50
+_SUMMARY_AGENT_FIELDS = ("file", "name", "permissionMode", "mode")
 _CLIP_ITEMS = 50
 _CLIP_CHARS = 200
 

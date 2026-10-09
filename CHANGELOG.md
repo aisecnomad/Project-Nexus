@@ -5,6 +5,37 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 9 post-holdout changes: Ruby literals and two fixed limits
+
+Informed by the post-change holdout's incomplete scans, whose most common cause
+was Ruby source the lexical walk could not finish; a further accuracy claim
+needs a new holdout. The fixes were developed against Ruby's standard library
+and installed gems, not the holdout files, and measured with Ruby's own lexer
+(Ripper) as the oracle: on 1,947 files, incomplete walks went from 87 to 0 and
+code tokens wrongly masked from 38,749 to 80 (most of the rest are `#@ivar`
+interpolations, which stay masked). The walk now reads Ruby regular
+expressions where an operand starts (after an operator, a keyword such as
+`when`, a line break, or a command name followed by a non-space), every
+percent literal type with nested paired delimiters, command strings,
+character literals, punctuation globals and the `__END__` data section, and
+no longer opens a here-document at `class << self` or `items<<value`.
+Interpolation inside those literals and inside here-documents is lexed as
+code, nested strings and regular expressions included; before, `%Q` with
+`#{}` and many here-document interpolations ended the scan incomplete. Two
+fail-closed cases for interpolating `%Q` strings moved to tests that now
+expect a complete walk with the interpolation visible.
+
+The JavaScript import binder read each call's arguments from its first 8,192
+characters; agents built by calls of thousands of lines left scans
+incomplete. A call is now read up to 131,072 characters while the file's
+1,048,576-character allowance lasts, then up to 8,192, so total work stays
+bounded. A project now keeps up to 1,000 agent definitions instead of 50:
+the first 50 with their parsed fields, later ones with file, name and
+permission mode only. Agent-definition matching for coding-agent findings is
+a set lookup instead of a quadratic scan.
+
+Not addressed: F# and Kotlin lexer gaps and bundled `yarn-*.cjs` releases.
+
 ### October 9 post-holdout changes: one executed tool selection is an agent
 
 Also informed by the holdout's in-sample diagnosis. The benchmark rubric (A2)

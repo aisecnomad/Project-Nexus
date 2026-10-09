@@ -66,6 +66,12 @@ from shadowscan.utils.text import line_counter
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
+# A JavaScript call's argument text is read up to MAX_LONG_CALL_TEXT characters
+# while the file's MAX_FILE_CALL_TEXT allowance lasts, then up to MAX_CALL_TEXT:
+# a long agent or flow definition is read whole, and the binder's total work
+# stays bounded by the allowance plus MAX_BOUND_CALLS * MAX_CALL_TEXT.
+MAX_LONG_CALL_TEXT = 131_072
+MAX_FILE_CALL_TEXT = 1_048_576
 # The Python binder checks the file's matching budget every this many visited
 # nodes: its walk is pure Python, which no regex timeout covers.
 _BUDGET_CHECK_NODES = 256
@@ -115,7 +121,7 @@ class _Call:
     decorator: bool = False
     receiver: str = ""
     genkit_tools: tuple[str, ...] = ()
-    # The argument text stops at MAX_CALL_TEXT (or the end of the source) before the
+    # The argument text stops at the call-text limit (or the end of the source) before the
     # call closes: options past that point are unread, so they establish nothing.
     partial: bool = False
 
@@ -1242,6 +1248,7 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
         rf"\s*(?:<[^;(){{}}]{{1,1000}}>)?\s*\("
     )
     line_at = line_counter(text)
+    allowance = MAX_FILE_CALL_TEXT
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
         binding = bindings.get(parts[0])
@@ -1251,14 +1258,16 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
             raise SourceBudgetExceeded("source binding call limit exceeded")
         opening = match.end() - 1
         depth, end = 1, opening + 1
-        while end < min(len(masked), opening + MAX_CALL_TEXT) and depth:
+        limit = opening + max(MAX_CALL_TEXT, min(MAX_LONG_CALL_TEXT, allowance))
+        while end < min(len(masked), limit) and depth:
             depth += (masked[end] == "(") - (masked[end] == ")")
             end += 1
+        allowance -= end - opening
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
-        # A longer call (a Genkit flow body, an agent with long instructions) is
-        # analyzed from its first MAX_CALL_TEXT characters, as the Python binder
-        # does; an option past them cannot be read, so it establishes nothing,
-        # and the caller reports the call (bound_source_matches ``truncated``).
+        # A longer call is analyzed from its first characters up to that limit,
+        # as the Python binder reads its argument text; an option past them
+        # cannot be read, so it establishes nothing, and the caller reports the
+        # call (bound_source_matches ``truncated``).
         calls.append(
             _Call(
                 _Binding(binding.module, symbol, binding.constructed),
@@ -1383,7 +1392,7 @@ def bound_source_matches(
     Invalid Python cannot establish bound constructions: ``SourceNotParsed`` is
     raised so the caller can say so. It already retains lexical import and
     supporting evidence and reports lexical ambiguity. The lines of JavaScript
-    calls analyzed only from their first ``MAX_CALL_TEXT`` characters are
+    calls analyzed only up to the call-text limit are
     appended to ``truncated``.
     """
     module_matches = _ModuleMatches(index, language, is_local_module)

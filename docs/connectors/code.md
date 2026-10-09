@@ -338,13 +338,17 @@ that needs more, which ordinary code does not, is treated like one that imports
 a signature's library. Any other Python module over `max_ast_nodes` (default
 50000) keeps its lexical evidence without import-bound analysis: a warning in
 test code, an error elsewhere. A call into a signature's library is analyzed
-from its first 8,192 characters in Python, JavaScript and TypeScript alike. A
-longer JavaScript or TypeScript call (a Genkit flow body, an agent with long
-instructions) keeps its construction evidence, as does the rest of the file's
-import-bound evidence, but an option past that point is unread: the scan
-records `import-bound call at line N analyzed from its first 8192
-characters; options after them were not read, so coverage is incomplete` and
-is incomplete (exit 3), a warning in test code as for the other binder limits.
+from its first 8,192 characters in Python, where its keyword options come
+from the parsed call whatever its length. A JavaScript or TypeScript call (a
+Genkit flow body, an agent with long instructions) is read up to 131,072
+characters while the file's allowance of 1,048,576 characters of call text
+lasts, and up to 8,192 after it. A longer call keeps its construction
+evidence, as does the rest of the file's import-bound evidence, but an option
+past that point is unread: the scan records `import-bound call at line N
+analyzed from its first 131072 characters (8192 once 1048576 of the file's
+call text are read); options after them were not read, so coverage is
+incomplete` and is incomplete (exit 3), a warning in test code as for the
+other binder limits.
 
 An absolute import is read as repository code rather than the SDK of the same
 name when the scan root, the project root, its `src` directory or the importing
@@ -377,7 +381,20 @@ incomplete.
 Malformed YAML front matter in an agent
 definition, including a YAML value PyYAML cannot construct (an impossible date,
 an integer over 4,300 digits), is reported as `invalid agent definition YAML`;
-the definition is still listed by its file name.
+the definition is still listed by its file name. A project lists up to 1,000
+agent definitions under `metadata.agent_definitions`: the first 50 with their
+parsed fields, later ones with only their file, name and permission mode. A
+further definition is skipped with `agent definition limit (1000) reached;
+definition skipped`, and the scan is incomplete.
+
+Ruby source is walked with its own literals: regular expressions (`/…/` where
+an operand starts, by Ruby's rule for `/` after a command name, and `%r`),
+every percent literal (`%w %W %i %I %q %Q %s %x` and bare `%(…)`, with nested
+paired delimiters), command strings, character literals (`?"`), punctuation
+globals (`$"`, `$'`), the `__END__` data section and `class << self`.
+Interpolation in a regular expression, an interpolating percent literal, a
+command string or a here-document is read as code, nested strings included;
+one that does not close on its here-document line leaves the scan incomplete.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server
