@@ -113,6 +113,41 @@ def test_dotnet_function_invocation_middleware_requires_library_corroboration(tm
     assert all(not finding.capabilities for finding in findings)
 
 
+@pytest.mark.parametrize(
+    "files",
+    [
+        {
+            "Program.cs": "using Microsoft.Extensions.AI;\n"
+            "var builder = WebApplication.CreateBuilder(args);\n"
+            "builder.Services.AddSingleton<IChatClient>(sp => new FunctionInvokingChatClient(inner));\n"
+            "builder.Build().Run();\n",
+            "WeatherAgent.cs": MEAI_DI_AGENT,
+        },
+        {
+            "Helper.cs": "using Microsoft.Extensions.AI;\npublic class Helper\n{\n"
+            "    private readonly IChatClient _client;\n    private readonly ChatOptions _options;\n"
+            "    public Helper(IChatClient inner)\n    {\n"
+            "        _client = new FunctionInvokingChatClient(inner);\n"
+            "        _options = new ChatOptions { Tools = [AIFunctionFactory.Create(GetWeather)] };\n"
+            "    }\n"
+            "    public async Task<string> Ask(string q) => (await _client.GetResponseAsync(q, _options)).Text;\n"
+            '    static string GetWeather(string city) => "sunny";\n}\n',
+        },
+    ],
+)
+def test_dotnet_explicit_invoker_in_di_or_fields_is_documented_usage(tmp_path, run_connector, files):
+    # The explicit client type is not a lexical indicator, since it would override
+    # the per-file proof's rejections. Registered through DI or held in fields,
+    # it is beyond that proof; docs/connectors/code.md documents this as usage.
+    files = {"App.csproj": MEAI_PROJECT, **files}
+    for name, source in files.items():
+        (tmp_path / name).write_text(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert not _agent(findings, "framework.microsoft-extensions-ai")
+    assert any("framework.microsoft-extensions-ai" in finding.frameworks for finding in findings)
+
+
 def test_dotnet_large_file_without_the_sdk_namespace_stays_complete(tmp_path, run_connector):
     # WebRequest.GetResponseAsync shares the SDK's method name. A file that never
     # names Microsoft.Extensions.AI cannot bind the proof, so it must not spend

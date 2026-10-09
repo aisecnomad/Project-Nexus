@@ -41,8 +41,13 @@ summarizes each release for people who install and operate ShadowScan.
   invocation meaning.
 - Keep Microsoft.Extensions.AI `UseFunctionInvocation()` middleware as an
   agent indicator with tool use, still requiring matching import or dependency
-  evidence. Dependency-injected clients, provider constructor chains and
-  target-typed options remain agents, as before these corrections.
+  evidence. Clients that this middleware configures, including
+  dependency-injected ones, provider constructor chains and target-typed
+  options remain agents, as before these corrections. An explicitly
+  constructed `FunctionInvokingChatClient` is not a lexical indicator: when it
+  is registered through dependency injection or held in fields, the per-file
+  proof cannot follow it and the project is reported as framework usage,
+  where an `AIFunctionFactory.Create` tool previously made it an agent.
 - The C# tool-loop proof reads target-typed `new()` in a local declaration of
   an SDK type and in a response call's options argument, so an explicit
   `FunctionInvokingChatClient` with `ChatOptions options = new() { Tools = ... }`

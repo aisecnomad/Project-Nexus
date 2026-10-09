@@ -194,7 +194,10 @@ signatures:
       - type: code
         # Tool definitions and the explicit client type remain usage evidence.
         # The C# import/receiver proof establishes registered AIFunctions and
-        # response dispatch through an automatic function-invoking client.
+        # response dispatch through an automatic function-invoking client; as
+        # a lexical indicator the explicit client would override its empty-tool,
+        # disabled-mode and unreachable-dispatch rejections. An explicit client
+        # registered through DI or held in fields therefore stays usage.
         patterns: ['\bAIFunctionFactory\.Create\s*\(', '\bFunctionInvokingChatClient\s*\(']
         weight: 0.8
 

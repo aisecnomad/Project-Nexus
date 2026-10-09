@@ -5,7 +5,9 @@ bind the client, options and actual AIFunction objects. A tool definition alone
 is supporting framework evidence. Only a function-invoking client receiving
 known nonempty tools through a response call establishes an agent here. Dynamic
 factories, fields and cross-file flows remain candidates, not proof; the
-lexical UseFunctionInvocation signal covers them with corroboration.
+lexical UseFunctionInvocation signal covers clients that middleware configures,
+with corroboration. An explicit FunctionInvokingChatClient in a field or a DI
+registration stays usage.
 """
 
 from __future__ import annotations

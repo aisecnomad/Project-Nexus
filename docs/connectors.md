@@ -248,7 +248,9 @@ dynamic imports, re-exports and uncertain bindings remain usage evidence. Narrow
 Go and C# proofs additionally require imported receivers and supported tool flows;
 C# automatic tool modes require an unshadowed SDK type or alias.
 Microsoft.Extensions.AI `UseFunctionInvocation()` middleware stays a lexical,
-corroborated agent indicator, which covers dependency-injected clients. Other
+corroborated agent indicator, which covers dependency-injected clients it
+configures; an explicit `FunctionInvokingChatClient` registered through
+dependency injection or held in fields is framework usage. Other
 languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
