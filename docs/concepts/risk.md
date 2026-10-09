@@ -71,8 +71,8 @@ specific code evidence elsewhere in the project, and a project with nothing
 else yields no finding. Discounted files are listed in
 `metadata.catalog_mentions`. Source code, dotenv, Compose, Helm and CI files
 are never catalogs, and a file naming one to three products is configuration
-unless its file name has a whole deny-list word such as `blocklist` or `deny`
-(an allowlist or egress policy is configuration); see
+unless its file name spells `blocklist`, `denylist` or `blacklist` (an
+allowlist, an egress policy or a firewall rule set is configuration); see
 [Code connectors](../connectors/code.md) for the exact rule and the threshold.
 
 ## Risk

@@ -558,10 +558,10 @@ from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
 names appear. A data or prose file that only lists four or more products by
 domain or variable name (a proxy blocklist, a vendor policy, a copy of the
-signature packs) is a catalog, as is a shorter list whose file name has a whole
-deny-list word (`blocklist`, `denylist`, `blacklist`, `block`, `deny`,
-`firewall`, `waf`); an allowlist or egress policy permits what it names and is
-not one. A catalog's mentions count only for a product with an import,
+signature packs) is a catalog, as is a shorter list whose file name spells
+`blocklist`, `denylist` or `blacklist` as one word or two (`deny_list.json`);
+an allowlist, an egress policy or a firewall or WAF rule set permits what it
+names and is not one. A catalog's mentions count only for a product with an import,
 dependency or code pattern elsewhere in the project, and the discounted
 files are listed in `metadata.catalog_mentions` (see
 [Code connectors](connectors/code.md)). MCP servers

@@ -259,6 +259,14 @@ def test_policy_filename_is_catalog_below_threshold():
         "chain/blockchain.yaml",
         "fab/wafer.yaml",
         "infra/firewalls.yaml",
+        # A firewall or WAF rule set, or a default-deny policy, permits traffic
+        # (often to exactly the hosts it names), so "block" or "deny" alone is no list.
+        "gw/Firewall.yml",
+        "infra/firewall-rules.json",
+        "edge/waf.rules.yaml",
+        "net/default-deny.yaml",
+        "net/deny_hosts.json",
+        "x/BLOCK.txt",
     ],
 )
 def test_only_whole_deny_list_words_make_a_small_file_a_catalog(rel):
@@ -269,10 +277,12 @@ def test_only_whole_deny_list_words_make_a_small_file_a_catalog(rel):
     "rel",
     [
         "proxy/ai-blocklist.yaml",
-        "net/deny_hosts.json",
-        "edge/waf.rules.yaml",
-        "gw/Firewall.yml",
-        "x/BLOCK.txt",
+        "net/DenyList.json",
+        "x/BLACKLIST.txt",
+        # The same nouns spelled as two words.
+        "net/deny_list.json",
+        "proxy/ai-block-list.yaml",
+        "x/Black.List.txt",
     ],
 )
 def test_whole_deny_list_words_in_any_case_make_a_small_file_a_catalog(rel):
