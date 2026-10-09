@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +76,7 @@ def _scope(payload: dict[str, Any]) -> None:
         raise ValueError("ruleset must cover main without branch exclusions")
 
 
-def _payload(snapshot: Any, ruleset_id: int) -> dict[str, Any]:
+def _payload(snapshot: Any, ruleset_id: int, *, allow_missing_bypass: bool = False) -> dict[str, Any]:
     if (
         ruleset_id not in RULESETS
         or not isinstance(snapshot, dict)
@@ -85,7 +87,8 @@ def _payload(snapshot: Any, ruleset_id: int) -> dict[str, Any]:
         or snapshot.get("name") != RULESETS[ruleset_id]
     ):
         raise ValueError("ruleset response does not match the expected repository and ruleset")
-    if missing := [field for field in _FIELDS if field not in snapshot]:
+    fields = tuple(field for field in _FIELDS if not (allow_missing_bypass and field == "bypass_actors"))
+    if missing := [field for field in fields if field not in snapshot]:
         # GitHub returns bypass_actors only to a caller with write access to the
         # ruleset, so the read-only audit token gets a partial response. An
         # omitted field is unknown assurance, never an empty setting.
@@ -93,7 +96,7 @@ def _payload(snapshot: Any, ruleset_id: int) -> dict[str, Any]:
             "ruleset response omits " + ", ".join(missing) + "; the reading identity cannot see every "
             "managed setting, so an administrator must verify a complete readback"
         )
-    payload = copy.deepcopy({field: snapshot[field] for field in _FIELDS})
+    payload = copy.deepcopy({field: snapshot[field] for field in _FIELDS if field in snapshot})
     _scope(payload)
     _rules(payload)
     return payload
@@ -149,8 +152,7 @@ def prepare_payload(snapshot: Any, *, ruleset_id: int) -> dict[str, Any]:
     return payload
 
 
-def verify_readback(snapshot: Any, expected: Any, *, ruleset_id: int) -> None:
-    """Reject wrong identity, weakened policies, or any unreviewed settings change."""
+def _validate_expected(expected: Any, ruleset_id: int) -> None:
     if not isinstance(expected, dict) or set(expected) != set(_FIELDS):
         raise ValueError("expected policy must be a reviewed PUT payload")
     projected = {
@@ -161,10 +163,105 @@ def verify_readback(snapshot: Any, expected: Any, *, ruleset_id: int) -> None:
     }
     if _canonical(prepare_payload(projected, ruleset_id=ruleset_id)) != _canonical(expected):
         raise ValueError("expected policy is missing active enforcement, review, bypass or CI controls")
+
+
+def verify_readback(snapshot: Any, expected: Any, *, ruleset_id: int) -> None:
+    """Reject wrong identity, weakened policies, or any unreviewed settings change."""
+    _validate_expected(expected, ruleset_id)
     actual = _payload(snapshot, ruleset_id)
     if _canonical(actual) != _canonical(expected):
         changed = [field for field in _FIELDS if _canonical(actual[field]) != _canonical(expected[field])]
         raise ValueError("readback differs from reviewed payload: " + ", ".join(changed))
+
+
+def observe_readback(snapshot: Any, expected: Any, *, ruleset_id: int) -> dict[str, Any]:
+    """Check visible settings without treating an omitted bypass list as empty.
+
+    Only bypass_actors may be withheld. Every visible managed field must match
+    the same secure expected policy used by the strict complete-readback gate.
+    This observation is not a release receipt or evidence of human review.
+    """
+    _validate_expected(expected, ruleset_id)
+    actual = _payload(snapshot, ruleset_id, allow_missing_bypass=True)
+    changed = [field for field in actual if _canonical(actual[field]) != _canonical(expected[field])]
+    if changed:
+        raise ValueError("readback differs from reviewed payload: " + ", ".join(changed))
+    unknown = [field for field in _FIELDS if field not in actual]
+    return {
+        "schema_version": 1,
+        "repository": REPOSITORY,
+        "ruleset_id": ruleset_id,
+        "scope": "ruleset-settings-only",
+        "status": "partial" if unknown else "complete",
+        "visible_controls_match": True,
+        "complete_readback_verified": not unknown,
+        "verified_fields": list(actual),
+        "unknown_fields": unknown,
+        "administrator_readback_required": bool(unknown),
+        "limitations": (
+            "Snapshot settings only; does not authenticate origin, freshness, historical enforcement, "
+            "other protections, independent review or deployment acceptance. "
+            "A partial observation cannot replace strict complete-readback verification."
+        ),
+    }
+
+
+def _write_observation(report: dict[str, Any], output: Path, summary: Path | None) -> None:
+    with output.open("x", encoding="utf-8") as stream:
+        stream.write(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n")
+    if summary is not None:
+        # Use fixed text instead of copying an untrusted API/error string into Markdown.
+        descriptions = {
+            "partial": "Visible controls match. Bypass actors are UNKNOWN; administrator readback REQUIRED.",
+            "complete": "Complete ruleset settings match; this does not establish review or acceptance.",
+            "failed": "Verification FAILED. Inspect the retained observation and workflow logs.",
+        }
+        with summary.open("a", encoding="utf-8") as stream:
+            stream.write(f"- Ruleset {report['ruleset_id']}: {descriptions[report['status']]}\n")
+
+
+def _observe_cli(args: argparse.Namespace) -> None:
+    report: dict[str, Any]
+    recorded_at = datetime.now(UTC).isoformat()
+    snapshot_text_sha256: str | None = None
+    expected_policy_text_sha256: str | None = None
+    try:
+        # Hash the same bounded text that is parsed and compared. Never reopen
+        # an input for its digest, or copy an untrusted API payload into evidence.
+        expected_text = read_policy_text(args.expected, max_bytes=1024 * 1024)
+        expected_policy_text_sha256 = hashlib.sha256(expected_text.encode("utf-8")).hexdigest()
+        expected = strict_json_loads(expected_text)
+        if args.read_failed:
+            raise ValueError("ruleset API read failed; no snapshot assurance is available")
+        snapshot_text = read_policy_text(args.input, max_bytes=1024 * 1024)
+        snapshot_text_sha256 = hashlib.sha256(snapshot_text.encode("utf-8")).hexdigest()
+        report = observe_readback(strict_json_loads(snapshot_text), expected, ruleset_id=args.ruleset_id)
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+        report = {
+            "schema_version": 1,
+            "repository": REPOSITORY,
+            "ruleset_id": args.ruleset_id,
+            "scope": "ruleset-settings-only",
+            "status": "failed",
+            "visible_controls_match": False,
+            "complete_readback_verified": False,
+            "verified_fields": [],
+            "unknown_fields": list(_FIELDS),
+            "administrator_readback_required": True,
+            "error": str(exc),
+        }
+    report["input_identity"] = {
+        "recorded_at": recorded_at,
+        "snapshot_text_sha256": snapshot_text_sha256,
+        "expected_policy_text_sha256": expected_policy_text_sha256,
+        "digest_scope": "Inspected UTF-8 text after removal of an optional leading byte-order mark.",
+    }
+    _write_observation(report, args.output, args.summary)
+    print(f"Ruleset {args.ruleset_id}: {report['status']} settings assurance; see {args.output}")
+    if report["status"] == "partial":
+        print("Bypass actors are UNKNOWN; a separately verified administrator readback is REQUIRED.")
+    if report["status"] == "failed":
+        raise SystemExit(1)
 
 
 def main() -> None:
@@ -178,8 +275,22 @@ def main() -> None:
     verify.add_argument("--input", type=Path, required=True)
     verify.add_argument("--expected", type=Path, required=True)
     verify.add_argument("--ruleset-id", type=int, choices=RULESETS, required=True)
+    observe = subparsers.add_parser(
+        "observe", help="check visible settings; report withheld bypass assurance"
+    )
+    observe.add_argument("--input", type=Path, required=True)
+    observe.add_argument("--expected", type=Path, required=True)
+    observe.add_argument("--ruleset-id", type=int, choices=RULESETS, required=True)
+    observe.add_argument("--output", type=Path, required=True)
+    observe.add_argument("--summary", type=Path)
+    observe.add_argument(
+        "--read-failed", action="store_true", help="record a failed API read without trusting it"
+    )
     args = parser.parse_args()
     try:
+        if args.command == "observe":
+            _observe_cli(args)
+            return
         snapshot = _load(args.input)
         if args.command == "plan":
             payload = prepare_payload(snapshot, ruleset_id=args.ruleset_id)

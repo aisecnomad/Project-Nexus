@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -16,20 +18,26 @@ from shadowscan.connectors.agent_behavior import (
 
 
 @pytest.mark.parametrize(
-    ("path", "label"),
+    ("path", "host", "label"),
     [
-        ("/agents/AB12CD/agentAliases/TSTALIASID/sessions/s-1/text", "Amazon Bedrock InvokeAgent"),
-        ("/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1/invocations", "Amazon Bedrock AgentCore runtime"),
-        ("/v1/threads/thread_abc/runs", "Assistants API run"),
-        ("/openai/threads/thread_abc/runs/run_1/submit_tool_outputs?api-version=2024-05-01", "Assistants API run"),
-        ("/v1/assistants", "Assistants API"),
-        ("/v1/projects/p/locations/us-central1/reasoningEngines/123:streamQuery", "Vertex AI Agent Engine"),
-        ("/v3/projects/p/locations/global/agents/a/sessions/s:detectIntent", "Dialogflow CX agent session"),
+        ("/agents/AB12CD/agentAliases/TSTALIASID/sessions/s-1/text", "bedrock-agent-runtime.us-east-1.amazonaws.com", "Amazon Bedrock InvokeAgent"),
+        ("/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1/invocations", "bedrock-agentcore.us-east-1.amazonaws.com", "Amazon Bedrock AgentCore runtime"),
+        ("/v1/threads/thread_abc/runs", "api.openai.com", "Assistants API run"),
+        ("/v1/threads/runs", "api.openai.com", "Assistants API run"),
+        ("/v1/threads/thread_abc/runs/run_1/submit_tool_outputs", "api.openai.com", "Assistants API run"),
+        ("/openai/threads/thread_abc/runs/run_1/submit_tool_outputs?api-version=2024-05-01", "sample.openai.azure.com", "Assistants API run"),
+        ("/v1/projects/p/locations/us-central1/reasoningEngines/123:streamQuery", "us-central1-aiplatform.googleapis.com", "Vertex AI Agent Engine"),
+        ("/v3/projects/p/locations/global/agents/a/sessions/s:detectIntent", "dialogflow.googleapis.com", "Dialogflow CX agent session"),
+        ("/v3/projects/p/locations/us-central1/agents/a/environments/e/sessions/s:serverStreamingDetectIntent", "us-central1-dialogflow.googleapis.com", "Dialogflow CX agent session"),
     ],
 )  # fmt: skip
-def test_agent_operations(path, label):
-    ops = agent_operations({path: 3})
+def test_agent_operations(path, host, label):
+    ops = agent_operations({path: 3}, method="POST", host=host)
     assert [(op.label, op.requests) for op in ops] == [(label, 3)]
+    for method in (None, "GET", "DELETE", "PATCH", "PUT"):
+        assert not agent_operations({path: 3}, method=method, host=host)
+    for other_host in (None, "example.org", "api.anthropic.com", host + ".example.org"):
+        assert not agent_operations({path: 3}, method="POST", host=other_host)
 
 
 def test_agent_operations_ignore_plain_model_calls_and_sum_paths():
@@ -39,7 +47,9 @@ def test_agent_operations_ignore_plain_model_calls_and_sum_paths():
             "/model/anthropic.claude-3-5-sonnet/converse": 4,
             "/agents/A/agentAliases/B/sessions/1/text": 2,
             "/agents/A/agentAliases/B/sessions/2/text": 1,
-        }
+        },
+        method="POST",
+        host="bedrock-agent-runtime.us-east-1.amazonaws.com",
     )
     assert [(op.label, op.signature, op.requests) for op in ops] == [
         ("Amazon Bedrock InvokeAgent", "cloud.aws-bedrock-agents", 3)
@@ -64,18 +74,24 @@ def test_is_mcp_request(path, mcp_host, expected):
 
 
 @pytest.mark.parametrize(
-    ("path", "model", "expected"),
+    ("path", "model", "method", "expected"),
     [
-        ("/v1/chat/completions", "gpt-4o", True),
-        ("/v1/embeddings", None, False),
-        (None, "text-embedding-3-small", False),
-        ("/v1/models", None, False),
-        ("/v1/messages/count_tokens", None, False),
-        (None, None, True),
+        ("/v1/chat/completions", "gpt-4o", "POST", True),
+        ("/v1/chat/completions", "gpt-4o", None, False),
+        ("/v1/chat/completions", "gpt-4o", "GET", False),
+        ("/v1/embeddings", None, "POST", False),
+        (None, "text-embedding-3-small", None, False),
+        ("/v1/models", None, "GET", False),
+        ("/v1/messages/count_tokens", None, "POST", False),
+        (None, None, None, False),
+        (None, "gpt-4o", None, True),
+        ("/v1/assistants", "gpt-4o", "POST", False),
+        ("/v1/threads/thread_abc/runs/run_1", "gpt-4o", "GET", False),
+        ("/arbitrary", "gpt-4o", "POST", False),
     ],
 )
-def test_is_generation(path, model, expected):
-    assert is_generation(path, model) is expected
+def test_is_generation(path, model, method, expected):
+    assert is_generation(path, model, method) is expected
 
 
 @pytest.mark.parametrize(
@@ -149,7 +165,8 @@ def test_gateway_agent_loop_cadence_from_access_logs(run_connector, tmp_path):
     callers = _scan(run_connector, tmp_path, lines)
 
     agent = callers[sdk]
-    assert agent.title.startswith("Agentic caller") and "agent-loop" in agent.tags
+    assert agent.title.startswith("LLM caller") and "agent-loop" in agent.tags
+    assert not agent.metadata.get("agent_indicators")
     assert agent.metadata["agent_behaviour"]["loop_cadence"]["longest"] == 5
     assert any(e.signal == "gateway:agent-loop" for e in agent.evidence)
     for ua in (browser, spaced, embed):
@@ -234,3 +251,130 @@ def test_gateway_sse_on_a_non_mcp_host_is_not_an_mcp_client(run_connector, tmp_p
     ]
     callers = _scan(run_connector, tmp_path, lines)
     assert "mcp-client" not in callers[ua].tags
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/assistants",
+        "/v1/assistants/asst_1",
+        "/v1/threads/thread_1",
+        "/v1/threads/thread_1/messages",
+        "/v1/threads/thread_1/runs/run_1",
+        "/v1/threads/thread_1/runs/run_1/cancel",
+        "/v1/threads/thread_1/runs/run_1/steps",
+    ],
+)
+def test_management_paths_never_identify_invocation_or_model_cadence(path):
+    for method in (None, "GET", "POST", "DELETE"):
+        assert not agent_operations({path: 10}, method=method, host="api.openai.com")
+        assert not is_generation(path, "gpt-4o", method)
+
+
+def test_gateway_hosted_operation_fixture(run_connector):
+    path = Path(__file__).resolve().parents[1] / "fixtures/gateway/hosted_operations.jsonl"
+    findings, ctx = run_connector("gateway.logs", input=str(path))
+    assert not ctx.stats.incomplete
+    by = {finding.metadata["caller"]: finding for finding in findings}
+    positives = {
+        "openai-run",
+        "tool-submission",
+        "bedrock-run",
+        "azure-run",
+        "native-vertex",
+        "agentcore-run",
+        "vertex-query",
+        "dialogflow-stream",
+    }
+    negatives = {
+        "inventory-job",
+        "run-list",
+        "run-read",
+        "assistant-delete",
+        "assistant-create",
+        "method-missing",
+        "wrong-service",
+        "mixed-provenance",
+        "runtime-read",
+        "control-plane-read",
+        "session-list",
+        "dialogflow-wrong-stream-path",
+        "agentcore-reader",
+    }
+    assert set(by) == positives | negatives
+    for name, finding in by.items():
+        assert ("agent-runtime-api" in finding.tags) is (name in positives), name
+        assert finding.title.startswith("Agentic caller" if name in positives else "LLM caller"), name
+        assert "tool-use" not in finding.capabilities, name
+        assert "agent-loop" not in finding.tags, name
+        if name in positives:
+            evidence = next(e for e in finding.evidence if e.signal == "gateway:agent-runtime-api")
+            assert "does not establish successful execution or tool use" in evidence.description
+    # Three distinct calls must keep their own path/host/method provenance.
+    assert by["mixed-provenance"].metadata["events"] == 3
+    assert by["inventory-job"].metadata["events"] == 5
+    # An attempted invocation denied by the provider remains an error.
+    assert by["azure-run"].metadata["errors"] == 1
+
+
+def test_hosted_invocation_classified_before_display_path_truncation(run_connector, tmp_path):
+    path = "/agents/AGENT12345/agentAliases/TSTALIASID/sessions/" + "s" * 100 + "/text"
+    caller = "Boto3/1.35.10"
+    findings = _scan(
+        run_connector,
+        tmp_path,
+        [_line(START, path, "bedrock-agent-runtime.us-east-1.amazonaws.com", caller)],
+    )
+    assert "agent-runtime-api" in findings[caller].tags
+    assert findings[caller].metadata["agent_behaviour"]["agent_operations"] == {
+        "Amazon Bedrock InvokeAgent": 1
+    }
+    assert all(len(operation) <= 120 for operation in findings[caller].metadata["operations"])
+    assert "tool-use" not in findings[caller].capabilities
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/proxy/v1/threads/thread_1/runs",
+        "/v1/threads/thread_1/runs/extra",
+        "/v1/threads/thread_1/runs/run_1/submit_tool_outputs/extra",
+        "https://api.openai.com/v1/threads/thread_1/runs",
+    ],
+)
+def test_hosted_invocation_requires_exact_provider_path(path):
+    assert not agent_operations({path: 1}, method="POST", host="api.openai.com")
+
+
+def test_native_vertex_requires_schema_service_and_precise_rpc():
+    operation = "google.cloud.aiplatform.v1.ReasoningEngineExecutionService.QueryReasoningEngine"
+    assert agent_operations({operation: 1}, host="aiplatform.googleapis.com", schema="vertex")
+    assert not agent_operations({operation: 1}, host="aiplatform.googleapis.com", schema="generic")
+    assert not agent_operations({operation: 1}, host="dialogflow.googleapis.com", schema="vertex")
+    assert not agent_operations(
+        {operation: 1}, method="GET", host="aiplatform.googleapis.com", schema="vertex"
+    )
+    assert not agent_operations({operation + "Other": 1}, host="aiplatform.googleapis.com", schema="vertex")
+
+
+@pytest.mark.parametrize(
+    "schema,extra",
+    [
+        ("generic", {"user": "reader", "method": "get"}),
+        ("access-log", {"remote_user": "reader", "request": "GET /v1/assistants HTTP/1.1"}),
+        ("access-log", {"remote_user": "reader", "request_method": "GET"}),
+        ("kong", {"request": {"method": "GET"}}),
+        ("vertex", {"httpRequest": {"requestMethod": "GET"}}),
+    ],
+)
+def test_normalization_preserves_http_method(schema, extra):
+    from shadowscan.connectors.gateway.logs import normalise
+
+    assert normalise(extra, schema).method == "GET"
+
+
+def test_malformed_http_method_marks_export_incomplete(run_connector, tmp_path):
+    path = tmp_path / "invalid.jsonl"
+    path.write_text(json.dumps({"user": "reader", "method": {"POST": True}, "model": "gpt-4o"}))
+    _, ctx = run_connector("gateway.logs", input=str(path))
+    assert ctx.stats.incomplete
