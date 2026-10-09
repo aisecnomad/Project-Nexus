@@ -2366,12 +2366,6 @@ Redaction and lexing changes to review:
   hostile or machine-generated input, not configurable). Projects that vendor
   `emoji-regex` or similar generated tables stop reporting
   `incomplete source lexical analysis` for them.
-- **Lexer coverage (0.1.1).** A Rust ordinary string may span lines, and a `.js`, `.mjs`
-  or `.cjs` file that fails plain lexing is read as JSX when that reading lexes
-  completely. Files that held these constructs can now complete, and may produce new
-  findings where JSX appears in `.js` files. Ruby `#{...}` interpolation in a
-  here-document still marks the scan incomplete. A literal that stays open under every
-  reading still marks the scan incomplete (exit 3).
 
 ### Real-world robustness migration (unreleased)
 
