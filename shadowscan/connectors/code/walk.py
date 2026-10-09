@@ -69,10 +69,24 @@ def _packaging_setup_script(path: Path, root: Path | None = None) -> bool:
     return _PACKAGING_SETUP.search(head) is not None
 
 
+def _present(path: Path, root: Path | None) -> bool:
+    """Whether a listed name holds something a copy would hold: a dangling link does not."""
+    if root is None or not os.path.islink(path):
+        return True
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True  # cannot tell; the link itself is reported as a gap
+    return True
+
+
 def _marks_project(directory: Path, names: Iterable[str], root: Path | None = None) -> bool:
     """True when ``names`` in ``directory`` include a project manifest (``root``: _packaging_setup_script)."""
     return any(
         name in PROJECT_ROOT_MARKERS
+        and _present(directory / name, root)
         and (name != "setup.py" or _packaging_setup_script(directory / name, root))
         for name in names
     )
@@ -142,8 +156,11 @@ class _WalkCounters:
     non_regular: int = 0  # entries named like analyzable content that are not regular files
     stop_at: float | None = None  # monotonic time after which link checks stop (deadline minus margin)
     budget: _WalkBudget = field(default_factory=_WalkBudget)
-    # Files to analyze at the paths of the links just checked: (rel, real path, project, size).
+    # Files to analyze at the path of the file link just checked: (rel, real path, project, size).
     aliases: list[tuple[str, Path, str, int]] = field(default_factory=list)
+    # Directory links whose files wait for their place in the walk:
+    # (parent relative to the root as on disk, link name, files).
+    linked_directories: list[tuple[str, str, list[tuple[str, Path, str, int]]]] = field(default_factory=list)
 
 
 def _walk_directories(

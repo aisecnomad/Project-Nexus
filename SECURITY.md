@@ -120,11 +120,13 @@ coverage, even when a response includes an empty collection field.
   scanner's IaC and agent front-matter patterns run on the bounded engine under
   the per-input matching budget. Symbolic links count toward `max_files` and
   their checks stop at the connector deadline. A link inside the scan root is
-  analyzed as a copy of its target: the walk never enters it, and the target is
+  analyzed as a copy of its target: the walk never enters it, and each file is
   read at its resolved real path inside the root, relative to the open root
-  descriptor without following a link in any component, so a target swapped
-  for a link after resolution fails the read (incomplete) instead of leaving
-  the root. Files below a directory link count toward `max_files`, at most
+  descriptor without following a link in any component, so a file swapped for
+  a link after resolution fails the read (incomplete) instead of leaving the
+  root. A directory target is listed by path, as the walk lists directories: a
+  directory swapped for a link during the scan can expose names and sizes in
+  the listing, never file contents. Files below a directory link count toward `max_files`, at most
   20,000 entries per root are analyzed this way, and links leaving the root are
   never read. Limit hits and
   malformed inputs make coverage incomplete while retaining valid neighboring

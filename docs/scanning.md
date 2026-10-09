@@ -18,13 +18,12 @@ that are never silent:
   path, so content reachable at two paths is reported at both, as two copies
   would be. Content is decoded and judged under the link's name (a link
   `agent.ipynb` to a JSON file is read as a notebook). A directory link's target
-  is listed at its real path, and its files count toward `max_files`; at most
-  20,000 files and directories per scan root are analyzed this way. Evidence
-  limits keep the first items found in walk order, and a directory link's files
-  are found after its parent directory's own, so a capped evidence list can
-  differ from a copy's. A dangling link whose own name carries no file-name
-  signal and whose target would be inside the tree hides nothing and is noted
-  with a warning. Every other link makes the scan incomplete (exit code 3):
+  is listed at its real path, and its files are walked and counted toward
+  `max_files` where a copy's directory would be, between its siblings by name;
+  at most 20,000 directory entries per scan root, probes included, are listed
+  this way. A dangling link whose own name carries no file-name signal and
+  whose target would be inside the tree hides nothing and is noted with a
+  warning; it marks no project. Every other link makes the scan incomplete (exit code 3):
   links that leave the root or do not resolve, a link whose target cannot be
   inspected, a cycle (a link inside its own target), an unreadable directory, a
   link or `.gitmodules` file below a linked directory, and links beyond the

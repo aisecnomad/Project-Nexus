@@ -4,6 +4,7 @@ import errno
 import functools
 import ipaddress
 import json
+import os
 import re
 import shutil
 import socket
@@ -324,6 +325,24 @@ def _canonical(value):
     return value
 
 
+def _materialize(source: Path, destination: Path, depth: int = 0) -> None:
+    """Copy a tree as `cp -rL` does: each link holds its target's content; a dangling link is left out.
+
+    ``shutil.copytree(ignore_dangling_symlinks=True)`` judges a relative link
+    from the working directory, not from the link's own, so it is not used.
+    """
+    assert depth < 40, "a link cycle cannot be materialized"
+    destination.mkdir()
+    for entry in sorted(os.scandir(source), key=lambda item: item.name):
+        path = Path(entry.path)
+        if entry.is_symlink() and not os.path.exists(path):
+            continue  # dangling: nothing to copy
+        if path.is_dir():
+            _materialize(path, destination / entry.name, depth + 1)
+        else:
+            shutil.copyfile(path, destination / entry.name)
+
+
 @pytest.fixture
 def same_as_copy(run_connector):
     """Scan a tree with symbolic links and a copy with the links materialized; both must agree.
@@ -333,13 +352,14 @@ def same_as_copy(run_connector):
     materialized copy reports, apart from the scan root's name.
     """
 
-    def _check(root: Path, **config):
+    def _check(root: Path, *, complete: bool = True, **config):
         findings, ctx = run_connector("code.filesystem", path=str(root), use_git=False, **config)
         copy = root.parent / f"{root.name}-materialized"
-        shutil.copytree(root, copy, symlinks=False)
+        _materialize(root, copy)
         copied, copy_ctx = run_connector("code.filesystem", path=str(copy), use_git=False, **config)
-        assert not copy_ctx.stats.incomplete, (copy_ctx.stats.warnings, copy_ctx.stats.errors)
-        assert not ctx.stats.incomplete, (ctx.stats.warnings, ctx.stats.errors)
+        # ``complete=False``: a limit stops both scans alike (max_files), with the same findings.
+        assert copy_ctx.stats.incomplete is not complete, (copy_ctx.stats.warnings, copy_ctx.stats.errors)
+        assert ctx.stats.incomplete is not complete, (ctx.stats.warnings, ctx.stats.errors)
 
         def normalized(found, scanned: Path) -> list[str]:
             out = []

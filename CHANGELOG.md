@@ -80,9 +80,20 @@ second provider, test fixtures and dangling links.
   paths that are file links are read in their targets; Git stores and
   default-excluded directories below a directory link are handled as in the
   walk; and a link whose target cannot be inspected (an unsearchable
-  directory) is a gap, not dangling. Capped evidence lists can still differ
-  from a copy's, since a directory link's files are found after its parent
-  directory's own.
+  directory) is a gap, not dangling.
+- A fifth review found no fail-open path and three regressions of the fourth
+  round, fixed with regression tests. A directory link's files are now walked
+  and counted toward `max_files` where a copy's directory would be (between
+  its siblings by name), so a `max_files` stop keeps the parent's findings,
+  files the walk never reads are not counted, and evidence limits, confidence
+  and titles match the copy's. The alias budget is charged with every
+  directory entry its listings and probes consume, so a link farm cannot spend
+  `max_entries`. A dangling project-marker link marks no project; a `src`,
+  `__init__.py` or namespace-package module that is an in-root link is
+  resolved as a copy would be; a link is dangling only when the kernel finds
+  nothing where it points; and excluded link names, Git store parts and
+  `CODEOWNERS` that are in-root links are handled as copies. A seeded test
+  compares 40 random link layouts with their copies.
 
 ### October 8 benchmark remediation: oversize and binary content
 

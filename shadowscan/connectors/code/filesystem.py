@@ -492,20 +492,25 @@ _PLUGIN_MANIFEST_DIRS = frozenset({".claude-plugin", ".codex-plugin"})
 
 
 def _dangling_inside(link: Path, resolved_root: Path) -> bool:
-    """Whether ``link`` resolves, as far as it can, to a path inside the root where nothing exists."""
+    """Whether nothing exists where ``link`` points, and that place is inside the root.
+
+    The kernel resolves the link (``os.stat``): only a missing entry is
+    dangling. Any other failure, such as an unsearchable directory on the way,
+    hides whatever is there.
+    """
+    try:
+        os.stat(link)
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    except (OSError, ValueError):
+        return False
+    else:
+        return False  # it resolves
     try:
         target = link.resolve(strict=False)
     except (OSError, ValueError, RuntimeError):
         return False
-    if not (target == resolved_root or resolved_root in target.parents):
-        return False
-    try:
-        os.lstat(target)
-    except (FileNotFoundError, NotADirectoryError):
-        return True  # nothing there
-    except OSError:
-        return False  # an unsearchable directory hides whatever is there
-    return False
+    return target == resolved_root or resolved_root in target.parents
 
 
 # The header of an inflated loose Git object.
@@ -553,12 +558,13 @@ _GIT_BINARY_PARTS: tuple[tuple[re.Pattern[str], Callable[[bytes], bool]], ...] =
 _MAX_NAMED_GIT_STORES = 5
 
 
-def _git_binary_part(stores: AbstractSet[str], rel: str, path: Path) -> bool:
+def _git_binary_part(stores: AbstractSet[str], rel: str, path: Path, root: Path | None = None) -> bool:
     """Whether ``rel`` is binary Git content of a store: a known path whose leading bytes match its format.
 
     Only these are skipped; any other file in a store, a hook or a ref
     included, is analyzed like a file anywhere else. The store is found by
     walking up ``rel``, so the cost does not grow with the number of stores.
+    A link inside ``root`` (the resolved scan root) is judged by its target.
     """
     for parent in PurePosixPath(rel).parents:
         store = parent.as_posix()
@@ -567,6 +573,12 @@ def _git_binary_part(stores: AbstractSet[str], rel: str, path: Path) -> bool:
         below = rel[len(store) + 1 :]
         for pattern, verified in _GIT_BINARY_PARTS:
             if pattern.fullmatch(below):
+                if root is not None and os.path.islink(path):
+                    # A link inside the root holds its target, as a copy would.
+                    target = _resolved_link_target(path, root)
+                    if target is None:
+                        return False
+                    path = target
                 head = read_head(path, 256)
                 return head is not None and verified(head)
         return False
@@ -1934,7 +1946,14 @@ class FilesystemConnector(BaseConnector):
         git_stores = self._git_stores
         for dirpath, dirnames, filenames in _walk_directories(root, walk_error, budget=walk.budget):
             walk.budget.check()
-            rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
+            raw_dir = os.path.relpath(dirpath, root)
+            # A directory link's files are walked where a copy's directory would
+            # be: after its parent's files, between its siblings by name.
+            for entry in self._due_linked_directories(walk, raw_dir):
+                if not self._count_entry(walk, root):
+                    return
+                yield entry
+            rel_dir = raw_dir.replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if rel_dir != "." and _is_git_store(dirpath, dirnames, filenames):
                 self._note_git_store(root, rel_dir, git_stores)
@@ -1948,8 +1967,6 @@ class FilesystemConnector(BaseConnector):
             if kept is None:
                 return
             dirnames[:] = kept
-            # A directory link's files follow this directory's own, as a copy's would.
-            linked = list(self._drain_aliases(walk))
             for fn in sorted(filenames):
                 walk.budget.check()
                 shown = _report_name(fn)
@@ -1957,13 +1974,16 @@ class FilesystemConnector(BaseConnector):
                 if self._excluded_file(rel):
                     continue
                 p = Path(dirpath) / fn
-                if git_stores and _git_binary_part(git_stores, rel, p):
+                if git_stores and _git_binary_part(git_stores, rel, p, resolved_root):
                     continue
                 try:
                     if p.is_symlink():
                         if not self._skip_link(root, resolved_root, rel, p, walk, proj):
                             return
-                        yield from self._drain_aliases(walk)
+                        for entry in self._take_aliases(walk):
+                            if not self._count_entry(walk, root):
+                                return
+                            yield entry
                         continue
                     info = p.stat()
                 except OSError as exc:
@@ -1983,7 +2003,10 @@ class FilesystemConnector(BaseConnector):
                 if not self._count_entry(walk, root):
                     return
                 yield rel, p, proj, info.st_size
-            yield from linked
+        for entry in self._due_linked_directories(walk, None):
+            if not self._count_entry(walk, root):
+                return
+            yield entry
 
     def _note_git_store(self, root: Path, rel_dir: str, stores: set[str]) -> None:
         """Record a Git repository store at ``rel_dir``; the first few are named in warnings."""
@@ -2002,10 +2025,32 @@ class FilesystemConnector(BaseConnector):
             )
 
     @staticmethod
-    def _drain_aliases(walk: _WalkCounters) -> Iterator[tuple[str, Path, str, int]]:
-        """Yield the files queued at the paths of the links just checked."""
+    def _take_aliases(walk: _WalkCounters) -> list[tuple[str, Path, str, int]]:
+        """The files queued at the path of the file link just checked."""
         queued, walk.aliases = walk.aliases, []
-        yield from queued
+        return queued
+
+    @staticmethod
+    def _due_linked_directories(walk: _WalkCounters, raw_dir: str | None) -> list[tuple[str, Path, str, int]]:
+        """The files of the directory links a copy's walk would finish before entering ``raw_dir``.
+
+        ``raw_dir`` is the next walked directory, relative to the root as on
+        disk; None flushes every link at the end of the walk. A link's files
+        are due once the walk leaves the link's parent, or enters a sibling
+        directory whose name sorts after the link's, as ``sorted`` orders the
+        walk's subdirectories.
+        """
+        due: list[tuple[str, Path, str, int]] = []
+        pending = []
+        for parent, name, entries in walk.linked_directories:
+            if raw_dir is not None and (parent == "." or raw_dir.startswith(parent + os.sep)):
+                child = (raw_dir if parent == "." else raw_dir[len(parent) + 1 :]).split(os.sep, 1)[0]
+                if raw_dir != "." and child <= name:
+                    pending.append((parent, name, entries))
+                    continue
+            due.extend(entries)
+        walk.linked_directories = pending
+        return due
 
     def _walked_directories(
         self,
@@ -2029,7 +2074,16 @@ class FilesystemConnector(BaseConnector):
             rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
             if self._excluded(rel, name):
-                if self._disclosed_default_exclusion(rel, name) and _holds_file(path, walk.budget):
+                probe: Path | None = path
+                if path.is_symlink():
+                    # A copy of the link's target would be disclosed alike.
+                    target = _resolved_link_target(path, resolved_root)
+                    probe = target if target is not None and target.is_dir() else None
+                if (
+                    probe is not None
+                    and self._disclosed_default_exclusion(rel, name)
+                    and _holds_file(probe, walk.budget)
+                ):
                     self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
                 continue
             try:
@@ -2090,11 +2144,12 @@ class FilesystemConnector(BaseConnector):
         that depends on the path sees the link's path (``_queue_alias_file``,
         ``_queue_alias_directory``). Any other link is a coverage gap.
 
+        A link's files count toward ``max_files`` where the walk yields them,
+        as a copy's would; a link that is a gap counts itself.
+
         Returns False, with the reason recorded as an error, when the walk
         must stop: the link reached ``max_files`` or the connector deadline.
         """
-        if not self._count_entry(walk, root):
-            return False
         if walk.stop_at is not None and time.monotonic() >= walk.stop_at:
             self.ctx.error(
                 f"code.filesystem: connector deadline reached while checking symbolic links under {root}; "
@@ -2108,8 +2163,6 @@ class FilesystemConnector(BaseConnector):
                 if target.is_dir()
                 else self._queue_alias_file(root, resolved_root, rel, link, target, proj, walk)
             )
-            if queued is None:
-                return False  # max_files reached; the error is recorded
             if queued:
                 return True
         elif not self.index.match_file(rel) and _dangling_inside(link, resolved_root):
@@ -2118,6 +2171,8 @@ class FilesystemConnector(BaseConnector):
                 root, "dangling", f"skipped dangling symbolic link {rel}; its target is not in the tree"
             )
             return True
+        if not self._count_entry(walk, root):
+            return False
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
         if root not in self._symlink_warnings:
@@ -2138,12 +2193,11 @@ class FilesystemConnector(BaseConnector):
         target: Path,
         proj: str,
         walk: _WalkCounters,
-    ) -> bool | None:
+    ) -> bool:
         """Queue a file link's target for analysis at the link's path; False is a coverage gap.
 
         Its directory is the link's own, so local Python modules are looked up
-        beside the link, as for a copy. The link itself was counted toward
-        max_files, as the copy's file would be.
+        beside the link, as for a copy.
         """
         try:
             info = target.stat()
@@ -2160,7 +2214,8 @@ class FilesystemConnector(BaseConnector):
         if self._alias_entries_left <= 0:
             return False
         self._alias_entries_left -= 1
-        return self._queue_alias_entry(rel, real, proj, info.st_size, (link.parent, project), walk)
+        self._queue_alias_entry(rel, real, proj, info.st_size, (link.parent, project), walk.aliases)
+        return True
 
     def _queue_alias_directory(
         self,
@@ -2171,15 +2226,16 @@ class FilesystemConnector(BaseConnector):
         target: Path,
         proj: str,
         walk: _WalkCounters,
-    ) -> bool | None:
+    ) -> bool:
         """Queue every file below a directory link's target for analysis below the link's path.
 
         The target is listed at its real path; the link is never entered.
         Exclusions, projects, Git stores and every path rule apply to the link's
-        paths, as for a copy, and each file counts toward max_files (None: the
-        walk must stop). A cycle, a link or a `.gitmodules` file below the
-        target, an unreadable directory or the alias budget is a gap for the
-        whole link.
+        paths, as for a copy; the files are walked and counted where a copy's
+        directory would be (``_due_linked_directories``). Every directory entry
+        the listing and its probes consume is charged to the alias budget. A
+        cycle, a link or a `.gitmodules` file below the target, an unreadable
+        directory or a spent budget is a gap for the whole link.
         """
         target_rel = target.relative_to(resolved_root)
         shown_target = _report_name(target_rel.as_posix())
@@ -2191,6 +2247,25 @@ class FilesystemConnector(BaseConnector):
             # Named like an MCP configuration file, as a copied directory would be.
             self._skip_non_regular(walk, root, rel, "directory")
         real_top = root / target_rel
+        start = walk.budget.entries
+        try:
+            return self._list_linked_directory(root, resolved_root, rel, link, real_top, proj, walk)
+        finally:
+            # Every link lists its own target: a link farm must not multiply the walk.
+            self._alias_entries_left -= max(1, walk.budget.entries - start)
+
+    def _list_linked_directory(
+        self,
+        root: Path,
+        resolved_root: Path,
+        rel: str,
+        link: Path,
+        real_top: Path,
+        proj: str,
+        walk: _WalkCounters,
+    ) -> bool:
+        """List a directory link's target for ``_queue_alias_directory``; False is a gap."""
+        start = walk.budget.entries
         failed: list[OSError] = []
         roots_here = [proj]
         projects = {proj: root if proj == "." else _on_disk_project(root, link, proj)}
@@ -2201,9 +2276,7 @@ class FilesystemConnector(BaseConnector):
                 return False
             if walk.stop_at is not None and time.monotonic() >= walk.stop_at:
                 return False
-            # Every link lists its own target: a link farm must not multiply the walk.
-            self._alias_entries_left -= 1 + len(filenames)
-            if self._alias_entries_left < 0:
+            if walk.budget.entries - start >= self._alias_entries_left:
                 return False
             sub = Path(dirpath).relative_to(real_top).as_posix()
             alias_dir = rel if sub == "." else f"{rel}/{_report_name(sub)}"
@@ -2230,12 +2303,14 @@ class FilesystemConnector(BaseConnector):
                     self._skip_non_regular(walk, root, child, "directory")
                 kept.append(name)
             dirnames[:] = kept
+            if walk.budget.entries - start >= self._alias_entries_left:
+                return False
             for name in sorted(filenames):
                 alias_rel = f"{alias_dir}/{_report_name(name)}"
                 if self._excluded_file(alias_rel):
                     continue
                 path = Path(dirpath) / name
-                if stores and _git_binary_part(stores, alias_rel, path):
+                if stores and _git_binary_part(stores, alias_rel, path, resolved_root):
                     continue
                 try:
                     if path.is_symlink():
@@ -2253,17 +2328,24 @@ class FilesystemConnector(BaseConnector):
         self._alias_dirs[rel] = real_top
         for alias_rel in sorted(stores):
             self._note_git_store(root, alias_rel, self._git_stores)
+        queued: list[tuple[str, Path, str, int]] = []
         for alias_rel, path, here, size, directory in entries:
-            if not self._count_entry(walk, root):
-                return None
             # The real directory holds what a copy's directory would.
-            self._queue_alias_entry(alias_rel, path, here, size, (directory, projects[here]), walk)
+            self._queue_alias_entry(alias_rel, path, here, size, (directory, projects[here]), queued)
+        parent = os.path.relpath(link.parent, root)
+        walk.linked_directories.append((parent, link.name, queued))
         return True
 
     def _queue_alias_entry(
-        self, rel: str, real: Path, proj: str, size: int, origin: tuple[Path, Path], walk: _WalkCounters
-    ) -> bool:
-        """Queue one file read at ``real`` and analyzed as ``rel``, as the walk queues a regular file.
+        self,
+        rel: str,
+        real: Path,
+        proj: str,
+        size: int,
+        origin: tuple[Path, Path],
+        into: list[tuple[str, Path, str, int]],
+    ) -> None:
+        """Queue one file read at ``real`` and analyzed as ``rel``, filtered as the walk filters a file.
 
         ``origin`` is the on-disk directory and project directory that local
         Python import provenance probes for this path (see _scan_source).
@@ -2271,12 +2353,11 @@ class FilesystemConnector(BaseConnector):
         name = PurePosixPath(rel).name
         if size > self._size_limit(name, rel) and self._oversize_skippable(rel, name):
             self._skip_oversize(rel, size)
-            return True
+            return
         if _never_read_by_name(name):
-            return True
-        walk.aliases.append((rel, real, proj, size))
+            return
+        into.append((rel, real, proj, size))
         self._alias_origins[rel] = origin
-        return True
 
     def _link_note(self, root: Path, kind: str, message: str, *, incomplete: bool = False) -> None:
         """Note one link of each kind per root; a hostile tree cannot fill the report with link names."""
@@ -3721,8 +3802,18 @@ class FilesystemConnector(BaseConnector):
             p = root / cand
             if p.exists() or p.is_symlink():
                 try:
-                    if not p.resolve().is_relative_to(root) or any(
-                        part.is_symlink() for part in [p, *p.parents] if part != root and root in part.parents
+                    source = PurePosixPath(cand)
+                    if p.is_symlink():
+                        # A link inside the root holds its target, as a copy would.
+                        target = _resolved_link_target(p, root)
+                        if target is not None and target.is_file():
+                            source = PurePosixPath(target.relative_to(root).as_posix())
+                    if (
+                        source == PurePosixPath(cand)
+                        and p.is_symlink()
+                        or any(
+                            part.is_symlink() for part in p.parents if part != root and root in part.parents
+                        )
                     ):
                         self.ctx.error(f"code.filesystem: ignored unsafe CODEOWNERS path {cand}")
                         break
@@ -3732,10 +3823,11 @@ class FilesystemConnector(BaseConnector):
                     directory = open_confined_directory(root)
                     try:
                         content = read_text(
-                            PurePosixPath(cand),
+                            source,
                             self.max_file_size,
                             errors,
                             dir_fd=directory,
+                            name=PurePosixPath(cand).name,
                         )
                     finally:
                         os.close(directory)

@@ -31,8 +31,21 @@ class ImportProvenanceError(ValueError):
     """Local import provenance could not be safely established."""
 
 
-class _LinkProvenanceError(ImportProvenanceError):
+class ImportProvenanceLinkError(ImportProvenanceError):
     """A probed path component is a symbolic link."""
+
+
+def _inside(link: Path, root: Path | None) -> Path:
+    """The target of ``link`` when it resolves inside ``root``; any other link raises."""
+    if root is None:
+        raise ImportProvenanceError("local import provenance must not traverse a symbolic link")
+    try:
+        target = link.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ImportProvenanceError("could not inspect local import provenance") from exc
+    if target != root and root not in target.parents:
+        raise ImportProvenanceError("local import provenance symbolic link leaves the scan root")
+    return target
 
 
 def local_module_conflict(
@@ -114,7 +127,7 @@ def local_module_conflict(
         except OSError as exc:
             raise ImportProvenanceError("could not inspect local import provenance") from exc
         if result is not None and stat.S_ISLNK(result):
-            raise _LinkProvenanceError("local import provenance must not traverse a symbolic link")
+            raise ImportProvenanceLinkError("local import provenance must not traverse a symbolic link")
         modes[path] = result
         return result
 
@@ -126,7 +139,7 @@ def local_module_conflict(
         """A module or package path and its mode; a link inside the root stands for its target."""
         try:
             return path, mode(path)
-        except _LinkProvenanceError:
+        except ImportProvenanceLinkError:
             pass
         try:
             target = path.resolve(strict=True)
@@ -139,8 +152,8 @@ def local_module_conflict(
         return target, mode(target)
 
     candidates = dict.fromkeys((root, project, project / "src", directory_of_source))
-    for directory in candidates:
-        directory_mode = mode(directory)
+    for listed in candidates:
+        directory, directory_mode = candidate(listed)
         if directory_mode is None or not stat.S_ISDIR(directory_mode):
             continue
         _, module_mode = candidate(directory / f"{name}.py")
@@ -149,13 +162,13 @@ def local_module_conflict(
         package, package_mode = candidate(directory / name)
         if package_mode is None or not stat.S_ISDIR(package_mode):
             continue
-        init_mode = mode(package / "__init__.py")
-        if (init_mode is not None and stat.S_ISREG(init_mode)) or _holds_python_source(package):
+        _, init_mode = candidate(package / "__init__.py")
+        if (init_mode is not None and stat.S_ISREG(init_mode)) or _holds_python_source(package, real_root):
             return True
     return False
 
 
-def _holds_python_source(package: Path) -> bool:
+def _holds_python_source(package: Path, root: Path | None = None) -> bool:
     """Whether a directory without ``__init__.py`` holds a ``.py`` file, looking only a bounded way in.
 
     Breadth first, so shallow source is found first. Links are not followed: one
@@ -174,9 +187,16 @@ def _holds_python_source(package: Path) -> bool:
                             "local import provenance directory is too large to inspect"
                         )
                     if entry.is_symlink():
-                        raise ImportProvenanceError(
-                            "local import provenance must not traverse a symbolic link"
-                        )
+                        target = _inside(Path(entry.path), root)
+                        if entry.name.endswith(".py") and target.is_file():
+                            return True  # a module link inside the root, as a copy holds
+                        if target.is_dir():
+                            if depth >= MAX_NAMESPACE_DEPTH:
+                                raise ImportProvenanceError(
+                                    "local import provenance directory is nested too deeply"
+                                )
+                            pending.append((target, depth + 1))
+                        continue
                     if entry.is_dir(follow_symlinks=False):
                         if depth >= MAX_NAMESPACE_DEPTH:
                             raise ImportProvenanceError(

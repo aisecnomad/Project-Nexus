@@ -352,6 +352,58 @@ LAYOUTS = {
         {},
     ),
     "git-store-behind-a-link": ({**GIT_STORE, "app.py": AGENT}, [("vendor-store", "fixture.git")], {}),
+    # fifth review: walk order, project markers, provenance, stores and owners
+    "link-sorted-after-a-real-directory": (
+        {f"app/f{n:02d}.py": "import openai\nopenai.OpenAI()\n" for n in range(13)},
+        [("tests", "app")],
+        {},
+    ),
+    "link-sorted-before-real-directories": (
+        {
+            **{f"tests/f{n:02d}.py": "import openai\nopenai.OpenAI()\n" for n in range(13)},
+            "zzz/main.py": AGENT,
+        },
+        [("aaa", "tests"), ("zsrc", "tests")],
+        {},
+    ),
+    "dangling-project-marker": (
+        {
+            "a/pyproject.toml": "[project]\nname = 'a'\n",
+            "a/agent.py": AGENT,
+            "b/creds.py": 'DEPLOY_PASSWORD = "Q7vLm2Xr9TbK4pWz8NcYsynthetic"\n',
+        },
+        [("b/package.json", "missing-target")],
+        {},
+    ),
+    "src-directory-link": (
+        {"pyproject.toml": "[project]\nname = 'svc'\n", "lib/README.md": "# lib\n", "app/agent.py": CREW},
+        [("src", "lib")],
+        {},
+    ),
+    "package-initializer-link": (
+        {
+            "shim.py": '"""local shim"""\n',
+            "openai/README.md": "# shim\n",
+            "agent.py": "import openai\nprint(openai)\n",
+        },
+        [("openai/__init__.py", "../shim.py")],
+        {},
+    ),
+    "namespace-module-link": (
+        {"shim.py": '"""local shim"""\n', "agent.py": "import openai\nprint(openai)\n"},
+        [("openai/client.py", "../shim.py")],
+        {},
+    ),
+    "git-store-file-link": (
+        {
+            **{k: v for k, v in GIT_STORE.items() if not k.endswith("/index")},
+            "idx.bin": GIT_STORE["fixture.git/index"],
+        },
+        [("fixture.git/index", "../idx.bin")],
+        {},
+    ),
+    "codeowners-link": ({"docs/OWNERS": "* @team-a\n", "app.py": AGENT}, [("CODEOWNERS", "docs/OWNERS")], {}),
+    "excluded-name-link": ({"src/agent.py": AGENT}, [("build", "src")], {}),
     "test-fixture-links": (
         {"testdata/source/config.json": '{"a": 1}\n', "config/settings.yml": "model: gpt-4o\n"},
         [
@@ -504,16 +556,17 @@ def test_link_whose_target_cannot_be_inspected_is_not_dangling(tmp_path: Path, m
     from shadowscan.connectors.code import filesystem
 
     _link(tmp_path, "agent.py", "node_modules/priv/agent.py")
-    real_lstat = os.lstat
-    target = str(tmp_path.resolve() / "node_modules" / "priv" / "agent.py")
+    real_stat = os.stat
+    link = str(tmp_path / "agent.py")
 
-    def lstat(path, *args, **kwargs):
-        if os.fspath(path) == target:
-            raise PermissionError(13, "Permission denied", target)
-        return real_lstat(path, *args, **kwargs)
+    def denied(path, *args, **kwargs):
+        if os.fspath(path) == link:
+            raise PermissionError(13, "Permission denied", link)
+        return real_stat(path, *args, **kwargs)
 
     assert filesystem._dangling_inside(tmp_path / "agent.py", tmp_path.resolve()) is True
-    monkeypatch.setattr(filesystem.os, "lstat", lstat)
+    # The kernel cannot tell (an unsearchable directory on the way): not dangling.
+    monkeypatch.setattr(filesystem.os, "stat", denied)
     assert filesystem._dangling_inside(tmp_path / "agent.py", tmp_path.resolve()) is False
 
 
@@ -547,3 +600,94 @@ def test_default_excluded_directories_below_a_link_are_disclosed(tmp_path: Path,
     disclosed = [w.replace(str(root), "") for w in ctx.stats.warnings if "default-excluded" in w]
     copy_disclosed = [w.replace(str(copy), "") for w in copy_ctx.stats.warnings if "default-excluded" in w]
     assert disclosed and disclosed == copy_disclosed
+
+
+# ---------------------------------------------------------------- fifth review: limits keep a copy's findings
+
+
+def test_max_files_stop_keeps_the_findings_a_copy_keeps(tmp_path: Path, same_as_copy) -> None:
+    root = tmp_path / "repo"
+    _write(root, {"app.py": AGENT, **{f"shared/f{n}.py": "x = 1\n" for n in range(10)}})
+    _link(root, "lib", "shared")
+    findings, _ = same_as_copy(root, complete=False, max_files=5)
+    assert any("provider.openai" in f.model_providers for f in findings)
+
+
+def test_files_the_walk_never_reads_do_not_count_toward_max_files(tmp_path: Path, same_as_copy) -> None:
+    root = tmp_path / "repo"
+    _write(root, {"app.py": AGENT, **{f"shared/{name}.min.js": "x" for name in "abc"}})
+    _link(root, "lib", "shared")
+    same_as_copy(root, max_files=3)
+
+
+def test_disclosure_probes_below_links_are_charged_to_the_alias_budget(tmp_path: Path, run_connector) -> None:
+    names = ["bin", "build", "dist", "out", "target", "obj", "coverage", "vendor", "external"]
+    # Each probe of an excluded name lists up to 257 entries before it gives up.
+    _write(tmp_path, {f"shared/t/{name}/d{n:03d}/f.txt": "x" for name in names for n in range(300)})
+    _write(tmp_path, {"zzz/agent.py": AGENT})
+    for n in range(120):
+        _link(tmp_path, f"links/l{n:03d}", "../shared/t")
+    findings, ctx = _scan(run_connector, tmp_path, max_entries=150_000)
+    assert not any("max_entries" in e for e in ctx.stats.errors)
+    assert any("provider.openai" in f.model_providers for f in findings)
+
+
+def test_excluded_link_name_is_disclosed_as_a_copy_is(tmp_path: Path, run_connector) -> None:
+    root = tmp_path / "repo"
+    _write(root, {"src/agent.py": AGENT})
+    _link(root, "build", "src")
+    copy = tmp_path / "copy"
+    shutil.copytree(root, copy, symlinks=False)
+    _, ctx = _scan(run_connector, root)
+    _, copy_ctx = _scan(run_connector, copy)
+    disclosed = [w.replace(str(root), "") for w in ctx.stats.warnings if "default-excluded" in w]
+    copy_disclosed = [w.replace(str(copy), "") for w in copy_ctx.stats.warnings if "default-excluded" in w]
+    assert disclosed and disclosed == copy_disclosed
+
+
+# ---------------------------------------------------------------- randomized layouts against the oracle
+
+_CONTENTS = [
+    AGENT,
+    CREW,
+    "import openai\nopenai.OpenAI()\n",
+    "import anthropic\nanthropic.Anthropic()\n",
+    FASTMCP,
+    'DEPLOY_PASSWORD = "Q7vLm2Xr9TbK4pWz8NcYsynthetic"\n',
+    "print('hello')\n",
+]
+
+
+def _random_layout(seed: int) -> tuple[dict[str, str], list[tuple[str, str]]]:
+    """Real content under a few directories; file and directory links among them, never below a link."""
+    import random
+
+    rng = random.Random(seed)
+    files: dict[str, str] = {}
+    directories = [f"{rng.choice('aehmqtz')}{n}" for n in range(rng.randint(2, 4))]
+    for directory in directories:
+        if rng.random() < 0.4:
+            files[f"{directory}/pyproject.toml"] = f"[project]\nname = '{directory}'\n"
+        for n in range(rng.randint(1, 6)):
+            sub = rng.choice(["", "lib/", "tests/", ".claude/skills/x/"])
+            name = "SKILL.md" if sub.startswith(".claude") else f"m{n}.py"
+            files[f"{directory}/{sub}{name}"] = SKILL if name == "SKILL.md" else rng.choice(_CONTENTS)
+    targets = sorted({str(Path(rel).parent) for rel in files} | set(files))
+    links: list[tuple[str, str]] = []
+    for n in range(rng.randint(1, 4)):
+        target = rng.choice(targets)
+        # A sibling of the real directories, named to sort before, between or after them.
+        suffix = Path(target).suffix if target in files else ""
+        name = f"{rng.choice('bfnsy')}{n}{suffix}"
+        links.append((name, target))
+    return files, links
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_random_link_layouts_report_what_their_copies_report(tmp_path: Path, same_as_copy, seed: int) -> None:
+    files, links = _random_layout(seed)
+    root = tmp_path / "repo"
+    _write(root, files)
+    for link, target in links:
+        _link(root, link, target)
+    same_as_copy(root)
