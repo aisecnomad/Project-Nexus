@@ -39,6 +39,83 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+A code pattern establishes its library only with corroboration. A lexical
+match (every code pattern in a language without an import binder, and in
+Python or JavaScript a framework pattern the binder did not claim) is a word
+other code can use too: Spring AI's `ToolCallback` is a Rust trait name,
+LangChain's `create_agent(` a Goose function, `AgentType.Validate(` a Semantic
+Kernel method. Such a match counts only when the same signature also has an
+import, a dependency, a file-name, container-image, IaC or model-id match, an
+import-bound call, a recognised configuration shape or a manifest artifact
+somewhere in the project, or a host, variable name or display name of weight
+0.3 or more (after the test-path discount): a C# `new OpenAIClient(new Uri(...))`
+against `contoso.openai.azure.com` is Azure OpenAI; a Rust `create_agent(`
+next to a documentation link is not LangChain. Otherwise the evidence is kept
+at its 0.6 cap in the `uncorroborated-lexical` confidence group, but the
+signature joins neither
+`frameworks[]` nor `model_providers[]`, adds no capability and no agent
+indicator; it is listed under `metadata.potential_frameworks` or
+`metadata.potential_providers`, and the title follows the established
+technologies. A project whose only evidence is such patterns yields no
+finding; the scan records a note naming up to five of the files (a warning
+that does not make the scan incomplete), so the evidence is never dropped
+silently. Python and JavaScript code patterns of provider, protocol, platform
+and cloud-service signatures are written for the idioms of generic SDKs
+(`boto3.client("bedrock-agent-runtime")`) and remain supporting evidence.
+
+The same holds for mentions too weak to establish anything. When every match
+of a signature in a project is a host, environment-variable name, display
+name, model identifier found in a data file or CI job image, and none of them
+weighs 0.3 or more after the test-path discount, the signature is potential,
+not established: the bare `huggingface.co` host (weight 0.15, a model-hub
+link in a comment, an OAuth endpoint, a gallery entry) beside an OpenAI
+import leaves `model_providers` as `provider.openai` with
+`potential_providers: [provider.huggingface]`; `api-inference.huggingface.co`
+or `router.huggingface.co` (weight 0.8) establish the provider as before. The
+two-tier domain weights were written as corroboration; the connector now
+honours that. The OpenAI request shape (`.chat.completions.create(`) in a
+project that installs or imports the OpenAI SDK describes that SDK and never
+adds `provider.openai-compatible` as a second provider; in a project whose
+only such library is a Hugging Face `InferenceClient`, the shape names neither.
+
+Model identifiers are medium-weight provider evidence. Quoted literals in
+source files and notebook code cells (comments are skipped where the lexer
+masks them) and quoted or bare values after a model-ish key (`model`,
+`model_id`, `model_name`, `default_model`, `deployment`, `llm`, `engine`,
+`OPENAI_MODEL=...`) in YAML, JSON, TOML, Terraform, Bicep, `.env`, `.cfg`,
+`.ini` and `.properties` files are handed to the anchored `model` signatures
+when they carry a vendor stem (`claude-`, `gpt-`, `gemini-1`/`-2`/`-pro`,
+`mistral-large`, `bedrock/`, `vertex_ai/`, `openrouter/`, `@cf/`, …). A route
+such as `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0` attributes both
+the route's provider and the model's vendor. Each match weighs at most 0.5
+(`model:provider.anthropic`), lists the whole id under `metadata.models`, and
+is recorded at most three times per signature per file; a file is read for
+its first 400 literals, with a note when it holds more. A model id in a source
+file or notebook can anchor a project finding (a Python file whose only
+evidence is `MODEL = "claude-3-5-sonnet-20241022"` is reported, tagged
+`model-ids-only`, with heuristics dropped and confidence capped at 0.6,
+`metadata.confidence_cap`); one in a data or configuration file is a mention,
+like a host or a variable name: it anchors nothing, and a leaderboard or
+pricing table that lists eight model ids stays a catalog. Markdown and text
+files are never read for model ids, and ordinary strings (`amazon.com`,
+`o1ne`, `tts-config`, `command-line`, `gemini-python/1.8.2`) match nothing.
+The last path segment of a value is matched only under a known route prefix
+(`bedrock/`, `openai/`, `azure/`, `vertex_ai/`, `openrouter/`, `groq/`,
+`@cf/`, …): `EleutherAI/gpt-neox-20b` is a namespace, not an OpenAI model.
+The open-ended families are held to the vendor's shape (`gpt-` followed by a
+digit or `oss-`, `o1-`/`o3-`/`o4-` by a variant such as `mini`, `pro` or
+`deep-research` or a release date) and an id with a segment that names
+tooling (`tokenizer`, `encoder`, `engineer`, `agent`, `formatter`, …) is
+rejected, so `gpt-tokenizer`, `gpt-3-encoder`, `gpt-4all`, `gpt-engineer`,
+`gpt-j-6b`, `o1-visa`, `o3-build`, `grok-1-formatter`, `qwen-agent` and
+`qwen-code` count for nothing while `gpt-5-codex`, `gpt-oss-120b`,
+`o3-deep-research`, `o1-2024-12-17`, `grok-code-fast-1` and
+`qwen2.5-coder-7b-instruct` still do. Dotted `.properties` keys
+(`spring.ai.openai.chat.options.model=gpt-4o`) are read like any other.
+A model id also corroborates the same vendor's code pattern, so
+`boto3.client("bedrock-runtime")` beside a Bedrock route in `config/agent.yaml`
+establishes both `provider.aws-bedrock` and `provider.anthropic`.
+
 Python and JavaScript/TypeScript execution capabilities are attributed to supported
 registered tool bodies, direct local helpers, and recognized model-selected
 dispatch. Unused tools, unrelated helpers and turn-loop cleanup remain zero-weight
@@ -180,6 +257,31 @@ and local `use_git: true` also inventory committed gitlinks using the hardened
 metadata path. No submodule is initialized or fetched; see the detailed
 [coverage policy](../scanning.md#coverage-policy) for scope and limitations.
 
+Evidence found under a test or fixture path has half weight (see
+[scanning](../scanning.md#test-and-fixture-code)); unless `include_tests` is
+set, a mention there, a host, variable name, display name, model identifier
+or CI job image, anchors no project finding on its own: `huggingface.co`
+inside `test/data/ua/extension/crawler.json` once produced a 0.075-confidence
+provider finding. Imports, dependencies and code patterns in tests still
+anchor (tagged `test-code-only`). A project dropped for this reason is named
+in a note, like one whose evidence is only uncorroborated patterns.
+
+An `image:` line in a CI pipeline (`.github/workflows/`, `.gitlab-ci.yml`,
+`.circleci/`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.drone.yml`,
+`.woodpecker*`, `.buildkite/`, `.gitlab/`, `Jenkinsfile`) runs a job in that
+container rather than deploying it: its image match is recorded on the
+project at 0.3 of the image signal's weight, tagged `ci_image`, anchors no
+finding and produces no `infra` finding. A job that tests the MCP SDK in
+`modelcontextprotocol/python-sdk` is therefore a potential MCP mention, not
+"infrastructure provisions MCP"; the same image in a Compose or Kubernetes
+file keeps full weight and its infrastructure finding.
+
+.NET central package management is read as NuGet dependencies:
+`Directory.Packages.props` (`<PackageVersion Include=... />`),
+`Directory.Build.props` and other MSBuild imports (`<GlobalPackageReference
+Include=... />`, `<PackageReference Update=... />`) and project files whose
+`PackageReference` items carry no version of their own.
+
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
@@ -228,7 +330,30 @@ entries named like configuration files, and directory nesting deeper than the
 walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
-root that does not affect completeness. See the coverage policy in
+root that does not affect completeness. Incomplete coverage is reserved for
+content the scan would have read. The default `oversize_skip_globs` name the
+remaining lockfiles (`gradle.lockfile`, `Package.resolved`,
+`Cartfile.resolved`, `deno.lock`, `pubspec.lock`, `mix.lock`, `bun.lock`,
+`*.lockb`, `flake.lock`) and generated files (`CHANGELOG*`, `CHANGES*`,
+`HISTORY*`, `*.log`, `*.har`, `*.snap`), so a 1.2 MB `CHANGELOG.md` is no
+longer exit 3. Credential detection reads every analyzable file, prose and
+fixtures included, so while `scan_secrets` is on (the default) an oversize
+`README.md` or recorded cassette is a coverage gap like any other unread file:
+a key planted in it is never lost to an exit 0. With `scan_secrets: false`
+two more kinds are skipped with a warning and the scan stays complete: a
+documentation file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, a
+coding-agent instruction document such as `CLAUDE.md` or `AGENTS.md`, an
+agent definition under `.claude/agents/` and the like, or a file a file-name
+signature selects), whose body the technology passes never read (warning
+`documentation is matched by file name only and credential detection is
+off`), and, when `include_tests` is false and `strict_coverage` is not set, a
+file under a test or fixture path (a recorded cassette under
+`tests/cassettes/`, a `pkg/fixtures/*.json`), whose evidence is discounted and
+cannot establish a deployment (warning `skipped oversize test fixture`; the
+connector counts them in `skipped_oversize_test_fixtures` and reports the
+count in one summary warning per root). Instruction documents, agent
+definitions, source and configuration keep the gap in every mode. Every
+skipped file is still named. See the coverage policy in
 [scanning](../scanning.md#coverage-policy). Each root is opened once, and every
 file (including `CODEOWNERS`) is read relative to it without following a link in
 any path component. A directory replaced by a link while the scan runs therefore

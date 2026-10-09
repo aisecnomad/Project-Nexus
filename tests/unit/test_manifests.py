@@ -281,6 +281,41 @@ def test_msbuild_props_and_targets_are_nuget_manifests(rel):
     assert not result.errors
 
 
+def test_central_package_management_props_declare_nuget_dependencies(fixtures):
+    # Directory.Packages.props keeps the versions (PackageVersion), a shared
+    # Directory.Build.props pins packages every project gets
+    # (GlobalPackageReference) or overrides (PackageReference Update=...); a
+    # project file referencing them carries no version of its own.
+    root = fixtures / "code" / "dotnet_central"
+    deps, result = _deps("Directory.Packages.props", (root / "Directory.Packages.props").read_text())
+    assert not result.errors
+    assert deps == {
+        ("nuget", "Microsoft.Extensions.AI"),
+        ("nuget", "OllamaSharp"),
+        ("nuget", "Newtonsoft.Json"),
+    }
+    deps, result = _deps("Directory.Build.props", (root / "Directory.Build.props").read_text())
+    assert not result.errors
+    assert deps == {
+        ("nuget", "Microsoft.SourceLink.GitHub"),
+        ("nuget", "ModelContextProtocol"),
+        ("nuget", "Microsoft.Extensions.AI.Ollama"),
+    }
+    versions = {d.name: d.spec for d in result.deps}
+    assert versions["Microsoft.Extensions.AI.Ollama"] == "9.3.0-preview.1.25161.3"
+
+
+def test_central_package_management_establishes_the_project_technologies(fixtures, run_connector):
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(fixtures / "code" / "dotnet_central"), use_git=False
+    )
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    project = next(f for f in findings if f.resource_type == "project")
+    assert {"framework.microsoft-extensions-ai", "protocol.mcp"} <= set(project.frameworks)
+    assert "provider.ollama" in project.model_providers
+    assert "nuget:OllamaSharp" in project.metadata["dependencies_matched"]
+
+
 @pytest.mark.parametrize("name", ["Directory.Build.targets", "common.props"])
 def test_msbuild_entity_declarations_are_rejected_not_expanded(name):
     bomb = (

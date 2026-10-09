@@ -152,7 +152,15 @@ tag. Recognisable placeholders (repeated characters, marker words such as
 Evidence that only names a coding agent in a test path (an environment variable,
 a display name, a dependency or a code pattern) likewise does not establish a
 coding-agent configuration; instruction documents and coding-agent config
-files still do.
+files still do. A mention in a test path (a provider host in a fixture JSON,
+a variable name, a display name, a model identifier, a CI job image) anchors
+no project finding at all without `include_tests`; imports, dependencies and
+code patterns there still do. An oversize file under a test path is skipped
+with the warning `skipped oversize test fixture` and leaves the scan complete
+only when `scan_secrets` is off and neither `include_tests` nor
+`strict_coverage` is set; otherwise it is read for credentials below the
+limit and a coverage gap above it (see
+[large and generated files](#large-and-generated-files)).
 
 ## Incremental scans
 
@@ -270,16 +278,38 @@ incomplete depends on what the file could hide:
 * A file whose name matches `oversize_skip_globs` is skipped with a warning and
   the scan stays complete. The default list names lockfiles (`package-lock.json`,
   `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Pipfile.lock`, `Cargo.lock`,
-  `Gemfile.lock`, `composer.lock`, `go.sum`), minified bundles and source maps
-  (`*.min.js`, `*.min.css`, `*.map`), data and vector graphics (`*.svg`, `*.csv`,
-  `*.parquet`), compiled or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`,
-  `*.dll`, `*.jar`, `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`,
-  `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives
-  (`*.zip`, `*.gz`, `*.tar`). Such content is generated from sources the scanner
-  does inspect, or is binary, so no agent configuration, framework usage or
+  `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`,
+  `Package.resolved`, `Cartfile.resolved`, `deno.lock`, `pubspec.lock`,
+  `mix.lock`, `bun.lock`, `*.lockb`, `flake.lock`), generated change logs and
+  recordings (`CHANGELOG*`, `CHANGES*`, `HISTORY*`, `*.log`, `*.har`,
+  `*.snap`), minified bundles and source maps (`*.min.js`, `*.min.css`,
+  `*.map`), data and vector graphics (`*.svg`, `*.csv`, `*.parquet`), compiled
+  or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`, `*.dll`, `*.jar`,
+  `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`, `*.png`, `*.jpg`,
+  `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives (`*.zip`,
+  `*.gz`, `*.tar`). Such content is generated from sources the scanner does
+  inspect, or is binary, so no agent configuration, framework usage or
   credential evidence is lost by skipping it. The warning still names each file
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
+* With `scan_secrets: false`, an oversize documentation file (`.md`, `.mdc`,
+  `.mdx`, `.txt`, not a manifest name) is skipped with a warning and the scan
+  stays complete: its body is matched by file name only, so no technology
+  evidence is lost and nothing would have read it for credentials. With
+  credential detection on (the default) its text is read for credentials below
+  the limit, so an oversize copy is a coverage gap like any other unread file.
+  A coding-agent instruction document (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+  …), an agent definition under `.claude/agents/`, `.github/agents/`,
+  `.cursor/rules/` or `.windsurf/rules/`, and a file a file-name signature
+  selects are parsed, so an oversize copy stays a gap in every mode.
+* With `scan_secrets: false` and `include_tests` unset, an oversize file under
+  a test or fixture path (`tests/cassettes/*.yaml`, `pkg/fixtures/*.json`,
+  `test_*.py`) is skipped with the warning `skipped oversize test fixture` and
+  the scan stays complete: test code is discounted evidence that cannot
+  establish a deployment, so its omission is disclosed and counted (one
+  summary warning per root) rather than treated as a gap. With credential
+  detection on, or `include_tests: true`, the file is analyzable like any
+  other and the gap returns; `strict_coverage` records it as an error.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
   document, is skipped and makes the scan incomplete (exit 3). With
   `strict_coverage: true` (`--strict-coverage`) it is recorded as an error
@@ -538,6 +568,19 @@ domain, variable name or model identifier (a proxy blocklist, a vendor policy,
 a leaderboard, a copy of the signature packs) is a catalog: its mentions count
 only for a product with an import, dependency or code pattern elsewhere in the
 project, and the discounted files are listed in `metadata.catalog_mentions`.
+A lexical code pattern without the library's import, dependency, bound call,
+configuration shape, image, IaC, model id or a host or variable name of weight
+0.3 or more anywhere in the project (a Rust `create_agent(`, a C#
+`AgentType.Validate(`, a Java `new MCPClient()`) and a
+signature known only from mentions below weight 0.3 (the bare `huggingface.co`
+host) are kept as evidence but establish nothing: they are listed under
+`metadata.potential_frameworks` / `metadata.potential_providers` instead of
+`frameworks[]` / `model_providers[]`, and a project with nothing else yields a
+note naming the files rather than a finding. Model identifiers in source and
+configuration are medium-weight evidence (at most 0.5 each); a project known
+only from them is tagged `model-ids-only` and capped at 0.6, and a model id in
+a data file is a mention that anchors nothing. A container image in a CI
+pipeline is a mention at 0.3 of its weight and yields no `infra` finding.
 Configuration is never a catalog, however many products it names: deployment
 and CI documents, files under `.devcontainer/` or a top-level `config/`,
 `conf/` or `settings/` directory, files that assign the variables they name

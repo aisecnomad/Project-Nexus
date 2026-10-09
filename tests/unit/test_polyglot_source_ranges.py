@@ -10,6 +10,22 @@ import pytest
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.models import Kind
 
+# A lexical idiom without its library's import or dependency establishes nothing
+# on its own (no finding, a scan note). The connector-level tests below observe
+# the lexer through such idioms, so each project is anchored by an unrelated,
+# declared SDK: the idiom's evidence then appears on the project finding as a
+# potential framework (``code:`` evidence at the 0.6 cap), and the inert copies
+# in comments and literals produce no evidence at all.
+ANCHOR = "openai>=1.0\n"
+
+
+def _anchor(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_text(ANCHOR)
+
+
+def _code_evidence(findings):
+    return [e for finding in findings for e in finding.evidence if e.signal.startswith("code:")]
+
 
 @pytest.mark.parametrize(
     ("filename", "inert", "live"),
@@ -60,20 +76,25 @@ from shadowscan.models import Kind
 def test_polyglot_examples_do_not_create_agents(
     tmp_path: Path, run_connector, filename: str, inert: str, live: str
 ):
+    _anchor(tmp_path)
     path = tmp_path / filename
     path.write_text(inert)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert not [finding for finding in findings if finding.kind == Kind.AGENT]
+    assert not _code_evidence(findings)
 
     path.write_text(inert + live)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     # Lexing establishes the call is source, but cannot establish its library.
-    # These intentionally unbound snippets remain inspectable weak candidates.
+    # These intentionally unbound snippets remain inspectable weak candidates:
+    # evidence at the uncorroborated cap, a potential framework, never an agent.
     assert findings and all(finding.kind == Kind.FRAMEWORK_USAGE for finding in findings)
-    assert all(finding.confidence < 0.85 for finding in findings)
-    assert any(e.signal.startswith("code:") for finding in findings for e in finding.evidence)
+    [project] = findings
+    assert project.frameworks == [] and project.metadata["potential_frameworks"]
+    code = _code_evidence(findings)
+    assert code and all(e.weight <= 0.6 for e in code)
 
 
 @pytest.mark.parametrize(
@@ -216,6 +237,7 @@ def test_fsharp_comment_cannot_hide_csharp_dereference():
 
 
 def test_php_markup_is_inert_but_embedded_php_remains_code(tmp_path: Path, run_connector):
+    _anchor(tmp_path)
     (tmp_path / "agent.php").write_text(
         "<p>AiServices.builder(example)</p>\n"
         "<?php AiServices.builder(foo); ?>\n"
@@ -224,7 +246,7 @@ def test_php_markup_is_inert_but_embedded_php_remains_code(tmp_path: Path, run_c
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
-    assert any(evidence.location == "agent.php:2" for finding in findings for evidence in finding.evidence)
+    assert [e.location for e in _code_evidence(findings)] == ["agent.php:2"]
 
 
 def test_html_only_php_template_is_inert(tmp_path: Path, run_connector):
@@ -239,6 +261,7 @@ def test_html_only_php_template_is_inert(tmp_path: Path, run_connector):
 
 
 def test_php_echo_expression_is_executable(tmp_path: Path, run_connector):
+    _anchor(tmp_path)
     (tmp_path / "template.php").write_text(
         "<p>create_agent($model, $tools)</p>\n"
         "<?= create_agent($model, $tools) ?>\n"
@@ -247,7 +270,7 @@ def test_php_echo_expression_is_executable(tmp_path: Path, run_connector):
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
-    assert any(evidence.location == "template.php:2" for finding in findings for evidence in finding.evidence)
+    assert [e.location for e in _code_evidence(findings)] == ["template.php:2"]
 
 
 def test_ruby_block_comments_scan_in_linear_time():
@@ -364,10 +387,11 @@ def test_php_line_comment_ends_at_the_closing_tag(leader: str):
 
 
 def test_php_code_after_a_closing_tag_in_a_comment_is_scanned(tmp_path: Path, run_connector):
+    _anchor(tmp_path)
     (tmp_path / "agent.php").write_text("<?php // harmless ?><?php AiServices.builder($foo); ?>\n")
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
-    assert findings and any(e.signal.startswith("code:") for finding in findings for e in finding.evidence)
+    assert findings and _code_evidence(findings)
 
 
 def test_php_comments_ended_by_closing_tags_scan_in_linear_time():
@@ -487,11 +511,12 @@ LIVE_CALLS = {
 def test_code_after_a_comment_is_scanned_whatever_ends_the_line(
     tmp_path: Path, run_connector, filename: str, comment: str, terminator: str
 ):
+    _anchor(tmp_path)
     (tmp_path / filename).write_bytes(f"{comment}{terminator}{LIVE_CALLS[filename]}{terminator}".encode())
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     # Lexing establishes the call is source; without a library import it stays a weak candidate.
-    assert findings and any(e.signal.startswith("code:") for finding in findings for e in finding.evidence)
+    assert findings and _code_evidence(findings)
 
 
 @pytest.mark.parametrize("hashes", [1, 2, 3, 255])

@@ -20,6 +20,108 @@ summarizes each release for people who install and operate ShadowScan.
   author-written evidence, not independent human review, and the benchmark
   covers the code surface only.
 
+### code.filesystem
+
+- Model identifiers are provider evidence. Quoted literals in source files and
+  notebook code cells (comments skipped where the lexer masks them) and quoted
+  or bare values after a model-ish key (`model`, `model_id`, `default_model`,
+  `deployment`, `llm`, `engine`, `OPENAI_MODEL=`) in YAML, JSON, TOML,
+  Terraform, Bicep, dotenv, `.cfg`, `.ini` and `.properties` files are handed
+  to the anchored `model` signatures when they carry a vendor stem; a route
+  such as `bedrock/anthropic.claude-...` attributes both the route's provider
+  and the vendor. Each match weighs at most 0.5, lists the whole id under
+  `metadata.models` and is kept at most three times per signature per file
+  (400 literals per file, with a note beyond). A model id in source or a
+  notebook anchors a project finding, tagged `model-ids-only` with confidence
+  capped at 0.6 when nothing else establishes a technology; one in a data or
+  configuration file is a mention (`data_mention`) that anchors nothing and
+  keeps leaderboards and pricing tables catalogs. Markdown is never read for
+  model ids; `amazon.com`, `o1ne`, `tts-config`, `command-line` and
+  `gemini-python/1.8.2` match nothing. The last path segment is matched only
+  under a known route prefix (`bedrock/`, `openai/`, `openrouter/`, `@cf/`, …),
+  so `EleutherAI/gpt-neox-20b` is a namespace, not an OpenAI model; the
+  open-ended families are held to the vendor's shape (`gpt-` followed by a
+  digit or `oss-`, `o1-`/`o3-`/`o4-` by a variant or release date) and a
+  segment that names tooling is rejected, so `gpt-tokenizer`, `gpt-3-encoder`,
+  `gpt-4all`, `gpt-engineer`, `o1-visa`, `grok-1-formatter` and `qwen-agent`
+  match nothing while `gpt-5-codex`, `gpt-oss-120b`, `o3-deep-research`,
+  `grok-code-fast-1` and `qwen2.5-coder-7b-instruct` still do. Dotted
+  `.properties` keys (`spring.ai.openai.chat.options.model=gpt-4o`) are read.
+  A model id also corroborates the same
+  vendor's code pattern (`boto3.client("bedrock-runtime")` beside a Bedrock
+  route in `config/agent.yaml`).
+- Uncorroborated code patterns establish nothing. A lexical code match, in any
+  language, whose signature has no import, dependency, file-name, image, IaC
+  or model match, import-bound call, configuration shape, manifest artifact or
+  mention of weight 0.3 or more (a host such as `contoso.openai.azure.com`, a
+  variable name) anywhere in the project keeps its evidence (0.6 cap, `uncorroborated-lexical`
+  group) but joins neither `frameworks[]` nor `model_providers[]`, adds no
+  capability or agent indicator and is listed under
+  `metadata.potential_frameworks` / `metadata.potential_providers`; the title
+  follows the established technologies. A Rust `pub trait ToolCallback` no
+  longer titles a crate "Spring AI" (0xPlaygrounds/rig), a Rust `create_agent(`
+  is not LangChain (block/goose), `AgentType.Validate(` in C# is not LangChain
+  (microsoft/semantic-kernel), `handoff(` in Rust is not the OpenAI Agents SDK
+  (openai/codex). A project whose only evidence is such patterns yields no
+  finding and a note naming up to five files (never incomplete), so nothing
+  disappears silently. `apply_matches` gained `establish: bool`.
+- Weak mentions establish nothing. When every match of a signature in a
+  project is a host, variable name, display name, data-file model id or CI
+  job image below weight 0.3 after the test-path discount, the signature is
+  potential, not established: `huggingface.co` (0.15) in a comment, an OAuth
+  endpoint or a gallery YAML beside an OpenAI import no longer puts
+  `provider.huggingface` into `model_providers[]` (six benchmark false
+  positives); `router.huggingface.co` and `api-inference.huggingface.co` (0.8)
+  still do.
+- Mentions in test data do not anchor. Without `include_tests`, a host,
+  variable, display name, model id or CI image under a test path anchors no
+  project finding (faisalman/ua-parser-js: `huggingface.co` in
+  `test/data/ua/extension/crawler.json` gave a 0.075-confidence provider);
+  imports, dependencies and code patterns in tests still do. Dropped projects
+  are named in the same note.
+- CI job images are mentions. An `image:` in `.github/workflows/`,
+  `.gitlab-ci.yml`, `.circleci/`, `azure-pipelines.yml`,
+  `bitbucket-pipelines.yml`, `.drone.yml`, `.woodpecker*`, `.buildkite/`,
+  `.gitlab/` or a `Jenkinsfile` is recorded at 0.3 of the image weight, tagged
+  `ci_image`, anchors nothing, corroborates no lexical code pattern (a workflow
+  image beside an unbound Java `McpClient.sync(` does not establish MCP) and
+  produces no `infra` finding (pydantic/pydantic `third-party.yml` tested the
+  MCP SDK in `modelcontextprotocol/python-sdk` and was reported as
+  infrastructure at 0.989); Compose and Kubernetes images keep full weight and
+  their infrastructure finding.
+- The OpenAI request shape (`.chat.completions.create(`) in a project that
+  installs or imports the OpenAI SDK never adds `provider.openai-compatible`
+  as a second provider; beside a Hugging Face `InferenceClient` import it names
+  neither provider (huggingface/agents-course `scripts/translation.py`).
+- Incomplete coverage is reserved for content the scan would have read. The
+  remaining lockfiles (`gradle.lockfile`, `Package.resolved`,
+  `Cartfile.resolved`, `deno.lock`, `pubspec.lock`, `mix.lock`, `bun.lock`,
+  `*.lockb`, `flake.lock`) are never read, and `CHANGELOG*`, `CHANGES*`,
+  `HISTORY*`, `*.log`, `*.har` and `*.snap` join the default
+  `oversize_skip_globs` (Mastra's eight `CHANGELOG.md` files over 1 MB made
+  every scan exit 3). With `scan_secrets: false`, two more kinds of oversize
+  file are skipped with a warning and the scan stays complete: a documentation
+  file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, coding-agent
+  instruction document, agent definition or file-name-signature match), whose
+  body the technology passes never read, and, without `include_tests` or
+  `strict_coverage`, a file under a test or fixture path (pydantic-ai: 56
+  recorded cassettes), whose evidence is discounted; the latter are counted
+  in `skipped_oversize_test_fixtures` and summarised in one warning per root.
+  With credential detection on (the default) every read file, prose and
+  fixtures included, is scanned for credentials, so an oversize README or
+  cassette stays a coverage gap (exit 3): a planted key in it is never lost
+  to an exit 0. Instruction documents, agent definitions, source and
+  configuration over `max_file_size` keep the gap in every mode; see
+  `docs/production.md`.
+- .NET central package management: `Directory.Packages.props`
+  (`PackageVersion`), `Directory.Build.props` and other MSBuild imports
+  (`GlobalPackageReference`, `PackageReference Update=`) declare NuGet
+  dependencies, so `Microsoft.Extensions.AI` and `OllamaSharp` pinned there
+  (autogen, semantic-kernel) establish their technologies.
+- The evaluation harness (`tools/evaluation/evaluate.py`) no longer treats the
+  connector's informational notes (`evidence not reported because ...`) as an
+  incomplete scan.
+
 ### Signatures
 
 - New capability `mcp-server`: the project exposes tools to other agents over

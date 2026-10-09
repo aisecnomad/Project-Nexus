@@ -629,10 +629,15 @@ def parse_nuget(text: str) -> ManifestResult:
         res.errors.append("invalid NuGet XML")
         return res
 
+    # Project files declare PackageReference items; central package management
+    # keeps the versions in Directory.Packages.props as PackageVersion items and
+    # shared Directory.Build.props files add GlobalPackageReference items or
+    # PackageReference items that `Update` a package every project references.
     for element in root.iter():
         if element.tag.rsplit("}", 1)[-1].lower() not in {
             "packagereference",
             "packageversion",
+            "globalpackagereference",
             "package",
         }:
             continue
@@ -640,7 +645,7 @@ def parse_nuget(text: str) -> ManifestResult:
         versions: list[str] = []
         for attribute, value in element.attrib.items():
             key = attribute.rsplit("}", 1)[-1].lower()
-            if key in {"include", "id"}:
+            if key in {"include", "update", "id"}:
                 identities.append(value.strip())
             elif key == "version":
                 versions.append(value.strip())

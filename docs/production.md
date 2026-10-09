@@ -347,6 +347,20 @@ separate expanded-structure and total-work budget, so valid YAML aliases cannot
 cause unbounded report serialization. CODEOWNERS patterns use bounded iterative
 matching with a per-lookup work budget.
 
+`code.filesystem` reserves incomplete coverage (exit 3) for content it would
+have read. Since the model-identifier and corroboration changes of the next
+release, the remaining lockfile names and generated files (`CHANGELOG*`,
+`*.log`, `*.har`, `*.snap`) joined the default `oversize_skip_globs`, so a
+`CHANGELOG.md` over `max_file_size` is skipped with a warning and leaves the
+scan complete. With `scan_secrets: false`, an oversize documentation file
+(`.md`, `.txt`) and, without `include_tests`, an oversize file under a test or
+fixture path (a recorded cassette) are skipped the same way; with credential
+detection on (the default) they are read for credentials below the limit and
+stay a coverage gap above it, so no planted key is lost to an exit 0. A
+pipeline that gated on exit 3 for oversize changelogs now sees exit 0 with the
+omission named in the warnings; `strict_coverage` keeps every skip outside the
+globs a gap. See the [coverage policy](scanning.md#large-and-generated-files).
+
 The code scanner's IaC wildcard-action and agent front-matter patterns run on
 the bounded regex engine under the same per-input matching budget as the
 signature patterns, so a planted file costs at most that budget and is

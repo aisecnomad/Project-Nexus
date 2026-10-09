@@ -162,11 +162,23 @@ def test_tool_registration_examples_are_inert(
 def test_unbound_tool_registration_is_only_a_candidate(
     tmp_path: Path, run_connector, framework: str, import_name: str, chain: str
 ):
+    # Without the framework's import or dependency the chain is a lexical
+    # candidate: evidence on the project, listed as potential, never the
+    # framework itself or its tool-use. The project is anchored by an
+    # unrelated declared SDK; alone, the chain yields no finding at all.
     (tmp_path / "App.java").write_text(chain.format(tools="new WeatherTools()") + ";\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors and findings == []
+    assert any("App.java" in w and "evidence not reported" in w for w in ctx.stats.warnings)
+    (tmp_path / "pom.xml").write_text(
+        "<project><dependencies><dependency><groupId>com.openai</groupId>"
+        "<artifactId>openai-java</artifactId><version>1.0.0</version></dependency></dependencies></project>"
+    )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert len(findings) == 1
-    assert framework in findings[0].frameworks
+    assert framework not in findings[0].frameworks
+    assert findings[0].metadata["potential_frameworks"] == [framework]
     assert findings[0].kind == Kind.FRAMEWORK_USAGE
     assert "tool-use" not in findings[0].capabilities
 

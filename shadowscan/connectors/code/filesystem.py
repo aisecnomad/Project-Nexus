@@ -41,6 +41,19 @@ Precision safeguards
   variable name, no import, dependency, code or other structural evidence) is
   a catalog. Its mentions count only for a signature with library evidence
   elsewhere in the project (``shadowscan.connectors.code.catalogs``).
+* A lexical code pattern (no import binder for the language, or a framework
+  pattern the binder did not claim) whose signature has no import, dependency,
+  file, image, IaC, model, bound-call, configuration or strong-mention
+  evidence in the project, and a signature known only from mentions below
+  ``WEAK_MENTION_WEIGHT``, are kept as evidence but establish nothing: they
+  are listed under ``metadata.potential_frameworks`` /
+  ``metadata.potential_providers`` and anchor no finding
+  (``_uncorroborated_signatures``, ``_weak_mention_signatures``).
+* Model identifiers found as literals are medium-weight evidence (at most
+  0.5 each, ``_scan_model_literals``); a project known only from them is
+  tagged ``model-ids-only`` and capped at 0.6, and a model id in a data file
+  is a mention. A mention in a test path and a CI job image anchor nothing.
+  A project dropped for any of these reasons is named in a scan note.
 """
 
 from __future__ import annotations
@@ -55,6 +68,7 @@ import stat
 import subprocess
 import time
 import tomllib
+from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
@@ -67,6 +81,8 @@ import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.code.catalogs import (
+    _PIPELINE_DIRECTORIES,
+    _PIPELINE_NAMES,
     CATALOG_MIN_SIGNATURES,
     LOADER_EXTENSIONS,
     catalog_metadata,
@@ -140,6 +156,7 @@ from shadowscan.signatures.loader import builtin_signature_dir
 from shadowscan.signatures.matcher import (
     SOURCE_EXTENSIONS,
     MatchTimeoutError,
+    _finditer,
     language_for_path,
 )
 from shadowscan.utils.files import open_confined_directory, read_policy_text
@@ -193,6 +210,35 @@ _MAX_GIT_TIMESTAMP_CHARS = 64
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
 # Signals that name a product without configuring it.
 _MENTION_SIGNALS = frozenset({"env", "name"})
+# Signals that mention a product (a host, a variable, a display name) rather
+# than declare, import, configure or run it. A model identifier read from a
+# data file (``extra["data_mention"]``) and a job image in a CI pipeline
+# (``extra["ci_image"]``) are mentions too; see ``_mention``.
+_MENTION_SIGNAL_TYPES = frozenset({"domain", "env", "name"})
+# Signals that corroborate a code pattern of the same signature: the library is
+# declared, imported, configured by name, deployed, or one of its models is
+# named (a model id in a Modelfile, in IaC, or as a literal in code or
+# configuration). An import-bound call (``extra["import_bound"]``), a
+# recognised configuration shape (``extra["config_projection"]``) and a
+# manifest artifact (``extra["manifest_artifact"]``) corroborate as well; see
+# ``_uncorroborated_signatures``.
+_CORROBORATING_SIGNALS = frozenset({"import", "dependency", "file", "image", "iac", "model"})
+# A signature whose evidence in a project is only mentions, none of them at
+# this weight or more, is recorded as potential (``metadata.potential_*``),
+# not established. The two-tier domain weights (``huggingface.co`` 0.15 against
+# ``router.huggingface.co`` 0.8) were written as corroboration-only hints.
+WEAK_MENTION_WEIGHT = 0.3
+# A model identifier found as a literal is medium-weight evidence: it names a
+# model the code may call, not an installed SDK (see _scan_model_literals).
+MODEL_LITERAL_MAX_WEIGHT = 0.5
+MODEL_IDS_ONLY_MAX_CONFIDENCE = 0.6
+# Quoted literals the model-identifier pass reads per file before it stops.
+MAX_MODEL_LITERALS_PER_FILE = 400
+# Model matches kept per signature per file.
+MAX_MODEL_MATCHES_PER_SIGNATURE = 3
+# A container image that runs a CI job is a mention of that product at this
+# share of the image signal's weight; a deployed image keeps full weight.
+CI_IMAGE_WEIGHT_SCALE = 0.3
 
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
@@ -289,6 +335,12 @@ LOCK_FILES = {
     "flake.lock",
     "bun.lockb",
     "bun.lock",
+    "gradle.lockfile",
+    "Package.resolved",
+    "Cartfile.resolved",
+    "deno.lock",
+    "pubspec.lock",
+    "mix.lock",
 }
 
 # A file over max_file_size that the scanner would read leaves coverage
@@ -306,6 +358,21 @@ DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "Gemfile.lock",
     "composer.lock",
     "go.sum",
+    "gradle.lockfile",
+    "Package.resolved",
+    "Cartfile.resolved",
+    "deno.lock",
+    "pubspec.lock",
+    "mix.lock",
+    "bun.lock",
+    "*.lockb",
+    "flake.lock",
+    "CHANGELOG*",
+    "CHANGES*",
+    "HISTORY*",
+    "*.log",
+    "*.har",
+    "*.snap",
     "*.min.js",
     "*.min.css",
     "*.map",
@@ -349,7 +416,9 @@ DEADLINE_MARGIN_FRACTION = 0.05
 DEADLINE_MARGIN_MIN_SECONDS = 0.25
 
 # Generated or locked files the walker never reads at any size.
-_NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
+_NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock", ".lockb")
+# Prose the content passes never read (see _scan_content): matched by file name only.
+_DOCUMENTATION_EXTENSIONS = frozenset({".md", ".mdc", ".mdx", ".txt"})
 # A name no real file can have (a path component cannot contain NUL), so only
 # a wildcard glob segment such as ``**`` matches it.
 _ANY_FILE_NAME = "\x00"
@@ -614,6 +683,93 @@ class _SourceFile:
 _Observation = tuple[Match, str, str | None]  # match, relpath, snippet
 
 
+def _mention(m: Match) -> bool:
+    """Whether ``m`` names a product without declaring, importing, configuring or running it."""
+    return (
+        m.signal.type in _MENTION_SIGNAL_TYPES
+        or bool(m.extra.get("data_mention"))
+        or bool(m.extra.get("ci_image"))
+    )
+
+
+def _corroborates(m: Match) -> bool:
+    """Whether ``m`` shows the library of its signature is declared, imported, configured or deployed.
+
+    A CI job image (``extra["ci_image"]``) is a mention: the pipeline runs a
+    container, it does not deploy or install the library, so it corroborates
+    nothing, whatever its signal type.
+    """
+    if m.extra.get("ci_image"):
+        return False
+    return (
+        m.signal.type in _CORROBORATING_SIGNALS
+        or bool(m.extra.get("import_bound"))
+        or bool(m.extra.get("config_projection"))
+        or bool(m.extra.get("manifest_artifact"))
+    )
+
+
+def _uncorroborated_signatures(
+    observations: Iterable[_Observation], in_tests: Callable[[str], bool]
+) -> set[str]:
+    """Signatures whose project evidence is lexical code patterns no library evidence backs.
+
+    A lexical code match (``extra["lexical_source"]``: every code match in a
+    language without an import binder, and in Python or JavaScript a framework
+    pattern the binder did not claim) is a word that other code can use too,
+    whatever the language: Spring AI's ``ToolCallback`` is a Rust trait name,
+    LangChain's ``create_agent(`` a Goose function, ``AgentType.Validate(`` a
+    Semantic Kernel method. It establishes the library only when the same
+    signature also has an import, a dependency, a file-name, image, IaC or
+    model match, an import-bound call, a recognised configuration shape or a
+    manifest artifact somewhere in the project, or a mention (a host, a
+    variable, a display name) strong enough to establish the product on its
+    own (``WEAK_MENTION_WEIGHT`` after the test-path discount): a C# client
+    built against ``contoso.openai.azure.com`` is Azure OpenAI, a Rust
+    ``create_agent(`` next to a documentation link is not LangChain. Python
+    and JavaScript code patterns of provider, protocol, platform and
+    cloud-service signatures are written for idioms of generic SDKs
+    (``boto3.client("bedrock-agent-runtime")``) and stay supporting evidence,
+    as before. Heuristics are judged elsewhere.
+    """
+    corroborated: set[str] = set()
+    lexical: set[str] = set()
+    for m, rel, _ in observations:
+        if m.signature.category == "heuristic":
+            continue
+        if _corroborates(m) or (
+            m.signal.type != "code" and m.weight * (0.5 if in_tests(rel) else 1.0) >= WEAK_MENTION_WEIGHT
+        ):
+            corroborated.add(m.signature_id)
+        elif m.signal.type == "code" and m.extra.get("lexical_source"):
+            lexical.add(m.signature_id)
+    return lexical - corroborated
+
+
+def _weak_mention_signatures(
+    observations: Iterable[_Observation], in_tests: Callable[[str], bool]
+) -> set[str]:
+    """Signatures whose project evidence is only mentions, all below ``WEAK_MENTION_WEIGHT``.
+
+    A model-hub link in a comment, an OAuth endpoint or a gallery entry names a
+    product at a weight written as corroboration. Alone, such mentions are
+    recorded as potential technology, never as a provider or framework the
+    project uses. The test-path discount applies; the env-names-only halving
+    does not, so a configured variable at weight 0.5 still establishes.
+    """
+    strongest: dict[str, float] = {}
+    anchored: set[str] = set()
+    for m, rel, _ in observations:
+        if m.signature.category == "heuristic":
+            continue
+        if _mention(m):
+            scaled = m.weight * (0.5 if in_tests(rel) else 1.0)
+            strongest[m.signature_id] = max(strongest.get(m.signature_id, 0.0), scaled)
+        else:
+            anchored.add(m.signature_id)
+    return {sid for sid, weight in strongest.items() if sid not in anchored and weight < WEAK_MENTION_WEIGHT}
+
+
 class _ProjectEvidence:
     """How a project's observations count toward its finding (see the module docstring)."""
 
@@ -633,26 +789,23 @@ class _ProjectEvidence:
         # alone. A live credential is not a name: it keeps full weights
         # and lets the heuristics count. Every anchor is non-heuristic,
         # so the judgement below is never vacuous.
-        self.env_only = all(
-            m.signal.type in {"env", "name"}
-            for m, _, _ in observations
-            if m.signature.category != "heuristic"
-        )
-        self.matches = (
-            [t for t in observations if t[0].signal.type in {"env", "name"}]
-            if self.env_only
-            else observations
-        )
+        technology = [m for m, _, _ in observations if m.signature.category != "heuristic"]
+        self.env_only = all(m.signal.type in {"env", "name"} for m in technology)
+        # Model identifiers alone name what the code may call, not an SDK it
+        # installs: the finding is built from them, capped below the strong
+        # band, and heuristics are dropped as for name references.
+        self.model_ids_only = bool(technology) and all(m.extra.get("model_literal") for m in technology)
+        if self.env_only:
+            self.matches = [t for t in observations if t[0].signal.type in {"env", "name"}]
+        elif self.model_ids_only:
+            self.matches = [t for t in observations if t[0].extra.get("model_literal")]
+        else:
+            self.matches = observations
         self.library_evidence = {
             m.signature_id for m, _, _ in self.matches if m.signal.type in {"import", "dependency"}
         }
-        self.uncorroborated = {
-            m.signature_id
-            for m, _, _ in self.matches
-            if m.extra.get("lexical_source")
-            and m.signature.category != "heuristic"
-            and m.signature_id not in self.library_evidence
-        }
+        self.uncorroborated = _uncorroborated_signatures(self.matches, self.in_tests)
+        self.weak_mentions = _weak_mention_signatures(self.matches, self.in_tests)
         # Capabilities describe what the deployed code can do. Evidence
         # from tests (unless the project is only tests) and vendor-neutral
         # idioms in an MCP tool server (whose tools are read below) is
@@ -681,8 +834,19 @@ class _ProjectEvidence:
     def in_tests(self, rel: str) -> bool:
         return self.discount_tests and _is_test_path(rel)
 
+    def established(self, signature_id: str) -> bool:
+        """Whether the project's evidence for ``signature_id`` establishes that technology.
+
+        Code patterns without library evidence and mentions below
+        ``WEAK_MENTION_WEIGHT`` stay potential: their evidence is kept, but
+        they join neither ``frameworks[]`` nor ``model_providers[]``.
+        """
+        return signature_id not in self.uncorroborated and signature_id not in self.weak_mentions
+
     def verified_indicator(self, match: Match) -> bool:
         if match.signature.category == "heuristic" or match.signature_id == "protocol.mcp":
+            return False
+        if not self.established(match.signature_id):
             return False
         if "verified_agent" in match.extra:
             return bool(match.extra["verified_agent"])
@@ -691,7 +855,9 @@ class _ProjectEvidence:
         return match.agent_indicator
 
     def implies_capabilities(self, match: Match, rel: str) -> bool:
-        if match.signal.type in {"import", "dependency", "env", "name"}:
+        if match.signal.type in {"import", "dependency", "env", "name"} or match.extra.get("model_literal"):
+            return False
+        if not self.established(match.signature_id):
             return False
         if self.in_tests(rel) and not self.test_only:
             return False
@@ -761,6 +927,229 @@ _IAC_MODEL_RE = re.compile(
     r"""["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9._:/@-]{2,199})["']"""
 )
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
+
+# Model identifiers in source and configuration (see _scan_model_literals). A
+# quoted literal of the id alphabet, closed by the quote that opened it; the
+# run is possessive, so a quote that no matching quote follows costs one pass
+# over at most 161 characters. Unquoted values follow a model-ish key in YAML,
+# TOML, INI and dotenv files (``model: gpt-4o``, ``OPENAI_MODEL=gpt-4o``,
+# ``deployment: my-gpt4``, ``spring.ai.openai.chat.options.model=gpt-4o``); the
+# key search is anchored to a line start, the dotted prefix before ``model`` or
+# ``deployment`` is bounded and lazy and the rest of the key possessive, so a
+# line that is one long run of key characters costs a bounded number of
+# attempts rather than a quadratic backtrack.
+_MODEL_QUOTED_RE = regex.compile(r"""(["'`])([A-Za-z0-9][A-Za-z0-9._:/@-]{2,160}+)\1""")
+_MODEL_KEY_VALUE_RE = regex.compile(
+    r"""(?im)^[ \t]*+(?:-[ \t]*+)?["']?"""
+    r"""(?:[A-Za-z0-9_.-]{0,80}?(?:model|deployment)[A-Za-z0-9_.-]*+|llm|engine)["']?"""
+    r"""[ \t]*+[:=][ \t]*+["'`]?+([A-Za-z0-9][A-Za-z0-9._:/@-]{2,160}+)"""
+)
+# A literal that reaches the matcher through an open-ended family names a model
+# only in the vendor's own shape. ``gpt-`` is followed by a version digit or
+# the open-weight ``oss-`` family: ``gpt-j``, ``gpt-neox-20b`` (EleutherAI),
+# ``gpt-tokenizer`` and ``gpt-engineer`` are not OpenAI models. The reasoning
+# series carries a variant or a release date: ``o1-visa`` and ``o3-build`` do
+# not. For every family (``grok-`` and ``qwen`` included) a segment that names
+# a tool, package or product (``gpt-3-encoder``, ``gpt-4all``,
+# ``grok-1-formatter``, ``qwen-agent``) is never a model id, whatever the stem.
+_MODEL_FAMILY_SHAPES: tuple[tuple[str, regex.Pattern[str]], ...] = (
+    ("gpt-", regex.compile(r"^gpt-(?:\d|oss-)")),
+    ("o1-", regex.compile(r"^o1-(?:mini|preview|pro|\d{4}-\d{2}-\d{2})")),
+    ("o3-", regex.compile(r"^o3-(?:mini|pro|deep-research|\d{4}-\d{2}-\d{2})")),
+    ("o4-", regex.compile(r"^o4-(?:mini)")),
+)
+_MODEL_TOOLING_SEGMENTS = frozenset(
+    {
+        "4all",
+        "academic",
+        "agent",
+        "agents",
+        "app",
+        "bench",
+        "bot",
+        "build",
+        "cli",
+        "client",
+        "crawler",
+        "encoder",
+        "engineer",
+        "formatter",
+        "kit",
+        "lib",
+        "parser",
+        "pattern",
+        "patterns",
+        "pilot",
+        "plugin",
+        "researcher",
+        "sdk",
+        "server",
+        "tokenizer",
+        "tools",
+        "ui",
+        "utils",
+        "visa",
+        "web",
+    }
+)
+_MODEL_TOOLING_NAMES = frozenset({"qwen-code", "qwen-cli", "gpt4all", "gpt-4all", "gpt-3-encoder"})
+_MODEL_SEGMENT_RE = regex.compile(r"[-_./:@]")
+
+
+def _model_lookalike(candidate: str) -> bool:
+    """Whether a vendor-stemmed literal names a tool, package or product instead of a model.
+
+    ``candidate`` is lower-cased. The ``gpt-`` and ``o1-``/``o3-``/``o4-``
+    families, whose signature patterns are open-ended, are held to the vendor's
+    id shape (``_MODEL_FAMILY_SHAPES``); a known tool name
+    (``_MODEL_TOOLING_NAMES``) and any id whose segments name tooling
+    (``_MODEL_TOOLING_SEGMENTS``) are rejected whatever the family.
+    """
+    if candidate in _MODEL_TOOLING_NAMES:
+        return True
+    for stem, shape in _MODEL_FAMILY_SHAPES:
+        if candidate.startswith(stem):
+            if shape.match(candidate) is None:
+                return True
+            break
+    return any(segment in _MODEL_TOOLING_SEGMENTS for segment in _MODEL_SEGMENT_RE.split(candidate))
+
+
+# A literal is handed to the anchored ``model`` signatures only when it carries
+# a vendor stem; everything else in a source file is an ordinary string. Where
+# a signature's family prefix is open-ended (``gemini-``, ``mistral-``,
+# ``grok-``, ``embed-``, ``rerank-``, ``sonar``) the stems name the vendor's id
+# families, so ``gemini-python/1.8.2`` (an exchange client's user agent),
+# ``grok-pattern`` and ``sonar-scanner`` never reach the matcher.
+_MODEL_STEMS = (
+    "claude",
+    "gpt-",
+    "o1-",
+    "o3-",
+    "o4-",
+    "text-embedding",
+    "gemini-1",
+    "gemini-2",
+    "gemini-3",
+    "gemini-pro",
+    "gemini-flash",
+    "gemini-embedding",
+    "gemini-exp",
+    "gemini-live",
+    "gemini/",
+    "mistral-large",
+    "mistral-medium",
+    "mistral-small",
+    "mistral-tiny",
+    "mistral-embed",
+    "mistral-nemo",
+    "mistral-saba",
+    "mistral-ocr",
+    "mistral-moderation",
+    "mistral-7b",
+    "open-mistral",
+    "mistral/",
+    "mixtral-",
+    "codestral",
+    "ministral-",
+    "pixtral-",
+    "magistral",
+    "devstral",
+    "command-",
+    "embed-english",
+    "embed-multilingual",
+    "embed-v",
+    "rerank-english",
+    "rerank-multilingual",
+    "rerank-v",
+    "grok-1",
+    "grok-2",
+    "grok-3",
+    "grok-4",
+    "grok-beta",
+    "grok-vision",
+    "grok-code",
+    "deepseek",
+    "titan",
+    "nova-",
+    "anthropic.",
+    "amazon.",
+    "meta.",
+    "cohere.",
+    "bedrock/",
+    "vertex_ai/",
+    "azure/",
+    "openai/",
+    "anthropic/",
+    "ollama/",
+    "ollama_chat/",
+    "openrouter/",
+    "together_ai/",
+    "groq/",
+    "huggingface/",
+    "perplexity/",
+    "sonar-pro",
+    "sonar-reasoning",
+    "sonar-deep",
+    "sonar-small",
+    "sonar-medium",
+    "sonar-large",
+    "cerebras/",
+    "xai/",
+    "voyage-",
+    "llama",
+    "qwen",
+    "@cf/",
+    "@hf/",
+    "arn:aws:bedrock",
+)
+# A value under one of these prefixes is a route (``bedrock/anthropic.claude-...``,
+# ``openrouter/anthropic/claude-3.5-sonnet``): its last path segment is the
+# model id and is matched too. Any other ``/`` (``EleutherAI/gpt-neox-20b``, an
+# npm scope, a URL path) is a namespace, and the value is read whole only.
+_MODEL_ROUTE_PREFIXES = tuple(stem for stem in _MODEL_STEMS if stem.endswith("/")) + ("arn:aws:bedrock",)
+# Configuration formats whose literals the model-identifier pass reads. Prose
+# (.md, .mdc, .mdx, .txt) is never read; dotenv files are recognised by name.
+_MODEL_LITERAL_CONFIG_EXTENSIONS = frozenset(
+    {
+        ".yaml",
+        ".yml",
+        ".json",
+        ".jsonc",
+        ".json5",
+        ".toml",
+        ".tf",
+        ".tfvars",
+        ".hcl",
+        ".bicep",
+        ".env",
+        ".cfg",
+        ".ini",
+        ".properties",
+    }
+)
+# What opens a comment in the languages the lexer masks; every other masked
+# span is a string literal, which the model-identifier pass reads.
+_COMMENT_OPENERS = ("#", "//", "/*", "<!--", "=begin")
+
+
+def _comment_spans(text: str, ignored: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The comment spans among the lexer's ``ignored`` spans of ``text`` (strings are kept)."""
+    return [(start, end) for start, end in ignored if text.startswith(_COMMENT_OPENERS, start)]
+
+
+def _is_pipeline_file(rel: str) -> bool:
+    """Whether ``rel`` is a CI pipeline, whose ``image:`` lines name job containers, not deployments."""
+    path = PurePosixPath(rel)
+    parts = path.parts
+    name = path.name
+    return (
+        (".github" in parts and "workflows" in parts)
+        or name in _PIPELINE_NAMES
+        or name == "Jenkinsfile"
+        or name.startswith(".woodpecker")
+        or not _PIPELINE_DIRECTORIES.isdisjoint(parts[:-1])
+    )
 
 
 def _exception_name(exc: Exception) -> str:
@@ -1015,12 +1404,14 @@ class FilesystemConnector(BaseConnector):
         ),
         "max_file_size": (
             "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs "
-            "matches it (default 1,000,000 bytes)"
+            "matches it or, with scan_secrets false, it is documentation (.md/.txt outside agent instruction "
+            "files) or sits under a test path while include_tests is false: those are skipped with a "
+            "warning (default 1,000,000 bytes)"
         ),
         "oversize_skip_globs": (
             "case-insensitive file name globs; a file over max_file_size matching one is skipped with a "
-            "warning even under strict_coverage (default: lockfiles, minified bundles, source maps, images, "
-            "fonts, archives and compiled artifacts)"
+            "warning even under strict_coverage (default: lockfiles, changelogs, logs, HAR and snapshot "
+            "files, minified bundles, source maps, images, fonts, archives and compiled artifacts)"
         ),
         "max_files": "stop after this many files and symbolic links (default 100000)",
         "max_entries": (
@@ -1146,6 +1537,8 @@ class FilesystemConnector(BaseConnector):
         self._symlink_warnings: set[Path] = set()
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
+        # Oversize files under test paths skipped with a warning (include_tests false).
+        self.skipped_oversize_test_fixtures = 0
 
     # ----------------------------------------------------------------- input
     def _paths(self) -> list[Path]:
@@ -1252,12 +1645,80 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
-    def _skip_oversize(self, rel: str, size: int) -> None:
+    def _skip_oversize(self, rel: str, size: int, reason: str | None = None) -> None:
+        reason = reason or "generated or binary content is never analyzed"
         self.ctx.warn(
             f"code.filesystem: {rel}: skipped {size} byte file over max_file_size ({self.max_file_size}); "
-            "generated or binary content is never analyzed",
+            f"{reason}",
             incomplete=False,
         )
+
+    def _content_bearing(self, rel: str, name: str) -> bool:
+        """Whether the technology passes read the body of ``name``, so an unread copy is a coverage gap.
+
+        Credential detection is judged by the caller: it reads every file. Prose
+        (``.md``, ``.mdc``, ``.mdx``, ``.txt`` that is not a manifest) is
+        matched by file name only (see ``_scan_content``), unless it is a
+        coding-agent instruction document, an agent definition under
+        ``.claude/agents/`` and the like, or a file a file-name signature
+        selects: those are parsed, so they stay content-bearing.
+        """
+        ext = Path(name).suffix.lower()
+        if ext not in _DOCUMENTATION_EXTENSIONS or is_manifest_name(name):
+            return True
+        return (
+            _is_coding_agent_doc(name)
+            or any(directory in rel for directory in _AGENT_DEFINITION_DIRS)
+            or bool(self.index.match_file(rel))
+        )
+
+    def _skipped_oversize(self, rel: str, name: str, size: int) -> bool:
+        """Whether an oversize file is skipped here, with a warning that leaves the scan complete.
+
+        False means the file is yielded so the reader records the coverage gap
+        (``_read_source``): analyzable content the scan did not read. A name in
+        ``oversize_skip_globs`` (generated, locked or binary content) is always
+        disclosed without a gap. Two more kinds are, but only while
+        ``scan_secrets`` is off: a documentation file, whose body the
+        technology passes never read, and, when ``include_tests`` is false, a
+        file under a test path (a recorded cassette, a fixture), whose evidence
+        is discounted and cannot establish a deployment; the latter is counted
+        in ``skipped_oversize_test_fixtures``. With credential detection on
+        (the default) every read file, prose and fixtures included, is scanned
+        for credentials, so an unread copy may hide a real key and stays a gap
+        (fail closed). ``strict_coverage`` keeps the test-path case a gap too.
+        A file the scanner never reads at any size is yielded and ignored, as
+        before.
+        """
+        if self._oversize_skippable(rel, name):
+            self._skip_oversize(rel, size)
+            return True
+        if not (_analyzed_by_name(name) or self.index.match_file(rel)):
+            return False
+        if self.scan_secrets:
+            # Documentation and fixtures are read for credentials: unread,
+            # they could hide one, so the reader records the gap.
+            return False
+        if not self._content_bearing(rel, name):
+            self._skip_oversize(
+                rel,
+                size,
+                "documentation is matched by file name only and credential detection is off, "
+                "so its text is not read",
+            )
+            return True
+        if not self.include_tests and _is_test_path(rel):
+            if self.strict_coverage:
+                return False
+            self.skipped_oversize_test_fixtures += 1
+            self.ctx.warn(
+                f"code.filesystem: {rel}: skipped oversize test fixture ({size} bytes over max_file_size "
+                f"{self.max_file_size}); test code is discounted evidence, include_tests is false and "
+                "credential detection is off",
+                incomplete=False,
+            )
+            return True
+        return False
 
     def _link_target_is_scanned(
         self, rel: str, target: Path, root: Path, walk: _WalkCounters | None = None
@@ -1400,10 +1861,13 @@ class FilesystemConnector(BaseConnector):
         """Yield (relpath, path, project_root_rel, size) for every regular file to analyze.
 
         A file over ``max_file_size`` whose name matches ``oversize_skip_globs``
-        is reported as a warning and never yielded; the scan stays complete
-        because such content is never analyzed. Every other oversize file is
-        yielded so the reader records incomplete coverage for analyzable files;
-        types that the scanner never reads are still ignored.
+        or, while credential detection is off, whose body the technology passes
+        never read (documentation) or that sits under a test path while test
+        code is excluded is reported as a warning and never yielded
+        (``_skipped_oversize``); the scan stays complete.
+        Every other oversize file is yielded so the reader records incomplete
+        coverage for analyzable files; types that the scanner never reads are
+        still ignored.
         """
         # os.walk visits descendants before siblings. Keep only active project
         # ancestors, so assigning a project is amortized constant time even in
@@ -1428,8 +1892,7 @@ class FilesystemConnector(BaseConnector):
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {root.name}")
                 return
-            if size > self._size_limit(root.name) and self._oversize_skippable(root.name, root.name):
-                self._skip_oversize(root.name, size)
+            if size > self._size_limit(root.name) and self._skipped_oversize(root.name, root.name, size):
                 return
             yield root.name, root, ".", size
             return
@@ -1478,8 +1941,7 @@ class FilesystemConnector(BaseConnector):
                     if self._analyzed_name(rel, fn):
                         self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
                     continue
-                if info.st_size > self._size_limit(fn) and self._oversize_skippable(rel, fn):
-                    self._skip_oversize(rel, info.st_size)
+                if info.st_size > self._size_limit(fn) and self._skipped_oversize(rel, fn, info.st_size):
                     continue
                 if _never_read_by_name(fn):
                     continue
@@ -1689,6 +2151,7 @@ class FilesystemConnector(BaseConnector):
             self.ctx.error(f"code.filesystem: {scan.label}: could not open the scan root safely ({reason})")
             return
         self._default_skipped = {}
+        fixtures_before = self.skipped_oversize_test_fixtures
         try:
             self._walk_entries(scan)
         except _WalkLimitError as exc:
@@ -1697,6 +2160,14 @@ class FilesystemConnector(BaseConnector):
             os.close(scan.root_fd)
             scan.root_fd = -1
         self._report_default_excluded(scan)
+        skipped_fixtures = self.skipped_oversize_test_fixtures - fixtures_before
+        if skipped_fixtures:
+            self.ctx.warn(
+                f"code.filesystem: {scan.label}: {skipped_fixtures} oversize test fixture(s) skipped unread "
+                "(include_tests and scan_secrets are off); set either, or strict_coverage, to make them "
+                "coverage gaps",
+                incomplete=False,
+            )
 
     def _walk_entries(self, scan: _ScanState) -> None:
         """Start each file only while its matching budget fits before the connector deadline."""
@@ -2076,6 +2547,9 @@ class FilesystemConnector(BaseConnector):
             for m in self.index.match_dependency(dep.ecosystem, dep.name):
                 m.line = dep.line
                 self._record(file.proj, m, rel, f"{dep.ecosystem}: {dep.name} {dep.spec or ''}".strip())
+        # A pipeline's `image:` runs a job in that container; a Compose or
+        # Kubernetes `image:` deploys it. Only the deployment is infrastructure.
+        image_scale = CI_IMAGE_WEIGHT_SCALE if _is_pipeline_file(rel) else 1.0
         for art in manifest.artifacts:
             self._handle_artifact(
                 file.proj,
@@ -2085,6 +2559,7 @@ class FilesystemConnector(BaseConnector):
                 scan.infra_files,
                 scan.secret_hits,
                 scan.infra_names,
+                image_scale=image_scale,
             )
 
     def _scan_iac(self, scan: _ScanState, file: _SourceFile) -> None:
@@ -2123,9 +2598,14 @@ class FilesystemConnector(BaseConnector):
         if file.ext in _XML_EXTENSIONS:
             content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
-            self._scan_source(scan.root, file, content_text)
+            comments = self._scan_source(scan.root, file, content_text)
+            self._scan_model_literals(file, content_text, comments, source=True)
         elif not is_nonexecutable:
             self._scan_config(scan, file, content_text)
+            if not file.is_mcp and (
+                file.ext in _MODEL_LITERAL_CONFIG_EXTENSIONS or file.name.lower().startswith(".env")
+            ):
+                self._scan_model_literals(file, content_text, [], source=False)
         if not is_nonexecutable and not file.is_mcp:
             variables = self.index.match_envs_in_text(content_text)
             for m in variables:
@@ -2141,8 +2621,12 @@ class FilesystemConnector(BaseConnector):
             # A data file that code loads by name is configuration, not a catalog.
             file.proj.referenced_data_files.update(referenced_data_files(content_text))
 
-    def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> None:
-        """Match the imports, code patterns and import-bound calls of a source file."""
+    def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> list[tuple[int, int]]:
+        """Match the imports, code patterns and import-bound calls of a source file.
+
+        Returns the comment spans the lexer masked, for the passes that read
+        string literals but not comments.
+        """
         lang, ext = file.lang, file.ext
         is_local_module = _local_module_predicate(root, file.path, file.proj_root)
         # Malformed trailing literals are masked through EOF;
@@ -2180,9 +2664,102 @@ class FilesystemConnector(BaseConnector):
         )
         self._record_code_matches(file, code_matches, file_uses_llm, bound, unbound=unbound)
         for m in bound:
-            self._record_content(file, m, self._file_excerpt(file, m.line))
+            # A call the binder resolved to its import establishes the library;
+            # the flag tells emit-time corroboration (_uncorroborated_signatures)
+            # it apart from a lexical match of the same pattern.
+            recorded = replace(m, extra={**m.extra, "import_bound": True}) if m.signal.type == "code" else m
+            self._record_content(file, recorded, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
             self._register_mcp_tools(file, ignored)
+        return _comment_spans(content_text, ignored)
+
+    def _scan_model_literals(
+        self,
+        file: _SourceFile,
+        content_text: str,
+        comments: Sequence[tuple[int, int]],
+        *,
+        source: bool,
+    ) -> None:
+        """Record the model identifiers a source or configuration file names (medium weight).
+
+        Quoted literals (and, in configuration, unquoted values after a
+        model-ish key) that carry a vendor stem are handed to the anchored
+        ``model`` signatures, as a whole and, for a route such as
+        ``bedrock/anthropic.claude-...``, by their last path segment, so the
+        route's provider and the model's vendor are both attributed. Comments
+        are skipped where the lexer masked them. Each match is tagged
+        ``model_literal`` (weight capped at emit time) and, outside source
+        files, ``data_mention``: a model id in a data file names a model as a
+        domain names a host, so it anchors nothing and keeps a pricing table a
+        catalog. At most ``MAX_MODEL_LITERALS_PER_FILE`` literals are read per
+        pass and ``MAX_MODEL_MATCHES_PER_SIGNATURE`` matches kept per
+        signature; a file with more is noted, not a coverage gap.
+        """
+        lowered_text = content_text.lower()
+        if not any(stem in lowered_text for stem in _MODEL_STEMS):
+            return
+        starts = [start for start, _ in comments]
+        ends = [end for _, end in comments]
+
+        def in_comment(offset: int) -> bool:
+            previous = bisect_right(starts, offset) - 1
+            return previous >= 0 and offset < ends[previous]
+
+        literals: list[tuple[int, str]] = []
+        limited = False
+        quoted = _finditer(
+            _MODEL_QUOTED_RE,
+            content_text,
+            "model identifiers",
+            MAX_MODEL_LITERALS_PER_FILE,
+            in_comment if starts else None,
+        )
+        limited = len(quoted) >= MAX_MODEL_LITERALS_PER_FILE
+        literals.extend((m.start(2), m.group(2)) for m in quoted)
+        if not source:
+            keyed = _finditer(
+                _MODEL_KEY_VALUE_RE, content_text, "model identifiers", MAX_MODEL_LITERALS_PER_FILE
+            )
+            limited = limited or len(keyed) >= MAX_MODEL_LITERALS_PER_FILE
+            literals.extend((m.start(1), m.group(1)) for m in keyed)
+        if limited:
+            self.ctx.warn(
+                f"code.filesystem: {file.rel}: model identifiers read from the first "
+                f"{MAX_MODEL_LITERALS_PER_FILE} literals only; later ones were not matched",
+                incomplete=False,
+            )
+        literals.sort()
+        line_at = line_counter(content_text)
+        kept: dict[str, int] = {}
+        seen: set[tuple[str, str]] = set()
+        for offset, value in literals:
+            lowered = value.lower()
+            if not any(stem in lowered for stem in _MODEL_STEMS):
+                continue
+            candidates = [value]
+            if "/" in value and lowered.startswith(_MODEL_ROUTE_PREFIXES):
+                tail = value.rsplit("/", 1)[-1]
+                if _model_lookalike(tail.lower()):
+                    continue  # a route to a tool is no more a model than the tool
+                if len(tail) >= 3:
+                    candidates.append(tail)
+            elif _model_lookalike(lowered):
+                continue
+            line = line_at(offset)
+            for candidate in candidates:
+                for m in self.index.match_model(candidate):
+                    key = (m.signature_id, candidate)
+                    if key in seen or kept.get(m.signature_id, 0) >= MAX_MODEL_MATCHES_PER_SIGNATURE:
+                        continue
+                    seen.add(key)
+                    kept[m.signature_id] = kept.get(m.signature_id, 0) + 1
+                    m.line = line
+                    m.value = candidate  # the whole id, not the family prefix the pattern matched
+                    m.extra["model_literal"] = True
+                    if not source:
+                        m.extra["data_mention"] = True
+                    self._record_content(file, m, self._file_excerpt(file, line))
 
     def _bound_matches(
         self,
@@ -2418,6 +2995,8 @@ class FilesystemConnector(BaseConnector):
                     incomplete=self.strict_coverage,
                 )
         for m in structured:
+            # A recognised configuration shape declares the product by name.
+            m.extra["config_projection"] = True
             self._record_content(file, m, None)
             category = m.signature.category
             agent_platform = category in {"platform", "cloud-service"} and m.agent_indicator
@@ -2557,11 +3136,25 @@ class FilesystemConnector(BaseConnector):
         infra_files: dict[str, list[tuple[Match, str, str]]],
         secret_hits: dict[str, list[tuple[Match, str]]],
         infra_names: dict[str, list[str]] | None = None,
+        *,
+        image_scale: float = 1.0,
     ) -> None:
+        """Record a manifest artifact: an image, variable, credential, IaC type, model, action or module.
+
+        ``image_scale`` below 1.0 marks the file as a CI pipeline: its images
+        run jobs rather than deploy services, so each image match is scaled,
+        tagged ``ci_image`` (a mention that anchors no project finding) and
+        produces no infrastructure finding.
+        """
         infra_names = infra_names if infra_names is not None else {}
         if art.kind == "image":
             for m in self.index.match_image(art.value):
                 m.line = art.line
+                if image_scale < 1.0:
+                    m.weight = m.weight * image_scale
+                    m.extra["ci_image"] = True
+                    self._record(proj, m, rel, f"image: {art.value}")
+                    continue
                 self._record(proj, m, rel, f"image: {art.value}")
                 infra_files.setdefault(rel, []).append((m, art.value, f"image: {art.value}"))
         elif art.kind in {"env", "secret_ref"}:
@@ -2595,10 +3188,12 @@ class FilesystemConnector(BaseConnector):
         elif art.kind == "model":
             for m in self.index.match_model(art.value):
                 m.line = art.line
+                m.extra["manifest_artifact"] = True  # a model the manifest selects, not a literal
                 self._record(proj, m, rel, f"model: {art.value}")
         elif art.kind == "action":
             for m in self.index.match_code(f"uses: {art.value}"):
                 m.line = art.line
+                m.extra["manifest_artifact"] = True
                 self._record(proj, m, rel, f"uses: {art.value}")
         elif art.kind == "module":
             for m in self.index.match_domains_in_text(art.value):
@@ -2889,6 +3484,7 @@ class FilesystemConnector(BaseConnector):
             and not reported
             and self._anchored(self._project_observations(proj, frozenset()), covered_files)
         )
+        unanchored = not reported and not discounted
         for sig_id, files in proj.coding_agent_files.items():
             # Env-name and display-name mentions (GOOSE_PROVIDER in a detector
             # matrix, "GitHub Copilot" in an SDK adapter) are not configuration.
@@ -2906,20 +3502,77 @@ class FilesystemConnector(BaseConnector):
             yield self._coding_agent_finding(label, root, proj, sig_id, files)
         if discounted:
             self._note_discounted_catalogs(label, proj, catalogs)
+        elif unanchored:
+            self._note_unanchored(label, proj, observations, covered_files)
 
-    @staticmethod
-    def _anchored(observations: list[_Observation], covered_files: frozenset[str]) -> bool:
+    def _anchored(self, observations: list[_Observation], covered_files: frozenset[str]) -> bool:
         """Whether ``observations`` establish a project finding.
 
         Anchors establish LLM / agent technology on their own. A credential
         alone is already a SECRET finding, evidence that an MCP, manifest,
         workflow or IaC finding already reports is not a project anchor, and
         a vendor-neutral heuristic alone (a retry loop, subprocess.run)
-        describes ordinary automation.
+        describes ordinary automation. Nor does evidence that establishes no
+        technology (``_ProjectEvidence.established``): a code pattern without
+        the library's import or dependency anywhere in the project, or a
+        signature known only from mentions below ``WEAK_MENTION_WEIGHT``. A
+        mention (a host, a variable, a display name, a model id in a data
+        file, a CI job image) anchors only outside test paths, unless test
+        code is included: ``huggingface.co`` inside ``test/data/*.json``
+        describes a fixture, not a deployment.
         """
+        discount = not self.include_tests
+
+        def in_tests(rel: str) -> bool:
+            return discount and _is_test_path(rel)
+
+        uncorroborated = _uncorroborated_signatures(observations, in_tests)
+        weak = _weak_mention_signatures(observations, in_tests)
         return any(
-            m.signature.category != "heuristic" and rel not in covered_files and m.signal.type != "secret"
+            m.signature.category != "heuristic"
+            and rel not in covered_files
+            and m.signal.type != "secret"
+            and m.signature_id not in uncorroborated
+            and m.signature_id not in weak
+            and not m.extra.get("data_mention")
+            and not m.extra.get("ci_image")
+            and not (discount and _is_test_path(rel) and (_mention(m) or m.extra.get("model_literal")))
             for m, rel, _ in observations
+        )
+
+    def _note_unanchored(
+        self,
+        label: str,
+        proj: _Project,
+        observations: list[_Observation],
+        covered_files: frozenset[str],
+    ) -> None:
+        """Name the files whose evidence establishes no technology on its own; never drop it silently.
+
+        A note, not a coverage gap: every file was read and matched. Nothing is
+        said for a project whose evidence is heuristics or credentials alone,
+        which have their own handling.
+        """
+        files = sorted(
+            {
+                rel
+                for m, rel, _ in observations
+                if m.signature.category != "heuristic"
+                and m.signal.type != "secret"
+                and rel not in covered_files
+            }
+        )
+        if not files:
+            return
+        names = ", ".join(files[:5]) + (f" and {len(files) - 5} more" if len(files) > 5 else "")
+        where = "repository root" if proj.root == "." else proj.root
+        self.ctx.warn(
+            f"code.filesystem: {self._root_prefix(label)}{where}: evidence not reported because nothing in "
+            "the project establishes a technology on its own (a code pattern without the library's import or "
+            "dependency, a host, variable or model id mentioned in test data or a data file, a CI job image, "
+            f"or a mention below weight {WEAK_MENTION_WEIGHT}): {names}; review them if the project uses "
+            "these products",
+            incomplete=False,
         )
 
     def _note_discounted_catalogs(self, label: str, proj: _Project, catalogs: frozenset[str]) -> None:
@@ -2959,6 +3612,21 @@ class FilesystemConnector(BaseConnector):
             for m, _, _ in observations
             if m.signal.type in _LIBRARY_SIGNALS and not m.signal.ambiguous
         }
+        if "provider.openai" in independent:
+            # The OpenAI request shape (`.chat.completions.create(`) in a
+            # project that installs or imports the OpenAI SDK describes that
+            # SDK: it must not add an OpenAI-compatible endpoint as a second
+            # provider. The shape still counts for a project whose only
+            # library is a compatible server's base URL override.
+            observations = [
+                t
+                for t in observations
+                if not (
+                    t[0].signature_id == "provider.openai-compatible"
+                    and t[0].signal.type == "code"
+                    and t[0].signal.ambiguous
+                )
+            ]
         # A catalog (a blocklist, a vendor policy, a copy of the signature
         # packs) names many products and uses none, so its mentions are held
         # to the same rule (see shadowscan.connectors.code.catalogs).
@@ -2986,6 +3654,8 @@ class FilesystemConnector(BaseConnector):
         self._apply_project_evidence(f, evidence)
         if evidence.env_only:
             f.add_tag("env-names-only")
+        elif evidence.model_ids_only:
+            f.add_tag("model-ids-only")
         self._attach_example_credentials(f, proj)
         self._attach_project_metadata(f, root, proj, evidence)
         catalogs = project_catalog_files(proj, proj.configuration_files, proj.referenced_data_files)
@@ -2997,6 +3667,12 @@ class FilesystemConnector(BaseConnector):
         if evidence.env_only:
             cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
             f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
+        elif evidence.model_ids_only:
+            cap_confidence(f, MODEL_IDS_ONLY_MAX_CONFIDENCE)
+            f.metadata["confidence_cap"] = {
+                "reason": "model-ids-only",
+                "maximum": MODEL_IDS_ONLY_MAX_CONFIDENCE,
+            }
         f.title = self._project_title(f, proj)
         return f
 
@@ -3004,8 +3680,10 @@ class FilesystemConnector(BaseConnector):
         # Decisive evidence must survive the per-signature report quota.
         decisive_first = sorted(evidence.matches, key=lambda item: not evidence.verified_indicator(item[0]))
         for m, rel, snip in decisive_first:
-            if m.signature_id in evidence.uncorroborated and m.extra.get("lexical_source"):
+            if m.signature_id in evidence.uncorroborated:
                 m.weight = min(m.weight, 0.6)
+            if m.extra.get("model_literal"):
+                m.weight = min(m.weight, MODEL_LITERAL_MAX_WEIGHT)
             observed = m.extra.get("source_capabilities")
             applied = (
                 replace(m, signal=replace(m.signal, capabilities=observed)) if observed is not None else m
@@ -3023,6 +3701,7 @@ class FilesystemConnector(BaseConnector):
                 capabilities=evidence.implies_capabilities(m, rel),
                 signature_capabilities=observed is None
                 and (evidence.verified_indicator(m) or m.signature.category != "framework"),
+                establish=evidence.established(m.signature_id),
             )
             if contextual:
                 for item in f.evidence[before:]:
