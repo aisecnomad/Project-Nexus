@@ -10,8 +10,19 @@ from pathlib import Path
 from tools.discovery_benchmark import compare, evidence, fetch, report, score
 from tools.discovery_benchmark.adapters import ToolConfig
 from tools.discovery_benchmark.adapters.registry import adapters_by_id, all_adapters
-from tools.discovery_benchmark.corpus import CorpusError, load_corpus
+from tools.discovery_benchmark.corpus import Corpus, CorpusError, load_corpus
 from tools.discovery_benchmark.runner import RunPolicy, renormalize, run_matrix
+
+
+def _repo_ids(corpus: Corpus, text: str | None) -> set[str] | None:
+    """The corpus repository ids named by a comma-separated ``--repos``; None selects every one."""
+    if not text:
+        return None
+    ids = {item.strip() for item in text.split(",") if item.strip()}
+    unknown = sorted(ids - {r.id for r in corpus.repos})
+    if unknown:
+        raise CorpusError("unknown repository id(s): " + ", ".join(unknown))
+    return ids
 
 
 def cmd_fetch(args: argparse.Namespace) -> int:
@@ -51,7 +62,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         extra_path=tuple(p for p in cfg.setting("extra_path").split(":") if p),
         keep_network=args.keep_network,
     )
-    repos = set(args.repos.split(",")) if args.repos else None
+    repos = _repo_ids(corpus, args.repos)
     manifest = run_matrix(
         corpus, selected, cfg, Path(args.checkouts), Path(args.out), policy, workers=args.workers, repos=repos
     )
@@ -85,11 +96,14 @@ def cmd_score(args: argparse.Namespace) -> int:
     adapters = adapters_by_id()
     scopes = {tid: a.spec.categories for tid, a in adapters.items()}
     names = {tid: a.spec.name for tid, a in adapters.items()}
-    metrics = score.score_all(corpus, manifest, scopes, names)
+    metrics = score.score_all(corpus, manifest, scopes, names, _repo_ids(corpus, args.repos))
     Path(args.out).write_text(json.dumps(metrics, indent=1) + "\n", encoding="utf-8")
     for tool_id, t in metrics["tools"].items():
         v = t["value_level"]["in_scope"]
-        print(f"{tool_id}\tin-scope value F1={v['f1']}\trepo-level F1={t['repo_level']['f1']}")
+        print(
+            f"{tool_id}\tin-scope value F1={v['f1']}\trepo-level F1={t['repo_level']['f1']}"
+            f"\tincomplete runs={t['incomplete_runs']['count']}"
+        )
     return 0
 
 
@@ -97,14 +111,25 @@ def cmd_compare(args: argparse.Namespace) -> int:
     corpus = load_corpus(Path(args.corpus))
     classes = {r.id: r.klass for r in corpus.repos}
     baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
+    if args.baseline_runs:
+        runs = json.loads(Path(args.baseline_runs).read_text(encoding="utf-8"))
+        baseline = compare.with_run_incompleteness(baseline, runs)
     current = json.loads(Path(args.current).read_text(encoding="utf-8"))
     tools = args.tools.split(",") if args.tools else None
-    results = compare.compare(baseline, current, classes, tools=tools, f1_tolerance=args.f1_tolerance)
+    results = compare.compare(
+        baseline,
+        current,
+        classes,
+        tools=tools,
+        f1_tolerance=args.f1_tolerance,
+        repos=_repo_ids(corpus, args.repos),
+    )
     for item in results:
         state = "ok" if item.ok else "REGRESSION"
         f1 = f"F1 {item.baseline_f1} -> {item.current_f1}"
         recall = f"repo recall {item.baseline_recall} -> {item.current_recall}"
-        print(f"{item.tool}\t{state}\t{f1}\t{recall}")
+        incomplete = f"incomplete runs {item.baseline_incomplete} -> {item.current_incomplete}"
+        print(f"{item.tool}\t{state}\t{f1}\t{recall}\t{incomplete}")
         for reason in item.regressions:
             print(f"\t{reason}")
         for repo_id in item.newly_clean:
@@ -163,12 +188,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--corpus", required=True)
     p.add_argument("--runs", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--repos", help="comma-separated repo ids a partial run covered (default: all)")
     p.set_defaults(func=cmd_score)
 
     p = sub.add_parser("compare", help="fail when metrics regress against a committed baseline")
     p.add_argument("--corpus", required=True)
     p.add_argument("--baseline", required=True, help="baseline metrics.json")
     p.add_argument("--current", required=True, help="new metrics.json")
+    p.add_argument(
+        "--baseline-runs",
+        help="the baseline's runs.json, for metrics scored before incomplete runs were recorded",
+    )
+    p.add_argument("--repos", help="compare only these comma-separated repo ids (a partial run)")
     p.add_argument("--tools", help="comma-separated tool ids (default: every tool in the baseline)")
     p.add_argument("--f1-tolerance", type=float, default=0.01)
     p.add_argument("--out", help="write the comparison as JSON")

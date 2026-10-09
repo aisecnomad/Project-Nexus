@@ -3,9 +3,11 @@ name: Discovery benchmark
 # pinned public corpus in benchmarks/shadow-ai-discovery. Only ShadowScan runs
 # here; the third-party tools are installed and run locally (see the README).
 # The gate fails when in-scope F1 drops more than one point, repository-level
-# recall drops, or a control or near-miss repository that the committed
-# baseline left clean is flagged. Checkouts are read-only inputs; nothing in
-# them is executed.
+# recall drops, a control or near-miss repository that the committed baseline
+# left clean is flagged, or a repository scanned completely in the baseline is
+# now incomplete (exit 3). A dispatched subset of repositories is compared with
+# the same repositories of the baseline. Checkouts are read-only inputs;
+# nothing in them is executed.
 on:
   schedule:
     - cron: "23 6 * * 3"  # Wednesday 06:23 UTC
@@ -55,18 +57,23 @@ jobs:
             --checkouts "$RUNNER_TEMP/corpus" --out "$RUNNER_TEMP/run" --only shadowscan \
             --workers 2 --timeout 1500 "${extra[@]}"
       - name: Score and compare with the committed baseline
+        env:
+          REPOS: ${{ inputs.repos }}
         run: |
+          extra=()
+          if [ -n "$REPOS" ]; then extra=(--repos "$REPOS"); fi
           python -m tools.discovery_benchmark score \
             --corpus benchmarks/shadow-ai-discovery/corpus.json --runs "$RUNNER_TEMP/run/runs.json" \
-            --out "$RUNNER_TEMP/run/metrics.json"
+            --out "$RUNNER_TEMP/run/metrics.json" "${extra[@]}"
           python -m tools.discovery_benchmark report \
             --corpus benchmarks/shadow-ai-discovery/corpus.json --metrics "$RUNNER_TEMP/run/metrics.json" \
             --out "$RUNNER_TEMP/run/REPORT.md"
-          baseline="$(ls -d benchmarks/shadow-ai-discovery/results/*/ | sort | tail -1)metrics.json"
-          echo "baseline: $baseline"
+          baseline="$(ls -d benchmarks/shadow-ai-discovery/results/*/ | sort | tail -1)"
+          echo "baseline: ${baseline}metrics.json"
           python -m tools.discovery_benchmark compare \
-            --corpus benchmarks/shadow-ai-discovery/corpus.json --baseline "$baseline" \
-            --current "$RUNNER_TEMP/run/metrics.json" --tools shadowscan --out "$RUNNER_TEMP/run/compare.json"
+            --corpus benchmarks/shadow-ai-discovery/corpus.json --baseline "${baseline}metrics.json" \
+            --baseline-runs "${baseline}runs.json" --current "$RUNNER_TEMP/run/metrics.json" \
+            --tools shadowscan --out "$RUNNER_TEMP/run/compare.json" "${extra[@]}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

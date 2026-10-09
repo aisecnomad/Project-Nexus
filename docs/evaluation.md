@@ -30,13 +30,20 @@ recall or calibration; see the held-out procedure below for that.
 pinned public repositories that compares ShadowScan's `code.filesystem`
 connector with other open-source discovery tools under one tool-neutral fact
 taxonomy. Its ground truth is session-labeled evidence with file pointers, not
-independent review, and it runs third-party tools as an unprivileged user with
-no network or credentials. See its README for the method and its REPORT.md for
-the measured numbers; neither replaces the regression corpora above. The
-`compare` subcommand and `.github/workflows/benchmark.yml` turn the committed
-results into a weekly regression gate for ShadowScan: a drop in in-scope F1 of
-more than one point, any drop in repository-level recall, or a newly flagged
-control or near-miss repository fails the run.
+independent review. The harness gives each tool a rebuilt environment without
+API keys and a dead proxy that clients may ignore; it is not a filesystem or
+network sandbox. Without `--as-user` (as in the CI workflow) tools run as the
+invoking user, and `--as-user` only changes the account through `setpriv`.
+Run third-party tools only on an externally isolated, disposable runner with
+egress disabled and no credentials. See its README for the method and its
+REPORT.md for the measured numbers; neither replaces the regression corpora
+above. The `compare` subcommand and `.github/workflows/benchmark.yml` turn the
+committed results into a weekly regression gate for ShadowScan: a drop in
+in-scope F1 of more than one point, any drop in repository-level recall, a
+newly flagged control or near-miss repository, or a repository whose scan was
+complete in the baseline and is now incomplete (exit 3) fails the run.
+Incomplete runs are scored on the facts they found and marked `(incomplete)`
+in REPORT.md, never as clean negatives.
 
 ## Run the reproducible corpora
 

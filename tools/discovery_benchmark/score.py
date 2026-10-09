@@ -13,11 +13,16 @@ Three views are reported for every tool:
 Predicted facts listed as *tolerated* for a repository (lock-file-only
 dependencies) are dropped before scoring. Facts outside a tool's declared
 categories are ignored in the *in-scope* view and counted in the *all* view.
+
+A run the tool reported as incomplete (ShadowScan exit 3) is scored on the
+facts it found and flagged ``incomplete``: its facts are a lower bound, and a
+clean result on it is not a clean negative.
 """
 
 from __future__ import annotations
 
 import statistics
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -77,12 +82,14 @@ class RepoScore:
     tolerated_hits: list[str] = field(default_factory=list)
     out_of_scope: list[str] = field(default_factory=list)
     flagged: bool = False
+    incomplete: bool = False  # the tool reported unread content (ShadowScan exit 3)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "seconds": self.seconds,
             "flagged": self.flagged,
+            "incomplete": self.incomplete,
             "tp": self.tp,
             "fp": self.fp,
             "fn": self.fn,
@@ -125,13 +132,19 @@ def match_categories(predicted: set[str], expected: set[str]) -> Counts:
 
 
 def score_repo(
-    repo: Repo, predicted_facts: list[str], scope: frozenset[str], *, status: str, seconds: float
+    repo: Repo,
+    predicted_facts: list[str],
+    scope: frozenset[str],
+    *,
+    status: str,
+    seconds: float,
+    incomplete: bool = False,
 ) -> RepoScore:
     predicted = set(predicted_facts)
     tolerated = {f for f in predicted if f in set(repo.tolerated)}
     predicted -= tolerated
     out_of_scope = sorted(f for f in predicted if category(f) not in scope)
-    score = RepoScore(status=status, seconds=seconds, predicted=sorted(predicted))
+    score = RepoScore(status=status, seconds=seconds, predicted=sorted(predicted), incomplete=incomplete)
     score.tolerated_hits = sorted(tolerated)
     score.out_of_scope = out_of_scope
     score.flagged = bool(predicted)
@@ -149,8 +162,17 @@ def _quantile(values: list[float], q: float) -> float | None:
     return round(ordered[index], 2)
 
 
+def selected_repos(corpus: Corpus, repos: AbstractSet[str] | None) -> list[Repo]:
+    """The corpus repositories a run covered: every one, or those named in ``repos``."""
+    return [r for r in corpus.repos if repos is None or r.id in repos]
+
+
 def score_tool(
-    corpus: Corpus, tool_id: str, scope: frozenset[str], runs: list[dict[str, Any]]
+    corpus: Corpus,
+    tool_id: str,
+    scope: frozenset[str],
+    runs: list[dict[str, Any]],
+    repos: AbstractSet[str] | None = None,
 ) -> dict[str, Any]:
     by_repo = {r["repo"]: r for r in runs if r["tool"] == tool_id}
     per_repo: dict[str, RepoScore] = {}
@@ -162,7 +184,8 @@ def score_tool(
     detection = {"positive": [0, 0], "control": [0, 0], "nearmiss": [0, 0]}
     statuses = {"ok": 0, "failed": 0, "timeout": 0, "skipped": 0, "error": 0, "missing": 0}
     seconds: list[float] = []
-    for repo in corpus.repos:
+    incomplete: list[str] = []
+    for repo in selected_repos(corpus, repos):
         run = by_repo.get(repo.id)
         if run is None:
             statuses["missing"] += 1
@@ -175,10 +198,13 @@ def score_tool(
                 scope,
                 status=str(run.get("status")),
                 seconds=float(run.get("seconds") or 0.0),
+                incomplete=bool((run.get("detail") or {}).get("incomplete")),
             )
             if run.get("status") in {"ok", "failed"}:
                 seconds.append(float(run.get("seconds") or 0.0))
         per_repo[repo.id] = score
+        if score.incomplete:
+            incomplete.append(repo.id)
         expected = set(repo.expected_facts)
         predicted = set(score.predicted)
         value_all.add(Counts(len(score.tp), len(score.fp), len(score.fn)))
@@ -203,6 +229,7 @@ def score_tool(
     return {
         "categories": sorted(scope),
         "runs": statuses,
+        "incomplete_runs": {"count": len(incomplete), "repos": sorted(incomplete)},
         "seconds": {
             "median": _quantile(seconds, 0.5),
             "p90": _quantile(seconds, 0.9),
@@ -230,9 +257,15 @@ def score_tool(
 
 
 def score_all(
-    corpus: Corpus, manifest: dict[str, Any], scopes: dict[str, frozenset[str]], names: dict[str, str]
+    corpus: Corpus,
+    manifest: dict[str, Any],
+    scopes: dict[str, frozenset[str]],
+    names: dict[str, str],
+    repos: AbstractSet[str] | None = None,
 ) -> dict[str, Any]:
+    """Score every tool of ``manifest``; with ``repos``, only those repositories (a partial run)."""
     runs = list(manifest.get("results") or [])
+    selected = selected_repos(corpus, repos)
     tool_ids = sorted({str(r["tool"]) for r in runs} | set(manifest.get("tool_versions") or {}))
     tools: dict[str, Any] = {}
     for tool_id in tool_ids:
@@ -240,19 +273,18 @@ def score_all(
         tools[tool_id] = {
             "name": names.get(tool_id, tool_id),
             "version": (manifest.get("tool_versions") or {}).get(tool_id),
-            **score_tool(corpus, tool_id, scope, runs),
+            **score_tool(corpus, tool_id, scope, runs, repos),
         }
-    expected_total = sum(len(r.expected) for r in corpus.repos)
+    expected_total = sum(len(r.expected) for r in selected)
     return {
         "corpus": {
-            "repos": len(corpus.repos),
-            "positive": len(corpus.by_class("positive")),
-            "control": len(corpus.by_class("control")),
-            "nearmiss": len(corpus.by_class("nearmiss")),
+            "repos": len(selected),
+            "positive": sum(1 for r in selected if r.klass == "positive"),
+            "control": sum(1 for r in selected if r.klass == "control"),
+            "nearmiss": sum(1 for r in selected if r.klass == "nearmiss"),
             "expected_facts": expected_total,
             "expected_by_category": {
-                c: sum(1 for r in corpus.repos for e in r.expected if category(e.fact) == c)
-                for c in CATEGORIES
+                c: sum(1 for r in selected for e in r.expected if category(e.fact) == c) for c in CATEGORIES
             },
         },
         "run": {

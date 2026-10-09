@@ -643,6 +643,147 @@ def test_compare_flags_f1_drop_and_new_negative_only() -> None:
     assert any("F1" in r for r in bad.regressions) and any("recall" in r for r in bad.regressions)
 
 
+def _incomplete_manifest(*repo_ids: str) -> dict[str, object]:
+    manifest = _manifest()
+    for item in manifest["results"]:  # type: ignore[union-attr]
+        if item["tool"] == "shadowscan" and item["repo"] in repo_ids:
+            item["detail"] = {"incomplete": True}
+    return manifest
+
+
+def test_incomplete_runs_are_scored_reported_and_never_clean() -> None:
+    corpus = _tiny_corpus()
+    scopes = {"shadowscan": frozenset(taxonomy.CATEGORIES), "cdxgen": frozenset({"framework", "provider"})}
+    names = {"shadowscan": "ShadowScan", "cdxgen": "cdxgen"}
+    metrics = score.score_all(corpus, _incomplete_manifest("acme__ctl", "acme__demo"), scopes, names)
+    ss = metrics["tools"]["shadowscan"]
+    assert ss["incomplete_runs"] == {"count": 2, "repos": ["acme__ctl", "acme__demo"]}
+    assert ss["per_repo"]["acme__ctl"]["incomplete"] and not ss["per_repo"]["acme__near"]["incomplete"]
+    assert metrics["tools"]["cdxgen"]["incomplete_runs"] == {"count": 0, "repos": []}
+    text = report.render(metrics, corpus, title="T")
+    control = next(line for line in text.splitlines() if line.startswith("| acme/ctl |"))
+    assert "clean (incomplete)" in control
+    positive = next(line for line in text.splitlines() if line.startswith("| acme/demo |"))
+    assert "(incomplete)" in positive
+    assert "Incomplete runs" in text
+
+
+def test_compare_fails_when_a_complete_run_becomes_incomplete() -> None:
+    corpus = _tiny_corpus()
+    classes = {r.id: r.klass for r in corpus.repos}
+    scopes = {"shadowscan": frozenset(taxonomy.CATEGORIES), "cdxgen": frozenset({"framework", "provider"})}
+    names = {"shadowscan": "ShadowScan", "cdxgen": "cdxgen"}
+    baseline = score.score_all(corpus, _incomplete_manifest("acme__demo"), scopes, names)
+    # Same facts, but the control scan is now incomplete: its clean result proves nothing.
+    current = score.score_all(corpus, _incomplete_manifest("acme__demo", "acme__ctl"), scopes, names)
+    bad = {r.tool: r for r in compare.compare(baseline, current, classes)}["shadowscan"]
+    assert not bad.ok and bad.newly_incomplete == ["acme__ctl"]
+    assert any("incomplete" in reason for reason in bad.regressions)
+    assert bad.to_dict()["current_incomplete"] == 2 and bad.to_dict()["baseline_incomplete"] == 1
+    # A run that completes now, or stays incomplete, is no regression.
+    fixed = score.score_all(corpus, _manifest(), scopes, names)
+    assert all(r.ok for r in compare.compare(baseline, fixed, classes))
+    assert all(r.ok for r in compare.compare(baseline, baseline, classes))
+
+
+def test_compare_needs_baseline_incompleteness_when_runs_are_incomplete() -> None:
+    corpus = _tiny_corpus()
+    classes = {r.id: r.klass for r in corpus.repos}
+    scopes = {"shadowscan": frozenset(taxonomy.CATEGORIES), "cdxgen": frozenset({"framework", "provider"})}
+    names = {"shadowscan": "ShadowScan", "cdxgen": "cdxgen"}
+    legacy = score.score_all(corpus, _incomplete_manifest("acme__demo"), scopes, names)
+    for tool in legacy["tools"].values():  # metrics scored before incompleteness was recorded
+        tool.pop("incomplete_runs")
+        for per in tool["per_repo"].values():
+            per.pop("incomplete")
+    current = score.score_all(corpus, _incomplete_manifest("acme__demo"), scopes, names)
+    bad = {r.tool: r for r in compare.compare(legacy, current, classes)}["shadowscan"]
+    assert not bad.ok and any("baseline" in reason and "incomplete" in reason for reason in bad.regressions)
+    # The baseline's runs.json supplies the missing flags.
+    restored = compare.with_run_incompleteness(legacy, _incomplete_manifest("acme__demo"))
+    assert all(r.ok for r in compare.compare(restored, current, classes))
+    complete = score.score_all(corpus, _manifest(), scopes, names)
+    assert all(r.ok for r in compare.compare(legacy, complete, classes))
+
+
+def test_score_and_compare_a_repository_subset() -> None:
+    # A dispatched run of some repositories is compared with the same
+    # repositories of the full baseline, not with the whole corpus.
+    corpus = _tiny_corpus()
+    classes = {r.id: r.klass for r in corpus.repos}
+    scopes = {"shadowscan": frozenset(taxonomy.CATEGORIES), "cdxgen": frozenset({"framework", "provider"})}
+    names = {"shadowscan": "ShadowScan", "cdxgen": "cdxgen"}
+    baseline = score.score_all(corpus, _manifest(), scopes, names)
+    subset_run = _manifest()
+    subset_run["results"] = [r for r in subset_run["results"] if r["repo"] == "acme__ctl"]  # type: ignore[index]
+    current = score.score_all(corpus, subset_run, scopes, names, repos={"acme__ctl"})
+    ss = current["tools"]["shadowscan"]
+    assert set(ss["per_repo"]) == {"acme__ctl"} and ss["runs"]["missing"] == 0
+    assert current["corpus"]["repos"] == 1
+    assert not all(r.ok for r in compare.compare(baseline, current, classes, tools=["shadowscan"]))
+    assert all(
+        r.ok for r in compare.compare(baseline, current, classes, tools=["shadowscan"], repos={"acme__ctl"})
+    )
+    worse = _manifest()
+    worse["results"] = [dict(r) for r in worse["results"] if r["repo"] == "acme__demo"]  # type: ignore[index]
+    worse["results"][0]["facts"] = []  # type: ignore[index]
+    lost = score.score_all(corpus, worse, scopes, names, repos={"acme__demo"})
+    bad = compare.compare(baseline, lost, classes, tools=["shadowscan"], repos={"acme__demo"})[0]
+    assert not bad.ok and any("recall" in reason for reason in bad.regressions)
+
+
+def test_cli_scores_and_compares_a_dispatched_subset(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tools.discovery_benchmark.__main__ import main
+
+    corpus_path = tmp_path / "corpus.json"
+    save_corpus(_tiny_corpus(), corpus_path)
+    # The committed baseline: a full run whose metrics predate incompleteness.
+    (tmp_path / "base-runs.json").write_text(json.dumps(_incomplete_manifest("acme__ctl")), encoding="utf-8")
+    common = ["--corpus", str(corpus_path)]
+    assert (
+        main(
+            ["score", *common, "--runs", str(tmp_path / "base-runs.json"), "--out", str(tmp_path / "b.json")]
+        )
+        == 0
+    )
+    legacy = json.loads((tmp_path / "b.json").read_text(encoding="utf-8"))
+    for tool in legacy["tools"].values():
+        del tool["incomplete_runs"]
+        for per in tool["per_repo"].values():
+            del per["incomplete"]
+    (tmp_path / "b.json").write_text(json.dumps(legacy), encoding="utf-8")
+    # A dispatched run of the control alone, still incomplete as in the baseline.
+    run = _incomplete_manifest("acme__ctl")
+    run["results"] = [r for r in run["results"] if r["repo"] == "acme__ctl"]  # type: ignore[index]
+    (tmp_path / "runs.json").write_text(json.dumps(run), encoding="utf-8")
+    subset = ["--repos", "acme__ctl"]
+    out = str(tmp_path / "c.json")
+    assert main(["score", *common, "--runs", str(tmp_path / "runs.json"), "--out", out, *subset]) == 0
+    compare_args = ["compare", *common, "--baseline", str(tmp_path / "b.json"), "--current", out]
+    compare_args += ["--tools", "shadowscan"]
+    assert main([*compare_args, *subset]) == 1  # the baseline cannot vouch for the incomplete run
+    runs = ["--baseline-runs", str(tmp_path / "base-runs.json")]
+    assert main([*compare_args, *subset, *runs]) == 0
+    assert main([*compare_args, *runs]) == 1  # the whole corpus: the positive is now missing
+    assert main([*compare_args, "--repos", "acme__nope"]) == 2
+    assert "unknown repository id(s): acme__nope" in capsys.readouterr().err
+
+
+def test_subset_metrics_over_every_repository_match_the_scored_totals() -> None:
+    root = Path(__file__).resolve().parents[2] / "benchmarks" / "shadow-ai-discovery"
+    corpus = load_corpus(root / "corpus.json")
+    classes = {r.id: r.klass for r in corpus.repos}
+    baselines = sorted((root / "results").glob("*/metrics.json"))
+    assert baselines
+    metrics = json.loads(baselines[-1].read_text(encoding="utf-8"))
+    for tool_id, tool in metrics["tools"].items():
+        whole = compare.subset(tool, set(classes), classes)
+        assert whole["value_level"]["in_scope"] == tool["value_level"]["in_scope"], tool_id
+        assert whole["repo_level"]["recall"] == tool["repo_level"]["recall"], tool_id
+
+
 def test_shadowscan_slug_mapping_prefers_exact_taxonomy_values() -> None:
     from tools.discovery_benchmark.adapters.shadowscan import _slug_facts
 

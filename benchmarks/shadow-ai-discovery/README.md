@@ -210,13 +210,25 @@ committed results:
 ```console
 python -m tools.discovery_benchmark compare --corpus benchmarks/shadow-ai-discovery/corpus.json \
     --baseline benchmarks/shadow-ai-discovery/results/<run>/metrics.json \
+    --baseline-runs benchmarks/shadow-ai-discovery/results/<run>/runs.json \
     --current metrics.json --tools shadowscan
 ```
 
 It exits 1 when a tool's in-scope value-level F1 falls by more than one point
-(`--f1-tolerance`), when repository-level recall falls at all, or when a control
-or near-miss repository that the baseline left clean is flagged. Improvements
-and newly clean negatives are printed but never fail the gate. The workflow
+(`--f1-tolerance`), when repository-level recall falls at all, when a control
+or near-miss repository that the baseline left clean is flagged, or when a
+repository whose run was complete in the baseline is incomplete now. An
+incomplete run (ShadowScan exit 3, `detail.incomplete` in `runs.json`) read
+less than the whole repository: `score` keeps its facts, records it under
+`incomplete_runs` and in `per_repo`, and REPORT.md marks its cells
+`(incomplete)`, so an incomplete control is never shown as a clean negative.
+Metrics scored before incompleteness was recorded (the committed 2026-10-08
+and 2026-10-09 `metrics.json`) take it from their `runs.json` through
+`--baseline-runs`; without it, a run with incomplete repositories fails the
+gate rather than passing unchecked. A partial run (`run --repos`) is scored
+and compared with the same `--repos`, so the repositories it did not run are
+neither missing facts nor a recall drop. Improvements and newly clean
+negatives are printed but never fail the gate. The workflow
 `.github/workflows/benchmark.yml` runs ShadowScan alone on the pinned corpus
 weekly and on demand, with read-only permissions and no third-party tools, and
 uploads `runs.json`, `metrics.json`, `REPORT.md` and `compare.json` as an

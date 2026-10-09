@@ -332,6 +332,20 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   excerpts rather than the size of all matched files. A root-level Python
   re-export consumer analyzed after the walk now keeps its excerpts; its
   evidence had empty snippets unless an earlier pass had excerpted the file.
+- Fixed: the discovery benchmark carries incomplete runs (ShadowScan exit 3)
+  into scoring, the report and the regression gate. `metrics.json` records
+  `incomplete_runs` and a per-repository `incomplete` flag, REPORT.md marks
+  those cells `(incomplete)` instead of showing an incomplete control as
+  clean (43 of 87 ShadowScan runs in the 2026-10-09 baseline were
+  incomplete), and `compare` fails when a repository complete in the
+  baseline becomes incomplete. `compare --baseline-runs` reads the flag from
+  the `runs.json` of metrics scored before it was recorded.
+- Fixed: a dispatched benchmark run of some repositories (`--repos`) is scored
+  and compared over those repositories only. The unselected ones were scored
+  as missing, so the gate always reported a recall regression.
+- Docs: the benchmark's isolation is described as it is: a rebuilt
+  environment and a dead proxy that clients may ignore, not a network or
+  filesystem sandbox; third-party tools need an externally isolated runner.
 
 ### Shadow AI agent discovery benchmark
 

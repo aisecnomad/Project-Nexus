@@ -16,6 +16,15 @@ def _num(value: float | None) -> str:
     return "n/a" if value is None else f"{value:g}"
 
 
+def _incomplete_runs(tool: dict[str, Any]) -> str:
+    runs = tool.get("incomplete_runs")
+    return "n/a" if runs is None else str(runs["count"])
+
+
+def _incomplete_suffix(per_repo: dict[str, Any]) -> str:
+    return " (incomplete)" if per_repo.get("incomplete") else ""
+
+
 def _table(headers: list[str], rows: list[list[str]]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "|" + "|".join("---" for _ in headers) + "|"]
     lines.extend("| " + " | ".join(row) + " |" for row in rows)
@@ -80,6 +89,7 @@ def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
                 f"{r['nearmiss_flagged']}/{r['nearmiss']}",
                 f"{_num(s['median'])} / {_num(s['p90'])} / {_num(s['max'])}",
                 f"{t['runs'].get('failed', 0)} failed, {t['runs'].get('timeout', 0)} timed out",
+                _incomplete_runs(t),
             ]
         )
     out.append(
@@ -95,6 +105,7 @@ def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
                 "Near-misses flagged",
                 "Seconds median / p90 / max",
                 "Runs",
+                "Incomplete runs",
             ],
             rows,
         )
@@ -103,7 +114,9 @@ def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
     out.append(
         "In-scope metrics count only the categories a tool declares; the all-category value F1 "
         "charges every tool for every expected fact in the corpus. Repository-level detection "
-        "counts a repository as flagged when the tool reports any in-scope fact."
+        "counts a repository as flagged when the tool reports any in-scope fact. An incomplete run "
+        "(ShadowScan exit 3) left content unread: its facts are a lower bound, and its cells below "
+        "are marked (incomplete), so a clean cell there is not a clean result."
     )
     out.append("")
     out.append("## Value-level F1 by category")
@@ -142,9 +155,12 @@ def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
             pr = t["per_repo"].get(repo.id) or {}
             fps = pr.get("fp") or []
             cells.append(
-                "clean"
-                if not fps and pr.get("status") in {"ok", "failed"}
-                else (", ".join(fps) if fps else pr.get("status", "?"))
+                (
+                    "clean"
+                    if not fps and pr.get("status") in {"ok", "failed"}
+                    else (", ".join(fps) if fps else pr.get("status", "?"))
+                )
+                + _incomplete_suffix(pr)
             )
         rows.append(cells)
     out.append(_table(header, rows))
@@ -170,6 +186,7 @@ def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
                 suffix = "" if status == "ok" else " (tool reported failure)"
                 cells.append(
                     f"{len(pr.get('tp') or [])}/{len(pr.get('fp') or [])}/{len(pr.get('fn') or [])}{suffix}"
+                    + _incomplete_suffix(pr)
                 )
         rows.append(cells)
     out.append(_table(header, rows))
