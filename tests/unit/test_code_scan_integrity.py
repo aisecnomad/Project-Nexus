@@ -239,6 +239,22 @@ def test_text_typescript_with_a_stray_nul_is_analyzed_not_skipped(tmp_path, run_
     assert any("provider.openai" in finding.model_providers for finding in findings)
 
 
+def test_stray_nul_bytes_cannot_split_a_host_or_env_name_that_bash_runs(tmp_path, run_connector):
+    # Bash drops NUL bytes from a script, so this runs `curl https://api.openai.com/...` with
+    # $OPENAI_API_KEY. Matched with the NUL bytes in place, neither name was seen and the scan was
+    # complete and empty.
+    script = (
+        b"#!/bin/bash\n# "
+        + b"padding text for a script of ordinary size " * 14
+        + b'\nexport OPENAI_\x00API_KEY="$1"\n'
+        + b"echo curl -s https://api.open\x00ai.com/v1/chat/completions"
+        + b' -H "Authorization: Bearer $OPENAI_\x00API_KEY"\n'
+    )
+    (tmp_path / "run.sh").write_bytes(script)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete or any("provider.openai" in finding.model_providers for finding in findings)
+
+
 @pytest.mark.parametrize("rel", [".cursor/rules/notes.bin", ".roo/rules/notes.utf16"])
 def test_unrecognised_binary_read_for_its_directory_is_a_coverage_gap(tmp_path, run_connector, rel):
     # UTF-16 without a byte-order mark: an agent may read it, the scanner cannot.
