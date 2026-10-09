@@ -374,8 +374,22 @@ class NetworkLogConnector(BaseConnector, _NoDump):
 
     def _vpc_flow(self, row: dict[str, Any], name: str, number: int | None) -> Iterator[dict[str, Any]]:
         where = f"{name} line {number}" if number else name
-        if str(row.get("log-status") or row.get("log_status") or "OK").upper() != "OK":
-            return  # NODATA / SKIPDATA rows carry no flow
+        # Custom exports can omit log-status, but an explicit status must be
+        # valid. SKIPDATA means AWS failed to capture flows, not an idle ENI.
+        raw_statuses = [row[key] for key in ("log-status", "log_status") if key in row]
+        if any(not isinstance(status, str) or not status.strip() for status in raw_statuses):
+            self.ctx.warn(f"network.logs: {where}: invalid VPC flow log-status")
+            return
+        statuses = {status.strip().upper() for status in raw_statuses}
+        if len(statuses) > 1 or statuses - {"OK", "NODATA", "SKIPDATA"}:
+            self.ctx.warn(f"network.logs: {where}: invalid VPC flow log-status")
+            return
+        status = next(iter(statuses), "OK")
+        if status == "SKIPDATA":
+            self.ctx.warn(f"network.logs: {where}: VPC Flow Logs SKIPDATA reports uncaptured flows")
+            return
+        if status == "NODATA":
+            return
         if str(row.get("action") or "ACCEPT").upper() != "ACCEPT":
             return
         client, server = _text(row.get("srcaddr")), _text(row.get("dstaddr"))
@@ -686,7 +700,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
 def _detect(row: dict[str, Any]) -> str | None:
     if "query_name" in row and "srcaddr" in row:
         return "route53"
-    if "srcaddr" in row and "dstaddr" in row and ("dstport" in row or "log-status" in row):
+    if "log-status" in row or "log_status" in row or {"srcaddr", "dstaddr", "dstport"} <= row.keys():
         return "vpc-flow"
     if "id.orig_h" in row or "_path" in row:
         return "zeek"

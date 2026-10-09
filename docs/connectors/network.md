@@ -18,7 +18,7 @@ Each input record is read as a DNS query, a TLS connection or a flow:
 |---|---|---|
 | Zeek `dns.log`, `ssl.log`, `conn.log` | DNS queries and answers, TLS server names, connections | TSV with `#fields` headers or JSON (one object per line, `_path` optional) |
 | Amazon Route 53 Resolver query logs | DNS queries and answers | JSON or JSONL as delivered to CloudWatch Logs, S3 or Firehose |
-| AWS VPC Flow Logs | flows | default version 2 format, or any format with a header line; `REJECT` and `NODATA` rows are skipped |
+| AWS VPC Flow Logs | flows | default version 2 format, or any format with a header line; JSON accepts `log-status` or `log_status`; `REJECT` and `NODATA` rows are skipped |
 | Generic JSON or CSV | DNS queries (`query`, `qname`, `domain`…), TLS server names (`sni`, `server_name`), flows (`dst_ip` with `dst_port`) | client address from `client`, `client_ip`, `src_ip`, `srcaddr`… |
 
 The result is one `network-contact` finding per client address and AI
@@ -81,6 +81,14 @@ groups (client, server address, port and UID), and 500,000 TLS identities
 (client and UID). Records beyond any bound are reported and make the scan
 incomplete. If TLS identity storage fills, flows with an unretained UID are
 left unattributed because a discarded TLS record could contradict DNS.
+
+VPC Flow Logs `SKIPDATA` records mean AWS did not capture some flows. They
+produce an incomplete report (`summary.complete: false`) and CLI exit 3,
+including exports containing only `SKIPDATA`. Unknown, malformed or conflicting
+explicit log statuses also make the scan incomplete. `NODATA` means no traffic
+was observed for that interface and interval; it remains a clean empty result.
+Custom exports that omit the status field retain the normal flow handling.
+See [AWS log-status definitions](https://docs.aws.amazon.com/vpc/latest/userguide/flow-log-records.html).
 
 Client addresses identify a device or a NAT gateway, not a person. Join
 findings to DHCP, VPN or asset records before assigning an owner.

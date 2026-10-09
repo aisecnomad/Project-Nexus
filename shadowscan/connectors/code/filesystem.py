@@ -72,6 +72,8 @@ from shadowscan.connectors.code.catalogs import (
     configuration_document,
     project_catalog_files,
 )
+from shadowscan.connectors.code.dotnet_semantics import microsoft_tool_loop_matches
+from shadowscan.connectors.code.go_semantics import langchaingo_agent_matches
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
 from shadowscan.connectors.code.manifests import (
@@ -1944,7 +1946,10 @@ class FilesystemConnector(BaseConnector):
             return []
         if file.safe_lines is None:
             try:
-                file.safe_lines = _redacted_source(file.text, file.structure).splitlines()
+                # Match locations count LF only. Other separators can occur
+                # inside literals (Go raw imports may contain CR) and must not
+                # shift excerpts. _excerpt strips a CR left by a CRLF ending.
+                file.safe_lines = _redacted_source(file.text, file.structure).split("\n")
             except (YAMLResourceLimitError, SanitizationLimitError) as exc:
                 self._withhold_excerpts(file.rel, exc)
                 file.structure = None
@@ -2248,7 +2253,7 @@ class FilesystemConnector(BaseConnector):
         *,
         resolve_import: ImportResolver | None = None,
     ) -> tuple[list[Match], list[tuple[int, int]]]:
-        """Return bound evidence, including narrow typed-field registration for Java.
+        """Return bound evidence, including narrow Java, Go and C# proofs.
 
         Also returns the spans of ``content_text`` the Python or JavaScript
         binder did not read, where the lexical evidence stands in for it: the
@@ -2258,6 +2263,10 @@ class FilesystemConnector(BaseConnector):
         lang = file.lang
         if file.ext == ".java":
             return spring_tool_registration_matches(self.index, content_text, ignored), []
+        if lang == "go":
+            return langchaingo_agent_matches(self.index, content_text, ignored), []
+        if file.ext == ".cs":
+            return microsoft_tool_loop_matches(self.index, content_text, ignored), []
         if lang not in {"python", "javascript"}:
             return [], []
         whole = [(0, len(content_text))]
@@ -2355,10 +2364,25 @@ class FilesystemConnector(BaseConnector):
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
                 continue
             if file.lang not in {"python", "javascript"}:
-                # Other languages have lexical filtering but
-                # no import binder. Their code signatures need
-                # corroborating library evidence at emit time.
+                # Lexical candidates in these languages need
+                # corroborating library evidence at emit time;
+                # narrow import proofs are recorded separately.
                 m.extra["lexical_source"] = file.lang
+                if file.ext == ".cs" and m.signature_id == "heuristic.tool-use":
+                    # A local collection called tools is not registered model
+                    # dispatch, and may be cleared or disabled before use.
+                    # Keep the idiom for review; the C# loop proof owns the
+                    # active capability rather than this declaration's name.
+                    m.extra["contextual_capabilities"] = m.capabilities()
+                if (file.lang == "go" and m.signature_id == "framework.langchaingo") or (
+                    file.ext == ".cs" and m.signature_id == "framework.microsoft-extensions-ai"
+                ):
+                    # These languages have narrow import/receiver proofs.
+                    # A package elsewhere in the project does not bind this
+                    # receiver; defining a function tool does not configure a
+                    # model-directed loop. Retain the lexical candidate only.
+                    m.extra["verified_agent"] = False
+                    m.extra["source_capabilities"] = []
             elif m.signature.category != "framework":
                 if m.signature_id in {
                     "heuristic.tool-use",

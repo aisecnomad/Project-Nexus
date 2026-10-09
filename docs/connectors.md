@@ -10,6 +10,11 @@ written atomically with mode 0600 in a 0700 directory and JWT inputs are never
 exported. Every connector instance has a collision-resistant export filename,
 including repeated connector names or labels that normalize to the same text. Redaction
 removes sensitive values, so an export is not a lossless copy of the API response.
+Exports must satisfy strict JSON and the same encoded byte limits as replay.
+A rejected replacement marks the scan incomplete, preserves an existing file,
+and leaves that instance unexported in the current manifest. Check the manifest
+before replaying a path from an earlier run. A complete zero-record export is an
+explicit empty record envelope. See [migration guidance](production.md#october-9-scan-evidence-corrections-unreleased).
 Live HTTP endpoints require HTTPS; redirects and pagination cannot send credentials
 to another origin. Denied access, collection failures, pagination limits and
 oversized or slow responses (see
@@ -155,7 +160,11 @@ For the October 1 code-collection and capability corrections, review the
 [source coverage policy](scanning.md#coverage-policy). Added regression tests
 do not raise a connector's live-acceptance or field-evaluation status.
 
-Connector availability is not production acceptance. This snapshot describes evidence published in this repository, not private tenant work or guarantees for a particular deployment. It was prepared on 2026-09-27 from [`main` at `3761a09`](https://github.com/aisecnomad/Project-Nexus/commit/3761a09d15ba0d10e24ad96d210b5405fa9c4497). Refresh it when new evidence is accepted.
+Connector availability is not production acceptance. This summary describes
+published evidence, not private tenant work or guarantees for a deployment.
+The release status was refreshed on 2026-10-09 against the published 0.1.2
+release; the field and tenant evidence remains subject to the limits below.
+Unreleased changes require a new final-revision review and acceptance evidence.
 
 | Scope | Evidence published in this repository | Status supported by that evidence |
 |---|---|---|
@@ -163,7 +172,7 @@ Connector availability is not production acceptance. This snapshot describes evi
 | `cloud.aws`, `saas.slack` | Offline replay, stubbed API/SDK tests, and a read-only canary runner for exact tenant scopes. | Canary-capable; no live tenant acceptance is recorded. |
 | Other built-in connectors | Per-connector unit, fixture, and mocked-provider coverage at varying depth; no connector-specific live acceptance receipts are published. | Regression-tested; live acceptance is unestablished. |
 | Cross-connector field accuracy | No fresh, independently sampled and human-double-labeled representative holdout is published. The bundled AI-labeled corpus does not satisfy this requirement. | Not field-evaluated. |
-| Release candidate | No qualifying independent approval is recorded for a frozen release-candidate SHA. | Not independently reviewed for release. |
+| Published 0.1.2 | [Release and wheel evidence](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2), plus a [non-author approval on the release source tree](https://github.com/aisecnomad/Project-Nexus/pull/160#pullrequestreview-5459628229). | Published alpha; this does not approve a later candidate or establish field accuracy. |
 
 Use these labels literally:
 
@@ -228,6 +237,11 @@ A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
+Supported Go SDK import aliases are resolved before source evidence is
+excerpted; reports remain confidential. Ordinary Rust multiline strings and
+supported JSX in `.js`, `.mjs` and `.cjs` can be analyzed without false lexical
+incompleteness. Ambiguous or unterminated source still marks the scan incomplete.
+
 `package.json` npm aliases (`"runtime": "npm:@langchain/langgraph@^1"`) are
 attributed to the target package, not the local alias name. Malformed alias
 targets mark coverage incomplete while valid neighboring dependencies remain
@@ -238,7 +252,9 @@ Python and common JavaScript/TypeScript constructors are resolved against import
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
 Confidence groups cap repeated observations of the same technology. Unsupported
-dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
+dynamic imports, re-exports and uncertain bindings remain usage evidence. Narrow
+Go and C# proofs additionally require imported receivers and supported tool flows;
+C# automatic tool modes require an unshadowed SDK type or alias. Other
 languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
@@ -585,17 +601,20 @@ producer and delivery chain before treating them as verified production facts.
 
 A caller is titled **Agentic caller** when at least one agent indicator
 holds: requests carried tool definitions or responses invoked tools; a user
-agent belongs to a coding agent or agent framework; requests invoked a hosted
-agent runtime (Bedrock `InvokeAgent` or AgentCore runtimes, the Assistants
-API, Vertex AI Agent Engine, Dialogflow CX sessions; tag `agent-runtime-api`);
+agent belongs to a coding agent or agent framework; requests attempted a supported
+hosted-agent invocation (Bedrock `InvokeAgent` or AgentCore runtimes, Assistants
+runs, Vertex AI Agent Engine, Dialogflow CX sessions; tag `agent-runtime-api`);
 requests reached an MCP endpoint (`/mcp`, or `/sse` and `/messages` on a
-host a signature identifies as an MCP server; tag `mcp-client`); a
-programmatic caller made runs of three or more model calls at distinct times
-at most 30 seconds apart (tag `agent-loop`; simultaneous calls count once); or corroborated round-the-clock activity. The last
-two are heuristics read from request times alone: a batch script or a chat
-front end that makes several calls per message has the same cadence, so read
-`metadata.agent_behaviour` before acting on the label. A caller whose
+host a signature identifies as an MCP server; tag `mcp-client`); or corroborated
+round-the-clock activity. Cadence remains a weak hint: three or more model calls
+at distinct times at most 30 seconds apart can add `agent-loop`, but that tag
+alone does not promote the caller to an agent. A batch script or chat front end
+can have the same timing pattern. Read `metadata.agent_behaviour` before acting
+on the label. A caller whose
 requests mostly carry a browser user agent is never counted as a loop.
+Invocation evidence binds method, provider and operation within the same event.
+Management/list/poll/cancel requests cannot supply it, and an invocation attempt
+does not by itself establish success or the `tool-use` capability.
 Calling a model API is LLM use: the domains
 and names of AI SaaS apps (`*.openai.com`, `*.anthropic.com`) do not make a
 caller agentic. A product name matched in a key alias or a user name is a
@@ -942,13 +961,14 @@ Reports, per client address, the AI services contacted in DNS, TLS and flow
 telemetry: Zeek `dns.log`, `ssl.log` and `conn.log` (TSV or JSON), Route 53
 Resolver query logs, VPC Flow Logs, and generic JSON or CSV DNS and SNI
 records. Host names match a signature's exact domain or declared wildcard,
-never a substring, and only AI host names are kept. A flow is attributed only
-by its Zeek `uid` to an AI TLS server name, or through DNS answers in the
-same input; an address that also resolved to another service's host is
-shared and attributes nothing. Coding-agent, MCP and hosted-agent services
+never a substring. Non-AI TLS names are retained as negative attribution evidence.
+A flow is attributed by its connection identity to an AI TLS server name, or
+through unambiguous DNS answers in the same input. Conflicting identities and
+explicit non-AI TLS evidence prevent fallback attribution. Coding-agent, MCP and hosted-agent services
 are tagged `agent-service`; runs of connections to a model API seconds apart
 are tagged `agent-loop`. Malformed or unrecognized records make the scan
-incomplete.
+incomplete. VPC `SKIPDATA` and invalid or contradictory logging statuses also
+make coverage incomplete; `NODATA` is a valid no-traffic observation.
 
 Options: `format` (`zeek`, `route53`, `vpc-flow`, `generic`; default auto),
 `label` (network name; default `network`), `max_records`. See the

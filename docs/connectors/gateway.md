@@ -63,7 +63,8 @@ Hosted invocation classification (tag `agent-runtime-api`) requires an HTTP
 `POST`, an exact invocation path, and the matching service host **from the same
 record**. Supported operations are Bedrock `InvokeAgent`, AgentCore runtime
 invocations, OpenAI/Azure Assistants run creation or tool-output submission,
-Vertex AI Agent Engine queries, and Dialogflow CX session invocation. Listing,
+Vertex AI Agent Engine queries, and Dialogflow CX `detectIntent` or
+`serverStreamingDetectIntent` session invocation. Listing,
 reading, creating or deleting assistant definitions and updating/cancelling
 runs do not count. Paths alone, a provider name, an unknown upstream host or a
 missing method do not prove invocation. Native Vertex audit logs can instead
@@ -82,13 +83,21 @@ does not identify an upstream provider. Absolute URLs, custom domains, private
 endpoint aliases, and unrecognized route prefixes are not mapped to these
 operations. Export a path and the canonical upstream host; unsupported aliases
 remain ordinary service-contact evidence. Managed cloud-service host matches
-alone also do not add agent or tool-use indicators.
+alone also do not add agent or tool-use indicators; product names in caller or
+end-user labels do not establish capabilities either.
 
 Operation matching follows the provider request contracts: [Bedrock
 InvokeAgent](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_InvokeAgent.html),
 [AgentCore InvokeAgentRuntime](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeAgentRuntime.html),
 [AgentCore service endpoints](https://docs.aws.amazon.com/general/latest/gr/bedrock_agentcore.html),
 and the [Vertex execution service](https://docs.cloud.google.com/dotnet/docs/reference/Google.Cloud.AIPlatform.V1/latest/Google.Cloud.AIPlatform.V1.ReasoningEngineExecutionServiceClient).
+Additional route contracts are [OpenAI thread runs](https://developers.openai.com/api/reference/python/resources/beta),
+[Azure thread runs](https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/threads),
+[Vertex queries](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.reasoningEngines/query),
+[Vertex streaming queries](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.reasoningEngines/streamQuery),
+and [Dialogflow server streaming](https://docs.cloud.google.com/dialogflow/cx/docs/reference/rest/v3/projects.locations.agents.sessions/serverStreamingDetectIntent).
+OpenAI Assistants paths remain supported for historical exports; the
+[service was sunset on 26 August 2026](https://developers.openai.com/api/docs/assistants/migration).
 
 A programmatic caller making runs of three or more model calls at distinct
 times at most 30 seconds apart receives the informational `agent-loop` tag.

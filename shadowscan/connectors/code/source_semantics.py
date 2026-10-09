@@ -12,9 +12,9 @@ file; JavaScript statement nesting is bounded to 128 levels and source calls to
 cannot resolve to any signature skips the binder at any size, since it could
 yield no evidence (``_python_bindable``, linear in the file and bounded to 4,096
 statement matches). Regex operations share the scanner's per-input deadline.
-Other source languages do not use this resolver: filesystem
-classification requires matching import/dependency evidence for their lexical
-framework signals, and caps uncorroborated code evidence at 0.6.
+Other source languages use separate narrow Java/Go/C# proofs where supported;
+their lexical framework signals require matching import/dependency evidence,
+and uncorroborated lexical code evidence is capped at 0.6.
 """
 
 from __future__ import annotations
@@ -610,20 +610,26 @@ class _PythonBindings(ast.NodeVisitor):
         self.visit(node.iter)
         # Empty literal collections cannot enter a synchronous for body.
         # Async iteration and calls (including range()) are not evaluated.
-        if not isinstance(node, ast.AsyncFor) and (
-            isinstance(node.iter, (ast.List, ast.Tuple, ast.Set))
-            and not node.iter.elts
-            or isinstance(node.iter, ast.Dict)
-            and not node.iter.keys
-            or isinstance(node.iter, ast.Constant)
-            and isinstance(node.iter.value, (str, bytes))
-            and not node.iter.value
-        ):
+        if not isinstance(node, ast.AsyncFor) and self._empty_literal_iterable(node.iter):
             return self._visit_block(node.orelse)
         has_break = self._visit_loop(node.body, node.target)
         return self._loop_else(node.orelse, has_break=has_break)
 
     visit_AsyncFor = visit_For
+
+    @staticmethod
+    def _empty_literal_iterable(node: ast.AST) -> bool:
+        # No evaluation, name resolution or recursion: unpackings, calls and
+        # dynamic containers cannot prove that an iteration is empty.
+        return (
+            isinstance(node, (ast.List, ast.Tuple, ast.Set))
+            and not node.elts
+            or isinstance(node, ast.Dict)
+            and not node.keys
+            or isinstance(node, ast.Constant)
+            and isinstance(node.value, (str, bytes))
+            and not node.value
+        )
 
     def visit_While(self, node: ast.While) -> bool:
         self.visit(node.test)
@@ -667,21 +673,45 @@ class _PythonBindings(ast.NodeVisitor):
         # The first iterable is evaluated in the outer scope; targets and the
         # result expression live in the comprehension's implicit local scope.
         self.visit(node.generators[0].iter)
-        self.scopes.append({})
+        # All targets are locals throughout that scope, including targets of
+        # later generators. An earlier filter cannot resolve a later target to
+        # an enclosing import (Python would raise UnboundLocalError).
+        locals_: dict[str, _Binding | None] = {
+            target.id: None
+            for generator in node.generators
+            for target in ast.walk(generator.target)
+            if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store)
+        }
+        self.scopes.append(locals_)
         self.scope_kinds.append("comprehension")
-        for number, generator in enumerate(node.generators):
-            if number:
-                self.visit(generator.iter)
-            self._store(generator.target)
-            for condition in generator.ifs:
-                self.visit(condition)
-        if isinstance(node, ast.DictComp):
-            self.visit(node.key)
-            self.visit(node.value)
-        else:
-            self.visit(node.elt)
-        self.scopes.pop()
-        self.scope_kinds.pop()
+        try:
+            for number, generator in enumerate(node.generators):
+                if number:
+                    self.visit(generator.iter)
+                if not generator.is_async and self._empty_literal_iterable(generator.iter):
+                    return
+                self._store(generator.target)
+                for condition in generator.ifs:
+                    # The filter itself can construct an agent even when a
+                    # later filter or iterable prevents the result expression.
+                    self.visit(condition)
+                    if (
+                        isinstance(condition, ast.Constant)
+                        and not condition.value
+                        or self._empty_literal_iterable(condition)
+                    ):
+                        return
+            # Generator bodies are lazy, but remain potential construction
+            # evidence, like function bodies. Only provably unreachable bodies
+            # are removed; no consumption or runtime execution is inferred.
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+        finally:
+            self.scopes.pop()
+            self.scope_kinds.pop()
 
     visit_ListComp = _comprehension
     visit_SetComp = _comprehension

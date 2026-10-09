@@ -28,6 +28,7 @@ from shadowscan.connectors.agent_behavior import (
         ("/openai/threads/thread_abc/runs/run_1/submit_tool_outputs?api-version=2024-05-01", "sample.openai.azure.com", "Assistants API run"),
         ("/v1/projects/p/locations/us-central1/reasoningEngines/123:streamQuery", "us-central1-aiplatform.googleapis.com", "Vertex AI Agent Engine"),
         ("/v3/projects/p/locations/global/agents/a/sessions/s:detectIntent", "dialogflow.googleapis.com", "Dialogflow CX agent session"),
+        ("/v3/projects/p/locations/us-central1/agents/a/environments/e/sessions/s:serverStreamingDetectIntent", "us-central1-dialogflow.googleapis.com", "Dialogflow CX agent session"),
     ],
 )  # fmt: skip
 def test_agent_operations(path, host, label):
@@ -275,8 +276,32 @@ def test_gateway_hosted_operation_fixture(run_connector):
     findings, ctx = run_connector("gateway.logs", input=str(path))
     assert not ctx.stats.incomplete
     by = {finding.metadata["caller"]: finding for finding in findings}
-    positives = {"openai-run", "tool-submission", "bedrock-run", "azure-run", "native-vertex"}
-    assert positives <= by.keys()
+    positives = {
+        "openai-run",
+        "tool-submission",
+        "bedrock-run",
+        "azure-run",
+        "native-vertex",
+        "agentcore-run",
+        "vertex-query",
+        "dialogflow-stream",
+    }
+    negatives = {
+        "inventory-job",
+        "run-list",
+        "run-read",
+        "assistant-delete",
+        "assistant-create",
+        "method-missing",
+        "wrong-service",
+        "mixed-provenance",
+        "runtime-read",
+        "control-plane-read",
+        "session-list",
+        "dialogflow-wrong-stream-path",
+        "agentcore-reader",
+    }
+    assert set(by) == positives | negatives
     for name, finding in by.items():
         assert ("agent-runtime-api" in finding.tags) is (name in positives), name
         assert finding.title.startswith("Agentic caller" if name in positives else "LLM caller"), name
@@ -288,6 +313,37 @@ def test_gateway_hosted_operation_fixture(run_connector):
     # Three distinct calls must keep their own path/host/method provenance.
     assert by["mixed-provenance"].metadata["events"] == 3
     assert by["inventory-job"].metadata["events"] == 5
+    # An attempted invocation denied by the provider remains an error.
+    assert by["azure-run"].metadata["errors"] == 1
+
+
+def test_hosted_invocation_classified_before_display_path_truncation(run_connector, tmp_path):
+    path = "/agents/AGENT12345/agentAliases/TSTALIASID/sessions/" + "s" * 100 + "/text"
+    caller = "Boto3/1.35.10"
+    findings = _scan(
+        run_connector,
+        tmp_path,
+        [_line(START, path, "bedrock-agent-runtime.us-east-1.amazonaws.com", caller)],
+    )
+    assert "agent-runtime-api" in findings[caller].tags
+    assert findings[caller].metadata["agent_behaviour"]["agent_operations"] == {
+        "Amazon Bedrock InvokeAgent": 1
+    }
+    assert all(len(operation) <= 120 for operation in findings[caller].metadata["operations"])
+    assert "tool-use" not in findings[caller].capabilities
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/proxy/v1/threads/thread_1/runs",
+        "/v1/threads/thread_1/runs/extra",
+        "/v1/threads/thread_1/runs/run_1/submit_tool_outputs/extra",
+        "https://api.openai.com/v1/threads/thread_1/runs",
+    ],
+)
+def test_hosted_invocation_requires_exact_provider_path(path):
+    assert not agent_operations({path: 1}, method="POST", host="api.openai.com")
 
 
 def test_native_vertex_requires_schema_service_and_precise_rpc():

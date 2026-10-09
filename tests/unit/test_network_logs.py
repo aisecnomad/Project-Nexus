@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.network import logs as network_logs
 from shadowscan.connectors.network.logs import NetworkLogConnector, _host, _int, _zeek_escape
@@ -182,6 +184,79 @@ def test_vpc_flows_with_the_default_format_and_no_header(run_connector, tmp_path
     found, stats = scan(run_connector, tmp_path)
     assert not stats.warnings
     assert found[("10.0.0.4", "provider.mistral")].metadata["flows"] == 1
+
+
+@pytest.mark.parametrize("suffix", ["log", "json"])
+@pytest.mark.parametrize("status", ["SKIPDATA", "UNKNOWN", "-"])
+def test_vpc_missing_capture_or_unknown_status_fails_cli_closed(tmp_path, suffix, status):
+    path = tmp_path / f"flow.{suffix}"
+    if suffix == "log":
+        # AWS's default v2 layout uses '-' for the missing flow fields.
+        path.write_text(
+            f"2 123456789010 eni-11111111aaaaaaaaa - - - - - - - 1431280876 1431280934 - {status}\n"
+        )
+    else:
+        path.write_text(json.dumps({"srcaddr": "-", "dstaddr": "-", "log-status": status}))
+    result = CliRunner().invoke(main, ["run", "network.logs", "--input", str(path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.stdout)
+    assert report["summary"]["complete"] is False
+    assert report["findings"] == []
+    message = "SKIPDATA reports uncaptured flows" if status == "SKIPDATA" else "invalid VPC flow log-status"
+    assert message in result.output
+
+
+@pytest.mark.parametrize("suffix", ["log", "json"])
+def test_vpc_nodata_remains_a_complete_empty_cli_result(tmp_path, suffix):
+    path = tmp_path / f"flow.{suffix}"
+    if suffix == "log":
+        path.write_text("2 123456789010 eni-11111111aaaaaaaaa - - - - - - - 1431280876 1431280934 - NODATA\n")
+    else:
+        path.write_text(json.dumps({"log_status": "NODATA"}))
+    result = CliRunner().invoke(main, ["run", "network.logs", "--input", str(path), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.stdout)
+    assert report["summary"]["complete"] is True
+    assert report["findings"] == []
+
+
+@pytest.mark.parametrize("status", [None, False, 0, "", " ", [], {}, ["OK"], "untrusted-status-value"])
+@pytest.mark.parametrize("field", ["log-status", "log_status"])
+def test_vpc_explicit_invalid_status_cannot_fall_back_to_ok(run_connector, tmp_path, field, status):
+    rows = [
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]},
+        {"srcaddr": "10.0.0.1", "dstaddr": "203.0.113.5", "dstport": 443, "bytes": 100, field: status},
+    ]
+    path = tmp_path / "flow.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert stats.incomplete and any("invalid VPC flow log-status" in w for w in stats.warnings)
+    assert all("untrusted-status-value" not in w for w in stats.warnings)
+    assert found[("10.0.0.1", "provider.openai")].metadata["flows"] == 0
+
+
+@pytest.mark.parametrize(
+    "statuses", [{"log-status": "OK", "log_status": "SKIPDATA"}, {"log_status": "SKIPDATA"}]
+)
+def test_vpc_status_only_json_fails_closed_without_flow_endpoints(tmp_path, statuses):
+    path = tmp_path / "flow.json"
+    path.write_text(json.dumps(statuses))
+    result = CliRunner().invoke(main, ["run", "network.logs", "--input", str(path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.stdout)["summary"]["complete"] is False
+
+
+@pytest.mark.parametrize("statuses", [{}, {"log-status": "OK", "log_status": "ok"}])
+def test_vpc_optional_or_matching_statuses_preserve_normal_flows(run_connector, tmp_path, statuses):
+    rows = [
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]},
+        {"srcaddr": "10.0.0.1", "dstaddr": "203.0.113.5", "dstport": 443, "bytes": 100, **statuses},
+    ]
+    path = tmp_path / "flow.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and not stats.warnings
+    assert found[("10.0.0.1", "provider.openai")].metadata["bytes_out"] == 100
 
 
 def test_caps_on_clients_and_pairs(run_connector, tmp_path, monkeypatch):

@@ -20,3 +20,8 @@
 {"remote_user": "runtime-read", "host": "bedrock-agent-runtime.us-east-1.amazonaws.com", "request_method": "GET", "request_uri": "/agents/A/agentAliases/B/sessions/s/text", "status": 200}
 {"remote_user": "control-plane-read", "host": "bedrock-agentcore-control.us-east-1.amazonaws.com", "request_method": "GET", "request_uri": "/runtimes/abc/invocations", "status": 200}
 {"remote_user": "session-list", "host": "dialogflow.googleapis.com", "request_method": "GET", "request_uri": "/v3/projects/p/locations/global/agents/a", "status": 200}
+{"remote_user": "agentcore-run", "host": "bedrock-agentcore.us-east-1.amazonaws.com", "request_method": "POST", "request_uri": "/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A123456789012%3Aruntime%2Fagent_a/invocations?qualifier=DEFAULT", "status": 200}
+{"remote_user": "vertex-query", "host": "us-central1-aiplatform.googleapis.com", "request_method": "POST", "request_uri": "/v1/projects/p/locations/us-central1/reasoningEngines/123:query", "status": 200}
+{"remote_user": "dialogflow-stream", "host": "us-central1-dialogflow.googleapis.com", "request_method": "POST", "request_uri": "/v3/projects/p/locations/us-central1/agents/a/environments/e/sessions/s:serverStreamingDetectIntent", "status": 200}
+{"remote_user": "dialogflow-wrong-stream-path", "host": "us-central1-dialogflow.googleapis.com", "request_method": "POST", "request_uri": "/v3/projects/p/locations/us-central1/agents/a/sessions/s:streamingDetectIntent", "status": 404}
+{"remote_user": "agentcore-reader", "host": "bedrock-agentcore-control.us-east-1.amazonaws.com", "request_method": "GET", "request_uri": "/runtimes", "status": 200}

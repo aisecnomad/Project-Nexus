@@ -4,7 +4,7 @@ Gateway, proxy and flow logs rarely carry request bodies, so tool definitions
 cannot always be seen. These checks read only what such logs keep: the
 operation path and HTTP method, the host, the user agent and request times.
 
-* **Hosted agent runtime operations**: the request invokes a managed agent
+* **Hosted agent runtime operations**: the request targets a managed agent
   (Amazon Bedrock ``InvokeAgent``, Bedrock AgentCore runtimes, the OpenAI and
   Azure Assistants API, Vertex AI Agent Engine, Dialogflow CX sessions).
 * **MCP endpoints**: the request reaches a Model Context Protocol server
@@ -70,7 +70,7 @@ _AGENT_OPERATIONS: tuple[tuple[str, str | None, re.Pattern[str], re.Pattern[str]
         re.compile(r"\A(?:[a-z0-9-]+-)?dialogflow\.googleapis\.com\Z"),
         re.compile(
             r"/v3(?:beta1)?/projects/[^/]+/locations/[^/]+/agents/[^/]+/"
-            r"(?:environments/[^/]+/)?sessions/[^/:]+:(?:detectIntent|streamingDetectIntent)"
+            r"(?:environments/[^/]+/)?sessions/[^/:]+:(?:detectIntent|serverStreamingDetectIntent)"
         ),
     ),
 )

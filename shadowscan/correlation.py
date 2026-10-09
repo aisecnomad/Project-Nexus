@@ -296,15 +296,13 @@ _PACKAGE_VERSION = re.compile(r"(?<=.)@[^/@]*$")
 
 
 def _device_key(value: str | None) -> str | None:
-    """A host name compared case-insensitively and without its DNS domain."""
+    """An exact device identity compared case-insensitively, retaining its DNS domain."""
     if not value or not isinstance(value, str):
         return None
     text = value.strip().lower()
-    if not text or REDACTED in text:
+    if not text or REDACTED.lower() in text:
         return None
-    if re.fullmatch(r"[\d.]+|[0-9a-f:]+", text):
-        return text
-    return text.split(".", 1)[0]
+    return text
 
 
 def _package_key(value: object) -> str | None:
@@ -358,7 +356,8 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
     A configured or installed tool with a running process on the same device
     is ``observed-running``. The link is recorded in ``metadata['lifecycle']``
     and as zero-weight evidence: corroboration changes neither confidence nor
-    risk. Devices match by host name without its DNS domain; MCP
+    risk. Devices match by their full account/device identity; a short host name
+    does not implicitly match an FQDN or a host in another DNS domain. MCP
     configurations match a running MCP server only through the same package.
     """
     groups: dict[tuple[str, str], list[Finding]] = {}
@@ -366,6 +365,10 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
         # Repeated calls replace earlier results.
         f.metadata.pop("lifecycle", None)
         f.evidence[:] = [ev for ev in f.evidence if ev.signal != "lifecycle:observed-running"]
+        if f.surface == Surface.ENDPOINT:
+            # Endpoint runtime tags are derived from this pass. Runtime
+            # process findings retain their own directly observed state.
+            f.tags[:] = [tag for tag in f.tags if tag != "observed-running"]
         if _LIFECYCLE_STATES.get((f.surface, f.kind)) is None:
             continue
         device = _device_key(f.account)

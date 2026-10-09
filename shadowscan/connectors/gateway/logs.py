@@ -1900,11 +1900,19 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         if c.label != REDACTED and not c.label.startswith(_OPAQUE_LABEL_PREFIXES):
             # An opaque pseudonym cannot carry a display name; skip the pass.
             apply_matches(
-                f, self.index.match_name(c.label), weight_scale=0.6, indicator_filter=_caller_indicator
+                f,
+                self.index.match_name(c.label),
+                weight_scale=0.6,
+                capabilities=False,
+                indicator_filter=_caller_indicator,
             )
         for u, _ in c.users.most_common(3):
             apply_matches(
-                f, self.index.match_name(str(u)), weight_scale=0.4, indicator_filter=_caller_indicator
+                f,
+                self.index.match_name(str(u)),
+                weight_scale=0.4,
+                capabilities=False,
+                indicator_filter=_caller_indicator,
             )
         return top_models, framework_user_agent
 
