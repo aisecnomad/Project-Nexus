@@ -264,11 +264,9 @@ require `allow_instance_credentials: true`; use an explicit audit identity by de
 Oversize files the scanner would inspect and symbolic links that leave the scan
 root make coverage incomplete (exit 3) by default. `--strict-coverage`
 (`strict_coverage: true`) records them as errors instead of warnings;
-`oversize_skip_globs` remain declared warnings. An in-root link is complete when
-its name is never read (for example, a lockfile or image), or when it is a source
-file whose target is analyzed in the same project with the same test
-classification. Directory links are incomplete because their alias paths are
-not scanned. A file analyzed by name but unreadable as text (a NUL byte outside
+`oversize_skip_globs` remain declared warnings. A link inside the scan root is
+analyzed as a copy of its target at the link's path; the walk never enters it.
+A file analyzed by name but unreadable as text (a NUL byte outside
 UTF-8, UTF-16 or UTF-32 with a byte-order mark) is also a gap. Non-empty
 `bin/`, `build/`, `dist/`, `vendor/` and similar directories skipped by default
 are listed in a warning; `--no-default-excludes` scans them. Evidence found only

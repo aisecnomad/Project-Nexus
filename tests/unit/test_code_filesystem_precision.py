@@ -2,7 +2,7 @@
 
 Instruction-file aliases, env-name-only coding agents and CI lockfiles parsed
 as MCP each marked a scan incomplete or reported evidence the tree does not
-support. Test-path credentials stay findings at the test-code weight, and
+support; an instruction-file alias is now analyzed as a copy of its target. Test-path credentials stay findings at the test-code weight, and
 oversize recorded fixtures stay coverage gaps. The paired controls pin the
 cases that must keep their finding or their coverage gap.
 Credentials are assembled at runtime so no key-shaped literal appears here.
@@ -44,40 +44,31 @@ def agent_configs(findings) -> list[str]:
 
 
 # ---------------------------------------------------------------- instruction aliases
+# A link is analyzed as a copy of its target at the link's path (see
+# test_symlink_aliases): an alias instruction file reports what a copy reports.
 @needs_symlinks
 @pytest.mark.parametrize("strict", [False, True])
-def test_instruction_doc_alias_in_same_project_is_covered(run_connector, tmp_path, strict):
+def test_instruction_doc_alias_reports_what_a_copy_reports(run_connector, tmp_path, strict):
     write(tmp_path, "AGENTS.md", "Repository instructions.\n")
     (tmp_path / "CLAUDE.md").symlink_to("AGENTS.md")
     findings, stats = scan(run_connector, tmp_path, strict_coverage=strict)
     assert not stats.errors and not stats.incomplete
-    assert agent_configs(findings) == ["coding-agent.agents-md"]
+    assert agent_configs(findings) == ["coding-agent.agents-md", "coding-agent.claude-code"]
 
 
 @needs_symlinks
-def test_instruction_doc_alias_into_another_project_stays_a_gap(run_connector, tmp_path):
+@pytest.mark.parametrize(
+    ("link", "target"),
+    [("pkg/CLAUDE.md", "../AGENTS.md"), ("tests/CLAUDE.md", "../AGENTS.md"), ("CLAUDE.md", "docs")],
+    ids=["another-project", "test-path", "directory"],
+)
+def test_instruction_doc_aliases_are_analyzed_as_copies(tmp_path, same_as_copy, link, target):
     write(tmp_path, "AGENTS.md", "Repository instructions.\n")
-    write(tmp_path, "pkg/pyproject.toml", "[project]\nname = 'pkg'\n")
-    (tmp_path / "pkg" / "CLAUDE.md").symlink_to("../AGENTS.md")
-    _, stats = scan(run_connector, tmp_path)
-    assert stats.incomplete
-
-
-@needs_symlinks
-def test_instruction_doc_alias_from_a_test_path_stays_a_gap(run_connector, tmp_path):
-    write(tmp_path, "AGENTS.md", "Repository instructions.\n")
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "CLAUDE.md").symlink_to("../AGENTS.md")
-    _, stats = scan(run_connector, tmp_path)
-    assert stats.incomplete
-
-
-@needs_symlinks
-def test_instruction_doc_alias_to_a_directory_stays_a_gap(run_connector, tmp_path):
     write(tmp_path, "docs/AGENTS.md", "Repository instructions.\n")
-    (tmp_path / "CLAUDE.md").symlink_to("docs")
-    _, stats = scan(run_connector, tmp_path)
-    assert stats.incomplete
+    write(tmp_path, "pkg/pyproject.toml", "[project]\nname = 'pkg'\n")
+    (tmp_path / link).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / link).symlink_to(target)
+    same_as_copy(tmp_path)
 
 
 # ---------------------------------------------------------------- test-path credentials

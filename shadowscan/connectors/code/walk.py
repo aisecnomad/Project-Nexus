@@ -13,7 +13,7 @@ import os
 import re
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from shadowscan.utils.files import open_confined_file
 
@@ -126,55 +126,9 @@ class _WalkCounters:
     examined: int = 0  # files and links counted toward max_files
     non_regular: int = 0  # entries named like analyzable content that are not regular files
     stop_at: float | None = None  # monotonic time after which link checks stop (deadline minus margin)
-    # Directory (POSIX, relative to the root) -> project root of the files in
-    # it, so a directory holding many links lists its ancestors once.
-    project_roots: dict[str, str] = field(default_factory=dict)
     budget: _WalkBudget = field(default_factory=_WalkBudget)
-
-
-def _project_root(
-    root: Path,
-    rel: str,
-    cache: dict[str, str] | None = None,
-    *,
-    budget: _WalkBudget | None = None,
-) -> str:
-    """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
-
-    That is the deepest ancestor directory below the scan root holding a
-    project marker, or ``"."``. Used for the symlink checks only; ``cache``
-    remembers the answer for every directory the lookup passed through, so a
-    tree planted with links costs one listing per directory, not per link.
-    """
-    directory = PurePosixPath(rel).parent.as_posix()
-    if cache is not None and directory in cache:
-        return cache[directory]
-    passed: list[str] = []
-    result = "."
-    budget = budget or _WalkBudget()
-    for parent in PurePosixPath(rel).parents:
-        ancestor = parent.as_posix()
-        if ancestor == ".":
-            break
-        passed.append(ancestor)
-        try:
-            budget.check()
-            names = []
-            with os.scandir(root / ancestor) as entries:
-                for entry in entries:
-                    budget.count_entry()
-                    names.append(entry.name)
-        except OSError:
-            continue
-        if _marks_project(root / ancestor, names):
-            result = ancestor
-            break
-    if cache is not None:
-        # Every directory between the file and its project root (or the scan
-        # root) shares the answer: no marker was found below the result.
-        for ancestor in passed:
-            cache.setdefault(ancestor, result)
-    return result
+    # Files to analyze at the paths of the links just checked: (rel, real path, project, size).
+    aliases: list[tuple[str, Path, str, int]] = field(default_factory=list)
 
 
 def _walk_directories(

@@ -247,7 +247,9 @@ them to `exclude` unless that is intended); version-control metadata (`.git`,
 `.hg`, `.svn`) is never scanned, since its index and objects are binary. The
 same option is accepted by `code.github` and `code.gitlab` and forwarded to the
 scan of each checkout.
-Unread oversized source files and symlinks leaving the root make a scan incomplete
+A symbolic link inside the root is analyzed as a copy of its target at the
+link's path (see the coverage policy). Unread oversized source files and symlinks
+leaving the root make a scan incomplete
 by default, as do binary content (a NUL byte) in an analyzable file, non-regular
 entries named like configuration files, and directory nesting deeper than the
 walker supports; `strict_coverage` promotes their diagnostics to errors.

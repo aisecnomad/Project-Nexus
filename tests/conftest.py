@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import functools
 import ipaddress
+import json
 import re
 import shutil
 import socket
@@ -312,3 +313,45 @@ def run_connector(index):
         return findings, ctx
 
     return _run
+
+
+def _canonical(value):
+    """An order-independent form of a report value: dicts by key, lists as sorted multisets."""
+    if isinstance(value, dict):
+        return {key: _canonical(item) for key, item in sorted(value.items())}
+    if isinstance(value, list):
+        return sorted((_canonical(item) for item in value), key=lambda item: json.dumps(item, sort_keys=True))
+    return value
+
+
+@pytest.fixture
+def same_as_copy(run_connector):
+    """Scan a tree with symbolic links and a copy with the links materialized; both must agree.
+
+    A link inside the scan root is analyzed as a copy of its target would be at
+    the link's path. The scan with links must be complete and report what the
+    materialized copy reports, apart from the scan root's name.
+    """
+
+    def _check(root: Path, **config):
+        findings, ctx = run_connector("code.filesystem", path=str(root), use_git=False, **config)
+        copy = root.parent / f"{root.name}-materialized"
+        shutil.copytree(root, copy, symlinks=False)
+        copied, copy_ctx = run_connector("code.filesystem", path=str(copy), use_git=False, **config)
+        assert not copy_ctx.stats.incomplete, (copy_ctx.stats.warnings, copy_ctx.stats.errors)
+        assert not ctx.stats.incomplete, (ctx.stats.warnings, ctx.stats.errors)
+
+        def normalized(found, scanned: Path) -> list[str]:
+            out = []
+            for finding in found:
+                data = finding.to_dict()
+                data.pop("id", None)
+                out.append(
+                    json.dumps(_canonical(data), sort_keys=True, default=str).replace(str(scanned), "<root>")
+                )
+            return sorted(out)
+
+        assert normalized(findings, root) == normalized(copied, copy)
+        return findings, ctx
+
+    return _check

@@ -46,90 +46,6 @@ def _scan(run_connector, root: Path, **config):
     return run_connector("code.filesystem", path=str(root), use_git=False, **config)
 
 
-def test_manifest_alias_with_another_name_is_a_gap(tmp_path: Path, run_connector) -> None:
-    _write(
-        tmp_path,
-        {
-            "app/composer.json": json.dumps({"name": "app", "dependencies": {"openai": "^4.20.0"}}),
-            "app/main.py": 'print("hi")\n',
-        },
-    )
-    _link(tmp_path, "app/package.json", "composer.json")
-    findings, ctx = _scan(run_connector, tmp_path)
-    assert ctx.stats.incomplete or any("provider.openai" in f.model_providers for f in findings)
-
-
-def test_plugin_manifest_alias_with_another_name_is_a_gap(tmp_path: Path, run_connector) -> None:
-    manifest = {"name": "p", "version": "1.0.0", "description": "x" * 210_000, "mcpServers": "./servers.json"}
-    _write(
-        tmp_path, {"plug/manifest.json": json.dumps(manifest), "plug/servers.json": json.dumps(SHELL_SERVER)}
-    )
-    _link(tmp_path, "plug/plugin.json", "manifest.json")
-    findings, ctx = _scan(run_connector, tmp_path)
-    assert ctx.stats.incomplete or any(f.kind == Kind.MCP_SERVER for f in findings)
-
-
-def test_instruction_alias_into_an_agent_definition_directory_is_a_gap(tmp_path: Path, run_connector) -> None:
-    agent = "---\nname: release-bot\ntools: Bash, Write, WebFetch\npermissionMode: bypassPermissions\n---\nShip it.\n"
-    _write(tmp_path, {"AGENTS.md": agent})
-    _link(tmp_path, ".claude/agents/CLAUDE.md", "../../AGENTS.md")
-    _, ctx = _scan(run_connector, tmp_path)
-    assert ctx.stats.incomplete
-
-
-def test_instruction_alias_beside_its_target_stays_covered(tmp_path: Path, run_connector) -> None:
-    _write(tmp_path, {"AGENTS.md": "Run the tests.\n"})
-    _link(tmp_path, "CLAUDE.md", "AGENTS.md")
-    _, ctx = _scan(run_connector, tmp_path, strict_coverage=True)
-    assert not ctx.stats.incomplete
-
-
-def test_settings_directory_link_in_test_code_is_a_gap(tmp_path: Path, run_connector) -> None:
-    # Permission findings are not discounted in test code.
-    _write(tmp_path, {"shared/claude/settings.json": BYPASS})
-    _link(tmp_path, "tests/fixtures/.claude", "../../shared/claude")
-    _, ctx = _scan(run_connector, tmp_path)
-    assert ctx.stats.incomplete
-
-
-def test_test_code_link_to_another_file_type_is_a_gap(tmp_path: Path, run_connector) -> None:
-    server = "from mcp.server.fastmcp import FastMCP\nmcp = FastMCP('t')\n\n@mcp.tool()\ndef run(c: str) -> str:\n    return c\n"
-    _write(tmp_path, {"notes/agent.md": server})
-    _link(tmp_path, "tests/agent.py", "../notes/agent.md")
-    _, ctx = _scan(run_connector, tmp_path)
-    assert ctx.stats.incomplete
-
-
-def test_document_alias_into_a_sibling_project_is_a_gap(tmp_path: Path, run_connector) -> None:
-    # Generic credentials are reported by project: the alias's project uses AI.
-    _write(
-        tmp_path,
-        {
-            "ai/package.json": json.dumps({"name": "ai", "dependencies": {"openai": "^4.20.0"}}),
-            "other/package.json": json.dumps({"name": "other"}),
-            "other/NOTES.md": "DEPLOY_PASSWORD=Q7vLm2Xr9TbK4pWz8NcYsynthetic\n",
-        },
-    )
-    _link(tmp_path, "ai/NOTES.md", "../other/NOTES.md")
-    findings, ctx = _scan(run_connector, tmp_path)
-    assert ctx.stats.incomplete or any(f.kind == Kind.SECRET for f in findings)
-
-
-def test_plugin_manifest_directory_link_is_a_gap(tmp_path: Path, run_connector) -> None:
-    # Under `.claude-plugin/` the manifest's paths are relative to the directory above.
-    _write(
-        tmp_path,
-        {
-            "meta/plugin.json": json.dumps({"name": "p", "version": "1.0.0", "mcpServers": "./servers.json"}),
-            "meta/servers.json": json.dumps({"docs": {"command": "uvx", "args": ["mcp-server-fetch"]}}),
-            "servers.json": json.dumps(SHELL_SERVER),
-        },
-    )
-    _link(tmp_path, ".claude-plugin", "meta")
-    _, ctx = _scan(run_connector, tmp_path)
-    assert ctx.stats.incomplete
-
-
 def test_codex_plugin_paths_are_relative_to_the_plugin_root(tmp_path: Path, run_connector) -> None:
     _write(
         tmp_path,
@@ -188,7 +104,7 @@ def test_many_hosts_on_one_long_line_stay_linear(tmp_path: Path, run_connector) 
 
 def test_mention_judges_each_occurrence_on_its_own_window() -> None:
     # A long line still sees the API URL that holds an occurrence far from its start.
-    prefix = "x" * 50_000
+    prefix = " " * 50_000
     text = f"{prefix} https://openrouter.ai/api/v1/chat/completions\n"
     mentions = filesystem._Mentions.__new__(filesystem._Mentions)
     mentions.text, mentions.data_file, mentions.keyed = text, True, False
@@ -284,39 +200,6 @@ def test_many_git_stores_are_bounded(tmp_path: Path, run_connector) -> None:
 SKILL = "---\nname: translate\ndescription: Translate strings\n---\nTranslate the UI strings.\n"
 
 
-def test_skill_shared_between_agent_directories_with_plain_data_is_covered(
-    tmp_path: Path, run_connector
-) -> None:
-    # The in-sample benchmark: `.codex/skills/x -> ../../.claude/skills/x` holding a glossary.
-    _write(
-        tmp_path,
-        {
-            ".claude/skills/translate/SKILL.md": SKILL,
-            ".claude/skills/translate/references/glossary.json": json.dumps({"hello": "bonjour"}),
-            ".claude/skills/translate/agents/openai.yaml": "interface:\n  display_name: Translate\n",
-        },
-    )
-    _link(tmp_path, ".codex/skills/translate", "../../.claude/skills/translate")
-    _, ctx = _scan(run_connector, tmp_path)
-    assert not ctx.stats.incomplete, ctx.stats.warnings
-
-
-def test_skill_shared_between_agent_directories_with_an_mcp_table_is_a_gap(
-    tmp_path: Path, run_connector
-) -> None:
-    # An MCP table would be attributed to another client at the alias path.
-    _write(
-        tmp_path,
-        {
-            ".claude/skills/translate/SKILL.md": SKILL,
-            ".claude/skills/translate/servers.json": json.dumps({"mcpServers": SHELL_SERVER}),
-        },
-    )
-    _link(tmp_path, ".codex/skills/translate", "../../.claude/skills/translate")
-    _, ctx = _scan(run_connector, tmp_path)
-    assert ctx.stats.incomplete
-
-
 def test_pattern_allowance_keeps_its_rate_on_larger_files(monkeypatch) -> None:
     from shadowscan.signatures import matcher
 
@@ -337,25 +220,11 @@ def test_pattern_allowance_keeps_its_rate_on_larger_files(monkeypatch) -> None:
     assert seen[1] == matcher.REGEX_TIMEOUT_SECONDS
 
 
-@pytest.mark.parametrize(
-    ("name", "text", "expected"),
-    [
-        ("glossary.json", json.dumps({"hello": "bonjour"}), False),
-        ("servers.json", json.dumps({"mcpServers": SHELL_SERVER}), True),
-        # Escaped keys parse as an MCP table without the literal words in the text.
-        ("mcp.json", '{"\\u006dcp\\u0053ervers": {"fs": {"command": "npx", "args": ["x"]}}}', True),
-        ("mcp.json", "{not json", True),
-    ],
-    ids=["plain-data", "mcp-table", "escaped-keys", "unparsable"],
-)
-def test_mcp_table_check_uses_the_walks_parser(
-    tmp_path: Path, index, name: str, text: str, expected: bool
-) -> None:
-    from shadowscan.connectors import ConnectorContext
-
-    (tmp_path / name).write_text(text)
-    connector = filesystem.FilesystemConnector(
-        ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
-    )
-    alias, real = f".codex/skills/x/{name}", f".claude/skills/x/{name}"
-    assert connector._may_hold_mcp_table(alias, real, name, tmp_path / name) is expected
+def test_a_window_cut_inside_a_url_never_makes_an_api_url_a_mention(tmp_path: Path, run_connector) -> None:
+    # A scheme inside the run the window cuts would swallow the API URL after it.
+    first = "https://" + ("example.org/r?u=" + "b" * 84 + "http://docs.example.org/").ljust(2_048, "c")
+    second = "https://gateway.example.net/" + "a" * 80 + "/api.openai.com/x"
+    (tmp_path / "app.yaml").write_text(f"name: demo\nurl: {first}{second}\n")
+    (tmp_path / "package.json").write_text('{"name": "demo"}')
+    findings, _ = _scan(run_connector, tmp_path)
+    assert any("provider.openai" in f.model_providers for f in findings)

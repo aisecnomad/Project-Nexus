@@ -6,50 +6,23 @@ A code scan is *complete* when every file it was asked to assess was assessed.
 Situations that are deliberately outside a repository's own content, and gaps
 that are never silent:
 
-* **Symbolic links** are never followed. A link is skipped silently when its
-  own name is one the scanner never reads (a lockfile, generated bundle or
-  image), or when it is a source file whose target is analyzed at its real path
-  in the same project, with the same test classification, extension and
-  file-name signals. A coding-agent instruction document (`AGENTS.md`,
-  `AGENT.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`,
-  `copilot-instructions.md`) that links to another instruction document in the
-  same project with the same test classification is also covered: the target is
-  scanned at its real path, so the alias is not a second agent definition and
-  its alias-only file name is not reported separately. A document alias
-  (`docs/guide/README.md -> ../../README.md`, a Markdown, text or
-  reStructuredText file) whose target the walk reads as it would read the
-  alias, in the alias's project or (when the alias's own name carries no
-  file-name signal) an enclosing one, is covered: a document is read only for
-  credentials and file-name signals, and a generic credential is reported
-  wherever an enclosing project's would be. A configuration alias with the same
-  file name, in the same project, is covered on the same terms as a source
-  alias; parsers dispatch on the file name, so another name is a gap. Alias and
-  real paths must agree on every rule that reads a directory name: agent
-  definitions, workflows, CI files, agent manifests, coding-agent settings and
-  their permission checks (`.claude`, `.codex`, `.gemini`, goose, OpenClaw),
-  the MCP client a configuration belongs to (for a file below a linked
-  directory, only when the scanner's MCP parser reads servers or errors from
-  it at either path, or it cannot be read), plugin manifest directories
-  (`.claude-plugin`, `.codex-plugin`), pipeline and catalog classification, and
-  test classification; instruction-document aliases are compared the same
-  way. A directory link into the same
-  project, such as a skill directory shared between coding agents
-  (`.claude/skills -> ../.agents/skills`), is covered when the link's own name
-  carries no file-name signal and every file below the target (at most 2,000,
-  with no link and no other project among them) is analyzed alike at its alias
-  and real paths; file-name evidence only the alias path carries (Claude Code's
-  `.claude/skills/x/SKILL.md`) is recorded at that path. The target directory
-  is listed at its real path; the link is never entered, and listing targets
-  stops at 20,000 entries per scan root, after which directory links are gaps.
-  A dangling link whose own name carries no file-name signal and whose target
-  would be inside the tree hides nothing and is noted with a warning. A link
-  under a test path that these rules would cover apart from its test
-  classification follows the test-code policy. Every other link makes
-  the scan incomplete (exit code 3): directory links into another project, a
-  test directory or an agent-definition directory; other configuration
-  aliases, whose parsing can depend on their path; aliases into another
-  project or test directory; links into excluded or unread content; links
-  outside the root; and unresolved links.
+* **Symbolic links** are never entered by the walk. A link that resolves inside
+  the scan root is analyzed as a copy of its target would be at the link's
+  path, which is what a client that follows the link reads (a coding agent
+  loading `.claude/skills -> ../.agents/skills`). The target is read at its
+  real path, relative to the opened scan root and without following a link in
+  any path component, and every rule that depends on a path sees the link's
+  path: exclusions, file names, projects, test classification, coding-agent
+  settings and agent-definition directories, plugin roots, template paths and
+  local Python modules (looked up beside the link). Findings name the link's
+  path, so content reachable at two paths is reported at both, as two copies
+  would be. A directory link's target is listed at its real path; at most
+  20,000 files and directories per scan root are analyzed this way. A dangling
+  link whose own name carries no file-name signal and whose target would be
+  inside the tree hides nothing and is noted with a warning. Every other link
+  makes the scan incomplete (exit code 3): links that leave the root or do not
+  resolve, a cycle (a link inside its own target), a link or `.gitmodules` file
+  below a linked directory, and links beyond the 20,000-entry budget.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the

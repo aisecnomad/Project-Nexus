@@ -36,45 +36,36 @@ the deadline; regression tests cover slow reporting and slow project analysis.
 ### October 8 benchmark remediation: symbolic links
 
 In the real-world benchmark, 11 scans were incomplete because of a symbolic
-link, and every link pointed inside its repository. Links are still never
-followed; each new rule decides from real paths and has a regression test.
+link, and every link pointed inside its repository: skill directories shared
+between coding agents (`.claude/skills -> ../.agents/skills`), README and plan
+documents linked from another directory, model configurations linked under a
+second provider, test fixtures and dangling links.
 
-- A directory link into the same project (a skill directory shared between
-  coding agents, `.claude/skills -> ../.agents/skills`) is covered when every
-  file below the target, listed at its real path, is analyzed alike at its
-  alias path. File-name evidence only the alias path carries is recorded there.
-  Links into another project, a test directory or an agent-definition
-  directory, cycles, nested links and over 2,000 files stay gaps.
-- A document alias (`docs/guide/README.md -> ../../README.md`) and a
-  configuration alias with the same file name are covered like source aliases.
-- A dangling link inside the tree, whose name carries no file-name signal, is
-  noted with a warning; a dangling `.mcp.json` stays a gap.
-- A link in test code follows the test-code policy when it would be covered
-  outside test code, apart from its test classification: same file type,
-  project and directory rules, a target that is read, and no file-name signal
-  only the link's name adds (`tests/CLAUDE.md`). A link into excluded content
-  (`node_modules`, `build`), to another file type, or a directory link whose
-  files would be read differently (`tests/fixtures/.claude`) stays a gap.
-- An independent review found aliases these rules called covered while the
-  alias path would have been read differently; each is a gap again, with a
-  regression test. Alias and real paths must agree on every rule that reads a
-  parent directory: coding-agent settings and their permission checks
-  (`.claude`, `.codex`, `.gemini`, goose, OpenClaw), the MCP client a
-  configuration belongs to (compared for a file in a linked directory only
-  when the MCP parser reads servers or errors from it, so a skill's glossary shared
-  between `.claude/skills` and `.codex/skills` is covered), plugin manifest
-  directories (`.claude-plugin`,
-  `.codex-plugin`), catalog and pipeline classification, workflows, CI files,
-  agent definitions, agent manifests and test classification; coding-agent
-  instruction aliases (`CLAUDE.md -> AGENTS.md`) are compared the same way. A
-  document alias needs a target the walk reads as it would read the alias
-  (`README.md -> docs/index.rst` is a gap), in the alias's own project or, when
-  the alias carries no file-name signal, an enclosing one: generic credentials
-  are reported by project. A configuration alias needs the same file name,
-  since parsers dispatch on it (`package.json -> composer.json` and
-  `plugin.json -> manifest.json` are gaps). Alias enumeration has a total
-  budget of 20,000 entries per scan root, so a link farm is a gap rather than
-  a slow scan, and alias paths escape undecodable names as the walk does.
+- A link that resolves inside the scan root is analyzed as a copy of its
+  target would be at the link's path, which is what a client that follows the
+  link reads. The walk never enters a link: the target is read at its real
+  path, relative to the open scan root and without following a link in any
+  path component, and every path rule sees the link's path (exclusions, file
+  names, projects, test classification, coding-agent and agent-definition
+  directories, plugin roots, template paths, local Python modules). Findings
+  name the link's path. A directory link's target is listed at its real path,
+  and at most 20,000 files and directories per scan root are analyzed this
+  way. Links leaving the root, unresolved links, cycles, a link or
+  `.gitmodules` below a linked directory, and links beyond that budget stay
+  gaps. A dangling link inside the tree whose name carries no file-name signal
+  is noted with a warning; a dangling `.mcp.json` stays a gap.
+- The first version of this change kept links unread and covered an alias
+  only when rules proved it would be analyzed like its target's real path.
+  Three independent reviews kept proving rules it missed, each a repository
+  reported complete while losing evidence: directory names that select
+  permission checks (`.claude`, `.codex`, `.gemini`), the MCP client a
+  configuration belongs to, plugin roots, template paths, parsers that
+  dispatch on a file name, per-project credential reporting, local Python
+  modules beside a file, and test-code links into excluded content. Analyzing
+  the copy makes the reviewers' own oracle exact: a regression test checks 39
+  link layouts, including every one the reviews proved, against the same tree
+  with its links materialized (`same_as_copy` in `tests/conftest.py`); the
+  earlier design failed 33 of them.
 
 ### October 8 benchmark remediation: oversize and binary content
 
@@ -188,7 +179,9 @@ regression test.
   is judged once per file, each occurrence on its line clipped to 2,100
   characters around it, and the work, searches and lines alike, stops at
   64 MiB of text per file; a name beyond that is evidence, never a mention, as
-  is an occurrence more than 4 KiB from the start of its line in a keyed file.
+  is an occurrence more than 4 KiB from the start of its line in a keyed file,
+  and one whose window would start inside a run of URL characters (a scheme
+  inside the run could swallow the API URL that holds it).
   The MCP configuration files plugin manifests name are read once each, up to
   the walk's size limit for their type, before the connector deadline, and a
   failure in one is that file's error, not the scan's; paths in a Codex

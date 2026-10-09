@@ -401,14 +401,11 @@ application owns process supervision. Keep the external job deadline and process
 group/container cleanup to reap child processes and bound native code that holds
 the interpreter lock indefinitely.
 
-Code scans follow a documented coverage policy. Links whose own names are never
-read, source-file links whose real targets are analyzed in the same project
-with the same test classification, and coding-agent instruction-document links
-to another instruction document under the same condition, are skipped because
-nothing at the alias path is lost (see [scan semantics](scanning.md) for the
-exact rule). Directory
-links, configuration aliases, links into excluded or unread content, links
-leaving the root, oversized files the scanner would
+Code scans follow a documented coverage policy. A link inside the scan root is
+analyzed as a copy of its target at the link's path, reading the target at its
+real path without following a link (see [scan semantics](scanning.md) for the
+exact rule). Links
+leaving the root or below a linked directory, oversized files the scanner would
 inspect and files it analyzes by name but cannot read as text (a NUL byte
 outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) make the scan
 incomplete (exit 3) by default, with a warning naming the omission.
@@ -874,16 +871,15 @@ reported. Re-scan before comparing completeness or memory use:
   findings keeps the findings already built and is incomplete, instead of the
   engine discarding all of them. Large repositories may still need a higher
   `connector_timeout_seconds` to complete.
-- **Symbolic links.** Directory links into the same project, document
-  aliases, same-name configuration aliases, dangling links and links in test
-  code no longer make a scan incomplete when they lose no coverage (see the
-  [coverage policy](scanning.md#coverage-policy)). The alias and real paths
-  must agree on every rule that reads a directory name, so a link named
-  `.claude`, `.codex`, `.gemini` or `.claude-plugin`, in test code too, stays a
-  gap; so do a link to content the walk does not read, a configuration alias
-  with another file name, and a document alias into a sibling project. A covered skill-directory link adds its
-  alias-path file-name evidence, so a coding-agent configuration finding can
-  gain files.
+- **Symbolic links.** A link inside the scan root is now analyzed as a copy of
+  its target at the link's path (see the
+  [coverage policy](scanning.md#coverage-policy)), instead of being a coverage
+  gap unless an equivalence rule covered it. Scans that were incomplete only
+  because of in-root links complete, and report findings at the link paths too:
+  a shared skill directory reported under `.agents/skills` is also reported
+  under `.claude/skills`, and a policy that counts findings or evidence sees
+  each linked copy. Links that leave the root, cycles, links below a linked
+  directory and links beyond 20,000 analyzed entries per root stay gaps.
 - **Text and Git stores.** JavaScript and TypeScript sources with a NUL in a
   string literal and text in a legacy code page are analyzed (the latter with
   a warning). In a Git repository kept under another name, only its verified
