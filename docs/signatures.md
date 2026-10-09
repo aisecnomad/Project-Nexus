@@ -35,7 +35,7 @@ signatures:
         prefixes: [crewai]
         weight: 0.97
       - type: import
-        languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php | swift | dart
+        languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php | swift | dart | c | cpp | elixir | r | lua
         patterns: ['^[^\S\r\n]*(?:from|import)\s+crewai\b']
         weight: 0.97
       - type: code
@@ -216,7 +216,10 @@ key on, so a typo fails loading instead of silently never matching:
 * `ecosystem` must be one of `pypi`, `npm`, `nuget`, `maven`, `go`, `cargo`,
   `rubygems`, `composer`, `conda` or `any` (omitted means `any`);
 * `languages` entries must be canonical language names (`python`, `javascript`,
-  `go`, `rust`, `java`, `dotnet`, `ruby`, `php`, `swift`, `dart`);
+  `go`, `rust`, `java`, `dotnet`, `ruby`, `php`, `swift`, `dart`, `c`, `cpp`,
+  `elixir`, `r`, `lua`). There is no `hex` or `cran` ecosystem: nothing parses
+  `mix.exs`, `DESCRIPTION` or `renv.lock`, so Elixir and R signatures use
+  `import` and `code` signals only;
 * `capabilities` (signature or signal level) must be capabilities the risk
   engine scores: `code-exec`, `autonomous`, `saas-actions`, `data-access`,
   `browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`,
@@ -304,7 +307,12 @@ and tests, which call and test the products they detect.
   high weight, so a DNS script or a dataset download stays a low-confidence hint, not LLM usage.
   A `re:` value must not match a dotted identifier: end it in a list of top-level domains or a fixed vendor
   domain, because the tokenizer reads every `a.b.c` word of a source file as a host
-  (`re:^mcp\.[a-z0-9-]+\.(?:com|dev|app|ai|io|...)$`, not `\.[a-z]+$`). A host on a line of a hosts file,
+  (`re:^mcp\.[a-z0-9-]+\.(?:com|dev|app|ai|io|...)$`, not `\.[a-z]+$`), and leave out two-letter codes
+  that are also common file extensions or property names (`py`, `md`, `rs`, `id`, `in`) and words that
+  name properties or methods (`info`, `page`, `live`). For `protocol.mcp` the matcher also refuses a
+  candidate followed by a call, an index, an underscore or an assignment (`mcp.logger.info("x")`), and in a
+  source file one that does not come right after a quote, a URL's `//` or a user name's `@` and has no
+  `/mcp` or `/sse` path after it (`y = mcp.result.no`). A host on a line of a hosts file,
   ad-block list, resolver configuration or proxy rule list is routed or blocked, not used, and never matches.
   `gateway.logs` still treats Cloudflare Workers AI inference paths (`/accounts/<id>/ai/run/`,
   `/accounts/<id>/ai/v1/`) as LLM traffic on any host.

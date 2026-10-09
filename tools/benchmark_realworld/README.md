@@ -15,7 +15,9 @@ The protocol is [`PROTOCOL.md`](PROTOCOL.md). Results are in [`results/`](result
 - Labels were made by two model-based labelers, not by humans. The
   orchestrator adjudicated the disagreements against the cited lines.
   This is not independent human review, and the results are not field precision
-  or recall.
+  or recall. Where the frozen [`PROTOCOL-v2.md`](PROTOCOL-v2.md) says "two
+  independent code reviews", it means two separate model-agent reviews (section
+  10, item 6): neither was human or independent of the author.
 
 ## Layout
 

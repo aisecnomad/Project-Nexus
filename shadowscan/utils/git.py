@@ -674,6 +674,9 @@ def diff_changed_files(
         raise DiffError("git diff timed out") from None
     except MetadataOutputLimitError:
         raise DiffError("git diff output exceeded size limit") from None
+    except UnicodeDecodeError:
+        # A changed path that is not UTF-8 cannot be matched to the walk exactly.
+        raise DiffError("git diff reported a path that is not valid UTF-8") from None
     except (OSError, subprocess.SubprocessError) as exc:
         raise DiffError(f"git diff failed: {exc}") from None
     if result.returncode != 0:

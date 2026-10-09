@@ -20,7 +20,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
-SELF_PREFIXES = ("tools/benchmark/realworld/", "tests/test_benchmark_realworld.py")
+SELF_PREFIXES = ("tools/benchmark/realworld/", "tests/test_benchmark_realworld_sampled.py")
 MAX_BYTES = 5_000_000
 
 

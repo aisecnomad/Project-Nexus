@@ -16,6 +16,7 @@ from tools.benchmark_realworld.score_v2 import (
     balanced_accuracy,
     counts,
     determinism_check,
+    held_out,
     mcc,
     render,
     sensitivity_rerun,
@@ -233,6 +234,42 @@ def test_render_mentions_each_tool_and_section() -> None:
     text = render(summary, corpus, {"determinism": None, "sensitivity": None, "labels": None})
     for needle in ("## Composite and estate", "shadowscan", "other", "## Limits"):
         assert needle in text
+
+
+@pytest.mark.parametrize(
+    ("run", "is_held_out"),
+    [
+        # The frozen v2 run, before the lexer was tuned on the v2 entries.
+        ({"shadowscan_commit": "fc3e998cc4c37ba9b61a408b5e62571a303d8a36"}, True),
+        # The tuning commit, a later commit, a run without a recorded commit and no run manifest.
+        ({"shadowscan_commit": "7e523ba32dfc4dfe0529c678f58d959ddd7c5d93"}, False),
+        ({"shadowscan_commit": "3" * 40}, False),
+        ({}, False),
+        (None, False),
+    ],
+)
+def test_v2_entries_are_labelled_held_out_only_for_a_run_before_the_lexer_tuning(
+    run: dict[str, Any] | None, is_held_out: bool
+) -> None:
+    rows_by_tool = {
+        "shadowscan": [
+            dict(_row("agent", True), case="rw-new-agent:repo"),
+            dict(_row("none", False), case="rw-new-clean:repo"),
+        ]
+    }
+    doc = {"repos": [{"id": "rw-new-agent", "category": "agent"}, {"id": "rw-new-clean", "category": "x"}]}
+    summary = summarize(rows_by_tool)
+    summary["held_out"] = held_out(rows_by_tool, doc, run)
+    corpus = {
+        "repo": {"cases": 2, "labels": {"agent": 1, "none": 1}, "strata": {"ai-app": 2}, "scored": 2},
+        "endpoint": {"cases": 0, "labels": {}, "strata": {}, "scored": 0},
+    }
+    text = render(summary, corpus, {"determinism": None, "sensitivity": None, "labels": None})
+    assert summary["held_out"]["repo"]["shadowscan"]["n"] == 2
+    assert summary["held_out"]["predates_lexer_tuning"] is is_held_out
+    assert ("## Held-out view" in text) is is_held_out
+    assert ("not held out for runs after the lexer was tuned on them" in text) is not is_held_out
+    assert "**New repositories (repo surface)**" in text
 
 
 # --- determinism and sensitivity checks ---------------------------------------

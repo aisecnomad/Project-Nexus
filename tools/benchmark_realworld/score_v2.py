@@ -52,6 +52,13 @@ STRATA = ("ai-app", "hard-negative", "ordinary", "dotfiles")
 CHANCE = 0.5
 BOOT = 2000
 SEED = 20260901
+# Commit 7e523ba (9fdaf85 after its sign-off rewrite) tuned the Rust and JSX lexer on the
+# repositories added in v2. The frozen v2 run was recorded at fc3e998 (887142c after that rewrite,
+# the same tree), before it. A run at any other commit, including every run of the merged code, does
+# not treat those entries as held out.
+PRE_LEXER_TUNING_COMMITS = frozenset(
+    {"fc3e998cc4c37ba9b61a408b5e62571a303d8a36", "887142c651cc39c9fc8b971f7cbb72f14d5d33a7"}
+)
 ERROR_CATEGORIES = (
     ("incomplete", "incomplete"),
     ("not complete", "incomplete"),
@@ -614,14 +621,26 @@ def render(summary: dict[str, Any], corpus: dict[str, Any], extras: dict[str, An
 
     held = summary.get("held_out")
     if held:
-        out += [
-            "",
-            "## Held-out view (no connector or rule was designed on these entries)",
-            "",
-            "The 43 repositories and 40 dotfiles repositories added in v2. Both groups were fixed before "
-            "they were attached, and neither was used to design a connector or a rule.",
-            "",
-        ]
+        if held.get("predates_lexer_tuning"):
+            out += [
+                "",
+                "## Held-out view (no connector or rule was designed on these entries)",
+                "",
+                "The 43 repositories and 40 dotfiles repositories added in v2. Both groups were fixed before "
+                "they were attached, and neither was used to design a connector or a rule.",
+                "",
+            ]
+        else:
+            out += [
+                "",
+                "## Entries added in v2 (not held out for runs after the lexer was tuned on them)",
+                "",
+                "The 43 repositories and 40 dotfiles repositories added in v2. The Rust and JSX lexer was "
+                "tuned on these repositories (commit 7e523ba, 9fdaf85 after its sign-off rewrite). This run "
+                "was not recorded at the commit of the frozen v2 run, which predates that tuning, so these "
+                "entries are not held-out evidence for this run.",
+                "",
+            ]
         for surface, label in (
             ("repo", "New repositories (repo surface)"),
             ("endpoint", "New dotfiles (endpoint surface)"),
@@ -707,12 +726,20 @@ def render(summary: dict[str, Any], corpus: dict[str, Any], extras: dict[str, An
     return "\n".join(out) + "\n"
 
 
-def held_out(rows_by_tool: dict[str, list[dict[str, Any]]], doc: dict[str, Any]) -> dict[str, Any]:
-    """The view on entries that no connector or rule was designed on: the 43 repositories and the
-    40 dotfiles repositories added in v2. Both groups were fixed before they were attached."""
+def held_out(
+    rows_by_tool: dict[str, list[dict[str, Any]]], doc: dict[str, Any], run: dict[str, Any] | None
+) -> dict[str, Any]:
+    """The view on the 43 repositories and the 40 dotfiles repositories added in v2. Both groups were
+    fixed before they were attached. They are held out only for a run recorded before the lexer was
+    tuned on them (``PRE_LEXER_TUNING_COMMITS``); an unknown commit is not held out."""
     added_repo = {e["id"] for e in doc["repos"] if "category" in e}
     added_endpoint = {e["id"] for e in doc["repos"] if "design" in e}
-    out: dict[str, Any] = {"repo": {}, "endpoint": {}}
+    commit = run.get("shadowscan_commit") if run is not None else None
+    out: dict[str, Any] = {
+        "repo": {},
+        "endpoint": {},
+        "predates_lexer_tuning": commit in PRE_LEXER_TUNING_COMMITS,
+    }
     for surface, ids in (("repo", added_repo), ("endpoint", added_endpoint)):
         for tool, rows in rows_by_tool.items():
             mine = [r for r in scored(rows, surface) if r["case"].split(":")[0] in ids]
@@ -755,7 +782,7 @@ def main(argv: list[str] | None = None) -> int:
         write_rerun(plan, args.write_rerun)
 
     summary = summarize(rows_by_tool)
-    summary["held_out"] = held_out(rows_by_tool, doc)
+    summary["held_out"] = held_out(rows_by_tool, doc, run)
     corpus = corpus_counts(rows_by_tool)
     extras: dict[str, Any] = {
         "tree_diagnostic": tree_diagnostic(args.v1_results),

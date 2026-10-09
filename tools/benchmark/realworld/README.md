@@ -6,12 +6,14 @@ a false alarm. It complements the synthetic head-to-head in [`../README.md`](../
 were written in this repository and which cannot say anything about code in the wild.
 
 > **Read [PROTOCOL.md](PROTOCOL.md) first.** It states the sampling, ground truth, tool rules, metrics, the
-> changes made after an independent design review, and what the benchmark does *not* show. This benchmark is
+> changes made after a separate-agent design review (not human, not independent), and what the benchmark
+> does *not* show. This benchmark is
 > **not independent**: ShadowScan, one of the tools scored, is developed in the same repository. The ground
 > truth is a deterministic oracle plus language-model adjudication of disagreements; neither is human review.
 > Results are for offline runs of pinned tool versions on one dated sample, not field precision or recall,
-> and nothing here ranks the tools. Nothing was committed while the benchmark ran (the files were an uncommitted working tree), and
-> `results/freeze.json` records the hashes the scored run was checked against.
+> and nothing here ranks the tools. Nothing was committed while the benchmark ran (the files were an uncommitted working tree);
+> they were committed afterwards, in the pull request that added this directory, and `results/freeze.json`
+> records the hashes the scored run was checked against.
 
 | File | Purpose |
 |---|---|
@@ -55,7 +57,7 @@ python -m tools.benchmark.realworld.report --summary results/summary.json --run-
     --results results --freeze results/freeze.json --output REPORT.md
 ```
 
-Unit tests: `python -m pytest tests/test_benchmark_realworld.py`.
+Unit tests: `python -m pytest tests/test_benchmark_realworld_sampled.py`.
 
 ## Safety notes
 

@@ -147,10 +147,8 @@ filesystem or network activity.
 
 ## Validation maturity and evidence status
 
-The unreleased attribution corrections distinguish individual network
-connections, hosted-agent execution from management traffic, and a bounded
-subset of Python re-exports. See the [network](connectors/network.md),
-[gateway](connectors/gateway.md) and [code](connectors/code.md) guides, plus the
+The unreleased attribution corrections resolve a bounded subset of Python
+re-exports. See the [code](connectors/code.md) guide and the
 [migration notes](production.md#unreleased-attribution-migration). Regression
 coverage for these cases does not change the field-evaluation or live-acceptance
 status below.
@@ -238,9 +236,11 @@ low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
 Supported Go SDK import aliases are resolved before source evidence is
-excerpted; reports remain confidential. Ordinary Rust multiline strings and
-supported JSX in `.js`, `.mjs` and `.cjs` can be analyzed without false lexical
-incompleteness. Ambiguous or unterminated source still marks the scan incomplete.
+excerpted; reports remain confidential. Ordinary Rust multiline strings, C raw
+strings, `\x`/`\u{...}` character escapes and supported JSX in `.js`, `.mjs` and
+`.cjs` can be analyzed without false lexical incompleteness; a `<<` shift never
+opens a JSX element. Ambiguous or unterminated source still marks the scan
+incomplete.
 
 Opt-in `agent_granularity: source` gives supported uniquely named Python
 constructions separate inventory resources and constructor-specific evidence.
@@ -265,7 +265,11 @@ subprocess calls and repeated weak idioms cannot independently establish an agen
 Confidence groups cap repeated observations of the same technology. Unsupported
 dynamic imports, re-exports and uncertain bindings remain usage evidence. Narrow
 Go and C# proofs additionally require imported receivers and supported tool flows;
-C# automatic tool modes require an unshadowed SDK type or alias. Other
+C# automatic tool modes require an unshadowed SDK type or alias.
+Microsoft.Extensions.AI `UseFunctionInvocation()` middleware stays a lexical,
+corroborated agent indicator, which covers dependency-injected clients it
+configures; an explicit `FunctionInvokingChatClient` registered through
+dependency injection or held in fields is framework usage. Other
 languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
@@ -336,8 +340,10 @@ checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
-`include` limits local filesystem collection to named relative paths below each root.
-Endpoint profile discovery uses it and reports unsafe or unreadable known locations as incomplete.
+`include` limits local filesystem collection to named relative paths below each root;
+such a scan always runs in full, without the incremental cache.
+Endpoint profile discovery uses it and reports unsafe or unreadable known locations as
+incomplete while still scanning the others.
 `metadata` is a mapping merged into every finding's metadata. The walk skips a
 built-in list of directory names (`bin`, `build`, `dist`, `vendor`,
 `node_modules`, virtualenvs, caches, ...); a skipped non-empty `bin`, `build`,
@@ -1043,4 +1049,6 @@ Contributor solely for this read operation. See Microsoft's
 [permission definitions](https://learn.microsoft.com/en-us/azure/role-based-access-control/permissions/web-and-mobile).
 
 The `code.filesystem` connector also accepts `diff_base` for a scoped scan of
-committed changes. See the [code guide](connectors/code.md) for scope and fallback behavior.
+committed changes. Its report is never comparable for `shadowscan diff` and is
+never reused by `--incremental`. See the [code guide](connectors/code.md) for
+scope and fallback behavior.

@@ -39,7 +39,15 @@ A file is catalog-like when all of the following hold:
   filesystem connector marks ``data_mention``), so the file holds no import,
   dependency, code, file-name, image, IaC or credential anchor and no model
   selected by a manifest or IaC; and
-* its matches span at least ``CATALOG_MIN_SIGNATURES`` distinct signatures.
+* its matches span at least ``CATALOG_MIN_SIGNATURES`` distinct signatures, or
+  its file stem names a deny list: a whole word, or two adjacent words, spell
+  ``blocklist``, ``denylist`` or ``blacklist`` (``ai-blocklist.yaml``,
+  ``deny_list.json``). An allowlist, a whitelist, an egress policy or a
+  firewall or WAF rule set is not a deny list: it permits traffic, often to
+  exactly the hosts it names, so a bare ``block``, ``deny``, ``firewall`` or
+  ``waf`` (``firewall-rules.json``, ``default-deny.yaml``) is not enough. A
+  deny-list name outweighs a configuration directory and a reference from
+  code (a proxy loads its own deny list), not an assignment or a resource.
 
 Why four is a judgement from the data at hand: the bundled evaluation corpora's
 multi-provider configurations are dotenv files naming three or four products
@@ -70,6 +78,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
+from itertools import pairwise
 from pathlib import PurePosixPath
 from typing import Any, Protocol
 
@@ -172,11 +181,12 @@ _CONFIGURATION_DIRECTORIES = frozenset({"config", "conf", "settings"})
 _DOCUMENTATION_DIRECTORIES = frozenset(
     {"docs", "doc", "website", "site", "_data", "_posts", "_includes", "blog"}
 )
-_POLICY_FILE = re.compile(
-    r"(?:block|deny|reject|drop|firewall|acl|egress|ingress|waf|security)[_-]?"
-    r"|(?:blocklist|denylist|blacklist|allowlist|whitelist)",
-    re.IGNORECASE,
-)
+# Whole words of a file stem that name a deny list. An allowlist, a whitelist, an
+# egress policy or a firewall or WAF rule set (a default-deny policy with allow
+# exceptions) permits the traffic it names, which is evidence of use, and a
+# substring would also match "oracle" (acl), "dropdown" or "blockchain".
+_DENY_LIST_WORDS = frozenset({"blocklist", "denylist", "blacklist"})
+_STEM_SEPARATORS = re.compile(r"[._-]+")
 # Spring application and bootstrap configuration, including profiles (application-prod.yml).
 _SERVICE_CONFIGURATION = re.compile(r"(?:application|bootstrap)(?:-[\w.-]+)?\.(?:ya?ml|properties)")
 # Keys whose entries assign variables to a container, a job or a function. Compared without
@@ -553,7 +563,8 @@ def configuration_document(
     are the variable names it mentions; ``root`` is its project's directory.
     A Kubernetes-style resource (``apiVersion`` and ``kind``) or an ECS task
     definition is a deployment, whatever it names, and a file in a configuration
-    directory (``_configuration_directory``) is configuration. Any other document
+    directory (``_configuration_directory``) is configuration unless its name
+    spells a deny list (``deny_list_file``). Any other document
     is configuration when it assigns one of ``env_names``: under an env,
     environment, variables, secrets, containerEnv or remoteEnv key (as a key, or
     as the ``name`` or ``key`` of an item); as a key with a scalar value at any
@@ -566,7 +577,7 @@ def configuration_document(
     if not _is_data_file(rel):
         return False  # source code and manifests are never catalogs
     if (
-        _configuration_directory(rel, root)
+        (_configuration_directory(rel, root) and not deny_list_file(rel))
         or _kubernetes_resource(text, parsed)
         or _ecs_task_definition(parsed)
     ):
@@ -576,6 +587,14 @@ def configuration_document(
     return not env_names.isdisjoint(_configured_variables(parsed, env_names)) or _assigns_in_text(
         text, env_names, limits
     )
+
+
+def deny_list_file(rel: str) -> bool:
+    """Whether ``rel`` is named as a block or deny list (``ai-blocklist.yaml``, ``deny_list.json``)."""
+    words = _STEM_SEPARATORS.split(PurePosixPath(rel).stem.lower())
+    # "block-list" and "deny_list" spell the same nouns as two words.
+    terms = {*words, *(first + second for first, second in pairwise(words))}
+    return not _DENY_LIST_WORDS.isdisjoint(terms)
 
 
 def catalog_files(
@@ -591,7 +610,10 @@ def catalog_files(
     (``referenced_data_files``); ``root`` is the project's directory. Neither a
     configuration document, a file in a configuration directory nor a file code
     loads (outside documentation and website directories) is a catalog, and
-    their evidence keeps small data files beside a catalog from joining it.
+    their evidence keeps small data files beside a catalog from joining it. A
+    file named as a deny list (``deny_list_file``) is judged as a list even in a
+    configuration directory or when code loads it; a configuration document
+    that assigns variables or deploys a resource stays configuration.
     """
     references = referenced if isinstance(referenced, AbstractSet) else frozenset(referenced)
     signatures: dict[str, set[str]] = defaultdict(set)
@@ -608,14 +630,18 @@ def catalog_files(
         if rel not in anchored
         and _is_data_file(rel)
         and rel not in configuration
-        and not _configuration_directory(rel, root)
-        and not _loaded_by_code(rel, references)
+        and (
+            # A proxy keeps its deny list beside its configuration and loads it:
+            # the name says what the file is, as an assignment would.
+            deny_list_file(rel)
+            or not (_configuration_directory(rel, root) or _loaded_by_code(rel, references))
+        )
     }
     catalogs = {rel for rel in mention_only if len(signatures[rel]) >= CATALOG_MIN_SIGNATURES}
-    # A file whose name indicates a blocklist or policy is a catalog even with
-    # fewer signatures: its domain/env mentions are deny rules, not usage.
+    # A file named as a block or deny list is a catalog even with fewer
+    # signatures: its domain and variable mentions are deny rules, not usage.
     for rel in mention_only - catalogs:
-        if signatures[rel] and _POLICY_FILE.search(PurePosixPath(rel).stem):
+        if signatures[rel] and deny_list_file(rel):
             catalogs.add(rel)
     if catalogs and mention_only.issuperset(signatures):
         # Nothing but mention-only data files names a technology here.

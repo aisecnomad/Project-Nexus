@@ -1,14 +1,14 @@
 {
   "overall": {
     "n": 130,
-    "tp": 88,
+    "tp": 87,
     "fp": 0,
-    "fn": 3,
+    "fn": 4,
     "tn": 39,
     "recall": [
-      0.967032967032967,
-      0.907506930570377,
-      0.9887255932323175
+      0.9560439560439561,
+      0.8923690661573366,
+      0.9827756335558827
     ],
     "specificity": [
       1.0,
@@ -17,14 +17,14 @@
     ],
     "precision": [
       1.0,
-      0.9581729333351078,
+      0.9577124930558795,
       0.9999999999999999
     ],
-    "f1": 0.9832,
-    "mcc": 0.9476,
+    "f1": 0.9775,
+    "mcc": 0.9312,
     "f1_ci": [
-      0.9617,
-      1.0
+      0.9535,
+      0.9948
     ]
   },
   "by_category": {
@@ -102,14 +102,14 @@
     },
     "coding-agent": {
       "n": 10,
-      "tp": 10,
+      "tp": 9,
       "fp": 0,
-      "fn": 0,
+      "fn": 1,
       "tn": 0,
       "recall": [
-        1.0,
-        0.7224672001371107,
-        0.9999999999999999
+        0.9,
+        0.5958499732047615,
+        0.9821237869049271
       ],
       "specificity": [
         null,
@@ -118,10 +118,10 @@
       ],
       "precision": [
         1.0,
-        0.7224672001371107,
-        0.9999999999999999
+        0.7008549515804559,
+        1.0
       ],
-      "f1": 1.0,
+      "f1": 0.9474,
       "mcc": 0.0
     },
     "endpoint": {
@@ -247,7 +247,7 @@
   },
   "by_label": {
     "agent": {
-      "correct": 63,
+      "correct": 62,
       "total": 66
     },
     "llm": {
@@ -261,7 +261,7 @@
   },
   "by_difficulty": {
     "easy": {
-      "correct": 23,
+      "correct": 22,
       "total": 23
     },
     "medium": {
@@ -300,14 +300,14 @@
     },
     "repo": {
       "n": 125,
-      "tp": 85,
+      "tp": 84,
       "fp": 0,
-      "fn": 1,
+      "fn": 2,
       "tn": 39,
       "recall": [
-        0.9883720930232558,
-        0.9370359341070826,
-        0.9979444313347503
+        0.9767441860465116,
+        0.9191198543736794,
+        0.9935990737957292
       ],
       "specificity": [
         1.0,
@@ -316,16 +316,16 @@
       ],
       "precision": [
         1.0,
-        0.9567605161859486,
-        1.0
+        0.95626827158534,
+        0.9999999999999999
       ],
-      "f1": 0.9942,
-      "mcc": 0.9817
+      "f1": 0.9882,
+      "mcc": 0.9639
     }
   },
-  "best_surface_f1": 0.9942,
+  "best_surface_f1": 0.9882,
   "best_surface_name": "repo",
-  "surface_normalized_f1": 0.9848,
+  "surface_normalized_f1": 0.979,
   "adversarial_metrics": {
     "n": 15,
     "tp": 15,
@@ -357,7 +357,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|crewai-team": {
       "label": "agent",
@@ -365,7 +365,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|autogen-groupchat": {
       "label": "agent",
@@ -373,7 +373,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|pydantic-ai": {
       "label": "agent",
@@ -381,7 +381,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|openai-agents-sdk": {
       "label": "agent",
@@ -389,7 +389,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|google-adk": {
       "label": "agent",
@@ -397,7 +397,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|smolagents": {
       "label": "agent",
@@ -405,7 +405,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|llamaindex-agent": {
       "label": "agent",
@@ -413,7 +413,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|vercel-ai-tools": {
       "label": "agent",
@@ -421,7 +421,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|semantic-kernel-csharp": {
       "label": "agent",
@@ -429,15 +429,15 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|claude-agent-sdk": {
       "label": "agent",
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "agent_tier_correct": false,
+      "signature_recall": 1.0
     },
     "agent-framework|langchaingo": {
       "label": "agent",
@@ -445,7 +445,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|mastra-agent": {
       "label": "agent",
@@ -453,7 +453,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|ag2-swarm": {
       "label": "agent",
@@ -461,7 +461,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|dspy-pipeline": {
       "label": "agent",
@@ -469,7 +469,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|haystack-agent": {
       "label": "agent",
@@ -477,7 +477,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|spring-ai-java": {
       "label": "agent",
@@ -485,7 +485,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|langchain4j-agent": {
       "label": "agent",
@@ -493,7 +493,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|agency-swarm": {
       "label": "agent",
@@ -501,15 +501,15 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|letta-memgpt": {
       "label": "agent",
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "agent_tier_correct": false,
+      "signature_recall": 1.0
     },
     "agent-framework|phidata-agent": {
       "label": "agent",
@@ -517,7 +517,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|instructor-extraction": {
       "label": "llm",
@@ -525,15 +525,15 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|metagpt-team": {
       "label": "agent",
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "agent_tier_correct": false,
+      "signature_recall": 1.0
     },
     "agent-framework|autogpt": {
       "label": "agent",
@@ -549,7 +549,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|semantic-kernel-python": {
       "label": "agent",
@@ -557,7 +557,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|copilotkit-agent": {
       "label": "agent",
@@ -565,7 +565,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|browser-use-agent": {
       "label": "agent",
@@ -573,7 +573,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|langchain-lcel-agent": {
       "label": "agent",
@@ -581,7 +581,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "agent-framework|openai-swarm-node": {
       "label": "agent",
@@ -589,7 +589,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|openai-embeddings": {
       "label": "llm",
@@ -597,7 +597,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|anthropic-messages": {
       "label": "llm",
@@ -605,7 +605,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|ollama-local": {
       "label": "llm",
@@ -613,7 +613,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|gemini-multimodal": {
       "label": "llm",
@@ -621,7 +621,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|litellm-proxy": {
       "label": "llm",
@@ -629,7 +629,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|cohere-chat": {
       "label": "llm",
@@ -637,7 +637,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|mistral-client": {
       "label": "llm",
@@ -645,7 +645,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|groq-inference": {
       "label": "llm",
@@ -653,7 +653,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|azure-openai-sdk": {
       "label": "llm",
@@ -661,7 +661,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|huggingface-inference": {
       "label": "llm",
@@ -669,7 +669,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|replicate-prediction": {
       "label": "llm",
@@ -677,7 +677,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "llm-sdk|bedrock-invoke-model": {
       "label": "llm",
@@ -685,7 +685,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "mcp-protocol|mcp-server-python": {
       "label": "agent",
@@ -693,7 +693,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "mcp-protocol|claude-desktop-mcp-config": {
       "label": "agent",
@@ -701,15 +701,15 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "mcp-protocol|mcp-server-typescript": {
       "label": "agent",
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "agent_tier_correct": true,
+      "signature_recall": 1.0
     },
     "mcp-protocol|mcp-client-python": {
       "label": "agent",
@@ -717,7 +717,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "mcp-protocol|windsurf-mcp-config": {
       "label": "agent",
@@ -725,7 +725,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "mcp-protocol|zed-mcp-config": {
       "label": "agent",
@@ -741,7 +741,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "coding-agent|aider-config": {
       "label": "agent",
@@ -749,7 +749,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "coding-agent|cline-config": {
       "label": "agent",
@@ -757,7 +757,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "coding-agent|continue-dev-config": {
       "label": "agent",
@@ -765,7 +765,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "coding-agent|windsurf-rules": {
       "label": "agent",
@@ -773,7 +773,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "coding-agent|github-copilot-workspace": {
       "label": "agent",
@@ -781,7 +781,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "coding-agent|claude-code-project": {
       "label": "agent",
@@ -789,7 +789,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "coding-agent|sourcegraph-cody-config": {
       "label": "agent",
@@ -797,13 +797,13 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "coding-agent|devin-config": {
       "label": "agent",
       "surface": "repo",
-      "detected": true,
-      "correct": true,
+      "detected": false,
+      "correct": false,
       "agent_tier_correct": true,
       "signature_recall": 0.0
     },
@@ -813,7 +813,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "cloud-ai|bedrock-agent-terraform": {
       "label": "agent",
@@ -821,7 +821,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "cloud-ai|vertex-ai-pipeline": {
       "label": "llm",
@@ -829,7 +829,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "cloud-ai|azure-openai-terraform": {
       "label": "llm",
@@ -837,7 +837,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "cloud-ai|sagemaker-llm-endpoint": {
       "label": "llm",
@@ -845,7 +845,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "cloud-ai|bedrock-knowledge-base": {
       "label": "agent",
@@ -861,7 +861,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "cloud-ai|azure-ai-search-rag": {
       "label": "agent",
@@ -869,7 +869,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 0.5
     },
     "cloud-ai|vertex-agent-builder": {
       "label": "agent",
@@ -877,7 +877,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "lowcode-ai|n8n-ai-workflow": {
       "label": "agent",
@@ -885,23 +885,23 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "lowcode-ai|dify-workflow": {
       "label": "agent",
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "agent_tier_correct": false,
+      "signature_recall": 1.0
     },
     "lowcode-ai|flowise-chatflow": {
       "label": "agent",
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "agent_tier_correct": false,
+      "signature_recall": 1.0
     },
     "lowcode-ai|langflow-pipeline": {
       "label": "agent",
@@ -916,16 +916,16 @@
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "agent_tier_correct": false,
+      "signature_recall": 1.0
     },
     "adversarial|raw-openai-tool-loop": {
       "label": "agent",
       "surface": "repo",
       "detected": true,
       "correct": true,
-      "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "agent_tier_correct": false,
+      "signature_recall": 1.0
     },
     "adversarial|go-import-only-agent": {
       "label": "agent",
@@ -933,7 +933,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|rust-llm-cargo-only": {
       "label": "llm",
@@ -941,7 +941,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|custom-http-llm-client": {
       "label": "llm",
@@ -957,7 +957,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|minified-js-ai-sdk": {
       "label": "llm",
@@ -965,7 +965,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|polyglot-ai-project": {
       "label": "agent",
@@ -973,7 +973,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": false,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|test-only-ai-code": {
       "label": "llm",
@@ -981,7 +981,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|monorepo-hidden-ai": {
       "label": "agent",
@@ -989,7 +989,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|docker-ai-deployment": {
       "label": "llm",
@@ -997,7 +997,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|cpp-llm-rest-client": {
       "label": "llm",
@@ -1013,7 +1013,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|ruby-langchain-agent": {
       "label": "agent",
@@ -1029,7 +1029,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "adversarial|github-actions-ai": {
       "label": "agent",
@@ -1037,7 +1037,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "endpoint|dev-home-claude-dir": {
       "label": "agent",
@@ -1045,7 +1045,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "endpoint|vscode-ai-extensions": {
       "label": "agent",
@@ -1069,7 +1069,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 1.0
     },
     "endpoint|npm-global-ai-packages": {
       "label": "agent",
@@ -1077,7 +1077,7 @@
       "detected": true,
       "correct": true,
       "agent_tier_correct": true,
-      "signature_recall": 0.0
+      "signature_recall": 0.5
     },
     "negative|neg-insurance-agents": {
       "label": "none",
@@ -1392,10 +1392,14 @@
       "signature_recall": null
     }
   },
-  "agent_tier_accuracy": 0.6984126984126984,
-  "mean_signature_recall": 0.0,
+  "agent_tier_accuracy": 0.5967741935483871,
+  "mean_signature_recall": 0.898876404494382,
   "false_positives": [],
   "false_negatives": [
+    {
+      "case_id": "rw-repo-057",
+      "family": "devin-config"
+    },
     {
       "case_id": "rw-repo-070",
       "family": "langflow-pipeline"

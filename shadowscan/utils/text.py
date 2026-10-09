@@ -147,7 +147,8 @@ def _stray_nul_text(raw: bytes) -> str | None:
     A NUL in the sniff window used to make the whole file a coverage gap, whatever else it held, so
     the source around it was never analyzed. Binary data fails at least one of the tests below (it is
     not valid UTF-8, it holds other control characters, or it is far more than 0.5% NUL), so it stays
-    a gap.
+    a gap. The NUL bytes stay in the text returned: bash drops them from a script, but Node and PHP keep
+    them, so what they mean is for the caller to decide.
     """
     if len(raw) < _STRAY_NUL_MIN_BYTES or raw.count(b"\x00") * _SPARSE_NUL_RATIO > len(raw):
         return None

@@ -22,7 +22,7 @@ Offline input: n/a (path is the input).
 | `path` | directory to scan (or `paths`: list) |
 | `paths` | list of directories to scan instead of `path`; each root keeps its own identity |
 | `exclude` | list of extra directory names / glob patterns to skip (a bare string is rejected) |
-| `include` | list of paths relative to each root that limit the walk to those files and directories; other file contents are not read; parent directory names are listed (endpoint scans use it; default: everything) |
+| `include` | list of paths relative to each root that limit the walk to those files and directories; other file contents are not read; parent directory names are listed; such a scan always runs in full, without the incremental cache (endpoint scans use it; default: everything) |
 | `default_excludes` | skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE state, and build-output or vendored names such as bin, build, dist, vendor) at any depth (default true); a skipped non-empty bin/build/dist/out/target/obj/coverage/vendor/third\_party/thirdparty/external directory is reported as a warning. false scans all of them, including node\_modules and virtualenvs unless `exclude` names them; VCS metadata (.git, .hg, .svn) is never scanned |
 | `max_file_size` | bytes; an analyzable larger file is skipped with incomplete coverage unless oversize\_skip\_globs matches it or, with scan\_secrets false, it is documentation (.md/.txt outside agent instruction files) or sits under a test path while include\_tests is false: those are skipped with a warning (default 1,000,000 bytes) |
 | `oversize_skip_globs` | case-insensitive file name globs; a file over max\_file\_size matching one is skipped with a warning even under strict\_coverage (default: lockfiles, logs, HAR and snapshot files, minified bundles, source maps, images, fonts, archives and compiled artifacts) |
@@ -43,7 +43,7 @@ Offline input: n/a (path is the input).
 | `owner` | owner recorded on every finding; overrides CODEOWNERS and inventory attribution (default: CODEOWNERS, then git author when use\_git, then inventory) |
 | `provider` | provider label recorded on findings (default filesystem) |
 | `metadata` | mapping merged into every finding's metadata |
-| `diff_base` | git ref to diff against (branch, tag, or SHA); only files changed since this ref are scanned, plus manifests and environment files for cross-file context. Requires a local .git directory. Falls back to a full scan when the ref cannot be resolved |
+| `diff_base` | git ref to diff against (branch, tag, or SHA); only files committed between its merge-base and HEAD are scanned, plus dependency manifests and .env files for context. Uncommitted, untracked and submodule changes are not scanned. The report is not a repository inventory: `shadowscan diff` never resolves findings from it and --incremental never reuses it. Requires Git 2.45+ and a local .git directory; falls back to a full scan when the diff cannot be computed |
 
 Also accepted: `input`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
 

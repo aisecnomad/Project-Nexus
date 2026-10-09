@@ -105,6 +105,10 @@ def _materialize(case: RealWorldCase, root: Path) -> None:
         target.write_text(content, encoding="utf-8")
 
 
+class IncompleteScanError(RuntimeError):
+    """The connector finished without complete coverage of the case."""
+
+
 def _scan(case: RealWorldCase, root: Path, index: Any) -> dict[str, Any]:
     ctx = ConnectorContext(
         config={
@@ -119,6 +123,11 @@ def _scan(case: RealWorldCase, root: Path, index: Any) -> dict[str, Any]:
     started = time.perf_counter()
     findings = FilesystemConnector(ctx).run()
     elapsed = time.perf_counter() - started
+    # The connector records failures instead of raising. A scan that did not
+    # finish is not an answer: an empty incomplete scan must never score as a
+    # correct negative, so it becomes an error row.
+    if ctx.stats.incomplete or ctx.stats.errors or ctx.stats.skipped:
+        raise IncompleteScanError("scan incomplete: " + "; ".join(ctx.stats.errors[:3]))
     detected = len(findings) > 0
     agentic = any(
         f.kind.value in {"agent", "mcp-server", "agent-config", "bot-app", "workflow"}
@@ -142,15 +151,49 @@ def _scan(case: RealWorldCase, root: Path, index: Any) -> dict[str, Any]:
     }
 
 
+# Corpus labels name packages or products ("crewai", "langchain-openai") while
+# findings carry signature IDs ("framework.crewai", "provider.openai"). These
+# labels name a product that no signature ID or dependency name spells out.
+_LABEL_ALIASES: dict[str, tuple[str, ...]] = {
+    "bedrock": ("provider.aws-bedrock",),
+    "bedrock-agents": ("cloud.aws-bedrock-agents",),
+    "codeium": ("coding-agent.windsurf",),
+    "coderabbit": ("coding-agent.pr-review-bots",),
+    "cody": ("coding-agent.sourcegraph-cody",),
+    "go-openai": ("provider.openai",),
+    "jetbrains-ai": ("coding-agent.jetbrains-junie",),
+    "openai-kotlin": ("provider.openai",),
+    "openai-php": ("provider.openai",),
+    "vertex-ai": ("provider.google-vertex-ai",),
+}
+
+
+def label_signatures(label: str, index: Any) -> frozenset[str]:
+    """Signature IDs that satisfy an expected label.
+
+    A signature satisfies a label when its ID names it (``crewai`` and
+    ``framework.crewai``), when one of its dependency signals declares that
+    package (``langchain-openai`` and ``provider.openai``), or through
+    ``_LABEL_ALIASES``. A label nothing satisfies always counts as missed.
+    """
+    ids = set(_LABEL_ALIASES.get(label, ()))
+    for sig in index.signatures.values():
+        if sig.id.split(".", 1)[-1] == label or any(
+            signal.type == "dependency" and label in signal.names for signal in sig.signals
+        ):
+            ids.add(sig.id)
+    return frozenset(ids)
+
+
 def _check_expectations(
-    case: RealWorldCase, scan_result: dict[str, Any]
+    case: RealWorldCase, scan_result: dict[str, Any], index: Any
 ) -> dict[str, Any]:
     all_sigs = set()
     for item in scan_result["items"]:
         all_sigs.update(item["signatures"])
     expected_hit = set(case.expected_signatures)
-    found_expected = expected_hit & all_sigs
-    missed_expected = expected_hit - all_sigs
+    found_expected = {label for label in expected_hit if label_signatures(label, index) & all_sigs}
+    missed_expected = expected_hit - found_expected
 
     correct_detection = (
         (case.label != "none" and scan_result["detected"])
@@ -184,7 +227,7 @@ def run_benchmark(output_dir: Path) -> dict[str, Any]:
         try:
             _materialize(case, work_dir)
             scan_result = _scan(case, work_dir, index)
-            checks = _check_expectations(case, scan_result)
+            checks = _check_expectations(case, scan_result, index)
             row = {
                 "case_id": case.id,
                 "category": case.category,
@@ -390,7 +433,7 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
     lines.append(f"- **Families**: {len(summary['by_family'])}")
     lines.append(f"- **Timestamp**: {manifest['timestamp']}")
     lines.append(f"- **Python**: {manifest['python']}")
-    lines.append(f"- **Errors**: {summary['error_count']}")
+    lines.append(f"- **Errors** (incomplete or failed scans, excluded from the metrics): {summary['error_count']}")
     lines.append("")
 
     o = summary["overall"]
@@ -556,13 +599,13 @@ def main() -> int:
     print(f"Cases: {o['n']}  F1: {o['f1']}  MCC: {o['mcc']}  "
           f"TP: {o['tp']} FP: {o['fp']} FN: {o['fn']} TN: {o['tn']}")
     if summary["error_count"]:
-        print(f"Errors: {summary['error_count']}")
+        print(f"Errors: {summary['error_count']} (excluded from the metrics above)")
 
     for surface, m in sorted(summary["by_surface"].items()):
         print(f"  [{surface}] F1: {m['f1']}  N: {m['n']}")
     print(f"  Best-surface F1: {summary['best_surface_f1']} ({summary['best_surface_name']})")
     print(f"  Surface-normalized F1: {summary['surface_normalized_f1']}")
-    return 0
+    return 1 if summary["error_count"] else 0
 
 
 if __name__ == "__main__":

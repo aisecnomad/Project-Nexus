@@ -7,7 +7,7 @@ integrates an LLM, an AI agent framework, an MCP server or client, or a
 coding-agent configuration. Its knowledge lives in ``registry/ai_registry.json``.
 
 This file imports nothing from ShadowScan or from any tool under test
-(``tests/test_benchmark_realworld.py`` enforces both) and uses only the standard
+(``tests/test_benchmark_realworld_sampled.py`` enforces both) and uses only the standard
 library, so it can run isolated and outside the corpus directory::
 
     python -I oracle.py --registry registry/ai_registry.json \\

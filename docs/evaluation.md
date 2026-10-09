@@ -147,13 +147,16 @@ with an MCP client config, a Terraform Bedrock agent module, a CrewAI crew
 with YAML agents, a Semantic Kernel console app, a LangChainGo service, an
 n8n export, a Claude Code project with subagents and `.mcp.json`, an M365
 declarative agent package, a Spring AI app, an OpenAI tool loop script, a
-Dify DSL export, a LiteLLM proxy worker, a Pydantic AI notebook and an OpenAI
-Agents SDK worker as positives; and, as negatives, repositories that share
-vocabulary with agents without using any LLM: insurance agents with a
-supervisor role, a ChatGPT usage policy in prose, a Minecraft Bedrock server,
-a generated API client, text splitters without a model, a scikit-learn
-notebook with a `transformers` tokenizer, Ansible handoff and unattended
-upgrades, shell `execute_command` loops, geology buckets tagged `bedrock`, a
+Dify DSL export, a LiteLLM proxy worker, a Pydantic AI notebook, an OpenAI
+Agents SDK worker, an ASP.NET API that registers a Microsoft.Extensions.AI
+function-invoking client through dependency injection, and a
+Microsoft.Extensions.AI console tool loop as positives; and, as negatives,
+repositories that share vocabulary with agents without using any LLM:
+insurance agents with a supervisor role, a ChatGPT usage policy in prose, a
+Minecraft Bedrock server, a generated API client, text splitters without a
+model, a scikit-learn notebook with a `transformers` tokenizer, Ansible
+handoff and unattended upgrades, shell `execute_command` loops, geology
+buckets tagged `bedrock`, a
 user agent parser, `REPLACE_ME` placeholders, a key rotation runbook, a Slack
 standup bot, a crypto exchange client named `gemini-python`, a `copilot-css`
 theme and a monitoring agent Helm chart. Each case labels one target kind and
@@ -165,7 +168,7 @@ promotes to an agent through C# code patterns for `Kernel.CreateBuilder()`,
 `Plugins.AddFromType<>()`, `[KernelFunction("...")]` and automatic tool
 invocation, and a Flask view defined as `def create_agent():` no longer matches
 the LangChain `create_agent(` call pattern. At the time of writing the scanner
-scores 13 TP, 1 FP, 2 FN and 15 TN on it (precision 0.93, recall 0.87,
+scores 15 TP, 1 FP, 2 FN and 15 TN on it (precision 0.94, recall 0.88,
 specificity 0.94). Three failures of the binary target carry `known_gap: true` and explain the
 cause in their description: the runbook's illustrative provider-shaped value is
 reported as a hardcoded credential because it is well formed and high entropy,
@@ -177,7 +180,7 @@ precision rule documented in docs/scanning.md. Binary-correct cases can still
 contain off-target findings or vendor attribution. The separate authored
 attribution suite below checks those aspects. Like the other corpora, this one
 is author-written: the authors chose the frameworks, the file layouts and the
-distractors, so its rates describe these 31 cases only and are not a field
+distractors, so its rates describe these 33 cases only and are not a field
 precision estimate.
 
 `tools/evaluation/attribution_corpus.json` contains 24 short, handwritten
@@ -211,7 +214,10 @@ Goose's user configuration at `~/.config/goose/config.yaml` and an installed
 Cline editor extension without an MCP settings file, each with a look-alike
 negative.
 October 8 cases cover import-bound Go agent constructors, .NET tool definition
-versus invocation, and Python comprehension reachability. These authored cases
+versus invocation, and Python comprehension reachability. October 9 cases cover
+guarded optional Python imports: a passing or exiting `ImportError` handler,
+alternative import paths of one class, and a local fallback class that keeps
+the construction uncertain. These authored cases
 are regression evidence, not new independent annotation.
 It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its

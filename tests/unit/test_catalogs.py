@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 
 import pytest
@@ -559,6 +560,69 @@ def test_policy_filename_is_catalog_below_threshold():
     assert catalog_files([*products(rel, 1)]) == {rel}
     assert catalog_files([*products("config/denylist.yaml", 2)]) == {"config/denylist.yaml"}
     assert catalog_files([*products("config/services.yaml", 3)]) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        # An allowlist or egress policy permits the traffic it names: evidence of use.
+        "proxy/egress_allowlist.yaml",
+        "proxy/whitelist.json",
+        "net/ingress.yaml",
+        "net/egress.yaml",
+        "config/acl.yaml",
+        # Deny words inside other words are not deny lists.
+        "proxy/oracle_endpoints.yaml",
+        "config/security_agent.yaml",
+        "ui/dropdown.yaml",
+        "chain/blockchain.yaml",
+        "fab/wafer.yaml",
+        "infra/firewalls.yaml",
+        # A firewall or WAF rule set, or a default-deny policy, permits traffic
+        # (often to exactly the hosts it names), so "block" or "deny" alone is no list.
+        "gw/Firewall.yml",
+        "infra/firewall-rules.json",
+        "edge/waf.rules.yaml",
+        "net/default-deny.yaml",
+        "net/deny_hosts.json",
+        "x/BLOCK.txt",
+    ],
+)
+def test_only_whole_deny_list_words_make_a_small_file_a_catalog(rel):
+    assert catalog_files(products(rel, 2)) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "proxy/ai-blocklist.yaml",
+        "net/DenyList.json",
+        "x/BLACKLIST.txt",
+        # The same nouns spelled as two words.
+        "net/deny_list.json",
+        "proxy/ai-block-list.yaml",
+        "x/Black.List.txt",
+    ],
+)
+def test_whole_deny_list_words_in_any_case_make_a_small_file_a_catalog(rel):
+    assert catalog_files(products(rel, 2)) == {rel}
+
+
+def test_a_deny_list_name_outweighs_location_and_loading_not_an_assignment():
+    # A proxy keeps its deny list beside its configuration and loads it by name.
+    for rel in ("config/blocklist.yaml", ".devcontainer/deny_list.json", "net/blocklist.yaml"):
+        assert catalog_files(products(rel, 2)) == {rel}
+        assert catalog_files(products(rel, 2), referenced={PurePosixPath(rel).name}) == {rel}
+        assert not configuration_document(rel, "", None, set())
+    # An ordinary file there stays configuration.
+    assert catalog_files(products("config/vendors.yaml", 8)) == frozenset()
+    assert catalog_files(products("net/vendors.yaml", 2), referenced={"vendors.yaml"}) == frozenset()
+    # A document that assigns the variables it names, or deploys a resource, stays configuration.
+    rel = "config/denylist.cfg"
+    assert configuration_document(rel, "OPENAI_API_KEY=sk-example\n", None, {"OPENAI_API_KEY"})
+    assert catalog_files(products(rel, 2, "env"), configuration={rel}) == frozenset()
+    resource = "apiVersion: v1\nkind: ConfigMap\n"
+    assert configuration_document("config/blocklist.yaml", resource, None, set())
 
 
 def test_a_catalog_is_judged_per_file():

@@ -463,7 +463,8 @@ The first run used many workers on few CPUs. Every pair that ended in a timeout,
 
 ## Deviations and limitations
 
-* **Declared after the run started, before any result was read** (on an independent reviewer's advice): the re-run
+* **Declared after the run started, before any result was read** (on the separate-agent reviewer's advice; not
+  human, not independent): the re-run
   of timeouts and harness failures alone (section above), the Agentic Radar reading, the three-group vocabulary
   table and the incomplete-scan caption. None changes the headline, which is the first run.
 * **Machine load.** The scored run used 8 workers on 4 CPUs with a load average of about 9, so some timeouts,
