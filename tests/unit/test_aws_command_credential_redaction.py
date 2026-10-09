@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -357,6 +358,26 @@ def test_aws_command_variants_are_redacted(command, setting):
     assert SECRET not in safe and REDACTED in safe
     assert safe.count("\n") == source.count("\n")
     assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize("unit", ["aws #", "// aws\n"])
+def test_aws_candidates_in_comment_blocks_are_read_in_linear_time(unit):
+    # Every 'aws' in a comment block read the source argv space after it to
+    # the end of that block: 200 KB of 'aws #' took about 25 s to sanitize.
+    # Linear, not fast: four times the input may take at most ten times as long.
+    small = min(_sanitize_seconds(unit * (100_000 // len(unit))) for _ in range(2))
+    large = _sanitize_seconds(unit * (400_000 // len(unit)))
+    assert large < 10 * max(small, 0.05), (small, large)
+    assert large < 60.0
+
+
+def _sanitize_seconds(text: str) -> float:
+    started = time.perf_counter()
+    try:
+        sanitize_text(text)
+    except SanitizationLimitError:  # a fail-closed limit is acceptable; a stall is not
+        pass
+    return time.perf_counter() - started
 
 
 @pytest.mark.parametrize(
