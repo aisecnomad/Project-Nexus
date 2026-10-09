@@ -113,3 +113,41 @@ fit. Results are in [`../results-insample-postchange/`](../results-insample-post
 The gap between the in-sample and holdout results (8.7% against 18.6%
 incomplete) is the expected cost of fitting fixes to a sample. It is why the
 holdout, not the in-sample run, is the result to quote.
+
+## After the holdout: in-sample only
+
+After this holdout, ShadowScan changed again (see `CHANGELOG.md`, the
+"October 9 post-holdout changes" entries). Those changes were informed by
+this holdout's incomplete scans and by the in-sample misses, so the holdout
+above stays the result to quote for `c30aaac`. No accuracy claim for the
+later code can be made until a new holdout is drawn and run.
+
+The changes:
+
+- MCP servers are recognized from SDK server constructs.
+- A single executed tool selection counts as an agent (rubric A2).
+- Ruby literals are lexed.
+- Long JavaScript calls and large agent-definition collections no longer hit
+  fixed limits.
+- Fixes from an AI review (not independent human review).
+
+The Ruby lexer was developed against Ruby's standard library and installed
+gems, with Ruby's own lexer as the oracle, not against holdout files.
+
+ShadowScan re-ran at `f4f78ff` on the original 183-repository corpus. This is
+**in-sample**, since the diagnosis came from these repositories. Results are
+in [`../results-insample-r3/`](../results-insample-r3/).
+
+| ShadowScan, original corpus | Freeze `c30aaac` | Post-holdout `f4f78ff` |
+|---|---|---|
+| Incomplete scans | 16/183 | 15/183 |
+| T1 MCC, strict | 0.727 | 0.737 |
+| T2 MCC, strict | 0.492 | 0.582 |
+| T1 MCC, completed scans only | 0.907 | 0.907 |
+| T2 MCC, completed scans only | 0.660 | 0.744 |
+
+- The T2 gain comes from MCP server repositories that were reported as plain
+  LLM usage.
+- No repository moved from not-agentic to agentic against its label.
+- Completed-scan T2 precision is 49/50.
+- 18 repeated scans changed no verdict.
