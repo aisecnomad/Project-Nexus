@@ -279,3 +279,59 @@ def test_many_git_stores_are_bounded(tmp_path: Path, run_connector) -> None:
     assert (
         sum("Git repository store" in w for w in ctx.stats.warnings) <= filesystem._MAX_NAMED_GIT_STORES + 1
     )
+
+
+SKILL = "---\nname: translate\ndescription: Translate strings\n---\nTranslate the UI strings.\n"
+
+
+def test_skill_shared_between_agent_directories_with_plain_data_is_covered(
+    tmp_path: Path, run_connector
+) -> None:
+    # The in-sample benchmark: `.codex/skills/x -> ../../.claude/skills/x` holding a glossary.
+    _write(
+        tmp_path,
+        {
+            ".claude/skills/translate/SKILL.md": SKILL,
+            ".claude/skills/translate/references/glossary.json": json.dumps({"hello": "bonjour"}),
+            ".claude/skills/translate/agents/openai.yaml": "interface:\n  display_name: Translate\n",
+        },
+    )
+    _link(tmp_path, ".codex/skills/translate", "../../.claude/skills/translate")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+
+
+def test_skill_shared_between_agent_directories_with_an_mcp_table_is_a_gap(
+    tmp_path: Path, run_connector
+) -> None:
+    # An MCP table would be attributed to another client at the alias path.
+    _write(
+        tmp_path,
+        {
+            ".claude/skills/translate/SKILL.md": SKILL,
+            ".claude/skills/translate/servers.json": json.dumps({"mcpServers": SHELL_SERVER}),
+        },
+    )
+    _link(tmp_path, ".codex/skills/translate", "../../.claude/skills/translate")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert ctx.stats.incomplete
+
+
+def test_pattern_allowance_keeps_its_rate_on_larger_files(monkeypatch) -> None:
+    from shadowscan.signatures import matcher
+
+    assert matcher._pattern_allowance("x" * 1_000) == matcher.REGEX_TIMEOUT_SECONDS
+    assert matcher._pattern_allowance("x" * 3_000_000) == pytest.approx(3 * matcher.REGEX_TIMEOUT_SECONDS)
+    seen: list[float | None] = []
+    original = matcher._run_regex
+
+    def record(operation, context, *, max_seconds=None):
+        seen.append(max_seconds)
+        return original(operation, context, max_seconds=max_seconds)
+
+    monkeypatch.setattr(matcher, "_run_regex", record)
+    rx = matcher.regex.compile(r"\bagent\b")
+    matcher._finditer(rx, "agent " * 400_000, "test", 3)
+    matcher._search(rx, "agent", "test")
+    assert seen[0] == pytest.approx(matcher.REGEX_TIMEOUT_SECONDS * 2.4)
+    assert seen[1] == matcher.REGEX_TIMEOUT_SECONDS

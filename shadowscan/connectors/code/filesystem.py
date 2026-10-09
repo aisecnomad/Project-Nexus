@@ -519,21 +519,33 @@ def _path_semantics(rel: str) -> tuple[Any, ...]:
         bool(_CI_CONFIGURATION.search(rel)),
         posture_client(rel),
         is_agent_config_path(rel),
-        # Only configuration can hold an MCP table; the client name matches
-        # substrings anywhere in the path.
-        _mcp_client_for(rel) if PurePosixPath(rel).suffix.lower() in _MCP_TABLE_EXTENSIONS else None,
         _is_data_file(rel),
+        _mcp_client_scope(rel),  # last: see _same_path_semantics(client=False)
     )
 
 
-def _same_path_semantics(first: str, second: str, *, ignore_test: bool = False) -> bool:
+def _mcp_client_scope(rel: str) -> str | None:
+    """The MCP client an MCP table in ``rel`` would be attributed to; only configuration holds one.
+
+    The client name matches substrings anywhere in the path.
+    """
+    return _mcp_client_for(rel) if PurePosixPath(rel).suffix.lower() in _MCP_TABLE_EXTENSIONS else None
+
+
+# Text that every MCP table holds: its container key or a server's protocol name.
+_MCP_TABLE_HINT = re.compile(r"mcp|servers", re.IGNORECASE)
+
+
+def _same_path_semantics(first: str, second: str, *, ignore_test: bool = False, client: bool = True) -> bool:
     """Whether two paths of the same content are analyzed alike, apart from their file-name signals.
 
     ``ignore_test`` compares everything but test classification (see the
-    test-code link rule in ``_skip_link``).
+    test-code link rule in ``_skip_link``); ``client=False`` leaves out the MCP
+    client, for a caller that has read the content and found no MCP table.
     """
-    skip = 1 if ignore_test else 0
-    return _path_semantics(first)[skip:] == _path_semantics(second)[skip:]
+    start = 1 if ignore_test else 0
+    end = None if client else -1
+    return _path_semantics(first)[start:end] == _path_semantics(second)[start:end]
 
 
 def _dangling_inside(link: Path, resolved_root: Path) -> bool:
@@ -2301,6 +2313,7 @@ class FilesystemConnector(BaseConnector):
                 files += 1
                 if files > _MAX_ALIAS_FILES or (Path(dirpath) / name).is_symlink():
                     return False
+                real_path = Path(dirpath) / name
                 name = _report_name(name)  # reported form from here on
                 alias_rel, real_rel = f"{alias_dir}/{name}", f"{real_dir}/{name}"
                 excluded = self._excluded_file(real_rel)
@@ -2308,8 +2321,15 @@ class FilesystemConnector(BaseConnector):
                     return False
                 if excluded or _never_read_by_name(name):
                     continue
-                if not _same_path_semantics(alias_rel, real_rel, ignore_test=ignore_test):
+                if not _same_path_semantics(alias_rel, real_rel, ignore_test=ignore_test, client=False):
                     return False
+                if _mcp_client_scope(alias_rel) != _mcp_client_scope(real_rel):
+                    # A file shared between coding agents' directories (a skill's
+                    # glossary) is attributed to another MCP client only if it
+                    # holds an MCP table: read it at its real path to know.
+                    text = read_text(real_path, self._size_limit(name, real_rel))
+                    if text is None or _MCP_TABLE_HINT.search(text):
+                        return False
                 real_matches = self.index.match_file(real_rel)
                 real_keys = {(m.signature.id, id(m.signal)) for m in real_matches}
                 extra = [

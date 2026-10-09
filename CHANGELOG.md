@@ -60,7 +60,10 @@ followed; each new rule decides from real paths and has a regression test.
   regression test. Alias and real paths must agree on every rule that reads a
   parent directory: coding-agent settings and their permission checks
   (`.claude`, `.codex`, `.gemini`, goose, OpenClaw), the MCP client a
-  configuration belongs to, plugin manifest directories (`.claude-plugin`,
+  configuration belongs to (compared for a file in a linked directory only
+  when its content could hold an MCP table, so a skill's glossary shared
+  between `.claude/skills` and `.codex/skills` is covered), plugin manifest
+  directories (`.claude-plugin`,
   `.codex-plugin`), catalog and pipeline classification, workflows, CI files,
   agent definitions, agent manifests and test classification; coding-agent
   instruction aliases (`CLAUDE.md -> AGENTS.md`) are compared the same way. A
@@ -94,7 +97,12 @@ code the scanner failed to read. Each change has a regression test.
   instead of stopping silently, so decoy placeholders cannot hide a token.
 - An oversize compiled or packed binary without an extension (`mcp-publisher`)
   is skipped as a smaller one already was.
-- The default `max_file_size` is 4 MiB (was 1,000,000 bytes). Test files (fixtures,
+- The default `max_file_size` is 4 MiB (was 1,000,000 bytes). A signature
+  pattern's CPU allowance over one text, 0.1 s, now applies per 1,000,000
+  characters, so a pattern keeps the rate it had at the old limit on a larger
+  file instead of timing out; the per-file budget still bounds the total. In
+  the benchmark, generated TypeScript clients of 1.1 to 1.7 MB timed out
+  without it. Test files (fixtures,
   recorded cassettes) are read and analyzed in full up to
   `max_data_file_size`, like data; above it they are gaps. An earlier
   version of this change scanned oversize test files for credentials only;

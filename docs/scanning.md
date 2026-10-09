@@ -27,7 +27,9 @@ that are never silent:
   real paths must agree on every rule that reads a directory name: agent
   definitions, workflows, CI files, agent manifests, coding-agent settings and
   their permission checks (`.claude`, `.codex`, `.gemini`, goose, OpenClaw),
-  the MCP client a configuration belongs to, plugin manifest directories
+  the MCP client a configuration belongs to (for a file below a linked
+  directory, only when it mentions `mcp` or `servers`, as every MCP table
+  does), plugin manifest directories
   (`.claude-plugin`, `.codex-plugin`), pipeline and catalog classification, and
   test classification; instruction-document aliases are compared the same
   way. A directory link into the same
@@ -330,8 +332,11 @@ override and private-endpoint policies, output changes and rollout checks.
 ## Large and generated files
 
 `code.filesystem.max_file_size` (default 4 MiB) bounds every source file the
-scanner reads. A larger file is never analyzed. Whether that makes the scan
-incomplete depends on what the file could hide:
+scanner reads. A larger file is never analyzed. Each signature pattern may use
+0.1 s of CPU per 1,000,000 characters of a file (and at least 0.1 s), within
+the file's matching budget; a pattern that exceeds it marks the scan
+incomplete. Whether a skipped file makes the scan incomplete depends on what it
+could hide:
 
 * A file whose name matches `oversize_skip_globs` is skipped with a warning and
   the scan stays complete. The default list names lockfiles (`package-lock.json`,
