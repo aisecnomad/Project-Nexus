@@ -573,6 +573,9 @@ class _ScanState:
     reexports: PythonReexports = field(default_factory=PythonReexports)
     reexport_files: list[_SourceFile] = field(default_factory=list)
     reexport_bytes: int = 0
+    # The walk's safety margin before the connector deadline, kept by the
+    # pass that analyzes the queued re-export consumers after it.
+    margin: float = 0.0
 
     def covered_files(self) -> frozenset[str]:
         """Files whose own MCP, manifest, workflow or IaC finding reports their evidence."""
@@ -1668,15 +1671,36 @@ class FilesystemConnector(BaseConnector):
         yield from self._emit_findings(scan)
 
     def _resolve_reexport_sources(self, scan: _ScanState) -> None:
-        """Bind queued consumers after all shim snapshots have been read safely."""
-        for file in scan.reexport_files:
-            if self.ctx.deadline is not None and time.monotonic() >= self.ctx.deadline:
-                self.ctx.error("code.filesystem: Python re-export analysis deadline exceeded")
-                break
+        """Bind queued consumers after all shim snapshots have been read safely.
+
+        Each consumer starts under the walk's own rule: only while its matching
+        budget and the walk's margin fit before the connector deadline, so the
+        findings already collected are still emitted in time. A consumer left
+        unanalyzed is named and makes the results incomplete.
+        """
+        deadline = self.ctx.deadline
+        for position, file in enumerate(scan.reexport_files):
+            budget = scan_timeout_for_size(self.scan_timeout, len(file.text.encode("utf-8")))
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining < budget + scan.margin:
+                    if remaining > scan.margin + self.scan_timeout:
+                        self.ctx.error(
+                            f"code.filesystem: {file.rel}: Python re-export analysis skipped; the remaining "
+                            f"connector deadline cannot cover its {budget:.0f}s matching budget",
+                        )
+                        continue
+                    others = len(scan.reexport_files) - position - 1
+                    queued = f" and {others} other queued files" if others else ""
+                    self.ctx.error(
+                        "code.filesystem: connector deadline reached before Python re-export analysis of "
+                        f"{file.rel}{queued}; results incomplete",
+                    )
+                    break
             local = _local_module_predicate(scan.root, file.path, file.proj_root)
             with (
                 self._isolated(file.rel, "Python re-export analysis"),
-                self.index.scan_budget(seconds=scan_timeout_for_size(self.scan_timeout, len(file.text))),
+                self.index.scan_budget(seconds=budget),
             ):
                 try:
                     self._scan_source(
@@ -1736,6 +1760,7 @@ class FilesystemConnector(BaseConnector):
         """Start each file only while its matching budget fits before the connector deadline."""
         deadline = self.ctx.deadline
         margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
+        scan.margin = margin
         entries = self._iter_entries(scan.root)
         examined = 0
         for rel, path, proj_root, size in entries:

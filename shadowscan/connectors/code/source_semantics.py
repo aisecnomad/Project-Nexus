@@ -972,6 +972,21 @@ def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
     return statements is None or any(matched(module, name) for module, name in sorted(statements))
 
 
+def _python_resolves(tree: ast.AST, resolve_import: ImportResolver) -> bool:
+    """Whether some absolute ``from`` import of ``tree`` resolves through a project re-export.
+
+    Otherwise the resolver changes no binding, so ``_python_bindable`` still
+    proves whether the binder can yield evidence.
+    """
+    return any(
+        resolve_import(node.module, alias.name) is not None
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and not node.level and node.module
+        for alias in node.names
+        if alias.name != "*"
+    )
+
+
 def _python_bindings(
     text: str,
     relevant: Callable[[_Binding], bool] | None = None,
@@ -1437,7 +1452,10 @@ def bound_source_matches(
                 module_matches.relevant,
                 max_ast_nodes,
                 # The single-file proof cannot see a project-local export.
-                bindable=(lambda parsed: _python_bindable(index, parsed)) if resolve_import is None else None,
+                bindable=lambda parsed: (
+                    _python_bindable(index, parsed)
+                    or (resolve_import is not None and _python_resolves(parsed, resolve_import))
+                ),
                 resolve_import=resolve_import,
             )
         else:

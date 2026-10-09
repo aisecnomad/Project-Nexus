@@ -4,7 +4,10 @@ import time
 
 import pytest
 
+from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code import filesystem, python_reexports
+from shadowscan.engine import Engine
 from shadowscan.models import Kind
 
 
@@ -181,3 +184,163 @@ def test_symlink_export_is_never_followed(tmp_path, run_connector):
     )
     assert not _agents(findings)
     assert ctx.stats.incomplete
+
+
+_OPENAI_CONSUMER = (
+    "from helpers import helper\n"
+    "from openai import OpenAI\n"
+    "client = OpenAI()\n"
+    'client.chat.completions.create(model="gpt-4o", messages=[])\n'
+)
+
+
+def _uses_openai(findings):
+    return any("provider.openai" in finding.model_providers for finding in findings)
+
+
+def test_large_ordinary_local_module_leaves_its_consumers_complete(tmp_path, run_connector):
+    # A module over the shim byte budget that is not import-only cannot be a
+    # shim, so importing it neither limits resolution nor changes evidence.
+    helpers = "def helper():\n    return 1\n" + "".join(f"VALUE_{n} = {n}\n" for n in range(8000))
+    assert len(helpers.encode("utf-8")) > python_reexports.MAX_SHIM_BYTES
+    findings, ctx = _scan(tmp_path, run_connector, {"helpers.py": helpers, "app.py": _OPENAI_CONSUMER})
+    assert _uses_openai(findings)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+@pytest.mark.parametrize(
+    ("text", "limited"),
+    [
+        ("from agents import Agent\n", True),
+        (
+            '"""Docstring."""\n# comment\n\nfrom agents import (\n    Agent,\n    Runner as R,\n)\n'
+            "from openai import \\\n    OpenAI\n",
+            True,
+        ),
+        ("from agents import Agent;\n", True),
+        ("import agents\n", False),
+        ("from agents import Agent; Agent = object\n", False),
+        ("from agents import Agent\nclass Agent:\n    pass\n", False),
+        ('"""One."""\n"""Two."""\nfrom agents import Agent\n', False),
+        ("if True:\n    from agents import Agent\n", False),
+        ("from agents import Agent\n'unterminated\n", False),
+        ('"""Only a docstring."""\n# and a comment\n', False),
+    ],
+)
+def test_oversize_module_is_limited_only_if_it_may_be_import_only(monkeypatch, text, limited):
+    monkeypatch.setattr(python_reexports, "MAX_SHIM_BYTES", 0)
+    graph = python_reexports.PythonReexports()
+    graph.add(".", "sdk.py", text)
+    assert ((".", "sdk") in graph.limited) is limited
+    assert not graph.modules
+
+
+def test_export_budget_applies_only_to_import_only_modules(tmp_path, run_connector, monkeypatch):
+    # Names imported at the top of an ordinary module are not exports of a shim.
+    monkeypatch.setattr(python_reexports, "MAX_EXPORTS", 0)
+    findings, ctx = _scan(
+        tmp_path,
+        run_connector,
+        {
+            "helpers.py": "from os import path\n\ndef helper():\n    return path\n",
+            "app.py": _OPENAI_CONSUMER,
+        },
+    )
+    assert _uses_openai(findings)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+_LARGE_BODY = "".join(f"value_{n} = helper({n})\n" for n in range(400))
+
+
+def test_unresolved_local_import_keeps_the_single_file_bindability_proof(tmp_path, run_connector):
+    # No import resolves through a shim, so the proof that the binder can
+    # yield nothing still holds: a root consumer over the AST budget remains
+    # complete, as it is without the local import or in a nested directory.
+    files = {
+        "helpers.py": "def helper(value):\n    return value\n",
+        "app.py": "from helpers import helper\n" + _LARGE_BODY,
+    }
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), git_metadata=False, max_ast_nodes=1000)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+def test_resolved_import_keeps_the_binder_and_its_ast_budget(tmp_path, run_connector):
+    files = {
+        "sdk.py": "from agents import Agent as RuntimeAgent\n",
+        "app.py": 'from sdk import RuntimeAgent\nhelper = RuntimeAgent\na = RuntimeAgent(name="helper")\n'
+        + _LARGE_BODY,
+    }
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), git_metadata=False, max_ast_nodes=1000)
+    assert ctx.stats.incomplete
+    assert any("app.py: import-bound analysis skipped" in error for error in ctx.stats.errors)
+
+
+def _fake_clock(monkeypatch) -> list[float]:
+    """Freeze ``time.monotonic`` and advance it by one second for every file the scanner reads."""
+    clock = [1000.0]
+    monkeypatch.setattr(filesystem.time, "monotonic", lambda: clock[0])
+    read_text = filesystem.read_text
+
+    def slow_read(path, max_bytes, errors=None, **options):
+        clock[0] += 1.0
+        return read_text(path, max_bytes, errors, **options)
+
+    monkeypatch.setattr(filesystem, "read_text", slow_read)
+    return clock
+
+
+def test_queued_consumers_keep_the_walk_deadline_margin(tmp_path, index, monkeypatch):
+    # The walk stops early enough to emit what it found. The queued consumer
+    # must not then start without its budget and that margin: overrunning the
+    # deadline makes the engine discard every finding of the connector.
+    (tmp_path / "a_app.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
+    (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
+    for number in range(3):
+        (tmp_path / f"z_agent_{number}.py").write_text("from langchain import agents\n")
+    clock = _fake_clock(monkeypatch)
+    bind = filesystem.bound_source_matches
+
+    def slow_bind(*args, **options):
+        # Resolved analysis uses its whole matching budget.
+        if options.get("resolve_import") is not None:
+            clock[0] += 2.0
+        return bind(*args, **options)
+
+    monkeypatch.setattr(filesystem, "bound_source_matches", slow_bind)
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"path": str(tmp_path), "use_git": False})],
+        connector_timeout_seconds=5.5,
+        parallel=1,
+    )
+    result = Engine(config, index).run()
+    stats = result.stats[0]
+    assert not result.complete and not stats.skipped
+    assert any("framework.langchain" in finding.frameworks for finding in result.findings)
+    assert any("a_app.py" in error and "re-export" in error for error in stats.errors)
+
+
+def test_queued_consumer_whose_budget_does_not_fit_is_skipped_alone(tmp_path, index, monkeypatch):
+    # The walk finishes with 5 s left: a 900 KiB consumer's 8 s budget no
+    # longer fits, but an ordinary queued consumer's still does.
+    large = "from b_helpers import helper\n" + "x = 1\n" * (900 * 1024 // 6)
+    (tmp_path / "a_large.py").write_text(large)
+    (tmp_path / "a_small.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
+    (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
+    for number in range(4):
+        (tmp_path / f"z_agent_{number}.py").write_text("from langchain import agents\n")
+    clock = _fake_clock(monkeypatch)
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 12.0
+    )
+    findings = filesystem.FilesystemConnector(ctx).run()
+    assert ctx.stats.objects_examined == 7 and ctx.stats.incomplete
+    assert [error for error in ctx.stats.errors if "deadline" in error] == [
+        "code.filesystem: a_large.py: Python re-export analysis skipped; the remaining connector deadline "
+        "cannot cover its 8s matching budget"
+    ]
+    assert _uses_openai(findings)

@@ -42,8 +42,14 @@ a framework never becomes third-party framework evidence through an alias.
 No scanned code is imported or executed, and source is not reopened for this
 pass. It retains at most 4,096 consumer files / 16 MiB of source, and resolves
 at most 16 modules per chain. Each shim has a 64 KiB source and 256-export
-budget, with at most 4,096 shims per scan. Reaching a required source or chain
-budget marks the scan incomplete and preserves available per-file evidence.
+budget, with at most 4,096 shims per scan. These budgets apply only to modules
+that may be import-only; a larger ordinary module stays unresolved. Reaching a
+required source or chain budget marks the scan incomplete and preserves available
+per-file evidence. A consumer whose imports resolve through no shim keeps the
+single-file proof that lets a large file without signature imports finish
+complete. Queued consumers are analyzed after the walk under its deadline rule:
+each starts only while its matching budget and the walk's safety margin fit,
+and any left unanalyzed is named and makes the scan incomplete.
 
 Packages, nested source layouts, dynamic imports, other re-exports and uncertain
 bindings remain usage evidence when ordinary signatures identify them.
