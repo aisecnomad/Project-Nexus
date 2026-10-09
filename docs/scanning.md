@@ -26,8 +26,8 @@ that are never silent:
   warning; it marks no project. Every other link makes the scan incomplete (exit code 3):
   links that leave the root or do not resolve, a link whose target cannot be
   inspected, a cycle (a link inside its own target), an unreadable directory, a
-  link or `.gitmodules` file below a linked directory, and links beyond the
-  20,000-entry budget.
+  link that the scanner would read or a `.gitmodules` file below a linked
+  directory, and links beyond the 20,000-entry budget.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the
@@ -311,7 +311,7 @@ override and private-endpoint policies, output changes and rollout checks.
 
 `code.filesystem.max_file_size` (default 4 MiB) bounds every source file the
 scanner reads. A larger file is never analyzed. Each signature pattern may use
-0.1 s of CPU per 1,000,000 characters of a file (and at least 0.1 s), within
+0.1 s of CPU per 250,000 characters of a file (and at least 0.1 s), within
 the file's matching budget; a pattern that exceeds it marks the scan
 incomplete. Whether a skipped file makes the scan incomplete depends on what it
 could hide:

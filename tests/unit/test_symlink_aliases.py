@@ -404,6 +404,17 @@ LAYOUTS = {
     ),
     "codeowners-link": ({"docs/OWNERS": "* @team-a\n", "app.py": AGENT}, [("CODEOWNERS", "docs/OWNERS")], {}),
     "excluded-name-link": ({"src/agent.py": AGENT}, [("build", "src")], {}),
+    "image-link-below-a-linked-directory": (
+        {
+            "fixtures/this is a folder/The Terminator.jpg": "jpeg",
+            "fixtures/links/terminator/readme.txt": "x\n",
+        },
+        [
+            ("fixtures/links/terminator/terminator2.jpg", "../../this is a folder/The Terminator.jpg"),
+            ("fixtures/links/folder-link", "terminator"),
+        ],
+        {},
+    ),
     "test-fixture-links": (
         {"testdata/source/config.json": '{"a": 1}\n', "config/settings.yml": "model: gpt-4o\n"},
         [

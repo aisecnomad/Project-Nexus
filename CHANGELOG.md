@@ -93,7 +93,9 @@ second provider, test fixtures and dangling links.
   resolved as a copy would be; a link is dangling only when the kernel finds
   nothing where it points; and excluded link names, Git store parts and
   `CODEOWNERS` that are in-root links are handled as copies. A seeded test
-  compares 40 random link layouts with their copies.
+  compares 40 random link layouts with their copies. Below a directory link,
+  a link whose name is never read (an image) and carries no file-name signal
+  hides nothing, as the walk skips it; any other link there stays a gap.
 
 ### October 8 benchmark remediation: oversize and binary content
 
@@ -117,11 +119,12 @@ code the scanner failed to read. Each change has a regression test.
 - An oversize compiled or packed binary without an extension (`mcp-publisher`)
   is skipped as a smaller one already was.
 - The default `max_file_size` is 4 MiB (was 1,000,000 bytes). A signature
-  pattern's CPU allowance over one text, 0.1 s, now applies per 1,000,000
-  characters, so a pattern keeps the rate it had at the old limit on a larger
-  file instead of timing out; the per-file budget still bounds the total. In
-  the benchmark, generated TypeScript clients of 1.1 to 1.7 MB timed out
-  without it. Test files (fixtures,
+  pattern's CPU allowance over one text, 0.1 s, now applies per 250,000
+  characters (and is never less), so a linear pattern does not time out on a
+  larger file; the per-file budget still bounds the total. In the benchmark,
+  generated TypeScript clients of 1.1 to 1.7 MB and a 1.1 MB minified bundle
+  timed out without it; a first version scaled per 1,000,000 characters and
+  left the bundle within 1.5 times of its limit on a busy machine. Test files (fixtures,
   recorded cassettes) are read and analyzed in full up to
   `max_data_file_size`, like data; above it they are gaps. An earlier
   version of this change scanned oversize test files for credentials only;

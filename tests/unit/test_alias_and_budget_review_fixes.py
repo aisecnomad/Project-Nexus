@@ -204,7 +204,8 @@ def test_pattern_allowance_keeps_its_rate_on_larger_files(monkeypatch) -> None:
     from shadowscan.signatures import matcher
 
     assert matcher._pattern_allowance("x" * 1_000) == matcher.REGEX_TIMEOUT_SECONDS
-    assert matcher._pattern_allowance("x" * 3_000_000) == pytest.approx(3 * matcher.REGEX_TIMEOUT_SECONDS)
+    assert matcher._pattern_allowance("x" * 250_000) == matcher.REGEX_TIMEOUT_SECONDS
+    assert matcher._pattern_allowance("x" * 3_000_000) == pytest.approx(12 * matcher.REGEX_TIMEOUT_SECONDS)
     seen: list[float | None] = []
     original = matcher._run_regex
 
@@ -216,7 +217,7 @@ def test_pattern_allowance_keeps_its_rate_on_larger_files(monkeypatch) -> None:
     rx = matcher.regex.compile(r"\bagent\b")
     matcher._finditer(rx, "agent " * 400_000, "test", 3)
     matcher._search(rx, "agent", "test")
-    assert seen[0] == pytest.approx(matcher.REGEX_TIMEOUT_SECONDS * 2.4)
+    assert seen[0] == pytest.approx(matcher.REGEX_TIMEOUT_SECONDS * 2_400_000 / 250_000)
     assert seen[1] == matcher.REGEX_TIMEOUT_SECONDS
 
 

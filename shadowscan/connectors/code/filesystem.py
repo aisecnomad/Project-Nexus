@@ -2314,6 +2314,8 @@ class FilesystemConnector(BaseConnector):
                     continue
                 try:
                     if path.is_symlink():
+                        if not (_analyzed_by_name(name) or self.index.match_file(alias_rel)):
+                            continue  # nothing is read at that path, link or copy (an image)
                         return False
                     info = path.stat()
                 except OSError:

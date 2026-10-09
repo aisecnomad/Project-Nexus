@@ -851,7 +851,7 @@ reported. Re-scan before comparing completeness or memory use:
 
 - **Larger reads.** The default `max_file_size` is 4 MiB (was 1,000,000 bytes),
   each signature pattern's CPU allowance scales with text size above
-  1,000,000 characters, and
+  250,000 characters, and
   documentation, data and test files up to `max_data_file_size` (default
   32 MiB) are now read and analyzed, so a scan can use more memory and time,
   and can gain findings from files it used to skip. Set `max_file_size: 1000000`

@@ -28,10 +28,10 @@ from shadowscan.utils.redaction import sanitize_text
 _SCAN_DEADLINE: ContextVar[float | None] = ContextVar("signature_scan_deadline", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
 # The CPU allowance of one pattern over one text is REGEX_TIMEOUT_SECONDS per
-# this many characters (the default max_file_size before it became 4 MiB), and
-# never less: a pattern keeps the same rate on a larger file, and the per-input
-# budget still bounds the total.
-REGEX_TIMEOUT_REFERENCE_CHARS = 1_000_000
+# this many characters, and never less. Linear signature patterns run at about
+# a quarter of that rate on minified bundles, so a busy machine does not time
+# them out on a large file; the per-input budget still bounds the total.
+REGEX_TIMEOUT_REFERENCE_CHARS = 250_000
 DEFAULT_SCAN_BUDGET_SECONDS = 2.0
 # A briefly busy worker can exhaust several regex wall-clock attempts before
 # this thread has used its own 100 ms CPU allowance. Keep retries finite and
