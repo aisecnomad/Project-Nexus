@@ -1,0 +1,7100 @@
+{
+ "labels": [
+  {
+   "id": "h001",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/index.ts",
+     "line": 12,
+     "criterion": "A3",
+     "excerpt": "import { McpServer } from \"@modelcontextprotocol/sdk/server/mcp.js\";"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 36,
+     "criterion": "A3",
+     "excerpt": "const server = new McpServer({ name: \"aiterm\", version: pkg.version });"
+    },
+    {
+     "path": "src/remote.ts",
+     "line": 189,
+     "criterion": "A3",
+     "excerpt": "const client = new Client({ name: \"aiterm-remote\", version: pkg.version });"
+    },
+    {
+     "path": "prototype/python/aiterm_mcp.py",
+     "line": 19,
+     "criterion": "A3",
+     "excerpt": "mcp = FastMCP(\"aiterm\")"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 260,
+     "criterion": "A3",
+     "excerpt": "server.registerTool("
+    },
+    {
+     "path": "package.json",
+     "line": 74,
+     "criterion": "A3",
+     "excerpt": "\"@modelcontextprotocol/sdk\": \"^1.29.0\","
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h002",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A3",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "examples/python/openai_agents_v2/agent.py",
+     "line": 7,
+     "criterion": "A1",
+     "excerpt": "from agents import Agent, function_tool"
+    },
+    {
+     "path": "examples/typescript/mastra_support_triage/src/agent.ts",
+     "line": 60,
+     "criterion": "A1",
+     "excerpt": "return new Agent({"
+    },
+    {
+     "path": "src/kitaru/mcp/server.py",
+     "line": 57,
+     "criterion": "A3",
+     "excerpt": "server = MCPServer[MCPServerState]("
+    },
+    {
+     "path": "plugins/packages/post-import-insights/src/kitaru_post_import_insights/openai_generator.py",
+     "line": 160,
+     "criterion": "L1",
+     "excerpt": "response = await self._client.responses.parse("
+    },
+    {
+     "path": "plugins/packages/claude-agent-sdk/pyproject.toml",
+     "line": 26,
+     "criterion": "L3",
+     "excerpt": "\"claude-agent-sdk>=0.2.149,<0.3\","
+    },
+    {
+     "path": "examples/python/openai_agents_v2/agent.py",
+     "line": 58,
+     "criterion": "A1",
+     "excerpt": "agent = Agent("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h003",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/utils/create-isolated-agent.ts",
+     "line": 12,
+     "criterion": "A1",
+     "excerpt": "import { LangGraphAgent } from \"@copilotkit/runtime/langgraph\";"
+    },
+    {
+     "path": "src/utils/create-isolated-agent.ts",
+     "line": 91,
+     "criterion": "A1",
+     "excerpt": "const agent = new LangGraphAgent(isolatedConfig);"
+    },
+    {
+     "path": "src/runner/history-hydrating-runner.ts",
+     "line": 202,
+     "criterion": "A1",
+     "excerpt": "return freshAgent.run(inputWithState);"
+    },
+    {
+     "path": "examples/nextjs-app-router/src/app/api/copilotkit/route.ts",
+     "line": 45,
+     "criterion": "A1",
+     "excerpt": "agents: { [graphId]: agent },"
+    },
+    {
+     "path": "examples/nextjs-app-router/package.json",
+     "line": 17,
+     "criterion": "L3",
+     "excerpt": "\"@langchain/langgraph-sdk\": \"^1.3.1\","
+    },
+    {
+     "path": "examples/nextjs-app-router/src/app/api/copilotkit/route.ts",
+     "line": 44,
+     "criterion": "A1",
+     "excerpt": "return new CopilotRuntime({"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h004",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h005",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "A3",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "mini_swe_runner.py",
+     "line": 250,
+     "criterion": "A2",
+     "excerpt": "return self.client.chat.completions.create(**api_kwargs).choices[0].message"
+    },
+    {
+     "path": "mini_swe_runner.py",
+     "line": 267,
+     "criterion": "A2",
+     "excerpt": "result = self._execute_command(command, args.get(\"timeout\", self.command_timeout))"
+    },
+    {
+     "path": "mcp_serve.py",
+     "line": 696,
+     "criterion": "A3",
+     "excerpt": "mcp = MCPServer(\"hermes\", instructions=("
+    },
+    {
+     "path": "agent/chat_completion_helpers.py",
+     "line": 788,
+     "criterion": "L1",
+     "excerpt": "return agent.client.chat.completions.create(**api_kwargs)"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 40,
+     "criterion": "L3",
+     "excerpt": "\"openai==2.24.0; python_version >= '3.14'\","
+    },
+    {
+     "path": "model_tools.py",
+     "line": 872,
+     "criterion": "A2",
+     "excerpt": "def handle_function_call("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h006",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "A6",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": ".github/workflows/claude.yml",
+     "line": 35,
+     "criterion": "A6",
+     "excerpt": "uses: anthropics/claude-code-action@beta"
+    },
+    {
+     "path": "examples/ragas_examples/agent_evals/agent.py",
+     "line": 331,
+     "criterion": "A2",
+     "excerpt": "result = self._execute_tool_call(tool_call)"
+    },
+    {
+     "path": "examples/ragas_examples/llamaIndex_agent_evals/llamaindex_agent.py",
+     "line": 46,
+     "criterion": "A1",
+     "excerpt": "workflow = FunctionAgent("
+    },
+    {
+     "path": "src/ragas/embeddings/openai_provider.py",
+     "line": 40,
+     "criterion": "L1",
+     "excerpt": "response = self.client.embeddings.create("
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 17,
+     "criterion": "L3",
+     "excerpt": "\"openai>=1.0.0\","
+    },
+    {
+     "path": "examples/ragas_examples/improve_rag/rag.py",
+     "line": 138,
+     "criterion": "A1",
+     "excerpt": "self._agent = Agent("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h007",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "src/bandersnatch/utils.py",
+     "line": 26,
+     "criterion": "none-note",
+     "excerpt": "def user_agent() -> str:"
+    },
+    {
+     "path": "src/bandersnatch/master.py",
+     "line": 59,
+     "criterion": "none-note",
+     "excerpt": "custom_headers = {\"User-Agent\": USER_AGENT}"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h008",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A4",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "frameworks/dev-squad-kit-1.2.1/agents/qa.md",
+     "line": 4,
+     "criterion": "A4",
+     "excerpt": "tools: [Read, Grep, Glob, Bash]"
+    },
+    {
+     "path": "frameworks/operator-kit-1.8.2/agents/refutador.md",
+     "line": 4,
+     "criterion": "A4",
+     "excerpt": "tools: [Read, Grep, Glob, Bash]"
+    },
+    {
+     "path": "multi-session/lane-kit-1.8.1/hooks/hooks.json",
+     "line": 11,
+     "criterion": "A4",
+     "excerpt": "\"PreToolUse\": ["
+    },
+    {
+     "path": "examples/typed-decisions/decide.py",
+     "line": 144,
+     "criterion": "L1",
+     "excerpt": "body = json.dumps({\"model\": model, \"state\": state, \"questions\":"
+    },
+    {
+     "path": "examples/typed-decisions/decide.py",
+     "line": 151,
+     "criterion": "L1",
+     "excerpt": "with _OPENER.open(request, timeout=timeout) as response:"
+    },
+    {
+     "path": "frameworks/dev-squad-kit-1.2.1/agents/dev.md",
+     "line": 4,
+     "criterion": "A4",
+     "excerpt": "tools: [Read, Grep, Glob, Bash, Write, Edit]"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h009",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "rust-server/src/server.rs",
+     "line": 319,
+     "criterion": "A3",
+     "excerpt": "impl ServerHandler for UnityMcpServer {"
+    },
+    {
+     "path": "rust-server/src/server.rs",
+     "line": 183,
+     "criterion": "A3",
+     "excerpt": "#[tool_router]"
+    },
+    {
+     "path": "rust-server/src/main.rs",
+     "line": 122,
+     "criterion": "A3",
+     "excerpt": "let service_result: anyhow::Result<()> = match handler.serve(stdio()).await {"
+    },
+    {
+     "path": "rust-server/Cargo.toml",
+     "line": 7,
+     "criterion": "A3",
+     "excerpt": "rmcp = { version = \"3.1\", features = [\"server\", \"transport-io\", \"macros\"] }"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h010",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "agent-word"
+   ],
+   "evidence": [
+    {
+     "path": "pnet_packet/src/ip.rs",
+     "line": 381,
+     "criterion": "none-note",
+     "excerpt": "/// Interactive Agent Transfer Protocol"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h011",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A4",
+    "A6"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": ".github/workflows/opencode.yml",
+     "line": 26,
+     "criterion": "A6",
+     "excerpt": "uses: anomalyco/opencode/github@latest"
+    },
+    {
+     "path": ".github/workflows/ci-fixer.yml",
+     "line": 163,
+     "criterion": "A6",
+     "excerpt": "} | opencode run --agent ci-fixer -m opencode/muse-spark-1.3 --variant xhigh | tee \"$RESPONSE_FILE\""
+    },
+    {
+     "path": ".github/workflows/pr-reviewer.yml",
+     "line": 81,
+     "criterion": "A6",
+     "excerpt": "opencode run --agent pr-reviewer -m opencode/muse-spark-1.3 --variant xhigh --format json <<'EOF' |"
+    },
+    {
+     "path": ".opencode/agent/ci-fixer.md",
+     "line": 5,
+     "criterion": "A4",
+     "excerpt": "model: opencode/glm-5.2"
+    },
+    {
+     "path": ".opencode/tool/mark-pr-ready.ts",
+     "line": 4,
+     "criterion": "A4",
+     "excerpt": "export default tool({"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h012",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "ai-names-as-data",
+    "chatbot",
+    "product-name",
+    "provider-name"
+   ],
+   "evidence": [
+    {
+     "path": "extension/manifest.json",
+     "line": 24,
+     "criterion": "none-note",
+     "excerpt": "\"matches\": [\"https://chat.openai.com/*\"],"
+    },
+    {
+     "path": "extension/index.js",
+     "line": 3,
+     "criterion": "none-note",
+     "excerpt": "const API_URL = \"https://sharegpt.com/api/conversations\";"
+    },
+    {
+     "path": "extension/index.js",
+     "line": 91,
+     "criterion": "none-note",
+     "excerpt": "from: \"gpt\","
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h013",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A3",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/agency_swarm/agent/core.py",
+     "line": 114,
+     "criterion": "A1",
+     "excerpt": "class Agent(BaseAgent[MasterContext]):"
+    },
+    {
+     "path": "examples/mcp_servers.py",
+     "line": 45,
+     "criterion": "A3",
+     "excerpt": "stdio_server = MCPServerStdio("
+    },
+    {
+     "path": "src/agency_swarm/integrations/mcp_server.py",
+     "line": 106,
+     "criterion": "A3",
+     "excerpt": "mcp: FastMCP = _AgencySwarmFastMCP(server_name)"
+    },
+    {
+     "path": "src/agency_swarm/ui/demos/compact.py",
+     "line": 112,
+     "criterion": "L1",
+     "excerpt": "response = client.responses.create(model=model_name, input=final_prompt)"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 21,
+     "criterion": "L3",
+     "excerpt": "\"openai-agents==0.22.3\","
+    },
+    {
+     "path": "src/agency_swarm/agent/execution_helpers.py",
+     "line": 89,
+     "criterion": "A1",
+     "excerpt": "result = await Runner.run("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h014",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h015",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "prompt-word"
+   ],
+   "evidence": [
+    {
+     "path": ".claude/settings.json",
+     "line": 28,
+     "criterion": "none-note",
+     "excerpt": "\"Bash(dotnet *)\","
+    },
+    {
+     "path": "src/Eto/Forms/Controls/MaskedTextBox.cs",
+     "line": 23,
+     "criterion": "none-note",
+     "excerpt": "/// Mode for when prompt characters are shown in a control."
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h016",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "A3",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "swarms/structs/agent.py",
+     "line": 129,
+     "criterion": "A1",
+     "excerpt": "class Agent:"
+    },
+    {
+     "path": "swarms/structs/agent.py",
+     "line": 1237,
+     "criterion": "A2",
+     "excerpt": "self.tool_manager.handle_tool_calls("
+    },
+    {
+     "path": "swarms/tools/mcp_manager.py",
+     "line": 1562,
+     "criterion": "A3",
+     "excerpt": "async with ClientSession("
+    },
+    {
+     "path": "swarms/utils/litellm_wrapper.py",
+     "line": 1603,
+     "criterion": "L1",
+     "excerpt": "response = await acompletion(**completion_params)"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 70,
+     "criterion": "L3",
+     "excerpt": "litellm = \"1.76.1\""
+    },
+    {
+     "path": "swarms/utils/litellm_wrapper.py",
+     "line": 1545,
+     "criterion": "L1",
+     "excerpt": "response = completion(**completion_params)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h017",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "src/index.ts",
+     "line": 2,
+     "criterion": "none-note",
+     "excerpt": "getUserAgentRegex,"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h018",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/lib/tool-orchestrator.ts",
+     "line": 44,
+     "criterion": "A2",
+     "excerpt": "export async function executeToolLoop("
+    },
+    {
+     "path": "src/lib/model-result.ts",
+     "line": 579,
+     "criterion": "A2",
+     "excerpt": "const result = await executeTool(tool, tc as ParsedToolCall<Tool>, turnContext, undefined, this.cont"
+    },
+    {
+     "path": "src/funcs/chatSend.ts",
+     "line": 217,
+     "criterion": "L1",
+     "excerpt": "const path = pathToFunc(\"/chat/completions\")();"
+    },
+    {
+     "path": "examples/package.json",
+     "line": 16,
+     "criterion": "L3",
+     "excerpt": "\"@openrouter/sdk\": \"file:..\""
+    },
+    {
+     "path": "src/lib/model-result.ts",
+     "line": 1306,
+     "criterion": "A2",
+     "excerpt": "const currentToolCalls = extractToolCallsFromResponse(currentResponse);"
+    },
+    {
+     "path": "src/lib/model-result.ts",
+     "line": 1330,
+     "criterion": "A2",
+     "excerpt": "const toolResults = await this.executeToolRound(currentToolCalls, turnContext);"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h019",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/chat/index.ts",
+     "line": 196,
+     "criterion": "L1",
+     "excerpt": "url: this.config.url({ path: \"/chat/completions\" }),"
+    },
+    {
+     "path": "src/embedding/index.ts",
+     "line": 56,
+     "criterion": "L1",
+     "excerpt": "url: this.config.url({ path: \"/embeddings\" }),"
+    },
+    {
+     "path": "package.json",
+     "line": 71,
+     "criterion": "L3",
+     "excerpt": "\"@ai-sdk/provider-utils\": \"^4.0.23\""
+    },
+    {
+     "path": "src/chat/index.ts",
+     "line": 195,
+     "criterion": "L1",
+     "excerpt": "const { value: response, responseHeaders } = await postJsonToApi({"
+    },
+    {
+     "path": "src/embedding/index.ts",
+     "line": 55,
+     "criterion": "L1",
+     "excerpt": "const { value: response, responseHeaders } = await postJsonToApi({"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h020",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/index.ts",
+     "line": 10,
+     "criterion": "A3",
+     "excerpt": "const server = new McpServer({"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 877,
+     "criterion": "L1",
+     "excerpt": "`${NWS_API_BASE}/api/v1/agents/generate-completion`,"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 973,
+     "criterion": "L1",
+     "excerpt": "const response = await fetch(`${NWS_API_BASE}/api/v1/generate-ai-image`, {"
+    },
+    {
+     "path": "package.json",
+     "line": 42,
+     "criterion": "L3",
+     "excerpt": "\"@modelcontextprotocol/sdk\": \"^1.7.0\","
+    },
+    {
+     "path": "src/index.ts",
+     "line": 1055,
+     "criterion": "A3",
+     "excerpt": "const transport = new StdioServerTransport();"
+    },
+    {
+     "path": "CLAUDE.md",
+     "line": 1,
+     "criterion": "A3",
+     "excerpt": "We are building a MCP server for the Dumpling AI API"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h021",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "A3",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "packages/core/src/agent/agent.ts",
+     "line": 1013,
+     "criterion": "A1",
+     "excerpt": "export class Agent {"
+    },
+    {
+     "path": "packages/core/src/agent/agent.ts",
+     "line": 1393,
+     "criterion": "A2",
+     "excerpt": "stopWhen: options?.stopWhen ?? this.stopWhen ?? stepCountIs(maxSteps),"
+    },
+    {
+     "path": "packages/core/src/mcp/client/index.ts",
+     "line": 143,
+     "criterion": "A3",
+     "excerpt": "this.client = new Client(this.clientInfo, {"
+    },
+    {
+     "path": "packages/core/src/agent/agent.ts",
+     "line": 1386,
+     "criterion": "L1",
+     "excerpt": "generateText({"
+    },
+    {
+     "path": "packages/core/package.json",
+     "line": 56,
+     "criterion": "L3",
+     "excerpt": "\"ai\": \"^6.0.0\","
+    },
+    {
+     "path": "examples/base/src/index.ts",
+     "line": 20,
+     "criterion": "A1",
+     "excerpt": "const agent = new Agent({"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h022",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "aider/coders/editblock_coder.py",
+     "line": 33,
+     "criterion": "A2",
+     "excerpt": "self.shell_commands += [edit[1] for edit in edits if edit[0] is None]"
+    },
+    {
+     "path": "aider/coders/base_coder.py",
+     "line": 2445,
+     "criterion": "A2",
+     "excerpt": "output = self.handle_shell_commands(command, group)"
+    },
+    {
+     "path": "aider/models.py",
+     "line": 1036,
+     "criterion": "L1",
+     "excerpt": "res = litellm.completion(**kwargs)"
+    },
+    {
+     "path": "requirements/requirements.in",
+     "line": 18,
+     "criterion": "L3",
+     "excerpt": "litellm"
+    },
+    {
+     "path": "aider/models.py",
+     "line": 1008,
+     "criterion": "A2",
+     "excerpt": "kwargs[\"tools\"] = [dict(type=\"function\", function=function)]"
+    },
+    {
+     "path": "aider/coders/wholefile_func_coder.py",
+     "line": 111,
+     "criterion": "A2",
+     "excerpt": "name = self.partial_response_function_call.get(\"name\")"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h023",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "index.js",
+     "line": 29,
+     "criterion": "L1",
+     "excerpt": "const response = await openai.createCompletion({"
+    },
+    {
+     "path": "package.json",
+     "line": 25,
+     "criterion": "L3",
+     "excerpt": "\"openai\": \"^3.1.0\""
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h024",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "ImageGen/Services/LlmService.cs",
+     "line": 94,
+     "criterion": "L1",
+     "excerpt": "await foreach (var token in executor.InferAsync(fullPrompt, inferenceParams))"
+    },
+    {
+     "path": "ImageGen/Services/SdService.cs",
+     "line": 22,
+     "criterion": "L1",
+     "excerpt": "private const string EngineUrl = \"http://127.0.0.1:7860/sdapi/v1/txt2img\";"
+    },
+    {
+     "path": "ImageGen/ImageGen.csproj",
+     "line": 21,
+     "criterion": "L3",
+     "excerpt": "<PackageReference Include=\"LLamaSharp\" Version=\"0.15.0\" />"
+    },
+    {
+     "path": "ImageGen/Services/SdService.cs",
+     "line": 65,
+     "criterion": "L1",
+     "excerpt": "var response = await _client.PostAsync(EngineUrl, content);"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h025",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "A4",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/server.ts",
+     "line": 42,
+     "criterion": "A3",
+     "excerpt": "const server = new McpServer({"
+    },
+    {
+     "path": "mcp.json",
+     "line": 3,
+     "criterion": "A4",
+     "excerpt": "\"mcpServers\": {"
+    },
+    {
+     "path": "claude-plugin/.mcp.json",
+     "line": 2,
+     "criterion": "A4",
+     "excerpt": "\"mcpServers\": {"
+    },
+    {
+     "path": "package.json",
+     "line": 27,
+     "criterion": "L3",
+     "excerpt": "\"@modelcontextprotocol/server\": \"^2.0.0\","
+    },
+    {
+     "path": "src/server.ts",
+     "line": 57,
+     "criterion": "A3",
+     "excerpt": "server.registerTool("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h026",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "source/NsDepCop.sln",
+     "line": 11,
+     "criterion": "none-note",
+     "excerpt": "..\\CLAUDE.md = ..\\CLAUDE.md"
+    },
+    {
+     "path": "CLAUDE.md",
+     "line": 3,
+     "criterion": "none-note",
+     "excerpt": "This file provides guidance to Claude Code (claude.ai/code) when working with code in this reposi..."
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h027",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "inference/generate.py",
+     "line": 141,
+     "criterion": "L1",
+     "excerpt": "completion_tokens = generate(model, [prompt_tokens], max_new_tokens, tokenizer.eos_token_id, tempera"
+    },
+    {
+     "path": "inference/model.py",
+     "line": 738,
+     "criterion": "L1",
+     "excerpt": "class Transformer(nn.Module):"
+    },
+    {
+     "path": "inference/requirements.txt",
+     "line": 3,
+     "criterion": "L3",
+     "excerpt": "transformers==4.46.3"
+    },
+    {
+     "path": "inference/generate.py",
+     "line": 117,
+     "criterion": "L1",
+     "excerpt": "tokenizer = AutoTokenizer.from_pretrained(ckpt_path)"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h028",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "A3",
+    "A4",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "plugins/ruflo-ai-team/src/server.mjs",
+     "line": 60,
+     "criterion": "A3",
+     "excerpt": "const mcp = new McpServer({ name: 'ruflo-ai-team', version: VERSION }"
+    },
+    {
+     "path": ".claude/mcp.json",
+     "line": 2,
+     "criterion": "A4",
+     "excerpt": "\"mcpServers\": {"
+    },
+    {
+     "path": "ruflo/src/ruvocal/src/lib/server/textGeneration/mcp/runMcpFlow.ts",
+     "line": 695,
+     "criterion": "A2",
+     "excerpt": "const exec = executeToolCalls({"
+    },
+    {
+     "path": "v3/@claude-flow/memory/benchmarks/longmemeval/harness.ts",
+     "line": 150,
+     "criterion": "L1",
+     "excerpt": "const response = await client.messages.create({"
+    },
+    {
+     "path": "ruflo/src/ruvocal/package.json",
+     "line": 98,
+     "criterion": "L3",
+     "excerpt": "\"openai\": \"^4.44.0\","
+    },
+    {
+     "path": "v3/@claude-flow/cli/src/mcp-server.ts",
+     "line": 899,
+     "criterion": "A3",
+     "excerpt": "case 'tools/list':"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h029",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A3",
+    "A4",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/mattermost_mcp_host/agent/llm_agent.py",
+     "line": 99,
+     "criterion": "A1",
+     "excerpt": "workflow = StateGraph(AgentState)"
+    },
+    {
+     "path": "src/mattermost_mcp_host/mcp_client.py",
+     "line": 83,
+     "criterion": "A3",
+     "excerpt": "self.session = ClientSession(self.read, self.write)"
+    },
+    {
+     "path": "simple-mcp-server/server.py",
+     "line": 13,
+     "criterion": "A3",
+     "excerpt": "mcp = FastMCP(\"Test\")"
+    },
+    {
+     "path": "src/mattermost_mcp_host/mcp-servers.json",
+     "line": 2,
+     "criterion": "A4",
+     "excerpt": "\"mcpServers\": {"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 15,
+     "criterion": "L3",
+     "excerpt": "\"langgraph>=0.3.18\","
+    },
+    {
+     "path": "src/mattermost_mcp_host/mcp_client.py",
+     "line": 81,
+     "criterion": "A3",
+     "excerpt": "self.client_context = stdio_client(server_params)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h030",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "product-name"
+   ],
+   "evidence": [
+    {
+     "path": "README.md",
+     "line": 6,
+     "criterion": "none-note",
+     "excerpt": "[![CodeRabbit Pull Request Reviews]"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h031",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "haystack/components/agents/agent.py",
+     "line": 264,
+     "criterion": "A1",
+     "excerpt": "class Agent:"
+    },
+    {
+     "path": "haystack/components/agents/agent.py",
+     "line": 1114,
+     "criterion": "A2",
+     "excerpt": "tool_messages, exe_context.state = _run_tool(**tool_execution_inputs)"
+    },
+    {
+     "path": "haystack/components/generators/chat/openai.py",
+     "line": 388,
+     "criterion": "L1",
+     "excerpt": "openai_endpoint_method = getattr(self.client.chat.completions, openai_endpoint)"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 48,
+     "criterion": "L3",
+     "excerpt": "\"openai>=2.6.0\","
+    },
+    {
+     "path": "haystack/components/agents/agent.py",
+     "line": 1089,
+     "criterion": "A2",
+     "excerpt": "result = self.chat_generator.run(**chat_generator_inputs)"
+    },
+    {
+     "path": "test/tools/test_agent_tool.py",
+     "line": 39,
+     "criterion": "A1",
+     "excerpt": "agent = Agent(chat_generator=MockChatGenerator(responses=[\"done\"]), system_prompt=\"You research t"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h032",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "agent-word",
+    "ai-prose"
+   ],
+   "evidence": [
+    {
+     "path": ".agents/skills/engineering-audit/learned-systems.md",
+     "line": 3,
+     "criterion": "none-note",
+     "excerpt": "Run this mode when the audited system uses a generative model"
+    },
+    {
+     "path": ".agents/skills/engineering-audit/learned-systems.md",
+     "line": 19,
+     "criterion": "none-note",
+     "excerpt": "When the tree publishes skill files, prompt templates, MCP configs, or tool schemas, inventory those"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h033",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A6",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "advanced_ai_agents/multi_agent_apps/multi_agent_researcher/research_agent.py",
+     "line": 21,
+     "criterion": "A1",
+     "excerpt": "hn_researcher = Agent("
+    },
+    {
+     "path": "generative_ui_agents/mcp-apps-generative-ui-showcase/mcp-server/server.ts",
+     "line": 99,
+     "criterion": "A3",
+     "excerpt": "const server = new McpServer("
+    },
+    {
+     "path": "generative_ui_agents/ai-shadcn-component-generator/.mcp.json",
+     "line": 2,
+     "criterion": "A4",
+     "excerpt": "\"mcpServers\": {"
+    },
+    {
+     "path": ".github/workflows/claude.yml",
+     "line": 33,
+     "criterion": "A6",
+     "excerpt": "uses: anthropics/claude-code-action@beta"
+    },
+    {
+     "path": "advanced_ai_agents/autonomous_game_playing_agent_apps/ai_3dpygame_r1/ai_3dpygame_r1.py",
+     "line": 76,
+     "criterion": "L1",
+     "excerpt": "deepseek_response = deepseek_client.chat.completions.create("
+    },
+    {
+     "path": "advanced_ai_agents/multi_agent_apps/product_launch_intelligence_agent/product_launch_intelligence_agent.py",
+     "line": 47,
+     "criterion": "A1",
+     "excerpt": "launch_analyst = Agent("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h034",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "CLAUDE.md",
+     "line": 3,
+     "criterion": "none-note",
+     "excerpt": "This file provides guidance to Claude Code (claude.ai/code) when working with code in this reposi..."
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h035",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "rag/scripts/rag.py",
+     "line": 90,
+     "criterion": "L1",
+     "excerpt": "llm = ChatOpenAI("
+    },
+    {
+     "path": "rag/scripts/rag.py",
+     "line": 118,
+     "criterion": "L1",
+     "excerpt": "res = llm([SystemMessage(content=prompt)])"
+    },
+    {
+     "path": "rag/scripts/rag.py",
+     "line": 51,
+     "criterion": "L1",
+     "excerpt": "embedding_function = OpenAIEmbeddings(model=OPENAI_EMBEDDING_MODEL,"
+    },
+    {
+     "path": "rag/scripts/rag.py",
+     "line": 183,
+     "criterion": "L1",
+     "excerpt": "qa = RetrievalQA.from_chain_type("
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h036",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "prompttools/utils/expected.py",
+     "line": 27,
+     "criterion": "L1",
+     "excerpt": "response = openai.chat.completions.create("
+    },
+    {
+     "path": "prompttools/experiment/experiments/anthropic_completion_experiment.py",
+     "line": 119,
+     "criterion": "L1",
+     "excerpt": "return self.client.completions.create(**input_args)"
+    },
+    {
+     "path": "prompttools/experiment/experiments/google_gemini_chat_experiment.py",
+     "line": 71,
+     "criterion": "L1",
+     "excerpt": "response = model.generate_content(**params)"
+    },
+    {
+     "path": "requirements.txt",
+     "line": 1,
+     "criterion": "L3",
+     "excerpt": "openai"
+    },
+    {
+     "path": "prompttools/playground/requirements.txt",
+     "line": 5,
+     "criterion": "L3",
+     "excerpt": "anthropic"
+    },
+    {
+     "path": "prompttools/utils/autoeval.py",
+     "line": 51,
+     "criterion": "L1",
+     "excerpt": "evaluation = openai.chat.completions.create(model=model, messages=_get_messages(prompt, response))"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h037",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "gofight.go",
+     "line": 418,
+     "criterion": "none-note",
+     "excerpt": "req.Header.Set(UserAgent, \"Gofight-client/\"+Version)"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h038",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/pattern_vista/mcp_server.py",
+     "line": 45,
+     "criterion": "A3",
+     "excerpt": "from mcp.server.fastmcp import FastMCP as _Server # mcp 1.x"
+    },
+    {
+     "path": "src/pattern_vista/mcp_server.py",
+     "line": 73,
+     "criterion": "A3",
+     "excerpt": "mcp = _Server(version=__version__, **_SERVER_KWARGS)"
+    },
+    {
+     "path": "src/pattern_vista/mcp_server.py",
+     "line": 119,
+     "criterion": "A3",
+     "excerpt": "@mcp.tool()"
+    },
+    {
+     "path": "src/pattern_vista/mcp_server.py",
+     "line": 224,
+     "criterion": "A3",
+     "excerpt": "mcp.run()"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h039",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "ai-prose",
+    "prompt-word",
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": ".github/pull_request_template.md",
+     "line": 4,
+     "criterion": "none-note",
+     "excerpt": "* [ ] I reviewed the design choices and implementation details of the changes."
+    },
+    {
+     "path": "src/websockets/http11.py",
+     "line": 33,
+     "criterion": "none-note",
+     "excerpt": "USER_AGENT = os.environ.get("
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h040",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L2",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "superagi/agent/agent_iteration_step_handler.py",
+     "line": 75,
+     "criterion": "A2",
+     "excerpt": "response = self.llm.chat_completion(messages, TokenCounter(session=self.session, organisation_id=or"
+    },
+    {
+     "path": "superagi/agent/output_handler.py",
+     "line": 104,
+     "criterion": "A2",
+     "excerpt": "return tool_executor.execute(session, action.name, action.args)"
+    },
+    {
+     "path": "superagi/llms/openai.py",
+     "line": 86,
+     "criterion": "L1",
+     "excerpt": "response = openai.ChatCompletion.create("
+    },
+    {
+     "path": "local-llm",
+     "line": 43,
+     "criterion": "L2",
+     "excerpt": "super__tgwui:"
+    },
+    {
+     "path": "requirements.txt",
+     "line": 84,
+     "criterion": "L3",
+     "excerpt": "openai==0.27.7"
+    },
+    {
+     "path": "superagi/agent/tool_executor.py",
+     "line": 39,
+     "criterion": "A2",
+     "excerpt": "observation = tool.execute(parsed_args)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h041",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "A3",
+    "A6",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "internal/llmloop/loop.go",
+     "line": 474,
+     "criterion": "A2",
+     "excerpt": "cp := r.executeToolCall(ctx, taskKey, call, rec, thinking)"
+    },
+    {
+     "path": "internal/mcp/client.go",
+     "line": 50,
+     "criterion": "A3",
+     "excerpt": "client := mcp.NewClient("
+    },
+    {
+     "path": ".github/workflows/ocr-review.yml",
+     "line": 54,
+     "criterion": "A6",
+     "excerpt": "uses: ./"
+    },
+    {
+     "path": "internal/llm/client.go",
+     "line": 1511,
+     "criterion": "L1",
+     "excerpt": "sdkResp, err := c.sdk.Messages.New(ctx, params, opts...)"
+    },
+    {
+     "path": "go.mod",
+     "line": 9,
+     "criterion": "L3",
+     "excerpt": "github.com/anthropics/anthropic-sdk-go v1.63.1"
+    },
+    {
+     "path": "internal/llmloop/loop.go",
+     "line": 808,
+     "criterion": "A2",
+     "excerpt": "result, err := p.Execute(ctx, args)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h042",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "Sources/MCP/AngouriMath.Mcp/Server.cs",
+     "line": 134,
+     "criterion": "A3",
+     "excerpt": "case \"initialize\":"
+    },
+    {
+     "path": "Sources/MCP/AngouriMath.Mcp/Server.cs",
+     "line": 172,
+     "criterion": "A3",
+     "excerpt": "case \"tools/call\":"
+    },
+    {
+     "path": "Sources/MCP/AngouriMath.Mcp/Server.cs",
+     "line": 169,
+     "criterion": "A3",
+     "excerpt": "case \"tools/list\":"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h043",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "sgpt/handlers/handler.py",
+     "line": 120,
+     "criterion": "A2",
+     "excerpt": "additional_kwargs[\"tools\"] = functions"
+    },
+    {
+     "path": "sgpt/handlers/handler.py",
+     "line": 93,
+     "criterion": "A2",
+     "excerpt": "result = get_function(name)(**dict_args)"
+    },
+    {
+     "path": "sgpt/handlers/handler.py",
+     "line": 32,
+     "criterion": "L1",
+     "excerpt": "completion = client.chat.completions.create"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 27,
+     "criterion": "L3",
+     "excerpt": "\"openai >= 2.0.0, < 3.0.0\","
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h044",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "A4"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "server.js",
+     "line": 202,
+     "criterion": "A3",
+     "excerpt": "let server = new FastMCP({"
+    },
+    {
+     "path": "server.js",
+     "line": 1336,
+     "criterion": "A3",
+     "excerpt": "server.start({transportType: 'stdio'});"
+    },
+    {
+     "path": "package.json",
+     "line": 30,
+     "criterion": "A3",
+     "excerpt": "\"fastmcp\": \"^3.33.0\","
+    },
+    {
+     "path": "mcp-evals/server-configs/server-config.research.json",
+     "line": 5,
+     "criterion": "A4",
+     "excerpt": "\"url\": \"https://mcp.brightdata.com/mcp?groups=research&browser=scraping_browser\","
+    },
+    {
+     "path": "mcp-evals/tool-groups.json/tool-groups.research.json",
+     "line": 6,
+     "criterion": "A4",
+     "excerpt": "\"model\": \"gpt-5-mini-2025-08-07\","
+    },
+    {
+     "path": "server.js",
+     "line": 3,
+     "criterion": "A3",
+     "excerpt": "import {FastMCP} from 'fastmcp';"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h045",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "client_gpt35.go",
+     "line": 61,
+     "criterion": "L1",
+     "excerpt": "resp, err := gptClient.CreateChatCompletion(ctx, gogpt.ChatCompletionRequest{"
+    },
+    {
+     "path": "client_gpt35.go",
+     "line": 62,
+     "criterion": "L1",
+     "excerpt": "Model: gogpt.GPT3Dot5Turbo,"
+    },
+    {
+     "path": "go.mod",
+     "line": 6,
+     "criterion": "L3",
+     "excerpt": "github.com/sashabaranov/go-gpt3 v1.3.1"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h046",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "config.js",
+     "line": 8,
+     "criterion": "L1",
+     "excerpt": "return `${OPEN_AI_URL}/engines/${engine}/completions`;"
+    },
+    {
+     "path": "config.js",
+     "line": 2,
+     "criterion": "L1",
+     "excerpt": "const ORIGIN = 'https://api.openai.com';"
+    },
+    {
+     "path": "index.js",
+     "line": 61,
+     "criterion": "L1",
+     "excerpt": "const url = config.completionURL(opts.engine || DEFAULT_ENGINE);"
+    },
+    {
+     "path": "index.js",
+     "line": 106,
+     "criterion": "L1",
+     "excerpt": "const url = config.chatURL();"
+    },
+    {
+     "path": "index.js",
+     "line": 24,
+     "criterion": "L1",
+     "excerpt": "return axios({"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h047",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "wut/utils.py",
+     "line": 234,
+     "criterion": "L1",
+     "excerpt": "response = anthropic.messages.create("
+    },
+    {
+     "path": "wut/utils.py",
+     "line": 245,
+     "criterion": "L1",
+     "excerpt": "response = openai.chat.completions.create("
+    },
+    {
+     "path": "setup.py",
+     "line": 32,
+     "criterion": "L3",
+     "excerpt": "install_requires=[\"openai\", \"anthropic\", \"ollama\", \"rich\", \"psutil\"],"
+    },
+    {
+     "path": "Pipfile",
+     "line": 9,
+     "criterion": "L3",
+     "excerpt": "openai = \"*\""
+    },
+    {
+     "path": "wut/utils.py",
+     "line": 257,
+     "criterion": "L1",
+     "excerpt": "response = chat("
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h048",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "nodes/AgentWithLangfuse/V3/helpers/createAgentSequence.ts",
+     "line": 34,
+     "criterion": "A1",
+     "excerpt": "const agent = createToolCallingAgent({"
+    },
+    {
+     "path": "nodes/AgentWithLangfuse/V2/execute.ts",
+     "line": 89,
+     "criterion": "A1",
+     "excerpt": "return AgentExecutor.fromAgentAndTools({"
+    },
+    {
+     "path": "package.json",
+     "line": 50,
+     "criterion": "L3",
+     "excerpt": "\"@langchain/openai\": \"1.5.5\","
+    },
+    {
+     "path": "package.json",
+     "line": 53,
+     "criterion": "L3",
+     "excerpt": "\"langfuse-langchain\": \"^3.0.0\","
+    },
+    {
+     "path": "nodes/AgentWithLangfuse/V2/execute.ts",
+     "line": 64,
+     "criterion": "A1",
+     "excerpt": "const agent = createToolCallingAgent({"
+    },
+    {
+     "path": "nodes/AgentWithLangfuse/V3/helpers/runAgent.ts",
+     "line": 89,
+     "criterion": "A1",
+     "excerpt": "const eventStream = executorWithTracing.streamEvents("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h049",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "skyagi/src/skyagi/simulation/agent.py",
+     "line": 69,
+     "criterion": "L1",
+     "excerpt": "return chain.run(name=self.name, related_memories=relevant_memories_str).strip()"
+    },
+    {
+     "path": "skyagi/src/skyagi/model.py",
+     "line": 11,
+     "criterion": "L1",
+     "excerpt": "\"chatopenai\": chat_models.ChatOpenAI,"
+    },
+    {
+     "path": "skyagi-web/src/lib/agent.ts",
+     "line": 159,
+     "criterion": "L1",
+     "excerpt": "const res = await chain.call({ name: this.name, relevantMemories: relevantMemoriesStr });"
+    },
+    {
+     "path": "skyagi/setup.cfg",
+     "line": 33,
+     "criterion": "L3",
+     "excerpt": "langchain==0.0.154"
+    },
+    {
+     "path": "skyagi/src/skyagi/simulation/agent.py",
+     "line": 68,
+     "criterion": "L1",
+     "excerpt": "chain = LLMChain(llm=self.llm, prompt=prompt, verbose=self.verbose)"
+    },
+    {
+     "path": "skyagi/src/skyagi/util.py",
+     "line": 15,
+     "criterion": "L1",
+     "excerpt": "openai.Completion.create("
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h050",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "agent-word"
+   ],
+   "evidence": [
+    {
+     "path": "AGENTS.md",
+     "line": 1,
+     "criterion": "none-note",
+     "excerpt": "# AGENTS.md \u2014 SemVer Formatter"
+    },
+    {
+     "path": "docs/devcontainer.adoc",
+     "line": 29,
+     "criterion": "none-note",
+     "excerpt": "killall -q gpg-agent && gpg-agent --daemon --default-cache-ttl 120 --max-cache-ttl 300"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h051",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "crews/recruitment/src/recruitment/crew.py",
+     "line": 14,
+     "criterion": "A1",
+     "excerpt": "return Agent("
+    },
+    {
+     "path": "crews/recruitment/src/recruitment/crew.py",
+     "line": 16,
+     "criterion": "A1",
+     "excerpt": "tools=[SerperDevTool(), ScrapeWebsiteTool(), LinkedInTool()],"
+    },
+    {
+     "path": "integrations/CrewAI-LangGraph/src/graph.py",
+     "line": 13,
+     "criterion": "A1",
+     "excerpt": "workflow = StateGraph(EmailsState)"
+    },
+    {
+     "path": "integrations/azure_model/main.py",
+     "line": 10,
+     "criterion": "L1",
+     "excerpt": "default_llm = AzureChatOpenAI("
+    },
+    {
+     "path": "crews/recruitment/pyproject.toml",
+     "line": 8,
+     "criterion": "L3",
+     "excerpt": "\"crewai[tools]>=0.152.0\","
+    },
+    {
+     "path": "crews/match_profile_to_positions/src/match_to_proposal/crew.py",
+     "line": 14,
+     "criterion": "A1",
+     "excerpt": "return Agent("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h052",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "lwe/backends/api/request.py",
+     "line": 114,
+     "criterion": "A2",
+     "excerpt": "config[\"customizations\"], tools=tools, tool_choice=tool_choice, use_defaults=True"
+    },
+    {
+     "path": "lwe/backends/api/request.py",
+     "line": 451,
+     "criterion": "A2",
+     "excerpt": "success, tool_response, user_message = self.run_tool(tool_call[\"name\"], tool_call[\"args\"])"
+    },
+    {
+     "path": "lwe/backends/api/request.py",
+     "line": 409,
+     "criterion": "L1",
+     "excerpt": "response = self.llm.invoke(messages)"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 32,
+     "criterion": "L3",
+     "excerpt": "\"langchain_openai>=1.2.1\","
+    },
+    {
+     "path": "lwe/core/provider.py",
+     "line": 352,
+     "criterion": "A2",
+     "excerpt": "llm = llm.bind_tools(**kwargs)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h053",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "agent-word",
+    "mcp-acronym"
+   ],
+   "evidence": [
+    {
+     "path": "src/imperazim/enchantment/EnchantmentManager.php",
+     "line": 31,
+     "criterion": "none-note",
+     "excerpt": "use pocketmine\\network\\mcpe\\protocol\\InventoryContentPacket;"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h054",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "_source/robots.txt",
+     "line": 2,
+     "criterion": "none-note",
+     "excerpt": "User-agent: *"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h055",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A3",
+    "A4",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "packages/@monomind/cli/src/orgrt/agent-runner-claude.ts",
+     "line": 189,
+     "criterion": "A1",
+     "excerpt": "const stream = queryFn({"
+    },
+    {
+     "path": "packages/@monomind/cli/src/orgrt/vercel-runner.ts",
+     "line": 135,
+     "criterion": "A1",
+     "excerpt": "tools: buildTools(),"
+    },
+    {
+     "path": "packages/@monomind/mcp/src/server-routing.ts",
+     "line": 17,
+     "criterion": "A3",
+     "excerpt": "case 'tools/call':"
+    },
+    {
+     "path": ".kimi-code/mcp.json",
+     "line": 3,
+     "criterion": "A4",
+     "excerpt": "\"monomind\": {"
+    },
+    {
+     "path": "packages/@monomind/cli/package.json",
+     "line": 100,
+     "criterion": "L3",
+     "excerpt": "\"@anthropic-ai/claude-agent-sdk\": \"0.3.289\","
+    },
+    {
+     "path": "packages/@monomind/cli/src/orgrt/agent-runner-claude.ts",
+     "line": 78,
+     "criterion": "A1",
+     "excerpt": "const { createSdkMcpServer, query, tool } = await this.loadSdk();"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h056",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "internal/protocols/strategies/MCP/mcp.go",
+     "line": 22,
+     "criterion": "A3",
+     "excerpt": "mcpServer := server.NewMCPServer("
+    },
+    {
+     "path": "internal/protocols/strategies/MCP/mcp.go",
+     "line": 70,
+     "criterion": "A3",
+     "excerpt": "mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResu..."
+    },
+    {
+     "path": "internal/plugins/llm-integration.go",
+     "line": 28,
+     "criterion": "L1",
+     "excerpt": "openAIEndpoint = \"https://api.openai.com/v1/chat/completions\""
+    },
+    {
+     "path": "internal/plugins/llm-integration.go",
+     "line": 298,
+     "criterion": "L1",
+     "excerpt": "Post(llmHoneypot.Host)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h057",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/flux/cli.py",
+     "line": 185,
+     "criterion": "L1",
+     "excerpt": "model = load_flow_model(name, device=\"cpu\" if offload else torch_device)"
+    },
+    {
+     "path": "src/flux/cli.py",
+     "line": 264,
+     "criterion": "L1",
+     "excerpt": "x = denoise(model, **inp, timesteps=timesteps, guidance=opts.guidance)"
+    },
+    {
+     "path": "src/flux/content_filters.py",
+     "line": 69,
+     "criterion": "L1",
+     "excerpt": "self.model = LlavaForConditionalGeneration.from_pretrained(model_id, device_map=device)"
+    },
+    {
+     "path": "src/flux/content_filters.py",
+     "line": 136,
+     "criterion": "L1",
+     "excerpt": "generate_ids = self.model.generate("
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h058",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/mcp_server_esignatures/server.py",
+     "line": 27,
+     "criterion": "A3",
+     "excerpt": "server = Server(\"mcp-server-esignatures\")"
+    },
+    {
+     "path": "src/mcp_server_esignatures/server.py",
+     "line": 30,
+     "criterion": "A3",
+     "excerpt": "@server.list_tools()"
+    },
+    {
+     "path": "src/mcp_server_esignatures/server.py",
+     "line": 196,
+     "criterion": "A3",
+     "excerpt": "@server.call_tool()"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 8,
+     "criterion": "A3",
+     "excerpt": "\"mcp>=1.2.0,<2\","
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h059",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/index.ts",
+     "line": 13,
+     "criterion": "A3",
+     "excerpt": "const server = new McpServer({ name: \"redmine-mcp-stdio\", version: VERSION });"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 16,
+     "criterion": "A3",
+     "excerpt": "await server.connect(new StdioServerTransport());"
+    },
+    {
+     "path": "src/tools/issues.ts",
+     "line": 74,
+     "criterion": "A3",
+     "excerpt": "server.registerTool("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h060",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "image-2-text-2-image.py",
+     "line": 16,
+     "criterion": "L1",
+     "excerpt": "response = ollama.chat("
+    },
+    {
+     "path": "image-2-text-2-image.py",
+     "line": 33,
+     "criterion": "L1",
+     "excerpt": "pipe = StableDiffusionPipeline.from_pretrained("
+    },
+    {
+     "path": "img2img.py",
+     "line": 12,
+     "criterion": "L1",
+     "excerpt": "pipe = StableDiffusionImg2ImgPipeline.from_pretrained("
+    },
+    {
+     "path": "controlNet_CannyEdges.py",
+     "line": 44,
+     "criterion": "L1",
+     "excerpt": "pipe = StableDiffusionControlNetPipeline.from_pretrained("
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h061",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h062",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": true,
+   "subtypes": [],
+   "traits": [
+    "non-generative-ml"
+   ],
+   "evidence": [
+    {
+     "path": "lib/blazer/anomaly_detectors.rb",
+     "line": 8,
+     "criterion": "none-note",
+     "excerpt": "m = Prophet.new(interval_width: 0.99)"
+    },
+    {
+     "path": "lib/blazer/forecasters.rb",
+     "line": 2,
+     "criterion": "none-note",
+     "excerpt": "Prophet.forecast(series, count: count)"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h063",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/index.ts",
+     "line": 3,
+     "criterion": "A3",
+     "excerpt": "import { Server } from \"@modelcontextprotocol/sdk/server/index.js\";"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 432,
+     "criterion": "A3",
+     "excerpt": "server.setRequestHandler(ListToolsRequestSchema, async () => {"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 449,
+     "criterion": "A3",
+     "excerpt": "server.setRequestHandler(CallToolRequestSchema, async (request) => {"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 174,
+     "criterion": "A3",
+     "excerpt": "const server = new Server("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h064",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "agent-word",
+    "prompt-word",
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "scripts/deps-update.mjs",
+     "line": 2,
+     "criterion": "none-note",
+     "excerpt": "import prompts from 'prompts'"
+    },
+    {
+     "path": "public/robots.txt",
+     "line": 2,
+     "criterion": "none-note",
+     "excerpt": "User-agent: *"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h065",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h066",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "internal/model/ollama.go",
+     "line": 85,
+     "criterion": "L1",
+     "excerpt": "http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+\"/api/generate\""
+    },
+    {
+     "path": "cmd/hofund/main.go",
+     "line": 78,
+     "criterion": "L1",
+     "excerpt": "response, err := reviewer.Review(ctx, model.ReviewRequest{Diff: string(diff)})"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h067",
+   "label": "llm",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "rapidfireai/evals/actors/inference_engines.py",
+     "line": 70,
+     "criterion": "L1",
+     "excerpt": "self.llm = LLM(**model_config)"
+    },
+    {
+     "path": "rapidfireai/evals/actors/inference_engines.py",
+     "line": 176,
+     "criterion": "L1",
+     "excerpt": "response = await self.client.chat.completions.create("
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 89,
+     "criterion": "L3",
+     "excerpt": "\"openai>=1.106.1\","
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 139,
+     "criterion": "L3",
+     "excerpt": "\"vllm==0.7.2\","
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h068",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "prompt/agent_prompt.py",
+     "line": 89,
+     "criterion": "A2",
+     "excerpt": "{{\"action_type\":\"buy\"|\"sell\", \"stock\":\"A\"|\"B\"|\"C\"|\"D\", amount: 100, price : 30.1}}"
+    },
+    {
+     "path": "main.py",
+     "line": 155,
+     "criterion": "A2",
+     "excerpt": "action = agent.plan_stock(date, session, stock_a, stock_b, stock_a_deals, stock_b_deals)"
+    },
+    {
+     "path": "main.py",
+     "line": 162,
+     "criterion": "A2",
+     "excerpt": "handle_action(action, stock_a_deals, all_agents, stock_a, session)"
+    },
+    {
+     "path": "agent.py",
+     "line": 110,
+     "criterion": "L1",
+     "excerpt": "response = client.chat.completions.create("
+    },
+    {
+     "path": "requirements.txt",
+     "line": 2,
+     "criterion": "L3",
+     "excerpt": "openai==1.13.3"
+    },
+    {
+     "path": "agent.py",
+     "line": 294,
+     "criterion": "A2",
+     "excerpt": "if action[\"action_type\"] == \"buy\":"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h069",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "run.py",
+     "line": 25,
+     "criterion": "L1",
+     "excerpt": "grok_1_model = LanguageModelConfig("
+    },
+    {
+     "path": "run.py",
+     "line": 67,
+     "criterion": "L1",
+     "excerpt": "print(f\"Output for prompt: {inp}\", sample_from_model(gen, inp, max_len=100, temperature=0.01))"
+    },
+    {
+     "path": "runners.py",
+     "line": 262,
+     "criterion": "L1",
+     "excerpt": "class InferenceRunner:"
+    },
+    {
+     "path": "model.py",
+     "line": 1202,
+     "criterion": "L1",
+     "excerpt": "class LanguageModel(hk.Module):"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h070",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "crates/rmcp-openapi/src/server.rs",
+     "line": 277,
+     "criterion": "A3",
+     "excerpt": "impl ServerHandler for Server {"
+    },
+    {
+     "path": "crates/rmcp-openapi/src/server.rs",
+     "line": 322,
+     "criterion": "A3",
+     "excerpt": "async fn list_tools("
+    },
+    {
+     "path": "crates/rmcp-openapi/src/server.rs",
+     "line": 356,
+     "criterion": "A3",
+     "excerpt": "async fn call_tool("
+    },
+    {
+     "path": "crates/rmcp-openapi-server/src/main.rs",
+     "line": 11,
+     "criterion": "A3",
+     "excerpt": "use rmcp_actix_web::transport::StreamableHttpService;"
+    },
+    {
+     "path": "Cargo.toml",
+     "line": 16,
+     "criterion": "A3",
+     "excerpt": "rmcp = { version = \"3.4.0\", default-features = false, features = [\"server\", \"base64\", \"macros\""
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h071",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "agent-word"
+   ],
+   "evidence": [
+    {
+     "path": "README.md",
+     "line": 42,
+     "criterion": "none-note",
+     "excerpt": "- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/..."
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h072",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A4",
+    "A5",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "flows/security-audit.yml",
+     "line": 10,
+     "criterion": "A5",
+     "excerpt": "type: AgentComponent"
+    },
+    {
+     "path": "flows/security-audit.yml",
+     "line": 21,
+     "criterion": "A4",
+     "excerpt": "toolset:"
+    },
+    {
+     "path": "agents/scanner.yml",
+     "line": 94,
+     "criterion": "A4",
+     "excerpt": "tools:"
+    },
+    {
+     "path": ".gitlab/duo/flows/sast-scanner.yaml",
+     "line": 20,
+     "criterion": "L1",
+     "excerpt": "curl -sS -X POST \"${ANTHROPIC_BASE_URL%/}/v1/messages\" \\"
+    },
+    {
+     "path": "agents/scanner.yml",
+     "line": 4,
+     "criterion": "A5",
+     "excerpt": "system_prompt: |"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h073",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "ai-prose",
+    "product-name",
+    "prompt-word",
+    "provider-name"
+   ],
+   "evidence": [
+    {
+     "path": "web/src/components/shared.tsx",
+     "line": 155,
+     "criterion": "none-note",
+     "excerpt": "export function PromptDialog({"
+    },
+    {
+     "path": "CLAUDE.md",
+     "line": 1,
+     "criterion": "none-note",
+     "excerpt": "# CLAUDE.md \u2014 Loom rulebook for AI coding agents"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h074",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "examples/crewai/sample_crew.py",
+     "line": 65,
+     "criterion": "A1",
+     "excerpt": "agent = Agent("
+    },
+    {
+     "path": "examples/crewai/sample_crew.py",
+     "line": 82,
+     "criterion": "A1",
+     "excerpt": "crew = Crew(agents=[agent], tasks=[task1, task2], verbose=False)"
+    },
+    {
+     "path": "python/crewai_adapter/hook.py",
+     "line": 88,
+     "criterion": "A1",
+     "excerpt": "from crewai.hooks import register_before_tool_call_hook"
+    },
+    {
+     "path": "python/crewai_adapter/pyproject.toml",
+     "line": 16,
+     "criterion": "L3",
+     "excerpt": "\"crewai>=0.80\","
+    },
+    {
+     "path": "packages/langchain/package.json",
+     "line": 26,
+     "criterion": "L3",
+     "excerpt": "\"@langchain/core\": \"^0.3.0\""
+    },
+    {
+     "path": "packages/langchain/src/middleware.ts",
+     "line": 45,
+     "criterion": "A1",
+     "excerpt": "export class APortGuardrailCallback extends BaseCallbackHandler {"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h075",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "packages/agent/src/domain/use-cases/execute-workflow.ts",
+     "line": 301,
+     "criterion": "A2",
+     "excerpt": "const result = await this.#executeTool("
+    },
+    {
+     "path": "packages/agent/src/domain/use-cases/execute-workflow.ts",
+     "line": 421,
+     "criterion": "A2",
+     "excerpt": "for (const toolId of idsOfSelectedTools)"
+    },
+    {
+     "path": "packages/agent/src/domain/value-types/agent/solver-agent.ts",
+     "line": 96,
+     "criterion": "L1",
+     "excerpt": "const chatResult = await this.modelApi.chat("
+    },
+    {
+     "path": "packages/agent/src/infra/api/controllers/execute-workflow-controller.ts",
+     "line": 61,
+     "criterion": "L1",
+     "excerpt": "chat: modelApi.createChatCompletion,"
+    },
+    {
+     "path": "packages/agent/package.json",
+     "line": 22,
+     "criterion": "L3",
+     "excerpt": "\"openai\": \"^3.3.0\""
+    },
+    {
+     "path": "packages/agent/src/domain/value-types/agent/planner-agent.ts",
+     "line": 36,
+     "criterion": "A2",
+     "excerpt": "You need to help the user find a workflow that allows her to execute a task."
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h076",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "agents/react_agents.py",
+     "line": 383,
+     "criterion": "A2",
+     "excerpt": "prompt, action = self.prompt_agent()"
+    },
+    {
+     "path": "agents/react_agents.py",
+     "line": 459,
+     "criterion": "A2",
+     "excerpt": "code_output = eval(code_str)"
+    },
+    {
+     "path": "agents/react_agents.py",
+     "line": 171,
+     "criterion": "L1",
+     "excerpt": "self.llm = ChatOpenAI(temperature=self.temp,"
+    },
+    {
+     "path": "APIs/api_implementation.py",
+     "line": 62,
+     "criterion": "L1",
+     "excerpt": "return openai.Embedding.create(input = [text], model=model).data[0].embedding"
+    },
+    {
+     "path": "requirements.txt",
+     "line": 7,
+     "criterion": "L3",
+     "excerpt": "openai==0.27.4"
+    },
+    {
+     "path": "agents/react_agents.py",
+     "line": 512,
+     "criterion": "A2",
+     "excerpt": "exec(code_str, globals(), self.local_vars)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h077",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "backend/api/chat_copilot.py",
+     "line": 311,
+     "criterion": "A1",
+     "excerpt": "interaction_executor = initialize_agent(tools, llm, continue_model, memory=memory,"
+    },
+    {
+     "path": "backend/api/chat_copilot.py",
+     "line": 262,
+     "criterion": "A1",
+     "excerpt": "\"PythonCodeBuilder\": Tool("
+    },
+    {
+     "path": "backend/api/chat_webot.py",
+     "line": 267,
+     "criterion": "A1",
+     "excerpt": "tools = [Tool(name=webot.name, func=run_webot.run, description=webot.description)]"
+    },
+    {
+     "path": "real_agents/adapters/models/anthropic.py",
+     "line": 141,
+     "criterion": "L1",
+     "excerpt": "response = await self.client.acompletion(**params)"
+    },
+    {
+     "path": "backend/requirements.txt",
+     "line": 16,
+     "criterion": "L3",
+     "excerpt": "langchain==0.0.173"
+    },
+    {
+     "path": "real_agents/adapters/interactive_executor.py",
+     "line": 38,
+     "criterion": "A1",
+     "excerpt": "agent_obj = ConversationalChatAgent.from_llm_and_tools("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h078",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "A3",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "packages/sdk/src/internal/agent-loop/loop.ts",
+     "line": 421,
+     "criterion": "A2",
+     "excerpt": "const rawResults = await dispatchTools("
+    },
+    {
+     "path": "packages/sdk/src/internal/agent-loop/loop.ts",
+     "line": 414,
+     "criterion": "A2",
+     "excerpt": "if (llmOutput.stopReason !== \"tool_use\" || llmOutput.toolCalls.length === 0) {"
+    },
+    {
+     "path": "packages/sdk/src/internal/mcp/client.ts",
+     "line": 42,
+     "criterion": "A3",
+     "excerpt": "export function createMcpClient("
+    },
+    {
+     "path": "packages/sdk/src/internal/agent-loop/tool-executors.ts",
+     "line": 155,
+     "criterion": "A3",
+     "excerpt": "const response = await client.callTool(resolved.mcpToolName, call.input);"
+    },
+    {
+     "path": "packages/sdk/src/internal/llm/anthropic.ts",
+     "line": 138,
+     "criterion": "L1",
+     "excerpt": "response = await this.fetchImpl(`${this.baseUrl}/v1/messages`, {"
+    },
+    {
+     "path": "packages/sdk/src/internal/agent-loop/loop.ts",
+     "line": 53,
+     "criterion": "A2",
+     "excerpt": "export async function runAgentLoop(inputs: AgentLoopInputs): Promise<AgentLoopOutput> {"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h079",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h080",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h081",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A3",
+    "A6",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "examples/with-chain-of-thought/app/api/chat/route.ts",
+     "line": 115,
+     "criterion": "A1",
+     "excerpt": "const result = streamText({"
+    },
+    {
+     "path": "examples/with-chain-of-thought/app/api/chat/route.ts",
+     "line": 119,
+     "criterion": "A1",
+     "excerpt": "stopWhen: stepCountIs(10),"
+    },
+    {
+     "path": "apps/docs/app/api/mcp/route.ts",
+     "line": 479,
+     "criterion": "A3",
+     "excerpt": "const server = new McpServer({"
+    },
+    {
+     "path": "examples/with-chain-of-thought/app/api/chat/route.ts",
+     "line": 117,
+     "criterion": "L1",
+     "excerpt": "model: openai(\"gpt-6-luna\"),"
+    },
+    {
+     "path": "apps/docs/package.json",
+     "line": 59,
+     "criterion": "L3",
+     "excerpt": "\"ai\": \"^7.0.130\","
+    },
+    {
+     "path": "examples/with-google-adk/app/api/chat/route.ts",
+     "line": 22,
+     "criterion": "A1",
+     "excerpt": "const agent = new LlmAgent({"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h082",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/index.ts",
+     "line": 132,
+     "criterion": "A3",
+     "excerpt": "const server = new Server("
+    },
+    {
+     "path": "src/index.ts",
+     "line": 219,
+     "criterion": "A3",
+     "excerpt": "server.setRequestHandler(ListToolsRequestSchema, async () => ({"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 223,
+     "criterion": "A3",
+     "excerpt": "server.setRequestHandler(CallToolRequestSchema, async (request) => {"
+    },
+    {
+     "path": "package.json",
+     "line": 38,
+     "criterion": "A3",
+     "excerpt": "\"@modelcontextprotocol/sdk\": \"0.5.0\""
+    },
+    {
+     "path": "src/index.ts",
+     "line": 3,
+     "criterion": "A3",
+     "excerpt": "import { Server } from \"@modelcontextprotocol/sdk/server/index.js\";"
+    },
+    {
+     "path": "src/index.ts",
+     "line": 413,
+     "criterion": "A3",
+     "excerpt": "const transport = new StdioServerTransport();"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h083",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L2"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "predict.py",
+     "line": 125,
+     "criterion": "L1",
+     "excerpt": "batch_samples = batch_ddim_sampling("
+    },
+    {
+     "path": "scripts/gradio/t2v_test.py",
+     "line": 51,
+     "criterion": "L1",
+     "excerpt": "batch_samples = batch_ddim_sampling(model, cond, noise_shape, n_samples=1, ddim_steps=steps, ddim_et"
+    },
+    {
+     "path": "scripts/gradio/t2v_test.py",
+     "line": 71,
+     "criterion": "L1",
+     "excerpt": "hf_hub_download(repo_id=REPO_ID, filename=filename, local_dir='./checkpoints/base_512_v2/', local_di"
+    },
+    {
+     "path": "cog.yaml",
+     "line": 25,
+     "criterion": "L2",
+     "excerpt": "predict: \"predict.py:Predictor\""
+    },
+    {
+     "path": "scripts/evaluation/funcs.py",
+     "line": 13,
+     "criterion": "L1",
+     "excerpt": "def batch_ddim_sampling(model, cond, noise_shape, n_samples=1, ddim_steps=50, ddim_eta=1.0,\\"
+    },
+    {
+     "path": "lvdm/models/ddpm3d.py",
+     "line": 327,
+     "criterion": "L1",
+     "excerpt": "class LatentDiffusion(DDPM):"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h084",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "server-manager.ts",
+     "line": 1179,
+     "criterion": "A3",
+     "excerpt": "const stdioTransport = new StdioClientTransport({"
+    },
+    {
+     "path": "server-manager.ts",
+     "line": 1471,
+     "criterion": "A3",
+     "excerpt": "private createClient(serverName: string, definition: ServerDefinition): Client {"
+    },
+    {
+     "path": "index.ts",
+     "line": 517,
+     "criterion": "A3",
+     "excerpt": "callReentrant(() => (pi.registerTool as (tool: unknown) => unknown)(definition));"
+    },
+    {
+     "path": "sampling-handler.ts",
+     "line": 68,
+     "criterion": "L1",
+     "excerpt": "const result = await options.modelRegistry.complete("
+    },
+    {
+     "path": "package.json",
+     "line": 185,
+     "criterion": "A3",
+     "excerpt": "\"@modelcontextprotocol/client\": \"2.0.0\","
+    },
+    {
+     "path": "host-managed.ts",
+     "line": 270,
+     "criterion": "A3",
+     "excerpt": "const client = new Client("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h085",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h086",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "agent-word",
+    "ai-prose",
+    "product-name"
+   ],
+   "evidence": [
+    {
+     "path": ".github/workflows/copilot-setup-steps.yml",
+     "line": 1,
+     "criterion": "none-note",
+     "excerpt": "name: Copilot Setup Steps"
+    },
+    {
+     "path": ".agents/skills/codex-subagent-delegation/SKILL.md",
+     "line": 6,
+     "criterion": "none-note",
+     "excerpt": "# Subagent delegation (applicable only to OpenAI Codex harness)"
+    },
+    {
+     "path": "src/ruby_supportlib/phusion_passenger/packaging.rb",
+     "line": 106,
+     "criterion": "none-note",
+     "excerpt": "'CLAUDE.md',"
+    },
+    {
+     "path": "src/agent/Shared/ApiAccountUtils.h",
+     "line": 53,
+     "criterion": "none-note",
+     "excerpt": "* The various PassengerAgent ApiServers can be accessed through HTTP sockets."
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h087",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/agent_coworker/mcp_server.py",
+     "line": 25,
+     "criterion": "A3",
+     "excerpt": "class MCPServer:"
+    },
+    {
+     "path": "src/agent_coworker/mcp_server.py",
+     "line": 103,
+     "criterion": "A3",
+     "excerpt": "elif method == \"tools/list\":"
+    },
+    {
+     "path": "src/agent_coworker/_internal/llm_skill.py",
+     "line": 28,
+     "criterion": "L1",
+     "excerpt": "\"url\": \"https://api.openai.com/v1/chat/completions\","
+    },
+    {
+     "path": "src/agent_coworker/_internal/llm_skill.py",
+     "line": 97,
+     "criterion": "L1",
+     "excerpt": "resp = json.loads(urllib.request.urlopen(req, timeout=60).read())"
+    },
+    {
+     "path": "src/agent_coworker/mcp_server.py",
+     "line": 107,
+     "criterion": "A3",
+     "excerpt": "elif method == \"tools/call\":"
+    },
+    {
+     "path": "src/agent_coworker/_internal/llm_skill.py",
+     "line": 95,
+     "criterion": "L1",
+     "excerpt": "req = urllib.request.Request(url, data=data, headers=headers)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h088",
+   "label": "llm",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/llm.rs",
+     "line": 59,
+     "criterion": "L1",
+     "excerpt": "\"https://api.openai.com/v1/chat/completions\".to_string()"
+    },
+    {
+     "path": "src/llm.rs",
+     "line": 440,
+     "criterion": "L1",
+     "excerpt": ".post(&config.api_url)"
+    },
+    {
+     "path": "src/transcription/openai_rest.rs",
+     "line": 17,
+     "criterion": "L1",
+     "excerpt": "const OPENAI_TRANSCRIPTION_URL: &str = \"https://api.openai.com/v1/audio/transcriptions\";"
+    },
+    {
+     "path": "src/tts/mod.rs",
+     "line": 29,
+     "criterion": "L1",
+     "excerpt": "const OPENAI_SPEECH_URL: &str = \"https://api.openai.com/v1/audio/speech\";"
+    },
+    {
+     "path": "contrib/asr-sidecars/moonshine/server.py",
+     "line": 47,
+     "criterion": "L1",
+     "excerpt": "self.model = MoonshineForConditionalGeneration.from_pretrained(model_id)"
+    },
+    {
+     "path": "src/transcription/groq.rs",
+     "line": 25,
+     "criterion": "L1",
+     "excerpt": "const GROQ_TRANSCRIPTION_URL: &str = \"https://api.groq.com/openai/v1/audio/transcriptions\";"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h089",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "modules/gpt.js",
+     "line": 34,
+     "criterion": "L1",
+     "excerpt": "const completion = await openai.createChatCompletion({"
+    },
+    {
+     "path": "agents/coder.js",
+     "line": 64,
+     "criterion": "L1",
+     "excerpt": "const response = await model.call(input);"
+    },
+    {
+     "path": "modules/model.js",
+     "line": 14,
+     "criterion": "L1",
+     "excerpt": "model = new OpenAI({"
+    },
+    {
+     "path": "package.json",
+     "line": 21,
+     "criterion": "L3",
+     "excerpt": "\"langchain\": \"^0.0.51\","
+    },
+    {
+     "path": "package.json",
+     "line": 23,
+     "criterion": "L3",
+     "excerpt": "\"openai\": \"^3.2.1\","
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h090",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h091",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "cookbook/04-supply-chain-replanning/agents/inventory_analyst.py",
+     "line": 36,
+     "criterion": "A2",
+     "excerpt": "tools = [{"
+    },
+    {
+     "path": "cookbook/04-supply-chain-replanning/agents/inventory_analyst.py",
+     "line": 71,
+     "criterion": "A2",
+     "excerpt": "tool_result = self.check_local_stock(args.get(\"sku\"), args.get(\"region\"))"
+    },
+    {
+     "path": "cookbook/06-ai-feature-compliance-gate-anthropic/run_demo.py",
+     "line": 43,
+     "criterion": "L1",
+     "excerpt": "response = client.messages.create("
+    },
+    {
+     "path": "cookbook/06-ai-feature-compliance-gate-anthropic/requirements.txt",
+     "line": 1,
+     "criterion": "L3",
+     "excerpt": "anthropic>=0.40.0"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 45,
+     "criterion": "L3",
+     "excerpt": "openai = [\"openai>=1.0.0\"]"
+    },
+    {
+     "path": "src/octochains/base.py",
+     "line": 21,
+     "criterion": "A1",
+     "excerpt": "class Agent(ABC):"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h092",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "gptchatbot.py",
+     "line": 269,
+     "criterion": "L1",
+     "excerpt": "response = await self.http.post(\"https://chat.openai.com/backend-api/conversation\""
+    },
+    {
+     "path": "gptchatbot.py",
+     "line": 312,
+     "criterion": "L1",
+     "excerpt": "\"model\": \"text-davinci-002-render\","
+    },
+    {
+     "path": "gptchatbot.py",
+     "line": 148,
+     "criterion": "L1",
+     "excerpt": "response = await self.chatbot.get_chat_response(message, output=\"text\")"
+    },
+    {
+     "path": "gptchatbot.py",
+     "line": 219,
+     "criterion": "L1",
+     "excerpt": "response = await self.http.post(\"https://chat.openai.com/backend-api/conversation\","
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h093",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "packages/react-select/src/utils.ts",
+     "line": 340,
+     "criterion": "none-note",
+     "excerpt": "navigator.userAgent"
+    },
+    {
+     "path": "package.json",
+     "line": 62,
+     "criterion": "none-note",
+     "excerpt": "\"user-agent-data-types\": \"^0.4.2\""
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h094",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "A4"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/mcp_server.py",
+     "line": 14,
+     "criterion": "A3",
+     "excerpt": "from mcp.server import Server"
+    },
+    {
+     "path": "src/mcp_server.py",
+     "line": 34,
+     "criterion": "A3",
+     "excerpt": "@server.list_tools()"
+    },
+    {
+     "path": "claude_desktop_config.json",
+     "line": 2,
+     "criterion": "A4",
+     "excerpt": "\"mcpServers\": {"
+    },
+    {
+     "path": "src/mcp_server.py",
+     "line": 32,
+     "criterion": "A3",
+     "excerpt": "server = Server(\"subscription-tracker-mcp-server\")"
+    },
+    {
+     "path": "src/mcp_server.py",
+     "line": 275,
+     "criterion": "A3",
+     "excerpt": "@server.call_tool()"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h095",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "A3",
+    "A6",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "services/mcp-server/app/services/assistant.py",
+     "line": 504,
+     "criterion": "A2",
+     "excerpt": "tools=anthropic_tools,"
+    },
+    {
+     "path": "services/mcp-server/app/services/assistant.py",
+     "line": 512,
+     "criterion": "A2",
+     "excerpt": "if response.stop_reason == \"tool_use\":"
+    },
+    {
+     "path": "services/mcp-server/app/mcp_app.py",
+     "line": 34,
+     "criterion": "A3",
+     "excerpt": "from mcp.server import Server"
+    },
+    {
+     "path": ".gitlab-ci.yml",
+     "line": 399,
+     "criterion": "A6",
+     "excerpt": "claude -p \""
+    },
+    {
+     "path": "services/knowledge-service/app/services/llm.py",
+     "line": 358,
+     "criterion": "L1",
+     "excerpt": "with client.messages.stream("
+    },
+    {
+     "path": "services/mcp-server/app/services/assistant.py",
+     "line": 499,
+     "criterion": "A2",
+     "excerpt": "response = await anthropic_client.messages.create("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h096",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "product-name"
+   ],
+   "evidence": [
+    {
+     "path": ".gitignore",
+     "line": 24,
+     "criterion": "none-note",
+     "excerpt": "CLAUDE.md"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h097",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h098",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/semgrep_mcp/server.py",
+     "line": 12,
+     "criterion": "A3",
+     "excerpt": "from mcp.server.fastmcp import FastMCP"
+    },
+    {
+     "path": "src/semgrep_mcp/server.py",
+     "line": 342,
+     "criterion": "A3",
+     "excerpt": "mcp = FastMCP("
+    },
+    {
+     "path": "src/semgrep_mcp/server.py",
+     "line": 352,
+     "criterion": "A3",
+     "excerpt": "@mcp.tool()"
+    },
+    {
+     "path": "examples/sse_client.py",
+     "line": 4,
+     "criterion": "A3",
+     "excerpt": "from mcp.client.session import ClientSession"
+    },
+    {
+     "path": "examples/sse_client.py",
+     "line": 10,
+     "criterion": "A3",
+     "excerpt": "async with ClientSession(read_stream, write_stream) as session:"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h099",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h100",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "ai-names-as-data",
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "src/icons/index.php",
+     "line": 41595,
+     "criterion": "none-note",
+     "excerpt": "'terms' => ' ai data language llm model programming token ',"
+    },
+    {
+     "path": "src/web/Request.php",
+     "line": 869,
+     "criterion": "none-note",
+     "excerpt": "if ($this->getUserAgent() !== null) {"
+    },
+    {
+     "path": "src/icons/index.php",
+     "line": 25154,
+     "criterion": "none-note",
+     "excerpt": "'terms' => ' action ai artificial intelligence cluster graph language llm model network neuronal ',"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h101",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L2",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "vdiff.py",
+     "line": 160,
+     "criterion": "L1",
+     "excerpt": "pred, v, next_x = sampling.sample_step(self.sample_state, self.x, cur_iteration, self.pred, self.v)"
+    },
+    {
+     "path": "vqgan.py",
+     "line": 195,
+     "criterion": "L1",
+     "excerpt": "return clamp_with_grad(self.model.decode(z_q).add(1).div(2), 0, 1)"
+    },
+    {
+     "path": "slip.py",
+     "line": 175,
+     "criterion": "L1",
+     "excerpt": "perceptor, preprocess = clip.load(clip_model_name, download_root=\"models\")"
+    },
+    {
+     "path": "cog.yaml",
+     "line": 14,
+     "criterion": "L2",
+     "excerpt": "image: \"r8.im/pixray/text2image\""
+    },
+    {
+     "path": "requirements.txt",
+     "line": 28,
+     "criterion": "L3",
+     "excerpt": "git+https://github.com/bfirsh/taming-transformers.git@7a6e64ee"
+    },
+    {
+     "path": "vdiff.py",
+     "line": 83,
+     "criterion": "L1",
+     "excerpt": "model = get_model(self.vdiff_model)()"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h102",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "agent-word",
+    "ai-prose",
+    "product-name"
+   ],
+   "evidence": [
+    {
+     "path": "README.md",
+     "line": 12,
+     "criterion": "none-note",
+     "excerpt": "<a href=\"https://gurubase.io/g/ts-jest\"><img src=\"https://img.shields.io/badge/Gurubase-Ask%20ts"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h103",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "A3",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/mcp/mcp-client.ts",
+     "line": 11,
+     "criterion": "A3",
+     "excerpt": "import { Client } from \"@modelcontextprotocol/sdk/client/index.js\";"
+    },
+    {
+     "path": "src/mcp/mcp-client.ts",
+     "line": 443,
+     "criterion": "A3",
+     "excerpt": "return new StdioClientTransport({"
+    },
+    {
+     "path": "src/llm/provider/openai/openai-build-body.ts",
+     "line": 170,
+     "criterion": "A2",
+     "excerpt": "body.tools = emittedTools;"
+    },
+    {
+     "path": "src/agent/step/step-batch-policy.ts",
+     "line": 900,
+     "criterion": "A2",
+     "excerpt": "const ran = await executeBatch("
+    },
+    {
+     "path": "src/llm/provider/openai/openai-provider.ts",
+     "line": 370,
+     "criterion": "L1",
+     "excerpt": "const path = `${this.chatPathPrefix}/chat/completions`;"
+    },
+    {
+     "path": "src/agent/agent-loop.ts",
+     "line": 59,
+     "criterion": "A2",
+     "excerpt": "export class AgentLoop {"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h104",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h105",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/cag_system.py",
+     "line": 374,
+     "criterion": "L1",
+     "excerpt": "response = ollama.chat("
+    },
+    {
+     "path": "src/cag_system.py",
+     "line": 6,
+     "criterion": "L1",
+     "excerpt": "import ollama"
+    },
+    {
+     "path": "requirements.txt",
+     "line": 1,
+     "criterion": "L3",
+     "excerpt": "langchain==0.1.0"
+    },
+    {
+     "path": "requirements.txt",
+     "line": 3,
+     "criterion": "L3",
+     "excerpt": "ollama>=0.1.7"
+    },
+    {
+     "path": "src/cag_system.py",
+     "line": 21,
+     "criterion": "L1",
+     "excerpt": "self.model = SentenceTransformer(model_name)"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h106",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h107",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/index.js",
+     "line": 9,
+     "criterion": "A3",
+     "excerpt": "import { Server } from \"@modelcontextprotocol/sdk/server/index.js\";"
+    },
+    {
+     "path": "src/index.js",
+     "line": 11,
+     "criterion": "A3",
+     "excerpt": "import { Client } from \"@modelcontextprotocol/sdk/client/index.js\";"
+    },
+    {
+     "path": "src/index.js",
+     "line": 39,
+     "criterion": "A3",
+     "excerpt": "server.setRequestHandler(ListToolsRequestSchema, () => client.listTools());"
+    },
+    {
+     "path": "src/discovery.js",
+     "line": 96,
+     "criterion": "A3",
+     "excerpt": "server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: TOOLS }));"
+    },
+    {
+     "path": "src/index.js",
+     "line": 34,
+     "criterion": "A3",
+     "excerpt": "const server = new Server("
+    },
+    {
+     "path": "src/index.js",
+     "line": 40,
+     "criterion": "A3",
+     "excerpt": "server.setRequestHandler(CallToolRequestSchema, (request) =>"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h108",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "A6"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "server.ts",
+     "line": 2,
+     "criterion": "A3",
+     "excerpt": "import { MCPServer } from \"mcp-use\";"
+    },
+    {
+     "path": "server.ts",
+     "line": 43,
+     "criterion": "A3",
+     "excerpt": "const server = new MCPServer<SquadUser>({"
+    },
+    {
+     "path": "src/tools/registry.ts",
+     "line": 62,
+     "criterion": "A3",
+     "excerpt": "server.tool("
+    },
+    {
+     "path": ".github/workflows/claude-pr-assistant.yaml",
+     "line": 35,
+     "criterion": "A6",
+     "excerpt": "uses: anthropics/claude-code-action@<redacted> # v1"
+    },
+    {
+     "path": "src/tools/registry.ts",
+     "line": 58,
+     "criterion": "A3",
+     "excerpt": "export function registerTool<S extends z.ZodType>("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h109",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/providers/anthropic/index.ts",
+     "line": 220,
+     "criterion": "L1",
+     "excerpt": "const data = await this.postJSON<AnthropicChatResponse>('/v1/messages', body, signal);"
+    },
+    {
+     "path": "src/providers/openai/index.ts",
+     "line": 251,
+     "criterion": "L1",
+     "excerpt": "const data = await this.postJSON<OpenAIChatResponse>('/chat/completions', body, signal);"
+    },
+    {
+     "path": "src/providers/openai/index.ts",
+     "line": 471,
+     "criterion": "L1",
+     "excerpt": "const data = await this.postJSON<OpenAIEmbeddingsResp>('/embeddings', body, signal);"
+    },
+    {
+     "path": "src/providers/gemini/index.ts",
+     "line": 162,
+     "criterion": "L1",
+     "excerpt": "const data = await this.postJSON<GeminiChatResponse>(`/v1beta/models/${req.model}:generateContent..."
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h110",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A6"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": ".github/workflows/trigger-obs-aw-pull-request.yml",
+     "line": 1,
+     "criterion": "A6",
+     "excerpt": "name: Observability Agentic Workflow \u2014 Pull Request"
+    },
+    {
+     "path": ".github/workflows/trigger-obs-aw-pull-request.yml",
+     "line": 15,
+     "criterion": "A6",
+     "excerpt": "copilot-requests: write"
+    },
+    {
+     "path": ".github/workflows/trigger-obs-aw-pull-request.yml",
+     "line": 20,
+     "criterion": "A6",
+     "excerpt": "uses: elastic/oblt-aw/.github/workflows/obs-aw-event-pull-request.yml@v0 # ratchet:exclude"
+    },
+    {
+     "path": ".github/workflows/trigger-obs-aw-schedule-daily.yml",
+     "line": 22,
+     "criterion": "A6",
+     "excerpt": "uses: elastic/oblt-aw/.github/workflows/obs-aw-event-schedule.yml@v0 # ratchet:exclude"
+    },
+    {
+     "path": ".github/workflows/trigger-obs-aw-schedule-daily.yml",
+     "line": 18,
+     "criterion": "A6",
+     "excerpt": "copilot-requests: write"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h111",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "evolution/skills/evolve_skill.py",
+     "line": 140,
+     "criterion": "L1",
+     "excerpt": "lm = dspy.LM(eval_model)"
+    },
+    {
+     "path": "evolution/core/fitness.py",
+     "line": 62,
+     "criterion": "L1",
+     "excerpt": "self.judge = dspy.ChainOfThought(self.JudgeSignature)"
+    },
+    {
+     "path": "evolution/skills/evolve_skill.py",
+     "line": 156,
+     "criterion": "L1",
+     "excerpt": "optimizer = dspy.GEPA("
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 18,
+     "criterion": "L3",
+     "excerpt": "\"dspy>=3.0.0\","
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 19,
+     "criterion": "L3",
+     "excerpt": "\"openai>=1.0.0\","
+    },
+    {
+     "path": "evolution/skills/skill_module.py",
+     "line": 107,
+     "criterion": "L1",
+     "excerpt": "self.predictor = dspy.ChainOfThought(self.TaskWithSkill)"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h112",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "A4",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/argus_bot.py",
+     "line": 504,
+     "criterion": "A2",
+     "excerpt": "route = await _classify_intent(message.content)"
+    },
+    {
+     "path": "src/argus_bot.py",
+     "line": 515,
+     "criterion": "A2",
+     "excerpt": "if route == \"REGULATORY_QA\":"
+    },
+    {
+     "path": "scripts/local_agent.sh",
+     "line": 108,
+     "criterion": "A4",
+     "excerpt": "--skills pv-workbench \\"
+    },
+    {
+     "path": "src/modules/regulatory_qa.py",
+     "line": 96,
+     "criterion": "L1",
+     "excerpt": "llm = ChatOllama(model=REASON_MODEL, base_url=OLLAMA_BASE_URL, temperature=0)"
+    },
+    {
+     "path": "requirements.txt",
+     "line": 5,
+     "criterion": "L3",
+     "excerpt": "langchain-ollama>=0.3.0"
+    },
+    {
+     "path": "scripts/local_agent.sh",
+     "line": 93,
+     "criterion": "A1",
+     "excerpt": "\"$HERMES\" -m hermes_cli.main -m gemma4-stable:latest \\"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h113",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h114",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h115",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "AGENTS.md",
+     "line": 1,
+     "criterion": "none-note",
+     "excerpt": "# Repository Guidelines"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h116",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "greasemonkey/bravegpt.user.js",
+     "line": 187,
+     "criterion": "L1",
+     "excerpt": "// @connect api.openai.com"
+    },
+    {
+     "path": "greasemonkey/bravegpt.user.js",
+     "line": 1327,
+     "criterion": "L1",
+     "excerpt": "const reqData = api.createReqData({ api: reqAPI, msgs })"
+    },
+    {
+     "path": "greasemonkey/bravegpt.user.js",
+     "line": 1338,
+     "criterion": "L1",
+     "excerpt": "url: app.apis[reqAPI].endpoints?.completions || app.apis[reqAPI].endpoint"
+    },
+    {
+     "path": "greasemonkey/bravegpt.user.js",
+     "line": 1296,
+     "criterion": "L1",
+     "excerpt": "get.reply.api = app.config.proxyAPIenabled ? api.pick(get.reply) : 'OpenAI'"
+    },
+    {
+     "path": "greasemonkey/bravegpt.user.js",
+     "line": 1342,
+     "criterion": "L1",
+     "excerpt": "env.xhr(xhrConfig)"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h117",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A4"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": ".claude-plugin/plugin.json",
+     "line": 2,
+     "criterion": "A4",
+     "excerpt": "\"name\": \"overloop\","
+    },
+    {
+     "path": "agents/outbound-manager.md",
+     "line": 4,
+     "criterion": "A4",
+     "excerpt": "model: sonnet"
+    },
+    {
+     "path": "agents/outbound-manager.md",
+     "line": 5,
+     "criterion": "A4",
+     "excerpt": "maxTurns: 30"
+    },
+    {
+     "path": "hooks/hooks.json",
+     "line": 3,
+     "criterion": "A4",
+     "excerpt": "\"SessionStart\": ["
+    },
+    {
+     "path": ".claude-plugin/plugin.json",
+     "line": 3,
+     "criterion": "A4",
+     "excerpt": "\"description\": \"Sales automation CLI"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "low",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h118",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A5",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "packages/components/nodes/agents/ToolAgent/ToolAgent.ts",
+     "line": 353,
+     "criterion": "A1",
+     "excerpt": "const executor = AgentExecutor.fromAgentAndTools({"
+    },
+    {
+     "path": "packages/server/src/utils/buildAgentGraph.ts",
+     "line": 831,
+     "criterion": "A1",
+     "excerpt": "bindModel[agent.id] = agent.llm.bindTools(tools)"
+    },
+    {
+     "path": "packages/server/src/services/mcp-endpoint/index.ts",
+     "line": 278,
+     "criterion": "A3",
+     "excerpt": "const mcpServer = new McpServer("
+    },
+    {
+     "path": "packages/server/marketplaces/agentflowsv2/Agents Handoff.json",
+     "line": 352,
+     "criterion": "A5",
+     "excerpt": "\"name\": \"agentAgentflow\","
+    },
+    {
+     "path": "packages/components/package.json",
+     "line": 63,
+     "criterion": "L3",
+     "excerpt": "\"@anthropic-ai/sdk\": \"^0.73.0\","
+    },
+    {
+     "path": "packages/components/nodes/agentflow/Agent/Agent.ts",
+     "line": 1001,
+     "criterion": "A2",
+     "excerpt": "llmNodeInstance = llmNodeInstance.bindTools(toolsInstance)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h119",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A3",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "packages/agent-sdk/src/agent.ts",
+     "line": 1334,
+     "criterion": "A1",
+     "excerpt": "const response = await generateText(runner.buildModelCallParams(attempt));"
+    },
+    {
+     "path": "packages/agent-sdk/src/agent.ts",
+     "line": 1785,
+     "criterion": "A1",
+     "excerpt": "const response = streamText({"
+    },
+    {
+     "path": "packages/agent-sdk/src/mcp/manager.ts",
+     "line": 581,
+     "criterion": "A3",
+     "excerpt": "const client = new Client({"
+    },
+    {
+     "path": "packages/agent-sdk/package.json",
+     "line": 147,
+     "criterion": "L3",
+     "excerpt": "\"ai\": \"^7.0.0\","
+    },
+    {
+     "path": "packages/agent-sdk/src/agent.ts",
+     "line": 233,
+     "criterion": "A1",
+     "excerpt": "export function createAgent(options: AgentOptions): Agent {"
+    },
+    {
+     "path": "packages/agent-sdk/package.json",
+     "line": 142,
+     "criterion": "L3",
+     "excerpt": "\"@modelcontextprotocol/sdk\": \"^1.30.0\","
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h120",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "mcp_server_geo.py",
+     "line": 60,
+     "criterion": "A3",
+     "excerpt": "mcp = FastMCP(\"App\", stateless_http=True, transport_security=TransportSecuritySettings("
+    },
+    {
+     "path": "mcp_server_geo.py",
+     "line": 73,
+     "criterion": "A3",
+     "excerpt": "@mcp.tool()"
+    },
+    {
+     "path": "mcp_server_geo_sameer.py",
+     "line": 62,
+     "criterion": "A3",
+     "excerpt": "mcp = FastMCP(\"App\", auth=auth)"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h121",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "ai-names-as-data",
+    "ai-prose",
+    "product-name",
+    "provider-name"
+   ],
+   "evidence": [
+    {
+     "path": "data/tutorials.json",
+     "line": 13231,
+     "criterion": "none-note",
+     "excerpt": "\"https://github.com/ollama/ollama\","
+    },
+    {
+     "path": "data/tutorials.json",
+     "line": 2238,
+     "criterion": "none-note",
+     "excerpt": "\"description\": \"Text to image generation, using OpenAI's CLIP and a BigGAN\","
+    },
+    {
+     "path": "data/courses.json",
+     "line": 25,
+     "criterion": "none-note",
+     "excerpt": "\"name\": \"Anthropic courses\","
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h122",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "magenta/models/music_vae/music_vae_generate.py",
+     "line": 170,
+     "criterion": "L1",
+     "excerpt": "results = model.sample("
+    },
+    {
+     "path": "magenta/models/gansynth/gansynth_generate.py",
+     "line": 104,
+     "criterion": "L1",
+     "excerpt": "waves = model.generate_samples(FLAGS.batch_size)"
+    },
+    {
+     "path": "magenta/models/melody_rnn/melody_rnn_generate.py",
+     "line": 209,
+     "criterion": "L1",
+     "excerpt": "generated_sequence = generator.generate(input_sequence, generator_options)"
+    },
+    {
+     "path": "magenta/models/gansynth/gansynth_generate.py",
+     "line": 69,
+     "criterion": "L1",
+     "excerpt": "model = lib_model.Model.load_from_path(FLAGS.ckpt_dir, flags)"
+    },
+    {
+     "path": "magenta/models/drums_rnn/drums_rnn_generate.py",
+     "line": 215,
+     "criterion": "L1",
+     "excerpt": "generated_sequence = generator.generate(input_sequence, generator_options)"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "low",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h123",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "product-name",
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "src/Traffic/Message/Multipart/File.php",
+     "line": 131,
+     "criterion": "none-note",
+     "excerpt": "public function getEmbeddingId(): ?string"
+    },
+    {
+     "path": "CHANGELOG.md",
+     "line": 25,
+     "criterion": "none-note",
+     "excerpt": "* fix(socket): handle partial writes for large WebSocket payloads by @Copilot in https://github.c..."
+    },
+    {
+     "path": "CHANGELOG.md",
+     "line": 28,
+     "criterion": "none-note",
+     "excerpt": "* @Copilot made their first contribution in https://github.com/buggregator/trap/pull/213"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h124",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "A3",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "bin/tangle-agent/runtime.mjs",
+     "line": 47,
+     "criterion": "A3",
+     "excerpt": "const server = new McpServer({ name: 'tangle-agent', version: '1.0.0' })"
+    },
+    {
+     "path": "bin/tangle-agent/runtime.mjs",
+     "line": 56,
+     "criterion": "A3",
+     "excerpt": "server.registerTool(name, { description, inputSchema: schema }, async (args, extra) => {"
+    },
+    {
+     "path": "src/runtime/loop.ts",
+     "line": 29,
+     "criterion": "A2",
+     "excerpt": "runToolLoop as runAppToolLoop,"
+    },
+    {
+     "path": "src/runtime/openai-stream.ts",
+     "line": 208,
+     "criterion": "A2",
+     "excerpt": "...(opts.tools && opts.tools.length > 0 ? { tools: opts.tools } : {}),"
+    },
+    {
+     "path": "src/runtime/openai-stream.ts",
+     "line": 203,
+     "criterion": "L1",
+     "excerpt": "streamChatCompletions(doFetch, `${base}/chat/completions`, opts.apiKey, {"
+    },
+    {
+     "path": "src/tools/mcp-rpc.ts",
+     "line": 163,
+     "criterion": "A3",
+     "excerpt": "case 'tools/call': {"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h125",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "A4",
+    "L1",
+    "L2",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "flexible-graphrag-mcp/main.py",
+     "line": 24,
+     "criterion": "A3",
+     "excerpt": "mcp = FastMCP(\"flexible-graphrag-mcp\")"
+    },
+    {
+     "path": "flexible-graphrag-mcp/claude-desktop-configs/macos/uvx-config.json",
+     "line": 2,
+     "criterion": "A4",
+     "excerpt": "\"mcpServers\": {"
+    },
+    {
+     "path": "flexible-graphrag/factories.py",
+     "line": 76,
+     "criterion": "L1",
+     "excerpt": "stream = await aclient.chat.completions.create("
+    },
+    {
+     "path": "docker/includes/vllm.yaml",
+     "line": 36,
+     "criterion": "L2",
+     "excerpt": "image: vllm/vllm-openai:latest"
+    },
+    {
+     "path": "flexible-graphrag/pyproject.toml",
+     "line": 43,
+     "criterion": "L3",
+     "excerpt": "\"llama-index-llms-openai\","
+    },
+    {
+     "path": "flexible-graphrag-mcp/main.py",
+     "line": 41,
+     "criterion": "A3",
+     "excerpt": "@mcp.tool()"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h126",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/C/say/main.cpp",
+     "line": 74,
+     "criterion": "none-note",
+     "excerpt": "std::string commandToSend=\"espeak -g5\";"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h127",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [
+    "product-name",
+    "provider-name"
+   ],
+   "evidence": [
+    {
+     "path": "greasemonkey/chatgpt-auto-talk.user.js",
+     "line": 696,
+     "criterion": "none-note",
+     "excerpt": "playBtn.click() ; document.querySelector('textarea')?.click()"
+    },
+    {
+     "path": "greasemonkey/chatgpt-auto-talk.user.js",
+     "line": 232,
+     "criterion": "none-note",
+     "excerpt": "// @match *://chatgpt.com/*"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "medium",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h128",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/openai/chat.js",
+     "line": 11,
+     "criterion": "L1",
+     "excerpt": "const chatCompletion = await openai.createChatCompletion({"
+    },
+    {
+     "path": "package.json",
+     "line": 34,
+     "criterion": "L3",
+     "excerpt": "\"openai\": \"^3.3.0\","
+    },
+    {
+     "path": "src/openai/chat.js",
+     "line": 2,
+     "criterion": "L1",
+     "excerpt": "import {OpenAIApi} from 'openai';"
+    },
+    {
+     "path": "src/openai/models.js",
+     "line": 7,
+     "criterion": "L1",
+     "excerpt": "const response = await axios.get('https://api.openai.com/v1/models', {"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h129",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A2",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "packages/amplication-server/src/core/assistant/assistant.service.ts",
+     "line": 250,
+     "criterion": "A2",
+     "excerpt": "event.data.required_action.submit_tool_outputs.tool_calls;"
+    },
+    {
+     "path": "packages/amplication-server/src/core/assistant/assistant.service.ts",
+     "line": 258,
+     "criterion": "A2",
+     "excerpt": "await this.assistantFunctionsService.executeFunction("
+    },
+    {
+     "path": "packages/amplication-server/src/core/assistant/assistant.service.ts",
+     "line": 182,
+     "criterion": "L1",
+     "excerpt": "const runStream = openai.beta.threads.runs.stream(preparedThread.threadId, {"
+    },
+    {
+     "path": "packages/gpt-gateway/providers/openai/openai.service.ts",
+     "line": 37,
+     "criterion": "L1",
+     "excerpt": "const response = await openai.chat.completions.create({"
+    },
+    {
+     "path": "package.json",
+     "line": 139,
+     "criterion": "L3",
+     "excerpt": "\"openai\": \"^4.46.0\","
+    },
+    {
+     "path": "packages/amplication-server/src/core/assistant/assistant.service.ts",
+     "line": 248,
+     "criterion": "A2",
+     "excerpt": "if (event.event === \"thread.run.requires_action\") {"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h130",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "A3",
+    "A6",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "python/examples/mcp_example.py",
+     "line": 42,
+     "criterion": "A1",
+     "excerpt": "agent = create_react_agent(\"openai:gpt-4.1\", tools)"
+    },
+    {
+     "path": "python/providers/openai/openai_demo.py",
+     "line": 32,
+     "criterion": "A2",
+     "excerpt": "result = composio.provider.handle_tool_calls(response=response, user_id=\"default\")"
+    },
+    {
+     "path": "python/providers/claude_agent_sdk/composio_claude_agent_sdk/provider.py",
+     "line": 191,
+     "criterion": "A3",
+     "excerpt": "return create_sdk_mcp_server("
+    },
+    {
+     "path": ".github/workflows/claude.yml",
+     "line": 38,
+     "criterion": "A6",
+     "excerpt": "uses: anthropics/claude-code-action@<redacted> # v1.0.231"
+    },
+    {
+     "path": "python/providers/anthropic/pyproject.toml",
+     "line": 16,
+     "criterion": "L3",
+     "excerpt": "\"anthropic>=0.120.0\","
+    },
+    {
+     "path": "python/examples/tool_router/openai_agents.py",
+     "line": 27,
+     "criterion": "A1",
+     "excerpt": "agent = Agent("
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h131",
+   "label": "none",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "CLAUDE.md",
+     "line": 1,
+     "criterion": "none-note",
+     "excerpt": "# CLAUDE.md"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h132",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "src/server.py",
+     "line": 48,
+     "criterion": "A3",
+     "excerpt": "from mcp.server.fastmcp import FastMCP"
+    },
+    {
+     "path": "src/server.py",
+     "line": 239,
+     "criterion": "A3",
+     "excerpt": "server = FastMCP(name=\"callhub-mcp-py\")"
+    },
+    {
+     "path": "src/server.py",
+     "line": 242,
+     "criterion": "A3",
+     "excerpt": "@server.tool(name=\"listAccounts\", description=\"List configured CallHub accounts.\")"
+    },
+    {
+     "path": "requirements.txt",
+     "line": 7,
+     "criterion": "A3",
+     "excerpt": "mcp>=1.2.0,<2"
+    },
+    {
+     "path": "src/server.py",
+     "line": 2965,
+     "criterion": "A3",
+     "excerpt": "server.run()"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h133",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "croiseur-clue/croiseur-clue-openai-plugin/src/main/java/re/belv/croiseur/clue/openai/plugin/ClueGenerator.java",
+     "line": 97,
+     "criterion": "L1",
+     "excerpt": ".getChatCompletions(config.model(), completionRequest)"
+    },
+    {
+     "path": "croiseur-clue/croiseur-clue-openai-plugin/src/main/java/re/belv/croiseur/clue/openai/plugin/ClueGenerator.java",
+     "line": 48,
+     "criterion": "L1",
+     "excerpt": "new OpenAIClientBuilder().credential(new KeyCredential(token)).buildClient();"
+    },
+    {
+     "path": "gradle/libs.versions.toml",
+     "line": 50,
+     "criterion": "L3",
+     "excerpt": "openai = { module = \"com.azure:azure-ai-openai\", version.ref = \"openai\" }"
+    },
+    {
+     "path": "croiseur-clue/croiseur-clue-openai-plugin/build.gradle.kts",
+     "line": 12,
+     "criterion": "L3",
+     "excerpt": "implementation(libs.openai)"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h134",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A1",
+    "A2",
+    "A6",
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "connectonion/core/agent.py",
+     "line": 825,
+     "criterion": "A2",
+     "excerpt": "self._execute_and_record_tools(response.tool_calls)"
+    },
+    {
+     "path": "connectonion/cli/github_action.py",
+     "line": 107,
+     "criterion": "A1",
+     "excerpt": "return Agent("
+    },
+    {
+     "path": ".github/workflows/co-ai-review.yml",
+     "line": 41,
+     "criterion": "A6",
+     "excerpt": "uses: ./"
+    },
+    {
+     "path": "connectonion/core/llm.py",
+     "line": 688,
+     "criterion": "L1",
+     "excerpt": "lambda: self.client.messages.create(**api_kwargs))"
+    },
+    {
+     "path": "pyproject.toml",
+     "line": 42,
+     "criterion": "L3",
+     "excerpt": "\"anthropic>=0.18.0\","
+    },
+    {
+     "path": "connectonion/core/agent.py",
+     "line": 769,
+     "criterion": "A2",
+     "excerpt": "if not response.tool_calls:"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h135",
+   "label": "llm",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "L1",
+    "L3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "app/Clients/OpenAI.php",
+     "line": 141,
+     "criterion": "L1",
+     "excerpt": "'chat/completions',"
+    },
+    {
+     "path": "app/Clients/OpenAI.php",
+     "line": 185,
+     "criterion": "L1",
+     "excerpt": "->baseUrl($this->configRepository->get('base_url', 'https://api.openai.com/v1'))"
+    },
+    {
+     "path": "app/Clients/Moonshot.php",
+     "line": 82,
+     "criterion": "L1",
+     "excerpt": "->post('chat/completions', $this->validate($parameters, ["
+    },
+    {
+     "path": "composer.json",
+     "line": 102,
+     "criterion": "L3",
+     "excerpt": "\"prism-php/prism\": \"^0.100\","
+    },
+    {
+     "path": "app/Generators/OpenAIGenerator.php",
+     "line": 63,
+     "criterion": "L1",
+     "excerpt": "$response = $this->openAI->completions($parameters, $this->buildWriter($messages));"
+    }
+   ],
+   "provenance": {
+    "a": "llm",
+    "b": "llm",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h136",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": true,
+   "subtypes": [],
+   "traits": [
+    "ai-prose",
+    "chatbot",
+    "non-generative-ml"
+   ],
+   "evidence": [
+    {
+     "path": "nlpandml.ipynb",
+     "line": 106,
+     "criterion": "none-note",
+     "excerpt": "\"from sklearn.feature_extraction.text import TfidfVectorizer\\n\","
+    },
+    {
+     "path": "nlpandml.ipynb",
+     "line": 152,
+     "criterion": "none-note",
+     "excerpt": "\" TfidfVec = TfidfVectorizer(tokenizer=LemNormalize, stop_words='english')\\n\","
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h137",
+   "label": "none",
+   "assistant_artifacts": false,
+   "ml_only": true,
+   "subtypes": [],
+   "traits": [
+    "chatbot",
+    "non-generative-ml",
+    "user-agent"
+   ],
+   "evidence": [
+    {
+     "path": "src/main/kotlin/totoro/yui/util/Markov.kt",
+     "line": 53,
+     "criterion": "none-note",
+     "excerpt": "database.markov?.addBatch(chain.replace(\"'\", \"''\"), word.replace(\"'\", \"''\"), author)"
+    },
+    {
+     "path": "src/main/kotlin/totoro/yui/util/api/BackronymRu.kt",
+     "line": 12,
+     "criterion": "none-note",
+     "excerpt": "val result = Jsoup.connect(\"http://aiproject.ru/abbr.php\")"
+    },
+    {
+     "path": "src/main/kotlin/totoro/yui/actions/MarkovAction.kt",
+     "line": 10,
+     "criterion": "none-note",
+     "excerpt": "class MarkovAction(private val database: Database) : NamedAction(\"m\", \"markov\", \"talk\") {"
+    }
+   ],
+   "provenance": {
+    "a": "none",
+    "b": "none",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": false,
+    "changed": false
+   }
+  },
+  {
+   "id": "h138",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "cmd/mcp-searxng/main.go",
+     "line": 24,
+     "criterion": "A3",
+     "excerpt": "server := mcp.NewServer(&mcp.Implementation{Name: \"mcp-searxng\", Version: appVersion}, nil)"
+    },
+    {
+     "path": "cmd/mcp-searxng/main.go",
+     "line": 30,
+     "criterion": "A3",
+     "excerpt": "if err := server.Run(ctx, mcp.NewStdioTransport()); err != nil {"
+    },
+    {
+     "path": "go.mod",
+     "line": 7,
+     "criterion": "A3",
+     "excerpt": "github.com/modelcontextprotocol/go-sdk v0.2.0"
+    },
+    {
+     "path": "cmd/mcp-searxng/main.go",
+     "line": 26,
+     "criterion": "A3",
+     "excerpt": "mcp.AddTool(server, &mcp.Tool{Name: \"searxng_web_search\", Description: \"Performs a web search usi..."
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h139",
+   "label": "agent",
+   "assistant_artifacts": false,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "A4"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "samples/claude-code/veriqa-approval/.claude-plugin/plugin.json",
+     "line": 16,
+     "criterion": "A4",
+     "excerpt": "\"mcpServers\": {"
+    },
+    {
+     "path": "samples/claude-code/veriqa-approval/scripts/qr-server.mjs",
+     "line": 2,
+     "criterion": "A3",
+     "excerpt": "// A minimal MCP server (stdio, newline-delimited JSON-RPC) with one tool: it shows the user the QR"
+    },
+    {
+     "path": "samples/claude-code/veriqa-approval/scripts/qr-server.mjs",
+     "line": 74,
+     "criterion": "A3",
+     "excerpt": "case 'tools/call':"
+    },
+    {
+     "path": "samples/claude-code/veriqa-approval/hooks/hooks.json",
+     "line": 3,
+     "criterion": "A4",
+     "excerpt": "\"PreToolUse\": ["
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": false,
+    "b_assistant": false,
+    "a_confidence": "high",
+    "b_confidence": "medium",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  },
+  {
+   "id": "h140",
+   "label": "agent",
+   "assistant_artifacts": true,
+   "ml_only": false,
+   "subtypes": [
+    "A3",
+    "L1"
+   ],
+   "traits": [],
+   "evidence": [
+    {
+     "path": "packages/pond/src/transport.rs",
+     "line": 762,
+     "criterion": "A3",
+     "excerpt": "ErrorData, RoleServer, ServerHandler, ServiceExt,"
+    },
+    {
+     "path": "packages/pond/Cargo.toml",
+     "line": 159,
+     "criterion": "A3",
+     "excerpt": "rmcp = { version = \"3.5.0\", features = [\"transport-io\", \"transport-streamable-http-server\"] }"
+    },
+    {
+     "path": "packages/openclaw-pond/src/mcp.ts",
+     "line": 41,
+     "criterion": "A3",
+     "excerpt": "const client = new Client(CLIENT_INFO, { capabilities: {} });"
+    },
+    {
+     "path": "packages/pi-pond/index.ts",
+     "line": 67,
+     "criterion": "A3",
+     "excerpt": "pi.registerTool(tool);"
+    },
+    {
+     "path": "packages/pond/src/embed.rs",
+     "line": 95,
+     "criterion": "L1",
+     "excerpt": "let model = XLMRobertaModel::new(&config, vb)"
+    },
+    {
+     "path": "packages/pond/src/transport.rs",
+     "line": 1602,
+     "criterion": "A3",
+     "excerpt": "impl ServerHandler for PondMcp {"
+    }
+   ],
+   "provenance": {
+    "a": "agent",
+    "b": "agent",
+    "a_assistant": true,
+    "b_assistant": true,
+    "a_confidence": "high",
+    "b_confidence": "high",
+    "adjudicated": false,
+    "reason": ""
+   },
+   "postrun": {
+    "reviewed": true,
+    "changed": false
+   }
+  }
+ ],
+ "agreement": {
+  "n": 140,
+  "only_a": [],
+  "only_b": [],
+  "label": {
+   "agreement": 1.0,
+   "kappa": 1.0,
+   "confusion_a_by_b": {
+    "agent|agent": 67,
+    "llm|llm": 28,
+    "none|none": 45
+   }
+  },
+  "t1_genai": {
+   "agreement": 1.0,
+   "kappa": 1.0,
+   "confusion_a_by_b": {
+    "False|False": 45,
+    "True|True": 95
+   }
+  },
+  "t2_agent": {
+   "agreement": 1.0,
+   "kappa": 1.0,
+   "confusion_a_by_b": {
+    "False|False": 73,
+    "True|True": 67
+   }
+  },
+  "assistant_artifacts": {
+   "agreement": 1.0,
+   "kappa": 1.0,
+   "confusion_a_by_b": {
+    "False|False": 97,
+    "True|True": 43
+   }
+  }
+ }
+}

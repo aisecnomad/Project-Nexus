@@ -1,5 +1,11 @@
 # Real-world shadow-AI discovery benchmark
 
+**Post-change holdout:** ShadowScan was changed using the first run, then
+measured on a fresh, pre-registered holdout of 140 repositories. See
+[results-holdout/FINDINGS.md](results-holdout/FINDINGS.md) (targets, comparison
+with the first run, remaining gaps) and [results-holdout/REPORT.md](results-holdout/REPORT.md).
+None of the pre-registered targets was met.
+
 This harness measures how well open-source tools find generative-AI use and AI
 agents in **real public repositories**. The corpus is 183 GitHub and GitLab
 repositories, drawn by a seeded procedure from public sampling frames and

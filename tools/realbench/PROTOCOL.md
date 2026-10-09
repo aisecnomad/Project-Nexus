@@ -562,6 +562,16 @@ MCC at least 0.75; T1 specificity at least 0.97.
    checkout was opened. The freeze came later than planned because the
    symbolic-link handling was redesigned during review (see `CHANGELOG.md`).
 
+6. **Run and adjudication.** The holdout run was started twice before the
+   run that is reported: the first start was stopped to move it out of a
+   session time limit, and the second died with the shell that launched it.
+   Neither left results; the reported run started from an empty results
+   directory at the freeze commit. The post-run adjudication packets name
+   each checkout under `corpus/`; the adjudicators were told the holdout
+   checkouts are under `holdout/`, and nothing else in the packets or the
+   instructions changed. All 111 repositories with a tool disagreement were
+   adjudicated in 11 blind batches; no label or assistant flag changed.
+
 Label summary at the holdout freeze: 67 `agent`, 28 `llm` and 45 `none`.
 10 of the `none` are assistant-only, which leaves 130 repositories in the
 primary analysis.
