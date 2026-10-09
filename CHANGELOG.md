@@ -156,6 +156,43 @@ author-written and not independent review.
   versus the LLM flavor, Spring AI with and without tools, a Go MCP server
   and a TypeScript MCP client).
 
+### Change-scoped scans, path context, corroboration and new ecosystems
+
+These change confidence, risk, kind and the set of findings against existing
+baselines; rebaseline before comparing (see `docs/production.md`).
+
+- `code.filesystem` option `diff_base` (`shadowscan code PATH --diff-base REF`)
+  scans the files committed between the merge base with `REF` and HEAD, plus
+  dependency manifests and `.env*` files. Findings carry the `diff-scan` tag and
+  `metadata.diff_scan`; the report is not comparable and is never cached. It
+  needs Git 2.45 or later and falls back to a full scan with a warning.
+- Path context discounts code evidence. Inside a project, documentation
+  directories (`docs/`, `guides/`, `tutorials/`, ...) and example directories
+  (`examples/`, `samples/`, `templates/`, `recipes/`, ...) scale evidence weight
+  by 0.5; generated files (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) by 0.4.
+  When every non-test observation of a project is discounted, the finding is
+  tagged `docs-only`, `example-code-only` or `generated-code-only`, its
+  confidence is capped at 0.85, 0.85 or 0.7 (`metadata.confidence_cap`) and the
+  new default risk weights subtract 8, 8 or 10. `metadata.negative_contexts`
+  and `attributes.negative_context` record the context. `include_tests`
+  disables the discount, as it does for test code.
+- A project finding whose evidence spans independent signal types gains a
+  synthetic `corroboration:cross-signal` evidence item of weight 0.10 (library
+  and code) or 0.15 (three or more signal types) and
+  `metadata.cross_signal_corroboration`, raising confidence and likelihood.
+- A mention-only data file with fewer than four products is a catalog when its
+  name has a whole deny-list word (`blocklist`, `denylist`, `blacklist`,
+  `block`, `deny`, `firewall`, `waf`), so its mentions alone yield no finding.
+- `import` and `code` signals accept the languages `c`, `cpp`, `elixir`, `r` and
+  `lua`; `conda` dependency signals cover the OpenAI, Anthropic, Hugging Face,
+  LangChain and LlamaIndex packages. New signatures: Agency Swarm, Rivet, Devin, Bumblebee/Instructor
+  (Elixir), LangChain (Elixir), R LLM clients, Lua LLM clients, Rust AI crates,
+  Homebrew AI tools (heuristic), MLflow AI Gateway and Cloudflare AI Gateway.
+  Several coding-agent, Dify, Flowise, Langflow and SageMaker signatures gained
+  patterns and file names.
+- An authored 130-case benchmark under `benchmarks/sab_realworld` exercises
+  these changes. It is author-written, not independent validation.
+
 ### PR review: incremental scan and evidence verification
 
 - Preserve whitespace and newlines in changed Git paths so incremental scans

@@ -929,6 +929,26 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 9 change-scoped scans, path context and new ecosystems (unreleased)
+
+These `code.filesystem` changes move confidence, risk and kind, and add or
+remove findings, against baselines from an earlier build. The default risk
+weights changed (three new tags). Rescan and rebaseline before comparing;
+`shadowscan diff` otherwise reports the differences as changed, new or
+resolved findings.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Diff-scoped scans | `--diff-base REF` scans committed changes since the merge base plus dependency manifests and `.env*` files; the report is not comparable and never cached. | Keep a full scan of the default branch as the comparison baseline. Do not gate inventory or resolution on a diff-scoped report. |
+| Path context | Evidence in documentation or example directories inside a project has half weight, generated files (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) 0.4. A project with no other evidence is tagged `docs-only`, `example-code-only` or `generated-code-only`, capped at 0.85, 0.85 or 0.7 confidence and scored 8, 8 or 10 lower. A directory that is itself a project root, or one named `codegen` or `generated`, is not discounted. | Review findings whose risk dropped below a `--fail-on` threshold. A custom risk policy that sets these tags overrides the defaults; set `include_tests: true` to scan these paths at full weight. |
+| Corroboration | A project whose evidence spans a library and a code signal, or three signal types, gains a synthetic `corroboration:cross-signal` item (0.10 or 0.15). | Expect higher confidence and likelihood on such projects, and findings that now pass `min_confidence`. |
+| Deny-list files | A mention-only data file whose name has a whole deny-list word (`blocklist`, `deny`, `firewall`, `waf`, ...) is a catalog whatever it names. Allowlists and egress policies are configuration. | A project evidenced only by such a file has no finding; the scan note names the file. |
+| Signatures | New languages (`c`, `cpp`, `elixir`, `r`, `lua`), `conda` dependency signals and eleven new signatures, listed in `CHANGELOG.md`. Elixir and R signatures have no dependency signals. | New products appear in reports. Re-run your own signature packs through `python -m shadowscan.signatures.validate`: `hex` and `cran` are not ecosystems. |
+
+These cases are authored regressions and a 130-case author-written benchmark.
+They do not establish independent review, live tenant acceptance or measured
+field precision.
+
 ### October 9 scan evidence corrections (unreleased)
 
 This source candidate includes corrections reviewed from the existing discovery,

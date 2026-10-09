@@ -25,6 +25,16 @@ one permission class, several system prompts in one workflow) count once. A
 project that merely imports `openai` is not the same as a Bedrock Agent with a
 confirmed runtime status.
 
+A `code.filesystem` project finding whose evidence outside test code and
+heuristics spans independent signal types also gets one synthetic
+`corroboration:cross-signal` evidence item (`attributes.synthetic: true`,
+group `cross-signal-corroboration`): weight 0.10 when a library signal (an
+import or a dependency) and a code pattern agree, 0.15 when three or more of
+import, dependency, code, file, domain and environment-name signals are
+present. It points at one of the observations it summarizes, raises confidence
+and likelihood but never the finding's kind, and is described in
+`metadata.cross_signal_corroboration`.
+
 Confidence is a heuristic evidence score, not a calibrated probability of
 agent execution: the weights are authored in signature packs and connectors,
 not fitted to observed outcomes. The `likelihood` label is only a bucket of that
@@ -49,7 +59,11 @@ factory or an enabled executable tool definition, can support a capability;
 source evidence still does not prove that the code ran in production.
 
 A name is a mention, not use. Environment-variable names alone cap a project at
-confidence 0.8 (tag `env-names-only`, `metadata.confidence_cap`). A data file
+confidence 0.8 (tag `env-names-only`, `metadata.confidence_cap`). Evidence only
+in documentation or example directories inside a project, or only in generated
+files (`*_pb2.py`, `*.generated.*`), caps it at 0.85, 0.85 or 0.7 (tags
+`docs-only`, `example-code-only`, `generated-code-only`); see
+[Scanning](../scanning.md) for the paths. A data file
 that lists four or more products by domain or variable name, such as a proxy
 blocklist, a vendor policy or a copy of the signature packs, is a *catalog*:
 its mentions count only for a product that also has an import, a dependency or
@@ -99,6 +113,8 @@ include:
 | `tag:remote-code-fetch` | Instruction file downloads and executes code in one step, or decodes an inline blob into an interpreter | 15 |
 | `tag:invisible-text` | Instruction file contains invisible or bidirectional control characters | 10 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
+| `tag:test-code-only` / `tag:generated-code-only` | Code evidence is only in test or fixture code, or only in generated files | −10 |
+| `tag:docs-only` / `tag:example-code-only` | Code evidence is only in documentation or example directories inside the project | −8 |
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
 10 for `agent-config`, `workflow`, `bot-app`, `oauth-grant`,
