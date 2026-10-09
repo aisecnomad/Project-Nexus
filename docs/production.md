@@ -116,9 +116,10 @@ between candidate builds, not between releases.
 ## Review before deployment
 
 The model-identifier pass leaves coverage incomplete (exit 3) when a file
-exceeds its 400-literal analysis limit. Findings from the analyzed prefix
-remain available; review the unread content separately before using an
-incomplete result for an assurance decision.
+exceeds its 400-literal analysis limit. Only literals that carry a vendor stem
+(model-id candidates) count; ordinary strings never reach the limit. Findings
+from the analyzed prefix remain available; review the unread content
+separately before using an incomplete result for an assurance decision.
 Catalog assignment and data-file reference limits likewise mark coverage
 incomplete when unread content could change the configuration classification.
 

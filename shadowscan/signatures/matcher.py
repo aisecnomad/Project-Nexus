@@ -162,6 +162,7 @@ def _finditer(
     context: str,
     limit: int,
     excluded: Callable[[int], bool] | None = None,
+    selected: Callable[[Any], bool] | None = None,
 ) -> list[Any]:
     def collect(timeout: float) -> list[Any]:
         # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
@@ -175,6 +176,9 @@ def _finditer(
         matches = rx.finditer(text, timeout=timeout, concurrent=False)
         if excluded is not None:
             matches = (match for match in matches if not excluded(match.start()))
+        if selected is not None:
+            # Only selected matches count toward the limit.
+            matches = (match for match in matches if selected(match))
         return list(islice(matches, limit))
 
     result: list[Any] = _run_regex(collect, context)

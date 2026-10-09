@@ -276,7 +276,8 @@ WEAK_MENTION_WEIGHT = 0.3
 # model the code may call, not an installed SDK (see _scan_model_literals).
 MODEL_LITERAL_MAX_WEIGHT = 0.5
 MODEL_IDS_ONLY_MAX_CONFIDENCE = 0.6
-# Quoted literals the model-identifier pass reads per file before it stops.
+# Model-id candidates (literals with a vendor stem) the model-identifier pass
+# reads per file before it stops; ordinary strings do not count.
 MAX_MODEL_LITERALS_PER_FILE = 400
 # Model matches kept per signature per file.
 MAX_MODEL_MATCHES_PER_SIGNATURE = 3
@@ -1350,6 +1351,17 @@ _MODEL_STEMS = (
 # model id and is matched too. Any other ``/`` (``EleutherAI/gpt-neox-20b``, an
 # npm scope, a URL path) is a namespace, and the value is read whole only.
 _MODEL_ROUTE_PREFIXES = tuple(stem for stem in _MODEL_STEMS if stem.endswith("/")) + ("arn:aws:bedrock",)
+# The stems as one alternation of plain strings: the per-literal test runs for
+# every quoted string of a file inside the match iterator, where an ``any``
+# over each stem costs several times more.
+_MODEL_STEM_RE = re.compile("|".join(map(re.escape, _MODEL_STEMS)))
+
+
+def _has_model_stem(value: str) -> bool:
+    """Whether ``value`` carries a vendor stem, so it is a model-id candidate."""
+    return _MODEL_STEM_RE.search(value.lower()) is not None
+
+
 # Configuration formats whose literals the model-identifier pass reads. Prose
 # (.md, .mdc, .mdx, .txt) is never read; dotenv files are recognised by name.
 _MODEL_LITERAL_CONFIG_EXTENSIONS = frozenset(
@@ -3390,9 +3402,10 @@ class FilesystemConnector(BaseConnector):
         ``model_literal`` (weight capped at emit time) and, outside source
         files, ``data_mention``: a model id in a data file names a model as a
         domain names a host, so it anchors nothing and keeps a pricing table a
-        catalog. At most ``MAX_MODEL_LITERALS_PER_FILE`` literals are read per
-        pass and ``MAX_MODEL_MATCHES_PER_SIGNATURE`` matches kept per
-        signature; unread literals leave coverage incomplete.
+        catalog. At most ``MAX_MODEL_LITERALS_PER_FILE`` literals with a
+        vendor stem are read per pass (ordinary strings are skipped in the match
+        iterator and do not count) and ``MAX_MODEL_MATCHES_PER_SIGNATURE``
+        matches kept per signature; unread candidates leave coverage incomplete.
         """
         lowered_text = content_text.lower()
         if not any(stem in lowered_text for stem in _MODEL_STEMS):
@@ -3412,12 +3425,17 @@ class FilesystemConnector(BaseConnector):
             "model identifiers",
             MAX_MODEL_LITERALS_PER_FILE + 1,
             in_comment if starts else None,
+            lambda m: _has_model_stem(m.group(2)),
         )
         limited = len(quoted) > MAX_MODEL_LITERALS_PER_FILE
         literals.extend((m.start(2), m.group(2)) for m in quoted[:MAX_MODEL_LITERALS_PER_FILE])
         if not source:
             keyed = _finditer(
-                _MODEL_KEY_VALUE_RE, content_text, "model identifiers", MAX_MODEL_LITERALS_PER_FILE + 1
+                _MODEL_KEY_VALUE_RE,
+                content_text,
+                "model identifiers",
+                MAX_MODEL_LITERALS_PER_FILE + 1,
+                selected=lambda m: _has_model_stem(m.group(1)),
             )
             limited = limited or len(keyed) > MAX_MODEL_LITERALS_PER_FILE
             literals.extend((m.start(1), m.group(1)) for m in keyed[:MAX_MODEL_LITERALS_PER_FILE])
@@ -3433,8 +3451,6 @@ class FilesystemConnector(BaseConnector):
         seen: set[tuple[str, str]] = set()
         for offset, value in literals:
             lowered = value.lower()
-            if not any(stem in lowered for stem in _MODEL_STEMS):
-                continue
             candidates = [value]
             if "/" in value and lowered.startswith(_MODEL_ROUTE_PREFIXES):
                 tail = value.rsplit("/", 1)[-1]

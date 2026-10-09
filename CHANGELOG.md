@@ -317,6 +317,10 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
 - Fixed: the model-identifier literal limit now marks coverage incomplete
   when later literals were not matched. A model beyond the limit can no
   longer produce an empty scan reported as complete.
+- Fixed: that limit counts only model-id candidates, literals that carry a
+  vendor stem. It counted every quoted string, so an ordinary file with more
+  than 400 strings and a stem anywhere in its text (`import.meta`,
+  `command-line`) made the scan incomplete (exit 3) with nothing unread.
 - Fixed: truncated catalog assignment and data-file reference analysis also
   marks coverage incomplete while preserving the evidence already read.
 
@@ -512,11 +516,12 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   such as `bedrock/anthropic.claude-...` attributes both the route's provider
   and the vendor. Each match weighs at most 0.5, lists the whole id under
   `metadata.models` and is kept at most three times per signature per file
-  (400 literals per file, with a note beyond). A model id in source or a
-  notebook anchors a project finding, tagged `model-ids-only` with confidence
-  capped at 0.6 when nothing else establishes a technology; one in a data or
-  configuration file is a mention (`data_mention`) that anchors nothing and
-  keeps leaderboards and pricing tables catalogs. Markdown is never read for
+  (400 vendor-stem literals per file, with incomplete coverage beyond). A
+  model id in source or a notebook anchors a project finding, tagged
+  `model-ids-only` with confidence capped at 0.6 when nothing else
+  establishes a technology; one in a data or configuration file is a mention
+  (`data_mention`) that anchors nothing and keeps leaderboards and pricing
+  tables catalogs. Markdown is never read for
   model ids; `amazon.com`, `o1ne`, `tts-config`, `command-line` and
   `gemini-python/1.8.2` match nothing. The last path segment is matched only
   under a known route prefix (`bedrock/`, `openai/`, `openrouter/`, `@cf/`, …),

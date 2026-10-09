@@ -260,7 +260,14 @@ def test_oversize_documentation_is_disclosed_without_a_gap(run_connector, tmp_pa
 
 @pytest.mark.parametrize(
     "rel",
-    ["history_store.py", "HistoryService.java", "changes.ts", "changelog_parser.go", "CHANGELOG.md", "CHANGES"],
+    [
+        "history_store.py",
+        "HistoryService.java",
+        "changes.ts",
+        "changelog_parser.go",
+        "CHANGELOG.md",
+        "CHANGES",
+    ],
 )
 def test_oversize_change_log_names_never_hide_read_content(run_connector, tmp_path, rel):
     # A scanned repository chooses its file names: a source file or a change
@@ -534,7 +541,9 @@ def test_model_literal_pass_is_bounded_per_file(run_connector, tmp_path):
 def test_model_literal_after_the_limit_is_an_incomplete_scan(run_connector, tmp_path):
     from shadowscan.connectors.code.filesystem import MAX_MODEL_LITERALS_PER_FILE
 
-    source = "\n".join(f'x{n} = "ordinary-{n}"' for n in range(MAX_MODEL_LITERALS_PER_FILE))
+    # "command-line-N" carries a vendor stem (Cohere's "command-") but names no
+    # model: each one is a candidate the pass must read, so they use up the limit.
+    source = "\n".join(f'x{n} = "command-line-{n}"' for n in range(MAX_MODEL_LITERALS_PER_FILE))
     write(tmp_path, "app.py", source + '\nmodel = "claude-3-5-sonnet-20241022"\n')
     findings, stats = scan(run_connector, tmp_path)
     assert not findings
@@ -545,11 +554,45 @@ def test_model_literal_after_the_limit_is_an_incomplete_scan(run_connector, tmp_
 def test_exactly_the_model_literal_limit_keeps_complete_coverage(run_connector, tmp_path):
     from shadowscan.connectors.code.filesystem import MAX_MODEL_LITERALS_PER_FILE
 
-    source = "\n".join(f'x{n} = "ordinary-{n}"' for n in range(MAX_MODEL_LITERALS_PER_FILE - 1))
+    source = "\n".join(f'x{n} = "command-line-{n}"' for n in range(MAX_MODEL_LITERALS_PER_FILE - 1))
     write(tmp_path, "app.py", source + '\nmodel = "claude-3-5-sonnet-20241022"\n')
     findings, stats = scan(run_connector, tmp_path)
     assert not stats.incomplete
     assert _project(findings).model_providers == ["provider.anthropic"]
+
+
+@pytest.mark.parametrize(
+    ("rel", "body"),
+    [
+        pytest.param(
+            "src/app.js",
+            "const base = import.meta.env.BASE_URL;\n"
+            + "".join(f'export const k{n} = "label_{n}";\n' for n in range(500)),
+            id="vite-module",
+        ),
+        pytest.param(
+            "locales/en.json",
+            "{\n"
+            + "".join(f'  "label_{n}": "text_{n}",\n' for n in range(450))
+            + '  "cli": "command-line"\n}\n',
+            id="i18n-bundle",
+        ),
+        pytest.param(
+            "config/settings.yaml",
+            'homepage: "https://amazon.com"\n' + "".join(f"- model_id: resnet-{n}\n" for n in range(450)),
+            id="keyed-config",
+        ),
+    ],
+)
+def test_model_literal_limit_counts_only_vendor_stem_literals(run_connector, tmp_path, rel, body):
+    # A stem anywhere in the file (import.meta, command-line, amazon.) lets the
+    # pass run, but ordinary strings are not model-id candidates: hundreds of
+    # labels leave nothing unread, so the scan stays complete.
+    write(tmp_path, rel, body)
+    findings, stats = scan(run_connector, tmp_path)
+    assert not findings
+    assert not stats.incomplete and not stats.errors
+    assert not [w for w in stats.warnings if "model identifiers" in w]
 
 
 @pytest.mark.parametrize("limit_kind", ["assignments", "path-literals", "references"])

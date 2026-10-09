@@ -118,7 +118,8 @@ such as `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0` attributes both
 the route's provider and the model's vendor. Each match weighs at most 0.5
 (`model:provider.anthropic`), lists the whole id under `metadata.models`, and
 is recorded at most three times per signature per file; a file is read for
-its first 400 literals, with incomplete coverage (exit 3) when it holds more.
+its first 400 literals that carry a vendor stem, with incomplete coverage
+(exit 3) when it holds more. Ordinary strings do not count toward that limit.
 A model id in a source
 file or notebook can anchor a project finding (a Python file whose only
 evidence is `MODEL = "claude-3-5-sonnet-20241022"` is reported, tagged
