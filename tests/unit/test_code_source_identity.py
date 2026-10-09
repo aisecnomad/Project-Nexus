@@ -10,7 +10,7 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext, ConnectorError
-from shadowscan.connectors.code import source_identity
+from shadowscan.connectors.code import source_identity, tool_attribution
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
@@ -192,9 +192,13 @@ def test_missing_and_literal_empty_tools_do_not_rescan_the_ast(monkeypatch, opti
 
 def test_nonempty_and_opaque_tools_still_use_the_registration_pass(monkeypatch):
     examined = []
+    passes = []
 
-    def inspect(text, tree, constructors, registrations, dispatch_calls):
-        examined.append(constructors[0][0])
+    def inspect(text, tree, constructors, registrations, dispatch_calls, *, each, **_):
+        passes.append(len(constructors))
+        for call, _ in constructors:
+            examined.append(call)
+            each[id(call)] = ToolRegions()
         return ToolRegions()
 
     monkeypatch.setattr(source_identity, "python_tool_regions", inspect)
@@ -203,6 +207,7 @@ def test_nonempty_and_opaque_tools_still_use_the_registration_pass(monkeypatch):
     regions = {}
     named_construction_spans(text, verified_spans=set(names), tool_regions=regions)
     assert len(examined) == 2
+    assert passes == [2]  # both constructions share one whole-file pass
     assert regions == dict.fromkeys(names, ToolRegions())
 
 
@@ -227,8 +232,10 @@ def test_many_empty_tool_constructions_keep_bounded_linear_identity_work(monkeyp
 def test_identical_literal_tool_names_in_one_scope_share_the_registration_pass(monkeypatch, tools):
     calls = []
 
-    def inspect(text, tree, constructors, registrations, dispatch_calls):
-        calls.append(constructors[0][0])
+    def inspect(text, tree, constructors, registrations, dispatch_calls, *, each, **_):
+        for call, _ in constructors:
+            calls.append(call)
+            each[id(call)] = ToolRegions(bodies=((1, 2),))
         return ToolRegions(bodies=((1, 2),))
 
     monkeypatch.setattr(source_identity, "python_tool_regions", inspect)
@@ -262,10 +269,11 @@ def test_same_tool_name_in_different_scopes_never_shares_capabilities(run_connec
 def test_same_literal_tools_in_separate_scopes_each_runs_registration(monkeypatch):
     calls = []
 
-    def inspect(text, tree, constructors, registrations, dispatch_calls):
-        call = constructors[0][0]
-        calls.append(call.lineno)
-        return ToolRegions(bodies=((call.lineno, call.lineno + 1),))
+    def inspect(text, tree, constructors, registrations, dispatch_calls, *, each, **_):
+        for call, _ in constructors:
+            calls.append(call.lineno)
+            each[id(call)] = ToolRegions(bodies=((call.lineno, call.lineno + 1),))
+        return ToolRegions()
 
     monkeypatch.setattr(source_identity, "python_tool_regions", inspect)
     text = (
@@ -286,9 +294,9 @@ def test_unpacked_keyword_registration_cannot_reuse_a_proven_literal_result(monk
     original = source_identity.python_tool_regions
     calls = []
 
-    def inspect(*args):
-        calls.append(args[2][0][0])
-        return original(*args)
+    def inspect(*args, **kwargs):
+        calls.extend(call for call, _ in args[2])
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(source_identity, "python_tool_regions", inspect)
     text = (
@@ -360,3 +368,232 @@ def test_notebooks_keep_project_identity(run_connector, tmp_path):
         ]
         == 1
     )
+
+
+@pytest.mark.parametrize("tools", ["TOOLS", "[search.run]", "make_tools()", "[search, lookup]"])
+def test_agent_registry_module_stays_complete_in_source_mode(run_connector, tmp_path, tools):
+    # A registry of ~100 named agents sharing one tool shape used to repeat a
+    # whole-file tool pass per construction and exceed the per-file deadline.
+    source = (
+        "import subprocess\nfrom agents import Agent, function_tool\n"
+        "@function_tool\ndef search(query: str):\n    return subprocess.run(query, shell=True)\n"
+        "@function_tool\ndef lookup(key: str):\n    return key\n"
+        "def make_tools():\n    return [search]\nTOOLS = [search]\n"
+    )
+    source += "".join(f"setting_{number} = {number}\n" for number in range(850))
+    source += "".join(f"agent_{number} = Agent(name='A{number}', tools={tools})\n" for number in range(100))
+    (tmp_path / "registry.py").write_text(source)
+    findings, ctx = _scan(run_connector, tmp_path, agent_granularity="source")
+    assert not ctx.stats.incomplete and not ctx.stats.errors, ctx.stats.errors
+    assert len(_agents(findings)) == 100
+
+
+_SHARED_TOOL = (
+    "import subprocess\nfrom agents import Agent, function_tool\n"
+    "@function_tool\ndef lookup(command: str):\n    return subprocess.run(command, shell=True)\n"
+    "approved = Agent(name='Approved', tools=[lookup])\n"
+)
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        "if True:\n    other = Agent(name='Other', tools=[lookup])\n",
+        "Agent(name='Anon', tools=[lookup])\n",
+        "other = Agent(name='One', tools=[lookup])\nother = Agent(name='Two', tools=[])\n",
+        "TOOLS = [lookup]\nfor _ in range(2):\n    Agent(name='Loop', tools=TOOLS)\n",
+        "options = {}\nAgent(name='Opaque', tools=[lookup], **options)\n",
+    ],
+)
+def test_shared_tool_execution_stays_on_the_project_with_unresolved_constructions(index, tmp_path, other):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "app.py").write_text(_SHARED_TOOL + other)
+    inventory = tmp_path / "inventory.yaml"
+    inventory.write_text("agents:\n  - id: approved\n    resources: ['repo/app.py#agent:approved']\n")
+    result = Engine(
+        ScanConfig(
+            connectors=[
+                ConnectorSpec(
+                    "code.filesystem",
+                    config={"path": str(root), "label": "repo", "agent_granularity": "source"},
+                )
+            ],
+            inventory=[str(inventory)],
+        ),
+        index,
+    ).run()
+    assert result.complete
+    approved = _agents(result.findings)["approved"]
+    assert approved.shadow is False and "code-exec" in approved.capabilities
+    project = next(f for f in result.findings if f.resource_type == "project")
+    assert project.metadata["source_identity"]["unresolved_constructions"] >= 1
+    # The unresolved construction registers the same shell tool: its shadow
+    # finding must not lose that capability to the approved named agent.
+    assert project.shadow is True and {"code-exec", "tool-use"} <= set(project.capabilities)
+
+
+def test_shared_tool_execution_stays_on_the_project_with_a_dispatch_loop(run_connector, tmp_path):
+    (tmp_path / "app.py").write_text(
+        _SHARED_TOOL + "import json\nfrom openai import OpenAI\nclient = OpenAI()\n"
+        "TOOLS = [{'type': 'function', 'function': {'name': 'lookup', 'parameters': {'type': 'object'}}}]\n"
+        "def ask(question):\n    messages = [{'role': 'user', 'content': question}]\n"
+        "    for _ in range(6):\n"
+        "        response = client.chat.completions.create(model='m', messages=messages, tools=TOOLS)\n"
+        "        message = response.choices[0].message\n        messages.append(message)\n"
+        "        if not message.tool_calls:\n            return message.content\n"
+        "        for call in message.tool_calls:\n"
+        "            result = lookup(**json.loads(call.function.arguments))\n"
+        "            messages.append({'role': 'tool', 'tool_call_id': call.id, 'content': json.dumps(result)})\n"
+    )
+    findings, ctx = _scan(run_connector, tmp_path, agent_granularity="source")
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert "code-exec" in _agents(findings)["approved"].capabilities
+    project = next(f for f in findings if f.resource_type == "project")
+    assert project.kind == Kind.AGENT and "code-exec" in project.capabilities
+
+
+def test_tool_shared_only_by_named_constructions_moves_to_them(run_connector, tmp_path):
+    (tmp_path / "app.py").write_text(
+        _SHARED_TOOL + "other = Agent(name='Other', tools=[lookup])\nidle = Agent(name='Idle', tools=[])\n"
+    )
+    findings, ctx = _scan(run_connector, tmp_path, agent_granularity="source")
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    agents = _agents(findings)
+    assert "code-exec" in agents["approved"].capabilities and "code-exec" in agents["other"].capabilities
+    assert "code-exec" not in agents["idle"].capabilities
+    project = next(f for f in findings if f.resource_type == "project")
+    assert project.metadata["source_identity"]["unresolved_constructions"] == 0
+    assert "code-exec" not in project.capabilities
+
+
+def test_shared_tool_execution_stays_on_the_project_with_a_method_registration(run_connector, tmp_path):
+    (tmp_path / "app.py").write_text(
+        "import subprocess\nfrom pydantic_ai import Agent\n"
+        "def lookup(command: str):\n    return subprocess.run(command, shell=True)\n"
+        "approved = Agent(model='openai:gpt-4o', tools=[lookup])\n"
+        "helper = Agent(model='openai:gpt-4o')\nhelper.tool_plain(lookup)\n"
+    )
+    findings, ctx = _scan(run_connector, tmp_path, agent_granularity="source")
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    agents = _agents(findings)
+    assert "code-exec" in agents["approved"].capabilities
+    # Later method registration remains project context, so the project keeps
+    # the execution capability the helper agent registers.
+    project = next(f for f in findings if f.resource_type == "project")
+    assert "code-exec" in project.capabilities
+
+
+def test_shared_tool_registry_reads_each_tool_body_once(monkeypatch):
+    # Each construction resolved alone walked every body of a shared TOOLS
+    # list again: 100 agents over 40 branching tools exceeded the deadline.
+    source = "import subprocess\nfrom agents import Agent, function_tool\n"
+    for number in range(40):
+        source += f"@function_tool\ndef tool_{number}(command: str):\n"
+        source += "".join(
+            f"    if command == 'c{branch}':\n        return subprocess.run(['echo', '{branch}'])\n"
+            for branch in range(10)
+        )
+    source += "TOOLS = [" + ", ".join(f"tool_{number}" for number in range(40)) + "]\n"
+    source += "".join(f"agent_{number} = Agent(name='A{number}', tools=TOOLS)\n" for number in range(100))
+    steps = []
+    monkeypatch.setattr(tool_attribution, "pattern_timeout", lambda: steps.append(1))
+    names = named_construction_spans(source)
+    regions = {}
+    named_construction_spans(source, verified_spans=set(names), tool_regions=regions)
+    assert len(regions) == 100
+    assert all(len(region.bodies) == 40 * 10 for region in regions.values())
+    assert len(steps) < sum(1 for _ in ast.walk(ast.parse(source)))
+
+
+_LOOKUP = (
+    "import os\nimport subprocess\nfrom agents import Agent, function_tool\n"
+    "@function_tool\ndef lookup(command: str):\n    return subprocess.run(command, shell=True)\n"
+)
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        # Constructions whose tools the keyword pass cannot enumerate.
+        "def get_tools():\n    return [lookup]\nAgent(name='Anon', tools=get_tools())\n",
+        "Agent(name='Anon', tools=[lookup] + [])\n",
+        "EXTRA = [lookup]\nAgent(name='Anon', tools=[*EXTRA])\n",
+        "class Box:\n    tools = [lookup]\nAgent(name='Anon', tools=Box.tools)\n",
+        "def get_tools():\n    return [lookup]\nother = Agent(name='Other', tools=get_tools())\n",
+        "other = Agent(name='Other', tools=[lookup] if os.environ.get('X') else [])\n",
+        "other = Agent(name='Other', tools=[tool for tool in [lookup]])\n",
+        "other = Agent('Other', None, [lookup])\n",
+        # Code that obtains the tool, or calls it, outside any construction.
+        "from langchain_openai import ChatOpenAI\nmodel = ChatOpenAI(model='gpt-4o').bind_tools([lookup])\n",
+        "class Runner:\n    def run(self, command):\n        return lookup(command)\n",
+        "def make():\n    return [lambda command: lookup(command)]\nother = Agent(name='Other', tools=make())\n",
+        "def dispatch(name, argument):\n    return globals()[name](argument)\n",
+    ],
+)
+def test_tool_other_code_can_obtain_keeps_its_execution_on_the_project(index, tmp_path, other):
+    # Only literal tools lists and decorator, method or dispatch registrations
+    # kept a tool on the project: a computed collection, a positional list or
+    # code outside any construction could reach the tool an approved named
+    # agent lists, and the shadow project finding lost its execution capability.
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "app.py").write_text(_LOOKUP + "approved = Agent(name='Approved', tools=[lookup])\n" + other)
+    inventory = tmp_path / "inventory.yaml"
+    inventory.write_text("agents:\n  - id: approved\n    resources: ['repo/app.py#agent:approved']\n")
+    result = Engine(
+        ScanConfig(
+            connectors=[
+                ConnectorSpec(
+                    "code.filesystem",
+                    config={"path": str(root), "label": "repo", "agent_granularity": "source"},
+                )
+            ],
+            inventory=[str(inventory)],
+        ),
+        index,
+    ).run()
+    assert result.complete
+    approved = _agents(result.findings)["approved"]
+    assert approved.shadow is False and "code-exec" in approved.capabilities
+    project = next(f for f in result.findings if f.resource_type == "project")
+    assert project.shadow is True and {"code-exec", "tool-use"} <= set(project.capabilities)
+
+
+def test_a_locally_decorated_tool_stays_on_the_project(run_connector, tmp_path):
+    (tmp_path / "app.py").write_text(
+        "import subprocess\nfrom agents import Agent, function_tool\nREGISTRY = []\n"
+        "def register(function):\n    REGISTRY.append(function)\n    return function\n"
+        "@register\n@function_tool\ndef lookup(command: str):\n    return subprocess.run(command, shell=True)\n"
+        "approved = Agent(name='Approved', tools=[lookup])\nother = Agent(name='Other', tools=REGISTRY)\n"
+    )
+    findings, ctx = _scan(run_connector, tmp_path, agent_granularity="source")
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert "code-exec" in _agents(findings)["approved"].capabilities
+    project = next(f for f in findings if f.resource_type == "project")
+    assert "code-exec" in project.capabilities
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # pydantic_ai takes the model positionally and tools only by keyword.
+        "import subprocess\nfrom pydantic_ai import Agent\n"
+        "def lookup(command: str):\n    return subprocess.run(command, shell=True)\n"
+        "approved = Agent('openai:gpt-4o', tools=[lookup])\n"
+        "summarizer = Agent('openai:gpt-4o', system_prompt='Summarize')\n",
+        # A direct call outside the agents does not register the tool anywhere.
+        _LOOKUP + "approved = Agent(name='Approved', tools=[lookup])\n"
+        "def main():\n    lookup('ls')\nif __name__ == '__main__':\n    main()\n",
+    ],
+)
+def test_tools_only_named_constructions_reach_leave_the_project(run_connector, tmp_path, source):
+    # A positional model string made the whole file opaque, so the project
+    # finding of a fully inventoried pydantic_ai module gained code-exec.
+    (tmp_path / "app.py").write_text(source)
+    findings, ctx = _scan(run_connector, tmp_path, agent_granularity="source")
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert "code-exec" in _agents(findings)["approved"].capabilities
+    project = next(f for f in findings if f.resource_type == "project")
+    assert project.metadata["source_identity"]["unresolved_constructions"] == 0
+    assert "code-exec" not in project.capabilities

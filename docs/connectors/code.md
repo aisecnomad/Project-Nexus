@@ -42,8 +42,16 @@ a framework never becomes third-party framework evidence through an alias.
 No scanned code is imported or executed, and source is not reopened for this
 pass. It retains at most 4,096 consumer files / 16 MiB of source, and resolves
 at most 16 modules per chain. Each shim has a 64 KiB source and 256-export
-budget, with at most 4,096 shims per scan. Reaching a required source or chain
-budget marks the scan incomplete and preserves available per-file evidence.
+budget, with at most 4,096 shims per scan. These budgets apply only to modules
+that may be import-only; a larger ordinary module stays unresolved. Reaching a
+required source or chain budget marks the scan incomplete and preserves available
+per-file evidence. A consumer whose imports resolve through no shim keeps the
+single-file proof that lets a large file without signature imports finish
+complete. A queued consumer's imports and code patterns are matched during the
+walk; its import binding runs after the walk under the walk's deadline rule,
+starting only while its matching budget and the walk's safety margin fit. A
+consumer left unbound is named, keeps that lexical evidence and makes the scan
+incomplete.
 
 Packages, nested source layouts, dynamic imports, other re-exports and uncertain
 bindings remain usage evidence when ordinary signatures identify them.
@@ -52,7 +60,17 @@ receiver, with local shadowing excluded. For Microsoft.Extensions.AI, a
 standalone function declaration is tool context; supported automatic invocation
 with concrete nonempty tools and a response call can establish an agent.
 Tool-mode type and alias names must remain unshadowed to prove automatic invocation.
-These bounded checks do not resolve arbitrary types or cross-file bindings.
+Target-typed `new()` takes the SDK type of its local declaration or, as a
+response call's options argument, `ChatOptions`; later `Tools.Add(...)` calls are
+not followed.
+These bounded checks do not resolve arbitrary types or cross-file bindings, so
+`UseFunctionInvocation()` middleware, including a dependency-injection
+registration, stays a lexical agent indicator with tool use that needs matching
+import or dependency corroboration. An explicitly constructed
+`FunctionInvokingChatClient` is not a lexical indicator; registered through
+dependency injection or held in fields, it is reported as framework usage. Only
+C# files that name `Microsoft.Extensions.AI` run the tool-loop proof and its
+token budget.
 Other languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
@@ -61,10 +79,18 @@ that code ran or that a deployment is autonomous.
 
 Python exception handlers and pattern-match alternatives join only bindings
 that agree across possible paths. A binding from the last visited alternative
-does not prove an agent construction. Literal unreachable alternatives can be
-excluded for supported shapes; scalar values assigned to names, computed
-subjects and uncertain control flow are not a general constant-propagation
-engine and remain conservative usage evidence.
+does not prove an agent construction. A guarded optional import
+(`try: from agents import Agent` / `except ImportError: pass`) keeps its
+binding when that try statement holds every binding of the name in the
+module: a handler that leaves the name unbound cannot construct another
+object. Handlers ending in `sys.exit()`, `os._exit()` or the `exit()`/`quit()`
+builtins do not continue, and alternative import paths of one package symbol
+(`crewai.Agent`, `crewai.agent.Agent`) agree. Any other binding of the name in
+the module (earlier, later, in a loop or through `global`), a handler
+rebinding, a star import or a same-named builtin keeps the name uncertain.
+Literal unreachable alternatives can be excluded for supported shapes; scalar
+values assigned to names, computed subjects and uncertain control flow are not
+a general constant-propagation engine and remain conservative usage evidence.
 Constructor and registered-tool coordinates follow Python's physical line
 endings, so separators inside string literals do not hide execution evidence.
 
@@ -97,7 +123,16 @@ Local execution sinks are linked for the existing supported keyword `tools=`
 forms. Positional tool factories and later method registration remain project
 context and do not transfer execution capabilities to a source identity.
 The project finding retains remaining technology and unsupported-construction
-evidence. A project inventory approval does not approve these separate source
+evidence. A tool body stays project evidence too, so the project keeps that
+execution capability, when anything other than a named construction's literal
+`tools=` list can reach it: a construction left in the project or with unpacked
+options, a computed tools value or positional list, another call, collection,
+return value, method, lambda or local decorator that obtains the function, a
+method or decorator registration, a dispatch loop, or `globals()`, `eval` or
+`exec`. A direct call of a tool does not register it elsewhere; other lookups
+by name, such as `getattr` on a module, are not followed. All named
+constructions in a file share one tool-attribution pass that reads each tool
+body once. A project inventory approval does not approve these separate source
 resources; broad resource globs still have their explicitly configured scope.
 
 The default `agent_granularity: project` keeps existing aggregation. The source
@@ -344,7 +379,9 @@ lexed on its own, and a cell that still does not parse (a `%%bash` cell, an
 unfinished scratch cell) is left out of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
 lexical evidence retained` names it, and the other cells are bound as usual. A
-string left open in one cell no longer masks the cells after it.
+string left open in one cell no longer masks the cells after it, and a cell that
+stops (`raise SystemExit`, `sys.exit()`, `exit()` or `quit()` to halt Run All)
+ends only its own statements: the later cells stay reachable.
 
 A Python source the running interpreter cannot parse (syntax newer than it,
 such as a PEP 695 `type` statement on Python 3.11) has no import binding: its

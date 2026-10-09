@@ -308,3 +308,105 @@ def test_wide_match_with_disjoint_writes_stays_fast_within_the_ast_budget():
     assert time.monotonic() - started < 3
     assert len(binder.scopes[-1]) == 9000
     assert all(binding is None for binding in binder.scopes[-1].values())
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "try:\n    from agents import Agent\nexcept ImportError:\n    pass\n"
+        "worker = Agent(name='w', tools=[])\n",
+        "import sys\ntry:\n    from agents import Agent\nexcept ImportError:\n"
+        "    print('install openai-agents')\n    sys.exit(1)\nworker = Agent(name='w', tools=[])\n",
+        "try:\n    from agents import Agent\nexcept ImportError:\n    exit('pip install openai-agents')\n"
+        "worker = Agent(name='w', tools=[])\n",
+        "try:\n    from agents import Agent\nexcept ImportError:\n    quit()\n"
+        "worker = Agent(name='w', tools=[])\n",
+        "import logging, sys\nlog = logging.getLogger()\ntry:\n    from agents import Agent\n"
+        "except ImportError:\n    log.error('missing')\n    sys.exit(2)\nworker = Agent(name='w', tools=[])\n",
+        "import os\ntry:\n    from agents import Agent\nexcept ImportError:\n    os._exit(1)\n"
+        "worker = Agent(name='w', tools=[])\n",
+        "from sys import exit as stop\ntry:\n    from agents import Agent\nexcept ImportError:\n    stop(1)\n"
+        "worker = Agent(name='w', tools=[])\n",
+        "try:\n    from crewai import Agent\nexcept ImportError:\n    from crewai.agent import Agent\n"
+        "worker = Agent(role='r', goal='g', backstory='b', tools=[])\n",
+        "class Settings:\n    try:\n        from agents import Agent\n    except ImportError:\n        pass\n"
+        "    worker = Agent(name='w', tools=[])\n",
+        "def build():\n    try:\n        from agents import Agent\n    except ImportError:\n        return None\n"
+        "    return Agent(name='w', tools=[])\n",
+        "def build():\n    try:\n        from agents import Agent\n    except ImportError:\n        pass\n"
+        "    return Agent(name='w', tools=[])\n",
+    ],
+)
+def test_guarded_sdk_imports_keep_their_agent_binding(tmp_path, run_connector, source):
+    # Calling a name left unbound by a failed import raises NameError; it cannot
+    # construct another object. Exiting handlers never reach the continuation.
+    (tmp_path / "app.py").write_text(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_guarded_provider_import_with_exiting_handler_keeps_tool_use(tmp_path, run_connector):
+    (tmp_path / "app.py").write_text(
+        "import sys\ntry:\n    from openai import OpenAI\nexcept ImportError:\n    sys.exit('pip install openai')\n"
+        "client = OpenAI()\nclient.chat.completions.create(model='m', messages=[], "
+        "tools=[{'type': 'function', 'function': {'name': 'f', 'parameters': {}}}])\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any("tool-use" in finding.capabilities for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A prior binding survives the failed import: the call may construct it.
+        "Agent = object\ntry:\n    from agents import Agent\nexcept ImportError:\n    pass\nAgent()\n",
+        # A handler rebinding the name to a non-SDK value stays uncertain.
+        "try:\n    from agents import Agent\nexcept ImportError:\n    Agent = object\nAgent()\n",
+        "try:\n    from agents import Agent\nexcept ImportError:\n    from crewai import Agent\nAgent()\n",
+        # Clause tests may assign the name before a later handler runs.
+        "try:\n    from agents import Agent\nexcept (Agent := ImportError):\n    pass\n"
+        "except Exception:\n    pass\nAgent()\n",
+        # A star import may already provide the name.
+        "from helpers import *\ntry:\n    from agents import Agent\nexcept ImportError:\n    pass\nAgent()\n",
+        # A builtin of the same name remains callable after the failed import.
+        "try:\n    from agents import input\nexcept ImportError:\n    pass\ninput()\n",
+        # Shadowed exits are ordinary calls that continue.
+        "def exit(code):\n    return code\ntry:\n    from agents import Agent\nexcept ImportError:\n"
+        "    exit(1)\n    Agent = object\nAgent()\n",
+        "import sys\nsys = object()\ntry:\n    from agents import Agent\nexcept ImportError:\n"
+        "    sys.exit(1)\n    Agent = object\nAgent()\n",
+        # A later iteration can reach the handler with the name another
+        # statement bound; so can a function that declares it global.
+        "for item in items:\n    try:\n        from agents import Agent\n    except ImportError:\n"
+        "        pass\n    Agent()\n    Agent = object\n",
+        "def setup():\n    global Agent\n    Agent = object\nsetup()\ntry:\n    from agents import Agent\n"
+        "except ImportError:\n    pass\nAgent()\n",
+    ],
+)
+def test_guarded_import_alternatives_that_may_differ_stay_uncertain(source):
+    binder = _PythonBindings(source)
+    binder.visit(ast.parse(source))
+    assert not any(call.binding.module == "agents" for call in binder.calls)
+
+
+def test_a_module_defined_exit_is_an_ordinary_call():
+    # The module binds exit after main is defined; calling it returns.
+    text = (
+        "from agents import Agent\ndef main():\n    exit(1)\n    return Agent()\n"
+        "def exit(code):\n    return code\n"
+    )
+    binder = _PythonBindings(text)
+    binder.visit(ast.parse(text))
+    assert any(call.binding == _Binding("agents", "Agent") for call in binder.calls)
+
+
+@pytest.mark.parametrize(
+    "terminator", ["sys.exit(1)", "exit(1)", "quit()", "os._exit(1)", "raise SystemExit(1)"]
+)
+def test_exiting_calls_do_not_reach_later_statements(terminator):
+    text = f"import os, sys\nfrom agents import Agent\ndef main():\n    {terminator}\n    return Agent()\n"
+    binder = _PythonBindings(text)
+    binder.visit(ast.parse(text))
+    assert not any(call.binding == _Binding("agents", "Agent") for call in binder.calls)

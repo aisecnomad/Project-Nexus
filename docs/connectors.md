@@ -147,10 +147,8 @@ filesystem or network activity.
 
 ## Validation maturity and evidence status
 
-The unreleased attribution corrections distinguish individual network
-connections, hosted-agent execution from management traffic, and a bounded
-subset of Python re-exports. See the [network](connectors/network.md),
-[gateway](connectors/gateway.md) and [code](connectors/code.md) guides, plus the
+The unreleased attribution corrections resolve a bounded subset of Python
+re-exports. See the [code](connectors/code.md) guide and the
 [migration notes](production.md#unreleased-attribution-migration). Regression
 coverage for these cases does not change the field-evaluation or live-acceptance
 status below.
@@ -265,7 +263,11 @@ subprocess calls and repeated weak idioms cannot independently establish an agen
 Confidence groups cap repeated observations of the same technology. Unsupported
 dynamic imports, re-exports and uncertain bindings remain usage evidence. Narrow
 Go and C# proofs additionally require imported receivers and supported tool flows;
-C# automatic tool modes require an unshadowed SDK type or alias. Other
+C# automatic tool modes require an unshadowed SDK type or alias.
+Microsoft.Extensions.AI `UseFunctionInvocation()` middleware stays a lexical,
+corroborated agent indicator, which covers dependency-injected clients it
+configures; an explicit `FunctionInvokingChatClient` registered through
+dependency injection or held in fields is framework usage. Other
 languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
