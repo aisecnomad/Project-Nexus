@@ -1,9 +1,10 @@
 """Conservative import-bound calls for Python and common JavaScript/TypeScript.
 
 This is static evidence of construction, not execution. Python uses its AST;
-JavaScript uses a bounded lexical resolver for imports and direct calls. Dynamic
-imports, re-exports and uncertain/shadowed JavaScript bindings remain supporting
-framework evidence. No scanned code is imported or executed.
+JavaScript uses a bounded lexical resolver for imports and direct calls. A
+filesystem-supplied resolver can bind Python imports through already-read,
+import-only project-root shims. Other dynamic imports, re-exports and uncertain
+bindings remain supporting framework evidence. No scanned code is imported or executed.
 
 Python AST work and JavaScript literal-branch tokens are capped at 50,000 per
 file; JavaScript statement nesting is bounded to 128 levels and source calls to
@@ -48,6 +49,7 @@ from shadowscan.connectors.code.provider_tools import (
     provider_tools_disabled,
     python_provider_tool_literals,
 )
+from shadowscan.connectors.code.python_reexports import ImportResolver
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.connectors.code.source_capabilities import (
     CONFIGURED_FRAMEWORKS,
@@ -236,8 +238,14 @@ def _symbol_tail(symbol: str) -> str:
 
 
 class _PythonBindings(ast.NodeVisitor):
-    def __init__(self, text: str, relevant: Callable[[_Binding], bool] | None = None):
+    def __init__(
+        self,
+        text: str,
+        relevant: Callable[[_Binding], bool] | None = None,
+        resolve_import: ImportResolver | None = None,
+    ):
         self.text = text
+        self.resolve_import = resolve_import
         # Only calls into modules that some signature describes can produce
         # evidence. Counting every bound call (``pytest.raises``, ``requests.get``)
         # against MAX_BOUND_CALLS made ordinary large files fail as incomplete.
@@ -451,6 +459,10 @@ class _PythonBindings(ast.NodeVisitor):
             binding = (
                 _Binding(node.module or "", alias.name) if not node.level and alias.name != "*" else None
             )
+            if binding is not None and self.resolve_import is not None:
+                resolved = self.resolve_import(binding.module, binding.symbol)
+                if resolved is not None:
+                    binding = _Binding(*resolved)
             self.scopes[-1][alias.asname or alias.name] = binding
             if binding:
                 self.imports.append((binding, node.lineno))
@@ -960,11 +972,27 @@ def _python_bindable(index: SignatureIndex, tree: ast.AST) -> bool:
     return statements is None or any(matched(module, name) for module, name in sorted(statements))
 
 
+def _python_resolves(tree: ast.AST, resolve_import: ImportResolver) -> bool:
+    """Whether some absolute ``from`` import of ``tree`` resolves through a project re-export.
+
+    Otherwise the resolver changes no binding, so ``_python_bindable`` still
+    proves whether the binder can yield evidence.
+    """
+    return any(
+        resolve_import(node.module, alias.name) is not None
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and not node.level and node.module
+        for alias in node.names
+        if alias.name != "*"
+    )
+
+
 def _python_bindings(
     text: str,
     relevant: Callable[[_Binding], bool] | None = None,
     max_nodes: int | None = None,
     bindable: Callable[[ast.AST], bool] | None = None,
+    resolve_import: ImportResolver | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     if bindable is not None and not bindable(tree):
@@ -975,7 +1003,7 @@ def _python_bindings(
     for count, _ in enumerate(ast.walk(tree)):
         if count >= limit:
             raise SourceBudgetExceeded("source binding AST limit exceeded")
-    visitor = _PythonBindings(text, relevant)
+    visitor = _PythonBindings(text, relevant, resolve_import)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
@@ -1405,6 +1433,7 @@ def bound_source_matches(
     is_local_module: Callable[[str], bool] | None = None,
     max_ast_nodes: int | None = None,
     truncated: list[int] | None = None,
+    resolve_import: ImportResolver | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -1422,7 +1451,12 @@ def bound_source_matches(
                 text,
                 module_matches.relevant,
                 max_ast_nodes,
-                bindable=lambda parsed: _python_bindable(index, parsed),
+                # The single-file proof cannot see a project-local export.
+                bindable=lambda parsed: (
+                    _python_bindable(index, parsed)
+                    or (resolve_import is not None and _python_resolves(parsed, resolve_import))
+                ),
+                resolve_import=resolve_import,
             )
         else:
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)

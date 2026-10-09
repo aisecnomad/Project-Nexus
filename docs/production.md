@@ -7,6 +7,40 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## Unreleased attribution migration
+
+This section covers the Python re-export and governance observation changes.
+For network connection attribution and hosted-agent invocation, see
+[October 9 scan evidence corrections](#october-9-scan-evidence-corrections-unreleased).
+
+- Supported local Python re-exports can expose agent construction previously
+  reported only as framework usage. This remains static integration evidence,
+  not proof of deployment or execution; see the [source guide](connectors/code.md).
+  Rerun affected source scans before comparing totals. A re-export source or
+  chain budget, or a connector deadline that leaves a queued root-level
+  consumer's import binding unanalyzed, marks the scan incomplete; ordinary
+  local modules, however large, do not. A consumer left unbound keeps its
+  lexical import and code evidence.
+- A scheduled governance audit can verify visible controls while reporting
+  bypass settings as unknown. Do not use that partial observation as the complete
+  ruleset evidence required for release or rollout. See the
+  [merge-policy procedure](operations/merge-policy.md).
+
+The scanner-source fingerprint changes with these fixes. Preserve earlier
+reports as historical observations and rebuild comparison baselines under the
+new reviewed revision; do not interpret incomparable findings as resolved.
+
+Before using the changed source classifications for enforcement, commission a
+fresh holdout using the [frozen field-evaluation procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+Include modular agent code: import-only re-exports, cycles, shadowed bindings
+and executable shims. Freeze repository/family sampling and acceptance
+thresholds before showing scanner results to reviewers. These new authored
+regressions must be excluded from that holdout.
+
+The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+supports static code, AWS and Slack. A code change cannot substitute for human
+labels, approved tenant credentials or live acceptance receipts.
+
 Use this operator sequence; dated candidate notes remain under
 [Candidate change history](#candidate-change-history) and describe differences
 between candidate builds, not between releases.
@@ -39,8 +73,11 @@ record or deployment acceptance evidence.
 
 The scheduled dependency and governance audit checks both live merge rulesets
 against the versioned desired policy. Its GitHub token is read-only: a green
-audit records a matching policy snapshot, while a failed or unavailable read
-does not establish protection. Repository administrators must apply the
+job establishes that the visible managed fields match, but its retained
+observation can still report partial assurance because GitHub withholds bypass
+settings. Read `complete_readback_verified` and `unknown_fields` in each
+observation; never interpret an omitted bypass list as empty. A failed or
+unavailable read does not establish protection. Repository administrators must apply the
 [reviewed ruleset updates](operations/merge-policy.md) and verify fresh API
 readback. The audit neither changes settings nor substitutes for independent
 human review or tenant acceptance.

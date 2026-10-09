@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from tools.governance.rulesets import REPOSITORY, RULESETS, prepare_payload, verify_readback
+from tools.governance.rulesets import REPOSITORY, RULESETS, observe_readback, prepare_payload, verify_readback
 from tools.governance_check import GITHUB_ACTIONS_APP_ID, check_ruleset
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +120,50 @@ def test_readback_names_a_withheld_bypass_list_instead_of_a_wrong_identity(rules
     assert "expected repository" not in str(refused.value)
 
 
+@pytest.mark.parametrize("ruleset_id", RULESETS)
+def test_observation_distinguishes_visible_controls_from_complete_readback(ruleset_id: int) -> None:
+    expected = json.loads((ROOT / ".github/rulesets" / f"{ruleset_id}.update.json").read_text())
+    snapshot = _readback(expected, ruleset_id)
+    complete = observe_readback(snapshot, expected, ruleset_id=ruleset_id)
+    assert complete["status"] == "complete"
+    assert complete["complete_readback_verified"] is True
+    assert complete["unknown_fields"] == []
+    del snapshot["bypass_actors"]
+    original = copy.deepcopy(snapshot)
+    partial = observe_readback(snapshot, expected, ruleset_id=ruleset_id)
+    assert snapshot == original and "bypass_actors" not in snapshot
+    assert partial["status"] == "partial"
+    assert partial["visible_controls_match"] is True
+    assert partial["complete_readback_verified"] is False
+    assert partial["administrator_readback_required"] is True
+    assert partial["unknown_fields"] == ["bypass_actors"]
+    assert "bypass_actors" not in partial["verified_fields"]
+    # An observation never makes this input eligible for either strict gate.
+    with pytest.raises(ValueError, match="omits bypass_actors"):
+        verify_readback(snapshot, expected, ruleset_id=ruleset_id)
+    with pytest.raises(ValueError, match="omits bypass_actors"):
+        prepare_payload(snapshot, ruleset_id=ruleset_id)
+
+
+@pytest.mark.parametrize("field", ["name", "target", "enforcement", "conditions", "rules", "source", "id"])
+def test_observation_rejects_missing_fields_other_than_bypass(field: str) -> None:
+    expected = prepare_payload(_snapshot(), ruleset_id=23913372)
+    snapshot = _readback(expected)
+    del snapshot["bypass_actors"]
+    del snapshot[field]
+    with pytest.raises(ValueError):
+        observe_readback(snapshot, expected, ruleset_id=23913372)
+
+
+@pytest.mark.parametrize("bypass", [None, False, {}, [{"actor_type": "RepositoryRole", "actor_id": 5}]])
+def test_observation_rejects_visible_bypass_drift_or_malformed_values(bypass: Any) -> None:
+    expected = prepare_payload(_snapshot(), ruleset_id=23913372)
+    snapshot = _readback(expected)
+    snapshot["bypass_actors"] = bypass
+    with pytest.raises(ValueError, match="readback differs.*bypass_actors"):
+        observe_readback(snapshot, expected, ruleset_id=23913372)
+
+
 @pytest.mark.parametrize("count", [True, -1, 1.5, "1", None])
 def test_plan_refuses_ambiguous_approval_counts(count: Any) -> None:
     source = _snapshot()
@@ -192,6 +236,12 @@ def test_readback_rejects_disabled_or_weakened_controls(weakening: str) -> None:
         actual["rules"] = [rule for rule in actual["rules"] if rule["type"] != "required_signatures"]
     with pytest.raises(ValueError):
         verify_readback(actual, payload, ruleset_id=23913372)
+    with pytest.raises(ValueError):
+        observe_readback(actual, payload, ruleset_id=23913372)
+    if weakening != "bypass":
+        actual.pop("bypass_actors")
+        with pytest.raises(ValueError):
+            observe_readback(actual, payload, ruleset_id=23913372)
 
 
 def test_readback_rejects_an_unreviewed_rule_change_and_an_insecure_expected_payload() -> None:
@@ -204,6 +254,8 @@ def test_readback_rejects_an_unreviewed_rule_change_and_an_insecure_expected_pay
     expected["enforcement"] = "disabled"
     with pytest.raises(ValueError, match="expected policy"):
         verify_readback(_readback(expected), expected, ruleset_id=23913372)
+    with pytest.raises(ValueError, match="expected policy"):
+        observe_readback(_readback(expected), expected, ruleset_id=23913372)
 
 
 @pytest.mark.parametrize(

@@ -96,6 +96,15 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
+from shadowscan.connectors.code.python_reexports import (
+    MAX_PENDING_BYTES,
+    MAX_PENDING_FILES,
+    ImportResolver,
+    PythonReexports,
+    ReexportLimitError,
+    has_local_import,
+    project_path,
+)
 from shadowscan.connectors.code.rule_packs import detection_rule_format
 from shadowscan.connectors.code.semantic_config import (
     agent_manifest_kind,
@@ -561,6 +570,12 @@ class _ScanState:
     infra_models: dict[str, list[Match]] = field(default_factory=dict)  # relpath -> model ids declared in IaC
     # project root -> (relpath, line, excerpt)
     iam_wildcards: dict[str, list[tuple[str, int, str]]] = field(default_factory=dict)
+    reexports: PythonReexports = field(default_factory=PythonReexports)
+    reexport_files: list[_MatchedSource] = field(default_factory=list)
+    reexport_bytes: int = 0
+    # The walk's safety margin before the connector deadline, kept by the
+    # pass that analyzes the queued re-export consumers after it.
+    margin: float = 0.0
 
     def covered_files(self) -> frozenset[str]:
         """Files whose own MCP, manifest, workflow or IaC finding reports their evidence."""
@@ -607,6 +622,22 @@ class _SourceFile:
     @property
     def ext(self) -> str:
         return self.path.suffix.lower()
+
+
+@dataclass
+class _MatchedSource:
+    """A source file's lexical evidence, awaiting its import-bound analysis.
+
+    The imports are already recorded; the code patterns are recorded with the
+    binder's result, whose evidence replaces their lexical matches.
+    """
+
+    file: _SourceFile
+    text: str  # the analyzed content text
+    ignored: list[tuple[int, int]]
+    is_local_module: Callable[[str], bool]
+    imports: list[Match]
+    code_matches: list[Match]
 
 
 _Observation = tuple[Match, str, str | None]  # match, relpath, snippet
@@ -1652,7 +1683,65 @@ class FilesystemConnector(BaseConnector):
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         scan = _ScanState(root, self._scan_label(root))
         self._walk(scan)
+        self._resolve_reexport_sources(scan)
         yield from self._emit_findings(scan)
+
+    def _resolve_reexport_sources(self, scan: _ScanState) -> None:
+        """Bind queued consumers after all shim snapshots have been read safely.
+
+        The walk already matched their imports and code patterns. Each binder
+        starts under the walk's own rule: only while its matching budget and
+        the walk's margin fit before the connector deadline, so the findings
+        already collected are still emitted in time. A consumer left unbound is
+        named, keeps its lexical evidence and makes the results incomplete.
+        """
+        deadline = self.ctx.deadline
+        for position, source in enumerate(scan.reexport_files):
+            file = source.file
+            budget = scan_timeout_for_size(self.scan_timeout, len(file.text.encode("utf-8")))
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining < budget + scan.margin:
+                    if remaining > scan.margin + self.scan_timeout:
+                        self.ctx.error(
+                            f"code.filesystem: {file.rel}: Python re-export analysis skipped; the remaining "
+                            f"connector deadline cannot cover its {budget:.0f}s matching budget; "
+                            "lexical evidence retained",
+                        )
+                        self._retain_lexical_evidence([source], deadline - scan.margin / 2)
+                        continue
+                    others = len(scan.reexport_files) - position - 1
+                    queued = f" and {others} other queued files" if others else ""
+                    self.ctx.error(
+                        "code.filesystem: connector deadline reached before Python re-export analysis of "
+                        f"{file.rel}{queued}; results incomplete",
+                    )
+                    self._retain_lexical_evidence(scan.reexport_files[position:], deadline - scan.margin / 2)
+                    break
+            resolver = scan.reexports.resolver(file.proj_root, source.is_local_module)
+            with (
+                self._isolated(file.rel, "Python re-export analysis"),
+                self.index.scan_budget(seconds=budget),
+            ):
+                try:
+                    self._bind_source(source, resolve_import=resolver)
+                except ReexportLimitError as exc:
+                    self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
+                    self._bind_source(source)
+        scan.reexport_files.clear()
+
+    def _retain_lexical_evidence(self, sources: list[_MatchedSource], until: float) -> None:
+        """Record the walk's lexical evidence for queued consumers the binder cannot read.
+
+        As for a file over the binder's budget, the lexical matches stand in for
+        the whole file. Recording stops at ``until``, like the walk's own final
+        count, so the findings collected so far are still emitted in time.
+        """
+        for source in sources:
+            if time.monotonic() >= until:
+                return
+            with self._isolated(source.file.rel, "Python re-export analysis"):
+                self._record_source(source, [], [(0, len(source.text))])
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -1700,6 +1789,7 @@ class FilesystemConnector(BaseConnector):
         """Start each file only while its matching budget fits before the connector deadline."""
         deadline = self.ctx.deadline
         margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
+        scan.margin = margin
         entries = self._iter_entries(scan.root)
         examined = 0
         for rel, path, proj_root, size in entries:
@@ -1733,6 +1823,7 @@ class FilesystemConnector(BaseConnector):
     def _scan_file(self, scan: _ScanState, rel: str, path: Path, proj_root: str) -> None:
         """Run every analysis pass over one file of the walk."""
         proj = scan.projects.setdefault(proj_root, _Project(proj_root))
+        scan.reexports.note_path(proj_root, rel)
         proj.files += 1
         self.ctx.examined()
         lang = language_for_path(rel)
@@ -2124,7 +2215,9 @@ class FilesystemConnector(BaseConnector):
         if file.ext in _XML_EXTENSIONS:
             content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
-            self._scan_source(scan.root, file, content_text)
+            source = self._match_source(scan.root, file, content_text)
+            if not self._defer_reexport_source(scan, source):
+                self._bind_source(source)
         elif not is_nonexecutable:
             self._scan_config(scan, file, content_text)
         if not is_nonexecutable and not file.is_mcp:
@@ -2138,8 +2231,25 @@ class FilesystemConnector(BaseConnector):
             if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):
                 file.proj.configuration_files.add(file.rel)
 
-    def _scan_source(self, root: Path, file: _SourceFile, content_text: str) -> None:
-        """Match the imports, code patterns and import-bound calls of a source file."""
+    def _defer_reexport_source(self, scan: _ScanState, source: _MatchedSource) -> bool:
+        """Keep only eligible root-level Python consumers, within a fixed memory budget."""
+        file = source.file
+        if file.ext != ".py" or len(project_path(file.proj_root, file.rel).parts) != 1:
+            return False
+        scan.reexports.add(file.proj_root, file.rel, file.text)
+        local = _local_module_predicate(scan.root, file.path, file.proj_root)
+        if not has_local_import(file.text, local):
+            return False
+        size = len(file.text.encode("utf-8"))
+        if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
+            self.ctx.error(f"code.filesystem: {file.rel}: Python re-export source budget exceeded")
+            return False
+        scan.reexport_files.append(source)
+        scan.reexport_bytes += size
+        return True
+
+    def _match_source(self, root: Path, file: _SourceFile, content_text: str) -> _MatchedSource:
+        """Match the imports and code patterns of a source file, recording the imports."""
         lang, ext = file.lang, file.ext
         is_local_module = _local_module_predicate(root, file.path, file.proj_root)
         # Malformed trailing literals are masked through EOF;
@@ -2168,7 +2278,23 @@ class FilesystemConnector(BaseConnector):
             if ignored
             else self.index.match_code(content_text, lang)
         )
-        bound, unbound = self._bound_matches(file, content_text, ignored, is_local_module)
+        return _MatchedSource(file, content_text, ignored, is_local_module, imports, code_matches)
+
+    def _bind_source(self, source: _MatchedSource, *, resolve_import: ImportResolver | None = None) -> None:
+        """Add the import-bound calls of a matched source file and record its code evidence."""
+        bound, unbound = self._bound_matches(
+            source.file, source.text, source.ignored, source.is_local_module, resolve_import=resolve_import
+        )
+        self._record_source(source, bound, unbound)
+
+    def _record_source(
+        self,
+        source: _MatchedSource,
+        bound: list[Match],
+        unbound: Sequence[tuple[int, int]],
+    ) -> None:
+        """Record a source file's code patterns and import-bound evidence."""
+        file, imports, code_matches = source.file, source.imports, source.code_matches
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
         # tool-calling protocol; elsewhere they are build tooling.
@@ -2179,7 +2305,7 @@ class FilesystemConnector(BaseConnector):
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
-            self._register_mcp_tools(file, ignored)
+            self._register_mcp_tools(file, source.ignored)
 
     def _bound_matches(
         self,
@@ -2187,6 +2313,8 @@ class FilesystemConnector(BaseConnector):
         content_text: str,
         ignored: list[tuple[int, int]],
         is_local_module: Callable[[str], bool],
+        *,
+        resolve_import: ImportResolver | None = None,
     ) -> tuple[list[Match], list[tuple[int, int]]]:
         """Return bound evidence, including narrow Java, Go and C# proofs.
 
@@ -2221,6 +2349,7 @@ class FilesystemConnector(BaseConnector):
                 is_local_module=is_local_module if lang == "python" else None,
                 max_ast_nodes=self.max_ast_nodes,
                 truncated=truncated,
+                resolve_import=resolve_import,
             )
         except SourceBudgetExceeded as exc:
             # The budget is a property of the file, not of

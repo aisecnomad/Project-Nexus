@@ -147,6 +147,12 @@ filesystem or network activity.
 
 ## Validation maturity and evidence status
 
+The unreleased attribution corrections resolve a bounded subset of Python
+re-exports. See the [code](connectors/code.md) guide and the
+[migration notes](production.md#unreleased-attribution-migration). Regression
+coverage for these cases does not change the field-evaluation or live-acceptance
+status below.
+
 For the October 1 code-collection and capability corrections, review the
 [migration notes](production.md#october-1-discovery-review-migration) and
 [source coverage policy](scanning.md#coverage-policy). Added regression tests

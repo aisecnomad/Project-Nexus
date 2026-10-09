@@ -71,6 +71,23 @@ summarizes each release for people who install and operate ShadowScan.
 - Add authored positive and negative regressions. Regression passes do not
   supply independent human labels or live tenant acceptance.
 
+### Discovery attribution and review assurance
+
+- Resolve a bounded subset of local Python import-only re-exports without
+  importing or executing scanned code. Unsupported or ambiguous bindings retain
+  their existing conservative classification. Shim budgets apply only to modules
+  that may be import-only, so large ordinary local modules no longer make their
+  importers incomplete; consumers that resolve through no shim keep the
+  single-file bindability proof. Queued consumers are matched lexically during
+  the walk; their import binding starts only within the walk's deadline budget
+  and margin, and any left unbound keep that lexical evidence and are reported
+  incomplete.
+- Separate the scheduled governance audit's visible-policy checks from complete
+  policy assurance. Withheld bypass settings remain explicitly unknown; release
+  verification still requires a complete policy readback.
+- Add regression coverage and reviewer guidance for these boundaries. These
+  checks do not establish human-reviewed field accuracy or live tenant acceptance.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

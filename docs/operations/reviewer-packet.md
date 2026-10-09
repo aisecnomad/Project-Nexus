@@ -139,6 +139,23 @@ regressions. Use [repository-level field acceptance](../evaluation.md#repository
 for fresh independently selected full repositories; obtain human labels and
 authorized live tenant receipts before declaring those checks complete.
 
+For the unreleased Python re-export and governance assurance changes, review
+these paired cases:
+
+- A supported Python import-only re-export versus a cycle, a shadowed binding
+  or executable shim. Inspect the declared source-analysis limits and verify
+  that scanned code is never imported or executed. A large ordinary local module
+  or a consumer whose imports resolve through no shim must keep its complete
+  result; a queued consumer's binding must not start inside the deadline
+  margin, and a consumer left unbound must keep its lexical evidence.
+- A complete governance readback versus a read-only response with withheld
+  bypass settings. Visible-policy drift must fail the monitor; a partial result
+  must identify unknown fields and must never satisfy full release verification.
+
+Commission fresh blinded human labels and scoped live acceptance using the
+[migration and acceptance guidance](../production.md#unreleased-attribution-migration);
+the authored regression cases in this change are not a held-out field sample.
+
 ## Suggested deliverable
 
 A concise review record could list the SHA reviewed, commands run, review slices
