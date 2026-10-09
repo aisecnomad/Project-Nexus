@@ -124,6 +124,13 @@ kind is unchanged; these fields summarise it:
 
 Project source that registers MCP tools is reported with kind `mcp-server`
 and the title `MCP server in <project>: <protocol> (<n> tools: a, b, c, …)`.
+A file that imports an MCP SDK and constructs its server is enough when the
+tool names cannot be read statically (tools registered from a table, the
+low-level `Server` with a `tools/call` handler, `FastMCP(tools=[...])`, Rust
+`rmcp` `ServerHandler`, Go `mcp.NewServer` or `server.NewMCPServer`, Java
+`McpServer.sync`, .NET `[McpServerToolType]`); the finding then carries
+`mcp-server:implementation` evidence. A server constructed only under test
+paths does not count unless the project holds nothing else.
 A server is not an agent itself; an agent framework in the same project still
 makes it an `agent`.
 

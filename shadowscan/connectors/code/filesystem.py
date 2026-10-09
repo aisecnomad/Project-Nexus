@@ -90,7 +90,12 @@ from shadowscan.connectors.code.mcp_config import (
     parse_plugin_mcp_file,
     plugin_mcp_paths,
 )
-from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_capabilities, mcp_tool_names
+from shadowscan.connectors.code.mcp_tools import (
+    MCPToolLimitError,
+    mcp_server_line,
+    mcp_tool_capabilities,
+    mcp_tool_names,
+)
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
@@ -693,6 +698,8 @@ class _Project:
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
+    # Files that implement an MCP server through an SDK construct -> its line (mcp_server_line).
+    mcp_server_files: dict[str, int] = field(default_factory=dict)
     detection_rules: dict[str, int] = field(default_factory=dict)  # rule-pack format -> files
     detection_rule_files: list[str] = field(default_factory=list)  # the first, in walk order
     # Data files that declare what a deployment or a job runs with: never catalogs.
@@ -790,6 +797,7 @@ class _ProjectEvidence:
         *,
         discount_tests: bool,
         mcp_tools: dict[str, str],
+        mcp_server_files: dict[str, int] | None = None,
     ) -> None:
         self.discount_tests = discount_tests
         # Environment-variable and display-name references are weak
@@ -838,6 +846,12 @@ class _ProjectEvidence:
         # Tools registered only in tests imply nothing, like other test evidence.
         self.server_tools = {
             tool: rel for tool, rel in mcp_tools.items() if self.test_only or not self.in_tests(rel)
+        }
+        # Files that construct an MCP server, whether or not its tool names are literals.
+        self.server_files = {
+            rel: line
+            for rel, line in (mcp_server_files or {}).items()
+            if self.test_only or not self.in_tests(rel)
         }
         # A tool server's capabilities come from its tools. When none were
         # recognised, its other evidence still implies what the code can do.
@@ -3374,6 +3388,9 @@ class FilesystemConnector(BaseConnector):
         except MCPToolLimitError as exc:
             self.ctx.error(f"code.filesystem: {file.rel}: {exc}; tool analysis incomplete")
             names = exc.names
+        line = mcp_server_line(file.text, file.lang, ignored)
+        if line is not None and len(file.proj.mcp_server_files) < _MAX_MCP_TOOLS:
+            file.proj.mcp_server_files.setdefault(file.rel, line)
         for tool in names:
             known = tools.get(tool)
             if known is None:
@@ -4067,6 +4084,7 @@ class FilesystemConnector(BaseConnector):
             observations,
             discount_tests=not self.include_tests,
             mcp_tools=proj.mcp_tools,
+            mcp_server_files=proj.mcp_server_files,
         )
         f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
         self._apply_project_evidence(f, evidence)
@@ -4081,11 +4099,21 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("test-code-only")
         finalize(f, self.index)
         if f.kind == Kind.FRAMEWORK_USAGE and "protocol.mcp" in f.frameworks:
-            if evidence.server_tools:
-                # Source that registers MCP tools implements an MCP server: it
-                # exposes them to whichever agent connects. A server is not an
-                # agent itself (see agent_indicators), so the kind says server.
+            if evidence.server_tools or evidence.server_files:
+                # Source that registers MCP tools, or constructs an MCP SDK
+                # server, implements an MCP server: it exposes tools to whichever
+                # agent connects. A server is not an agent itself (see
+                # agent_indicators), so the kind says server.
                 f.kind = Kind.MCP_SERVER
+                for rel, line in sorted(evidence.server_files.items())[:5]:
+                    f.add_evidence(
+                        Evidence(
+                            signal="mcp-server:implementation",
+                            description="MCP server implemented with an MCP SDK",
+                            location=f"{rel}:{line}",
+                            weight=0.0,
+                        )
+                    )
             elif any(
                 m.signature_id == "protocol.mcp"
                 and m.signal.type in {"code", "import"}

@@ -25,7 +25,7 @@ signatures:
         weight: 0.9
       - type: dependency
         ecosystem: go
-        names: ["github.com/mark3labs/mcp-go", "github.com/modelcontextprotocol/go-sdk", "github.com/metoro-io/mcp-golang", "github.com/mcp-go/mcp-go"]
+        names: ["github.com/mark3labs/mcp-go", "github.com/modelcontextprotocol/go-sdk", "github.com/metoro-io/mcp-golang", "github.com/mcp-go/mcp-go", "github.com/ThinkInAIXYZ/go-mcp"]
         weight: 0.9
       - type: dependency
         ecosystem: cargo
@@ -51,7 +51,7 @@ signatures:
         weight: 0.9
       - type: import
         languages: [go]
-        patterns: ['"github\.com/(?:mark3labs/mcp-go|modelcontextprotocol/go-sdk|metoro-io/mcp-golang)']
+        patterns: ['"github\.com/(?:mark3labs/mcp-go|modelcontextprotocol/go-sdk|metoro-io/mcp-golang|ThinkInAIXYZ/go-mcp)']
         weight: 0.9
       - type: import
         languages: [rust]

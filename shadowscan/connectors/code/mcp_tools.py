@@ -340,6 +340,40 @@ def mcp_tool_names(
     return list(names.names)
 
 
+# Constructs only an MCP server implementation holds, by language: the SDK's
+# server class or builder, a tools/call handler, or a tool registration whose
+# name is not a literal (a registration table). The caller runs this only on a
+# file that imports an MCP SDK (the `protocol.mcp` import signals).
+_SERVER_MARKERS: dict[str, re.Pattern[str]] = {
+    "javascript": re.compile(
+        r"\bnew\s+(?:McpServer|FastMCP)\s*\(|\.setRequestHandler\(\s*CallToolRequestSchema\b"
+        r"|\.(?:registerTool|tool)\(\s*[A-Za-z_$][\w$.]*\s*,"
+    ),
+    "python": re.compile(r"\bFastMCP\s*\(|@[A-Za-z_]\w*\.(?:call_tool|list_tools)\s*\(\s*\)"),
+    "go": re.compile(
+        r"\bmcp\.NewServer\s*\(|\bmcp\.AddTool\s*\(|\bserver\.NewMCPServer\s*\(|\bserver\.NewServer\s*\("
+    ),
+    "rust": re.compile(r"\bimpl\s+(?:rmcp::)?ServerHandler\s+for\b|#\[\s*tool_(?:router|handler)\b"),
+    "java": re.compile(r"\bMcpServer\s*\.\s*(?:sync|async)\s*\("),
+    "dotnet": re.compile(r"\[\s*McpServerToolType\b|\.AddMcpServer\s*\(|\.WithTools(?:FromAssembly)?\b"),
+}
+
+
+def mcp_server_line(text: str, language: str | None, ignored: list[tuple[int, int]]) -> int | None:
+    """The line of the first construct, outside ``ignored`` spans, that implements an MCP server."""
+    pattern = _SERVER_MARKERS.get(language or "")
+    if pattern is None:
+        return None
+    starts = [start for start, _ in ignored]
+    ends = [end for _, end in ignored]
+    for match in pattern.finditer(text, 0, len(text)):
+        preceding = bisect_right(starts, match.start()) - 1
+        if preceding >= 0 and match.start() < ends[preceding]:
+            continue
+        return text.count("\n", 0, match.start()) + 1
+    return None
+
+
 def _tokens(name: str) -> set[str]:
     return {word.lower() for part in re.split(r"[_.\-\s]+", name) for word in _WORDS.findall(part)}
 

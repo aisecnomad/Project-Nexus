@@ -5,6 +5,25 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 9 post-holdout changes: MCP servers from SDK server constructs
+
+These changes were informed by the post-change holdout
+(`tools/realbench/results-holdout/`), whose result stays the reported one for
+the freeze commit `c30aaac`; a further accuracy claim needs a new holdout.
+The in-sample diagnosis found nine labelled MCP servers reported as plain LLM
+usage, because their tool names could not be read statically: tools
+registered from a table (`server.registerTool(tool.name, …)`), the TypeScript
+SDK's low-level `Server` with a `CallToolRequestSchema` handler, Rust `rmcp`
+servers (`impl ServerHandler for …`, `#[tool_router]`), `FastMCP(...)` built
+from `Tool.from_function`, and the `ThinkInAIXYZ/go-mcp` SDK, which the
+signatures did not know. A source file that imports an MCP SDK and contains
+one of its server constructs (outside comments and strings) now makes its
+project an `mcp-server` finding with `mcp-server:implementation` evidence,
+even when no tool name is known. A server constructed only under test paths
+does not, unless the project holds nothing but tests. `protocol.mcp` now
+names `github.com/ThinkInAIXYZ/go-mcp`. Regression tests cover each language,
+a client, constructs in comments and strings, and a test-only server.
+
 ### October 8 benchmark remediation: CommonJS and dynamic module loads
 
 A benchmark repository loaded the Claude Agent SDK only through

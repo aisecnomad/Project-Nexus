@@ -224,9 +224,10 @@ Every code finding carries `metadata.agent_type` (`framework-agent`,
 `tool-loop`, `mcp-server`, `mcp-client`, `ci-agent`,
 `coding-assistant-config`, `llm-integration`, …) and `metadata.agentic`; a
 coding assistant's instruction files are not agentic, a coding agent run by
-CI is. Project source that registers MCP tools has kind `mcp-server`. A
-product named only in data or prose (a CSV, a feed, a `description` or
-`homepage` field) cannot establish AI use, and a credential that only the
+CI is. Project source that registers MCP tools or constructs an MCP SDK
+server has kind `mcp-server`. A product named only in data or prose (a CSV, a
+feed, a `description` or `homepage` field) cannot establish AI use, and a
+credential that only the
 generic pattern matched is reported only in projects with AI findings unless
 `report_generic_credentials` is set. See the
 [code connector guide](connectors/code.md).

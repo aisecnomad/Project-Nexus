@@ -792,6 +792,20 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 9 post-holdout changes
+
+These changes were made after the post-change holdout and were informed by
+it. The holdout result stays the reported result for the freeze commit; the
+changes below are not measured on fresh data.
+
+- **More MCP server projects.** A project whose source imports an MCP SDK and
+  constructs its server (outside tests) is now an `mcp-server` finding even
+  when its tool names cannot be read statically. Such projects were
+  `framework-usage` findings titled `LLM usage in …`. As with the October 8
+  change, the kind weighs more in the risk score, CycloneDX lists it under
+  `services[]`, and `shadowscan diff` shows the finding as changed, not new.
+  Finding identity is unchanged.
+
 ### October 8 benchmark remediation
 
 The real-world benchmark (`tools/realbench/`) found that most incomplete
