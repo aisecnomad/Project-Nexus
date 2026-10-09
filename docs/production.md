@@ -316,6 +316,19 @@ turn Git or the scanner into a process sandbox.
 
 ## Resource limits and incomplete scans
 
+Record dumps are JSONL and obey offline replay's 4 MiB encoded-byte line limit,
+including the newline. Each connector export also obeys the smaller of its
+`max_input_file_bytes` and `max_input_bytes` limits: 32 MiB by default. The hard
+file ceiling stays 64 MiB. Export-size and strict-JSON serialization rejections
+make the scan incomplete while preserving valid original records for analysis.
+Sanitizer safety-limit rejections skip the unsafe record and make the scan
+incomplete. Any of these rejections aborts dump publication and preserves a
+prior file; the manifest marks the new export `exported: false`.
+A partial dump is not complete evidence. Use smaller collection scopes or raise the
+configured file/total limits within their hard ceilings when appropriate.
+The line limit is fixed, so a single oversize record requires an upstream
+export with bounded records rather than a larger file limit.
+
 Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
 content by default. Each network attempt has a response-acquisition budget of
 twice the client timeout (60 seconds by default), covering connection, request
@@ -825,6 +838,47 @@ and exact-scope authorized [tenant canaries](canaries.md). The existing automate
 acceptance gate supports only local-code, AWS and Slack deployments; other
 connector families need their own approved validation. No fixture, mock, AI
 review or reused benchmark can be relabeled as that evidence.
+
+### October 8 discovery classification and lifecycle corrections (unreleased)
+
+Regenerate reports and comparison baselines with the reviewed candidate.
+Supported SDK credential argument recognition is applied before evidence
+publication; redaction remains defense in depth, and reports remain confidential.
+
+Source classification becomes more conservative for standalone .NET tool
+definitions, unrelated Go receivers, and provably unreachable Python
+comprehension clauses. Supported .NET automatic invocation and Go agent
+constructors retain import-bound positive evidence. These are static candidate
+classifications and do not establish deployed execution. Unknown dynamic
+bindings remain potential or framework-usage evidence.
+Microsoft.Extensions.AI `UseFunctionInvocation()` middleware remains an agent
+indicator with tool use when import or dependency evidence corroborates it, so
+projects that configure a client with this middleware and register it through
+dependency injection keep their agent classification. An explicitly
+constructed `FunctionInvokingChatClient` is proven only within one file and
+scope; when it is registered through dependency injection or held in fields,
+the project is reported as framework usage, where `AIFunctionFactory.Create`
+previously made it an agent. Expect such projects to move from agent to
+framework usage in regenerated baselines. The per-file proof also accepts
+target-typed `new()` options and clients. C# files that never name
+`Microsoft.Extensions.AI` skip the tool-loop proof and cannot exhaust its token
+budget.
+C# tool-mode expressions whose type or alias name is locally shadowed also
+remain unproven; a lookalike `Auto` member cannot establish automatic invocation.
+
+Lifecycle links now require the same complete device value, compared after
+trimming and case normalization. Standardize endpoint and runtime exports on
+the same canonical immutable device identifier or full hostname. A short name
+does not implicitly alias a FQDN, and different DNS suffixes remain distinct.
+Repeat correlation clears derived endpoint activity tags when their process
+observations disappear; native runtime observations remain intact. Confidence
+and risk are unchanged by these links.
+
+Use the [repository-level acceptance procedure](evaluation.md#repository-level-field-acceptance)
+for full repositories that exceed the bounded evaluation runner's limits.
+New authored regression cases are development evidence. Independent human
+annotation and authorized provider-specific tenant acceptance still require
+their own evidence and cannot be inferred from a passing CI run.
 
 ### October 7 distribution rename and PyPI publication
 

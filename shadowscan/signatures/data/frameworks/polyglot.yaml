@@ -185,9 +185,21 @@ signatures:
         patterns: ['^[^\S\r\n]*using\s+Microsoft\.Extensions\.AI\b']
         weight: 0.75
       - type: code
-        patterns: ['\bUseFunctionInvocation\s*\(', '\bAIFunctionFactory\.Create\s*\(']
+        # Function invocation middleware opts the pipeline's clients, including
+        # DI-injected ones the per-file proof cannot follow, into the automatic
+        # tool loop. Lexical, so it needs import/dependency corroboration.
+        patterns: ['\bUseFunctionInvocation\s*\(']
         weight: 0.8
         agent_indicator: true
+      - type: code
+        # Tool definitions and the explicit client type remain usage evidence.
+        # The C# import/receiver proof establishes registered AIFunctions and
+        # response dispatch through an automatic function-invoking client; as
+        # a lexical indicator the explicit client would override its empty-tool,
+        # disabled-mode and unreachable-dispatch rejections. An explicit client
+        # registered through DI or held in fields therefore stays usage.
+        patterns: ['\bAIFunctionFactory\.Create\s*\(', '\bFunctionInvokingChatClient\s*\(']
+        weight: 0.8
 
   - id: framework.m365-agents-sdk
     name: Microsoft 365 Agents SDK

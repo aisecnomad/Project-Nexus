@@ -123,6 +123,12 @@ coverage, even when a response includes an empty collection field.
   malformed inputs make coverage incomplete while retaining valid neighboring
   findings. These are resource safeguards, not process isolation or a universal
   deadline across every external SDK call.
+* Record dumps enforce replay's encoded-byte line and file limits and reject
+  non-finite JSON numbers. Omitted valid export records remain available to
+  live analysis, but the scan and export manifest are incomplete and the new
+  dump is not published. Sanitizer safety-limit rejections skip the record and
+  also abort dump publication. Preserve the manifest when replaying;
+  a direct partial JSONL replay cannot establish collection completeness.
 * Git history enrichment is disabled by default. Explicit `use_git: true`
   uses metadata-only commands with lazy fetching and every transport disabled;
   stdout and stderr share a 16 KiB limit, identity fields are capped, and

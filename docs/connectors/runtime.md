@@ -60,8 +60,10 @@ model stores) to `running` process findings for the same tool on the same
 device. The same tool means the same signature or, for a client configuration,
 the same tool id, so Claude Desktop, Kiro and LM Studio, which have no
 signature, link too. Code findings and the offline `endpoint.*` inventories
-are not linked. Devices match by host name without its DNS domain
-(`dev-laptop-07.corp.example` is `dev-laptop-07`). An MCP configuration links
+are not linked. Devices match by the complete trimmed, case-insensitive device
+value: `dev-laptop-07.corp.example` does not match `dev-laptop-07` or a host in
+another DNS domain. Use the same canonical device identifier or full hostname
+in both exports; do not strip domains when combining different estates. An MCP configuration links
 to a running MCP server only when one of its server's arguments names the
 same package.
 

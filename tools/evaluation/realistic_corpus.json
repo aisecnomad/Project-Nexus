@@ -305,6 +305,41 @@
       }
     },
     {
+      "id": "aspnet-meai-dependency-injected-tool-agent",
+      "family": "agent",
+      "description": "An ASP.NET minimal API registers a Microsoft.Extensions.AI chat client with function invocation through dependency injection; a separate agent class receives the client and sends AIFunction tools",
+      "files": {
+        "TravelDesk.Api.csproj": "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n\n  <PropertyGroup>\n    <TargetFramework>net9.0</TargetFramework>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <UserSecretsId>travel-desk-api-8d21</UserSecretsId>\n  </PropertyGroup>\n\n  <ItemGroup>\n    <PackageReference Include=\"Microsoft.Extensions.AI\" Version=\"9.5.0\" />\n    <PackageReference Include=\"Microsoft.Extensions.AI.OpenAI\" Version=\"9.5.0-preview.1.25265.7\" />\n    <PackageReference Include=\"Swashbuckle.AspNetCore\" Version=\"7.2.0\" />\n  </ItemGroup>\n\n</Project>\n",
+        "Program.cs": "using Microsoft.Extensions.AI;\nusing OpenAI;\nusing TravelDesk.Agents;\nusing TravelDesk.Tools;\n\nvar builder = WebApplication.CreateBuilder(args);\n\nvar openAi = new OpenAIClient(builder.Configuration[\"OpenAI:ApiKey\"]);\nbuilder.Services\n    .AddChatClient(openAi.GetChatClient(builder.Configuration[\"OpenAI:Model\"] ?? \"gpt-4o-mini\").AsIChatClient())\n    .UseFunctionInvocation()\n    .UseLogging();\n\nbuilder.Services.AddSingleton<FlightStatusTools>();\nbuilder.Services.AddScoped<TravelDeskAgent>();\nbuilder.Services.AddEndpointsApiExplorer();\nbuilder.Services.AddSwaggerGen();\n\nvar app = builder.Build();\napp.UseSwagger();\napp.UseSwaggerUI();\n\napp.MapPost(\"/ask\", async (AskRequest request, TravelDeskAgent agent, CancellationToken ct) =>\n    Results.Ok(new { answer = await agent.AskAsync(request.Question, ct) }));\n\napp.MapGet(\"/healthz\", () => Results.Ok(new { status = \"ok\" }));\n\napp.Run();\n\npublic sealed record AskRequest(string Question);\n",
+        "Agents/TravelDeskAgent.cs": "using Microsoft.Extensions.AI;\nusing TravelDesk.Tools;\n\nnamespace TravelDesk.Agents;\n\npublic sealed class TravelDeskAgent(IChatClient chatClient, FlightStatusTools flights, ILogger<TravelDeskAgent> logger)\n{\n    private const string SystemPrompt =\n        \"You are the travel desk assistant. Use the flight tools to answer questions about bookings.\";\n\n    public async Task<string> AskAsync(string question, CancellationToken ct)\n    {\n        List<ChatMessage> messages =\n        [\n            new(ChatRole.System, SystemPrompt),\n            new(ChatRole.User, question),\n        ];\n        var options = new ChatOptions\n        {\n            Tools =\n            [\n                AIFunctionFactory.Create(flights.GetFlightStatus),\n                AIFunctionFactory.Create(flights.FindRebookingOptions),\n            ],\n        };\n        var response = await chatClient.GetResponseAsync(messages, options, ct);\n        logger.LogInformation(\"Answered with {MessageCount} messages\", response.Messages.Count);\n        return response.Text;\n    }\n}\n",
+        "Tools/FlightStatusTools.cs": "using System.ComponentModel;\n\nnamespace TravelDesk.Tools;\n\npublic sealed class FlightStatusTools\n{\n    private static readonly Dictionary<string, string> Statuses = new(StringComparer.OrdinalIgnoreCase)\n    {\n        [\"TD101\"] = \"On time, departs 09:40 from gate B12\",\n        [\"TD245\"] = \"Delayed 50 minutes, new departure 14:05\",\n        [\"TD388\"] = \"Cancelled due to crew availability\",\n    };\n\n    [Description(\"Returns the current status of a flight by flight number.\")]\n    public string GetFlightStatus([Description(\"Flight number such as TD101\")] string flightNumber) =>\n        Statuses.TryGetValue(flightNumber, out var status) ? status : \"Unknown flight\";\n\n    [Description(\"Lists alternative flights for a cancelled booking.\")]\n    public string[] FindRebookingOptions(string flightNumber) =>\n        flightNumber.Equals(\"TD388\", StringComparison.OrdinalIgnoreCase)\n            ? [\"TD390 departs 16:20\", \"TD402 departs 19:05\"]\n            : [];\n}\n",
+        "appsettings.json": "{\n  \"Logging\": {\n    \"LogLevel\": {\n      \"Default\": \"Information\",\n      \"Microsoft.AspNetCore\": \"Warning\"\n    }\n  },\n  \"OpenAI\": {\n    \"Model\": \"gpt-4o-mini\"\n  },\n  \"AllowedHosts\": \"*\"\n}\n",
+        "README.md": "# TravelDesk API\n\nMinimal API that answers traveller questions about flight status and rebooking.\n\n```\ndotnet user-secrets set OpenAI:ApiKey <your key>\ndotnet run\ncurl -X POST localhost:5000/ask -H 'content-type: application/json' -d '{\"question\":\"Is TD245 delayed?\"}'\n```\n\nThe chat client is registered once in `Program.cs`; `TravelDeskAgent` receives it\nthrough dependency injection.\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.microsoft-extensions-ai"
+      },
+      "present": true
+    },
+    {
+      "id": "meai-ollama-console-tool-loop",
+      "family": "agent",
+      "description": "A .NET console chat builds an Ollama client with UseFunctionInvocation and target-typed ChatOptions that register order lookup tools",
+      "files": {
+        "OrderHelper.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\">\n\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net9.0</TargetFramework>\n    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n\n  <ItemGroup>\n    <PackageReference Include=\"Microsoft.Extensions.AI\" Version=\"9.5.0\" />\n    <PackageReference Include=\"Microsoft.Extensions.AI.Ollama\" Version=\"9.5.0-preview.1.25265.7\" />\n  </ItemGroup>\n\n</Project>\n",
+        "Program.cs": "using Microsoft.Extensions.AI;\nusing OrderHelper;\n\nvar endpoint = new Uri(Environment.GetEnvironmentVariable(\"OLLAMA_ENDPOINT\") ?? \"http://localhost:11434\");\nIChatClient client = new OllamaChatClient(endpoint, \"llama3.1\")\n    .AsBuilder()\n    .UseFunctionInvocation()\n    .Build();\n\nvar orders = new OrderLookup();\nChatOptions options = new()\n{\n    Tools = [AIFunctionFactory.Create(orders.GetOrderStatus), AIFunctionFactory.Create(orders.CancelOrder)],\n};\n\nList<ChatMessage> history = [new(ChatRole.System, \"You help customers with their orders. Use the tools.\")];\nwhile (true)\n{\n    Console.Write(\"> \");\n    var line = Console.ReadLine();\n    if (string.IsNullOrWhiteSpace(line))\n    {\n        break;\n    }\n    history.Add(new(ChatRole.User, line));\n    var response = await client.GetResponseAsync(history, options);\n    history.AddMessages(response);\n    Console.WriteLine(response.Text);\n}\n",
+        "OrderLookup.cs": "using System.ComponentModel;\n\nnamespace OrderHelper;\n\npublic sealed class OrderLookup\n{\n    private readonly Dictionary<int, string> _orders = new()\n    {\n        [1001] = \"Shipped\",\n        [1002] = \"Packing\",\n        [1003] = \"Awaiting payment\",\n    };\n\n    [Description(\"Gets the fulfilment status for an order id.\")]\n    public string GetOrderStatus(int orderId) =>\n        _orders.TryGetValue(orderId, out var status) ? status : \"No such order\";\n\n    [Description(\"Cancels an order that has not shipped yet.\")]\n    public string CancelOrder(int orderId)\n    {\n        if (!_orders.TryGetValue(orderId, out var status))\n        {\n            return \"No such order\";\n        }\n        if (status == \"Shipped\")\n        {\n            return \"Order already shipped\";\n        }\n        _orders[orderId] = \"Cancelled\";\n        return \"Cancelled\";\n    }\n}\n",
+        "README.md": "# order-helper\n\nConsole chat that answers order questions with a local Ollama model.\n\n```\nollama pull llama3.1\ndotnet run\n```\n\nSet `OLLAMA_ENDPOINT` to use a remote Ollama server.\n",
+        ".gitignore": "bin/\nobj/\n*.user\n.vs/\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.microsoft-extensions-ai"
+      },
+      "present": true
+    },
+    {
       "id": "flask-insurance-agents-crud",
       "family": "agent",
       "description": "A Flask CRUD app manages insurance agents with a supervisor role; the word agent is a business entity, not an AI agent.",

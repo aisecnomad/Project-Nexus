@@ -130,6 +130,15 @@ For the October 9 scan evidence corrections, verify these paired controls:
 These are authored regression controls. Keep the independent human holdout,
 provider-specific live canaries and final-revision approval as separate evidence.
 
+For the October 8 classification corrections, also review positive and
+negative .NET/Go source classification, Python comprehension reachability and
+exact device identity. Check that repeated lifecycle correlation removes derived
+endpoint activity without erasing native runtime observations, and that sanitizer
+safety rejections skip the unsafe record. Treat the new authored cases as
+regressions. Use [repository-level field acceptance](../evaluation.md#repository-level-field-acceptance)
+for fresh independently selected full repositories; obtain human labels and
+authorized live tenant receipts before declaring those checks complete.
+
 ## Suggested deliverable
 
 A concise review record could list the SHA reviewed, commands run, review slices

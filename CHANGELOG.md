@@ -29,6 +29,48 @@ summarizes each release for people who install and operate ShadowScan.
   acceptance. These regression changes do not establish live tenant acceptance
   or independently measured field precision.
 
+### Discovery classification and lifecycle identity corrections
+
+- Resolve supported positional SDK credential arguments before publishing
+  source evidence, including supported import aliases; retain confidential
+  report handling and bounded sanitization.
+- Keep standalone .NET tool definitions and unrelated Go receivers as
+  framework usage. Recognize supported import-bound .NET automatic tool
+  invocation and Go agent construction without claiming runtime execution.
+  Shadowed C# tool-mode names cannot borrow an SDK type or alias's automatic
+  invocation meaning.
+- Keep Microsoft.Extensions.AI `UseFunctionInvocation()` middleware as an
+  agent indicator with tool use, still requiring matching import or dependency
+  evidence. Clients that this middleware configures, including
+  dependency-injected ones, provider constructor chains and target-typed
+  options remain agents, as before these corrections. An explicitly
+  constructed `FunctionInvokingChatClient` is not a lexical indicator: when it
+  is registered through dependency injection or held in fields, the per-file
+  proof cannot follow it and the project is reported as framework usage,
+  where an `AIFunctionFactory.Create` tool previously made it an agent.
+- The C# tool-loop proof reads target-typed `new()` in a local declaration of
+  an SDK type and in a response call's options argument, so an explicit
+  `FunctionInvokingChatClient` with `ChatOptions options = new() { Tools = ... }`
+  remains an agent.
+- C# files that never name `Microsoft.Extensions.AI` skip the tool-loop proof,
+  so a large file calling an unrelated `GetResponseAsync` no longer exhausts
+  its token budget and marks the scan incomplete.
+- A Go function type declared on the preceding line, such as
+  `type Option func(...)` or one whose result ends in `interface{}` or
+  `struct{}`, no longer hides a parameter that shadows the imported
+  LangChainGo agents package, and its own parameters no longer shadow the
+  package in the function that follows.
+- Exclude Python comprehension results and later clauses that cannot execute
+  because a literal iterable is empty or a preceding filter is false.
+- Match lifecycle observations by the complete case-insensitive device value.
+  Different DNS domains and short/FQDN spellings no longer implicitly alias;
+  repeated correlation clears stale derived endpoint activity tags.
+- Export size, strict-JSON and sanitizer rejections abort dump publication and
+  preserve a prior file. Valid records omitted for export size or encoding
+  remain analyzed; records exceeding sanitizer safety limits remain skipped.
+- Add authored positive and negative regressions. Regression passes do not
+  supply independent human labels or live tenant acceptance.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction
