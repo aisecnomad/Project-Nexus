@@ -260,6 +260,26 @@ coverage, even when a response includes an empty collection field.
   assignment names, an opaque identifier with at least three digit runs and
   only short letter fragments is also withheld; ordinary type names and
   `--key users` values remain visible.
+  `aws configure set` also withholds positional `aws_access_key_id`,
+  `aws_secret_access_key`, `aws_session_token` and legacy `aws_security_token`
+  values in shell text and literal argv lists, in any letter case and for
+  `aws`, `aws.exe` and `aws.cmd`, including `default.` and `profile.<name>.`
+  settings, global options (an unlisted `--option` is read both as a flag and
+  as taking a value), quoted words (including JSON-escaped quotes), POSIX,
+  PowerShell backtick and cmd caret line continuations, `#` and `//` comments
+  and string prefixes such as `r"..."` or `b"..."` between source argv
+  elements, a bare `--` before the value, and an executable passed apart from
+  its list (`spawn("aws", [...])`, `spawn("aws", args=[...])`,
+  `["aws"] + [...]`, `Command::new("aws").args([...])`). Native argv exports remove
+  copies of those values from
+  sibling fields too. Variable references, placeholders and metavariables
+  stay visible. Adjacent quoted shell fragments, escaped bare values and source
+  argv expressions beginning
+  with a literal are withheld as a whole; the reader does not evaluate them.
+  Entirely computed argv values remain outside this command reader.
+  Recognition is bounded to 32 arguments and 16 KiB per candidate: a candidate
+  that exceeds either limit fails sanitization closed rather than publishing
+  a later value.
 
 ### What can remain
 
@@ -291,7 +311,8 @@ coverage, even when a response includes an empty collection field.
   after a space-separated option or as a fallback default; an option this
   list does not name, including command-specific one-letter options other
   than the recognized forms above; a positional
-  argument of any other command; the part of an unquoted option value after a
+  argument of any other command besides the supported AWS credential settings;
+  the part of an unquoted option value after a
   bracket, brace or comma; a literal fallback outside recognized credential
   contexts;
   URL userinfo that cannot be delimited: a password holding raw whitespace,

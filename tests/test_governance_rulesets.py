@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from tools.governance import rulesets
 from tools.governance.rulesets import REPOSITORY, RULESETS, observe_readback, prepare_payload, verify_readback
 from tools.governance_check import GITHUB_ACTIONS_APP_ID, check_ruleset
 
@@ -325,3 +327,81 @@ def test_cli_verify_is_nonzero_for_the_observed_disabled_ruleset(tmp_path: Path)
         text=True,
     )
     assert result.returncode != 0 and "readback differs" in result.stderr
+
+
+def test_observation_digest_binds_the_single_inspected_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy = ROOT / ".github/rulesets/23913372.update.json"
+    source = tmp_path / "snapshot.json"
+    snapshot_text = json.dumps(_readback(json.loads(policy.read_text()))) + "\n"
+    # The policy reader accepts a BOM, but the digest binds the decoded text.
+    source.write_text("\ufeff" + snapshot_text, encoding="utf-8")
+    output = tmp_path / "observation.json"
+    original_read = rulesets.read_policy_text
+    inspected: list[Path] = []
+
+    def rewrite_after_read(path: Path, max_bytes: int) -> str:
+        text = original_read(path, max_bytes=max_bytes)
+        inspected.append(path)
+        if path == source:
+            source.write_text('{"enforcement":"disabled"}')
+        return text
+
+    monkeypatch.setattr(rulesets, "read_policy_text", rewrite_after_read)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rulesets",
+            "observe",
+            "--ruleset-id",
+            "23913372",
+            "--input",
+            str(source),
+            "--expected",
+            str(policy),
+            "--output",
+            str(output),
+        ],
+    )
+    rulesets.main()
+    report = json.loads(output.read_text())
+    assert report["status"] == "complete"
+    assert inspected == [policy, source]
+    assert (
+        report["input_identity"]["snapshot_text_sha256"]
+        == hashlib.sha256(snapshot_text.encode("utf-8")).hexdigest()
+    )
+    assert source.read_text() == '{"enforcement":"disabled"}'
+
+
+def test_oversized_observation_input_has_no_inspected_snapshot_digest(tmp_path: Path) -> None:
+    source = tmp_path / "snapshot.json"
+    source.write_bytes(b"x" * (1024 * 1024 + 1))
+    output = tmp_path / "observation.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.governance.rulesets",
+            "observe",
+            "--ruleset-id",
+            "23913372",
+            "--input",
+            str(source),
+            "--expected",
+            str(ROOT / ".github/rulesets/23913372.update.json"),
+            "--output",
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    report = json.loads(output.read_text())
+    assert report["status"] == "failed"
+    assert report["input_identity"]["snapshot_text_sha256"] is None
+    assert report["input_identity"]["expected_policy_text_sha256"] is not None
+    assert "byte limit" in report["error"]

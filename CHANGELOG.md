@@ -88,6 +88,67 @@ summarizes each release for people who install and operate ShadowScan.
 - Add regression coverage and reviewer guidance for these boundaries. These
   checks do not establish human-reviewed field accuracy or live tenant acceptance.
 
+### Verified discovery review corrections
+
+- Join Python exception and pattern-match branches conservatively so an import
+  or alias from one alternative cannot establish another path's agent binding.
+  Literal unreachable alternatives stay excluded; uncertain bindings remain
+  framework usage rather than a proved construction.
+- Withhold supported AWS CLI positional credential settings in command text
+  and argument arrays, including nested copies used in evidence and caches.
+  Preserve variable references and documented placeholder values.
+- Export all permissions in CSV, and show inventory reconciliation in table,
+  Markdown and HTML reports when a supplied inventory contains zero agents.
+  JSON reports now carry the additive `inventory_present` field.
+- Add opt-in `agent_granularity: source` for separate supported named Python
+  construction identities. Existing project aggregation remains the default;
+  source identity is static evidence, not a count of deployed runtime instances.
+- Preserve Python AST coordinates across literal control and Unicode separators,
+  so registered-tool execution evidence stays attached to the correct source
+  construction in both project and source inventory modes.
+- Reuse the scheduled governance observation implementation from PR #163:
+  visible policy drift fails, withheld bypass settings remain explicitly
+  unknown, and complete release verification stays strict. Retained observations
+  bind the inspected policy and snapshot to their digests and observation time.
+- Add synthetic regressions and migration/reviewer guidance. Independent human
+  field labels and scoped live tenant acceptance remain deployment requirements.
+
+### Source identity, guarded import and AWS command review fixes
+
+- Resolve the tool regions of every verified construction in a file in one
+  pass that reads each tool body once. A module registering many named agents
+  with a shared `tools=TOOLS` list of branching tools no longer exceeds the
+  per-file deadline in `agent_granularity: source` mode and drops to an
+  incomplete file.
+- Keep a tool's execution evidence on the project finding when anything other
+  than a named construction's literal tools list can reach it: an unresolved
+  or unpacked construction, a computed tools value (`get_tools()`,
+  `[lookup] + extra`, `[*EXTRA]`, `Box.tools`, a conditional or comprehension),
+  a positional list, another call that receives the function
+  (`bind_tools([lookup])`), a method, lambda or local decorator, a decorator or
+  method registration, a dispatch loop, or `globals()`, `eval` and `exec`.
+  Approving a named source binding no longer hides that capability from the
+  shadow project finding. Tools that only named literal lists and direct calls
+  reach still move to the named findings; a positional model string
+  (`Agent('openai:gpt-4o')`) no longer keeps every tool on the project.
+- Restore guarded optional imports after the try/except join correction: a
+  name only that try statement binds agrees with handlers that leave it
+  unbound, handlers ending in `sys.exit()`, `os._exit()`, `exit()` or `quit()`
+  do not continue, and alternative import paths of one package symbol agree.
+  Other bindings of the name in the module, handler rebinding, star imports
+  and same-named builtins stay uncertain.
+- Bind each notebook code cell's statements on their own. A cell that stops
+  Run All (`raise SystemExit`, `sys.exit()`, `exit()`, `quit()`) no longer
+  makes the constructions in later cells unreachable; Jupyter still runs them.
+- Withhold `aws configure set` credential values after unlisted or newer global
+  options (`--no-paginate`, `--cli-binary-format`), in other letter cases and
+  for `aws.cmd`, across PowerShell and cmd continuations, with comments or
+  string prefixes between source argv elements, after a bare `--`, and when
+  the executable is passed apart from its argument list (`spawn("aws", [...])`,
+  `args=[...]`, `["aws"] + [...]`, Rust `Command::new("aws").args([...])`).
+  Reading the separators of commented source argv stays linear: hostile text
+  with `aws` in every comment of a long block no longer stalls sanitization.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

@@ -124,6 +124,17 @@ failed reads and policy mismatches. Its exit status measures the visible-control
 check; a successful job with a partial observation does **not** establish that
 the repository has no bypass actors.
 
+Each retained observation records a UTC `input_identity.recorded_at` timestamp
+and SHA-256 digests of the same bounded snapshot and expected-policy text used
+for verification. Digests cover UTF-8 text after removal of an optional leading
+byte-order mark; the command reads each input once and never retains its payload
+in the observation. A denied API read leaves the snapshot digest null, even if
+the failed command printed valid JSON. An unreadable or oversized input also
+has no inspected-text digest. Retain independently fetched source snapshots in
+restricted audit storage when later comparison is needed. These hashes bind
+content; the local timestamp does not authenticate the response's origin or
+establish that GitHub's settings were unchanged after the read.
+
 | Observation `status` | What was checked | Required action |
 |---|---|---|
 | `complete` | Every managed setting, including the visible bypass list, matched the reviewed policy. | Retain the snapshot; review freshness, origin and other protections separately. |

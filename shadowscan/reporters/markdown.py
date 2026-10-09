@@ -7,6 +7,7 @@ import re
 
 from shadowscan.models import Finding, ScanResult
 from shadowscan.reporters._publication import (
+    has_inventory,
     publication_stats,
     related_finding_ids,
     without_connector_prefix,
@@ -109,7 +110,7 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("## Summary")
     lines.append("")
     shadow_note = ""
-    if result.inventory_size:
+    if has_inventory(result):
         shadow_note = (
             f" (**{s['shadow']} shadow** — not in the inventory of {result.inventory_size} registered agents)"
         )

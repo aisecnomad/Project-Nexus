@@ -189,7 +189,10 @@ Goose's user configuration at `~/.config/goose/config.yaml` and an installed
 Cline editor extension without an MCP settings file, each with a look-alike
 negative.
 October 8 cases cover import-bound Go agent constructors, .NET tool definition
-versus invocation, and Python comprehension reachability. These authored cases
+versus invocation, and Python comprehension reachability. October 9 cases cover
+guarded optional Python imports: a passing or exiting `ImportError` handler,
+alternative import paths of one class, and a local fallback class that keeps
+the construction uncertain. These authored cases
 are regression evidence, not new independent annotation.
 It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its

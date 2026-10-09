@@ -18,7 +18,7 @@ references.
 ## `code.filesystem`
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
-package, …); each root yields one
+package, …); by default each root yields one
 finding summarizing frameworks, model providers, capabilities, models and
 evidence. Extra findings: MCP configs (`.mcp.json`, `.cursor/mcp.json`,
 `.vscode/mcp.json`, `claude_desktop_config.json`, Codex `config.toml`,
@@ -77,6 +77,23 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+Python exception handlers and pattern-match alternatives join only bindings
+that agree across possible paths. A binding from the last visited alternative
+does not prove an agent construction. A guarded optional import
+(`try: from agents import Agent` / `except ImportError: pass`) keeps its
+binding when that try statement holds every binding of the name in the
+module: a handler that leaves the name unbound cannot construct another
+object. Handlers ending in `sys.exit()`, `os._exit()` or the `exit()`/`quit()`
+builtins do not continue, and alternative import paths of one package symbol
+(`crewai.Agent`, `crewai.agent.Agent`) agree. Any other binding of the name in
+the module (earlier, later, in a loop or through `global`), a handler
+rebinding, a star import or a same-named builtin keeps the name uncertain.
+Literal unreachable alternatives can be excluded for supported shapes; scalar
+values assigned to names, computed subjects and uncertain control flow are not
+a general constant-propagation engine and remain conservative usage evidence.
+Constructor and registered-tool coordinates follow Python's physical line
+endings, so separators inside string literals do not hide execution evidence.
+
 Credential redaction resolves supported Go SDK import aliases against the full
 source before excerpts are cut. Excerpts use the same LF-based line positions as
 source matches, including when Go raw literals contain carriage returns.
@@ -93,6 +110,40 @@ files retain explicit JSX analysis. A JSX retry with unclosed multiline literals
 unbalanced tags or ambiguous source is rejected, retaining incomplete coverage.
 This lexical filter does not validate every construct against the language's
 full grammar or reinterpret an already-complete plain JavaScript pass.
+
+### Separate source identities
+
+Set `agent_granularity: source` to emit separate `source-agent` findings for
+supported import-proved Python constructors directly assigned to a unique simple
+name in a straight-line module, class or function scope in a `.py` file. Resources use the source file
+and qualified binding, so inserting unrelated lines does not change their IDs.
+Each finding receives its own constructor evidence and supported capabilities;
+it does not inherit another constructor's tools from the project aggregate.
+Local execution sinks are linked for the existing supported keyword `tools=`
+forms. Positional tool factories and later method registration remain project
+context and do not transfer execution capabilities to a source identity.
+The project finding retains remaining technology and unsupported-construction
+evidence. A tool body stays project evidence too, so the project keeps that
+execution capability, when anything other than a named construction's literal
+`tools=` list can reach it: a construction left in the project or with unpacked
+options, a computed tools value or positional list, another call, collection,
+return value, method, lambda or local decorator that obtains the function, a
+method or decorator registration, a dispatch loop, or `globals()`, `eval` or
+`exec`. A direct call of a tool does not register it elsewhere; other lookups
+by name, such as `getattr` on a module, are not followed. All named
+constructions in a file share one tool-attribution pass that reads each tool
+body once. A project inventory approval does not approve these separate source
+resources; broad resource globs still have their explicitly configured scope.
+
+The default `agent_granularity: project` keeps existing aggregation. The source
+option does not count runtime instances and does not split notebooks, arbitrary languages,
+dynamic factories, repeated assignments, unnamed calls or uncertain control
+flow. Unsupported identities remain visible in project metadata. Renaming a
+file or binding changes the identity. Review inventory stubs and rebuild
+comparison baselines when switching modes; see
+[migration](../production.md#unreleased-review-migration).
+
+### Construction and capability evidence
 
 Python and JavaScript/TypeScript execution capabilities are attributed to supported
 registered tool bodies, direct local helpers, and recognized model-selected
@@ -207,7 +258,7 @@ metadata path. No submodule is initialized or fetched; see the detailed
 [coverage policy](../scanning.md#coverage-policy) for scope and limitations.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
-`max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
+`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 `max_entries` defaults to 1,000,000 filesystem entries inspected during
@@ -328,7 +379,9 @@ lexed on its own, and a cell that still does not parse (a `%%bash` cell, an
 unfinished scratch cell) is left out of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
 lexical evidence retained` names it, and the other cells are bound as usual. A
-string left open in one cell no longer masks the cells after it.
+string left open in one cell no longer masks the cells after it, and a cell that
+stops (`raise SystemExit`, `sys.exit()`, `exit()` or `quit()` to halt Run All)
+ends only its own statements: the later cells stay reachable.
 
 A Python source the running interpreter cannot parse (syntax newer than it,
 such as a PEP 695 `type` statement on Python 3.11) has no import binding: its

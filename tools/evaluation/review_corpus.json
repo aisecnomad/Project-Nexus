@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "metadata": {
-    "name": "September 25 and October 8 review regressions",
+    "name": "September 25, October 8 and October 9 review regressions",
     "type": "synthetic",
     "provenance": "Authored after review findings, with source-based labels. A regression suite used during development; not independent annotation, a held-out set, or field accuracy."
   },
@@ -725,6 +725,127 @@
             "capabilities": []
           }
         ]
+      }
+    },
+    {
+      "id": "python-guarded-optional-import",
+      "family": "agent",
+      "description": "Author-written October 9 regression: An optional SDK import whose ImportError handler passes still binds the construction; an unbound name cannot construct another object.",
+      "files": {
+        "app.py": "try:\n    from agents import Agent\nexcept ImportError:\n    pass\n\nworker = Agent(name=\"worker\", instructions=\"Summarize the ticket\")\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.openai-agents-sdk"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "python-guarded-import-exits",
+      "family": "agent",
+      "description": "Author-written October 9 regression: An ImportError handler that reports and calls sys.exit() never reaches the construction.",
+      "files": {
+        "app.py": "import sys\n\ntry:\n    from agents import Agent\nexcept ImportError:\n    print(\"pip install openai-agents\", file=sys.stderr)\n    sys.exit(1)\n\nworker = Agent(name=\"worker\", instructions=\"Summarize the ticket\")\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.openai-agents-sdk"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "python-guarded-alternative-import-path",
+      "family": "agent",
+      "description": "Author-written October 9 regression: Alternative import paths of one CrewAI class agree after the try statement.",
+      "files": {
+        "app.py": "try:\n    from crewai import Agent\nexcept ImportError:\n    from crewai.agent import Agent\n\nanalyst = Agent(role=\"analyst\", goal=\"Summarize filings\", backstory=\"Reads reports\")\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.crewai"
+      },
+      "present": true,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.crewai"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.crewai"
+          }
+        ]
+      }
+    },
+    {
+      "id": "python-guarded-import-local-fallback",
+      "family": "agent",
+      "description": "Author-written October 9 regression: An ImportError handler that rebinds the name to a local class leaves the construction uncertain.",
+      "files": {
+        "app.py": "try:\n    from agents import Agent\nexcept ImportError:\n    class Agent:\n        def __init__(self, **options):\n            self.options = options\n\nworker = Agent(name=\"worker\", instructions=\"Summarize the ticket\")\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.openai-agents-sdk"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ],
+        "max_agent_findings": 0
       }
     }
   ]

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -121,6 +123,21 @@ def test_scheduled_audit_reports_scoped_assurance_without_admin_writes(tmp_path:
         for number in RULESET_IDS
     }
     report = reports[23913372]
+    identity = report["input_identity"]
+    assert datetime.fromisoformat(identity["recorded_at"]).utcoffset() == UTC.utcoffset(None)
+    policy_path = ROOT / ".github/rulesets/23913372.update.json"
+    assert (
+        identity["expected_policy_text_sha256"]
+        == hashlib.sha256(policy_path.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest()
+    )
+    if change in {"denied", "denied_with_valid_stdout"}:
+        assert identity["snapshot_text_sha256"] is None
+    else:
+        snapshot_path = runner_temp / "governance-observations/ruleset-23913372.json"
+        assert (
+            identity["snapshot_text_sha256"]
+            == hashlib.sha256(snapshot_path.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest()
+        )
     summary = (tmp_path / "summary.md").read_text()
     if change == "missing_bypass":
         assert report["status"] == "partial"

@@ -149,7 +149,7 @@ def render_csv(result: ScanResult) -> str:
             "models": "|".join(f.models),
             "capabilities": "|".join(f.capabilities),
             "tags": "|".join(f.tags),
-            "permissions": "|".join(f.permissions[:30]),
+            "permissions": "|".join(f.permissions),
             "first_seen": f.first_seen or "",
             "last_seen": f.last_seen or "",
             "risk_factors": "; ".join(x.description for x in f.risk.factors if x.weight > 0),

@@ -608,6 +608,21 @@ def test_a_broken_notebook_cell_keeps_its_own_construction(tmp_path, run_connect
     assert any(finding.kind == Kind.AGENT for finding in findings)
 
 
+@pytest.mark.parametrize("stop", ["sys.exit(0)", "exit()", "quit()", "raise SystemExit('stop Run All here')"])
+def test_a_notebook_cell_that_stops_does_not_hide_later_cells(tmp_path, run_connector, stop):
+    # Jupyter runs each cell on its own: a stop cell halts Run All, yet the
+    # later cells still run. Bound as one module, they were unreachable.
+    setup = f"import sys\nfrom agents import Agent\n{stop}\n"
+    (tmp_path / "agent.ipynb").write_text(_notebook(setup, "worker = Agent(name='w', tools=[])\n"))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+    # Within one cell the statements after the stop still never run.
+    (tmp_path / "agent.ipynb").write_text(_notebook(setup + "worker = Agent(name='w', tools=[])\n"))
+    findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert findings and not any(finding.kind == Kind.AGENT for finding in findings)
+
+
 def test_python_that_parses_keeps_import_bound_evidence_without_a_warning(tmp_path, run_connector):
     (tmp_path / "agent.py").write_text(_LANGCHAIN_AGENT)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)

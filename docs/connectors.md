@@ -225,7 +225,7 @@ Use the same six checks for each entry:
 ### `code.filesystem`
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
-package, …); each root yields one
+package, …); by default each root yields one
 finding summarizing frameworks, model providers, capabilities, models and
 evidence. Extra findings: MCP configs (`.mcp.json`, `.cursor/mcp.json`,
 `.vscode/mcp.json`, `claude_desktop_config.json`, Codex `config.toml`,
@@ -239,6 +239,17 @@ Supported Go SDK import aliases are resolved before source evidence is
 excerpted; reports remain confidential. Ordinary Rust multiline strings and
 supported JSX in `.js`, `.mjs` and `.cjs` can be analyzed without false lexical
 incompleteness. Ambiguous or unterminated source still marks the scan incomplete.
+
+Opt-in `agent_granularity: source` gives supported uniquely named Python
+constructions separate inventory resources and constructor-specific evidence.
+Other source remains project evidence, with unsupported identity limits visible.
+Literal control and Unicode separators preserve Python constructor and local
+tool coordinates, including execution capabilities. This is static source
+inventory, not runtime instance discovery. The default
+`project` mode preserves existing identities; see the
+[source guide](connectors/code.md#separate-source-identities) and
+[migration notes](production.md#unreleased-review-migration). GitHub and GitLab
+forward the same option to their checkout scans.
 
 `package.json` npm aliases (`"runtime": "npm:@langchain/langgraph@^1"`) are
 attributed to the target package, not the local alias name. Malformed alias

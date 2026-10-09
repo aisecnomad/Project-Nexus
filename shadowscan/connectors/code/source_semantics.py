@@ -20,12 +20,13 @@ and uncorroborated lexical code evidence is capped at 0.6.
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 import threading
 import weakref
 from bisect import bisect_right
 from collections import ChainMap
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -63,7 +64,7 @@ from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
 from shadowscan.utils.redaction import sanitize_text
-from shadowscan.utils.text import line_counter
+from shadowscan.utils.text import line_counter, python_source_lines
 
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
@@ -243,14 +244,20 @@ class _PythonBindings(ast.NodeVisitor):
         text: str,
         relevant: Callable[[_Binding], bool] | None = None,
         resolve_import: ImportResolver | None = None,
+        equivalent: Callable[[_Binding, _Binding], bool] | None = None,
+        cells: Sequence[tuple[int, int]] = (),
     ):
         self.text = text
         self.resolve_import = resolve_import
+        # Where each notebook code cell starts; Jupyter runs each on its own.
+        self.cell_starts = [start for start, _ in cells]
+        # Whether two import paths name one SDK symbol (a package re-export).
+        self.equivalent = equivalent
         # Only calls into modules that some signature describes can produce
         # evidence. Counting every bound call (``pytest.raises``, ``requests.get``)
         # against MAX_BOUND_CALLS made ordinary large files fail as incomplete.
         self.relevant = relevant
-        self.lines = text.splitlines(keepends=True)
+        self.lines = python_source_lines(text)
         self.offsets = [0]
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))
@@ -261,6 +268,10 @@ class _PythonBindings(ast.NodeVisitor):
         self._loop_transfers: list[_LoopTransfers] = []
         self.decorator_calls: set[int] = set()
         self._visited = 0
+        # Where the module binds each name, recorded once from the module node.
+        # A star import may bind any name; None means no module was visited.
+        self._binding_sites: dict[str, list[tuple[int, int]]] | None = None
+        self._star_import = True
 
     def visit(self, node: ast.AST) -> Any:
         self._visited += 1
@@ -274,17 +285,20 @@ class _PythonBindings(ast.NodeVisitor):
     def _visit_block(self, statements: Sequence[ast.AST]) -> bool:
         """Visit a syntactic suite until an explicit, unconditional transfer.
 
-        This only proves local reachability: return/raise/break/continue and
-        constant or fully terminating if branches. Calls, exception handlers,
-        context-manager suppression and interprocedural/global mutation timing
-        are not assumed to establish that a surrounding suite terminates.
+        This only proves local reachability: return/raise/break/continue, a
+        statement calling sys.exit(), os._exit(), exit() or quit() (see
+        visit_Expr) and constant or fully terminating if branches. Other calls,
+        exception handlers, context-manager suppression and
+        interprocedural/global mutation timing are not assumed to establish
+        that a surrounding suite terminates. A notebook cell that stops does
+        not end the later cells (visit_Module).
         """
         return any(self.visit(statement) is True for statement in statements)
 
     def generic_visit(self, node: ast.AST) -> None:
-        # Generic constructs (notably try suites) keep their existing bounded
-        # lexical traversal, but a return cannot make later statements in the
-        # same suite into reachable construction evidence.
+        # A return cannot make later statements in a generic suite into
+        # reachable construction evidence. Branching statements have their own
+        # visitors so mutually exclusive suites never overwrite one another.
         for _, value in ast.iter_fields(node):
             if isinstance(value, list):
                 if value and all(isinstance(item, ast.stmt) for item in value):
@@ -310,6 +324,41 @@ class _PythonBindings(ast.NodeVisitor):
         for name in set().union(*outcomes):
             prior = before.get(name)
             before[name] = prior if all(outcome.get(name, prior) == prior for outcome in outcomes) else None
+
+    @staticmethod
+    def _join_outcomes(
+        before: MutableMapping[str, _Binding | None],
+        outcomes: Sequence[Mapping[str, _Binding | None]],
+        *,
+        unbound: Collection[str] = frozenset(),
+        equivalent: Callable[[_Binding, _Binding], bool] | None = None,
+    ) -> None:
+        """Merge explicit branch writes without a names-by-branches cross product.
+
+        Names in ``unbound`` had no binding before the branches. A branch that
+        omits one leaves it unbound, where calling it raises NameError instead
+        of constructing another object, so that branch agrees with any binding.
+        """
+        observed: dict[str, tuple[_Binding | None, int, bool]] = {}
+        for outcome in outcomes:
+            for name, value in outcome.items():
+                candidate, count, agrees = observed.get(name, (value, 0, True))
+                same = value == candidate or (
+                    equivalent is not None
+                    and value is not None
+                    and candidate is not None
+                    and equivalent(value, candidate)
+                )
+                observed[name] = (candidate, count + 1, agrees and same)
+        for name, (candidate, count, agrees) in observed.items():
+            # A branch without a write leaves the prior binding intact. A new
+            # binding therefore requires agreement in every branch, while an
+            # unchanged one can also agree with branches that omit the name.
+            before[name] = (
+                candidate
+                if agrees and (count == len(outcomes) or name in unbound or candidate == before.get(name))
+                else None
+            )
 
     @staticmethod
     def _changes(
@@ -341,6 +390,81 @@ class _PythonBindings(ast.NodeVisitor):
         if node.cause is not None:
             self.visit(node.cause)
         return True
+
+    def visit_Module(self, node: ast.Module) -> None:
+        sites: dict[str, list[tuple[int, int]]] = {}
+        star = False
+        for item in ast.walk(node):
+            names: list[str] = []
+            if isinstance(item, ast.Name) and isinstance(item.ctx, (ast.Store, ast.Del)):
+                names = [item.id]
+            elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names = [item.name]
+            elif isinstance(item, (ast.Import, ast.ImportFrom)):
+                star = star or any(alias.name == "*" for alias in item.names)
+                names = [alias.asname or alias.name.split(".")[0] for alias in item.names]
+            elif isinstance(item, ast.arg):
+                names = [item.arg]
+            elif isinstance(item, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and item.name:
+                names = [item.name]
+            elif isinstance(item, ast.MatchMapping) and item.rest:
+                names = [item.rest]
+            elif isinstance(item, (ast.Global, ast.Nonlocal)):
+                names = list(item.names)
+            for name in names:
+                sites.setdefault(name, []).append((item.lineno, item.col_offset))  # type: ignore[attr-defined]
+        self._binding_sites, self._star_import = sites, star
+        if not self.cell_starts:
+            self.generic_visit(node)
+            return
+        # Jupyter runs each cell on its own: a cell that stops ('raise
+        # SystemExit', sys.exit() to halt Run All) leaves later cells runnable.
+        cells: dict[int, list[ast.stmt]] = {}
+        for statement in node.body:
+            cell = bisect_right(self.cell_starts, self.offsets[statement.lineno - 1]) - 1
+            cells.setdefault(cell, []).append(statement)
+        for statements in cells.values():
+            self._visit_block(statements)
+
+    def _bound_only_within(self, name: str, node: ast.stmt) -> bool:
+        """Whether ``node`` holds every binding of ``name``: before it, the name is unbound.
+
+        Using it then raises NameError (not a builtin or star-imported name).
+        Any other binding anywhere in the module, including a later or looped
+        one, keeps the name's earlier state uncertain.
+        """
+        if (
+            self._binding_sites is None
+            or self._star_import
+            or name in vars(builtins)
+            or node.end_lineno is None
+            or node.end_col_offset is None
+        ):
+            return False
+        start, end = (node.lineno, node.col_offset), (node.end_lineno, node.end_col_offset)
+        return all(start <= site <= end for site in self._binding_sites.get(name, ()))
+
+    def visit_Expr(self, node: ast.Expr) -> bool:
+        self.visit(node.value)
+        # sys.exit() raises SystemExit and os._exit() ends the process; like a
+        # raise, neither continues the suite. Only import-bound functions and
+        # the site exit()/quit() builtins qualify, never a module's own binding.
+        if not isinstance(node.value, ast.Call):
+            return False
+        function = node.value.func
+        binding = self._resolve(function)
+        if binding is not None:
+            return not binding.constructed and (binding.module, binding.symbol) in {
+                ("sys", "exit"),
+                ("os", "_exit"),
+            }
+        return (
+            isinstance(function, ast.Name)
+            and function.id in {"exit", "quit"}
+            and self._binding_sites is not None
+            and not self._star_import
+            and function.id not in self._binding_sites
+        )
 
     def visit_Break(self, node: ast.Break) -> bool:
         self._record_loop_transfer(is_break=True)
@@ -718,16 +842,146 @@ class _PythonBindings(ast.NodeVisitor):
     visit_DictComp = _comprehension
     visit_GeneratorExp = _comprehension
 
-    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        if node.type:
+    def visit_ExceptHandler(self, node: ast.ExceptHandler, *, visit_type: bool = True) -> bool:
+        if visit_type and node.type:
             self.visit(node.type)
         if node.name:
             self.scopes[-1][node.name] = None
-        self._visit_block(node.body)
+        stopped = self._visit_block(node.body)
+        # Python deletes the exception alias when leaving a handler. A deleted
+        # local must not resolve to an imported name in an enclosing scope.
+        if node.name:
+            self.scopes[-1][node.name] = None
+        return stopped
 
-    def visit_Match(self, node: ast.Match) -> None:
+    @staticmethod
+    def _suite_may_raise(statements: Sequence[ast.stmt]) -> bool:
+        """Recognize only trivial suites whose exception handlers cannot run.
+
+        Names, assignments, imports and calls stay potentially raising. This is
+        a local syntactic check, not an evaluator or an exception-type solver.
+        """
+        for statement in statements:
+            if isinstance(statement, ast.Pass) or (
+                isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
+            ):
+                continue
+            if isinstance(statement, ast.Return) and (
+                statement.value is None or isinstance(statement.value, ast.Constant)
+            ):
+                return False
+            if isinstance(statement, (ast.Break, ast.Continue)):
+                return False
+            return True
+        return False
+
+    def visit_Try(self, node: ast.Try | ast.TryStar) -> bool:
+        before = self.scopes[-1]
+        self.scopes[-1] = ChainMap({}, before)
+        body_stopped = self._visit_block(node.body)
+        body_changes = dict(self._changes(self.scopes[-1], before))
+        may_raise = self._suite_may_raise(node.body)
+        # A handler may start before any body assignment or after a partial
+        # statement. No body-written name has certain provenance at entry.
+        # A name only this statement binds is either bound by the body or
+        # still unbound there (a guarded optional import): it stays absent at
+        # handler entry and agrees with the bound paths when left alone.
+        unbound = {name for name in body_changes if self._bound_only_within(name, node)}
+        exceptional: dict[str, _Binding | None] = {name: None for name in body_changes if name not in unbound}
+        outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
+        normal_stopped = body_stopped
+        if not body_stopped:
+            normal_stopped = self._visit_block(node.orelse)
+        normal = self._changes(self.scopes[-1], before)
+        outcomes.append(normal)
+        if not normal_stopped:
+            continuing.append(normal)
+        final_may_raise = may_raise or not body_stopped and self._suite_may_raise(node.orelse)
+        # Else/handler suites can also fail after only some assignments. Their
+        # partial writes matter to calls in finally, though their exceptions do
+        # not reach the continuation after this try statement.
+        final_exceptional: dict[str, _Binding | None] = dict.fromkeys(normal)
+
+        if may_raise:
+            for handler in node.handlers:
+                exception_entry = ChainMap(exceptional, before)
+                self.scopes[-1] = ChainMap({}, exception_entry)
+                if handler.type:
+                    self.visit(handler.type)
+                    type_changes = self._changes(self.scopes[-1], exception_entry)
+                    # Clause tests run in order until one matches. A failed
+                    # test's assignments can affect a later test/body, unlike
+                    # the mutually exclusive bodies of ordinary except suites.
+                    exceptional.update(dict.fromkeys(type_changes))
+                stopped = self.visit_ExceptHandler(handler, visit_type=False)
+                changes = self._changes(self.scopes[-1], before)
+                outcomes.append(changes)
+                if not stopped:
+                    continuing.append(changes)
+                final_exceptional.update(dict.fromkeys(changes))
+                if isinstance(node, ast.TryStar):
+                    # Several except* suites can run in order for disjoint
+                    # subgroups. Later suites cannot assume an earlier one left
+                    # its input unchanged; keep every earlier write uncertain.
+                    exceptional.update(dict.fromkeys(changes))
+
+        self.scopes[-1] = before
+        joined: dict[str, _Binding | None] = {}
+        joined_scope = ChainMap(joined, before)
+        self._join_outcomes(joined_scope, continuing or outcomes, unbound=unbound, equivalent=self.equivalent)
+        final_stopped = False
+        if node.finalbody:
+            # finally runs on normal, handled, transferred and unhandled paths.
+            # Its calls need provenance valid across all of them, even though
+            # unhandled exceptions do not reach code after the whole try.
+            final_entry: dict[str, _Binding | None] = {}
+            final_scope = ChainMap(final_entry, before)
+            final_paths = [*outcomes, final_exceptional] if final_may_raise else outcomes
+            self._join_outcomes(final_scope, final_paths)
+            self.scopes[-1] = ChainMap({}, final_scope)
+            final_stopped = self._visit_block(node.finalbody)
+            final_changes = self._changes(self.scopes[-1], final_scope)
+            joined.update(final_changes)
+            self.scopes[-1] = before
+        before.update(joined)
+        return final_stopped or not continuing
+
+    visit_TryStar = visit_Try
+
+    @staticmethod
+    def _pattern_matches(pattern: ast.pattern, subject: ast.expr) -> bool | None:
+        """Narrow direct literals and irrefutable captures, without evaluating code."""
+        if isinstance(pattern, ast.MatchAs):
+            if pattern.pattern is None:
+                return True
+            return _PythonBindings._pattern_matches(pattern.pattern, subject)
+        if isinstance(pattern, ast.MatchOr):
+            matches = [_PythonBindings._pattern_matches(part, subject) for part in pattern.patterns]
+            return True if True in matches else None if None in matches else False
+        if isinstance(subject, ast.Constant):
+            if isinstance(pattern, ast.MatchSingleton):
+                return subject.value is pattern.value
+            if isinstance(pattern, ast.MatchValue) and isinstance(pattern.value, ast.Constant):
+                return subject.value == pattern.value.value
+        return None
+
+    def visit_Match(self, node: ast.Match) -> bool:
         self.visit(node.subject)
+        before = self.scopes[-1]
+        # Failed patterns may leave captures bound, and a failed guard may
+        # assign names before the next case is attempted. Preserve uncertainty
+        # from these paths without leaking a successful case's body writes.
+        fallback: dict[str, _Binding | None] = {}
+        fallback_scope = ChainMap(fallback, before)
+        outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
+        exhaustive = False
         for case in node.cases:
+            matches = self._pattern_matches(case.pattern, node.subject)
+            if matches is False:
+                continue
+            self.scopes[-1] = ChainMap({}, fallback_scope)
             for pattern in ast.walk(case.pattern):
                 if isinstance(pattern, (ast.MatchAs, ast.MatchStar)) and pattern.name:
                     self.scopes[-1][pattern.name] = None
@@ -735,7 +989,24 @@ class _PythonBindings(ast.NodeVisitor):
                     self.scopes[-1][pattern.rest] = None
             if case.guard:
                 self.visit(case.guard)
-            self._visit_block(case.body)
+            guard_changes = dict(self._changes(self.scopes[-1], fallback_scope))
+            guard = bool(case.guard.value) if isinstance(case.guard, ast.Constant) else None
+            if case.guard is None or guard is None or guard:
+                stopped = self._visit_block(case.body)
+                changes = self._changes(self.scopes[-1], before)
+                outcomes.append(changes)
+                if not stopped:
+                    continuing.append(changes)
+            if matches is True and (case.guard is None or guard is True):
+                exhaustive = True
+                break
+            self._join_into(fallback_scope, [guard_changes])
+        if not exhaustive:
+            outcomes.append(fallback)
+            continuing.append(fallback)
+        self.scopes[-1] = before
+        self._join_outcomes(before, continuing or outcomes)
+        return not continuing
 
     def visit_If(self, node: ast.If) -> bool:
         self.visit(node.test)
@@ -765,9 +1036,7 @@ class _PythonBindings(ast.NodeVisitor):
                 continuing.append(outcome)
         self.scopes[-1] = before
         joined = continuing or outcomes
-        for name in set().union(*joined):
-            values = [outcome.get(name, before.get(name)) for outcome in joined]
-            before[name] = values[0] if all(value == values[0] for value in values[1:]) else None
+        self._join_outcomes(before, joined)
         return not continuing
 
 
@@ -993,6 +1262,8 @@ def _python_bindings(
     max_nodes: int | None = None,
     bindable: Callable[[ast.AST], bool] | None = None,
     resolve_import: ImportResolver | None = None,
+    equivalent: Callable[[_Binding, _Binding], bool] | None = None,
+    cells: Sequence[tuple[int, int]] = (),
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     if bindable is not None and not bindable(tree):
@@ -1003,7 +1274,7 @@ def _python_bindings(
     for count, _ in enumerate(ast.walk(tree)):
         if count >= limit:
             raise SourceBudgetExceeded("source binding AST limit exceeded")
-    visitor = _PythonBindings(text, relevant, resolve_import)
+    visitor = _PythonBindings(text, relevant, resolve_import, equivalent, cells)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
@@ -1354,6 +1625,20 @@ class _ModuleMatches:
         """Whether calls through ``binding`` can carry evidence: its module resolves to a signature."""
         return bool(self(binding))
 
+    def equivalent(self, first: _Binding, second: _Binding) -> bool:
+        """Whether two import paths of one package name the same symbol of the same signatures.
+
+        ``from crewai import Agent`` and ``from crewai.agent import Agent`` are
+        alternatives for one class; another package or symbol never is.
+        """
+        return (
+            first.symbol == second.symbol
+            and first.constructed == second.constructed
+            and first.module.split(".")[0] == second.module.split(".")[0]
+            and bool(signatures := {match.signature_id for match in self(first)})
+            and signatures == {match.signature_id for match in self(second)}
+        )
+
     def _lookup(self, binding: _Binding) -> list[Match]:
         index, language = self.index, self.language
         if language == "python":
@@ -1434,6 +1719,7 @@ def bound_source_matches(
     max_ast_nodes: int | None = None,
     truncated: list[int] | None = None,
     resolve_import: ImportResolver | None = None,
+    cells: Sequence[tuple[int, int]] = (),
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -1441,7 +1727,7 @@ def bound_source_matches(
     raised so the caller can say so. It already retains lexical import and
     supporting evidence and reports lexical ambiguity. The lines of JavaScript
     calls analyzed only from their first ``MAX_CALL_TEXT`` characters are
-    appended to ``truncated``.
+    appended to ``truncated``. ``cells`` are a notebook's code cell spans.
     """
     module_matches = _ModuleMatches(index, language, is_local_module)
     tree = None
@@ -1457,6 +1743,8 @@ def bound_source_matches(
                     or (resolve_import is not None and _python_resolves(parsed, resolve_import))
                 ),
                 resolve_import=resolve_import,
+                equivalent=module_matches.equivalent,
+                cells=cells,
             )
         else:
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)
@@ -1564,6 +1852,8 @@ def bound_source_matches(
                 raise SourceBudgetExceeded(str(exc)) from exc
         found[0].extra["registered_tool_regions"] = regions.bodies
         found[0].extra["registered_tool_declarations"] = regions.declarations
+        # Tools reached other than through a constructor's own options.
+        found[0].extra["registered_tool_paths"] = bool(registrations or dispatch_calls)
         for match in found:
             span = match.extra.get("bound_call_span")
             if (

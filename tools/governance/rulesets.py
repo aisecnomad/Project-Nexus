@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -220,10 +222,20 @@ def _write_observation(report: dict[str, Any], output: Path, summary: Path | Non
 
 def _observe_cli(args: argparse.Namespace) -> None:
     report: dict[str, Any]
+    recorded_at = datetime.now(UTC).isoformat()
+    snapshot_text_sha256: str | None = None
+    expected_policy_text_sha256: str | None = None
     try:
+        # Hash the same bounded text that is parsed and compared. Never reopen
+        # an input for its digest, or copy an untrusted API payload into evidence.
+        expected_text = read_policy_text(args.expected, max_bytes=1024 * 1024)
+        expected_policy_text_sha256 = hashlib.sha256(expected_text.encode("utf-8")).hexdigest()
+        expected = strict_json_loads(expected_text)
         if args.read_failed:
             raise ValueError("ruleset API read failed; no snapshot assurance is available")
-        report = observe_readback(_load(args.input), _load(args.expected), ruleset_id=args.ruleset_id)
+        snapshot_text = read_policy_text(args.input, max_bytes=1024 * 1024)
+        snapshot_text_sha256 = hashlib.sha256(snapshot_text.encode("utf-8")).hexdigest()
+        report = observe_readback(strict_json_loads(snapshot_text), expected, ruleset_id=args.ruleset_id)
     except (OSError, UnicodeError, ValueError, RecursionError) as exc:
         report = {
             "schema_version": 1,
@@ -238,6 +250,12 @@ def _observe_cli(args: argparse.Namespace) -> None:
             "administrator_readback_required": True,
             "error": str(exc),
         }
+    report["input_identity"] = {
+        "recorded_at": recorded_at,
+        "snapshot_text_sha256": snapshot_text_sha256,
+        "expected_policy_text_sha256": expected_policy_text_sha256,
+        "digest_scope": "Inspected UTF-8 text after removal of an optional leading byte-order mark.",
+    }
     _write_observation(report, args.output, args.summary)
     print(f"Ruleset {args.ruleset_id}: {report['status']} settings assurance; see {args.output}")
     if report["status"] == "partial":

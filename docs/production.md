@@ -41,6 +41,75 @@ The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/
 supports static code, AWS and Slack. A code change cannot substitute for human
 labels, approved tenant credentials or live acceptance receipts.
 
+## Unreleased review migration
+
+After upgrading to the review corrections, rescan source and regenerate retained
+reports. Python `try` and `match` alternatives no longer transfer their last
+visited binding to another path. Supported literal unreachable alternatives
+remain excluded; uncertain branches retain usage evidence. A lower agent
+classification is not evidence that a deployed agent stopped executing.
+Guarded optional imports (`except ImportError: pass`, or a handler ending in
+`sys.exit()`) again keep their SDK binding, so rescans can restore agent
+classifications and tool-use capabilities that the first review correction
+lowered. A notebook cell that stops (`raise SystemExit`, `sys.exit()`) no longer
+hides constructions in later cells, so such notebooks can rise to agent.
+Python literals containing control or Unicode separators no longer shift AST
+coordinates; rescans can restore registered-tool execution capabilities that
+were previously lost in either project or source inventory mode.
+
+For separate source inventory bindings, explicitly select
+`agent_granularity: source` on `code.filesystem`, `code.github` or `code.gitlab`.
+The supported subset is import-proved Python constructors assigned to a unique
+simple name in a straight-line module, class or function scope in a `.py` file. Each supported binding
+uses its source file and qualified binding as a separate resource identity;
+unrelated line insertions do not change it. Renaming a file or binding changes
+the identity. Dynamic, repeated, control-flow-dependent and unnamed constructions
+retain project evidence and expose identity limitations; this option does not
+enumerate deployed instances, split notebooks or follow every source language.
+Execution capabilities of a tool that such a construction, a registration, a
+dispatch loop or other code that obtains the function (a computed tools value,
+`bind_tools`, a wrapper, method or local decorator) can also reach stay on the
+project finding as well as on each named source finding; approving a named
+binding does not hide them.
+
+Review generated inventory stubs for each source finding. A project resource
+approval does not approve a separate source resource; a broad inventory glob
+can intentionally match both and must be reviewed for that scope. Keep previous
+reports and establish a fresh baseline after changing granularity or scanner
+revision. Source identity and source-analysis changes alter the collection
+fingerprint, so incomparable observations cannot establish resolution.
+
+Supported AWS CLI positional credential settings are now sanitized in command
+text and argument arrays, including unlisted global options, other letter cases,
+PowerShell and cmd continuations, commented or prefixed source argv and an
+executable passed separately from its argument list. Regenerate old reports,
+exports and cached evidence under the reviewed revision; changing the scanner
+cannot erase already retained copies. Continue to protect audit artifacts and
+follow the credential handling policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+The additive JSON `inventory_present` field distinguishes an explicitly supplied
+empty inventory from a scan without inventory reconciliation. CSV now retains
+the entire sanitized permission list, including permissions beyond position 30.
+
+The scheduled governance audit can pass its visible-policy checks while its
+retained observation reports partial assurance. Inspect `unknown_fields` and
+`complete_readback_verified`; an omitted bypass list is never evidence of no
+bypass actors. Complete administrator readback remains required by the strict
+verification and release paths. After deployment, retain an actual scheduled or
+dispatched audit run and both ruleset observations, then verify a fresh complete
+administrator readback against the reviewed policy. Synthetic workflow tests
+do not establish the deployed token's response or assurance.
+
+Before enabling enforcement, commission a fresh blinded holdout that includes
+exception handling, pattern matching, multiple constructions per project,
+ambiguous bindings and registered versus unregistered source agents. Freeze
+sampling, labels and acceptance thresholds before showing results to reviewers;
+exclude the new authored regression fixtures. Follow
+[rollout acceptance](#rollout-acceptance) for complete and permission-denied
+tenant canaries. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+supports static code, AWS and Slack; passing those scopes does not grant
+acceptance to other connectors. Human labels and live receipts remain pending
+until operators supply them.
+
 Use this operator sequence; dated candidate notes remain under
 [Candidate change history](#candidate-change-history) and describe differences
 between candidate builds, not between releases.
