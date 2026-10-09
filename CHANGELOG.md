@@ -205,7 +205,10 @@ author-written and not independent review.
   throughput floor on secret patterns against a pathological corpus:
   patterns slower than the runtime allowance are rejected at validation.
   The floor measures the matching thread's CPU time, so scheduler
-  contention on a shared CI runner cannot fail it.
+  contention on a shared CI runner cannot fail it. An attempt the
+  wall-clock guard stops is retried unless its CPU time already exceeds the
+  allowance; a pattern fails when it exceeds the allowance or every attempt
+  is stopped.
 - The filesystem walk buffers and orders entries by signal priority —
   dependency manifests, MCP and coding-agent configuration first, source
   files last, smaller before larger — so a connector deadline cuts the

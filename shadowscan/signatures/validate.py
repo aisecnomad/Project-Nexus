@@ -88,7 +88,10 @@ def secret_pattern_throughput(signatures: Sequence[Signature]) -> list[str]:
     scans closed, so it must be rewritten rather than shipped. Timing takes
     the CPU time of the matching thread, best of three attempts, so wall time
     lost to scheduler contention on a shared runner never counts against a
-    pattern. The wall-clock timeout only stops a pathological pattern.
+    pattern. The wall-clock timeout only stops a pathological pattern: an
+    attempt it stops counts when its CPU time already exceeds the allowance,
+    and is otherwise retried; a pattern every attempt of which is stopped
+    fails.
     """
     from shadowscan.signatures.matcher import LINEAR_SECONDS_PER_MILLION_CHARS
 
@@ -110,11 +113,15 @@ def secret_pattern_throughput(signatures: Sequence[Signature]) -> list[str]:
                         matches = compiled.finditer(corpus, timeout=4 * allowance, concurrent=False)
                         list(islice(matches, _THROUGHPUT_MATCH_CAP))
                     except TimeoutError:
-                        best = 4 * allowance
-                        break
+                        # The CPU time until the timeout is only a lower bound:
+                        # a thread descheduled past it proves nothing.
+                        if time.thread_time() - started <= allowance:
+                            continue
                     elapsed = time.thread_time() - started
                     best = elapsed if best is None or elapsed < best else best
-                if best is not None and best > allowance:
+                if best is None:
+                    best = 4 * allowance
+                if best > allowance:
                     problems.append(
                         f"{signature.id}: secret pattern {pattern!r} needs {best:.3f}s per "
                         f"{_THROUGHPUT_CHARS} chars; the matcher allows {allowance:.3f}s — "
