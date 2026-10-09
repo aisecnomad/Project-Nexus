@@ -31,7 +31,21 @@ that are never silent:
   warnings, including when `strict_coverage` is enabled.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
   byte-order mark is decoded and the mark removed. A Python source is decoded
-  with the codec its `# coding:` cookie declares. Any other file the scanner
+  with the codec its `# coding:` cookie declares. Text that is not valid UTF-8
+  and has no NUL byte (Latin-1 or Windows-1252 prose, Shift-JIS comments) is
+  read with each byte that is not valid replaced by U+FFFD, except in a Python
+  source or a notebook, whose own runtime rejects it: everything the
+  scanner looks for is ASCII, which such an encoding writes the same way, so the
+  file is analyzed in full and the scan stays complete; the warning `is not
+  valid UTF-8, the bytes that are not were replaced` records it (one warning
+  per kind, listing the first files; `strict_coverage` makes each file a gap
+  instead). Content in which more than four characters and more than a tenth of the
+  first 8 KiB are not valid UTF-8, or that holds a control character other than tab, line
+  break or form feed there, is not text and stays a gap. A file of at
+  least 512 bytes that is valid UTF-8, has at most one NUL byte in 200 and holds
+  no other control character in its first 8 KiB (a TypeScript cache key joined
+  with a literal NUL) is read as text too, with the warning `stray NUL bytes in
+  text, read as text`. Any other file the scanner
   analyzes by name (source, configuration, documents, `.env`, extensionless
   files) that has a NUL byte in its first 8 KiB, or that its declared codec
   cannot decode or does not read as ASCII where the bytes are ASCII (UTF-16 or
@@ -63,13 +77,15 @@ that are never silent:
   source is available to scan, not that it matches an authentic remote commit.
 * **Undecodable or binary content** in a file whose name the scanner would
   analyze (source, manifests, `.env`, configuration, MCP and agent files,
-  notebooks) makes the scan incomplete with `binary or undecodable content in
-  analyzable file`. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  notebooks) that is not text in a supported encoding makes the scan incomplete
+  with `binary or undecodable content in analyzable file`; the rules above say
+  which invalid UTF-8 and NUL-bearing files are read instead. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
   still run a script with a NUL in a comment, so it is a gap, not an empty file;
-  this includes UTF-16 without a byte-order mark. Invalid UTF-8 and malformed
+  this includes UTF-16 without a byte-order mark and NUL-dense content. Mostly-invalid UTF-8, a Python
+  source or notebook that is not valid UTF-8, and malformed
   BOM-declared content also make coverage incomplete, with a fixed diagnostic
   that does not expose the rejected bytes. Names the scanner
   never reads (images, archives, `.bin`, compiled artifacts) stay silent, and so
@@ -639,6 +655,54 @@ with the `autonomous` capability, when tool use, an agent-framework user agent,
 a service or principal identity, or missing end-user attribution corroborates
 it. `tools/evaluation/corpus.json` carries regression cases for each rule.
 
+## Developer endpoints
+
+`shadowscan endpoint` scans a workstation profile at the well-known locations
+of AI client configuration instead of walking the home directory: Claude
+Desktop and Claude Code (`~/.claude.json`, `~/.claude/settings*.json`,
+`~/.claude/CLAUDE.md`, skills, agents, commands, hooks), Cursor (`~/.cursor/mcp.json`,
+rules), Windsurf, VS Code and VS Code Insiders with the Cline and Roo
+extensions, Gemini CLI, Codex CLI, Kiro, Amazon Q, GitHub Copilot CLI, Zed,
+Continue, Goose, OpenCode and a generic `~/.mcp.json`. macOS, Linux and Windows
+paths are all checked; Windows locations come from `%APPDATA%`. The full list
+is `shadowscan.endpoint.LOCATIONS`.
+
+Only the locations that exist are read, through the `code.filesystem`
+connector with its `include` option, so a profile scan has the connector's
+limits, credential detection and symlink policy: a location that is a link, or
+sits below one, is skipped. `--home DIR` inspects another profile (a mounted
+image, a fleet collection directory); `--list` prints the locations that exist
+and exits. Findings carry the resource prefix `endpoint:<hostname>`; `--label`
+replaces it, for example with an asset tag, so that merged fleet reports stay
+attributable. A profile with none of the locations is a complete, empty scan
+whose stats carry a warning, not a setup error (exit 0 unless `--fail-on`
+applies).
+
+The same client configuration inside a repository (`.mcp.json`,
+`.cursor/mcp.json`, `.claude/`) is found by `shadowscan code`; the endpoint
+command exists for the user-level copies that no repository scan sees.
+
+## Fleet merge
+
+`shadowscan merge laptop-a.json laptop-b.json -o fleet.json` combines JSON
+reports from several machines or scans into one. Findings with the same
+identity (the same object seen by the same connector, such as one workstation
+scanned twice) merge exactly as repeated observations do inside a scan:
+evidence and technologies union, the earliest `first_seen` and latest
+`last_seen` survive, the first report's metadata wins. Findings from
+different machines keep their own resources because the endpoint label
+prefixes every resource. Every finding records the reports it came from in
+`metadata.merged_from`, and `collection_scope.fleet.sources` lists each
+source with its completion state, finding count and scope fingerprint.
+
+The merged report is comparable with `shadowscan diff` only when every source
+was complete and carried a comparable collection scope; its fingerprint is
+then derived from the sources' fingerprints, so two fleet reports of the same
+machines with the same scanner and signatures compare. Otherwise the report
+says why it is not comparable. Completion follows the sources: one incomplete
+source makes the merged report incomplete (exit 3). Reports with another
+finding identity schema are refused; rescan them first.
+
 ## Comparing reports
 
 `shadowscan diff baseline.json current.json` reports new findings and substantive
@@ -674,6 +738,13 @@ the same label would otherwise make out-of-scope findings look resolved.
 By default `diff` exits 0 when the comparison is complete, whatever it finds.
 `--fail-on-new` exits 2 when there are new findings or a finding's risk level
 rose; an incomplete comparison still exits 3.
+
+`--shadow-only` narrows the displayed records to findings whose `shadow`
+field is true (unmatched against the supplied inventory; findings from
+inventory-less scans have `shadow: null` and are not shown). It is a view:
+the summary counts, incompleteness reasons, `--fail-on-new` gating and exit
+codes are always computed over the full comparison, and `--json` always
+carries the complete document plus a `shadow_only_view` id list.
 
 Connectors that were disabled or left out by `--only` do not make a scan
 incomplete (that is operator intent), but the JSON report lists them as

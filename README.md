@@ -79,7 +79,7 @@ name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 
 ## Frameworks & products recognized
 
-222 signatures / 1086 signals, YAML-defined with explicit opt-in overrides:
+233 signatures / 1136 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -198,9 +198,15 @@ shadowscan run cloud.aws --input ./exports/0001-cloud_aws.jsonl   # reanalyze la
 shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
 shadowscan jwt --file ./token.jwt --jwks-url https://acme.okta.com/oauth2/default/v1/keys
 
-# 6. Register what you found
+# 6. Developer workstations (well-known client locations only, never the whole home)
+shadowscan endpoint --list                                       # which AI client locations exist here
+shadowscan endpoint --format json -o laptop-$(hostname).json     # MCP configs, skills, rules, hooks
+shadowscan merge laptop-*.json --format json -o fleet.json       # one report for the fleet
+
+# 7. Register what you found
 shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents
 shadowscan diff last-week.json today.json                        # what is new / resolved/changed
+shadowscan scan -c shadowscan.yaml --format cyclonedx -o ai-bom.json   # CycloneDX 1.6 bill of materials
 ```
 
 Steps 1 and 2 need a repository checkout: `agent-card.yaml`, `examples/` and
@@ -268,8 +274,9 @@ root make coverage incomplete (exit 3) by default. `--strict-coverage`
 its name is never read (for example, a lockfile or image), or when it is a source
 file whose target is analyzed in the same project with the same test
 classification. Directory links are incomplete because their alias paths are
-not scanned. A file analyzed by name but unreadable as text (a NUL byte outside
-UTF-8, UTF-16 or UTF-32 with a byte-order mark) is also a gap. Non-empty
+not scanned. A file analyzed by name but unreadable as text (dense NUL bytes,
+mostly invalid UTF-8, or UTF-16 or UTF-32 without a byte-order mark) is also a gap;
+legacy-encoded text and a few stray NUL bytes are analyzed with a warning. Non-empty
 `bin/`, `build/`, `dist/`, `vendor/` and similar directories skipped by default
 are listed in a warning; `--no-default-excludes` scans them. Evidence found only
 in test or fixture code cannot establish an agent unless `--include-tests` is set.
@@ -354,8 +361,10 @@ Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
 findings carry file: line locations; results are warnings or notes with the
 heuristic risk level, never a CVSS `security-severity`, see
 [severity](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/severity.md)), `csv`, `markdown`, `html` (self-contained,
-filterable, with evidence drill-down), and `cyclonedx` (a CycloneDX 1.6 AI bill
-of materials, see [AI-BOM](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ai-bom.md)). Opt-in
+filterable, with evidence drill-down), `cyclonedx` (a CycloneDX 1.6 AI bill
+of materials, see [AI-BOM](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ai-bom.md)), and `ocsf`
+(OCSF 1.1.0 Detection Finding events for SIEMs and security data lakes, see
+[OCSF](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ocsf.md)). Opt-in
 [LLM triage](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/llm-triage.md) adds an advisory model verdict to
 the highest-risk findings; it is off by default and never changes scores.
 CSV inserts a literal `'` at the start of

@@ -29,7 +29,8 @@ coverage, even when a response includes an empty collection field.
 
 * Source and manifest inputs are decoded from UTF-8, from UTF-16 or UTF-32
   with a byte-order mark, and for Python from the declared PEP 263 codec. An
-  analyzed file with binary or undecodable content, or whose declared codec
+  analyzed file with binary or undecodable content (dense NUL bytes, mostly invalid
+  UTF-8; a few bad bytes in otherwise valid text are replaced and noted), or whose declared codec
   does not read ASCII as ASCII (UTF-16 or UTF-32 without a byte-order mark,
   UTF-7, EBCDIC), leaves coverage incomplete;
   ordinary binary assets are not text evidence. IAM wildcard and
@@ -123,6 +124,12 @@ coverage, even when a response includes an empty collection field.
   malformed inputs make coverage incomplete while retaining valid neighboring
   findings. These are resource safeguards, not process isolation or a universal
   deadline across every external SDK call.
+* Record dumps enforce replay's encoded-byte line and file limits and reject
+  non-finite JSON numbers. Omitted valid export records remain available to
+  live analysis, but the scan and export manifest are incomplete and the new
+  dump is not published. Sanitizer safety-limit rejections skip the record and
+  also abort dump publication. Preserve the manifest when replaying;
+  a direct partial JSONL replay cannot establish collection completeness.
 * Git history enrichment is disabled by default. Explicit `use_git: true`
   uses metadata-only commands with lazy fetching and every transport disabled;
   stdout and stderr share a 16 KiB limit, identity fields are capped, and
@@ -234,6 +241,11 @@ coverage, even when a response includes an empty collection field.
   strings, verbatim multiline C# strings with doubled quotes, and multiline
   triple-quoted literals. Recognized unterminated quoted flow-record values
   and credential-call literals are withheld through their bounded text tail.
+  Supported Go SDK imports bind credential-call receivers, including aliases
+  and dot imports, before evidence truncation. This lexical recognition shares
+  the sanitization work and binding limits; exhausting either withholds the
+  evidence and marks coverage incomplete. Local shadowing can over-redact.
+  Dynamic function reassignment is outside this bounded direct-call recognition.
   Known environment lookup
   fallback literals inherit the credential constructor's context even when
   their environment variable name is ordinary. Textual flow records support
@@ -249,6 +261,20 @@ coverage, even when a response includes an empty collection field.
   assignment names, an opaque identifier with at least three digit runs and
   only short letter fragments is also withheld; ordinary type names and
   `--key users` values remain visible.
+  `aws configure set` also withholds positional `aws_access_key_id`,
+  `aws_secret_access_key`, `aws_session_token` and legacy `aws_security_token`
+  values in shell text and literal argv lists, including `default.` and
+  `profile.<name>.` settings, global options, quoted words (including
+  JSON-escaped quotes) and shell line continuations. Native argv exports remove
+  copies of those values from
+  sibling fields too. Variable references, placeholders and metavariables
+  stay visible. Adjacent quoted shell fragments, escaped bare values and source
+  argv expressions beginning
+  with a literal are withheld as a whole; the reader does not evaluate them.
+  Entirely computed argv values remain outside this command reader.
+  Recognition is bounded to 32 arguments and 16 KiB per candidate: a candidate
+  that exceeds either limit fails sanitization closed rather than publishing
+  a later value.
 
 ### What can remain
 
@@ -270,15 +296,18 @@ coverage, even when a response includes an empty collection field.
   (com.theokanning.openai) and `new GoogleGenerativeAI("...")`. Where a
   variable stands at the key's position, a later literal such as an
   organization ID may be withheld instead. Any other SDK call is an ordinary
-  function, as are a key at a position no listed overload uses and a listed
-  call through an aliased import (`gogpt.DefaultConfig("...")`).
+  function, as is a key at a position no listed overload uses. The three
+  go-openai helpers also recognize literal imports of
+  `github.com/sashabaranov/go-openai`, including aliases and dot imports;
+  import references must be present in the full source passed to redaction.
   These forms can also remain: a word-like or short value under
   a name that is not itself sensitive and that lacks recognized opaque
   structure; a lowercase word
   after a space-separated option or as a fallback default; an option this
   list does not name, including command-specific one-letter options other
   than the recognized forms above; a positional
-  argument of any other command; the part of an unquoted option value after a
+  argument of any other command besides the supported AWS credential settings;
+  the part of an unquoted option value after a
   bracket, brace or comma; a literal fallback outside recognized credential
   contexts;
   URL userinfo that cannot be delimited: a password holding raw whitespace,

@@ -1,0 +1,1413 @@
+{
+  "overall": {
+    "n": 130,
+    "tp": 88,
+    "fp": 0,
+    "fn": 3,
+    "tn": 39,
+    "recall": [
+      0.967032967032967,
+      0.907506930570377,
+      0.9887255932323175
+    ],
+    "specificity": [
+      1.0,
+      0.9103331462924287,
+      1.0
+    ],
+    "precision": [
+      1.0,
+      0.9581729333351078,
+      0.9999999999999999
+    ],
+    "f1": 0.9832,
+    "mcc": 0.9476,
+    "f1_ci": [
+      0.9617,
+      1.0
+    ]
+  },
+  "by_category": {
+    "adversarial": {
+      "n": 15,
+      "tp": 15,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.7961166989641515,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.7961166989641515,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "agent-framework": {
+      "n": 30,
+      "tp": 30,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.8864866068260312,
+        0.9999999999999999
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.8864866068260312,
+        0.9999999999999999
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "cloud-ai": {
+      "n": 8,
+      "tp": 8,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.6755924351161198,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.6755924351161198,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "coding-agent": {
+      "n": 10,
+      "tp": 10,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.7224672001371107,
+        0.9999999999999999
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.7224672001371107,
+        0.9999999999999999
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "endpoint": {
+      "n": 5,
+      "tp": 3,
+      "fp": 0,
+      "fn": 2,
+      "tn": 0,
+      "recall": [
+        0.6,
+        0.2307242812760128,
+        0.882379225767352
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.4385029682449546,
+        1.0
+      ],
+      "f1": 0.75,
+      "mcc": 0.0
+    },
+    "llm-sdk": {
+      "n": 12,
+      "tp": 12,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.7575059933447592,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.7575059933447592,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "lowcode-ai": {
+      "n": 5,
+      "tp": 4,
+      "fp": 0,
+      "fn": 1,
+      "tn": 0,
+      "recall": [
+        0.8,
+        0.37553462976252533,
+        0.9637758913675698
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.5101091635454027,
+        1.0
+      ],
+      "f1": 0.8889,
+      "mcc": 0.0
+    },
+    "mcp-protocol": {
+      "n": 6,
+      "tp": 6,
+      "fp": 0,
+      "fn": 0,
+      "tn": 0,
+      "recall": [
+        1.0,
+        0.6096657120978346,
+        1.0
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.6096657120978346,
+        1.0
+      ],
+      "f1": 1.0,
+      "mcc": 0.0
+    },
+    "negative": {
+      "n": 39,
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "tn": 39,
+      "recall": [
+        null,
+        null,
+        null
+      ],
+      "specificity": [
+        1.0,
+        0.9103331462924287,
+        1.0
+      ],
+      "precision": [
+        null,
+        null,
+        null
+      ],
+      "f1": 0.0,
+      "mcc": 0.0
+    }
+  },
+  "by_label": {
+    "agent": {
+      "correct": 63,
+      "total": 66
+    },
+    "llm": {
+      "correct": 25,
+      "total": 25
+    },
+    "none": {
+      "correct": 39,
+      "total": 39
+    }
+  },
+  "by_difficulty": {
+    "easy": {
+      "correct": 23,
+      "total": 23
+    },
+    "medium": {
+      "correct": 53,
+      "total": 55
+    },
+    "hard": {
+      "correct": 51,
+      "total": 52
+    }
+  },
+  "by_surface": {
+    "endpoint": {
+      "n": 5,
+      "tp": 3,
+      "fp": 0,
+      "fn": 2,
+      "tn": 0,
+      "recall": [
+        0.6,
+        0.2307242812760128,
+        0.882379225767352
+      ],
+      "specificity": [
+        null,
+        null,
+        null
+      ],
+      "precision": [
+        1.0,
+        0.4385029682449546,
+        1.0
+      ],
+      "f1": 0.75,
+      "mcc": 0.0
+    },
+    "repo": {
+      "n": 125,
+      "tp": 85,
+      "fp": 0,
+      "fn": 1,
+      "tn": 39,
+      "recall": [
+        0.9883720930232558,
+        0.9370359341070826,
+        0.9979444313347503
+      ],
+      "specificity": [
+        1.0,
+        0.9103331462924287,
+        1.0
+      ],
+      "precision": [
+        1.0,
+        0.9567605161859486,
+        1.0
+      ],
+      "f1": 0.9942,
+      "mcc": 0.9817
+    }
+  },
+  "best_surface_f1": 0.9942,
+  "best_surface_name": "repo",
+  "surface_normalized_f1": 0.9848,
+  "adversarial_metrics": {
+    "n": 15,
+    "tp": 15,
+    "fp": 0,
+    "fn": 0,
+    "tn": 0,
+    "recall": [
+      1.0,
+      0.7961166989641515,
+      1.0
+    ],
+    "specificity": [
+      null,
+      null,
+      null
+    ],
+    "precision": [
+      1.0,
+      0.7961166989641515,
+      1.0
+    ],
+    "f1": 1.0,
+    "mcc": 0.0
+  },
+  "by_family": {
+    "agent-framework|langgraph-react": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|crewai-team": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|autogen-groupchat": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|pydantic-ai": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|openai-agents-sdk": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|google-adk": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|smolagents": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|llamaindex-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|vercel-ai-tools": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|semantic-kernel-csharp": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|claude-agent-sdk": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|langchaingo": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|mastra-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|ag2-swarm": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|dspy-pipeline": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|haystack-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|spring-ai-java": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|langchain4j-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|agency-swarm": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|letta-memgpt": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|phidata-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|instructor-extraction": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|metagpt-team": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|autogpt": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|composio-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|semantic-kernel-python": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|copilotkit-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "agent-framework|browser-use-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|langchain-lcel-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "agent-framework|openai-swarm-node": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|openai-embeddings": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|anthropic-messages": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|ollama-local": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|gemini-multimodal": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|litellm-proxy": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|cohere-chat": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|mistral-client": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|groq-inference": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|azure-openai-sdk": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|huggingface-inference": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|replicate-prediction": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "llm-sdk|bedrock-invoke-model": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "mcp-protocol|mcp-server-python": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "mcp-protocol|claude-desktop-mcp-config": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "mcp-protocol|mcp-server-typescript": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "mcp-protocol|mcp-client-python": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "mcp-protocol|windsurf-mcp-config": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "mcp-protocol|zed-mcp-config": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|cursor-rules": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|aider-config": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|cline-config": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|continue-dev-config": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|windsurf-rules": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|github-copilot-workspace": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|claude-code-project": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|sourcegraph-cody-config": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|devin-config": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "coding-agent|openclaw-state": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|bedrock-agent-terraform": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|vertex-ai-pipeline": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|azure-openai-terraform": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|sagemaker-llm-endpoint": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|bedrock-knowledge-base": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|lambda-ai-function": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|azure-ai-search-rag": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "cloud-ai|vertex-agent-builder": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "lowcode-ai|n8n-ai-workflow": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "lowcode-ai|dify-workflow": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "lowcode-ai|flowise-chatflow": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "lowcode-ai|langflow-pipeline": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": false,
+      "correct": false,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "lowcode-ai|rivet-graph": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|raw-openai-tool-loop": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|go-import-only-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "adversarial|rust-llm-cargo-only": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|custom-http-llm-client": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "adversarial|dynamic-import-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "adversarial|minified-js-ai-sdk": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|polyglot-ai-project": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "adversarial|test-only-ai-code": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|monorepo-hidden-ai": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|docker-ai-deployment": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|cpp-llm-rest-client": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "adversarial|kotlin-openai-ktor": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|ruby-langchain-agent": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": false,
+      "signature_recall": 0.0
+    },
+    "adversarial|php-openai-client": {
+      "label": "llm",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "adversarial|github-actions-ai": {
+      "label": "agent",
+      "surface": "repo",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "endpoint|dev-home-claude-dir": {
+      "label": "agent",
+      "surface": "endpoint",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "endpoint|vscode-ai-extensions": {
+      "label": "agent",
+      "surface": "endpoint",
+      "detected": false,
+      "correct": false,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "endpoint|shell-history-ai-cli": {
+      "label": "agent",
+      "surface": "endpoint",
+      "detected": false,
+      "correct": false,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "endpoint|jetbrains-ai-plugin": {
+      "label": "agent",
+      "surface": "endpoint",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "endpoint|npm-global-ai-packages": {
+      "label": "agent",
+      "surface": "endpoint",
+      "detected": true,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": 0.0
+    },
+    "negative|neg-insurance-agents": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-travel-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-user-agent-parser": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-monitoring-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-minecraft-bedrock": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-sklearn-pipeline": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-agent-pattern": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-gemini-exchange": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-commented-out": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-egress-blocklist": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-minecraft-mcp": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-plain-webapp": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-pytorch-training": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-tensorflow-serving": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-prometheus-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-ansible-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-puppet-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-jenkins-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-snmp-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-rule-based-chatbot": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-blockchain-contract": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-spacy-nlp": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-opencv-cv": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-gymnasium-rl": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-mesa-abm": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-message-broker": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-game-npc-ai": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-terraform-state": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-selenium-automation": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-consul-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-vault-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-nomad-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-salt-minion": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-graphql-resolver": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-kerberos-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-build-agent": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-db-replication": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-log-shipper": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    },
+    "negative|neg-deepseek-crypto": {
+      "label": "none",
+      "surface": "repo",
+      "detected": false,
+      "correct": true,
+      "agent_tier_correct": true,
+      "signature_recall": null
+    }
+  },
+  "agent_tier_accuracy": 0.6984126984126984,
+  "mean_signature_recall": 0.0,
+  "false_positives": [],
+  "false_negatives": [
+    {
+      "case_id": "rw-repo-070",
+      "family": "langflow-pipeline"
+    },
+    {
+      "case_id": "rw-repo-088",
+      "family": "vscode-ai-extensions"
+    },
+    {
+      "case_id": "rw-repo-089",
+      "family": "shell-history-ai-cli"
+    }
+  ],
+  "error_count": 0
+}

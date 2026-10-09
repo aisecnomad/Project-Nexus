@@ -1,0 +1,71 @@
+{
+  "manifest_version": 2,
+  "manifest_sha256": "805fbf2a8ba6ec5d5762e11db2e734efaab9b726083db65e88814b4fdc2fb0f6",
+  "protocol_sha256": "0c7fc9f2ff4ab8a6326fefbd5f67d8c5dd253e77e13a86b814d534c98934d994",
+  "code_sha256": "28c7cbbdf400b329c66074626d150e05b8649cafb6f20f549d2997c3208f411b",
+  "tool_pins": {
+    "cisco-aibom": "1.10.0",
+    "agent-bom": "0.108.2",
+    "agentdiscover": "2.9.5",
+    "snyk-agent-scan": "0.6.8",
+    "cisco-ai-mcp-scanner": "4.8.6",
+    "mcp-audit-scanner": "0.18.2",
+    "shadow-mcp": "0.2.0",
+    "safedep-vet": "v1.17.5"
+  },
+  "sandbox": "unshare --net --pid --fork --mount-proc; setpriv nobody; empty environment; HOME=case; no .git, no symlinks",
+  "manifest": "corpus_v2.json",
+  "protocol": "PROTOCOL-v2.md",
+  "only_cases": "cases-cisco-aibom.txt",
+  "workers": 1,
+  "repos": 124,
+  "cases": 11,
+  "python": "3.13.16",
+  "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+  "finished_utc": "2026-10-08T21:32:43+00:00",
+  "runs": [
+    {
+      "tool": "shadowscan",
+      "display": "Project Nexus ShadowScan",
+      "source": "aisecnomad/Project-Nexus",
+      "surfaces": {
+        "repo": "code.filesystem on the checkout"
+      },
+      "wall_seconds": 1158.1,
+      "ok": 0,
+      "error": 40,
+      "n/a": 0,
+      "only_cases_sha256": "a89607957ce34df7dacc4603e9910c206be14674d8b46cb2b1f49e2b5138c4f4"
+    },
+    {
+      "tool": "agent-bom",
+      "display": "agent-bom",
+      "source": "msaad00/agent-bom",
+      "surfaces": {
+        "repo": "scan <checkout> --no-scan --offline (inventory only), empty HOME",
+        "endpoint": "scan --no-scan --offline with HOME=<case> (client auto-discovery)"
+      },
+      "wall_seconds": 1897.6,
+      "ok": 0,
+      "error": 39,
+      "n/a": 0,
+      "only_cases_sha256": "27cf7a69ffd6c591dadefaea004afb0e5a5c7d68c2dab8d6b564f7b7fbca3e37"
+    },
+    {
+      "tool": "cisco-aibom",
+      "display": "Cisco AI BOM",
+      "source": "cisco-ai-defense/aibom",
+      "surfaces": {
+        "repo": "analyze <checkout>; Tier-3 LLM classifier unreachable (deterministic floor)"
+      },
+      "wall_seconds": 3316.5,
+      "ok": 0,
+      "error": 11,
+      "n/a": 0,
+      "only_cases_sha256": "095b506929f2cfd1f3c533174f5c0aec7e3beeb57576181bb04d48b74b5a9302"
+    }
+  ],
+  "self_check": null,
+  "subset": true,
+  "shadowscan_commit": "fc3e998cc4c37ba9b61a408b5e62571a303d8a36"
+}

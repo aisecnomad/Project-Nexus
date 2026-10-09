@@ -279,7 +279,13 @@ and tests, which call and test the products they detect.
   the timeout-capable `regex` engine in compatibility mode. Use `(?i)` for
   case-insensitivity. Write line-leading whitespace as `[^\S\r\n]*`, not `\s*`,
   so blank lines cannot trigger repeated scans of the rest of a file.
-* Each signature regex execution is limited to 100 ms. Fixed linear hostname
+* Each signature regex execution is limited to 100 ms, scaled linearly with
+  the declared input size for filesystem scans (0.25 s per million
+  characters, never beyond the file's wall budget), so allowed work stays
+  proportional to input length and super-linear patterns still fail on
+  large inputs. `python -m shadowscan.signatures.validate` rejects secret
+  patterns slower than that allowance on a pathological keyword-dense
+  corpus. Fixed linear hostname
   and environment tokenizers use the shared input deadline instead. Filesystem scans share a configurable
   execution budget across the file's matching operations (2 seconds by default).
   Exceeding either limit raises an error and makes the scan incomplete; timeout
@@ -296,6 +302,10 @@ and tests, which call and test the products they detect.
   general `api.cloudflare.com`, the `huggingface.co` site) is corroboration only (weight 0.15 or less) in
   its own signal; the AI-specific hosts (`gateway.ai.cloudflare.com`, `router.huggingface.co`) carry the
   high weight, so a DNS script or a dataset download stays a low-confidence hint, not LLM usage.
+  A `re:` value must not match a dotted identifier: end it in a list of top-level domains or a fixed vendor
+  domain, because the tokenizer reads every `a.b.c` word of a source file as a host
+  (`re:^mcp\.[a-z0-9-]+\.(?:com|dev|app|ai|io|...)$`, not `\.[a-z]+$`). A host on a line of a hosts file,
+  ad-block list, resolver configuration or proxy rule list is routed or blocked, not used, and never matches.
   `gateway.logs` still treats Cloudflare Workers AI inference paths (`/accounts/<id>/ai/run/`,
   `/accounts/<id>/ai/v1/`) as LLM traffic on any host.
 * Dependency names that are also unrelated packages (the PyPI name `swarm`, which is not OpenAI Swarm) are

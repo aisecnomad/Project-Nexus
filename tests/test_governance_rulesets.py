@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -11,7 +12,8 @@ from typing import Any
 
 import pytest
 
-from tools.governance.rulesets import REPOSITORY, RULESETS, prepare_payload, verify_readback
+from tools.governance import rulesets
+from tools.governance.rulesets import REPOSITORY, RULESETS, observe_readback, prepare_payload, verify_readback
 from tools.governance_check import GITHUB_ACTIONS_APP_ID, check_ruleset
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +122,50 @@ def test_readback_names_a_withheld_bypass_list_instead_of_a_wrong_identity(rules
     assert "expected repository" not in str(refused.value)
 
 
+@pytest.mark.parametrize("ruleset_id", RULESETS)
+def test_observation_distinguishes_visible_controls_from_complete_readback(ruleset_id: int) -> None:
+    expected = json.loads((ROOT / ".github/rulesets" / f"{ruleset_id}.update.json").read_text())
+    snapshot = _readback(expected, ruleset_id)
+    complete = observe_readback(snapshot, expected, ruleset_id=ruleset_id)
+    assert complete["status"] == "complete"
+    assert complete["complete_readback_verified"] is True
+    assert complete["unknown_fields"] == []
+    del snapshot["bypass_actors"]
+    original = copy.deepcopy(snapshot)
+    partial = observe_readback(snapshot, expected, ruleset_id=ruleset_id)
+    assert snapshot == original and "bypass_actors" not in snapshot
+    assert partial["status"] == "partial"
+    assert partial["visible_controls_match"] is True
+    assert partial["complete_readback_verified"] is False
+    assert partial["administrator_readback_required"] is True
+    assert partial["unknown_fields"] == ["bypass_actors"]
+    assert "bypass_actors" not in partial["verified_fields"]
+    # An observation never makes this input eligible for either strict gate.
+    with pytest.raises(ValueError, match="omits bypass_actors"):
+        verify_readback(snapshot, expected, ruleset_id=ruleset_id)
+    with pytest.raises(ValueError, match="omits bypass_actors"):
+        prepare_payload(snapshot, ruleset_id=ruleset_id)
+
+
+@pytest.mark.parametrize("field", ["name", "target", "enforcement", "conditions", "rules", "source", "id"])
+def test_observation_rejects_missing_fields_other_than_bypass(field: str) -> None:
+    expected = prepare_payload(_snapshot(), ruleset_id=23913372)
+    snapshot = _readback(expected)
+    del snapshot["bypass_actors"]
+    del snapshot[field]
+    with pytest.raises(ValueError):
+        observe_readback(snapshot, expected, ruleset_id=23913372)
+
+
+@pytest.mark.parametrize("bypass", [None, False, {}, [{"actor_type": "RepositoryRole", "actor_id": 5}]])
+def test_observation_rejects_visible_bypass_drift_or_malformed_values(bypass: Any) -> None:
+    expected = prepare_payload(_snapshot(), ruleset_id=23913372)
+    snapshot = _readback(expected)
+    snapshot["bypass_actors"] = bypass
+    with pytest.raises(ValueError, match="readback differs.*bypass_actors"):
+        observe_readback(snapshot, expected, ruleset_id=23913372)
+
+
 @pytest.mark.parametrize("count", [True, -1, 1.5, "1", None])
 def test_plan_refuses_ambiguous_approval_counts(count: Any) -> None:
     source = _snapshot()
@@ -192,6 +238,12 @@ def test_readback_rejects_disabled_or_weakened_controls(weakening: str) -> None:
         actual["rules"] = [rule for rule in actual["rules"] if rule["type"] != "required_signatures"]
     with pytest.raises(ValueError):
         verify_readback(actual, payload, ruleset_id=23913372)
+    with pytest.raises(ValueError):
+        observe_readback(actual, payload, ruleset_id=23913372)
+    if weakening != "bypass":
+        actual.pop("bypass_actors")
+        with pytest.raises(ValueError):
+            observe_readback(actual, payload, ruleset_id=23913372)
 
 
 def test_readback_rejects_an_unreviewed_rule_change_and_an_insecure_expected_payload() -> None:
@@ -204,6 +256,8 @@ def test_readback_rejects_an_unreviewed_rule_change_and_an_insecure_expected_pay
     expected["enforcement"] = "disabled"
     with pytest.raises(ValueError, match="expected policy"):
         verify_readback(_readback(expected), expected, ruleset_id=23913372)
+    with pytest.raises(ValueError, match="expected policy"):
+        observe_readback(_readback(expected), expected, ruleset_id=23913372)
 
 
 @pytest.mark.parametrize(
@@ -273,3 +327,81 @@ def test_cli_verify_is_nonzero_for_the_observed_disabled_ruleset(tmp_path: Path)
         text=True,
     )
     assert result.returncode != 0 and "readback differs" in result.stderr
+
+
+def test_observation_digest_binds_the_single_inspected_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy = ROOT / ".github/rulesets/23913372.update.json"
+    source = tmp_path / "snapshot.json"
+    snapshot_text = json.dumps(_readback(json.loads(policy.read_text()))) + "\n"
+    # The policy reader accepts a BOM, but the digest binds the decoded text.
+    source.write_text("\ufeff" + snapshot_text, encoding="utf-8")
+    output = tmp_path / "observation.json"
+    original_read = rulesets.read_policy_text
+    inspected: list[Path] = []
+
+    def rewrite_after_read(path: Path, max_bytes: int) -> str:
+        text = original_read(path, max_bytes=max_bytes)
+        inspected.append(path)
+        if path == source:
+            source.write_text('{"enforcement":"disabled"}')
+        return text
+
+    monkeypatch.setattr(rulesets, "read_policy_text", rewrite_after_read)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rulesets",
+            "observe",
+            "--ruleset-id",
+            "23913372",
+            "--input",
+            str(source),
+            "--expected",
+            str(policy),
+            "--output",
+            str(output),
+        ],
+    )
+    rulesets.main()
+    report = json.loads(output.read_text())
+    assert report["status"] == "complete"
+    assert inspected == [policy, source]
+    assert (
+        report["input_identity"]["snapshot_text_sha256"]
+        == hashlib.sha256(snapshot_text.encode("utf-8")).hexdigest()
+    )
+    assert source.read_text() == '{"enforcement":"disabled"}'
+
+
+def test_oversized_observation_input_has_no_inspected_snapshot_digest(tmp_path: Path) -> None:
+    source = tmp_path / "snapshot.json"
+    source.write_bytes(b"x" * (1024 * 1024 + 1))
+    output = tmp_path / "observation.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.governance.rulesets",
+            "observe",
+            "--ruleset-id",
+            "23913372",
+            "--input",
+            str(source),
+            "--expected",
+            str(ROOT / ".github/rulesets/23913372.update.json"),
+            "--output",
+            str(output),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    report = json.loads(output.read_text())
+    assert report["status"] == "failed"
+    assert report["input_identity"]["snapshot_text_sha256"] is None
+    assert report["input_identity"]["expected_policy_text_sha256"] is not None
+    assert "byte limit" in report["error"]

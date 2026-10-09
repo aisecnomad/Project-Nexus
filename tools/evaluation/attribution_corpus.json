@@ -173,20 +173,20 @@
     {
       "id": "n8n-compose-workflow",
       "family": "workflow",
-      "description": "n8n AI Agent workflow with a Docker Compose service and no Kubernetes resources Known gap: a Docker Compose service is incorrectly credited to Kubernetes agent workloads.",
+      "description": "n8n AI Agent workflow with a Docker Compose service and no Kubernetes resources Known gap: a Docker Compose service is incorrectly credited to Kubernetes agent workloads (agent node present, so the export classifies as an agent).",
       "files": {
         "workflows/triage.json": "{\"name\": \"triage\", \"active\": true, \"nodes\": [{\"name\": \"AI Agent\", \"type\": \"@n8n/n8n-nodes-langchain.agent\", \"parameters\": {}}, {\"name\": \"Model\", \"type\": \"@n8n/n8n-nodes-langchain.lmChatOpenAi\", \"parameters\": {}}], \"connections\": {}}\n",
         "docker-compose.yml": "services:\n  n8n:\n    image: docker.n8n.io/n8nio/n8n:1.70.0\n    ports:\n      - \"127.0.0.1:5678:5678\"\n"
       },
       "target": {
-        "kind": "workflow",
+        "kind": "agent",
         "signature": "platform.n8n"
       },
       "present": true,
       "assertions": {
         "expected_findings": [
           {
-            "kind": "workflow",
+            "kind": "agent",
             "product_signature": "platform.n8n",
             "provider_signature": "provider.openai"
           }
@@ -199,7 +199,7 @@
         ],
         "exact_findings": [
           {
-            "kind": "workflow",
+            "kind": "agent",
             "product_signatures": [
               "platform.n8n"
             ],

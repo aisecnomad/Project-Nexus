@@ -1,4 +1,4 @@
-"""Output formats: table (terminal), json, sarif, csv, markdown, html, cyclonedx."""
+"""Output formats: table (terminal), json, sarif, csv, markdown, html, cyclonedx, ocsf."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from shadowscan.reporters.cyclonedx import render_cyclonedx
 from shadowscan.reporters.html import render_html
 from shadowscan.reporters.json_ import render_json
 from shadowscan.reporters.markdown import render_markdown
+from shadowscan.reporters.ocsf import render_ocsf
 from shadowscan.reporters.sarif import render_sarif
 from shadowscan.signatures import SignatureIndex
 
@@ -21,6 +22,7 @@ RENDERERS: dict[str, Callable[[ScanResult], str]] = {
     "md": render_markdown,
     "html": render_html,
     "cyclonedx": render_cyclonedx,
+    "ocsf": render_ocsf,
 }
 
 FORMATS = ["table", *sorted(k for k in RENDERERS if k != "md")]

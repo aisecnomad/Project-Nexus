@@ -206,18 +206,37 @@ def test_transport_stream_like_source_comment_cannot_hide_agent_construction(
 @pytest.mark.parametrize(
     "content",
     [
+        # One NUL is a large share of a file this small: it cannot be called stray.
         b"import OpenAI from 'openai'; // \x00\n",
-        # Sync bytes at the first three packet starts only: not a transport stream.
-        b"G" + b"/" * 187 + b"G" + b"/" * 187 + b"G\x00\nimport OpenAI from 'openai';\n" + b"/" * 600,
-        # A sync byte at every packet start, but the packets are text.
-        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 187) * 11,
+        # Mostly NUL, as a transport stream's padding is.
+        b"G\x00" + b"\x00" * 600 + b"\nimport OpenAI from 'openai';\n",
+        # Not valid UTF-8: the packets are binary.
+        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 186 + b"\xff") * 11,
     ],
-    ids=["nul-comment", "three-sync-bytes", "sync-every-packet-but-text"],
+    ids=["nul-comment", "mostly-nul", "binary-packets"],
 )
 def test_nul_bearing_typescript_stays_a_coverage_gap(tmp_path, run_connector, content):
     (tmp_path / "agent.ts").write_bytes(content)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # Sync bytes at the first three packet starts only: not a transport stream.
+        b"G" + b"/" * 187 + b"G" + b"/" * 187 + b"G\x00\nimport OpenAI from 'openai';\n" + b"/" * 600,
+        # A sync byte at every packet start, but the packets are text.
+        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 187) * 11,
+    ],
+    ids=["three-sync-bytes", "sync-every-packet-but-text"],
+)
+def test_text_typescript_with_a_stray_nul_is_analyzed_not_skipped(tmp_path, run_connector, content):
+    # One NUL in over a kilobyte of valid UTF-8 text: reading it finds what a skip would have hidden.
+    (tmp_path / "agent.ts").write_bytes(content)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not _gaps(ctx.stats.errors)
+    assert any("provider.openai" in finding.model_providers for finding in findings)
 
 
 @pytest.mark.parametrize("rel", [".cursor/rules/notes.bin", ".roo/rules/notes.utf16"])
@@ -457,3 +476,28 @@ def test_host_of_returns_none_without_a_host(url):
 
 
 # ------------------------------------------------------------- inventory links
+
+
+def test_committed_template_syntax_keeps_coverage_incomplete(tmp_path, run_connector):
+    """Input-defect diagnostics preserve findings without claiming full coverage."""
+    (tmp_path / "agent.py").write_text("from crewai import Agent\nAgent(role='r', goal='g')\n")
+    template = tmp_path / "{{cookiecutter.package_name}}"
+    template.mkdir()
+    (template / "pyproject.toml").write_text('[project\nname = "{{cookiecutter.package_name}}"\n')
+    (tmp_path / "broken.mcp.json").write_text('{"mcpServers": "not-an-object"}')
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors, ctx.stats.errors
+    assert ctx.stats.incomplete
+    defects = [w for w in ctx.stats.warnings if "input defect" in w]
+    assert any("invalid TOML" in w for w in defects)
+    assert any("MCP servers must be an object or array" in w for w in defects)
+    assert any("framework.crewai" in f.frameworks for f in findings)
+
+
+def test_strict_coverage_keeps_template_syntax_failing_closed(tmp_path, run_connector):
+    template = tmp_path / "{{cookiecutter.package_name}}"
+    template.mkdir()
+    (template / "pyproject.toml").write_text("[project\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=True)
+    assert ctx.stats.incomplete
+    assert any("input defect" in e and "invalid TOML" in e for e in ctx.stats.errors)

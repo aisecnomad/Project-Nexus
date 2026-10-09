@@ -532,7 +532,7 @@ def test_a_structural_anchor_keeps_a_file_a_configuration(anchor):
 
 
 def test_heuristic_and_policy_matches_neither_count_nor_disqualify():
-    rel = "net/blocklist.yaml"
+    rel = "net/services.yaml"
     ignored = [
         mention(rel, "env", 10, category="heuristic"),
         mention(rel, "domain", 11, category="policy"),
@@ -542,6 +542,14 @@ def test_heuristic_and_policy_matches_neither_count_nor_disqualify():
     # They are not anchors either: a heuristic code idiom or a policy match does not make the file configuration.
     anchors = [mention(rel, "code", 12, category="heuristic"), mention(rel, "code", 13, category="policy")]
     assert catalog_files([*products(rel, 4), *anchors]) == {rel}
+
+
+def test_policy_filename_is_catalog_below_threshold():
+    rel = "net/blocklist.yaml"
+    assert catalog_files([*products(rel, 3)]) == {rel}
+    assert catalog_files([*products(rel, 1)]) == {rel}
+    assert catalog_files([*products("config/denylist.yaml", 2)]) == {"config/denylist.yaml"}
+    assert catalog_files([*products("config/services.yaml", 3)]) == frozenset()
 
 
 def test_a_catalog_is_judged_per_file():

@@ -473,3 +473,24 @@ def test_cli_reports_competing_regexes_in_custom_packs(tmp_path, capsys):
     (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [first, second]}))
     assert main(["--no-builtin", str(tmp_path)]) == 0
     assert capsys.readouterr().out.strip() == "Validated 2 signatures and 2 signals."
+
+
+def test_throughput_gate_rejects_a_slow_secret_pattern(tmp_path, capsys):
+    """A secret pattern slower than the matcher's linear allowance must fail validation."""
+    slow = _signature()
+    slow["id"] = "framework.slowsecret"
+    # Nested quantifiers over the corpus's hyphenated runs: super-linear work
+    # that cannot fit the per-million-chars allowance.
+    slow["signals"] = [{"type": "secret", "patterns": [r"(?i)(?:[a-z0-9_.-]+?[-.]){3,}API[_-]?KEY\b\S*"]}]
+    (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [slow]}))
+    assert main(["--no-builtin", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "rewrite the pattern rather than raising budgets" in err
+
+
+def test_throughput_gate_passes_a_literal_anchored_secret_pattern(tmp_path, capsys):
+    fast = _signature()
+    fast["id"] = "framework.fastsecret"
+    fast["signals"] = [{"type": "secret", "patterns": [r"\bghp_[A-Za-z0-9]{36}\b"]}]
+    (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [fast]}))
+    assert main(["--no-builtin", str(tmp_path)]) == 0

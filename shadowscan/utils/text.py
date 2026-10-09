@@ -22,6 +22,17 @@ _BINARY_SNIFF = 8192
 # Callers pass only files they would analyze, so this is a coverage gap, never
 # a reason to treat the scan as complete.
 BINARY_CONTENT_ERROR = "binary or undecodable content in analyzable file"
+# Notes ``read_text`` adds for text it read although it was not clean UTF-8. The file is analyzed in
+# full, so these leave coverage complete; they only tell the operator what the reader did.
+STRAY_NUL_NOTE = "stray NUL bytes in text, read as text"
+INVALID_UTF8_NOTE = "not valid UTF-8, the bytes that are not were replaced"
+# A file is text with stray NUL bytes, not binary, when it is valid UTF-8, holds no other control
+# character in the sniff window, and at most one byte in ``_SPARSE_NUL_RATIO`` is NUL. Below
+# ``_STRAY_NUL_MIN_BYTES`` one NUL is too large a share of the file to call it stray. Compressed or
+# encrypted data is about 0.4% NUL, but it is not valid UTF-8.
+_SPARSE_NUL_RATIO = 200
+_STRAY_NUL_MIN_BYTES = 512
+_BINARY_CONTROLS = frozenset(range(0x20)) - {0x00, 0x09, 0x0A, 0x0C, 0x0D}
 # Byte-order marks, longest first (the UTF-32LE mark begins with the UTF-16LE one).
 _BOM_CODECS: tuple[tuple[bytes, str], ...] = (
     (b"\xff\xfe\x00\x00", "utf-32"),
@@ -130,11 +141,72 @@ def _python_source_text(raw: bytes) -> str | None:
         raise ValueError(BINARY_CONTENT_ERROR) from None
 
 
-def _decode_text(raw: bytes, name: str, analyzable_name: bool) -> str | None:
+def _stray_nul_text(raw: bytes) -> str | None:
+    """The text of a file that holds a few NUL bytes (a TypeScript cache-key separator), or None.
+
+    A NUL in the sniff window used to make the whole file a coverage gap, whatever else it held, so
+    the source around it was never analyzed. Binary data fails at least one of the tests below (it is
+    not valid UTF-8, it holds other control characters, or it is far more than 0.5% NUL), so it stays
+    a gap.
+    """
+    if len(raw) < _STRAY_NUL_MIN_BYTES or raw.count(b"\x00") * _SPARSE_NUL_RATIO > len(raw):
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if any(ord(character) in _BINARY_CONTROLS for character in text[:_BINARY_SNIFF]):
+        return None
+    return text
+
+
+# The share of replacement characters in any bounded window above which "text that is not UTF-8" is
+# no longer text (random or compressed bytes are over half invalid; Latin-1 prose is a few percent).
+_MAX_REPLACED_SHARE = 0.10
+_REPLACED_ALLOWANCE = (
+    4  # a short file with a few bad bytes is text; the share rule needs room to mean anything
+)
+
+
+def _decode_utf8(raw: bytes, notes: list[str] | None, codec: str = "utf-8", *, strict: bool = False) -> str:
+    """Decode UTF-8, replacing the bytes that are not when the content is text, and say so in ``notes``.
+
+    ASCII-compatible text in another encoding (Latin-1 or Windows-1252 prose) reads the same here for
+    every pattern the scanner looks for, so skipping the file as a coverage gap lost everything the
+    scanner would have found and hid nothing. Content that is mostly not valid UTF-8, or that holds
+    control characters other than tab, line breaks and form feed anywhere, is not that: it
+    stays a gap, as do EBCDIC and other encodings that write ASCII differently. ``strict`` keeps the
+    gap for the files whose own runtime rejects bytes that are not valid UTF-8 and whose only other
+    encodings are declared (Python sources and notebooks).
+    """
+    try:
+        return raw.decode(codec)
+    except UnicodeDecodeError:
+        if strict:
+            raise
+        text = raw.decode(codec, errors="replace")
+        # Check the entire bounded input. An ordinary-text prefix must not
+        # conceal a binary body after the first sniff window.
+        for offset in range(0, len(text), _BINARY_SNIFF):
+            window = text[offset : offset + _BINARY_SNIFF]
+            if window.count("\ufffd") > max(_REPLACED_ALLOWANCE, _MAX_REPLACED_SHARE * len(window)) or any(
+                ord(character) in _BINARY_CONTROLS for character in window
+            ):
+                raise
+        if notes is not None:
+            notes.append(INVALID_UTF8_NOTE)
+        return text
+
+
+def _decode_text(raw: bytes, name: str, analyzable_name: bool, notes: list[str] | None = None) -> str | None:
     """Decode file content for analysis; None for a recognised binary artifact (``_skips_binary``)."""
     for bom, codec in _BOM_CODECS:
         if raw.startswith(bom):
-            decoded = raw.decode(codec)
+            decoded = (
+                _decode_utf8(raw, notes, codec, strict=name.lower().endswith((".py", ".ipynb")))
+                if codec == "utf-8-sig"
+                else raw.decode(codec)
+            )
             # A mark does not make the rest text: a NUL in the decoded prefix
             # is still binary content under an analyzable name.
             if "\x00" in decoded[:_BINARY_SNIFF]:
@@ -143,12 +215,17 @@ def _decode_text(raw: bytes, name: str, analyzable_name: bool) -> str | None:
     if b"\x00" in raw[:_BINARY_SNIFF]:
         if _skips_binary(name, raw, analyzable_name):
             return None
-        raise ValueError(BINARY_CONTENT_ERROR)
+        stray = _stray_nul_text(raw)
+        if stray is None:
+            raise ValueError(BINARY_CONTENT_ERROR)
+        if notes is not None:
+            notes.append(STRAY_NUL_NOTE)
+        return stray
     if name.lower().endswith(".py"):
         declared = _python_source_text(raw)
         if declared is not None:
             return declared
-    return raw.decode("utf-8")
+    return _decode_utf8(raw, notes, strict=name.lower().endswith((".py", ".ipynb")))
 
 
 def read_text(
@@ -158,6 +235,7 @@ def read_text(
     *,
     dir_fd: int | None = None,
     analyzable_name: bool = True,
+    notes: list[str] | None = None,
 ) -> str | None:
     """Read a bounded regular file without following a symlink in any path component.
 
@@ -172,12 +250,16 @@ def read_text(
     the mark removed, and a Python source is decoded with the codec its PEP 263
     cookie declares. Callers pass only files they would analyze, so any other
     content with a NUL byte in its first 8 KiB is reported as
-    ``BINARY_CONTENT_ERROR`` rather than ignored. The exception is a recognised
+    ``BINARY_CONTENT_ERROR`` rather than ignored. The exceptions are a recognised
     binary artifact (``_skips_binary``) without any file extension or, with
     ``analyzable_name`` False, any recognised artifact: the caller then reads
     the file only because of the directory it is in, such as an image kept
-    beside coding-agent rules. Limits and I/O failures are reported to callers
-    that track completeness.
+    beside coding-agent rules; and a large text file with a few stray NUL bytes
+    (``_stray_nul_text``). Text that is not valid UTF-8 and holds no NUL is read
+    with the invalid bytes replaced (``_decode_utf8``). Both are analyzed in full,
+    so they are not gaps: ``notes`` receives a short description of each for the
+    caller to report. Limits and I/O failures are reported to callers that track
+    completeness.
     """
     try:
         if max_bytes < 1:
@@ -188,7 +270,7 @@ def read_text(
             raw = fh.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise ValueError("file exceeds max_file_size")
-        return _decode_text(raw, path.name, analyzable_name)
+        return _decode_text(raw, path.name, analyzable_name, notes)
     except (OSError, ValueError) as exc:
         if errors is not None:
             # Do not embed raw file contents or exception messages in reports.
@@ -395,6 +477,22 @@ def line_counter(text: str) -> Callable[[int], int]:
         return line
 
     return line_at
+
+
+def python_source_lines(text: str) -> list[str]:
+    """Keep original physical lines for Python AST byte-column coordinates.
+
+    Python accepts LF, CRLF and CR as source line endings. Other separators
+    accepted by str.splitlines() are literal content and must not shift later
+    constructor or registered-tool spans.
+    """
+    lines: list[str] = []
+    start = 0
+    for match in re.finditer(r"\r\n|\r|\n", text):
+        lines.append(text[start : match.end()])
+        start = match.end()
+    lines.append(text[start:])
+    return lines
 
 
 _URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*+://", re.IGNORECASE)

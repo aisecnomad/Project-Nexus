@@ -145,6 +145,12 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "expired": (-5, "expired"),
     "asks-user": (-3, "asks the user before acting"),
     "test-code-only": (-10, "evidence found only in test or fixture code"),
+    "docs-only": (-8, "evidence found only in documentation"),
+    "example-code-only": (-8, "evidence found only in example or sample code"),
+    "generated-code-only": (-10, "evidence found only in generated or auto-generated code"),
+    "hidden-instructions": (20, "instruction file carries content hidden from the rendered view"),
+    "remote-code-fetch": (15, "instruction file downloads and executes code in one step"),
+    "invisible-text": (10, "instruction file contains invisible or bidirectional control characters"),
 }
 
 PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {

@@ -24,6 +24,12 @@ signatures:
         exclude_names: [langchain-text-splitters]
         weight: 0.85
       - type: dependency
+        ecosystem: conda
+        names: [langchain, langchain-core, langchain-community]
+        prefixes: [langchain-]
+        exclude_names: [langchain-text-splitters]
+        weight: 0.85
+      - type: dependency
         ecosystem: npm
         names: [langchain]
         prefixes: ["@langchain/"]
@@ -147,6 +153,11 @@ signatures:
         ecosystem: pypi
         names: [llama-index, llama-index-core, llama-index-agent-openai, llama-index-llms-openai, llama-index-llms-anthropic, llama-index-llms-bedrock-converse, llama-index-llms-vertex, llama-index-tools-mcp, llama-deploy, llama-agents, llama-cloud, llama-cloud-services, llama-parse]
         prefixes: [llama-index, llama-cloud]
+        weight: 0.85
+      - type: dependency
+        ecosystem: conda
+        names: [llama-index, llama-index-core]
+        prefixes: [llama-index]
         weight: 0.85
       - type: dependency
         ecosystem: npm
@@ -919,6 +930,27 @@ signatures:
       - type: env
         names: [SWARMS_API_KEY]
         weight: 0.6
+
+  - id: framework.agency-swarm
+    name: Agency Swarm
+    category: framework
+    vendor: VRSEN
+    homepage: https://github.com/VRSEN/agency-swarm
+    description: Multi-agent framework with CEO/worker hierarchies using OpenAI Assistants API.
+    capabilities: [multi-agent, autonomous]
+    agent_indicator: true
+    signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [agency-swarm]
+        weight: 0.97
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+agency_swarm\b']
+        weight: 0.97
+      - type: code
+        patterns: ['\bAgency\s*\(\s*\[', '\bset_openai_key\s*\(', '\bfrom\s+agency_swarm\s+import\s+[^\n]*\bAgent\b']
+        weight: 0.85
 
   - id: framework.autogpt
     name: AutoGPT

@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import codecs
+import random
 import time
+import zlib
 from datetime import UTC, datetime
 
 import pytest
 
 from shadowscan.utils import text
 from shadowscan.utils.redaction import credential_id, sanitize
-from shadowscan.utils.text import BINARY_CONTENT_ERROR, line_counter, parse_timestamp, read_text, redact
+from shadowscan.utils.text import (
+    BINARY_CONTENT_ERROR,
+    INVALID_UTF8_NOTE,
+    STRAY_NUL_NOTE,
+    line_counter,
+    parse_timestamp,
+    read_text,
+    redact,
+)
 
 
 @pytest.mark.parametrize(
@@ -195,6 +205,86 @@ def test_read_text_extension_or_unknown_header_defeats_the_quiet_skip(tmp_path):
         assert errors == [BINARY_CONTENT_ERROR], name
 
 
+def _typescript_with_nul(extra: bytes = b"") -> bytes:
+    # A cache key joined with a literal NUL, as one TypeScript module in the wild does.
+    return (
+        b'import OpenAI from "openai";\n'
+        + b"// a module with enough ordinary text around the byte below to be a source file\n" * 8
+        + b"const cacheKey = `${provider}\x00${modelId}`;\n"
+        + extra
+    )
+
+
+@pytest.mark.parametrize("name", ["cost.ts", "view.tsx", "NOTES.md", "settings.json", "Dockerfile"])
+def test_read_text_reads_a_large_text_file_with_a_stray_nul(tmp_path, name):
+    data = _typescript_with_nul()
+    (tmp_path / name).write_bytes(data)
+    errors: list[str] = []
+    notes: list[str] = []
+    text = read_text(tmp_path / name, 10_000, errors, notes=notes)
+    assert text == data.decode()
+    assert errors == []
+    assert notes == [STRAY_NUL_NOTE]
+
+
+@pytest.mark.parametrize(
+    ("label", "data"),
+    [
+        ("dense NUL", b"ab\x00" * 400),
+        ("NUL in a small file", b"const OpenAI = require('openai'); // a\x00b\n"),
+        ("not valid UTF-8", _typescript_with_nul(b"\xff\xfe\xfd")),
+        ("other control characters", _typescript_with_nul(b"\x01\x02 more text\n")),
+        ("UTF-16 without a mark", "import OpenAI from 'openai';\n".encode("utf-16-le") * 40),
+        ("compressed data", zlib.compress(bytes(range(256)) * 8)),
+    ],
+)
+def test_read_text_still_reports_binary_content_with_nul_bytes(tmp_path, label, data):
+    (tmp_path / "cost.ts").write_bytes(data)
+    errors: list[str] = []
+    notes: list[str] = []
+    assert read_text(tmp_path / "cost.ts", 100_000, errors, notes=notes) is None, label
+    assert errors == [BINARY_CONTENT_ERROR]
+    assert notes == []
+
+
+@pytest.mark.parametrize(
+    "name", ["CHANGELOG.txt", "CliSiTef.ini", "sigma.parse.js", "spam.csv", "Dockerfile"]
+)
+def test_read_text_reads_text_that_is_not_utf8_with_the_bad_bytes_replaced(tmp_path, name):
+    (tmp_path / name).write_bytes(b"# d\xe9pendances: OPENAI_API_KEY and langchain==0.2.0\r\n")
+    errors: list[str] = []
+    notes: list[str] = []
+    text = read_text(tmp_path / name, 1000, errors, notes=notes)
+    assert text == "# d\ufffdpendances: OPENAI_API_KEY and langchain==0.2.0\r\n"
+    assert errors == []
+    assert notes == [INVALID_UTF8_NOTE]
+
+
+@pytest.mark.parametrize("name", ["agent.py", "analysis.ipynb", "AGENT.PY"])
+def test_read_text_python_sources_and_notebooks_must_be_valid_utf8_or_declare_a_codec(tmp_path, name):
+    # Their own runtimes reject bytes that are not valid UTF-8, so the gap stays.
+    (tmp_path / name).write_bytes(b"import openai\nx = '\xe9'\n")
+    errors: list[str] = []
+    notes: list[str] = []
+    assert read_text(tmp_path / name, 1000, errors, notes=notes) is None
+    assert errors == [BINARY_CONTENT_ERROR]
+    assert notes == []
+
+
+def test_read_text_without_a_notes_list_still_reads_text_that_is_not_utf8(tmp_path):
+    (tmp_path / "a.txt").write_bytes(b"caf\xe9")
+    assert read_text(tmp_path / "a.txt", 100) == "caf\ufffd"
+
+
+def test_read_text_utf8_mark_followed_by_bad_bytes_is_read_but_a_utf16_one_is_a_gap(tmp_path):
+    (tmp_path / "a.txt").write_bytes(codecs.BOM_UTF8 + b"caf\xe9")
+    assert read_text(tmp_path / "a.txt", 100) == "caf\ufffd"
+    (tmp_path / "b.txt").write_bytes(codecs.BOM_UTF16_LE + b"a\x00\x00\xd8")
+    errors: list[str] = []
+    assert read_text(tmp_path / "b.txt", 100, errors) is None
+    assert errors == [BINARY_CONTENT_ERROR]
+
+
 def test_read_text_nul_after_the_sniff_window_is_still_text(tmp_path):
     (tmp_path / "a.txt").write_bytes(b"a" * 9000 + b"\x00tail")
     errors: list[str] = []
@@ -219,10 +309,13 @@ def test_read_text_decodes_python_source_with_its_declared_codec(tmp_path):
 
 
 def test_read_text_declared_codec_applies_to_python_sources_only(tmp_path):
+    # The cookie is not applied: the file is read as UTF-8, with the byte that is not replaced.
     (tmp_path / "notes.md").write_bytes(b"# coding: latin-1\n\xe9\n")
     errors: list[str] = []
-    assert read_text(tmp_path / "notes.md", 1000, errors) is None
-    assert errors == [BINARY_CONTENT_ERROR]
+    notes: list[str] = []
+    assert read_text(tmp_path / "notes.md", 1000, errors, notes=notes) == "# coding: latin-1\n\ufffd\n"
+    assert errors == []
+    assert notes == [INVALID_UTF8_NOTE]
 
 
 def test_read_text_python_source_its_codec_cannot_decode_is_a_gap(tmp_path):
@@ -296,3 +389,21 @@ def test_line_counter_scans_each_character_once_for_ordered_offsets():
 def test_line_counter_recounts_an_earlier_offset():
     line_at = line_counter("a\nb\nc\n")
     assert [line_at(4), line_at(0), line_at(2), line_at(2), line_at(6)] == [3, 1, 2, 2, 4]
+
+
+def test_read_text_random_bytes_without_nul_are_not_lossily_decoded(tmp_path):
+    rng = random.Random(20261009)
+    # Bytes 0x80-0xFF only: no NUL and no control character, but nearly all of it is not valid UTF-8.
+    (tmp_path / "config.yaml").write_bytes(bytes(rng.randrange(0x80, 0x100) for _ in range(20_000)))
+    errors: list[str] = []
+    notes: list[str] = []
+    assert read_text(tmp_path / "config.yaml", 100_000, errors, notes=notes) is None
+    assert errors == [BINARY_CONTENT_ERROR]
+    assert notes == []
+
+
+def test_read_text_control_characters_in_undecodable_content_keep_it_a_gap(tmp_path):
+    (tmp_path / "a.env").write_bytes(b"KEY=caf\xe9\x01\x02 more text here\n" * 40)
+    errors: list[str] = []
+    assert read_text(tmp_path / "a.env", 100_000, errors) is None
+    assert errors == [BINARY_CONTENT_ERROR]

@@ -5,6 +5,315 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Scan evidence, completeness and replay corrections
+
+- Resolve supported Go SDK import aliases before publishing credential-bearing
+  source evidence, and keep excerpts aligned with LF-based source locations when
+  literals contain carriage returns. Reports remain confidential; dynamic call
+  resolution is limited.
+- Treat VPC Flow Log `SKIPDATA`, invalid and contradictory logging statuses as
+  incomplete coverage. `NODATA` remains a valid no-traffic observation.
+- Attribute network flows by connection identity before aggregation, preserving
+  non-AI TLS evidence and refusing conflicting or ambiguous associations.
+- Bind hosted-agent invocation evidence to the HTTP method, provider and
+  execution operation from the same event. Management requests no longer imply
+  runtime activity; invocation attempts do not establish success or tool use.
+  Caller names and cadence remain hints rather than independent capability or
+  agent-execution evidence.
+- Accept ordinary Rust multiline string literals and supported JSX in `.js`,
+  `.mjs` and `.cjs` while retaining incomplete results for unresolved syntax.
+- Enforce strict JSON and replay byte limits on record exports; reject a failed
+  replacement atomically and retain valid live analysis. Empty successful exports
+  use an explicit empty record envelope that can be replayed.
+- Document baseline migration, paired review controls and repository-level field
+  acceptance. These regression changes do not establish live tenant acceptance
+  or independently measured field precision.
+
+### Discovery classification and lifecycle identity corrections
+
+- Resolve supported positional SDK credential arguments before publishing
+  source evidence, including supported import aliases; retain confidential
+  report handling and bounded sanitization.
+- Keep standalone .NET tool definitions and unrelated Go receivers as
+  framework usage. Recognize supported import-bound .NET automatic tool
+  invocation and Go agent construction without claiming runtime execution.
+  Shadowed C# tool-mode names cannot borrow an SDK type or alias's automatic
+  invocation meaning.
+- Exclude Python comprehension results and later clauses that cannot execute
+  because a literal iterable is empty or a preceding filter is false.
+- Match lifecycle observations by the complete case-insensitive device value.
+  Different DNS domains and short/FQDN spellings no longer implicitly alias;
+  repeated correlation clears stale derived endpoint activity tags.
+- Export size, strict-JSON and sanitizer rejections abort dump publication and
+  preserve a prior file. Valid records omitted for export size or encoding
+  remain analyzed; records exceeding sanitizer safety limits remain skipped.
+- Add authored positive and negative regressions. Regression passes do not
+  supply independent human labels or live tenant acceptance.
+
+### Discovery attribution and review assurance
+
+- Resolve a bounded subset of local Python import-only re-exports without
+  importing or executing scanned code. Unsupported or ambiguous bindings retain
+  their existing conservative classification.
+- Separate the scheduled governance audit's visible-policy checks from complete
+  policy assurance. Withheld bypass settings remain explicitly unknown; release
+  verification still requires a complete policy readback.
+- Add regression coverage and reviewer guidance for these boundaries. These
+  checks do not establish human-reviewed field accuracy or live tenant acceptance.
+
+### Verified discovery review corrections
+
+- Join Python exception and pattern-match branches conservatively so an import
+  or alias from one alternative cannot establish another path's agent binding.
+  Literal unreachable alternatives stay excluded; uncertain bindings remain
+  framework usage rather than a proved construction.
+- Withhold supported AWS CLI positional credential settings in command text
+  and argument arrays, including nested copies used in evidence and caches.
+  Preserve variable references and documented placeholder values.
+- Export all permissions in CSV, and show inventory reconciliation in table,
+  Markdown and HTML reports when a supplied inventory contains zero agents.
+  JSON reports now carry the additive `inventory_present` field.
+- Add opt-in `agent_granularity: source` for separate supported named Python
+  construction identities. Existing project aggregation remains the default;
+  source identity is static evidence, not a count of deployed runtime instances.
+- Preserve Python AST coordinates across literal control and Unicode separators,
+  so registered-tool execution evidence stays attached to the correct source
+  construction in both project and source inventory modes.
+- Reuse the scheduled governance observation implementation from PR #163:
+  visible policy drift fails, withheld bypass settings remain explicitly
+  unknown, and complete release verification stays strict. Retained observations
+  bind the inspected policy and snapshot to their digests and observation time.
+- Add synthetic regressions and migration/reviewer guidance. Independent human
+  field labels and scoped live tenant acceptance remain deployment requirements.
+
+### Endpoint, fleet and instruction-content corrections
+
+- Endpoint profile discovery fails incomplete (exit 3) when a known location
+  cannot be inspected safely, including symbolic links and denied access.
+- Instruction content checks inspect the original confined file snapshot;
+  exceeding their 512 KiB budget marks coverage incomplete.
+- Fleet merging validates source completion, counts and collection fingerprints.
+  An incomplete source stays incomplete even alongside healthy reports. Duplicate
+  findings retain the highest observed source risk and any shadow observation;
+  risk is not recalculated using an unknown source policy.
+- Preserve the existing CycloneDX AI-BOM semantics when adding endpoint and
+  fleet commands: credentials remain in JSON/SARIF, and MCP inventories remain
+  services linked to their technologies.
+
+### October 8 benchmark follow-ups
+
+The head-to-head benchmark in `archive/reviews/head-to-head-2026-10-08.md`
+compared ShadowScan with ten open-source discovery tools on a synthetic
+estate. These changes close the gaps it measured; the benchmark is
+author-written and not independent review.
+
+- `shadowscan endpoint` scans a workstation profile at the well-known
+  locations of AI client configuration (Claude Desktop and Claude Code,
+  Cursor, Windsurf, VS Code and its Cline and Roo extensions, Gemini CLI,
+  Codex CLI, Kiro, Amazon Q, GitHub Copilot CLI, Zed, Continue, Goose,
+  OpenCode and a generic `.mcp.json`), including user-level skills, sub-agent
+  definitions, hooks, rules and instruction files, without walking the whole
+  home directory. Findings carry an `endpoint:<hostname>` resource prefix
+  (`--label` overrides it) so fleet reports keep provenance; `--list` prints
+  the locations that exist. A profile without any location is a complete,
+  empty scan with a warning, not a setup error. The `code.filesystem`
+  connector gained the `include` option that implements it: a list of paths
+  relative to each root that limits the walk to those files and directories.
+- `shadowscan merge` combines JSON reports from several machines or scans into
+  one report. Findings with the same identity merge like repeated observations
+  inside a scan; every finding records the reports it came from in
+  `metadata.merged_from`; `collection_scope.fleet.sources` lists the sources.
+  The merged report is comparable with `shadowscan diff` only when every
+  source was complete and comparable, and its own completion (exit 3) follows
+  the sources. Reports with another finding identity schema are refused.
+- The existing `--format cyclonedx` AI-BOM supports endpoint and fleet
+  reports with its established component, service, credential-exclusion and
+  completeness rules; see `docs/operations/ai-bom.md`.
+- Coding-agent configuration findings now inspect the instruction files they
+  report (skills, `CLAUDE.md`-style files, sub-agent definitions, rules and
+  hooks) for content that a rendered view hides or that executes fetched
+  code: an HTML comment holding sentences, a network fetch piped into an
+  interpreter, an inline blob decoded into one, and invisible or
+  bidirectional control characters. Hits add `content:*` evidence with the
+  file and line (never an excerpt) and the tags `hidden-instructions` (20),
+  `remote-code-fetch` (15) and `invisible-text` (10), which raise the
+  finding's risk. `metadata.instruction_content` lists the rules and files.
+- A project whose executable code constructs and serves an MCP server (the
+  SDK plus a server-construction idiom outside test code) is reported through
+  the `mcp-server` capability, `metadata.mcp_server` and an "MCP server in"
+  title (see "October 8 MCP server capability and model id attribution").
+  The finding kind, resource and identity are
+  unchanged; `mcp-server` findings remain MCP configuration inventories.
+  MCP client code stays as before.
+- Spring AI: `ChatClient` builder chains that register concrete tools with
+  `defaultTools(new ...)` after setting a system prompt or advisors, and
+  per-request `prompt().tools(new ...)` chains, now establish an agent; Spring
+  Boot injects the builder, so the previous pattern (`ChatClient.builder(...)
+  .defaultTools(...)` in one expression) rarely matched real services.
+- `provider.databricks` no longer treats a bare `mlflow` or `mlflow-skinny`
+  dependency as Databricks Model Serving evidence; mlflow's LLM flavors and
+  the Databricks packages still match. A classic-ML training project no
+  longer produces a low-confidence LLM-usage finding.
+- Evaluation corpus: six cases cover the typing changes (mlflow tracking
+  versus the LLM flavor, Spring AI with and without tools, a Go MCP server
+  and a TypeScript MCP client).
+
+### PR review: incremental scan and evidence verification
+
+- Preserve whitespace and newlines in changed Git paths so incremental scans
+  inspect the actual filenames.
+- Keep semantic rejections and lexical corroboration checks authoritative when
+  a signature signal declares an agent indicator.
+
+### Real-world benchmark follow-up corrections
+
+- Crawler user-agent domain discounts apply only within a complete quoted UA
+  value. A provider endpoint in another value on the same line, or a later
+  occurrence of the same host, remains detection evidence.
+
+### Real-world robustness: input-defect taxonomy for code.filesystem
+
+- Malformed input — invalid TOML/JSON in committed templates and fixtures,
+  invalid structured configuration syntax, invalid agent manifests, or an
+  MCP configuration whose servers value is not an object or array — produces
+  file-attributed
+  **input-defect warnings** that preserve partial findings and still fail
+  the scan closed (exit 3). The file and issue are always named in the
+  report; nothing is dropped silently. Integrity and ambiguity
+  failures (duplicate keys, conflicting dialects, resource-limit hits,
+  undecodable analyzable files, unscanned symlink targets) still fail
+  closed, because parsers diverge on those and they could hide content.
+  `strict_coverage: true` promotes input-defect warnings to errors; both
+  settings mark the scan incomplete. There is no completeness exemption for
+  malformed templates or fixtures.
+
+### Lexing, matching and walk-order robustness (real-world benchmark fixes)
+
+- The JS/TS/TSX lexer now lexes brace-less JSX elements as attribute values
+  (`title=<span>…</span>`), a legal construct that marked real repositories
+  incomplete, and JSX is lexed in plain `.js`/`.mjs`/`.cjs` files too
+  (React-in-.js is routine; a closing tag after an expression previously
+  tripped the regex-vs-division ambiguity). Malformed JSX still fails
+  closed.
+- Credential detection scales its per-execution regex allowance linearly
+  with declared input size (`LINEAR_SECONDS_PER_MILLION_CHARS`, floor
+  0.1 s, always inside the per-file wall budget), so keyword-dense
+  megabyte files no longer abort the secret pass with MatchTimeoutError.
+  `python -m shadowscan.signatures.validate` now enforces a per-pattern
+  throughput floor on secret patterns against a pathological corpus:
+  patterns slower than the runtime allowance are rejected at validation.
+- The filesystem walk buffers and orders entries by signal priority —
+  dependency manifests, MCP and coding-agent configuration first, source
+  files last, smaller before larger — so a connector deadline cuts the
+  largest, lowest-signal tail first, and the deadline diagnostic now
+  reports the exact remainder (never "at least N").
+
+### Classification and precision
+
+- An exported low-code flow whose nodes include a verified agent node (n8n
+  `.agent`/`agentTool`/`openAiAssistant`, Dify `agent_mode: enabled`) now
+  yields a `kind: agent` finding, matching the lowcode.n8n connector; an
+  LLM chain without an agent node stays `kind: workflow`. Finding identity
+  is unchanged (`resource_type` stays `workflow-export`); the finding kind
+  and title change, and metadata gains `agent_flow`. Evaluation corpora
+  were relabeled accordingly.
+- Provider domains quoted inside crawler user-agent strings
+  (`Mozilla/5.0 (compatible; …-Bot/1.0; +https://provider.example/)`) no
+  longer count as provider usage; the discount is recorded as a visible
+  note naming the hosts.
+
+### New capabilities
+
+- `--format ocsf`: OCSF 1.1.0 Detection Finding (class_uid 2004) report
+  output for SIEM pipelines, with scan completeness marked on the document.
+- `triage: true` (and `shadowscan code --triage`): a fast subset scan of
+  manifests, MCP/coding-agent configuration, flow exports and IaC that
+  skips source analysis, credential detection and content sweeps. A triage
+  scan is always reported incomplete so it can never pass as a full scan.
+- `shadowscan diff --shadow-only`: display only findings whose `shadow`
+  field is true; counts, incompleteness reasons and exit codes are still
+  computed over the full comparison, and the JSON document always carries
+  the complete comparison plus a `shadow_only_view` id list.
+
+### Real-world benchmark v2 runner hardening
+
+- The real-world benchmark runner and exit probe refuse privileged execution.
+  Outputs use private directories and atomic writes that reject symlink paths.
+  User/network/PID namespaces require an externally isolated disposable host;
+  they do not establish filesystem isolation. The v2 scorer also validates
+  result metadata and boolean detections against the declared corpus.
+  Historical result hashes are preserved; rerun the revised code separately.
+
+### Lexical coverage: two constructs the lexer wrongly called ambiguous
+
+- Fixed: a Rust ordinary double-quoted string may span lines. The lexer ended it at the
+  line break and reported `incomplete source lexical analysis`. It now stays open across the
+  break, and an unclosed one is still incomplete.
+- Fixed: a `.js`, `.mjs` or `.cjs` file with JSX (React code in a `.js` file) was lexed as
+  plain JavaScript and reported incomplete. Plain lexing is retried as JSX only when it fails,
+  and the JSX reading is used only when it lexes completely. `.ts` files are never read as JSX.
+- Measured on the v2 real-world repositories (a tuning set for this change, not held out): 77 of
+  the 100 lexically flagged files, excluding notebook cells, now complete. The bundled regression
+  corpora (`make evaluate`) show identical outcomes with timing removed; only the scanner source
+  hash differs.
+- Not changed: Ruby `#{...}` interpolation in a here-document still marks the scan incomplete. An
+  attempt to scan the interpolated code as code reported a Java framework in a Ruby file, because
+  the matchers are not Ruby-aware. That change was reverted, and
+  `tests/unit/test_source_lexer_benchmark_regressions.py` pins the conservative behaviour. Binary or undecodable
+  content, parser failures on configuration files, connector deadlines and notebook cell lexing also
+  still mark the scan incomplete.
+
+### Real-world benchmark follow-up fixes
+
+- Fixed: lossy text decoding checks every bounded window, so an ASCII prefix
+  cannot hide an invalid or control-character body. Python and notebook files
+  with a UTF-8 byte-order mark retain strict decoding of invalid bytes.
+- Fixed: real-world benchmark candidate URLs require an exact parsed GitHub
+  or GitLab hostname, safe path components and supported transport. Host-like
+  text in another site's path or query cannot create false provenance.
+
+### Real-world benchmark follow-ups
+
+Running ShadowScan on 326 public repositories (`tools/benchmark/realworld`)
+showed that 28% of scans ended incomplete (exit 3) and that most false alarms
+came from two causes. Each item below was reproduced on a specific repository
+before it was changed, has a regression test, and leaves finding IDs unchanged.
+`docs/production.md` lists the effect on reports.
+
+- Fixed: the JavaScript check that drops an SDK binding shadowed by a method
+  parameter ran a quadratic pattern over the whole source. On a 22 KB
+  TypeScript file it exceeded the 0.1 s pattern budget, the whole file's
+  analysis was lost and the scan was incomplete. It now runs the same pattern
+  on the window around each use of the name; a test compares it with the
+  original pattern on generated inputs.
+- Fixed: the source lexers called these ambiguous (exit 3) and, where they
+  mis-read them, treated string text as code: ordinary strings that span lines
+  in Rust, PHP and F# (`.fs`; F# scripts are not scanned); PHP 8 attributes (a `#[` line in PHP before 8 is a comment and now reads as code), which were read as comments; F# type
+  variables and primed names; C# `@"""` verbatim strings; JSX in `.js` files;
+  the TypeScript non-null assertion before a division; and Qt translation files
+  named `.ts`. Strings that stay ambiguous (unclosed, Ruby, heredoc
+  interpolation) still end the scan as incomplete.
+- Fixed: a file with a few stray NUL bytes in otherwise valid UTF-8 text, or
+  text that is not valid UTF-8 and has no NUL byte, was skipped whole and made
+  the scan incomplete. Both are read now and add a warning; dense NUL content
+  and UTF-16/32 without a byte-order mark remain gaps. Content that is mostly invalid UTF-8 or holds
+  control characters stays a gap. Notes are one warning per kind; `strict_coverage` treats each as a gap.
+- Fixed: agent definition front matter with `: ` in a plain value was
+  `invalid agent definition YAML`. It is quoted and parsed again through the
+  same strict loader, as coding agents do.
+- Fixed: `re:^mcp\.[a-z0-9-]+\.[a-z]+$` matched dotted identifiers such as
+  `mcp.translator.translatekey`. It now ends in one of a short list of common top-level domains.
+- Fixed: a host on a hosts-file, ad-block, resolver or proxy-rule line counted
+  as use of that product. The filter applies to non-source documents only.
+- Changed: a `secret` finding with no attributed provider is titled
+  `Hard-coded credential in <file>` and tagged `unattributed-credential`
+  instead of `LLM provider credential in <file>`.
+- Added: `protocol.mcp` recognizes JSON-RPC method dispatch without an SDK, and
+  `coding-agent.claude-code` recognizes `.claude/launch.json`,
+  `.claude/rules/*.md`, `.claude/output-styles/*.md` and the plugin manifests.
+
+### Shadow AI discovery benchmark follow-ups
+
 - Fixed: the model-identifier literal limit now marks coverage incomplete
   when later literals were not matched. A model beyond the limit can no
   longer produce an empty scan reported as complete.

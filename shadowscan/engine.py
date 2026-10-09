@@ -1086,7 +1086,11 @@ class Engine:
 
     def run(self, only: list[str] | None = None) -> ScanResult:
         self._prepare_run()
-        result = ScanResult(version=__version__, inventory_size=len(self.inventory) if self.inventory else 0)
+        result = ScanResult(
+            version=__version__,
+            inventory_size=len(self.inventory) if self.inventory else 0,
+            inventory_present=self.inventory is not None,
+        )
         invalid = self._invalid_selectors(only)
         if invalid:
             return self._reject_selection(result, invalid)

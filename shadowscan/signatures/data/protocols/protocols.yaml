@@ -121,6 +121,13 @@ signatures:
         patterns: ['"mcpServers"\s*:', '"mcp"\s*:\s*\{\s*"servers"', '^[^\S\r\n]*mcpServers\s*:', '\[mcp_servers\.[A-Za-z0-9_-]+\]', '\[mcp\.servers\.[A-Za-z0-9_-]+\]']
         weight: 0.95
         description: MCP client configuration block
+      - type: code
+        # A server or client that speaks JSON-RPC itself, without an SDK, dispatches on these MCP method
+        # names. A match that starts inside a string literal is ignored for source files, so the pattern
+        # starts at executable syntax: a line start (a match arm or table row), `case`, `==` or `method:`.
+        patterns: ['(?:^[^\S\r\n]*|\bcase\s+|===?\s*|\bmethod\s*[:=]\s*)["''](?:tools/list|tools/call|resources/list|resources/read|prompts/list|prompts/get|notifications/initialized)["'']']
+        weight: 0.75
+        description: MCP JSON-RPC method dispatched without an SDK
       - type: file
         globs: [".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", ".cursor/mcp.json", ".vscode/mcp.json", "claude_desktop_config.json", ".roo/mcp.json", ".windsurf/mcp_config.json", "cline_mcp_settings.json", ".kiro/settings/mcp.json", ".amazonq/mcp.json", ".codeium/windsurf/mcp_config.json", "**/.mcp.json", "**/mcp.json", "**/mcp-config.json", "**/mcp_config.json", "**/mcp-servers.json", "**/claude_desktop_config.json", "**/cline_mcp_settings.json", "**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.roo/mcp.json", "**/.windsurf/mcp_config.json", "**/.kiro/settings/mcp.json", "**/.amazonq/mcp.json", "smithery.yaml", "**/smithery.yaml", "**/.well-known/mcp.json"]
         weight: 0.9
@@ -131,7 +138,9 @@ signatures:
         names: [MCP_SERVER_URL, MCP_SERVER_PORT, MCP_TRANSPORT, MCP_API_KEY, FASTMCP_PORT, FASTMCP_HOST, SMITHERY_API_KEY]
         weight: 0.6
       - type: domain
-        values: [server.smithery.ai, registry.smithery.ai, mcp.zapier.com, mcp.composio.dev, api.githubcopilot.com, mcp.notion.com, mcp.linear.app, mcp.atlassian.com, mcp.stripe.com, mcp.paypal.com, mcp.sentry.dev, mcp.cloudflare.com, remote.mcpservers.org, "re:^mcp\\.[a-z0-9-]+\\.[a-z]+$"]
+        # The mcp.<vendor>.<tld> form stops at real top-level domains: a dotted identifier such as the
+        # translation key mcp.translator.translatekey (Minecraft Coder Pack) is not a host.
+        values: [server.smithery.ai, registry.smithery.ai, mcp.zapier.com, mcp.composio.dev, api.githubcopilot.com, mcp.notion.com, mcp.linear.app, mcp.atlassian.com, mcp.stripe.com, mcp.paypal.com, mcp.sentry.dev, mcp.cloudflare.com, remote.mcpservers.org, "re:^mcp\\.[a-z0-9-]+\\.(?:com|dev|app|ai|io|net|org|tech|co|cloud|xyz|run|so|sh|tools|chat|eu|me|site|online|network|studio|systems|software|services)$"]
         weight: 0.85
       - type: user_agent
         patterns: ['(?i)\bmcp(?:-|_)?(?:client|server|remote|inspector)\b', '(?i)modelcontextprotocol', '(?i)\bmcp/\d']

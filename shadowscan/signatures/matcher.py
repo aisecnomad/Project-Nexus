@@ -25,7 +25,16 @@ import regex
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
 from shadowscan.utils.redaction import sanitize_text
 
+_SCAN_EXECUTION_CAP: ContextVar[float | None] = ContextVar("signature_scan_execution_cap", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
+# Per-execution allowance grows linearly with the input declared to
+# scan_budget: a pattern may spend this long per million characters. The
+# fail-fast property is size-relative, not absolute — a super-linear pattern
+# still times out on large inputs, while a linear pattern with a large
+# constant (keyword-dense megabyte files) is not misreported as pathological.
+# Patterns must still pass the per-pattern throughput floor enforced by
+# ``python -m shadowscan.signatures.validate``.
+LINEAR_SECONDS_PER_MILLION_CHARS = 0.25
 DEFAULT_SCAN_BUDGET_SECONDS = 2.0
 # An input's budget is CPU time of the matching thread; a thread that merely
 # waited for the scheduler has not spent it. Wall time still ends the input
@@ -92,13 +101,14 @@ class MatchTimeoutError(RuntimeError):
 
 
 def _remaining_timeout() -> float:
+    cap = _SCAN_EXECUTION_CAP.get() or REGEX_TIMEOUT_SECONDS
     budget = _SCAN_BUDGET.get()
     if budget is None:
-        return REGEX_TIMEOUT_SECONDS
+        return cap
     remaining = budget.remaining()
     if remaining <= 0:
         raise MatchTimeoutError(budget.exhausted())
-    return min(REGEX_TIMEOUT_SECONDS, remaining)
+    return min(cap, remaining)
 
 
 def pattern_timeout(default: float = REGEX_TIMEOUT_SECONDS) -> float:
@@ -864,6 +874,20 @@ _LANG_ALIASES = {
     "php": "php",
     "swift": "swift",
     "dart": "dart",
+    "c": "c",
+    "h": "c",
+    "cpp": "cpp",
+    "cc": "cpp",
+    "cxx": "cpp",
+    "hpp": "cpp",
+    "hxx": "cpp",
+    "hh": "cpp",
+    "ex": "elixir",
+    "exs": "elixir",
+    "elixir": "elixir",
+    "r": "r",
+    "rmd": "r",
+    "lua": "lua",
 }
 
 SOURCE_EXTENSIONS = {
@@ -889,6 +913,19 @@ SOURCE_EXTENSIONS = {
     ".php",
     ".swift",
     ".dart",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+    ".ex",
+    ".exs",
+    ".r",
+    ".rmd",
+    ".lua",
 }
 
 
@@ -1058,7 +1095,11 @@ class SignatureIndex:
 
     @contextmanager
     def scan_budget(
-        self, seconds: float = DEFAULT_SCAN_BUDGET_SECONDS, *, wall_seconds: float | None = None
+        self,
+        seconds: float = DEFAULT_SCAN_BUDGET_SECONDS,
+        *,
+        chars: int | None = None,
+        wall_seconds: float | None = None,
     ) -> Iterator[None]:
         """Share one execution budget across all signature operations for an input file.
 
@@ -1068,6 +1109,9 @@ class SignatureIndex:
         time, so hostile input and the connector deadline still end it.
         Individual regex executions are also preempted by the regex engine. An
         exhausted budget always raises, including after non-matching work.
+        ``chars`` declares the input size so each execution's allowance scales
+        linearly with it (never below ``REGEX_TIMEOUT_SECONDS``, never beyond
+        this budget); without it the strict flat cap applies.
         """
         if not 0 < seconds <= 60:
             raise ValueError("signature scan budget must be greater than zero and at most 60 seconds")
@@ -1076,11 +1120,21 @@ class SignatureIndex:
         elif not seconds <= wall_seconds <= 60 * WALL_BUDGET_FACTOR:
             raise ValueError("signature scan wall cap must be at least the budget and at most 240 seconds")
         token = _SCAN_BUDGET.set(_ScanBudget(seconds, wall_seconds, _SCAN_BUDGET.get()))
+        cap_token = None
+        if chars is not None and chars > 0:
+            scaled = max(REGEX_TIMEOUT_SECONDS, LINEAR_SECONDS_PER_MILLION_CHARS * (chars / 1_000_000))
+            cap = min(scaled, seconds)
+            outer_cap = _SCAN_EXECUTION_CAP.get()
+            if outer_cap is not None:
+                cap = min(cap, outer_cap)
+            cap_token = _SCAN_EXECUTION_CAP.set(cap)
         try:
             _remaining_timeout()
             yield
             _remaining_timeout()
         finally:
+            if cap_token is not None:
+                _SCAN_EXECUTION_CAP.reset(cap_token)
             _SCAN_BUDGET.reset(token)
 
     # ------------------------------------------------------------- matchers
@@ -1368,11 +1422,20 @@ class SignatureIndex:
                     out.append(Match(sig, s, h, s.weight))
         return out
 
-    def match_domains_in_text(self, text: str) -> list[Match]:
-        with self._input_budget():
-            return self._match_domains_in_text_with_budget(text)
+    def match_domains_in_text(
+        self, text: str, *, skip_line: Callable[[str], bool] | None = None
+    ) -> list[Match]:
+        """Find signature hosts in ``text``; ``skip_line`` names the lines whose hosts do not count.
 
-    def _match_domains_in_text_with_budget(self, text: str) -> list[Match]:
+        A line the predicate accepts (a hosts-file or proxy-rule entry) is passed over, and the same
+        host still counts where it occurs on another line.
+        """
+        with self._input_budget():
+            return self._match_domains_in_text_with_budget(text, skip_line)
+
+    def _match_domains_in_text_with_budget(
+        self, text: str, skip_line: Callable[[str], bool] | None = None
+    ) -> list[Match]:
         out: list[Match] = []
         seen: set[str] = set()
         newlines: list[int] | None = None
@@ -1430,6 +1493,13 @@ class SignatureIndex:
             if newlines is None:
                 newlines = [newline.start() for newline in re.finditer("\n", text)]
             line = bisect_right(newlines, m.start()) + 1
+            if skip_line is not None:
+                # Rule formats lead their lines, so only the start of a (possibly minified) line is read.
+                first = newlines[line - 2] + 1 if line > 1 else 0
+                last = newlines[line - 1] if line - 1 < len(newlines) else len(text)
+                if skip_line(text[first : min(last, first + _SKIP_LINE_CHARS)]):
+                    seen.discard(key)  # the host may still be used on another line
+                    continue
             matched_signatures: set[str] = set()
             for match in matches:
                 if match.signature_id in matched_signatures:
@@ -1473,6 +1543,8 @@ class SignatureIndex:
 
 
 _HOST_TOKEN_RX = re.compile(r"[a-z0-9.-]+", re.IGNORECASE)
+# Characters of a line that `match_domains_in_text` hands its `skip_line` predicate.
+_SKIP_LINE_CHARS = 256
 _STATEMENT_CACHE_LIMIT = 65_536
 _STATEMENT_CACHE_MAX_LENGTH = 256
 _STATEMENT_CACHE_MAX_CHARS = 4 * 1024 * 1024

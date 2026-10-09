@@ -1,0 +1,30 @@
+{
+ "excluded": {
+  "cal-13": {
+   "files": [
+    "shadowscan/signatures/data/coding_agents/coding_agents.yaml"
+   ],
+   "frame": "go-ai",
+   "url": "https://github.com/qodo-ai/pr-agent"
+  },
+  "rw-111": {
+   "files": [
+    "tools/evaluation/independent_corpus.json",
+    "tools/evaluation/independent_provenance.json",
+    "tools/evaluation/results/independent-baseline.json",
+    "tools/evaluation/results/independent-first-implementation.json",
+    "tools/evaluation/results/independent-regression.json"
+   ],
+   "frame": "go-ai",
+   "url": "https://github.com/openai/openai-node"
+  },
+  "rw-121": {
+   "files": [
+    "shadowscan/signatures/data/providers/model_providers.yaml"
+   ],
+   "frame": "go-random",
+   "url": "https://github.com/mudler/localai"
+  }
+ },
+ "reason": "named in a file of the ShadowScan repository (signature pack, evaluation corpus, documentation)"
+}

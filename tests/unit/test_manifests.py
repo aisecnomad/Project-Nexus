@@ -586,4 +586,7 @@ def test_shared_document_equals_a_fresh_parse_and_is_refused_for_jsonc(tmp_path,
     assert parse_manifest("package.json", commented).errors == ["invalid JSON"]
     (tmp_path / "package.json").write_text(commented)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert ctx.stats.errors == ["code.filesystem: package.json: invalid JSON"]
+    # An input defect: reported per file and the scan stays incomplete (exit 3).
+    assert not ctx.stats.errors
+    assert ctx.stats.warnings == ["code.filesystem: package.json: input defect: invalid JSON"]
+    assert ctx.stats.incomplete

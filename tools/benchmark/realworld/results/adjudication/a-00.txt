@@ -1,0 +1,10 @@
+[
+{"card": "A001", "ai": "no", "app": "no", "agent": "no", "reason": "MCP here means Minecraft Coder Pack, a name collision; no LLM or agent integration in the cards."},
+{"card": "A002", "ai": "no", "app": "no", "agent": "no", "reason": "Distributed-systems orchestration toolkit; 'agent/' is not an AI agent; only a vendored comment matches."},
+{"card": "A003", "ai": "yes", "app": "yes", "agent": "yes", "reason": "App calls LLMs via pydantic_ai Agent (src/grit/ai.py); .gemini.md and skills-lock.json present as coding-agent config."},
+{"card": "A004", "ai": "no", "app": "no", "agent": "no", "reason": "AMP HTML framework; only keyword hit is 'llm' bytes inside a binary PNG asset. No LLM or agent integration."},
+{"card": "A005", "ai": "yes", "app": "yes", "agent": "yes", "reason": "Official React/TS SDK for Rapida's real-time voice-agent platform (assistants, agent callbacks, LLM pipeline events)."},
+{"card": "A006", "ai": "no", "app": "no", "agent": "no", "reason": "LightGBM gradient boosting library; scikit-learn only as dependency and example import; no LLM or agent integration."},
+{"card": "A007", "ai": "yes", "app": "yes", "agent": "yes", "reason": "MCP server built on @modelcontextprotocol/sdk exposing six PageSpeed tools; server.json registry manifest present."},
+{"card": "A008", "ai": "no", "app": "no", "agent": "no", "reason": "Torch/torchvision transfer-learning research code; clip test file imports data and vision libraries only; no LLM or agent integration."}
+]

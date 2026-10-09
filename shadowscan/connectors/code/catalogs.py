@@ -68,7 +68,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from pathlib import PurePosixPath
 from typing import Any, Protocol
@@ -172,6 +172,11 @@ _CONFIGURATION_DIRECTORIES = frozenset({"config", "conf", "settings"})
 _DOCUMENTATION_DIRECTORIES = frozenset(
     {"docs", "doc", "website", "site", "_data", "_posts", "_includes", "blog"}
 )
+_POLICY_FILE = re.compile(
+    r"(?:block|deny|reject|drop|firewall|acl|egress|ingress|waf|security)[_-]?"
+    r"|(?:blocklist|denylist|blacklist|allowlist|whitelist)",
+    re.IGNORECASE,
+)
 # Spring application and bootstrap configuration, including profiles (application-prod.yml).
 _SERVICE_CONFIGURATION = re.compile(r"(?:application|bootstrap)(?:-[\w.-]+)?\.(?:ya?ml|properties)")
 # Keys whose entries assign variables to a container, a job or a function. Compared without
@@ -233,6 +238,105 @@ class _ProjectMatches(Protocol):
 
     @property
     def coding_agent_matches(self) -> Mapping[str, Sequence[Observation]]: ...
+
+
+# The addresses a hosts file or a resolver maps a blocked name to.
+_BLOCKING_ADDRESSES = frozenset({"0.0.0.0", "127.0.0.1", "127.0.1.1", "255.255.255.255", "::", "::1"})
+# Rule types of the proxy rule formats that route a host: Clash and Surge write them upper case,
+# Quantumult X lower case. Bare "host" and "domain" are not listed: `host, port = ...` is code.
+_PROXY_RULE_TYPES = frozenset(
+    {"DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "DOMAIN-SET", "HOST-SUFFIX", "HOST-KEYWORD"}
+    | {"host-suffix", "host-keyword"}
+)
+# Resolver directives that blackhole or redirect a name (dnsmasq).
+_RESOLVER_DIRECTIVES = ("address=/", "server=/", "ipset=/", "nftset=/")
+
+
+def _adblock_entry(line: str) -> bool:
+    """``||host^`` or ``@@||host^`` (optionally followed by options): a host, then the separator."""
+    body = line[4:] if line.startswith("@@||") else line[2:] if line.startswith("||") else ""
+    host = body.partition("^")
+    return bool(host[1]) and bool(host[0]) and all(ch.isalnum() or ch in ".-*_" for ch in host[0])
+
+
+def rule_list_line(line: str) -> bool:
+    """Whether ``line`` is an entry of a hosts file, ad-block list, resolver or proxy rule list.
+
+    Such a line routes or blocks a host: ``0.0.0.0 chatgpt.com``, ``||api.openai.com^``,
+    ``address=/api.openai.com/0.0.0.0`` or ``DOMAIN-SUFFIX,openai.com,PROXY``. Nothing in the
+    project calls the host, so a match on it is a mention, whether one product or twenty are named
+    (the file-level test in ``catalog_files`` needs four, and does not apply to files without an
+    extension such as ``hosts``). A blocklist of ad servers once reported "Make" and "Salesforce
+    Agentforce" because two of its entries were their hosts.
+    """
+    stripped = line.strip()
+    if stripped.startswith("- "):  # a YAML list item
+        stripped = stripped[2:].lstrip(" \t").lstrip("\"'")
+    if not stripped or stripped.startswith("#"):
+        return False
+    if stripped.startswith(_RESOLVER_DIRECTIVES) or _adblock_entry(stripped):
+        return True
+    head, _, rest = stripped.partition(",")
+    if rest and head.strip() in _PROXY_RULE_TYPES:
+        return True
+    address, _, host = stripped.partition(" ")
+    if not host:
+        address, _, host = stripped.partition("\t")
+    return address in _BLOCKING_ADDRESSES and bool(host.strip())
+
+
+# Lines read to decide whether a document is a rule list, and how many entries it needs.
+_RULE_LIST_SAMPLE_LINES = 4000
+_RULE_LIST_LINE_CHARS = 256
+_RULE_LIST_MIN_ENTRIES = 5
+
+
+def rule_list_document(text: str) -> bool:
+    """Whether most of the entries in ``text`` are rule-list lines (see ``rule_list_line``).
+
+    Blank lines and comments do not count. In such a document a comment is part of the list, not a
+    note on the configuration: a hosts file groups its entries under headings like
+    ``# [integromat.com]``, and a heading is no more a use of the host than the entries below it.
+    Only the start of each of the first lines is read, so a minified file costs one pass.
+    """
+    entries = others = position = 0
+    size = len(text)
+    for _ in range(_RULE_LIST_SAMPLE_LINES):
+        if position >= size:
+            break
+        end = text.find("\n", position)
+        stop = size if end < 0 else end
+        head = text[position : min(stop, position + _RULE_LIST_LINE_CHARS)].strip()
+        position = stop + 1
+        if not head or head.startswith("#"):
+            continue
+        if rule_list_line(head):
+            entries += 1
+        else:
+            others += 1
+    return entries >= _RULE_LIST_MIN_ENTRIES and entries >= 4 * others
+
+
+class HostLineFilter:
+    """The ``skip_line`` predicate for the hosts of one text, decided on first use.
+
+    Most files name no signature host, so whether the document is a rule list is only worked out
+    when the matcher finds a host and asks.
+    """
+
+    __slots__ = ("_skip", "_text")
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self._skip: Callable[[str], bool] | None = None
+
+    def __call__(self, line: str) -> bool:
+        if self._skip is None:
+            if rule_list_document(self._text):
+                self._skip = lambda candidate: rule_list_line(candidate) or candidate.lstrip().startswith("#")
+            else:
+                self._skip = rule_list_line
+        return self._skip(line)
 
 
 def _is_data_file(rel: str) -> bool:
@@ -497,6 +601,11 @@ def catalog_files(
         and not _loaded_by_code(rel, references)
     }
     catalogs = {rel for rel in mention_only if len(signatures[rel]) >= CATALOG_MIN_SIGNATURES}
+    # A file whose name indicates a blocklist or policy is a catalog even with
+    # fewer signatures: its domain/env mentions are deny rules, not usage.
+    for rel in mention_only - catalogs:
+        if signatures[rel] and _POLICY_FILE.search(PurePosixPath(rel).stem):
+            catalogs.add(rel)
     if catalogs and mention_only.issuperset(signatures):
         # Nothing but mention-only data files names a technology here.
         return frozenset(mention_only)

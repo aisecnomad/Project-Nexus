@@ -38,6 +38,10 @@ signatures:
         names: [openai]
         weight: 0.8
       - type: dependency
+        ecosystem: conda
+        names: [openai]
+        weight: 0.8
+      - type: dependency
         ecosystem: npm
         names: [openai]
         weight: 0.8
@@ -167,6 +171,10 @@ signatures:
         weight: 0.8
       - type: dependency
         ecosystem: pypi
+        names: [anthropic]
+        weight: 0.8
+      - type: dependency
+        ecosystem: conda
         names: [anthropic]
         weight: 0.8
       - type: dependency
@@ -1025,6 +1033,10 @@ signatures:
         names: [transformers, sentence-transformers, diffusers, accelerate, peft]
         weight: 0.2
       - type: dependency
+        ecosystem: conda
+        names: [huggingface_hub, transformers, sentence-transformers, diffusers, accelerate]
+        weight: 0.5
+      - type: dependency
         ecosystem: npm
         names: ["@huggingface/inference", "@huggingface/hub", "@huggingface/transformers", "@xenova/transformers"]
         prefixes: ["@huggingface/"]
@@ -1347,7 +1359,9 @@ signatures:
     signals:
       - type: dependency
         ecosystem: pypi
-        names: [databricks-langchain, databricks-agents, databricks-openai, databricks-ai-bridge, mlflow, mlflow-skinny]
+        # mlflow alone is experiment tracking and classic-ML lifecycle tooling; it does not
+        # establish model serving. The code patterns below cover mlflow's LLM flavors.
+        names: [databricks-langchain, databricks-agents, databricks-openai, databricks-ai-bridge]
         weight: 0.5
       - type: code
         patterns: ['\bChatDatabricks\s*\(', '\bserving_endpoints\.query\s*\(', '\bmlflow\.(?:langchain|openai|pyfunc)\.log_model\s*\(', '\bmlflow\.models\.ResourcesFromStub', '\bdatabricks\.agents\b', '\bagents\.deploy\s*\(']

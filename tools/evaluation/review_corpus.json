@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "metadata": {
-    "name": "September 25 review regressions",
+    "name": "September 25 and October 8 review regressions",
     "type": "synthetic",
     "provenance": "Authored after review findings, with source-based labels. A regression suite used during development; not independent annotation, a held-out set, or field accuracy."
   },
@@ -416,6 +416,322 @@
         "signature": "coding-agent.cline"
       },
       "present": false
+    },
+    {
+      "id": "python-comprehension-empty-iterable",
+      "family": "agent",
+      "description": "Author-written October 8 regression: A literal empty comprehension iterable suppresses the unreachable agent construction.",
+      "files": {
+        "app.py": "from agents import Agent\nworkers = [Agent(name=\"helper\") for _ in []]\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "python-comprehension-false-filter",
+      "family": "agent",
+      "description": "Author-written October 8 regression: A literal false filter suppresses the unreachable result expression.",
+      "files": {
+        "app.py": "from agents import Agent\nworkers = [Agent(name=\"helper\") for _ in [1] if False]\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "python-comprehension-later-empty-iterable",
+      "family": "agent",
+      "description": "Author-written October 8 regression: A later empty iterable suppresses the result expression in a nested comprehension.",
+      "files": {
+        "app.py": "from agents import Agent\nworkers = [Agent(name=\"helper\") for _ in [1] for item in ()]\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0
+      }
+    },
+    {
+      "id": "python-comprehension-first-iterable-call",
+      "family": "agent",
+      "description": "Author-written October 8 regression: The first iterable is evaluated even when a later filter prevents the result.",
+      "files": {
+        "app.py": "from agents import Agent\nworkers = [item for item in [Agent(name=\"helper\")] if False]\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {}
+    },
+    {
+      "id": "python-comprehension-earlier-filter-call",
+      "family": "agent",
+      "description": "Author-written October 8 regression: An earlier filter call is evaluated before a later false filter.",
+      "files": {
+        "app.py": "from agents import Agent\nworkers = [item for item in [1] if Agent(name=\"helper\") if False]\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {}
+    },
+    {
+      "id": "python-comprehension-active-result",
+      "family": "agent",
+      "description": "Author-written October 8 regression: A nonempty literal iterable preserves supported constructor evidence.",
+      "files": {
+        "app.py": "from agents import Agent\nworkers = [Agent(name=\"helper\") for _ in [1]]\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {}
+    },
+    {
+      "id": "go-import-alias-agent",
+      "family": "agent",
+      "description": "Author-written October 8 regression: Go agent constructors bind the imported agents-package alias.",
+      "files": {
+        "app.go": "package main\nimport sdk \"github.com/tmc/langchaingo/agents\"\nfunc run() { sdk.NewExecutor(ctx, model) }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchaingo"
+      },
+      "present": true,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.langchaingo"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.langchaingo",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-unrelated-local-agent-receiver",
+      "family": "agent",
+      "description": "Author-written October 8 regression: An LLM package import does not bind an unrelated local agents receiver.",
+      "files": {
+        "app.go": "package main\nimport \"github.com/tmc/langchaingo/llms\"\nfunc run() { agents := Queue{}; agents.NewExecutor() }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchaingo"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.langchaingo"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "max_agent_findings": 0,
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.langchaingo",
+            "capabilities": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "go-return-signature-parameter-shadow",
+      "family": "agent",
+      "description": "Author-written October 8 regression: A parameter shadows the imported Go package even with an anonymous return type.",
+      "files": {
+        "app.go": "package main\nimport \"github.com/tmc/langchaingo/agents\"\nfunc run(agents Queue) interface{} { return agents.NewExecutor() }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.langchaingo"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.langchaingo"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "max_agent_findings": 0,
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.langchaingo",
+            "capabilities": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "dotnet-tool-definition-only",
+      "family": "agent",
+      "description": "Author-written October 8 regression: A standalone .NET tool definition is framework usage.",
+      "files": {
+        "App.cs": "using Microsoft.Extensions.AI;\nclass App { void Run() { var tool = AIFunctionFactory.Create(Greet); System.Console.WriteLine(tool.Name); } }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.microsoft-extensions-ai"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.microsoft-extensions-ai"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "max_agent_findings": 0,
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.microsoft-extensions-ai",
+            "capabilities": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "dotnet-function-invocation-dispatch",
+      "family": "agent",
+      "description": "Author-written October 8 regression: A function-invoking client with concrete nonempty tools and response dispatch establishes an agent candidate.",
+      "files": {
+        "App.cs": "using Microsoft.Extensions.AI;\nclass App { async System.Threading.Tasks.Task Run(IChatClient inner, AIFunction weather) { var client = new FunctionInvokingChatClient(inner); var options = new ChatOptions { Tools = [weather] }; await client.GetResponseAsync(\"weather\", options); } }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.microsoft-extensions-ai"
+      },
+      "present": true,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "agent",
+            "product_signatures": [
+              "framework.microsoft-extensions-ai"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.microsoft-extensions-ai",
+            "capabilities": [
+              "tool-use"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "dotnet-empty-function-invocation-tools",
+      "family": "agent",
+      "description": "Author-written October 8 regression: Automatic invocation without registered tools remains framework usage.",
+      "files": {
+        "App.cs": "using Microsoft.Extensions.AI;\nclass App { async System.Threading.Tasks.Task Run(IChatClient inner, AIFunction weather) { var client = new FunctionInvokingChatClient(inner); var options = new ChatOptions { Tools = [] }; await client.GetResponseAsync(\"weather\", options); } }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.microsoft-extensions-ai"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.microsoft-extensions-ai"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "max_agent_findings": 0,
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.microsoft-extensions-ai",
+            "capabilities": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "dotnet-cleared-tool-list",
+      "family": "agent",
+      "description": "Author-written October 8 regression: Mutating a shared tool list invalidates previously registered nonempty tools.",
+      "files": {
+        "App.cs": "using Microsoft.Extensions.AI;\nclass App { async System.Threading.Tasks.Task Run(IChatClient inner, AIFunction weather) { var client = new FunctionInvokingChatClient(inner); var tools = new List<AITool> { weather }; var options = new ChatOptions { Tools = tools }; tools.Clear(); await client.GetResponseAsync(\"weather\", options); } }\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.microsoft-extensions-ai"
+      },
+      "present": false,
+      "assertions": {
+        "exact_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signatures": [
+              "framework.microsoft-extensions-ai"
+            ],
+            "provider_signatures": []
+          }
+        ],
+        "max_agent_findings": 0,
+        "expected_findings": [
+          {
+            "kind": "framework-usage",
+            "product_signature": "framework.microsoft-extensions-ai",
+            "capabilities": []
+          }
+        ]
+      }
     }
   ]
 }

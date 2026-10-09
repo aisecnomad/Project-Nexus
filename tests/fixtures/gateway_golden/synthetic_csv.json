@@ -41,6 +41,7 @@
     "cost": 0.02,
     "status": "success",
     "path": "acompletion",
+    "method": null,
     "metadata": {
      "request_tags": null,
      "cache_hit": null
@@ -81,6 +82,7 @@
     "cost": 0.03,
     "status": "failure",
     "path": "acompletion",
+    "method": null,
     "metadata": {
      "request_tags": null,
      "cache_hit": null
@@ -121,6 +123,7 @@
     "cost": 0.001,
     "status": "success",
     "path": "acompletion",
+    "method": null,
     "metadata": {
      "request_tags": null,
      "cache_hit": null
