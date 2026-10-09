@@ -17,12 +17,21 @@ references.
 
 ## `code.filesystem`
 
-Optional `diff_base` accepts a local Git branch, tag, or revision. It scans
-committed changes from the merge base to HEAD plus manifests, environment and
-configuration context. Findings carry `diff-scan` and `metadata.diff_scan`;
-this is a scoped change scan, not a complete repository inventory. Git paths
-retain their exact whitespace. If the revision cannot be resolved, collection
-falls back to a full scan with a warning.
+Optional `diff_base` (`shadowscan code PATH --diff-base REF`) accepts a local
+Git branch, tag, or revision. It scans the files committed between the merge
+base and HEAD, plus every dependency manifest and `.env*` file for context. It
+does not scan uncommitted or untracked files, changes inside submodules, or any
+other unchanged file. Findings carry `diff-scan` and `metadata.diff_scan`, and
+the connector records a warning with the changed-file count even when nothing
+is found. This is a scoped change scan, not a complete repository inventory:
+the report's `collection_scope` is not comparable, so `shadowscan diff` lists
+earlier findings that are absent from it as unknown, never as resolved, and
+`--incremental` never reuses a diff-scoped result. Git paths retain their exact
+whitespace. The option needs Git 2.45 or later and applies only to local paths;
+`--github-*` and `--gitlab-group` repositories in the same run are scanned in
+full. If the revision cannot be resolved, the diff fails or times out, or a
+changed path is not valid UTF-8, collection falls back to a full scan with a
+warning.
 
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
@@ -50,8 +59,16 @@ a framework never becomes third-party framework evidence through an alias.
 No scanned code is imported or executed, and source is not reopened for this
 pass. It retains at most 4,096 consumer files / 16 MiB of source, and resolves
 at most 16 modules per chain. Each shim has a 64 KiB source and 256-export
-budget, with at most 4,096 shims per scan. Reaching a required source or chain
-budget marks the scan incomplete and preserves available per-file evidence.
+budget, with at most 4,096 shims per scan. These budgets apply only to modules
+that may be import-only; a larger ordinary module stays unresolved. Reaching a
+required source or chain budget marks the scan incomplete and preserves available
+per-file evidence. A consumer whose imports resolve through no shim keeps the
+single-file proof that lets a large file without signature imports finish
+complete. A queued consumer's imports and code patterns are matched during the
+walk; its import binding runs after the walk under the walk's deadline rule,
+starting only while its matching budget and the walk's safety margin fit. A
+consumer left unbound is named, keeps that lexical evidence and makes the scan
+incomplete.
 
 Packages, nested source layouts, dynamic imports, other re-exports and uncertain
 bindings remain usage evidence when ordinary signatures identify them.
@@ -60,7 +77,17 @@ receiver, with local shadowing excluded. For Microsoft.Extensions.AI, a
 standalone function declaration is tool context; supported automatic invocation
 with concrete nonempty tools and a response call can establish an agent.
 Tool-mode type and alias names must remain unshadowed to prove automatic invocation.
-These bounded checks do not resolve arbitrary types or cross-file bindings.
+Target-typed `new()` takes the SDK type of its local declaration or, as a
+response call's options argument, `ChatOptions`; later `Tools.Add(...)` calls are
+not followed.
+These bounded checks do not resolve arbitrary types or cross-file bindings, so
+`UseFunctionInvocation()` middleware, including a dependency-injection
+registration, stays a lexical agent indicator with tool use that needs matching
+import or dependency corroboration. An explicitly constructed
+`FunctionInvokingChatClient` is not a lexical indicator; registered through
+dependency injection or held in fields, it is reported as framework usage. Only
+C# files that name `Microsoft.Extensions.AI` run the tool-loop proof and its
+token budget.
 Other languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code
@@ -69,10 +96,18 @@ that code ran or that a deployment is autonomous.
 
 Python exception handlers and pattern-match alternatives join only bindings
 that agree across possible paths. A binding from the last visited alternative
-does not prove an agent construction. Literal unreachable alternatives can be
-excluded for supported shapes; scalar values assigned to names, computed
-subjects and uncertain control flow are not a general constant-propagation
-engine and remain conservative usage evidence.
+does not prove an agent construction. A guarded optional import
+(`try: from agents import Agent` / `except ImportError: pass`) keeps its
+binding when that try statement holds every binding of the name in the
+module: a handler that leaves the name unbound cannot construct another
+object. Handlers ending in `sys.exit()`, `os._exit()` or the `exit()`/`quit()`
+builtins do not continue, and alternative import paths of one package symbol
+(`crewai.Agent`, `crewai.agent.Agent`) agree. Any other binding of the name in
+the module (earlier, later, in a loop or through `global`), a handler
+rebinding, a star import or a same-named builtin keeps the name uncertain.
+Literal unreachable alternatives can be excluded for supported shapes; scalar
+values assigned to names, computed subjects and uncertain control flow are not
+a general constant-propagation engine and remain conservative usage evidence.
 Constructor and registered-tool coordinates follow Python's physical line
 endings, so separators inside string literals do not hide execution evidence.
 
@@ -86,9 +121,11 @@ Rust ordinary strings and byte strings may span physical lines; their contents
 remain literal evidence, while code after the closing quote is still scanned.
 C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a `\x7F` or
 `\u{201C}` escape are recognized, so a quote inside them does not open a string.
-`.js`, `.mjs` and `.cjs` files are lexed with JSX enabled, like `.jsx` and
-`.tsx`: JSX text stays masked and executable expressions remain visible. A `<`
-right after another `<` is part of a `<<` shift and never opens a JSX element,
+For `.js`, `.mjs` and `.cjs` files, an incomplete plain JavaScript lexical pass
+is retried as JSX, and that reading is accepted only when it completes: JSX text
+stays masked and executable expressions remain visible. `.jsx` and `.tsx` files
+are always lexed with JSX. A `<` right after another `<` is part of a `<<`
+shift and never opens a JSX element,
 so `mask<<shift>limit` cannot hide code up to a later `</shift>`. TypeScript
 files (`.ts`, `.mts`, `.cts`) keep their generic/type-assertion behavior and are
 never read as JSX. Unclosed multiline literals, unbalanced tags or ambiguous
@@ -107,7 +144,16 @@ Local execution sinks are linked for the existing supported keyword `tools=`
 forms. Positional tool factories and later method registration remain project
 context and do not transfer execution capabilities to a source identity.
 The project finding retains remaining technology and unsupported-construction
-evidence. A project inventory approval does not approve these separate source
+evidence. A tool body stays project evidence too, so the project keeps that
+execution capability, when anything other than a named construction's literal
+`tools=` list can reach it: a construction left in the project or with unpacked
+options, a computed tools value or positional list, another call, collection,
+return value, method, lambda or local decorator that obtains the function, a
+method or decorator registration, a dispatch loop, or `globals()`, `eval` or
+`exec`. A direct call of a tool does not register it elsewhere; other lookups
+by name, such as `getattr` on a module, are not followed. All named
+constructions in a file share one tool-attribution pass that reads each tool
+body once. A project inventory approval does not approve these separate source
 resources; broad resource globs still have their explicitly configured scope.
 
 The default `agent_granularity: project` keeps existing aggregation. The source
@@ -155,8 +201,16 @@ Kubernetes-style resource (`apiVersion` and `kind`, also in a multi-document
 stream), an ECS task definition, or a data file that assigns a variable it
 names under an `env`, `environment`, `variables` or `secrets` key (as a key, or
 as the `name` or `key` of an item). A data file naming one to three products is
-configuration. The threshold of four is a judgement from the bundled corpora and
-fixtures: their multi-provider configurations name at most four products and are
+configuration, unless its file name (split at `.`, `_` and `-`) names a deny
+list: a whole word, or two adjacent words, spell `blocklist`, `denylist` or
+`blacklist` (`ai-blocklist.yaml`, `deny_list.json`). Such a file is a catalog
+whatever it names, and the scan note says so. An allowlist, whitelist, egress
+or ingress policy, or a firewall or WAF rule set, is not a deny list: it permits
+traffic, often to exactly the hosts it names, so a short one is configuration
+and reports the products. A bare `block`, `deny`, `firewall` or `waf` in the
+name (`firewall-rules.json`, `default-deny.yaml`) does not make a deny list. The threshold of four
+is a judgement from the bundled corpora and fixtures: their multi-provider
+configurations name at most four products and are
 dotenv files, while blocklists and vendor policies name six to ten and the
 signature packs seven to thirty-six per file. A real routing table kept in a
 plain data file that names four or more providers by base URL, with no other
@@ -354,7 +408,9 @@ lexed on its own, and a cell that still does not parse (a `%%bash` cell, an
 unfinished scratch cell) is left out of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
 lexical evidence retained` names it, and the other cells are bound as usual. A
-string left open in one cell no longer masks the cells after it.
+string left open in one cell no longer masks the cells after it, and a cell that
+stops (`raise SystemExit`, `sys.exit()`, `exit()` or `quit()` to halt Run All)
+ends only its own statements: the later cells stay reachable.
 
 A Python source the running interpreter cannot parse (syntax newer than it,
 such as a PEP 695 `type` statement on Python 3.11) has no import binding: its
@@ -417,7 +473,16 @@ the directory context that file signatures expect (`.claude/skills/*/SKILL.md`
 only matches when `.claude/` is part of the relative path), which is why
 `shadowscan endpoint` scans a profile root with an include list rather than
 each location as its own root. Entries must be relative and may not escape the
-root; a bare string is rejected like `exclude`.
+root; a bare string is rejected like `exclude`. A scan with `include` is never
+served from the incremental cache: fingerprinting the root would read every
+file below it, so such a scan always runs in full. A directory link that only
+lies on the way to selected paths is never followed; it is a coverage gap
+(incomplete) when a selected path exists through it, or cannot be looked up,
+and is passed over when none does, so a linked `~/.config` without any client
+configuration in it leaves an endpoint scan complete. A selected file that is
+a link to a file outside the selected paths is a coverage gap too, even when
+the target is an equivalent instruction document, because the walk never
+reads the target.
 
 ```yaml
 connectors:
@@ -432,8 +497,12 @@ connectors:
 A coding-agent configuration finding inspects the instruction files it reports
 (skills, `CLAUDE.md`-style files, sub-agent definitions, rules, hooks) for
 content a rendered view hides or that executes fetched code: an HTML comment
-holding sentences, a network fetch piped into an interpreter, an inline blob
-decoded into one, and invisible or bidirectional control characters. A hit adds
+holding sentences (however long, or never closed where Markdown passes it
+through as HTML: at the start of a line, below a list or quote marker, or in
+raw HTML, where it hides the rest of the file), a network fetch piped into an
+interpreter, an inline blob decoded into one, and invisible or bidirectional
+control characters (a zero-width joiner inside an emoji sequence and the tag
+characters of a subdivision flag are not counted). A hit adds
 `content:<rule>` evidence naming the file and line, never an excerpt, and the
 risk tags `hidden-instructions`, `remote-code-fetch` or `invisible-text`
 (see [risk](../concepts/risk.md)); `metadata.instruction_content` lists the

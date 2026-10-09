@@ -142,8 +142,28 @@ found only under test or fixture paths (`tests/`, `fixtures/`, `cassettes/`,
 `__mocks__/`, `test_*.py`, `*_test.go`, `*.spec.ts`, …) has half weight and cannot
 promote a project to an *agent*; a project whose evidence is entirely test code
 is tagged `test-code-only`. Exported low-code workflows found under those paths
-follow the same rule. Set `include_tests: true` (`--include-tests`) to
-treat test code like any other source. A real-format credential under a test,
+follow the same rule.
+
+Documentation, example and generated code is discounted the same way, but never
+judged by a project's own location. Evidence under a documentation directory
+(`docs/`, `doc/`, `documentation/`, `wiki/`, `guides/`, `tutorials/`) or an
+example directory (`examples/`, `samples/`, `demos/`, `quickstart/`, `starter/`,
+`templates/`, `boilerplate/`, `cookbook/`, `recipes/`, and their singular or
+plural forms) has half weight only when that directory lies inside the file's
+project, below the directory holding its manifest. A directory that is itself a
+project root, such as `services/templates/` with its own `requirements.txt`, is a
+deployable unit and is not discounted. Generated code is recognized by file name
+only (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) and has 0.4 weight; a
+directory named `generated/` or `codegen/` is ordinary source. When all non-test
+evidence of a project is discounted, the finding is tagged `docs-only`,
+`example-code-only` or `generated-code-only` and its confidence is capped at
+0.85, 0.85 or 0.7 (`metadata.confidence_cap`); `metadata.negative_contexts` lists
+the contexts seen and each discounted evidence item carries
+`attributes.negative_context`. Discounted evidence keeps the capabilities it
+implies.
+
+Set `include_tests: true` (`--include-tests`) to treat test, documentation,
+example and generated code like any other source. A real-format credential under a test,
 fixture or `cassettes/` path is still reported as a `secret` finding, because
 recorded cassettes capture real traffic and a committed key is exposed wherever
 it lives; without `include_tests` it has half weight and the `test-code-only`
@@ -185,8 +205,11 @@ connectors:
     input: ./exports/aws.jsonl
 ```
 
-Each `code.filesystem.paths` root is a separate cache unit. Offline local directory
-inputs to `code.github` / `code.gitlab` and static exports to the four `cloud.*`
+Each `code.filesystem.paths` root is a separate cache unit. A `code.filesystem`
+scan with `diff_base` is never cached or reused: its result depends on HEAD and
+the base ref's merge base, which the working-tree fingerprint does not cover.
+Offline local directory inputs to `code.github` / `code.gitlab` and static
+exports to the four `cloud.*`
 connectors are also eligible. Live remote repositories, live cloud APIs, gateway
 logs, identity, SaaS inputs and third-party connectors are collected anew: unchanged configuration cannot
 establish that remote state is unchanged. Hashing still reads eligible inputs;
@@ -331,8 +354,17 @@ remained when the walk began, at least 250 ms), records one error naming how man
 files it examined and how many remain (`connector deadline reached after N of M
 files ... results incomplete`), and returns the findings collected so far. The
 engine keeps those findings and reports the scan incomplete (exit 3), so a large
-tree yields partial inventory rather than nothing. Split roots share the deadline;
-a root that starts inside the margin records that error for all of its files.
+tree yields partial inventory rather than nothing. Split roots share the deadline.
+Each root's entries are listed first and scanned in priority order (manifests and
+agent or MCP configuration first, source last, smaller files before larger).
+Listing stops after half of the time in which a file can still start and records
+`connector deadline: listing stopped after N entries`, so a large tree or a slow
+filesystem still scans the entries it listed. A root that starts when no file can
+start any more lists nothing (`listing stopped after 0 entries`), so it cannot run
+the connector past the deadline and discard the findings of the roots before it.
+A tree whose listing alone takes more than that half is reported incomplete even
+when listing and scanning together would have finished; raise
+`connector_timeout_seconds` or narrow the root with `exclude` for such a tree.
 
 On expiry, the engine discards that connector's results, records incomplete
 coverage and the reason, retains other completed connectors' findings, and
@@ -535,8 +567,11 @@ from the name references alone: it is tagged `env-names-only`, its evidence
 weights are halved and its confidence is capped at 0.8 (`likely`), however many
 names appear. A data or prose file that only lists four or more products by
 domain or variable name (a proxy blocklist, a vendor policy, a copy of the
-signature packs) is a catalog: its mentions count only for a product with an
-import, dependency or code pattern elsewhere in the project, and the discounted
+signature packs) is a catalog, as is a shorter list whose file name spells
+`blocklist`, `denylist` or `blacklist` as one word or two (`deny_list.json`);
+an allowlist, an egress policy or a firewall or WAF rule set permits what it
+names and is not one. A catalog's mentions count only for a product with an import,
+dependency or code pattern elsewhere in the project, and the discounted
 files are listed in `metadata.catalog_mentions` (see
 [Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers
@@ -553,25 +588,59 @@ of AI client configuration instead of walking the home directory: Claude
 Desktop and Claude Code (`~/.claude.json`, `~/.claude/settings*.json`,
 `~/.claude/CLAUDE.md`, skills, agents, commands, hooks), Cursor (`~/.cursor/mcp.json`,
 rules), Windsurf, VS Code and VS Code Insiders with the Cline and Roo
-extensions, Gemini CLI, Codex CLI, Kiro, Amazon Q, GitHub Copilot CLI, Zed,
-Continue, Goose, OpenCode and a generic `~/.mcp.json`. macOS, Linux and Windows
-paths are all checked; Windows locations come from `%APPDATA%`. The full list
-is `shadowscan.endpoint.LOCATIONS`.
+extensions (also inside Cursor), Gemini CLI, Codex CLI, Kiro, Amazon Q, GitHub
+Copilot CLI, Zed, Continue, Goose, OpenCode, LM Studio, Aider, OpenClaw and a
+generic `~/.mcp.json`. macOS, Linux and Windows paths are all checked; the
+Windows ones are the profile's own `AppData/Roaming`, never the scanning
+process's `%APPDATA%`, so `--home` on a mounted Windows profile reads that
+profile's Claude Desktop and VS Code configuration. Without `--home`, a
+`%APPDATA%` redirected outside the profile (folder redirection to a file
+share) makes the scan incomplete (exit 3), because the clients' configuration
+there is not read. Scan the share separately, for example with `--home` set to
+the directory that holds the redirected `AppData\Roaming`. The full list is
+`shadowscan.endpoint.LOCATIONS`; it includes every configuration file the
+`endpoint.inventory` connector reads.
 
-Only the locations that exist are read, through the `code.filesystem`
-connector with its `include` option, so a profile scan has the connector's
-limits, credential detection and symlink policy: a location that is a link, or
-sits below one, is skipped. `--home DIR` inspects another profile (a mounted
-image, a fleet collection directory); `--list` prints the locations that exist
-and exits. Findings carry the resource prefix `endpoint:<hostname>`; `--label`
+The profile is read through the `code.filesystem` connector with its
+`include` option, walked only along the known locations, so a profile scan has
+the connector's limits, credential detection and symlink policy. The include
+list is the same for every profile, so the collection scope of a workstation
+stays comparable when clients are configured or removed: `shadowscan diff`
+reports them as new or resolved findings. A location that is a link, sits
+below one, or cannot be inspected is not read and makes the scan incomplete
+(exit 3); every other location is still read and reported. A linked directory
+holding none of the locations (a stow-folded `~/.config` without client
+configuration) is passed over and does not make the scan incomplete. The
+default profile is the current user's home with symbolic links resolved
+(`$HOME` is trusted as `--home` is), so a home below a linked `/home` works.
+`--home DIR` inspects another profile (a mounted image, a fleet collection
+directory); `--list` prints the locations that exist and exits (exit 3 if one
+could not be inspected). Findings carry the resource prefix `endpoint:<hostname>`; `--label`
 replaces it, for example with an asset tag, so that merged fleet reports stay
 attributable. A profile with none of the locations is a complete, empty scan
 whose stats carry a warning, not a setup error (exit 0 unless `--fail-on`
-applies).
+applies). `--incremental` does not apply: fingerprinting the profile would
+read every file in it, so an endpoint scan always runs in full.
 
 The same client configuration inside a repository (`.mcp.json`,
 `.cursor/mcp.json`, `.claude/`) is found by `shadowscan code`; the endpoint
 command exists for the user-level copies that no repository scan sees.
+
+`shadowscan endpoint` and the [`endpoint.inventory`](connectors/endpoint.md#endpointinventory)
+connector read the same configuration files for different purposes, and their
+findings have different identities, so one profile scanned both ways is not
+deduplicated in a merged report. `endpoint.inventory` is the device
+inventory: endpoint-surface findings per client and MCP configuration, editor
+and browser extensions, local models and shell history, linked to
+`runtime.processes`. It also reports a client whose directory exists
+(`~/.copilot`, `~/.kiro`, the OpenClaw workspace); `shadowscan endpoint` does
+not walk those directories, which hold session logs, caches and agent memory,
+and reads only the configuration files in them. `shadowscan endpoint` is a
+code scan of the configuration and instruction files themselves: code-surface
+findings with the code connector's MCP, coding-agent and credential
+signatures and the instruction-content checks. Use the inventory for asset
+and lifecycle tracking, and the endpoint command to review what the
+configured agents are told to do and can reach.
 
 ## Fleet merge
 
@@ -584,7 +653,17 @@ evidence and technologies union, the earliest `first_seen` and latest
 different machines keep their own resources because the endpoint label
 prefixes every resource. Every finding records the reports it came from in
 `metadata.merged_from`, and `collection_scope.fleet.sources` lists each
-source with its completion state, finding count and scope fingerprint.
+source with its completion state, finding count and scope fingerprint. A
+source is named by its path below the reports' common directory
+(`host-a/report.json` for reports collected as `<host>/report.json`), or by
+its file name when the reports share a directory.
+
+Report files are untrusted input. A finding id that another report already
+uses for a finding with another identity (resource, connector, account and
+the other identity fields) is refused (exit 1) rather than merged. Machines
+that share a host name and home directory, such as clones of one VM image,
+produce the same identities and merge as one machine scanned twice; give each
+a distinct `--label`, such as its asset tag.
 
 The merged report is comparable with `shadowscan diff` only when every source
 was complete and carried a comparable collection scope; its fingerprint is

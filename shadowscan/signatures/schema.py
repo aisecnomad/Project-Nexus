@@ -60,8 +60,6 @@ ECOSYSTEMS = frozenset(
         "rubygems",
         "composer",
         "conda",
-        "hex",
-        "cran",
         "any",
     }
 )

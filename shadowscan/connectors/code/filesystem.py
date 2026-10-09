@@ -72,6 +72,7 @@ from shadowscan.connectors.code.catalogs import (
     CATALOG_MIN_SIGNATURES,
     catalog_metadata,
     configuration_document,
+    deny_list_file,
     project_catalog_files,
 )
 from shadowscan.connectors.code.dotnet_semantics import microsoft_tool_loop_matches
@@ -367,6 +368,9 @@ SCAN_TIMEOUT_CAP_SECONDS = 10.0
 # discards a result that arrives after the deadline.
 DEADLINE_MARGIN_FRACTION = 0.05
 DEADLINE_MARGIN_MIN_SECONDS = 0.25
+# The walk lists every entry before it scans any. Listing may use this share
+# of the time in which a file can still start; the rest scans what it listed.
+ENUMERATION_DEADLINE_SHARE = 0.5
 
 # Generated or locked files the walker never reads at any size.
 _NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
@@ -477,7 +481,39 @@ def _analyzed_by_name(name: str) -> bool:
     )
 
 
-_QUOTED_VALUE_RX = re.compile(r""""(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*' """, re.VERBOSE)
+# One quoted value, matched from its opening quote; none spans a line break.
+_QUOTED_VALUE = {
+    '"': re.compile(r'"(?:[^"\\\r\n]|\\[^\r\n])*"'),
+    "'": re.compile(r"'(?:[^'\\\r\n]|\\[^\r\n])*'"),
+}
+# The next opening quote of the kinds that can still close on the line.
+_QUOTE_START = {kinds: re.compile(f"[{kinds}]") for kinds in ("\"'", '"', "'")}
+_CRAWLER_UA_MARK = re.compile("mozilla/", re.IGNORECASE)
+_LINE_BREAK = re.compile(r"[\r\n]")
+
+
+def _quoted_values(text: str, start: int, end: int) -> Iterator[tuple[int, int]]:
+    """Yield the spans of the quoted values on the line ``text[start:end]``, left to right.
+
+    A quote that never closes is scanned to the end of the line, passing
+    every later quote of its kind as an escaped character, so none of those
+    can close either. Each kind therefore fails at most once per line, and
+    a planted line of escaped quotes costs linear time, not one scan to the
+    end of the line per quote.
+    """
+    live = "\"'"
+    pos = start
+    while live:
+        quote = _QUOTE_START[live].search(text, pos, end)
+        if quote is None:
+            return
+        value = _QUOTED_VALUE[quote.group(0)].match(text, quote.start(), end)
+        if value is None:
+            live = live.replace(quote.group(0), "")
+            pos = quote.end()
+        else:
+            yield value.span()
+            pos = value.end()
 
 
 def _crawler_ua_text(text: str) -> tuple[str, str]:
@@ -489,17 +525,25 @@ def _crawler_ua_text(text: str) -> tuple[str, str]:
     provider. Only a complete quoted value with the crawler UA shape is
     discounted. Other values on its line, and later uses of the same host,
     must reach domain matching before the matcher deduplicates occurrences.
+    Only lines naming ``mozilla/`` are tokenized, each once.
     """
     spans = []
-    for match in _QUOTED_VALUE_RX.finditer(text):
-        value = match.group(0)[1:-1].lower()
-        if (
-            value.startswith("mozilla/")
-            and "(compatible;" in value
-            and ("+https://" in value or "+http://" in value)
-            and value.endswith(")")
-        ):
-            spans.append((match.start(), match.end()))
+    pos = 0
+    while (mark := _CRAWLER_UA_MARK.search(text, pos)) is not None:
+        # The line around the mark; ``pos`` is the previous line's end.
+        start = max(text.rfind("\n", pos, mark.start()), text.rfind("\r", pos, mark.start()), pos - 1) + 1
+        line_break = _LINE_BREAK.search(text, mark.end())
+        end = len(text) if line_break is None else line_break.start()
+        for value_start, value_end in _quoted_values(text, start, end):
+            value = text[value_start + 1 : value_end - 1].lower()
+            if (
+                value.startswith("mozilla/")
+                and "(compatible;" in value
+                and ("+https://" in value or "+http://" in value)
+                and value.endswith(")")
+            ):
+                spans.append((value_start, value_end))
+        pos = end
     if not spans:
         return text, ""
     content: list[str] = []
@@ -646,8 +690,11 @@ class _ScanState:
     diff_files: frozenset[str] | None = None  # when set, only these changed files + context files are scanned
     diff_base_ref: str | None = None  # the ref that was diffed against
     reexports: PythonReexports = field(default_factory=PythonReexports)
-    reexport_files: list[_SourceFile] = field(default_factory=list)
+    reexport_files: list[_MatchedSource] = field(default_factory=list)
     reexport_bytes: int = 0
+    # The walk's safety margin before the connector deadline, kept by the
+    # pass that analyzes the queued re-export consumers after it.
+    margin: float = 0.0
 
     def covered_files(self) -> frozenset[str]:
         """Files whose own MCP, manifest, workflow or IaC finding reports their evidence."""
@@ -687,6 +734,8 @@ class _SourceFile:
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
     source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
+    # Tool regions a project-level construction, registration or dispatch path may also reach.
+    project_tool_regions: list[tuple[int, int]] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -695,6 +744,22 @@ class _SourceFile:
     @property
     def ext(self) -> str:
         return self.path.suffix.lower()
+
+
+@dataclass
+class _MatchedSource:
+    """A source file's lexical evidence, awaiting its import-bound analysis.
+
+    The imports are already recorded; the code patterns are recorded with the
+    binder's result, whose evidence replaces their lexical matches.
+    """
+
+    file: _SourceFile
+    text: str  # the analyzed content text
+    ignored: list[tuple[int, int]]
+    is_local_module: Callable[[str], bool]
+    imports: list[Match]
+    code_matches: list[Match]
 
 
 _Observation = tuple[Match, str, str | None]  # match, relpath, snippet
@@ -709,6 +774,7 @@ class _ProjectEvidence:
         *,
         discount_tests: bool,
         mcp_tools: dict[str, str],
+        project_root: str = ".",
     ) -> None:
         self.discount_tests = discount_tests
         # Environment-variable and display-name references are weak
@@ -768,7 +834,7 @@ class _ProjectEvidence:
         if discount_tests:
             for _, rel, _ in self.matches:
                 if rel not in self.negative_contexts:
-                    ctx = negative_context(rel)
+                    ctx = negative_context(rel, project_root)
                     if ctx is not None:
                         self.negative_contexts[rel] = ctx
         self.docs_only = (
@@ -822,9 +888,6 @@ class _ProjectEvidence:
             return False
         if self.in_tests(rel) and not self.test_only:
             return False
-        ctx = self.negative_contexts.get(rel)
-        if ctx is not None and ctx.reason == "generated-code":
-            return False
         if match.extra.get("contextual_capabilities"):
             return False
         if (
@@ -853,6 +916,8 @@ class _ProjectEvidence:
 
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
+# The ":<line>" suffix of an evidence location.
+_LOCATION_LINE = re.compile(r":\d+\Z")
 
 # Test suites routinely construct agents to exercise a library. Evidence found
 # only there describes the library's tests, not a deployed agent, so it cannot
@@ -962,21 +1027,12 @@ _EXAMPLE_DIR_NAMES = frozenset(
     }
 )
 
-_GENERATED_MARKERS = frozenset(
-    {
-        "generated",
-        "autogenerated",
-        "auto-generated",
-        "auto_generated",
-        "codegen",
-        "proto_gen",
-        "pb2",
-        "pb2_grpc",
-    }
-)
-
+# Generated code is recognized by the file name a generator gives it, never by a
+# directory name: "codegen" or "generated" also names a service that runs an
+# LLM code-generation agent. "*.auto.*" is not a marker either (Terraform loads
+# "*.auto.tfvars" into the deployment).
 _GENERATED_FILE_RE = re.compile(
-    r"(?:^|/)(?:[^/]*\.generated\.[^/]+|[^/]*\.auto\.[^/]+|[^/]*_pb2\.py|[^/]*_pb2_grpc\.py)$",
+    r"(?:^|/)(?:[^/]*\.generated\.[^/]+|[^/]*_pb2\.py|[^/]*_pb2_grpc\.py)$",
     re.IGNORECASE,
 )
 
@@ -992,11 +1048,7 @@ def _is_example_path(rel: str) -> bool:
 
 
 def _is_generated_path(rel: str) -> bool:
-    lower = rel.lower()
-    parts = lower.split("/")
-    if any(part in _GENERATED_MARKERS for part in parts):
-        return True
-    return bool(_GENERATED_FILE_RE.search(lower))
+    return bool(_GENERATED_FILE_RE.search(rel.lower()))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1008,13 +1060,21 @@ class NegativeContext:
     confidence_cap: float | None = None
 
 
-def negative_context(rel: str) -> NegativeContext | None:
-    """Return the strongest negative context for a file path, or None."""
+def negative_context(rel: str, project_root: str = ".") -> NegativeContext | None:
+    """Return the strongest negative context for a file path, or None.
+
+    Documentation and example directories count only inside the file's project
+    (below ``project_root``): a directory that is itself a project root holds a
+    manifest and is a deployable unit, whatever it is called.
+    """
     if _is_generated_path(rel):
         return NegativeContext("generated-code", GENERATED_WEIGHT_SCALE, GENERATED_MAX_CONFIDENCE)
-    if _is_docs_path(rel):
+    inner = rel
+    if project_root not in ("", ".") and rel.startswith(project_root + "/"):
+        inner = rel[len(project_root) + 1 :]
+    if _is_docs_path(inner):
         return NegativeContext("documentation", DOCS_WEIGHT_SCALE, DOCS_MAX_CONFIDENCE)
-    if _is_example_path(rel):
+    if _is_example_path(inner):
         return NegativeContext("example-code", EXAMPLE_PATH_WEIGHT_SCALE, EXAMPLE_PATH_MAX_CONFIDENCE)
     return None
 
@@ -1106,6 +1166,27 @@ def deadline_margin(remaining: float) -> float:
     engine's own sanitization before it compares completion to the deadline.
     """
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
+
+
+def enumeration_deadline(now: float, deadline: float, margin: float, scan_timeout: float) -> float:
+    """Return the monotonic time after which the walk stops listing entries.
+
+    A large tree, a slow filesystem or a root inheriting a nearly spent
+    deadline must not spend it all on listing, leaving no file scanned.
+    Listing takes ``ENUMERATION_DEADLINE_SHARE`` of the time in which a
+    file's matching budget still fits before the margin. When no file can
+    start any more, nothing is listed: listing and sorting entries that
+    cannot be scanned would only spend the margin, and a result that then
+    arrives after the deadline is discarded with the earlier roots' findings.
+    """
+    window = deadline - margin - scan_timeout - now
+    return now + ENUMERATION_DEADLINE_SHARE * window if window > 0 else now
+
+
+def _check_enumeration_time(walk: _WalkCounters) -> None:
+    """Stop listing at ``walk.enumerate_until``; the entries listed so far are still scanned."""
+    if walk.enumerate_until is not None and time.monotonic() >= walk.enumerate_until:
+        raise _WalkLimitError(f"connector deadline: listing stopped after {walk.examined} entries")
 
 
 def _validated_include(value: Any) -> frozenset[str]:
@@ -1238,8 +1319,8 @@ class FilesystemConnector(BaseConnector):
         "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
         "include": (
             "list of paths relative to each root that limit the walk to those files and directories; "
-            "other file contents are not read; parent directory names are listed (endpoint scans use it; "
-            "default: everything)"
+            "other file contents are not read; parent directory names are listed; such a scan always "
+            "runs in full, without the incremental cache (endpoint scans use it; default: everything)"
         ),
         "default_excludes": (
             "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
@@ -1311,9 +1392,11 @@ class FilesystemConnector(BaseConnector):
         "provider": "provider label recorded on findings (default filesystem)",
         "metadata": "mapping merged into every finding's metadata",
         "diff_base": (
-            "git ref to diff against (branch, tag, or SHA); only files changed since this ref are scanned, "
-            "plus manifests and environment files for cross-file context. Requires a local .git directory. "
-            "Falls back to a full scan when the ref cannot be resolved"
+            "git ref to diff against (branch, tag, or SHA); only files committed between its merge-base and "
+            "HEAD are scanned, plus dependency manifests and .env files for context. Uncommitted, untracked "
+            "and submodule changes are not scanned. The report is not a repository inventory: `shadowscan "
+            "diff` never resolves findings from it and --incremental never reuses it. Requires Git 2.45+ "
+            "and a local .git directory; falls back to a full scan when the diff cannot be computed"
         ),
     }
     shared_config_keys: ClassVar[dict[str, str]] = {}  # scans a checkout, not an export file
@@ -1462,6 +1545,25 @@ class FilesystemConnector(BaseConnector):
         """Whether the walk must enter directory ``rel`` to reach a configured include path."""
         return self._included(rel) or any(p.startswith(rel + "/") for p in self.include_paths)
 
+    def _include_behind_link(self, link: Path, rel: str) -> bool:
+        """Whether a configured include path below directory link ``rel`` exists through it.
+
+        Only metadata is looked up through the link; nothing behind it is
+        listed or read. A lookup that fails for any reason other than absence
+        counts as present, so the link stays a coverage gap.
+        """
+        for selected in self.include_paths:
+            if not selected.startswith(rel + "/"):
+                continue
+            try:
+                os.lstat(link / selected[len(rel) + 1 :])
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except OSError:
+                return True
+            return True
+        return False
+
     def _excluded_file(self, rel: str) -> bool:
         """File exclusion: globs only, so a file named like an excluded directory is still scanned."""
         for g in self.exclude_globs:
@@ -1544,10 +1646,11 @@ class FilesystemConnector(BaseConnector):
         when the real target is walked and analyzed with the same semantics the
         alias path would have had: same project, same test classification, same
         source type and no file-name signal that only the alias name carries.
-        Directory links, links into excluded or unread content and config or
-        document aliases (whose parsing can depend on their path) are gaps. A
-        coding-agent instruction document linked to another one is the exception:
-        the target keeps the alias's project and test classification.
+        Directory links, links into excluded, unselected (outside ``include``)
+        or unread content and config or document aliases (whose parsing can
+        depend on their path) are gaps. A coding-agent instruction document
+        linked to another one is the exception: the target keeps the alias's
+        project and test classification.
         """
         relative = target.relative_to(root)
         target_rel = relative.as_posix()
@@ -1569,7 +1672,14 @@ class FilesystemConnector(BaseConnector):
         for depth, name in enumerate(parts[:-1], start=1):
             if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
                 return False
-        if not target.is_file() or self._excluded_file(target_rel) or _never_read_by_name(target.name):
+        # An include walk never reaches a target outside the selected paths,
+        # however equivalent the alias is.
+        if (
+            not target.is_file()
+            or self._excluded_file(target_rel)
+            or not self._included(target_rel)
+            or _never_read_by_name(target.name)
+        ):
             return False
         # Coding-agent instruction aliases (CLAUDE.md -> AGENTS.md) are the
         # same document family. The real file is scanned and the alias hides no
@@ -1691,10 +1801,12 @@ class FilesystemConnector(BaseConnector):
         # connector deadline, as file analysis does in _walk_entries, so a tree
         # planted with links cannot hold the walk past it.
         deadline = self.ctx.deadline
-        walk = _WalkCounters(
-            stop_at=None if deadline is None else deadline - deadline_margin(deadline - time.monotonic()),
-            budget=_WalkBudget(self.max_entries, self.ctx.check_deadline),
-        )
+        walk = _WalkCounters(budget=_WalkBudget(self.max_entries, self.ctx.check_deadline))
+        if deadline is not None:
+            now = time.monotonic()
+            margin = deadline_margin(deadline - now)
+            walk.stop_at = deadline - margin
+            walk.enumerate_until = enumeration_deadline(now, deadline, margin, self.scan_timeout)
 
         resolved_root = Path(os.path.realpath(root))
 
@@ -1718,8 +1830,12 @@ class FilesystemConnector(BaseConnector):
         # even when this source tree produces no findings (and no enrichment).
         if self.use_git and os.path.lexists(root / ".git"):
             self.check_gitlink_coverage(root)
+        # A root that starts when no file can start any more does not even
+        # read its top directory.
+        _check_enumeration_time(walk)
         for dirpath, dirnames, filenames in _walk_directories(root, walk_error, budget=walk.budget):
             walk.budget.check()
+            _check_enumeration_time(walk)
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if ".gitmodules" in filenames:
@@ -1737,6 +1853,7 @@ class FilesystemConnector(BaseConnector):
                 proj = rel_dir
             for fn in sorted(filenames):
                 walk.budget.check()
+                _check_enumeration_time(walk)
                 shown = _report_name(fn)
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
                 if self._excluded_file(rel) or not self._included(rel):
@@ -1778,11 +1895,13 @@ class FilesystemConnector(BaseConnector):
         """Return the subdirectories of ``dirpath`` the walk descends into, in name order.
 
         None means the walk must stop: a directory link reached ``max_files``
-        or the connector deadline (see ``_skip_link``).
+        or the connector deadline (see ``_skip_link``). Directory-link checks
+        are listing work, so they also stop at ``walk.enumerate_until``.
         """
         kept = []
         for name in sorted(dirnames):
             walk.budget.check()
+            _check_enumeration_time(walk)
             shown = _report_name(name)
             rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
@@ -1794,6 +1913,10 @@ class FilesystemConnector(BaseConnector):
                 continue
             try:
                 if path.is_symlink():
+                    if not self._included(rel) and not self._include_behind_link(path, rel):
+                        # The link only lies on the way to selected paths, and
+                        # none of them exists through it: nothing is lost.
+                        continue
                     if not self._skip_link(root, resolved_root, rel, path, walk):
                         return None
                     continue
@@ -1952,34 +2075,72 @@ class FilesystemConnector(BaseConnector):
                 incomplete=False,
             )
             return None
+        # Operator intent, like --only: not a coverage gap, but the report must say
+        # that unchanged files were not read, even when it holds no finding.
         self.ctx.warn(
-            f"code.filesystem: diff-base {self.diff_base!r}: {len(changed)} changed file(s)",
+            f"code.filesystem: diff-scoped scan against {self.diff_base!r}: only {len(changed)} changed "
+            "file(s) plus dependency manifests and .env files were scanned; unchanged files were not "
+            "scanned, so this report is not a repository inventory",
             incomplete=False,
         )
         return changed
 
     def _resolve_reexport_sources(self, scan: _ScanState) -> None:
-        """Bind queued consumers after all shim snapshots have been read safely."""
-        for file in scan.reexport_files:
-            if self.ctx.deadline is not None and time.monotonic() >= self.ctx.deadline:
-                self.ctx.error("code.filesystem: Python re-export analysis deadline exceeded")
-                break
-            local = _local_module_predicate(scan.root, file.path, file.proj_root)
+        """Bind queued consumers after all shim snapshots have been read safely.
+
+        The walk already matched their imports and code patterns. Each binder
+        starts under the walk's own rule: only while its matching budget and
+        the walk's margin fit before the connector deadline, so the findings
+        already collected are still emitted in time. A consumer left unbound is
+        named, keeps its lexical evidence and makes the results incomplete.
+        """
+        deadline = self.ctx.deadline
+        for position, source in enumerate(scan.reexport_files):
+            file = source.file
+            budget = scan_timeout_for_size(self.scan_timeout, len(file.text.encode("utf-8")))
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining < budget + scan.margin:
+                    if remaining > scan.margin + self.scan_timeout:
+                        self.ctx.error(
+                            f"code.filesystem: {file.rel}: Python re-export analysis skipped; the remaining "
+                            f"connector deadline cannot cover its {budget:.0f}s matching budget; "
+                            "lexical evidence retained",
+                        )
+                        self._retain_lexical_evidence([source], deadline - scan.margin / 2)
+                        continue
+                    others = len(scan.reexport_files) - position - 1
+                    queued = f" and {others} other queued files" if others else ""
+                    self.ctx.error(
+                        "code.filesystem: connector deadline reached before Python re-export analysis of "
+                        f"{file.rel}{queued}; results incomplete",
+                    )
+                    self._retain_lexical_evidence(scan.reexport_files[position:], deadline - scan.margin / 2)
+                    break
+            resolver = scan.reexports.resolver(file.proj_root, source.is_local_module)
             with (
                 self._isolated(file.rel, "Python re-export analysis"),
-                self.index.scan_budget(seconds=scan_timeout_for_size(self.scan_timeout, len(file.text))),
+                self.index.scan_budget(seconds=budget),
             ):
                 try:
-                    self._scan_source(
-                        scan.root,
-                        file,
-                        file.text,
-                        resolve_import=scan.reexports.resolver(file.proj_root, local),
-                    )
+                    self._bind_source(source, resolve_import=resolver)
                 except ReexportLimitError as exc:
                     self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
-                    self._scan_source(scan.root, file, file.text)
+                    self._bind_source(source)
         scan.reexport_files.clear()
+
+    def _retain_lexical_evidence(self, sources: list[_MatchedSource], until: float) -> None:
+        """Record the walk's lexical evidence for queued consumers the binder cannot read.
+
+        As for a file over the binder's budget, the lexical matches stand in for
+        the whole file. Recording stops at ``until``, like the walk's own final
+        count, so the findings collected so far are still emitted in time.
+        """
+        for source in sources:
+            if time.monotonic() >= until:
+                return
+            with self._isolated(source.file.rel, "Python re-export analysis"):
+                self._record_source(source, [], [(0, len(source.text))])
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -2031,18 +2192,21 @@ class FilesystemConnector(BaseConnector):
         source last — with smaller files before larger within each class and
         the deterministic walk order breaking ties. A deadline therefore
         degrades predictably: whatever is cut is the largest, lowest-signal
-        tail, and the remainder is reported exactly. Each entry carries its
-        own project root, so ordering never changes attribution.
+        tail, and the remainder is reported exactly. Listing itself stops at
+        ``enumeration_deadline``, leaving time to scan the listed entries.
+        Each entry carries its own project root, so ordering never changes
+        attribution.
         """
         deadline = self.ctx.deadline
         margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
+        scan.margin = margin
         entries: list[tuple[str, Path, str, int]] = []
         try:
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
-            # Enumeration hit max_entries: the files already enumerated are
-            # still scanned (in priority order) so partial findings survive,
-            # and the limit is recorded exactly as the lazy walk did.
+            # Enumeration hit max_entries or its share of the deadline: the
+            # files already enumerated are still scanned (in priority order)
+            # so partial findings survive, and the limit is recorded.
             self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
         entries.sort(key=lambda entry: (_scan_priority(entry[0], entry[1].name), entry[3]))
         examined = 0
@@ -2080,8 +2244,8 @@ class FilesystemConnector(BaseConnector):
     def _diff_included(rel: str, diff_files: frozenset[str]) -> bool:
         """Whether a file should be scanned in diff mode.
 
-        Always included: files in the diff set, manifests, env files, and
-        config files whose content contextualizes code changes.
+        Always included: files in the diff set, dependency manifests and
+        ``.env*`` files, whose content contextualizes code changes.
         """
         if rel in diff_files:
             return True
@@ -2543,8 +2707,10 @@ class FilesystemConnector(BaseConnector):
         if file.ext in _XML_EXTENSIONS:
             content_text = _without_xml_comments(content_text)
         if file.ext in SOURCE_EXTENSIONS:
-            if not self.triage and not self._defer_reexport_source(scan, file):
-                self._scan_source(scan.root, file, content_text)
+            if not self.triage:
+                source = self._match_source(scan.root, file, content_text)
+                if not self._defer_reexport_source(scan, source):
+                    self._bind_source(source)
         elif not is_nonexecutable:
             self._scan_config(scan, file, content_text)
         if not is_nonexecutable and not file.is_mcp and not self.triage:
@@ -2563,8 +2729,9 @@ class FilesystemConnector(BaseConnector):
             if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):
                 file.proj.configuration_files.add(file.rel)
 
-    def _defer_reexport_source(self, scan: _ScanState, file: _SourceFile) -> bool:
+    def _defer_reexport_source(self, scan: _ScanState, source: _MatchedSource) -> bool:
         """Keep only eligible root-level Python consumers, within a fixed memory budget."""
+        file = source.file
         if file.ext != ".py" or len(project_path(file.proj_root, file.rel).parts) != 1:
             return False
         scan.reexports.add(file.proj_root, file.rel, file.text)
@@ -2575,19 +2742,12 @@ class FilesystemConnector(BaseConnector):
         if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
             self.ctx.error(f"code.filesystem: {file.rel}: Python re-export source budget exceeded")
             return False
-        scan.reexport_files.append(file)
+        scan.reexport_files.append(source)
         scan.reexport_bytes += size
         return True
 
-    def _scan_source(
-        self,
-        root: Path,
-        file: _SourceFile,
-        content_text: str,
-        *,
-        resolve_import: ImportResolver | None = None,
-    ) -> None:
-        """Match the imports, code patterns and import-bound calls of a source file."""
+    def _match_source(self, root: Path, file: _SourceFile, content_text: str) -> _MatchedSource:
+        """Match the imports and code patterns of a source file, recording the imports."""
         lang, ext = file.lang, file.ext
         is_local_module = _local_module_predicate(root, file.path, file.proj_root)
         # Malformed trailing literals are masked through EOF;
@@ -2597,14 +2757,7 @@ class FilesystemConnector(BaseConnector):
         if file.cells:
             ignored, ambiguous = _cell_noncode_ranges(content_text, file.cells)
         else:
-            # JSX is lexed in plain .js/.mjs/.cjs too: React ecosystems
-            # (Docusaurus, CRA) put JSX there routinely, and without JSX
-            # modes a closing tag after an expression trips the
-            # regex-vs-division ambiguity and fails real files closed.
-            # Plain JavaScript has no generics, so tag-shaped spans at
-            # expression positions are even less ambiguous than in .tsx.
-            jsx = ext in {".jsx", ".tsx", ".js", ".mjs", ".cjs"}
-            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=jsx)
+            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
         if ambiguous:
             self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
         imports = (
@@ -2623,31 +2776,57 @@ class FilesystemConnector(BaseConnector):
             if ignored
             else self.index.match_code(content_text, lang)
         )
+        return _MatchedSource(file, content_text, ignored, is_local_module, imports, code_matches)
+
+    def _bind_source(self, source: _MatchedSource, *, resolve_import: ImportResolver | None = None) -> None:
+        """Add the import-bound calls of a matched source file and record its code evidence."""
         bound, unbound = self._bound_matches(
-            file, content_text, ignored, is_local_module, resolve_import=resolve_import
+            source.file, source.text, source.ignored, source.is_local_module, resolve_import=resolve_import
         )
-        if self.agent_granularity == "source" and lang == "python" and file.ext == ".py" and not unbound:
+        file, content_text = source.file, source.text
+        if self.agent_granularity == "source" and file.lang == "python" and file.ext == ".py" and not unbound:
             verified = {
                 tuple(m.extra["bound_call_span"])
                 for m in bound
                 if m.extra.get("verified_agent") and m.extra.get("bound_call_span")
             }
             regions: dict[tuple[int, int], ToolRegions] = {}
+            unresolved: list[tuple[int, int]] = []
             names = named_construction_spans(
                 content_text,
                 max_ast_nodes=self.max_ast_nodes,
                 verified_spans=verified,
                 tool_regions=regions,
+                unresolved_regions=unresolved,
             )
             file.source_agent_regions = [
                 (start, end, names[span])
                 for span, region in regions.items()
                 for start, end in (*region.bodies, *region.declarations)
             ]
+            if any(
+                m.extra.get("registered_tool_paths")
+                or (m.extra.get("verified_agent") and not m.extra.get("bound_call_span"))
+                for m in bound
+            ):
+                # Decorator registrations and dispatch loops are not source
+                # identities; whatever tools they reach stay project evidence.
+                unresolved = [(0, len(content_text))]
+            file.project_tool_regions = unresolved
             for m in bound:
                 span = m.extra.get("bound_call_span")
                 if span is not None and tuple(span) in verified and tuple(span) in names:
                     m.extra["source_agent_binding"] = names[tuple(span)]
+        self._record_source(source, bound, unbound)
+
+    def _record_source(
+        self,
+        source: _MatchedSource,
+        bound: list[Match],
+        unbound: Sequence[tuple[int, int]],
+    ) -> None:
+        """Record a source file's code patterns and import-bound evidence."""
+        file, imports, code_matches = source.file, source.imports, source.code_matches
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
         # tool-calling protocol; elsewhere they are build tooling.
@@ -2658,7 +2837,7 @@ class FilesystemConnector(BaseConnector):
         for m in bound:
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
-            self._register_mcp_tools(file, ignored)
+            self._register_mcp_tools(file, source.ignored)
 
     def _bound_matches(
         self,
@@ -2703,6 +2882,7 @@ class FilesystemConnector(BaseConnector):
                 max_ast_nodes=self.max_ast_nodes,
                 truncated=truncated,
                 resolve_import=resolve_import,
+                cells=file.cells,
             )
         except SourceBudgetExceeded as exc:
             # The budget is a property of the file, not of
@@ -2791,12 +2971,16 @@ class FilesystemConnector(BaseConnector):
                     # active capability rather than this declaration's name.
                     m.extra["contextual_capabilities"] = m.capabilities()
                 if (file.lang == "go" and m.signature_id == "framework.langchaingo") or (
-                    file.ext == ".cs" and m.signature_id == "framework.microsoft-extensions-ai"
+                    file.ext == ".cs"
+                    and m.signature_id == "framework.microsoft-extensions-ai"
+                    and not m.signal.agent_indicator
                 ):
                     # These languages have narrow import/receiver proofs.
                     # A package elsewhere in the project does not bind this
                     # receiver; defining a function tool does not configure a
                     # model-directed loop. Retain the lexical candidate only.
+                    # Function invocation middleware does configure that loop
+                    # and stays a corroborated lexical indicator.
                     m.extra["verified_agent"] = False
                     m.extra["source_capabilities"] = []
             elif m.signature.category != "framework":
@@ -2857,6 +3041,10 @@ class FilesystemConnector(BaseConnector):
                     }
                     if bindings:
                         m.extra["source_agent_bindings"] = sorted(bindings)
+                        if _within(m.extra.get("start", -1), file.project_tool_regions):
+                            # A construction left in the project may run this
+                            # tool too: its findings keep the capability as well.
+                            m.extra["source_agent_shared"] = True
             elif (m.signature_id, id(m.signal), m.line) in bound_signals or (
                 _bundled_signature(m.signature) and not _within(m.extra.get("start", -1), unbound)
             ):
@@ -3408,6 +3596,8 @@ class FilesystemConnector(BaseConnector):
                     if bindings and rel not in covered_files:
                         for binding in bindings:
                             groups.setdefault((rel, binding), []).append(observation)
+                        if match.extra.get("source_agent_shared"):
+                            remaining.append(observation)
                     else:
                         remaining.append(observation)
                 for (rel, binding), source_observations in sorted(groups.items()):
@@ -3475,10 +3665,13 @@ class FilesystemConnector(BaseConnector):
         listed = sorted(catalogs)
         names = ", ".join(listed[:5]) + (f" and {len(listed) - 5} more" if len(listed) > 5 else "")
         where = "repository root" if proj.root == "." else proj.root
+        reason = f"name {CATALOG_MIN_SIGNATURES} or more products"
+        if any(deny_list_file(rel) for rel in listed):
+            reason += " or are named as block or deny lists"
         self.ctx.warn(
             f"code.filesystem: {self._root_prefix(label)}{where}: evidence not reported because it is only "
-            f"in catalog-like data files that name {CATALOG_MIN_SIGNATURES} or more products, which nothing "
-            f"else in the project uses: {names}; review them if they configure a deployment",
+            f"in catalog-like data files that {reason}, which nothing else in the project uses: {names}; "
+            "review them if they configure a deployment",
             incomplete=False,
         )
 
@@ -3525,6 +3718,7 @@ class FilesystemConnector(BaseConnector):
             observations,
             discount_tests=not self.include_tests,
             mcp_tools=proj.mcp_tools,
+            project_root=proj.root,
         )
         f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
         if self.agent_granularity == "source":
@@ -3563,10 +3757,24 @@ class FilesystemConnector(BaseConnector):
         # small synthetic evidence item so the noisy-OR rewards diversity.
         if evidence.has_library_and_code or evidence.has_multi_signal:
             boost = 0.15 if evidence.has_multi_signal else 0.1
+            # Every code observation has a source location. The synthetic item
+            # points at one it summarizes: the code evidence that the library
+            # evidence corroborates, else the first deployed observation.
+            located = [
+                item
+                for item in f.evidence
+                if item.location
+                and item.attributes.get("category") != "heuristic"
+                and not evidence.in_tests(_LOCATION_LINE.sub("", item.location))
+            ]
+            anchor = next((item for item in located if item.signal.startswith("code:")), None)
+            if anchor is None and located:
+                anchor = located[0]
             f.add_evidence(
                 Evidence(
                     signal="corroboration:cross-signal",
                     description="Multiple independent signal types corroborate this finding",
+                    location=anchor.location if anchor is not None else None,
                     weight=boost,
                     attributes={"confidence_group": "cross-signal-corroboration", "synthetic": True},
                 )
@@ -3633,7 +3841,9 @@ class FilesystemConnector(BaseConnector):
         observations: list[_Observation],
     ) -> Finding:
         """Inventory one static source binding without inheriting project capabilities."""
-        evidence = _ProjectEvidence(observations, discount_tests=not self.include_tests, mcp_tools={})
+        evidence = _ProjectEvidence(
+            observations, discount_tests=not self.include_tests, mcp_tools={}, project_root=proj.root
+        )
         f = self._base(label, root, f"{rel}#agent:{binding}", Kind.FRAMEWORK_USAGE, "", "source-agent")
         self._apply_project_evidence(f, evidence)
         source_project = _Project(proj.root, files=1, languages={"python"})

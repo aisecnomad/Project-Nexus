@@ -1,9 +1,20 @@
 # Real-world benchmark, post-fix rerun — 2026-10-08
 
+> **Stale: do not quote these figures for the merged code.** This run
+> measured the original experimental branch. Merge review then restored
+> fail-closed handling of malformed input (an input defect again marks the
+> scan incomplete and exits 3), narrowed the crawler user-agent discount to
+> complete quoted values, and returned plain `.js`/`.mjs`/`.cjs` files to the
+> JSX retry used only when the plain reading is ambiguous. The error, recall
+> and false-positive changes below were not measured on the reviewed commit,
+> and the struck recoveries do not hold for it. Rerun the ShadowScan rows at
+> that commit before attributing any of these numbers to it.
+
 The ShadowScan rows of [`results-realworld/`](../results-realworld/), rerun
-on this branch after the fixes that run drove (input-defect taxonomy,
-brace-less-JSX and JSX-in-`.js` lexing, size-scaled credential allowance,
-priority-ordered walk, UA-string discount, agent-flow classification).
+on the original experimental branch after the fixes that run drove
+(input-defect taxonomy, brace-less-JSX and JSX-in-`.js` lexing, size-scaled
+credential allowance, priority-ordered walk, UA-string discount, agent-flow
+classification).
 Same pinned corpus, same adapters, same pre-registered detection rules;
 the other six tools were not rerun. Like
 [`results-post-change/`](../results-post-change/README.md), this is a
@@ -17,10 +28,12 @@ evidence.
 | ShadowScan, default options | 15 → **13** | 0.56 → **0.64** | 1 → **0** |
 | ShadowScan, max_file_size 20 MiB | 12 → **7** | 0.64 → **0.76** | 0 → **1** (see below) |
 
-Recovered scans: autogen and langgraph (brace-less JSX in attribute
-values; an invalid agent manifest now an input defect), gpt-researcher
-(JSX in a plain `.js` Docusaurus page; a dead MCP shape now an input
-defect), awesome-mcp-servers and pytorch-examples (credential pass no
+Recovered scans on the experimental branch: ~~autogen and langgraph
+(brace-less JSX in attribute values; an invalid agent manifest now an input
+defect), gpt-researcher (JSX in a plain `.js` Docusaurus page; a dead MCP
+shape now an input defect)~~ (these depended on the input-defect relaxation
+that merge review reverted; at the merged code those files mark the scan
+incomplete again), awesome-mcp-servers and pytorch-examples (credential pass no
 longer times out on large keyword-dense text), crewai-examples,
 openai-agents-python and nukkit under the tuned row (oversize plus the
 above). The ua-parser-js false positive (a provider domain inside a

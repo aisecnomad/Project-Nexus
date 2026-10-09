@@ -9,24 +9,18 @@ passing unit suite does not establish complete coverage of a particular estate.
 
 ## Unreleased attribution migration
 
-After upgrading to the discovery-attribution corrections, rerun the affected
-network, gateway and source scans before comparing totals:
+This section covers the Python re-export and governance observation changes.
+For network connection attribution and hosted-agent invocation, see
+[October 9 scan evidence corrections](#october-9-scan-evidence-corrections-unreleased).
 
-- Network byte and flow totals can decrease when unrelated connections share a
-  destination address. Retain connection UIDs and endpoint fields in the input
-  exports so service attribution can use the individual connection. The fixed
-  attribution budget now counts UID-separated connection groups, so a capture
-  with many connections to one address can reach it sooner. A capacity limit
-  marks coverage incomplete; split large exports into controlled analysis scopes
-  instead of treating omitted traffic as zero.
-- Gateway findings can lose the `tool-use` capability or the "Agentic caller"
-  title when their only evidence was management API traffic or request cadence.
-  Preserve HTTP method and service-host metadata; a path alone does not establish
-  that a hosted agent was invoked. A lower classification is not proof that an
-  agent stopped running.
 - Supported local Python re-exports can expose agent construction previously
   reported only as framework usage. This remains static integration evidence,
   not proof of deployment or execution; see the [source guide](connectors/code.md).
+  Rerun affected source scans before comparing totals. A re-export source or
+  chain budget, or a connector deadline that leaves a queued root-level
+  consumer's import binding unanalyzed, marks the scan incomplete; ordinary
+  local modules, however large, do not. A consumer left unbound keeps its
+  lexical import and code evidence.
 - A scheduled governance audit can verify visible controls while reporting
   bypass settings as unknown. Do not use that partial observation as the complete
   ruleset evidence required for release or rollout. See the
@@ -36,21 +30,16 @@ The scanner-source fingerprint changes with these fixes. Preserve earlier
 reports as historical observations and rebuild comparison baselines under the
 new reviewed revision; do not interpret incomparable findings as resolved.
 
-Before using the changed classifications for enforcement, commission a fresh
-holdout using the [frozen field-evaluation procedure](evaluation.md#build-a-genuinely-held-out-field-set).
-Include shared-IP traffic, agent management reads, invocation attempts, ordinary
-batch calls and modular agent code. Label provider identity, operation type and
-attributed volume as well as agent presence. Freeze repository/family sampling
-and acceptance thresholds before showing scanner results to reviewers. These
-new authored regressions must be excluded from that holdout.
+Before using the changed source classifications for enforcement, commission a
+fresh holdout using the [frozen field-evaluation procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+Include modular agent code: import-only re-exports, cycles, shadowed bindings
+and executable shims. Freeze repository/family sampling and acceptance
+thresholds before showing scanner results to reviewers. These new authored
+regressions must be excluded from that holdout.
 
-Collect complete and permission-denied tenant canary receipts for every intended
-deployment scope. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
-currently supports static code, AWS and Slack; it cannot grant acceptance to
-network, gateway or other connectors by implication. Keep those scopes in
-analyst-reviewed use until their own approved validation is available. A code
-change cannot substitute for human labels, approved tenant credentials or live
-acceptance receipts.
+The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+supports static code, AWS and Slack. A code change cannot substitute for human
+labels, approved tenant credentials or live acceptance receipts.
 
 ## Unreleased review migration
 
@@ -59,6 +48,11 @@ reports. Python `try` and `match` alternatives no longer transfer their last
 visited binding to another path. Supported literal unreachable alternatives
 remain excluded; uncertain branches retain usage evidence. A lower agent
 classification is not evidence that a deployed agent stopped executing.
+Guarded optional imports (`except ImportError: pass`, or a handler ending in
+`sys.exit()`) again keep their SDK binding, so rescans can restore agent
+classifications and tool-use capabilities that the first review correction
+lowered. A notebook cell that stops (`raise SystemExit`, `sys.exit()`) no longer
+hides constructions in later cells, so such notebooks can rise to agent.
 Python literals containing control or Unicode separators no longer shift AST
 coordinates; rescans can restore registered-tool execution capabilities that
 were previously lost in either project or source inventory mode.
@@ -72,6 +66,11 @@ unrelated line insertions do not change it. Renaming a file or binding changes
 the identity. Dynamic, repeated, control-flow-dependent and unnamed constructions
 retain project evidence and expose identity limitations; this option does not
 enumerate deployed instances, split notebooks or follow every source language.
+Execution capabilities of a tool that such a construction, a registration, a
+dispatch loop or other code that obtains the function (a computed tools value,
+`bind_tools`, a wrapper, method or local decorator) can also reach stay on the
+project finding as well as on each named source finding; approving a named
+binding does not hide them.
 
 Review generated inventory stubs for each source finding. A project resource
 approval does not approve a separate source resource; a broad inventory glob
@@ -81,10 +80,12 @@ revision. Source identity and source-analysis changes alter the collection
 fingerprint, so incomparable observations cannot establish resolution.
 
 Supported AWS CLI positional credential settings are now sanitized in command
-text and argument arrays. Regenerate old reports, exports and cached evidence
-under the reviewed revision; changing the scanner cannot erase already retained
-copies. Continue to protect audit artifacts and follow the credential handling
-policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+text and argument arrays, including unlisted global options, other letter cases,
+PowerShell and cmd continuations, commented or prefixed source argv and an
+executable passed separately from its argument list. Regenerate old reports,
+exports and cached evidence under the reviewed revision; changing the scanner
+cannot erase already retained copies. Continue to protect audit artifacts and
+follow the credential handling policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
 The additive JSON `inventory_present` field distinguishes an explicitly supplied
 empty inventory from a scan without inventory reconciliation. CSV now retains
 the entire sanitized permission list, including permissions beyond position 30.
@@ -468,13 +469,24 @@ matching with a per-lookup work budget.
 The code scanner's IaC wildcard-action and agent front-matter patterns run on
 the bounded regex engine under the same per-input matching budget as the
 signature patterns, so a planted file costs at most that budget and is
-reported as an incomplete file rather than holding the connector. Symbolic
-links count toward `max_files` together with regular files, and the link
-checks stop at the connector deadline with the error `connector deadline
-reached while checking symbolic links`; findings collected before that point
-are kept and the scan is incomplete (exit 3). A checkout with more links than
-the remaining `max_files` budget needs a larger `max_files` or an `exclude`
-entry for the link directories.
+reported as an incomplete file rather than holding the connector. The crawler
+user-agent discount tokenizes only lines naming `mozilla/`, in linear time, so
+a planted file of escaped quotes cannot hold the connector either. Symbolic
+links count toward `max_files` together with regular files. A checkout with
+more links than the remaining `max_files` budget needs a larger `max_files` or
+an `exclude` entry for the link directories. The walk lists a root's entries
+before it scans them in priority order; listing, including the checks of file
+and directory links, stops after half of the time in which a file can still
+start, with the error `connector deadline: listing stopped after N entries`,
+so the listed files are still scanned and their findings kept. The link-check
+error `connector deadline reached while checking symbolic links` remains as a
+backstop at the deadline margin. The scan is incomplete (exit 3). A root that
+starts when no file can start any more, such as a late repository of an
+organization scan, lists nothing (`after 0 entries`), so it cannot run the
+connector past its deadline and discard the findings of the roots scanned
+before it. A tree whose listing alone takes more than that half is reported
+incomplete even when the former interleaved walk would have finished in time;
+raise `connector_timeout_seconds` for such a tree.
 
 YAML manifest artifact matching uses a shared one-second deadline and gives
 each bounded line chunk no more than the remaining manifest pattern budget.
@@ -912,12 +924,42 @@ Incremental scans preserve exact Git filenames, including whitespace. Agent
 classification continues to require semantic verification or corroboration of
 lexical source matches even for signatures with an agent-indicator flag.
 
+`shadowscan code PATH --diff-base REF` scans only the files committed since the
+merge base with `REF`, plus dependency manifests and `.env*` files. Use it for
+pull-request feedback, not as an inventory: its report is not comparable, so a
+pipeline that keeps the last report as its `shadowscan diff` baseline sees
+earlier findings as unknown, never resolved, and `--incremental` does not reuse
+it. Uncommitted, untracked and submodule changes are not scanned. Keep a full
+scan of the default branch as the comparison baseline. The option needs Git
+2.45 or later; when the diff cannot be computed the connector warns and scans
+the whole tree.
+
 ## Candidate change history
 
 These notes record unreleased corrections and earlier candidate changes.
 Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 9 change-scoped scans, path context and new ecosystems (unreleased)
+
+These `code.filesystem` changes move confidence, risk and kind, and add or
+remove findings, against baselines from an earlier build. The default risk
+weights changed (three new tags). Rescan and rebaseline before comparing;
+`shadowscan diff` otherwise reports the differences as changed, new or
+resolved findings.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Diff-scoped scans | `--diff-base REF` scans committed changes since the merge base plus dependency manifests and `.env*` files; the report is not comparable and never cached. | Keep a full scan of the default branch as the comparison baseline. Do not gate inventory or resolution on a diff-scoped report. |
+| Path context | Evidence in documentation or example directories inside a project has half weight, generated files (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) 0.4. A project with no other evidence is tagged `docs-only`, `example-code-only` or `generated-code-only`, capped at 0.85, 0.85 or 0.7 confidence and scored 8, 8 or 10 lower. A directory that is itself a project root, or one named `codegen` or `generated`, is not discounted. | Review findings whose risk dropped below a `--fail-on` threshold. A custom risk policy that sets these tags overrides the defaults; set `include_tests: true` to scan these paths at full weight. |
+| Corroboration | A project whose evidence spans a library and a code signal, or three signal types, gains a synthetic `corroboration:cross-signal` item (0.10 or 0.15). | Expect higher confidence and likelihood on such projects, and findings that now pass `min_confidence`. |
+| Deny-list files | A mention-only data file whose name spells `blocklist`, `denylist` or `blacklist` as one word or two (`ai-blocklist.yaml`, `deny_list.json`) is a catalog whatever it names. Allowlists, egress policies and firewall or WAF rule sets (`firewall-rules.json`, `default-deny.yaml`) are configuration. | A project evidenced only by such a file has no finding; the scan note names the file. |
+| Signatures | New languages (`c`, `cpp`, `elixir`, `r`, `lua`), `conda` dependency signals and eleven new signatures, listed in `CHANGELOG.md`. Elixir and R signatures have no dependency signals. | New products appear in reports. Re-run your own signature packs through `python -m shadowscan.signatures.validate`: `hex` and `cran` are not ecosystems. |
+
+These cases are authored regressions and a 130-case author-written benchmark.
+They do not establish independent review, live tenant acceptance or measured
+field precision.
 
 ### October 9 scan evidence corrections (unreleased)
 
@@ -962,6 +1004,18 @@ comprehension clauses. Supported .NET automatic invocation and Go agent
 constructors retain import-bound positive evidence. These are static candidate
 classifications and do not establish deployed execution. Unknown dynamic
 bindings remain potential or framework-usage evidence.
+Microsoft.Extensions.AI `UseFunctionInvocation()` middleware remains an agent
+indicator with tool use when import or dependency evidence corroborates it, so
+projects that configure a client with this middleware and register it through
+dependency injection keep their agent classification. An explicitly
+constructed `FunctionInvokingChatClient` is proven only within one file and
+scope; when it is registered through dependency injection or held in fields,
+the project is reported as framework usage, where `AIFunctionFactory.Create`
+previously made it an agent. Expect such projects to move from agent to
+framework usage in regenerated baselines. The per-file proof also accepts
+target-typed `new()` options and clients. C# files that never name
+`Microsoft.Extensions.AI` skip the tool-loop proof and cannot exhaust its token
+budget.
 C# tool-mode expressions whose type or alias name is locally shadowed also
 remain unproven; a lookalike `Auto` member cannot establish automatic invocation.
 
@@ -981,19 +1035,46 @@ their own evidence and cannot be inferred from a passing CI run.
 
 ### October 9 endpoint and fleet completeness corrections
 
-Endpoint discovery stops with an incomplete report (exit 3) if any known
-configuration location cannot be inspected safely. Missing locations remain
-normal; symbolic links, non-regular objects and denied access are coverage
-failures. Instruction checks reuse the original confined file snapshot and
-mark inspection beyond 512 KiB incomplete.
+Endpoint discovery marks the report incomplete (exit 3) if any known
+configuration location cannot be inspected safely; the other locations are
+still scanned and reported. Missing locations remain normal; symbolic links,
+non-regular objects and denied access are coverage failures. A linked
+directory that holds none of the locations (a stow-folded `~/.config`) is
+passed over without being followed. A scan of the user's own profile whose
+`%APPDATA%` is redirected outside it (folder redirection) is incomplete, since
+the Windows client configuration there is not read. In any `code.filesystem`
+scan with `include`, a file link whose target is not selected is a coverage
+gap rather than covered by a target the walk never reads. Instruction checks
+reuse the original confined file snapshot and mark inspection beyond 512 KiB
+incomplete.
+
+Rescan endpoint baselines produced by an earlier candidate. Windows locations
+now come from the profile's own `AppData/Roaming`: a mounted Windows profile
+scanned with `--home` gains its Claude Desktop and VS Code findings, and a
+scan that ran with `APPDATA` set loses the operator's configuration it had
+attributed to the target. The command covers every `endpoint.inventory`
+configuration file and uses the same include list for every profile, so the
+collection scope fingerprint changes once and then stays stable as clients
+come and go; empty profiles are comparable in fleet diffs. `--incremental` is
+ignored for endpoint scans, and for every `code.filesystem` scan with
+`include`, because fingerprinting would read the whole profile. Hidden HTML
+comments longer than 4,000 bytes, or never closed where Markdown passes them
+through as HTML, now add the `hidden-instructions` tag, and emoji joiners and
+subdivision flags no longer add `invisible-text`, so `shadowscan diff` can
+show those findings as changed.
 
 Fleet inputs must preserve completion statistics, matching summary counts and
 valid collection fingerprints. Combining an incomplete or truncated report
 with a healthy one does not restore completeness. When duplicate observations
 have different assessments, the highest source risk is retained, and a shadow
 observation remains shadow. Source risk policies are not silently replaced by
-the merging workstation's defaults. Rescan to replace baselines produced by
-an earlier candidate; these safeguards do not establish field validation.
+the merging workstation's defaults. A finding id that another report uses for
+a finding with another identity is refused (exit 1) instead of merged, and
+sources are named by their path below the reports' common directory. Machines
+that share a host name and home path, such as clones of one VM image, still
+produce the same identities: give each a distinct `--label`. Rescan to replace
+baselines produced by an earlier candidate; these safeguards do not establish
+field validation.
 
 ### October 8 classification and risk follow-ups
 
