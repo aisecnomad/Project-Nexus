@@ -112,6 +112,26 @@ effective on `main`; their presence in workflow files alone is insufficient.
 
 ## Suggested deliverable
 
+For the unreleased review corrections, verify these paired cases:
+
+- Matching versus conflicting Python imports across exception and pattern-match
+  alternatives, including handler aliases, guards and a no-match path. An
+  uncertain branch must not establish a construction by visit order.
+- Two supported named constructions in one approved project, with different
+  tools. In source mode, only the exact approved resource should be registered,
+  and neither construction should inherit the other's execution capabilities.
+- A supplied inventory with zero entries versus no supplied inventory, and a
+  permission list whose privileged entry comes after position 30. Reports must
+  retain both reconciliation status and the complete permission evidence.
+- A complete governance readback versus a read-only response with withheld
+  bypass settings. Visible drift must fail the monitor, partial observations must
+  identify unknown fields, and strict release verification must still fail an
+  incomplete readback. Inspect retained observation provenance as well.
+
+Use the [migration and acceptance procedure](../production.md#unreleased-review-migration)
+to plan fresh human labels and scoped live canaries. The authored regression
+fixtures do not constitute that independent evidence.
+
 A concise review record could list the SHA reviewed, commands run, review slices
 covered, findings and remaining limitations. This is a suggested record, not a
 certification of independence or release approval.

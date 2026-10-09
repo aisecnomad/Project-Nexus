@@ -4,6 +4,8 @@ Produces:
 
 * one ``agent`` / ``framework-usage`` finding per project (nearest manifest
   root) summarising frameworks, model providers, capabilities and evidence;
+  opt-in ``agent_granularity: source`` separately inventories unique named
+  Python constructions and their local registered-tool evidence;
 * one ``mcp-server`` finding per MCP client/server configuration file;
 * one ``agent-config`` finding per coding-agent product per project
   (Claude Code, Copilot, Cursor, Codex... including sub-agent definitions);
@@ -102,6 +104,7 @@ from shadowscan.connectors.code.semantic_config import (
     parse_agent_manifest,
     structured_code_matches,
 )
+from shadowscan.connectors.code.source_identity import named_construction_spans
 from shadowscan.connectors.code.source_ranges import noncode_ranges
 from shadowscan.connectors.code.source_semantics import (
     MAX_CALL_TEXT,
@@ -109,6 +112,7 @@ from shadowscan.connectors.code.source_semantics import (
     SourceNotParsed,
     bound_source_matches,
 )
+from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     DEFAULT_MAX_WALK_ENTRIES,
     _holds_file,
@@ -597,6 +601,7 @@ class _SourceFile:
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
+    source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -1051,6 +1056,10 @@ class FilesystemConnector(BaseConnector):
             "let test and fixture code establish agents and credential findings at full weight "
             "(default false)"
         ),
+        "agent_granularity": (
+            "project (default) | source; source additionally inventories unique named straight-line "
+            "Python agent constructions by file and scoped binding; other source remains project evidence"
+        ),
         "label": "prefix for resource ids (e.g. 'github:org/repo'); defaults to the path",
         "root_ids": "unique stable IDs aligned with paths, for resource identity across checkout moves",
         "account": "account label recorded on every finding (default none)",
@@ -1092,6 +1101,11 @@ class FilesystemConnector(BaseConnector):
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
+        self.agent_granularity = ctx.get("agent_granularity", "project")
+        if ("agent_granularity" in ctx.config and ctx.config["agent_granularity"] is None) or (
+            self.agent_granularity not in ("project", "source")
+        ):
+            raise ConnectorError("code.filesystem: agent_granularity must be project or source")
         extra = _validated_names(ctx.get("exclude"), "exclude")
         self.default_excludes = config_boolean(ctx.get("default_excludes", True), "default_excludes")
         self._explicit_exclude_names = frozenset(e for e in extra if "*" not in e and "/" not in e)
@@ -2164,6 +2178,28 @@ class FilesystemConnector(BaseConnector):
             else self.index.match_code(content_text, lang)
         )
         bound, unbound = self._bound_matches(file, content_text, ignored, is_local_module)
+        if self.agent_granularity == "source" and lang == "python" and file.ext == ".py" and not unbound:
+            verified = {
+                tuple(m.extra["bound_call_span"])
+                for m in bound
+                if m.extra.get("verified_agent") and m.extra.get("bound_call_span")
+            }
+            regions: dict[tuple[int, int], ToolRegions] = {}
+            names = named_construction_spans(
+                content_text,
+                max_ast_nodes=self.max_ast_nodes,
+                verified_spans=verified,
+                tool_regions=regions,
+            )
+            file.source_agent_regions = [
+                (start, end, names[span])
+                for span, region in regions.items()
+                for start, end in (*region.bodies, *region.declarations)
+            ]
+            for m in bound:
+                span = m.extra.get("bound_call_span")
+                if span is not None and tuple(span) in verified and tuple(span) in names:
+                    m.extra["source_agent_binding"] = names[tuple(span)]
         # Execution sinks describe a model-driven capability only
         # when this same file invokes a model, framework or
         # tool-calling protocol; elsewhere they are build tooling.
@@ -2339,6 +2375,18 @@ class FilesystemConnector(BaseConnector):
                     # syntax remains supporting, potential evidence.
                     m.extra["source_capabilities"] = []
                 m.extra["verified_agent"] = False
+                if m.signature_id in {
+                    "heuristic.tool-use",
+                    "heuristic.code-execution",
+                    "heuristic.llm-command-execution",
+                }:
+                    bindings = {
+                        binding
+                        for start, end, binding in file.source_agent_regions
+                        if start <= m.extra.get("start", -1) < end
+                    }
+                    if bindings:
+                        m.extra["source_agent_bindings"] = sorted(bindings)
             elif (m.signature_id, id(m.signal), m.line) in bound_signals or (
                 _bundled_signature(m.signature) and not _within(m.extra.get("start", -1), unbound)
             ):
@@ -2875,6 +2923,24 @@ class FilesystemConnector(BaseConnector):
         # project finding (catalog_mentions) or, without one, in a scan note.
         reported = self._anchored(observations, covered_files)
         if reported:
+            if self.agent_granularity == "source":
+                groups: dict[tuple[str, str], list[_Observation]] = {}
+                remaining: list[_Observation] = []
+                for observation in observations:
+                    match, rel, _ = observation
+                    bindings = match.extra.get("source_agent_bindings") or (
+                        [match.extra["source_agent_binding"]]
+                        if match.extra.get("source_agent_binding")
+                        else []
+                    )
+                    if bindings and rel not in covered_files:
+                        for binding in bindings:
+                            groups.setdefault((rel, binding), []).append(observation)
+                    else:
+                        remaining.append(observation)
+                for (rel, binding), source_observations in sorted(groups.items()):
+                    yield self._source_agent_finding(label, root, proj, rel, binding, source_observations)
+                observations = remaining
             yield self._project_finding(label, root, proj, observations)
         discounted = (
             bool(catalogs)
@@ -2975,6 +3041,18 @@ class FilesystemConnector(BaseConnector):
             mcp_tools=proj.mcp_tools,
         )
         f = self._base(label, root, proj.root, Kind.FRAMEWORK_USAGE, "", "project")
+        if self.agent_granularity == "source":
+            unresolved = {
+                (rel, tuple(m.extra.get("bound_call_span", (m.line,))))
+                for m, rel, _ in observations
+                if evidence.verified_indicator(m) and m.signal.type in {"code", "file"}
+            }
+            f.metadata["source_identity"] = {
+                "mode": "source",
+                "scope": "unique named straight-line Python constructions",
+                "unresolved_constructions": len(unresolved),
+                "runtime_instances": "not-enumerated",
+            }
         self._apply_project_evidence(f, evidence)
         if evidence.env_only:
             f.add_tag("env-names-only")
@@ -2990,6 +3068,34 @@ class FilesystemConnector(BaseConnector):
             cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
             f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
         f.title = self._project_title(f, proj)
+        return f
+
+    def _source_agent_finding(
+        self,
+        label: str,
+        root: Path,
+        proj: _Project,
+        rel: str,
+        binding: str,
+        observations: list[_Observation],
+    ) -> Finding:
+        """Inventory one static source binding without inheriting project capabilities."""
+        evidence = _ProjectEvidence(observations, discount_tests=not self.include_tests, mcp_tools={})
+        f = self._base(label, root, f"{rel}#agent:{binding}", Kind.FRAMEWORK_USAGE, "", "source-agent")
+        self._apply_project_evidence(f, evidence)
+        source_project = _Project(proj.root, files=1, languages={"python"})
+        self._attach_project_metadata(f, root, source_project, evidence)
+        f.metadata["path"] = rel
+        f.metadata["project_resource"] = f"{label}/{proj.root}" if proj.root != "." else label
+        f.metadata["source_identity"] = {
+            "schema": "python-named-construction-v1",
+            "binding": binding,
+            "runtime_instances": "not-enumerated",
+        }
+        if evidence.test_only:
+            f.add_tag("test-code-only")
+        finalize(f, self.index)
+        f.title = f"{'Agent' if f.kind == Kind.AGENT else 'Agent test construction'} in {rel}: {binding}"
         return f
 
     def _apply_project_evidence(self, f: Finding, evidence: _ProjectEvidence) -> None:

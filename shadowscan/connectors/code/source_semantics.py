@@ -274,9 +274,9 @@ class _PythonBindings(ast.NodeVisitor):
         return any(self.visit(statement) is True for statement in statements)
 
     def generic_visit(self, node: ast.AST) -> None:
-        # Generic constructs (notably try suites) keep their existing bounded
-        # lexical traversal, but a return cannot make later statements in the
-        # same suite into reachable construction evidence.
+        # A return cannot make later statements in a generic suite into
+        # reachable construction evidence. Branching statements have their own
+        # visitors so mutually exclusive suites never overwrite one another.
         for _, value in ast.iter_fields(node):
             if isinstance(value, list):
                 if value and all(isinstance(item, ast.stmt) for item in value):
@@ -302,6 +302,24 @@ class _PythonBindings(ast.NodeVisitor):
         for name in set().union(*outcomes):
             prior = before.get(name)
             before[name] = prior if all(outcome.get(name, prior) == prior for outcome in outcomes) else None
+
+    @staticmethod
+    def _join_outcomes(
+        before: MutableMapping[str, _Binding | None], outcomes: Sequence[Mapping[str, _Binding | None]]
+    ) -> None:
+        """Merge explicit branch writes without a names-by-branches cross product."""
+        observed: dict[str, tuple[_Binding | None, int, bool]] = {}
+        for outcome in outcomes:
+            for name, value in outcome.items():
+                candidate, count, agrees = observed.get(name, (value, 0, True))
+                observed[name] = (candidate, count + 1, agrees and value == candidate)
+        for name, (candidate, count, agrees) in observed.items():
+            # A branch without a write leaves the prior binding intact. A new
+            # binding therefore requires agreement in every branch, while an
+            # unchanged one can also agree with branches that omit the name.
+            before[name] = (
+                candidate if agrees and (count == len(outcomes) or candidate == before.get(name)) else None
+            )
 
     @staticmethod
     def _changes(
@@ -676,16 +694,142 @@ class _PythonBindings(ast.NodeVisitor):
     visit_DictComp = _comprehension
     visit_GeneratorExp = _comprehension
 
-    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        if node.type:
+    def visit_ExceptHandler(self, node: ast.ExceptHandler, *, visit_type: bool = True) -> bool:
+        if visit_type and node.type:
             self.visit(node.type)
         if node.name:
             self.scopes[-1][node.name] = None
-        self._visit_block(node.body)
+        stopped = self._visit_block(node.body)
+        # Python deletes the exception alias when leaving a handler. A deleted
+        # local must not resolve to an imported name in an enclosing scope.
+        if node.name:
+            self.scopes[-1][node.name] = None
+        return stopped
 
-    def visit_Match(self, node: ast.Match) -> None:
+    @staticmethod
+    def _suite_may_raise(statements: Sequence[ast.stmt]) -> bool:
+        """Recognize only trivial suites whose exception handlers cannot run.
+
+        Names, assignments, imports and calls stay potentially raising. This is
+        a local syntactic check, not an evaluator or an exception-type solver.
+        """
+        for statement in statements:
+            if isinstance(statement, ast.Pass) or (
+                isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
+            ):
+                continue
+            if isinstance(statement, ast.Return) and (
+                statement.value is None or isinstance(statement.value, ast.Constant)
+            ):
+                return False
+            if isinstance(statement, (ast.Break, ast.Continue)):
+                return False
+            return True
+        return False
+
+    def visit_Try(self, node: ast.Try | ast.TryStar) -> bool:
+        before = self.scopes[-1]
+        self.scopes[-1] = ChainMap({}, before)
+        body_stopped = self._visit_block(node.body)
+        body_changes = dict(self._changes(self.scopes[-1], before))
+        may_raise = self._suite_may_raise(node.body)
+        # A handler may start before any body assignment or after a partial
+        # statement. No body-written name has certain provenance at entry.
+        exceptional: dict[str, _Binding | None] = dict.fromkeys(body_changes)
+        outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
+        normal_stopped = body_stopped
+        if not body_stopped:
+            normal_stopped = self._visit_block(node.orelse)
+        normal = self._changes(self.scopes[-1], before)
+        outcomes.append(normal)
+        if not normal_stopped:
+            continuing.append(normal)
+        final_may_raise = may_raise or not body_stopped and self._suite_may_raise(node.orelse)
+        # Else/handler suites can also fail after only some assignments. Their
+        # partial writes matter to calls in finally, though their exceptions do
+        # not reach the continuation after this try statement.
+        final_exceptional: dict[str, _Binding | None] = dict.fromkeys(normal)
+
+        if may_raise:
+            for handler in node.handlers:
+                exception_entry = ChainMap(exceptional, before)
+                self.scopes[-1] = ChainMap({}, exception_entry)
+                if handler.type:
+                    self.visit(handler.type)
+                    type_changes = self._changes(self.scopes[-1], exception_entry)
+                    # Clause tests run in order until one matches. A failed
+                    # test's assignments can affect a later test/body, unlike
+                    # the mutually exclusive bodies of ordinary except suites.
+                    exceptional.update(dict.fromkeys(type_changes))
+                stopped = self.visit_ExceptHandler(handler, visit_type=False)
+                changes = self._changes(self.scopes[-1], before)
+                outcomes.append(changes)
+                if not stopped:
+                    continuing.append(changes)
+                final_exceptional.update(dict.fromkeys(changes))
+                if isinstance(node, ast.TryStar):
+                    # Several except* suites can run in order for disjoint
+                    # subgroups. Later suites cannot assume an earlier one left
+                    # its input unchanged; keep every earlier write uncertain.
+                    exceptional.update(dict.fromkeys(changes))
+
+        self.scopes[-1] = before
+        joined: dict[str, _Binding | None] = {}
+        joined_scope = ChainMap(joined, before)
+        self._join_outcomes(joined_scope, continuing or outcomes)
+        final_stopped = False
+        if node.finalbody:
+            # finally runs on normal, handled, transferred and unhandled paths.
+            # Its calls need provenance valid across all of them, even though
+            # unhandled exceptions do not reach code after the whole try.
+            final_entry: dict[str, _Binding | None] = {}
+            final_scope = ChainMap(final_entry, before)
+            final_paths = [*outcomes, final_exceptional] if final_may_raise else outcomes
+            self._join_outcomes(final_scope, final_paths)
+            self.scopes[-1] = ChainMap({}, final_scope)
+            final_stopped = self._visit_block(node.finalbody)
+            final_changes = self._changes(self.scopes[-1], final_scope)
+            joined.update(final_changes)
+            self.scopes[-1] = before
+        before.update(joined)
+        return final_stopped or not continuing
+
+    visit_TryStar = visit_Try
+
+    @staticmethod
+    def _pattern_matches(pattern: ast.pattern, subject: ast.expr) -> bool | None:
+        """Narrow direct literals and irrefutable captures, without evaluating code."""
+        if isinstance(pattern, ast.MatchAs):
+            if pattern.pattern is None:
+                return True
+            return _PythonBindings._pattern_matches(pattern.pattern, subject)
+        if isinstance(pattern, ast.MatchOr):
+            matches = [_PythonBindings._pattern_matches(part, subject) for part in pattern.patterns]
+            return True if True in matches else None if None in matches else False
+        if isinstance(subject, ast.Constant):
+            if isinstance(pattern, ast.MatchSingleton):
+                return subject.value is pattern.value
+            if isinstance(pattern, ast.MatchValue) and isinstance(pattern.value, ast.Constant):
+                return subject.value == pattern.value.value
+        return None
+
+    def visit_Match(self, node: ast.Match) -> bool:
         self.visit(node.subject)
+        before = self.scopes[-1]
+        # Failed patterns may leave captures bound, and a failed guard may
+        # assign names before the next case is attempted. Preserve uncertainty
+        # from these paths without leaking a successful case's body writes.
+        fallback: dict[str, _Binding | None] = {}
+        fallback_scope = ChainMap(fallback, before)
+        outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
+        exhaustive = False
         for case in node.cases:
+            matches = self._pattern_matches(case.pattern, node.subject)
+            if matches is False:
+                continue
+            self.scopes[-1] = ChainMap({}, fallback_scope)
             for pattern in ast.walk(case.pattern):
                 if isinstance(pattern, (ast.MatchAs, ast.MatchStar)) and pattern.name:
                     self.scopes[-1][pattern.name] = None
@@ -693,7 +837,24 @@ class _PythonBindings(ast.NodeVisitor):
                     self.scopes[-1][pattern.rest] = None
             if case.guard:
                 self.visit(case.guard)
-            self._visit_block(case.body)
+            guard_changes = dict(self._changes(self.scopes[-1], fallback_scope))
+            guard = bool(case.guard.value) if isinstance(case.guard, ast.Constant) else None
+            if case.guard is None or guard is None or guard:
+                stopped = self._visit_block(case.body)
+                changes = self._changes(self.scopes[-1], before)
+                outcomes.append(changes)
+                if not stopped:
+                    continuing.append(changes)
+            if matches is True and (case.guard is None or guard is True):
+                exhaustive = True
+                break
+            self._join_into(fallback_scope, [guard_changes])
+        if not exhaustive:
+            outcomes.append(fallback)
+            continuing.append(fallback)
+        self.scopes[-1] = before
+        self._join_outcomes(before, continuing or outcomes)
+        return not continuing
 
     def visit_If(self, node: ast.If) -> bool:
         self.visit(node.test)
@@ -723,9 +884,7 @@ class _PythonBindings(ast.NodeVisitor):
                 continuing.append(outcome)
         self.scopes[-1] = before
         joined = continuing or outcomes
-        for name in set().union(*joined):
-            values = [outcome.get(name, before.get(name)) for outcome in joined]
-            before[name] = values[0] if all(value == values[0] for value in values[1:]) else None
+        self._join_outcomes(before, joined)
         return not continuing
 
 

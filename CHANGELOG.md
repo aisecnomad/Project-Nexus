@@ -3,6 +3,30 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
+## Unreleased
+
+### Verified discovery review corrections
+
+- Join Python exception and pattern-match branches conservatively so an import
+  or alias from one alternative cannot establish another path's agent binding.
+  Literal unreachable alternatives stay excluded; uncertain bindings remain
+  framework usage rather than a proved construction.
+- Withhold supported AWS CLI positional credential settings in command text
+  and argument arrays, including nested copies used in evidence and caches.
+  Preserve variable references and documented placeholder values.
+- Export all permissions in CSV, and show inventory reconciliation in table,
+  Markdown and HTML reports when a supplied inventory contains zero agents.
+  JSON reports now carry the additive `inventory_present` field.
+- Add opt-in `agent_granularity: source` for separate supported named Python
+  construction identities. Existing project aggregation remains the default;
+  source identity is static evidence, not a count of deployed runtime instances.
+- Reuse the scheduled governance observation implementation from PR #163:
+  visible policy drift fails, withheld bypass settings remain explicitly
+  unknown, and complete release verification stays strict. Retained observations
+  bind the inspected policy and snapshot to their digests and observation time.
+- Add synthetic regressions and migration/reviewer guidance. Independent human
+  field labels and scoped live tenant acceptance remain deployment requirements.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

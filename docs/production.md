@@ -7,6 +7,60 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## Unreleased review migration
+
+After upgrading to the review corrections, rescan source and regenerate retained
+reports. Python `try` and `match` alternatives no longer transfer their last
+visited binding to another path. Supported literal unreachable alternatives
+remain excluded; uncertain branches retain usage evidence. A lower agent
+classification is not evidence that a deployed agent stopped executing.
+
+For separate source inventory bindings, explicitly select
+`agent_granularity: source` on `code.filesystem`, `code.github` or `code.gitlab`.
+The supported subset is import-proved Python constructors assigned to a unique
+simple name in a straight-line module, class or function scope in a `.py` file. Each supported binding
+uses its source file and qualified binding as a separate resource identity;
+unrelated line insertions do not change it. Renaming a file or binding changes
+the identity. Dynamic, repeated, control-flow-dependent and unnamed constructions
+retain project evidence and expose identity limitations; this option does not
+enumerate deployed instances, split notebooks or follow every source language.
+
+Review generated inventory stubs for each source finding. A project resource
+approval does not approve a separate source resource; a broad inventory glob
+can intentionally match both and must be reviewed for that scope. Keep previous
+reports and establish a fresh baseline after changing granularity or scanner
+revision. Source identity and source-analysis changes alter the collection
+fingerprint, so incomparable observations cannot establish resolution.
+
+Supported AWS CLI positional credential settings are now sanitized in command
+text and argument arrays. Regenerate old reports, exports and cached evidence
+under the reviewed revision; changing the scanner cannot erase already retained
+copies. Continue to protect audit artifacts and follow the credential handling
+policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+The additive JSON `inventory_present` field distinguishes an explicitly supplied
+empty inventory from a scan without inventory reconciliation. CSV now retains
+the entire sanitized permission list, including permissions beyond position 30.
+
+The scheduled governance audit can pass its visible-policy checks while its
+retained observation reports partial assurance. Inspect `unknown_fields` and
+`complete_readback_verified`; an omitted bypass list is never evidence of no
+bypass actors. Complete administrator readback remains required by the strict
+verification and release paths. After deployment, retain an actual scheduled or
+dispatched audit run and both ruleset observations, then verify a fresh complete
+administrator readback against the reviewed policy. Synthetic workflow tests
+do not establish the deployed token's response or assurance.
+
+Before enabling enforcement, commission a fresh blinded holdout that includes
+exception handling, pattern matching, multiple constructions per project,
+ambiguous bindings and registered versus unregistered source agents. Freeze
+sampling, labels and acceptance thresholds before showing results to reviewers;
+exclude the new authored regression fixtures. Follow
+[rollout acceptance](#rollout-acceptance) for complete and permission-denied
+tenant canaries. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+supports static code, AWS and Slack; passing those scopes does not grant
+acceptance to other connectors. Human labels and live receipts remain pending
+until operators supply them.
+
 Use this operator sequence; dated candidate notes remain under
 [Candidate change history](#candidate-change-history) and describe differences
 between candidate builds, not between releases.
@@ -39,8 +93,11 @@ record or deployment acceptance evidence.
 
 The scheduled dependency and governance audit checks both live merge rulesets
 against the versioned desired policy. Its GitHub token is read-only: a green
-audit records a matching policy snapshot, while a failed or unavailable read
-does not establish protection. Repository administrators must apply the
+job establishes that the visible managed fields match, but its retained
+observation can still report partial assurance because GitHub withholds bypass
+settings. Read `complete_readback_verified` and `unknown_fields` in each
+observation; never interpret an omitted bypass list as empty. A failed or
+unavailable read does not establish protection. Repository administrators must apply the
 [reviewed ruleset updates](operations/merge-policy.md) and verify fresh API
 readback. The audit neither changes settings nor substitutes for independent
 human review or tenant acceptance.

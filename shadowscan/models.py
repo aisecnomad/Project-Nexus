@@ -615,6 +615,7 @@ class ScanResult:
     version: str = ""
     inventory_size: int = 0
     collection_scope: dict[str, Any] | None = None
+    inventory_present: bool = False
 
     def __post_init__(self) -> None:
         for finding in self.findings:
@@ -663,6 +664,7 @@ class ScanResult:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "inventory_size": self.inventory_size,
+            "inventory_present": self.inventory_present,
             "collection_scope": sanitize(self.collection_scope),
             "summary": self.summary(),
             "stats": sanitize([asdict(s) for s in self.stats]),

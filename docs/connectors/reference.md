@@ -34,6 +34,7 @@ Offline input: n/a (path is the input).
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
+| `agent_granularity` | project (default) \| source; source additionally inventories unique named straight-line Python agent constructions by file and scoped binding; other source remains project evidence |
 | `label` | prefix for resource ids (e.g. 'github:org/repo'); defaults to the path |
 | `root_ids` | unique stable IDs aligned with paths, for resource identity across checkout moves |
 | `account` | account label recorded on every finding (default none) |
@@ -65,6 +66,7 @@ Offline input: directory of cloned repositories.
 | `default_excludes` | see code.filesystem (default true) |
 | `strict_coverage` | see code.filesystem (default false) |
 | `include_tests` | see code.filesystem (default false) |
+| `agent_granularity` | project (default) \| source; see code.filesystem |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
@@ -100,6 +102,7 @@ Offline input: directory of cloned projects.
 | `default_excludes` | see code.filesystem (default true) |
 | `strict_coverage` | see code.filesystem (default false) |
 | `include_tests` | see code.filesystem (default false) |
+| `agent_granularity` | project (default) \| source; see code.filesystem |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
