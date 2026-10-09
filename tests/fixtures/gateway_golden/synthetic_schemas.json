@@ -3044,7 +3044,7 @@
    "first_seen": "2025-09-01T09:00:00+00:00",
    "last_seen": "2025-09-01T09:00:00+00:00",
    "metadata": {
-    "agent_indicators": 2,
+    "agent_indicators": 1,
     "caller_kind": "principal",
     "caller": "svc-billing-bot",
     "events": 1,
@@ -3156,7 +3156,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller '10.2.0.6' (ip): 1 requests via Claude / Anthropic to claude-3-5-haiku-20241022",
+   "title": "LLM caller '10.2.0.6' (ip): 1 requests via Claude / Anthropic to claude-3-5-haiku-20241022",
    "resource": "kong:10.2.0.6",
    "resource_type": "caller/ip",
    "provider": "synthetic-gateway",
@@ -3240,7 +3240,7 @@
    "first_seen": "2025-09-01T09:01:00+00:00",
    "last_seen": "2025-09-01T09:01:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "ip",
     "caller": "10.2.0.6",
     "events": 1,
@@ -3887,7 +3887,7 @@
    "first_seen": "2025-09-01T11:00:00+00:00",
    "last_seen": "2025-09-01T11:00:00+00:00",
    "metadata": {
-    "agent_indicators": 2,
+    "agent_indicators": 1,
     "caller_kind": "user",
     "caller": "erin@acme.com",
     "events": 1,
@@ -3981,7 +3981,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'digest-cron' (principal): 1 requests via ChatGPT / OpenAI to gpt-4o-mini",
+   "title": "LLM caller 'digest-cron' (principal): 1 requests via ChatGPT / OpenAI to gpt-4o-mini",
    "resource": "helicone:digest-cron",
    "resource_type": "caller/principal",
    "provider": "synthetic-gateway",
@@ -4076,7 +4076,7 @@
    "first_seen": "2025-09-01T11:10:00+00:00",
    "last_seen": "2025-09-01T11:10:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "principal",
     "caller": "digest-cron",
     "events": 1,
@@ -4855,7 +4855,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'gina@acme.com' (api-key): 1 requests via ChatGPT / OpenAI",
+   "title": "LLM caller 'gina@acme.com' (api-key): 1 requests via ChatGPT / OpenAI",
    "resource": "openai:credential:hmac-sha256:d9933637d6fa33af1f34538056117ea1d6d353e925ddec095e415558f9c5a5e4",
    "resource_type": "caller/api-key",
    "provider": "synthetic-gateway",
@@ -4935,7 +4935,7 @@
    "first_seen": "2025-09-01T13:00:00+00:00",
    "last_seen": "2025-09-01T13:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "api-key",
     "caller": "gina@acme.com",
     "events": 1,
@@ -5035,7 +5035,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'sa_1' (api-key): 1 requests via ChatGPT / OpenAI",
+   "title": "LLM caller 'sa_1' (api-key): 1 requests via ChatGPT / OpenAI",
    "resource": "openai:credential:hmac-sha256:744bf6ae7b4744125d90169a93e2a8211843ca2fd3663b286eddce15cc03b928",
    "resource_type": "caller/api-key",
    "provider": "synthetic-gateway",
@@ -5115,7 +5115,7 @@
    "first_seen": "2025-09-01T13:01:00+00:00",
    "last_seen": "2025-09-01T13:01:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "api-key",
     "caller": "sa_1",
     "events": 1,
@@ -5216,7 +5216,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'credential:hmac-sha256:bb953dad2d3adb1d952f245bc6bc86f9a82354aea230fc10b04c6ada0df4ad24' (api-key): 19 requests via ChatGPT / OpenAI to gpt-4o",
+   "title": "LLM caller 'credential:hmac-sha256:bb953dad2d3adb1d952f245bc6bc86f9a82354aea230fc10b04c6ada0df4ad24' (api-key): 19 requests via ChatGPT / OpenAI to gpt-4o",
    "resource": "openai:credential:hmac-sha256:bb953dad2d3adb1d952f245bc6bc86f9a82354aea230fc10b04c6ada0df4ad24",
    "resource_type": "caller/api-key",
    "provider": "synthetic-gateway",
@@ -5324,7 +5324,7 @@
    "first_seen": "2025-09-01T12:00:00+00:00",
    "last_seen": "2025-09-01T14:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "api-key",
     "caller": "credential:hmac-sha256:bb953dad2d3adb1d952f245bc6bc86f9a82354aea230fc10b04c6ada0df4ad24",
     "events": 19,
@@ -5438,7 +5438,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'user-9' (user): 30 requests via ChatGPT / OpenAI to text-embedding-3-small",
+   "title": "LLM caller 'user-9' (user): 30 requests via ChatGPT / OpenAI to text-embedding-3-small",
    "resource": "openai:user-9",
    "resource_type": "caller/user",
    "provider": "synthetic-gateway",
@@ -5532,7 +5532,7 @@
    "first_seen": "2025-09-01T13:00:00+00:00",
    "last_seen": "2025-09-01T14:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "user",
     "caller": "user-9",
     "events": 30,
@@ -5640,7 +5640,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'user-3' (api-key): 12 requests via ChatGPT / OpenAI to gpt-4-0613",
+   "title": "LLM caller 'user-3' (api-key): 12 requests via ChatGPT / OpenAI to gpt-4-0613",
    "resource": "openai:credential:hmac-sha256:3fc93b4a328556e6e931d13611eac1b7ca48ec2ba3670e70d8cadda01c21a375",
    "resource_type": "caller/api-key",
    "provider": "synthetic-gateway",
@@ -5734,7 +5734,7 @@
    "first_seen": "2025-09-01T12:00:00+00:00",
    "last_seen": "2025-09-01T12:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "api-key",
     "caller": "user-3",
     "events": 12,
@@ -5837,7 +5837,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'credential:hmac-sha256:dbb2471fcdb79f060281753c9d1c21b95a384abacced09c5f324f4c77476ce20' (api-key): 1 requests via Claude / Anthropic to claude-sonnet-4-20250514",
+   "title": "LLM caller 'credential:hmac-sha256:dbb2471fcdb79f060281753c9d1c21b95a384abacced09c5f324f4c77476ce20' (api-key): 1 requests via Claude / Anthropic to claude-sonnet-4-20250514",
    "resource": "anthropic:credential:hmac-sha256:dbb2471fcdb79f060281753c9d1c21b95a384abacced09c5f324f4c77476ce20",
    "resource_type": "caller/api-key",
    "provider": "synthetic-gateway",
@@ -5921,7 +5921,7 @@
    "first_seen": "2025-09-01T14:00:00+00:00",
    "last_seen": "2025-09-01T14:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "api-key",
     "caller": "credential:hmac-sha256:dbb2471fcdb79f060281753c9d1c21b95a384abacced09c5f324f4c77476ce20",
     "events": 1,
@@ -6022,7 +6022,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'wrkspc_02' (principal): 1 requests via Claude / Anthropic to claude-3-5-haiku-20241022",
+   "title": "LLM caller 'wrkspc_02' (principal): 1 requests via Claude / Anthropic to claude-3-5-haiku-20241022",
    "resource": "anthropic:wrkspc_02",
    "resource_type": "caller/principal",
    "provider": "synthetic-gateway",
@@ -6106,7 +6106,7 @@
    "first_seen": "2025-09-01T15:00:00+00:00",
    "last_seen": "2025-09-01T15:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "principal",
     "caller": "wrkspc_02",
     "events": 1,
@@ -6324,7 +6324,7 @@
    "first_seen": "2025-09-01T15:00:00+00:00",
    "last_seen": "2025-09-01T15:00:00+00:00",
    "metadata": {
-    "agent_indicators": 2,
+    "agent_indicators": 1,
     "caller_kind": "api-key",
     "caller": "credential:hmac-sha256:758c5b929260b031f082edb5ea5f53bddcf639cbd4517a83cbcba15fe13e5e4a",
     "events": 1,
@@ -6433,7 +6433,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'nightly-report-bot' (principal): 1 requests via Claude / Anthropic to claude-3-5-haiku-20241022",
+   "title": "LLM caller 'nightly-report-bot' (principal): 1 requests via Claude / Anthropic to claude-3-5-haiku-20241022",
    "resource": "principal:nightly-report-bot",
    "resource_type": "caller/principal",
    "provider": "synthetic-gateway",
@@ -6530,7 +6530,7 @@
    "first_seen": "2025-09-01T15:00:00+00:00",
    "last_seen": "2025-09-01T15:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "principal",
     "caller": "nightly-report-bot",
     "events": 1,
@@ -6759,7 +6759,7 @@
    "first_seen": "2025-09-01T16:00:00+00:00",
    "last_seen": "2025-09-01T16:00:00+00:00",
    "metadata": {
-    "agent_indicators": 4,
+    "agent_indicators": 2,
     "caller_kind": "user-agent",
     "caller": "Claude-Code/1.0",
     "events": 1,
@@ -6982,7 +6982,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'ivan' (user): 1 requests via ChatGPT / OpenAI",
+   "title": "LLM caller 'ivan' (user): 1 requests via ChatGPT / OpenAI",
    "resource": "access:ivan",
    "resource_type": "caller/user",
    "provider": "synthetic-gateway",
@@ -7074,7 +7074,7 @@
    "first_seen": "2025-09-01T18:00:00+00:00",
    "last_seen": "2025-09-01T18:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "user",
     "caller": "ivan",
     "events": 1,
@@ -7171,7 +7171,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'anthropic-sdk-typescript/0.27' (user-agent): 1 requests via Claude / Anthropic",
+   "title": "LLM caller 'anthropic-sdk-typescript/0.27' (user-agent): 1 requests via Claude / Anthropic",
    "resource": "access:anthropic-sdk-typescript/0.27",
    "resource_type": "caller/user-agent",
    "provider": "synthetic-gateway",
@@ -7264,7 +7264,7 @@
    "first_seen": "2025-09-01T00:00:00+00:00",
    "last_seen": "2025-09-01T00:00:00+00:00",
    "metadata": {
-    "agent_indicators": 2,
+    "agent_indicators": 0,
     "caller_kind": "user-agent",
     "caller": "anthropic-sdk-typescript/0.27",
     "events": 1,
@@ -7635,7 +7635,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'embed-pipeline' (api-key): 1 requests via ChatGPT / OpenAI, LlamaIndex to text-embedding-3-large",
+   "title": "LLM caller 'embed-pipeline' (api-key): 1 requests via ChatGPT / OpenAI, LlamaIndex to text-embedding-3-large",
    "resource": "litellm-key:credential:hmac-sha256:193b176d04b1cdf4974458d053e24d3794fd8a0b6deda1f0e525d3e84521f449",
    "resource_type": "caller/api-key",
    "provider": "synthetic-gateway",
@@ -7745,7 +7745,7 @@
    "first_seen": "2025-09-01T19:00:00+00:00",
    "last_seen": "2025-09-01T19:00:00+00:00",
    "metadata": {
-    "agent_indicators": 1,
+    "agent_indicators": 0,
     "caller_kind": "api-key",
     "caller": "embed-pipeline",
     "events": 1,
@@ -8780,7 +8780,7 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "Agentic caller 'autogen/0.4' (user-agent): 1 requests via ChatGPT / OpenAI",
+   "title": "Agentic caller 'autogen/0.4' (user-agent): 1 requests via ChatGPT / OpenAI, AutoGen / AG2",
    "resource": "access:autogen/0.4",
    "resource_type": "caller/user-agent",
    "provider": "synthetic-gateway",
@@ -8788,13 +8788,17 @@
    "region": null,
    "owner": null,
    "frameworks": [
-    "identity-app.openai-chatgpt"
+    "identity-app.openai-chatgpt",
+    "framework.autogen"
    ],
    "model_providers": [
     "provider.openai"
    ],
    "models": [],
-   "capabilities": [],
+   "capabilities": [
+    "tool-use",
+    "multi-agent"
+   ],
    "permissions": [],
    "evidence": [
     {
@@ -8834,6 +8838,18 @@
      }
     },
     {
+     "signal": "user_agent:framework.autogen",
+     "description": "user agent matched AutoGen / AG2: autogen/0",
+     "location": null,
+     "snippet": null,
+     "weight": 0.85,
+     "signature": "framework.autogen",
+     "attributes": {
+      "category": "framework",
+      "value": "autogen/0"
+     }
+    },
+    {
      "signal": "gateway:user-agent",
      "description": "1 LLM request(s) by user-agent 'autogen/0.4' to models unknown",
      "location": null,
@@ -8843,8 +8859,8 @@
      "attributes": {}
     }
    ],
-   "confidence": 0.831,
-   "likelihood": "likely",
+   "confidence": 0.975,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -8906,7 +8922,9 @@
     "runtime_observations": [
      {
       "code_resources": [],
-      "frameworks": [],
+      "frameworks": [
+       "framework.autogen"
+      ],
       "environment": null,
       "scope": {},
       "events": 1,
@@ -8928,7 +8946,8 @@
     "identity_scope": "run",
     "evidence_counts": {
      "provider.openai|domain": 2,
-     "identity-app.openai-chatgpt|domain": 1
+     "identity-app.openai-chatgpt|domain": 1,
+     "framework.autogen|user_agent": 1
     },
     "technologies": [
      {
@@ -8936,6 +8955,12 @@
       "name": "ChatGPT / OpenAI",
       "category": "identity-app",
       "vendor": "OpenAI"
+     },
+     {
+      "id": "framework.autogen",
+      "name": "AutoGen / AG2",
+      "category": "framework",
+      "vendor": "Microsoft / AG2"
      },
      {
       "id": "provider.openai",

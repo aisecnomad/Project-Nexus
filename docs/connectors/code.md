@@ -11,11 +11,15 @@ that provisions agent resources.
     an export file. For code connectors `--dump-records` records repository
     listings and scan roots only, so those records are not replayable.
 
+See the [shared connector entry guide](../connectors.md#connector-entry-guide)
+for the common modes, permissions, options, fail-closed and evidence-limit
+references.
+
 ## `code.filesystem`
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
 package, …); each root yields one
-finding summarising frameworks, model providers, capabilities, models and
+finding summarizing frameworks, model providers, capabilities, models and
 evidence. Extra findings: MCP configs (`.mcp.json`, `.cursor/mcp.json`,
 `.vscode/mcp.json`, `claude_desktop_config.json`, Codex `config.toml`,
 Continue, Kiro, Amazon Q…), coding-agent configs (`CLAUDE.md`, `.claude/agents`,
@@ -120,7 +124,12 @@ and [Semantic Kernel ChatCompletionAgent](https://learn.microsoft.com/en-us/pyth
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
-agent findings. JSON/YAML descriptions are not executed or treated as source; low-code
+agent findings. An A2A card that names its agent and declares an endpoint,
+skills or capabilities but misses other required fields still gets its own
+`protocol.a2a` framework-usage finding, tagged `incomplete-agent-card` with
+the errors in `metadata.card_errors`, never an agent finding; the errors also
+keep the scan incomplete. JSON/YAML descriptions are not
+executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history
@@ -293,8 +302,8 @@ import-bound requests and linked enabled dispatch provide that evidence.
 
 An MCP server entry that declares itself disabled (`disabled: true` or
 `enabled: false`) is still reported. The flag is client-specific (Cline and Roo
-honour it, Claude Code's `.mcp.json` does not) and the repository sets it, so
-honouring it would let a repository hide a server. The finding lists the server
+honor it, Claude Code's `.mcp.json` does not) and the repository sets it, so
+honoring it would let a repository hide a server. The finding lists the server
 with `disabled: true` in `metadata.servers`, keeps its endpoints, environment
 names and capabilities as evidence, and carries the tag `declared-disabled` (not
 `disabled`, which would lower the risk score); `metadata.disabled` is `true`
@@ -317,7 +326,10 @@ makes the scan incomplete.
 
 `include` lists paths relative to each root; the walk enters only the
 directories that lead to them and reads only the files below them, with the
-usual excludes, limits and symlink policy still applied. Relative paths keep
+usual excludes, limits and symlink policy still applied. Parent directory names
+are listed to reach selected files; unselected CODEOWNERS, setup scripts and
+submodule declarations are not read. Explicit `use_git` enrichment remains a
+separate metadata opt-in. Relative paths keep
 the directory context that file signatures expect (`.claude/skills/*/SKILL.md`
 only matches when `.claude/` is part of the relative path), which is why
 `shadowscan endpoint` scans a profile root with an include list rather than
@@ -347,7 +359,7 @@ not judge whether an instruction is malicious: a hidden comment may be a
 template note, and a documented installer may pipe to a shell. Read the file.
 
 ## `code.github`
-Enumerates an organisation, a user or an explicit `repos:` list, fetches
+Enumerates an organization, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
 matching LLM providers. Token: a fine-grained PAT or GitHub App token with

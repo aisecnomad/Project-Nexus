@@ -77,7 +77,7 @@ RUN python3.12 -m venv --without-pip /opt/venv \
     && python3.12 -m pip --python /opt/build/bin/python wheel --no-cache-dir --no-deps \
         --no-build-isolation --wheel-dir /opt/wheel /opt/shadowscan \
     && python3.12 -m pip --python /opt/venv/bin/python install --no-cache-dir --no-deps \
-        /opt/wheel/project_nexus_shadowscan-*.whl \
+        /opt/wheel/nexusshadowscan-*.whl \
     && python3.12 -m pip --python /opt/venv/bin/python check
 
 FROM chainguard/wolfi-base:latest@sha256:824f77df45397eb954dfb963db255907ee8842e3446353ce93d688e5e862f51d

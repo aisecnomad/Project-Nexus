@@ -125,6 +125,28 @@ def _prose_lines(text: str) -> Iterator[tuple[int, str]]:
             yield number, line
 
 
+_SHELL_INFO = frozenset({"", "bash", "sh", "shell", "console"})
+
+
+def _shell_lines(text: str) -> Iterator[tuple[int, str]]:
+    """Yield ``(line_number, command)`` for each line of a shell or unlabeled fenced block."""
+    fence: str | None = None
+    shell = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+        match = _FENCE.match(stripped)
+        if match is not None:
+            marker = match.group(1)[0]
+            if fence is None:
+                fence, shell = marker, stripped[len(match.group(1)) :].strip().lower() in _SHELL_INFO
+                continue
+            if marker == fence:
+                fence = None
+                continue
+        if fence is not None and shell:
+            yield number, stripped.removeprefix("$ ")
+
+
 _INLINE_LINK = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 _REFERENCE_LINK = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)")
 _INLINE_CODE = re.compile(r"`[^`]*`")
@@ -205,6 +227,39 @@ def test_relative_markdown_links_and_anchors_resolve(markdown: Path) -> None:
         if anchor and resolved.suffix == ".md" and anchor.lower() not in _anchors(resolved):
             problems.append(f"line {number}: {target} -> no heading produces #{anchor}")
     assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
+
+
+_REPOSITORY_LINK = re.compile(
+    r"https://github\.com/aisecnomad/Project-Nexus/(blob|tree)/main/([^#?]+)(?:#(.+))?"
+)
+
+
+@pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
+def test_absolute_repository_links_resolve_in_this_checkout(markdown: Path) -> None:
+    """Links that must stay absolute (README on PyPI, the changelog on the docs site) still cannot rot."""
+    problems: list[str] = []
+    for number, target in _link_targets(_read(markdown)):
+        match = _REPOSITORY_LINK.fullmatch(target)
+        if match is None:
+            continue
+        kind, path, anchor = match.groups()
+        resolved = ROOT / unquote(path)
+        if not resolved.exists() or (kind == "tree") != resolved.is_dir():
+            problems.append(f"line {number}: {target} -> no {kind} {path} in this checkout")
+        elif anchor and resolved.suffix == ".md" and anchor.lower() not in _anchors(resolved):
+            problems.append(f"line {number}: {target} -> no heading produces #{anchor}")
+    assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
+
+
+def test_readme_links_work_on_the_package_index() -> None:
+    """README.md is the PyPI project description, where a relative link resolves against pypi.org."""
+    relative = [
+        f"line {number}: {target}"
+        for number, target in _link_targets(_read(ROOT / "README.md"))
+        if not _is_external(target) and not target.startswith("#")
+    ]
+    assert not relative, "link the repository URL instead:\n  " + "\n  ".join(relative)
+    assert _pyproject()["project"]["readme"] == "README.md"
 
 
 def test_issue_form_links_reference_forms_that_exist() -> None:
@@ -299,6 +354,46 @@ def test_citation_matches_the_package_metadata() -> None:
     assert citation["url"] == project["urls"]["Documentation"]
 
 
+# The word each one-line scope description uses for a discovery surface; a
+# plural or a longer phrase ("LLM gateway logs", "running processes") matches.
+SURFACE_WORDS = {
+    "code": "code",
+    "identity": "identity",
+    "gateway": "gateway",
+    "lowcode": "low-code",
+    "saas": "saas",
+    "cloud": "cloud",
+    "endpoint": "endpoint",
+    "network": "network",
+    "runtime": "process",
+}
+
+
+def test_scope_descriptions_name_every_discovery_surface() -> None:
+    from shadowscan import cli
+    from shadowscan.connectors import base
+    from shadowscan.models import ScanResult, Surface
+    from shadowscan.reporters.html import render_html
+
+    assert set(SURFACE_WORDS) == {surface.value for surface in Surface}, "name the new surface here"
+    intro = re.search(r"It inspects \w+ surfaces: (.+?)\.\s", _read(ROOT / "README.md"), re.S)
+    assert intro, "README should list the surfaces it inspects"
+    header = re.search(r"<header>.*?</header>", render_html(ScanResult()), re.S)
+    assert header
+    descriptions = {
+        "pyproject.toml description": _pyproject()["project"]["description"],
+        "CITATION.cff abstract": _load_yaml(ROOT / "CITATION.cff")["abstract"],
+        "README introduction": intro.group(1),
+        "shadowscan --help": cli.main.help or "",
+        "HTML report header": header.group(0),
+    }
+    for where, text in descriptions.items():
+        missing = [w for w in SURFACE_WORDS.values() if not re.search(rf"(?<![\w-]){w}", text, re.I)]
+        assert not missing, f"{where} omits {missing}"
+    missing = [s.value for s in Surface if not re.search(rf"\b{s.value}\b", base.__doc__ or "")]
+    assert not missing, f"shadowscan/connectors/base.py docstring omits {missing}"
+
+
 def test_codeowners_paths_exist() -> None:
     for line in _read(ROOT / "CODEOWNERS").splitlines():
         line = line.strip()
@@ -342,7 +437,7 @@ def test_ci_matrix_covers_every_classified_python_version() -> None:
 
 def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
     project = _pyproject()["project"]
-    assert project["name"] == "project-nexus-shadowscan"
+    assert project["name"] == "NexusShadowScan"
     assert project["scripts"] == {"shadowscan": "shadowscan.cli:main"}
     assert "shadowscan.connectors" in project["entry-points"]
     assert project["optional-dependencies"]["all"] == [f"{project['name']}[cloud,dev,docs]"]
@@ -354,7 +449,7 @@ def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
         GITHUB / "workflows/release.yml",
     ):
         text = _read(path)
-        assert "project_nexus_shadowscan-*.whl" in text
+        assert "nexusshadowscan-*.whl" in text
         assert "/shadowscan-*.whl" not in text
 
 
@@ -381,7 +476,7 @@ def test_make_validation_uses_private_temporary_paths_and_always_cleans_up(
     source.mkdir()
     shutil.copyfile(ROOT / "Makefile", source / "Makefile")
     (source / "dist").mkdir()
-    (source / "dist/project_nexus_shadowscan-0.1.1-py3-none-any.whl").touch()
+    (source / "dist/nexusshadowscan-0.1.1-py3-none-any.whl").touch()
     scratch = tmp_path / "temporary files"
     scratch.mkdir()
     # Another run's directory must remain untouched, even when validation fails.
@@ -445,7 +540,7 @@ def test_make_wheel_validation_rejects_stale_multiple_wheels(tmp_path: Path) -> 
     wheels = tmp_path / "dist"
     wheels.mkdir()
     for version in ("0.1.0", "0.1.1"):
-        (wheels / f"project_nexus_shadowscan-{version}-py3-none-any.whl").touch()
+        (wheels / f"nexusshadowscan-{version}-py3-none-any.whl").touch()
     result = subprocess.run(
         [make, "--no-print-directory", "-o", "build", "wheel-validate"],
         cwd=tmp_path,
@@ -1047,7 +1142,7 @@ def test_documented_fixture_connector_count_matches_the_demo_configuration() -> 
 _DEMO_COMMAND = "$ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows "
 _DEMO_TOTALS = re.compile(r"(\d+) findings  •  (\d+) shadow \(inventory: (\d+) registered agents\)")
 _DEMO_LEVELS = re.compile(r"\b(critical|high|medium|low|info) (\d+)\b")
-_DEMO_SURFACES = re.compile(r"\b(cloud|code|gateway|identity|lowcode|saas) (\d+)\b")
+_DEMO_SURFACES = re.compile(r"\b(cloud|code|endpoint|gateway|identity|lowcode|network|runtime|saas) (\d+)\b")
 _DEMO_ROW = re.compile(r"^ ([A-Z]+) +(\d+)  (\S+) +(\S+) +(\S+) +(.+?)\s*$", re.MULTILINE)
 
 
@@ -1089,6 +1184,75 @@ def test_readme_demo_output_matches_the_offline_demo(index) -> None:
     ]
     shown = [(lvl, int(score), *rest) for lvl, score, *rest in _DEMO_ROW.findall(table)]
     assert shown == expected, "README demo rows are stale; rerun the command it shows"
+
+
+_PIP_COMMANDS = frozenset(
+    {
+        "cache", "check", "completion", "config", "debug", "download", "freeze", "hash", "help",
+        "index", "inspect", "install", "list", "lock", "search", "show", "uninstall", "wheel",
+    }
+)  # fmt: skip
+_COMMAND_SEPARATORS = frozenset({"&&", "||", "|", ";"})
+_COMMAND_START = _COMMAND_SEPARATORS | {"then", "do", "time", "exec"}
+
+
+def _invocations(words: list[str], tool: str) -> Iterator[list[str]]:
+    """The arguments of each command ``tool`` starts in one shell line, up to the next command."""
+    for position, word in enumerate(words):
+        if (word == tool or word.endswith("/" + tool)) and (
+            position == 0
+            or words[position - 1] in _COMMAND_START
+            or "=" in words[position - 1]
+            or (tool == "pip" and words[position - 1] == "-m")
+        ):
+            rest = itertools.takewhile(lambda arg: arg not in _COMMAND_SEPARATORS, words[position + 1 :])
+            yield [arg for arg in rest if not arg.startswith("-")]
+
+
+def test_documented_command_arguments_stop_at_the_next_command() -> None:
+    line = "shadowscan --help && python -m shadowscan.signatures.validate"
+    assert list(_invocations(line.split(), "shadowscan")) == [[]]
+    line = "python -m pip wheel . && shadowscan code . | tee out"
+    assert list(_invocations(line.split(), "pip")) == [["wheel", "."]]
+    assert list(_invocations(line.split(), "shadowscan")) == [["code", "."]]
+
+
+def test_documented_commands_name_real_subcommands() -> None:
+    """A command copied from a shell block reaches a real ShadowScan or pip subcommand.
+
+    A lost space (``shadowscan code.`` or ``pip wheel.``) still reads as a
+    command but fails for everyone who copies it.
+    """
+    import click
+
+    from shadowscan.cli import main
+
+    groups = {
+        name: set(command.commands) if isinstance(command, click.Group) else None
+        for name, command in main.commands.items()
+    }
+    problems = []
+    for path in _markdown_files():
+        for number, line in _shell_lines(_read(path)):
+            words = [word.strip("\"'") for word in line.split()]
+            for args in _invocations(words, "shadowscan"):
+                if not args:
+                    continue
+                subcommands = groups.get(args[0], set())
+                if args[0] not in groups or (
+                    subcommands and len(args) > 1 and args[1][:1].isalpha() and args[1] not in subcommands
+                ):
+                    problems.append(f"{_relative(path)}:{number}: {line}")
+            for args in _invocations(words, "pip"):
+                if args and args[0] not in _PIP_COMMANDS:
+                    problems.append(f"{_relative(path)}:{number}: {line}")
+    assert not problems, "documented commands with no such subcommand:\n" + "\n".join(problems)
+
+
+def test_readme_quotes_a_declared_classifier() -> None:
+    quoted = re.findall(r"package classifier is `([^`]+)`", _read(ROOT / "README.md"))
+    assert quoted, "README should name the package classifier"
+    assert set(quoted) <= set(_pyproject()["project"]["classifiers"]), quoted
 
 
 def test_connector_configuration_reference_is_current() -> None:

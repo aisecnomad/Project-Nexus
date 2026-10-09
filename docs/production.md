@@ -1,65 +1,39 @@
 # Deployment and migration
 
-This is the rollout guide for the unreleased 0.1.1 candidate. It combines the
-previous input, transport, identity and collection fixes with explicit credential
-boundaries, connector deadlines, serialized incremental state and reproducible
-runtime dependency installs. The package version is 0.1.1; a version string does
-not establish that a tag, signed artifact or production acceptance exists.
+This is the rollout guide for version 0.1.2. It covers reviewed
+revisions, installation, validation, rollout, operation and migration.
 
 Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
-The operator sections come first: installing a reviewed revision, the explicit
-security, Git and resource policies, release verification and rollout acceptance.
-Dated change and migration notes for the unreleased candidate follow them under
-[Candidate change history](#candidate-change-history). Nothing has been published,
-so those notes describe differences between candidate builds, not between
-releases.
+Use this operator sequence; dated candidate notes remain under
+[Candidate change history](#candidate-change-history) and describe differences
+between candidate builds, not between releases.
 
-## Credential evidence identity migration
+## Review before deployment
 
-Code and cloud credential evidence now carries `credential:hmac-sha256:`
-pseudonyms made with a domain-separated HMAC and a private key. A report reader
-cannot check guessed low-entropy credentials against a public hash. Each Engine
-scan supplies one random key shared by its workers, so identical credentials
-within that scan have identical pseudonyms. Without an operator key, another
-scan produces different credential pseudonyms. Direct calls to the library's
-`credential_id()` or `redact()` outside an Engine use an ephemeral process key.
+Before selecting a revision, verify its final-head review record and the live
+merge rules. A versioned policy, merged pull request or passing CI does not
+establish independent human review. The [merge gate and review status](#merge-gate-and-review-status)
+section records the available evidence and commands for checking current
+enforcement. Independent human review is required before any tagged release.
 
-For stable credential correlation between scans, provide the existing
-`SHADOWSCAN_IDENTITY_KEY` through a private secret environment: at least 32
-random secret bytes, explicitly encoded as `hex:<value>` or `base64:<value>`.
-Ambiguous bare encodings, including ordinary 64-character hex keys, now fail
-before collection; prefix an existing hex key with `hex:` to preserve its bytes.
-Use the same key for the scans being compared. The key also governs gateway
-pseudonyms, so rotating it changes gateway identities too. Keep the key out of configuration files, logs,
-command-line arguments and shared reports. No key is generated into persistent
-storage automatically, and scan reports/export/cache files never contain it.
+Release tags are annotated; personal tag signatures are optional. Verify the
+downloaded wheel's digest and GitHub provenance as described in the
+[publishing runbook](operations/publishing.md#per-release). Workflow
+attestations identify the artifact's origin and do not replace the review
+record or deployment acceptance evidence.
 
-The report's `collection_scope.credential_identity_schema` is
-`shadowscan.credential-identity/v1`; `credential_identity_scope` is `run` or
-`keyed`. Resource-based finding IDs still identify the same source observation;
-the credential pseudonym in its evidence has the key's scope. Without a stable
-key, incremental scanning does not persist results containing credential
-pseudonyms, while clean inputs remain cacheable. With a stable key those
-results may be reused. Cache format 4 and private key commitments invalidate
-older entries or entries generated under a different key. Key rotation also
-changes the collection-scope fingerprint, so `diff` cannot claim resolution
-across that change; establish a fresh baseline.
+## Contents
 
-Regenerate reports and baselines made with previous candidate builds. Their
-`credential:sha256:` values cannot be converted to the new pseudonyms without
-rescanning the source credentials. Restrict or delete the old copies and
-rotate exposed low-entropy credentials if their digests were disclosed.
-Existing gateway correlation mappings using private `credential:sha256:` exact
-bindings remain compatible. Those legacy binding values are private and never
-enter gateway reports; gateway public identities retain their existing domain
-and behavior. Reports still contain sensitive audit evidence and business data.
-
-Synthetic code/cloud, cache, comparison, gateway-binding and publication
-regressions validate these behaviors. They do not establish independent human
-review or live tenant acceptance.
+1. [Review before deployment](#review-before-deployment)
+2. [Pin and install a reviewed revision](#install-from-a-reviewed-revision)
+3. [Validate security policy, Git metadata and resource limits](#explicit-security-policy)
+4. [Roll out with tenant acceptance evidence](#rollout-acceptance)
+5. [Operate within collection and resource limits](#resource-limits-and-incomplete-scans)
+6. [Upgrade and migrate identities](#credential-evidence-identity-migration)
+7. [Candidate change history](#candidate-change-history)
 
 ## Install from a reviewed revision
 
@@ -111,7 +85,7 @@ From the reviewed checkout, in a clean virtual environment:
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/project_nexus_shadowscan-0.1.1-*.whl
+python -m pip install --no-deps dist/nexusshadowscan-0.1.2-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
 shadowscan --help
@@ -556,6 +530,18 @@ On 2026-10-04, both rulesets read back as `enforcement: disabled` again,
 and the `main` branch response reported `protected: false`. The available
 GitHub connector exposes no administration-write operation; restoring the
 reviewed policy and verifying exact readback requires an administrator.
+On 2026-10-06 (23:50 UTC; both last updated at 20:16 UTC), both rulesets
+read back `enforcement: active` in complete responses that included
+`bypass_actors`, the `main` branch response reported `protected: true`, and
+the classic branch-protection endpoint answered HTTP 404 `Branch not
+protected`. `Require CI and CodeQL` requires one approving review with stale
+reviews dismissed, the strict checks `test (3.11)`, `test (3.12)` and
+`analyze`, CodeQL and code-quality gating and signed commits, and lists no
+bypass actors; it still omits `CI gate`, the checks' application binding,
+last-push approval and review-thread resolution. `Protect main` requires no
+approval, adds linear history and deletion protection, and still lists the
+administrator role and three integrations as `always` bypass actors. The
+weekly audit keeps failing until the reviewed payloads are applied.
 
 Classic branch protection is not readable through the app
 integration. Read and retain the current configuration before changing it,
@@ -757,12 +743,73 @@ the concrete status, denominator, control and reviewer artifacts:
 These checks require operator-specific tenant access and operational decisions.
 Until completed, describe deployment status as pending tenant and container acceptance.
 
+## Credential evidence identity migration
+
+Code and cloud credential evidence now carries `credential:hmac-sha256:`
+pseudonyms made with a domain-separated HMAC and a private key. A report reader
+cannot check guessed low-entropy credentials against a public hash. Each Engine
+scan supplies one random key shared by its workers, so identical credentials
+within that scan have identical pseudonyms. Without an operator key, another
+scan produces different credential pseudonyms. Direct calls to the library's
+`credential_id()` or `redact()` outside an Engine use an ephemeral process key.
+
+For stable credential correlation between scans, provide the existing
+`SHADOWSCAN_IDENTITY_KEY` through a private secret environment: at least 32
+random secret bytes, explicitly encoded as `hex:<value>` or `base64:<value>`.
+Ambiguous bare encodings, including ordinary 64-character hex keys, now fail
+before collection; prefix an existing hex key with `hex:` to preserve its bytes.
+Use the same key for the scans being compared. The key also governs gateway
+pseudonyms, so rotating it changes gateway identities too. Keep the key out of
+configuration files, logs, command-line arguments and shared reports. No key is
+generated into persistent storage automatically, and scan reports/export/cache
+files never contain it.
+
+The report's `collection_scope.credential_identity_schema` is
+`shadowscan.credential-identity/v1`; `credential_identity_scope` is `run` or
+`keyed`. Resource-based finding IDs still identify the same source observation;
+the credential pseudonym in its evidence has the key's scope. Without a stable
+key, incremental scanning does not persist results containing credential
+pseudonyms, while clean inputs remain cacheable. With a stable key those
+results may be reused. Cache format 4 and private key commitments invalidate
+older entries or entries generated under a different key. Key rotation also
+changes the collection-scope fingerprint, so `diff` cannot claim resolution
+across that change; establish a fresh baseline.
+
+Regenerate reports and baselines made with previous candidate builds. Their
+`credential:sha256:` values cannot be converted to the new pseudonyms without
+rescanning the source credentials. Restrict or delete the old copies and
+rotate exposed low-entropy credentials if their digests were disclosed.
+Existing gateway correlation mappings using private `credential:sha256:` exact
+bindings remain compatible. Those legacy binding values are private and never
+enter gateway reports; gateway public identities retain their existing domain
+and behavior. Reports still contain sensitive audit evidence and business data.
+
+Synthetic code/cloud, cache, comparison, gateway-binding and publication
+regressions validate these behaviors. They do not establish independent human
+review or live tenant acceptance.
+
 ## Candidate change history
 
 These notes record behavior changes made while the 0.1.1 candidate was being
 hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 9 endpoint and fleet completeness corrections
+
+Endpoint discovery stops with an incomplete report (exit 3) if any known
+configuration location cannot be inspected safely. Missing locations remain
+normal; symbolic links, non-regular objects and denied access are coverage
+failures. Instruction checks reuse the original confined file snapshot and
+mark inspection beyond 512 KiB incomplete.
+
+Fleet inputs must preserve completion statistics, matching summary counts and
+valid collection fingerprints. Combining an incomplete or truncated report
+with a healthy one does not restore completeness. When duplicate observations
+have different assessments, the highest source risk is retained, and a shadow
+observation remains shadow. Source risk policies are not silently replaced by
+the merging workstation's defaults. Rescan to replace baselines produced by
+an earlier candidate; these safeguards do not establish field validation.
 
 ### October 8 classification and risk follow-ups
 
@@ -780,11 +827,158 @@ file and line only. A bare `mlflow` dependency no longer produces a
 `provider.databricks` finding, so such findings resolve on re-scan; that is a
 detection correction, not remediation. Spring AI services that register tools
 on an injected `ChatClient.Builder` chain become `agent` findings. The new
-`shadowscan endpoint` and `shadowscan merge` commands and the `cyclonedx`
-format add outputs; they change nothing in existing scans. None of this is
+`shadowscan endpoint` and `shadowscan merge` commands add collection and
+aggregation paths; the existing CycloneDX AI-BOM semantics are retained. None of this is
 field-validated: the changes were driven by an author-written benchmark
 (`archive/reviews/head-to-head-2026-10-08.md`) and are covered by regression
 tests and evaluation cases only.
+### October 7 distribution rename and PyPI publication
+
+The distribution is renamed from `project-nexus-shadowscan` to
+`NexusShadowScan`, the name it is published under on PyPI; the wheel file is
+`nexusshadowscan-<version>-py3-none-any.whl`. The CLI, Python imports,
+connector entry-point group and report schemas keep the `shadowscan` name, so
+configurations, reports and baselines need no change. Install into a fresh
+virtual environment rather than over an earlier `project-nexus-shadowscan` or
+`shadowscan` distribution, because they share the import package and command.
+Update any pipeline that globs the old wheel name, and any container inventory
+check that looks for `pkg:pypi/project-nexus-shadowscan`; it is now
+`pkg:pypi/nexusshadowscan`.
+
+The release-evidence workflow gains a `publish` input (default `none`); the
+[publishing runbook](operations/publishing.md) describes the upload path and
+its gates. The workflow's wheel-count checks also
+now fail when an artifact holds more than one wheel; before, `set -e` ignored
+the failed count in an `a && b` list and only the file check could stop the
+job.
+
+### October 6 benchmark follow-ups
+
+Re-scan before comparing risk with earlier reports. MCP configuration
+findings gain `mcp-unpinned-package` (+10), `mcp-broad-filesystem` (+10) and
+`mcp-shell-command` (+5), and coding-agent configuration findings gain posture
+tags read from the agent's own settings: `posture-permissions-bypassed` (+15),
+`posture-unrestricted-shell` (+10), `posture-unsandboxed` (+10),
+`posture-exposed-gateway` (+15) and `posture-unauthenticated-gateway` (+15).
+Each server record in `metadata.servers` lists its `risks`, and
+`metadata.posture` names the client, setting, enumerated value and file. A
+finding can therefore rise a level without any repository change. Override a
+weight with `options.risk_weights.tags` if your policy differs. The new
+evidence has weight 0, so confidence and finding identity are unchanged.
+OpenClaw state directories (`.openclaw/openclaw.json` and workspace files)
+are now attributed to a new `coding-agent.openclaw` signature, so findings that
+previously fell under a generic instruction-file signature may change their
+framework list; finding IDs depend on the resource and discriminator, and the
+discriminator of a coding-agent configuration includes its signature id. A
+coding agent's own configuration file now belongs to that agent's signature
+alone: `platform.openclaw` still matches a bare `openclaw.json`,
+`clawdbot.json` or `moltbot.json` and OpenClaw code, but no longer adds a
+second framework-usage finding for a file in the state directory.
+An MCP server reached through `ws://`, an upper-case `HTTP://` scheme, or a
+URL that client parsers read as plaintext despite embedded tabs, newlines or
+leading control characters now gains the `mcp-plain-http` factor (+10), as
+`http://` servers already did: the factor parses the scheme as the
+`mcp-insecure-transport` tag does, so every tagged server is scored.
+
+The new `endpoint.inventory` connector reports findings on the `endpoint`
+surface with new kinds (`ai-app` and `local-model` at base weight 5, plus
+`agent-config` and `mcp-server`). Reports, dashboards and `--surface` filters
+that enumerate surfaces or kinds should add them; `network-contact` (5) and
+`runtime-process` (10) are reserved for the network and runtime connectors.
+Endpoint resource ids have the form
+`endpoint:<device>:<home>:<category>:<key>`, so a finding keeps its identity
+across scans of the same device and home. The connector reads home
+directories of the account running it; on a shared host, scope `paths` to the
+homes you are authorized to inventory, and leave `shell_history` off unless
+your policy allows it (only tool names and counts are kept).
+
+Gateway caller titles change on re-scan. Callers whose only agent indicator
+was the domain or name of an AI SaaS app (any `api.openai.com` or
+`api.anthropic.com` caller, or a key named after the vendor) are now
+"LLM caller" instead of "Agentic caller". Callers that invoke hosted agent
+runtimes, reach MCP endpoints or show agent-loop cadence gain the tags
+`agent-runtime-api`, `mcp-client` or `agent-loop` and
+`metadata.agent_behaviour`. Finding IDs are unchanged; dashboards that count
+agentic callers by title will see a different number.
+
+The new `network.logs` connector reports `network-contact` findings on the
+`network` surface, with resource ids `network:<label>:<client>:<signature>`.
+A client address names a device or a NAT gateway; give each sensor or VPC a
+distinct `label` so the same private address in two networks stays two
+findings, and join findings to DHCP or VPN records before assigning owners.
+
+`runtime.processes` reports `runtime-process` findings with resource ids
+`runtime:<host>:<user>:<tool>`, and `endpoint.inventory` findings for the same
+tool on the same device gain `metadata.lifecycle` and the tag
+`observed-running`. A tool links through its signature, through its tool id
+(Claude Desktop, Kiro and LM Studio have no signature), or, for an MCP
+configuration, through a running server's package. Neither changes risk. Keep
+endpoint `label` values equal to the host names that process exports report,
+or the two will not link. A process list is a point in time: absence does not
+show that a tool is unused. A live `/proc` scan of a container's own `/proc`,
+or under a `hidepid` setting that hides processes from the scanning account,
+cannot see every process and is marked incomplete (see the runtime guide for
+which settings do).
+
+`--format cyclonedx` replaces the earlier candidate's CycloneDX exporter with
+a different document: agents, configurations, apps, callers and processes are
+`application` components instead of `machine-learning-model` components (MCP
+and Ollama inventories stay `services`, model stores stay models), the new
+`shadowscan:heuristic-risk` properties carry the risk the earlier exporter
+never published, the per-tag `shadowscan:tag:<tag>` properties are one
+`shadowscan:tags` list, and `secret` and `token` findings are no longer
+components. Regenerate BOMs and update
+their consumers; `docs/operations/ai-bom.md` lists the changes. Its
+composition is `incomplete` for an incomplete scan, and the exit code is
+unchanged. `options.llm_triage` is off
+by default. Enabling it sends finding summaries to a third-party or
+self-hosted model endpoint, so treat it as a data-egress decision: review
+`docs/operations/llm-triage.md`, prefer a `base_url` you operate, and do not
+enable it for scans whose finding titles must stay in your environment.
+
+### Incomplete A2A cards, OpenClaw state files and short `sk-` keys
+
+Re-scan before comparing finding counts with earlier reports; these changes
+add findings and evidence that earlier candidate builds did not report. Exit
+codes and existing finding IDs are unchanged, except as noted for Moltbot
+state files.
+
+- An A2A card that names its agent and declares an endpoint, skills or
+  capabilities, but misses other required fields, gets its own
+  `protocol.a2a` framework-usage finding tagged `incomplete-agent-card`, with
+  the errors in `metadata.card_errors`. It never becomes an agent finding,
+  and its validation errors still mark the scan incomplete (exit 3); the
+  report now also shows which file holds the card. Completing the card turns
+  the same finding ID into the agent finding.
+- `config.json` in an OpenClaw state directory (`.openclaw/`, `.clawdbot/` or
+  `.moltbot/`) and `.moltbot/moltbot.json` join the `coding-agent.openclaw`
+  configuration finding with the other state files. A `.moltbot/moltbot.json`
+  previously produced a separate `platform.openclaw` framework-usage finding;
+  `diff` against an older baseline reports that finding removed and the agent
+  configuration added.
+- `heuristic.unattributed-api-key` reports `sk-` keys of 20 to 31 characters
+  after the prefix when they look random (see the
+  [signature conventions](signatures.md#conventions)), at its usual weight 0.4.
+  Such keys were missed in SDK calls, JSON and YAML configuration and
+  `Authorization` headers, so `--fail-on` gates may now fail on a repository
+  that holds one. A key that the generic credential rule already reported
+  (an `*_API_KEY=` assignment) keeps that finding and its weight.
+
+### Offline endpoint and runtime inventory limits
+
+The `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and
+`endpoint.ebpf` connectors and `gateway.otel` currently analyze offline exports
+only. They do not make live API calls, probe endpoint URLs, discover host
+configuration files, or read model directories (`endpoint.inventory` reads its
+fixed list of local locations). Kubernetes and OpenShift inventories are also
+offline-only; do not provide kubeconfig material, Secret values, service-account
+tokens, environment values, or image pull credentials in an export.
+
+`endpoint.models` consumes metadata produced elsewhere; it does not parse GGUF or
+safetensors files. MCP tool fingerprints are not compared with a saved baseline,
+so rug-pull detection is not implemented. Findings from these offline inventories
+carry no device name, so lifecycle links do not apply to them. Treat their output as bounded inventory evidence, not
+live execution or deployment attestation.
 
 ### October 3 source capability attribution migration
 
@@ -1429,9 +1623,10 @@ corpora, replays and mocked transports do not meet these live requirements.
 After independent review, merge and successful exact-commit CI and CodeQL,
 exercise the manual release-evidence workflow described below. Retain its
 candidate, attestation and `release-publication-input-<SHA>` artifacts together.
-The latter contains the exact attested wheel bytes and is an input to a possible
-future OIDC trusted-publishing job; it does not publish anything or approve a
-release. Evidence from an earlier main commit does not cover these source or
+The latter contains the exact attested wheel bytes, which the workflow's
+publish job uploads to PyPI only when the maintainer dispatches it with
+`publish` set and approves its protected environment; retaining it approves
+nothing. Evidence from an earlier main commit does not cover these source or
 package changes, and local wheel checks do not establish GitHub-hosted provenance.
 
 ### September 25 migration and acceptance
@@ -1502,22 +1697,31 @@ requires successful main-branch CI and CodeQL runs for the exact selected commit
 It rejects modified, untracked and ignored checkout files, builds from a clean
 `git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
 and produces GitHub artifact provenance. It then assembles the candidate and
-attestation bundles without rebuilding the wheel. It does not publish to PyPI,
-create a release, or declare tenant acceptance. Review and retain its artifacts
-before a separate maintainer publication decision.
+attestation bundles without rebuilding the wheel. With the default
+`publish: none` it uploads nothing; it never creates a GitHub release or
+declares tenant acceptance. Review and retain its artifacts before a separate
+maintainer publication decision.
 
 After merge and successful push CI, dispatch **Release candidate evidence** on
 `main` with `expected_commit` set to the full current main SHA, `ci_run_id`
-set to that commit's successful CI run ID, and `codeql_run_id` set to its
-successful CodeQL run ID. The workflow rejects stale commits, PR-only runs,
-failed checks and other workflows. Retain `release-candidate-<SHA>`,
+set to that commit's successful CI run ID, `codeql_run_id` set to its
+successful CodeQL run ID, and `ruleset_readback` set to an administrator's
+`gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` output taken just
+before dispatch. The workflow rejects stale commits, PR-only runs, failed
+checks and other workflows. GitHub withholds `bypass_actors` from the
+workflow's read-only token, so the build job accepts the readback only when it
+matches the job's own read in every other field, `updated_at` included, and
+records in the evidence that `bypass_actors` came from that readback. Retain `release-candidate-<SHA>`,
 `release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
 hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
-attestations before publication. A future publisher must use the wheel in that
-publication-input artifact, not rebuild from a tag. Configure an environment-
-protected PyPI trusted publisher and grant `id-token: write` only in that future,
-isolated publication job. The current workflow deliberately has no package-index
-permission or upload action.
+attestations before publication. Publication uploads the wheel in that
+publication-input artifact and never rebuilds from a tag: the isolated
+`publish` job holds `id-token: write` as its only permission, waits for approval
+in the protected `testpypi` or `pypi` environment, checks out nothing, and uses
+PyPI trusted publishing, so no package-index token exists to leak. A `pypi`
+upload also requires the maintainer's tag `v<version>` on the reviewed commit.
+The one-time setup and per-release steps are in the
+[publishing runbook](operations/publishing.md).
 
 The runtime SBOM covers locked Python core/cloud dependencies. It is not a
 container or operating-system SBOM and does not cover the base image, Git,

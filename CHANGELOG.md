@@ -3,7 +3,352 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
-## 0.1.1 — Unreleased
+## Unreleased
+
+- Endpoint profile discovery fails incomplete (exit 3) when a known location
+  cannot be inspected safely, including symbolic links and denied access.
+- Instruction content checks inspect the original confined file snapshot;
+  exceeding their 512 KiB budget marks coverage incomplete.
+- Fleet merging validates source completion, counts and collection fingerprints.
+  An incomplete source stays incomplete even alongside healthy reports. Duplicate
+  findings retain the highest observed source risk and any shadow observation;
+  risk is not recalculated using an unknown source policy.
+- Preserve the existing CycloneDX AI-BOM semantics when adding endpoint and
+  fleet commands: credentials remain in JSON/SARIF, and MCP inventories remain
+  services linked to their technologies.
+
+## 0.1.2 — 2026-10-08
+
+### Release tag lookup correction
+
+- Fix the production publication gate to query GitHub with the fully qualified
+  `refs/tags/v<version>` ref. The previous `tags/v<version>` lookup returned
+  HTTP 422 for the existing annotated tag during release preflight. The gate still
+  requires the resolved commit to equal the reviewed workflow commit.
+- Execute the gate in regression tests against the accepted API ref format,
+  including rejection of the old lookup and of missing or mismatched tags.
+- Prepare a new version because `v0.1.1` is already immutable. Its TestPyPI
+  upload and fresh installation passed; production preflight stopped before
+  any PyPI dispatch or upload. Preserve the tag and the rehearsal evidence.
+
+## 0.1.1 — 2026-10-08
+
+### October 8 release tags without a personal signing key
+
+- Release policy now permits unsigned annotated tags on the exact reviewed
+  commit; personal SSH or GPG tag signatures are optional. The default tagging
+  command disables automatic signing for that invocation.
+- Publishing continues through the existing protected GitHub Actions workflow
+  and PyPI trusted publisher, with GitHub provenance, SBOM and PyPI publish
+  attestations. Independent review, CI and CodeQL, immutable tag protections,
+  digest checks and environment approval remain required.
+
+### October 7 release merge-rule check with an administrator readback
+
+- Fixed: the release-evidence workflow could never pass its merge-rule step.
+  GitHub returns a ruleset's `bypass_actors` only to a caller with write
+  access to it, the build job reads with its read-only token, and the verifier
+  rightly refuses a response without the field. A dispatch of the governance
+  audit, which reads the same way, confirmed the omission. The workflow had
+  never been run, so nothing had shown the failure.
+- The workflow takes a required `ruleset_readback` input: an administrator's
+  `gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` output.
+  `python -m tools.release.rules verify --live` accepts it only when it equals
+  the job's own read in every field that read returned, `updated_at`
+  included, so a stale or edited readback fails and the readback can supply
+  only the withheld `bypass_actors`. The full policy check then runs on the
+  readback. The build job still holds no administrator credential.
+- The merge-rule receipt records `bypass_actors_source` and
+  `observed_updated_at`; `verify_receipt` and the evidence manifest validate
+  both. Receipts without them still verify.
+- Field names from a mismatching readback appear in the error only when they
+  are plain lowercase names, so a crafted key cannot inject log lines or
+  workflow commands.
+
+### October 7 PyPI distribution and publishing
+
+- The distribution is renamed from `project-nexus-shadowscan` to
+  `NexusShadowScan`, so `pip install NexusShadowScan` installs the scanner once
+  a release is published. The wheel is
+  `nexusshadowscan-<version>-py3-none-any.whl` and the container inventory
+  check looks for `pkg:pypi/nexusshadowscan`. The command, imports, connector
+  entry-point group and report schemas keep the `shadowscan` name.
+- The release-evidence workflow gains a `publish` input (`none` by default,
+  `testpypi` or `pypi`). A `publication-gate` job requires exactly one wheel
+  with matching digests, a public release version and, for `pypi`, the tag
+  `v<version>` on the reviewed commit. A `publish` job, whose only permission
+  is `id-token: write`, waits for approval in the protected environment of the
+  same name, checks out nothing, and uploads that attested wheel with the
+  SHA-pinned `pypa/gh-action-pypi-publish` v1.14.2 through trusted publishing,
+  which adds PEP 740 attestations. No package-index token is stored.
+- The repository policy tests allow that one upload step and no other. They
+  pin each gate, and mutation tests show that removing a gate, uploading from
+  another job, rebuilding in the publish job or adding a write scope fails.
+- Fixed: the workflow's exactly-one-wheel checks were written
+  `[ "${#wheels[@]}" -eq 1 ] && [ -f "${wheels[0]}" ]`. `set -e` ignores a
+  failure of the first command of an `&&` list, so an artifact with two
+  wheels passed. They now fail in an explicit `if`, and tests run the
+  committed scripts with one and two wheels.
+- README links are absolute repository URLs, because README is also the PyPI
+  project description, where relative links resolve against pypi.org. A test
+  keeps README free of relative links, and a new test resolves every absolute
+  `blob/main` and `tree/main` link in the Markdown files, anchors included,
+  against the checkout.
+- Fixed a missing space in the README deployment install
+  (`pip wheel. --no-deps`), which made the command fail.
+- New maintainer runbook, `docs/operations/publishing.md`, for the one-time
+  PyPI and environment setup and the per-release steps.
+
+### Incomplete A2A cards, OpenClaw state files and short sk- keys
+
+- An A2A card that fails validation but still names its agent and declares an
+  endpoint, skills or capabilities gets its own `protocol.a2a` framework-usage
+  finding ("Incomplete A2A agent card: …", tagged `incomplete-agent-card`,
+  errors in `metadata.card_errors`) instead of disappearing from the report.
+  It never becomes or joins an agent finding, so a valid card beside it keeps
+  its single agent finding, and its validation errors still make the scan
+  incomplete. An empty or unrelated object under a card file name is still
+  not reported. Once the card is complete, the same finding ID reports the
+  agent.
+- `config.json` in an OpenClaw state directory (`.openclaw/`, `.clawdbot/`,
+  `.moltbot/`) and `.moltbot/moltbot.json` belong to `coding-agent.openclaw`,
+  so a state directory is one agent configuration finding. #155 placed the
+  new paths under `platform.openclaw`; that signature covers configuration
+  formats outside a state directory, which already belongs to the
+  coding-agent signature alone.
+- `heuristic.unattributed-api-key` has a second signal for `sk-` keys of 20 to
+  31 characters after the prefix (LiteLLM proxy virtual keys have 22). A value
+  is kept when it mixes letters and digits, has at most two separators, passes
+  the generic credential's diversity and entropy test and is not already
+  covered by a kept generic assigned-credential match, so an `*_API_KEY=`
+  assignment keeps its finding and weight. OpenSSH security-key algorithm
+  names (`sk-ssh-…`, `sk-ecdsa-…`) never match. Such keys were missed in SDK
+  calls, JSON and YAML configuration and `Authorization` headers. A separate
+  signal keeps rejected look-alikes from using the longer keys' match budget.
+- `examples/inventory/sanctioned.yaml` shows the bare-list inventory form. The
+  comment #155 gave it said the `agents:` mapping is not accepted; it is, and a
+  test now loads both examples and checks that a name alone only suggests a
+  match.
+- The default evaluation corpus gains OpenClaw and Moltbot state-file cases, a
+  short-key positive (which fails on the previous signatures) and a look-alike
+  negative: SSH algorithm names, a spinner class and a ticket branch.
+- A redaction test's parameter ID embedded a per-process HMAC, so pytest-xdist
+  workers collected different test IDs and `make test-parallel` stopped at
+  collection. The case now has a fixed ID.
+
+### README command checks
+
+- A README edit on `main` dropped the space in two copy-paste commands
+  (`python -m pip wheel. …` and `shadowscan code. …`, both of which fail),
+  misquoted the package classifier as `Development Status:: 3 - Alpha`, and
+  indented the `Project status` heading so it rendered inside the preceding
+  bullet. The PyPI publishing change fixed the `pip wheel` command and the
+  classifier; the rest is fixed here, and the edit's wording and section
+  order are kept.
+- A repository test now checks that every `shadowscan` and `pip` command in a
+  shell block of a Markdown page names a real subcommand, and that the
+  classifier the README quotes is one `pyproject.toml` declares. Both checks
+  fail on the edit as committed.
+- `CITATION.cff`'s abstract named six of the nine discovery surfaces; it now
+  names all nine, as the README does.
+
+### Surface descriptions and pre-commit hooks
+
+- The package summary in `pyproject.toml`, `shadowscan --help`, the HTML
+  report's subtitle and the connector base docstring also named six of the
+  nine surfaces, and the README said only identity, gateway, low-code, SaaS
+  and cloud findings group repeated matches of one signal; every surface
+  except code does. A repository test now checks that each one-line scope
+  description names every `Surface`.
+- `pre-commit run --all-files` failed on `main`. The benchmark report writer
+  ended `REPORT.md` with a blank line, which `end-of-file-fixer` removes, and
+  the mypy hook, which runs with `--ignore-missing-imports`, reported the Open
+  Shadow AI helper's `import-not-found` ignores as unused. The writer now ends
+  the report with one newline, `REPORT.md` is regenerated (the only change is
+  that line), and the helper's ignores also allow `unused-ignore`, so CI's
+  mypy and the hook both pass. The benchmark README's regeneration command
+  wrote `REPORT.md` to the working directory; it names the committed path.
+
+### October 6 merge-policy audit diagnostics
+
+- The first scheduled merge-policy audit failed with "ruleset response does
+  not match the expected repository and ruleset". A response missing a managed
+  field produced the same message as a wrong repository or ruleset, and GitHub
+  returns `bypass_actors` only to a caller with write access to the ruleset,
+  which the read-only workflow token lacks. The verifier now names omitted
+  fields separately. The job still fails until an administrator applies the
+  reviewed payloads and a complete readback matches them; a complete readback
+  taken on 2026-10-06 reports `readback differs from reviewed payload:
+  bypass_actors, rules`.
+- `docs/production.md` and `docs/operations/merge-policy.md` record that
+  readback: both rulesets active again, with the gaps observed on 2026-10-03.
+
+### October 6 head-to-head benchmark follow-ups
+
+- The Goose signature matches the user configuration Goose writes on first
+  run (`~/.config/goose/config.yaml`, and
+  `%APPDATA%\Block\goose\config\config.yaml` on Windows). The benchmark
+  missed all six Goose homes because only `.goose/`, `.goosehints` and
+  `goose.yaml` were recognized.
+- The Cline signature matches the installed extension directory
+  (`saoudrizwan.claude-dev-*` under VS Code, VS Code Server, Cursor or
+  Windsurf), so an install without `cline_mcp_settings.json` is found.
+- `review_corpus.json` gains both cases and two look-alike negatives; the
+  positives fail on the previous signatures.
+- MCP configuration findings report static server risks: a package or image
+  fetched without an exact version or digest (`mcp-unpinned-package`), a
+  filesystem server rooted at `/` or a home directory
+  (`mcp-broad-filesystem`), a shell-wrapped launch (`mcp-shell-command`),
+  plaintext remote transport and auto-approved tools. The checks read the
+  sanitized server record only; nothing is started or fetched.
+- Coding-agent configuration findings report posture from the agent's own
+  settings: Claude Code `bypassPermissions` and unrestricted `Bash` allow
+  rules, Codex `approval_policy = "never"` and `danger-full-access`, Goose
+  `GOOSE_MODE: auto`, and an OpenClaw gateway exposed beyond loopback or
+  without an auth token. Only enumerated setting values are reported.
+- A `coding-agent.openclaw` signature recognizes OpenClaw state directories.
+- New default risk weights for these tags; see `docs/concepts/risk.md` and the
+  October 6 migration note in `docs/production.md`.
+- New `endpoint.inventory` connector on the `endpoint` surface. It reads a
+  fixed list of documented user-scope locations below home directories: AI client
+  and coding-agent configurations with their MCP servers, server risks and
+  posture; AI editor and browser extensions; local model stores; and, with
+  `shell_history: true`, AI command-line tool names and counts. Offline it
+  replays exported records or osquery `vscode_extensions`,
+  `chrome_extensions` and `firefox_addons` results. Symbolic links are never
+  followed, and links, unreadable locations, oversized files or an exhausted
+  `max_entries` budget make the scan incomplete.
+- New finding kinds `ai-app`, `local-model`, `network-contact` and
+  `runtime-process`, and surfaces `network` and `runtime`.
+  `KIND_BASE` gives the first three 5 and `runtime-process` 10.
+- MCP risk and posture recording moved to shared helpers
+  (`record_server_risks`, `record_posture`) used by the code and endpoint
+  connectors.
+- The offline demo runs `endpoint.inventory`.
+- `gateway.logs` classifies agentic callers from request metadata when logs
+  carry no request bodies: hosted agent runtime operations
+  (`agent-runtime-api`), MCP endpoints (`mcp-client`) and agent-loop cadence
+  from programmatic callers (`agent-loop`). The indicators live in
+  `shadowscan/connectors/agent_behavior.py` for reuse by other log sources.
+- Fixed: every gateway caller to `*.openai.com` or `*.anthropic.com`, and any
+  caller named after those vendors, was titled "Agentic caller" because the
+  ChatGPT and Claude SaaS app signatures carry an agent indicator for OAuth
+  grants. Gateway callers no longer take agent indicators from
+  `identity-app` signatures; the golden replays record the corrected titles.
+- Fixed: a user or key alias that matched a product name (a person called
+  Jules) and browsing `chatgpt.com` (also listed by the ChatGPT plugin
+  protocol signature) made gateway callers agentic. Name matches are hints,
+  and a host counts only through the service it belongs to. Found by the
+  post-change benchmark run; regression tests added.
+- `framework.autogen` gains a user-agent signal (`autogen/…`, `ag2/…`).
+- New `network.logs` connector and `network` surface. It reads Zeek
+  `dns.log`, `ssl.log` and `conn.log` (TSV or JSON), Route 53 Resolver query
+  logs, VPC Flow Logs and generic DNS/SNI exports, and reports one
+  `network-contact` finding per client address and AI service. Host names
+  match exactly or by a declared wildcard, and only AI host names are kept.
+  Flows are attributed by Zeek `uid` to a TLS server name or through DNS
+  answers in the same input; addresses shared with another service's host
+  attribute nothing. The offline demo runs it.
+- New `runtime.processes` connector and `runtime` surface: coding-agent CLIs,
+  AI desktop apps, MCP servers, local model servers and agent dev servers seen
+  running, from osquery `processes`, Defender `DeviceProcessEvents`,
+  CrowdStrike process events, generic exports or `/proc` on Linux. Command
+  lines never enter a finding, and the connector's records are excluded from
+  `--dump-records` because command lines can carry credentials. The offline
+  demo runs it.
+- Lifecycle corroboration: the engine links endpoint findings (configured,
+  installed) to running-process findings for the same tool on the same
+  device, recording `metadata.lifecycle` and the tag `observed-running` with
+  zero-weight evidence. MCP configurations link only through the same server
+  package. Scores do not change.
+- The CycloneDX 1.6 AI-BOM output (`--format cyclonedx`) models agents and
+  other findings as application components, model artifacts and stores as
+  machine-learning-model components, MCP and model-server inventories as
+  services, and frameworks, models, providers and MCP servers as shared
+  entries with dependencies.
+  Credential findings are excluded, and `compositions` declares the inventory
+  `incomplete` whenever the scan was. See `docs/operations/ai-bom.md`.
+- Opt-in LLM triage (`options.llm_triage`, off by default): a redacted summary
+  of the highest-risk findings goes to a model the operator names, through the
+  scanner's HTTPS client, and the reply is stored as advisory
+  `metadata.llm_triage`. Resource ids, owners, accounts, locations and
+  snippets are not sent as fields, and their values are withheld from titles
+  and evidence text; keys come only from an environment variable; replies
+  never change scores or completeness. See `docs/operations/llm-triage.md`.
+- `endpoint.inventory` coexists with the `endpoint.*` offline inventories:
+  it reads local locations or osquery exports, they read collector exports.
+  Their findings carry no device name, so lifecycle links do not apply to
+  them.
+- The CycloneDX output replaces the earlier candidate's exporter: findings
+  other than models, MCP and Ollama inventories are `application` components
+  instead of `machine-learning-model` components, risk is published as
+  `shadowscan:heuristic-risk` (the earlier `shadowscan:risk_level` lookup never
+  matched), per-tag `shadowscan:tag:<tag>` properties are one
+  `shadowscan:tags` list, and credential findings are excluded. Regenerate
+  BOMs and update their consumers.
+
+#### Fixes from a review of the merged branch
+
+- CycloneDX: MCP server risks were never emitted (the reporter expected
+  objects, the records hold ids); `endpoint.ollama` model findings are
+  `machine-learning-model` components again; each entry is sanitized on its
+  own, so scans of about a thousand findings or more render; entries capped
+  at 50 MCP servers or 20 models are recorded as `incomplete`; same-named
+  servers and empty or repeated finding ids get distinct refs; providers carry
+  no `trustZone`; names and vendors come from the scan's signature index,
+  custom packs included.
+- `endpoint.inventory`: a symbolically linked directory on the way to a
+  location (Linux reports it as "not a directory") was treated as absent; it
+  is now a gap. Unparseable agent settings, whose posture is therefore
+  unknown, and a shell history longer than the read limit are gaps too.
+  Malformed server, posture or model entries in replayed records are dropped
+  with a warning (incomplete) instead of failing the connector or, through
+  the lifecycle pass, the whole scan. Project servers in `~/.claude.json` that
+  reuse a user-scope name are kept (`name#2`), MCP risk evidence cites the
+  file that holds the servers, and the lock links a running Chromium browser
+  keeps in its user-data directory no longer make every scan incomplete.
+- `runtime.processes`: an export row whose pid is a non-ASCII digit no longer
+  fails the export (64-bit ids such as CrowdStrike's `TargetProcessId` are
+  kept). A live scan of a container's own `/proc`, identified by the PID
+  namespace's inode, is marked incomplete because it cannot see the host's
+  processes; so is one under a `hidepid` setting that hides processes from
+  the scanning account. `subset=pid`, and root under the default `hidepid`
+  group, hide nothing and stay complete.
+- Lifecycle links also match by tool id, so Claude Desktop, Kiro and
+  LM Studio configurations, which have no signature, link to their running
+  processes.
+- LLM triage withholds owner, account, resource, device, home, file and
+  network client values from the title and evidence text it sends (one- and
+  two-character values as whole words), while product names stay readable. A
+  malformed reply is `unparseable`; an API key that is not a valid header
+  value, or any other triage failure, is a warning on the triage entry that
+  never echoes the key, and the scan keeps its report.
+- MCP servers reached through `ws://`, an upper-case `HTTP://` scheme, or a
+  URL that MCP clients' parsers read as plaintext despite embedded tabs,
+  newlines or leading control characters gain the `mcp-plain-http` factor
+  (+10): the factor parses the scheme as the `mcp-insecure-transport` tag
+  does, so every tagged server is scored.
+- A coding agent's own configuration file belongs to that agent's signature
+  alone: `main`'s `platform.openclaw` no longer adds a second framework-usage
+  finding for files in an OpenClaw state directory.
+
+### Offline runtime inventory connectors
+
+- Added the `endpoint` surface, offline analyzers for MCP tool inventories,
+  OTLP GenAI spans, host/runtime records, local model metadata, and eBPF events,
+  plus offline Kubernetes/OpenShift workload analysis.
+- Added risk tags and OWASP/MITRE control references for selected runtime
+  indicators, and a CycloneDX 1.6 AI-BOM output format. New runtime tag
+  weights can change risk scores for findings that carry those tags.
+- These offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
+  `endpoint.models`, `endpoint.ebpf`, `gateway.otel`, Kubernetes/OpenShift)
+  remain offline-only; live MCP, Ollama and Kubernetes collection is
+  unsupported. (`endpoint.inventory` and `runtime.processes`, above, read local
+  state when no `input` is set.)
+- Model metadata is supplied by an offline exporter; ShadowScan does not parse
+  GGUF or safetensors files. MCP tool fingerprints have no rug-pull baseline, and
+  findings from these inventories carry no device name, so lifecycle links do
+  not apply to them.
 
 ### October 8 benchmark follow-ups
 
@@ -31,10 +376,9 @@ author-written and not independent review.
   The merged report is comparable with `shadowscan diff` only when every
   source was complete and comparable, and its own completion (exit 3) follows
   the sources. Reports with another finding identity schema are refused.
-- `--format cyclonedx` renders a CycloneDX 1.6 JSON bill of materials: one
-  component per finding with its surface, kind, risk, confidence, shadow
-  status, owner, technologies, tags and evidence locations as properties.
-  It never carries evidence snippets or credential values.
+- The existing `--format cyclonedx` AI-BOM supports endpoint and fleet
+  reports with its established component, service, credential-exclusion and
+  completeness rules; see `docs/operations/ai-bom.md`.
 - Coding-agent configuration findings now inspect the instruction files they
   report (skills, `CLAUDE.md`-style files, sub-agent definitions, rules and
   hooks) for content that a rendered view hides or that executes fetched
@@ -310,7 +654,7 @@ in `docs/production.md` under "Candidate change history".
   uses its current id `ruff-check`, and Markdown line-break spaces are kept.
 - `.gitignore` anchors root build, report and site outputs, so a source file
   such as `shadowscan/reporters/report.py` is no longer ignored, and the
-  digest-bound licence texts are never converted by Git (`-text`).
+  digest-bound license texts are never converted by Git (`-text`).
 
 #### Documentation
 
@@ -666,7 +1010,7 @@ field precision. Behavior changes that affect an existing baseline are listed in
   `/healthz/../v1/chat/completions` is no longer excluded either. The number of
   excluded requests is reported as a scan note (a warning that does not make
   the scan incomplete).
-- `gateway.logs`: `key=value` (logfmt) lines honour `\"` and `\\` escapes in
+- `gateway.logs`: `key=value` (logfmt) lines honor `\"` and `\\` escapes in
   quoted values, so a quoted client value can no longer inject `api_key=`,
   `user=` or `model=` pairs and attribute events to another caller. A line that
   repeats a key or leaves a quote open is malformed (scan incomplete); other
@@ -691,7 +1035,7 @@ field precision. Behavior changes that affect an existing baseline are listed in
   100 of 500 rows could come back with exit 0). Collection continues until an
   empty page; reaching `max_pages` first makes the scan incomplete. Each table
   costs one extra request.
-- `lowcode.power-platform`: one flow, app or bot record that cannot be analysed
+- `lowcode.power-platform`: one flow, app or bot record that cannot be analyzed
   (signature-matching timeout or malformed fields) is skipped with a warning and
   the scan is incomplete; the records around it are still reported. A 3 MiB flow
   definition used to abort the connector with 0 findings. Signature matching
@@ -894,7 +1238,7 @@ field precision. Behavior changes that affect an existing baseline are listed in
   with the clone credential in its environment, and the checkout stayed on disk.
   No new clone starts afterwards, and an interrupted clone is not retried through
   the sampled API fallback. SIGKILL and OOM kills cannot be handled in process.
-- `code.github` and `code.gitlab` read the organisation, user or group listing to
+- `code.github` and `code.gitlab` read the organization, user or group listing to
   the end before the first repository is cloned or scanned, in an order a push
   cannot change (GitHub `sort=full_name`, GitLab `order_by=id`). The listing was
   ordered by recent activity and paged lazily, so a push to a not-yet-listed
@@ -927,7 +1271,7 @@ field precision. Behavior changes that affect an existing baseline are listed in
   Variables, Codespaces secrets and Dependabot secrets (read). Without them every
   repository adds four identical `repository metadata HTTP 403` warnings and the
   scan exits 3. Use separate token variables for `code.github` (which reads
-  untrusted content) and `saas.github-apps` (which needs organisation admin).
+  untrusted content) and `saas.github-apps` (which needs organization admin).
 
 #### Redaction and report output
 
@@ -1051,8 +1395,6 @@ field precision. Behavior changes that affect an existing baseline are listed in
   `docs/connectors.md` documents the 44 connector configuration keys that no
   connector page named. A consistency test now fails when a key reported by
   `shadowscan connectors --json` is undocumented.
-
-
 
 ### October 2 production review corrections
 
@@ -1189,7 +1531,7 @@ has a regression test.
   `saas.generic` rows without a resolvable name, wrong-schema `saas.generic` and
   `lowcode.zapier` objects, and negative or absurd gateway token and cost values
   each produce a specific incomplete diagnostic. A symlinked card inside an
-  inventory directory stops setup instead of being skipped. A recognised binary
+  inventory directory stops setup instead of being skipped. A recognized binary
   artifact (executable, archive, image, PDF or SQLite database, by its header)
   stays a quiet skip when it has no file extension, when only a directory-wide
   signature glob such as `.cursor/rules/**` selected it. An analyzable source
@@ -1420,7 +1762,7 @@ independent human review); each behavior change has a regression test.
   with the project's settings; ruff reports broad exception handlers (`BLE`),
   and each suppression must state its reason; CodeQL cancels superseded
   pull-request analyses; `.gitignore` covers local credentials and tool state,
-  and licence texts are kept byte-exact.
+  and license texts are kept byte-exact.
 
 ### October 1 discovery review corrections
 
@@ -1848,11 +2190,11 @@ Fixes from the review of the field-review series; each has a regression test.
   process.
 - GitHub Apps match their slug's words as well as the slug, so
   `amazon-q-developer`, `ellipsis-dev`, `mentatbot` and `factory-droid` are
-  recognised again instead of dropping out of complete scans.
+  recognized again instead of dropping out of complete scans.
 - `boto3.client(service_name="bedrock-agent-runtime")` and the AgentCore
   clients corroborate `invoke_agent` like the positional form.
 - An MCP server keeps the capabilities its code implies when no tools were
-  recognised, so a FastMCP shell tool registered with `@mcp.tool(description=...)`
+  recognized, so a FastMCP shell tool registered with `@mcp.tool(description=...)`
   is `code-exec` again. Tools registered only in tests imply no capabilities.
 - MCP enum tool names are found in one pass instead of one text search per enum.
 - Documentation: the GitHub Apps rollout note lists the risk changes, the code
@@ -2060,7 +2402,7 @@ Development:
   so it had never run; it now uses `types_or`, recognises current OpenAI and
   Anthropic key formats and excludes the tests that hold synthetic tokens;
   `check-yaml` skips `mkdocs.yml`, whitespace fixers skip fixtures and the
-  digest-bound retained licences, and `detect-private-key` skips the redaction
+  digest-bound retained licenses, and `detect-private-key` skips the redaction
   tests, so `pre-commit run --all-files` passes. The `pre-commit` dependency
   closure is pinned in `requirements-ci-constraints.txt`. Documentation: the
   production guide, constraints header and contributor guide state that Linux
@@ -2080,7 +2422,7 @@ Development:
   read` for private repositories. HTML report: sorting and evidence drill-down
   are real buttons reachable by keyboard with `aria-expanded`/`aria-sort`, the
   filters have accessible names, the result count is a live region, an `info`
-  tile is shown, and pill and light-scheme colours meet WCAG AA contrast. The
+  tile is shown, and pill and light-scheme colors meet WCAG AA contrast. The
   bug report form asks for the full commit SHA and describes exit codes
   accurately; the CSV reporter's formula-quoting is documented in README.
 
@@ -2253,8 +2595,8 @@ Fixes and additions:
 
 ### Production review round 2 (2026-09-24)
 
-- Stop treating every environment value of a cloud inventory record as a credential to remove from sibling fields: a benign setting such as `STAGE=prod` or `WORKERS=4` no longer redacts ARNs, account IDs and names out of SageMaker findings and `--dump-records` exports, which also restores stable finding IDs when an export is re-analysed offline. Environment values remain withheld in exports, and values under sensitive names or in recognizable credential formats are still removed everywhere. SageMaker findings now record environment variable names only, like Lambda findings.
-- Snapshot Bedrock agent DRAFT details instead of storing the agent record inside itself; the previous self-reference collapsed to a redaction marker in record exports and marked every re-analysed agent incomplete. Older exports with the collapsed entry are read without a coverage warning.
+- Stop treating every environment value of a cloud inventory record as a credential to remove from sibling fields: a benign setting such as `STAGE=prod` or `WORKERS=4` no longer redacts ARNs, account IDs and names out of SageMaker findings and `--dump-records` exports, which also restores stable finding IDs when an export is reanalyzed offline. Environment values remain withheld in exports, and values under sensitive names or in recognizable credential formats are still removed everywhere. SageMaker findings now record environment variable names only, like Lambda findings.
+- Snapshot Bedrock agent DRAFT details instead of storing the agent record inside itself; the previous self-reference collapsed to a redaction marker in record exports and marked every reanalyzed agent incomplete. Older exports with the collapsed entry are read without a coverage warning.
 - Identify potential grants from IAM `NotAction` allow statements against a representative AI-action list, recorded with a `notaction-partially-evaluated` limitation (the wildcard treatment first described here was superseded before it shipped), and treat `sagemaker:*` as an LLM invoke grant during live collection, matching the offline analysis.
 - Report OCI custom (fine-tuned) models by `type: CUSTOM` / base model reference instead of a vendor test that excluded every real custom model.
 - A `bedrock-logging` export record without a `loggingConfig` key, or carrying an error body, is unknown coverage rather than a "logging DISABLED" finding.
@@ -2263,7 +2605,7 @@ Fixes and additions:
 - JWT classification: `client_name`, `app_displayname` and `azp_name` count as agent hints only when their value matches an AI product or agent name signature (every Entra v1 delegated token carries `app_displayname`, so ordinary user tokens were reported as agents); a user-subject token with an RFC 8693 actor and agent claims is `delegated-agent`, never weaker than the same token without `act`; nested claim values are sanitized before truncation so no token prefix is persisted.
 - Entra service-principal findings use the scanned tenant as `account` (the publisher tenant is kept as `metadata.owner_tenant`); Google Workspace accepts the Admin SDK `tokenList` envelope and URL-encodes user keys; Atlassian validates `products`; Make pagination isolates invalid pages.
 - n8n, Make, Workato and Notion exports containing a provider error body are incomplete coverage instead of an empty inventory; one malformed record in Teams, n8n, Make, Zapier, Workato, Notion, generic SaaS or live Slack lists is skipped with a warning instead of aborting the connector.
-- Gateway: response-side tool calls count when inspected requests carried no tool definitions (LiteLLM with body logging off), Bedrock Converse `toolUse`/`stopReason` are recognised, activity buckets use UTC, `llm_hosts_only` keeps requests to known LLM hosts on unlisted paths, Vertex and Portkey/Helicone detection use structural fields, a token in a user or principal field is sanitized before the label is shortened, LiteLLM rows without key material are `service` callers rather than pseudonymised credentials, `identity.arn` wins over the `identity` object, prose `message` wrappers keep the structured event, retained labels and samples are bounded, and a caller's first model/provider/host label survives an exhausted detail budget. Opaque credential labels skip display-name matching.
+- Gateway: response-side tool calls count when inspected requests carried no tool definitions (LiteLLM with body logging off), Bedrock Converse `toolUse`/`stopReason` are recognized, activity buckets use UTC, `llm_hosts_only` keeps requests to known LLM hosts on unlisted paths, Vertex and Portkey/Helicone detection use structural fields, a token in a user or principal field is sanitized before the label is shortened, LiteLLM rows without key material are `service` callers rather than pseudonymized credentials, `identity.arn` wins over the `identity` object, prose `message` wrappers keep the structured event, retained labels and samples are bounded, and a caller's first model/provider/host label survives an exhausted detail budget. Opaque credential labels skip display-name matching.
 - Code connectors: cooperative cancellation now stops the tree walk instead of being recorded as one error per remaining file; credential detection runs first and in its own isolation, so a content pass that exceeds its regex budget, a structured file that exceeds the sanitizer budget (excerpts withheld) or notebook outputs and markdown cells no longer hide a real key; one unsafe tree path in API mode skips that file rather than the repository; agent definitions (50 per project) and retained agent manifests (200) are bounded with an incomplete-scan error; directory exclusion names no longer skip files of the same name; `Containerfile` is parsed like a Dockerfile; per-repository diagnostics share the 1000-entry cap; Git author fields use NUL separators with a validated timestamp; Ruby `=begin` blocks scan in linear time; a Python 3.12 tokenizer error mid-file marks the file ambiguous instead of silently masking the remainder; multi-line structured secrets keep excerpt line numbers aligned.
 - Environment-style credential names in text (`AZURE_OPENAI_KEY`, `DATABRICKS_TOKEN`, `MODAL_TOKEN_SECRET`, `LITELLM_MASTER_KEY`, ...) have their assigned values redacted in source excerpts, evidence and URL queries (indexed targets such as `os.environ["DATABRICKS_TOKEN"]` included); record field names keep their narrower sensitivity so provider inventories are not over-redacted. A connector's other findings survive one finding that exceeds the sanitizer's output budget.
 - Tests that assert successful Git history enrichment skip with a clear reason when the local Git lacks `--no-lazy-fetch` (2.45+) instead of failing; CI enables pip caching and mypy checks untyped function bodies.

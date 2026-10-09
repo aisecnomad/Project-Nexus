@@ -24,6 +24,7 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any
+from urllib.parse import urlsplit
 
 from shadowscan.models import Finding, Kind, Risk, RiskFactor, RiskLevel
 from shadowscan.signatures import SignatureIndex
@@ -46,6 +47,10 @@ KIND_BASE: dict[Kind, int] = {
     Kind.SECRET: 30,
     Kind.TOKEN: 5,
     Kind.INFRA: 10,
+    Kind.AI_APP: 5,
+    Kind.LOCAL_MODEL: 5,
+    Kind.NETWORK_CONTACT: 5,
+    Kind.RUNTIME_PROCESS: 10,
 }
 
 CAPABILITY_WEIGHTS: dict[str, tuple[int, str]] = {
@@ -68,6 +73,18 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "hardcoded-credential": (25, "credential hard-coded in source"),
     "plaintext-credential": (25, "plaintext credential in environment / configuration"),
     "inline-secrets": (15, "secrets inline in MCP configuration"),
+    "mcp-unpinned-package": (10, "MCP server package or image is not pinned to an exact version"),
+    # Every server these tags label is scored by the mcp-plain-http and mcp-auto-approve
+    # metadata factors (which also count loopback URLs and disabled servers).
+    "mcp-insecure-transport": (0, "MCP server reached over plaintext HTTP"),
+    "mcp-auto-approve": (0, "MCP tools run without per-call approval"),
+    "mcp-broad-filesystem": (10, "MCP filesystem server is given the whole disk or a home directory"),
+    "mcp-shell-command": (5, "MCP server started through a shell command line"),
+    "posture-permissions-bypassed": (15, "agent runs tool calls without asking for approval"),
+    "posture-unrestricted-shell": (10, "agent may run any shell command"),
+    "posture-unsandboxed": (10, "agent runs outside its sandbox"),
+    "posture-exposed-gateway": (15, "agent gateway listens beyond loopback"),
+    "posture-unauthenticated-gateway": (15, "exposed agent gateway has no auth token"),
     "secret-in-env": (10, "secret-looking values in environment variables"),
     "unmasked-ci-variable": (10, "CI variable holding a provider key is not masked"),
     "ci-credentials": (5, "provider credentials available to CI pipelines"),
@@ -75,6 +92,14 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "no-auth-declared": (10, "agent card declares no security scheme"),
     "iam-auth-only": (0, "IAM-only authorisation"),
     "public-ingress": (10, "publicly reachable ingress"),
+    "exposed-llm-server": (15, "LLM inference service is reachable beyond loopback or cluster scope"),
+    "unauthenticated-mcp": (15, "MCP server does not declare an authentication mechanism"),
+    "tool-poisoning": (15, "MCP tool description contains prompt-injection or exfiltration indicators"),
+    "unsafe-serialization": (15, "model artifact uses an unsafe serialization format"),
+    "privileged-pod": (15, "workload requests privileged host access"),
+    "cluster-admin": (20, "workload service account is bound to cluster-admin"),
+    "no-egress-policy": (10, "AI workload namespace has no NetworkPolicy egress controls"),
+    "gpu-workload": (3, "workload requests GPU resources"),
     "public-network": (5, "public network access enabled"),
     "public-principal": (20, "granted to allUsers / allAuthenticatedUsers"),
     "api-key-auth-enabled": (5, "static API-key authentication enabled"),
@@ -306,6 +331,18 @@ def _strings(values: Any) -> list[str]:
     return []
 
 
+def _plaintext_scheme(url: str) -> bool:
+    """Whether ``url`` uses http or ws, parsed as the mcp-insecure-transport tag parses it.
+
+    ``urlsplit`` drops tabs and newlines and leading control characters, as the
+    WHATWG URL parsers in MCP clients do, so a prefix test alone can be evaded.
+    """
+    try:
+        return urlsplit(url.strip()).scheme.lower() in {"http", "ws"}
+    except ValueError:
+        return url.strip().lower().startswith(("http://", "ws://"))
+
+
 def _mcp_server_urls(server: dict[str, Any]) -> list[str]:
     """Return every projected MCP endpoint, retaining legacy single-URL reports."""
     urls = _strings(server.get("urls"))
@@ -450,7 +487,9 @@ def _metadata_factors(finding: Finding) -> list[RiskFactor]:
             )
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
-        if any(url.startswith("http://") for server in servers for url in _mcp_server_urls(server)):
+        # Every plaintext scheme, loopback included, so each server the zero-weight
+        # mcp-insecure-transport tag labels (http or ws to another host) is scored here.
+        if any(_plaintext_scheme(url) for server in servers for url in _mcp_server_urls(server)):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
     if finding.kind == Kind.AGENT_CONFIG:
         definitions = metadata.get("agent_definitions")

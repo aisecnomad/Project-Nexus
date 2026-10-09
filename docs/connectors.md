@@ -1,5 +1,7 @@
 # Connectors
 
+## Modes and shared collection rules
+
 Most connectors have a **live** mode (API credentials) and an **offline** mode
 (`input:` pointing at an export). `gateway.logs` reads supplied logs and
 `identity.jwt` reads supplied tokens. Live runs can persist sanitized records with
@@ -19,6 +21,8 @@ internal PKI fails verification (and the scan is incomplete) unless the connecto
 offers an explicit CA option. Only `identity.jwt` does today (`ca_bundle`, JWKS
 endpoint); other connectors trust the default CA store.
 
+### Offline input limits
+
 Offline file and directory inputs use shared safety limits: 10,000 files,
 32 MiB per file and 256 MiB total per connector by default. JSONL, CSV and gateway
 text logs stream line by line, with a 4 MiB line cap; gzip gateway logs are bounded
@@ -29,6 +33,21 @@ Any skipped symlink or input-limit hit marks the connector incomplete, and so
 does any file in an offline input directory without one of the connector's
 export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
 `input` at the export file.
+
+The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
+`endpoint.models`, `endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes` and
+`cloud.openshift`) are **offline-only**. See the
+[Kubernetes and OpenShift guide](connectors/kubernetes.md) for workload exports
+and the [endpoint guide](connectors/endpoint.md) for MCP, OTLP, Ollama,
+model-artifact metadata, and eBPF exports. These connectors do not perform live
+probes or local host filesystem discovery, and their findings carry no device
+name, so lifecycle links do not apply to them.
+Model metadata is not parsed from GGUF/safetensors files, and MCP fingerprints
+have no rug-pull baseline. When no `input` is set, `endpoint.inventory` reads a
+fixed list of local user-scope locations and `runtime.processes` reads `/proc`
+on Linux; the engine links the two for the same tool on the same device (see
+the [endpoint](connectors/endpoint.md) and [runtime](connectors/runtime.md)
+guides).
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and
@@ -36,6 +55,8 @@ lists them after each connector's own keys. `code.filesystem`, `code.github` and
 `max_repos` and `max_projects` and do not advertise the export limits. They
 ignore those three keys, but a value supplied for one must still be a positive
 integer or the entry fails validation.
+
+### Live pagination limits
 
 Connectors that page through a live API accept `max_pages`, a positive integer
 (default 1000; larger values are capped at 1000). Zero, a negative or fractional
@@ -49,6 +70,8 @@ the lookup off: `cloudtrail_days: 0.5` is an error, not a disabled lookup.
 
 See [scan state and runtime correlation](scanning.md) for incremental scans,
 gateway workload bindings and completion semantics.
+
+### Configuration reference
 
 The [configuration reference](connectors/reference.md) lists the keys every
 built-in connector accepts; it is generated from the connector classes and the
@@ -166,13 +189,29 @@ addition to the connector's own options:
 - `input`: the offline export path; each connector's offline format is listed
   below and by `shadowscan connectors`.
 
+## Connector entry guide
+
+Use the same six checks for each entry:
+
+- **Modes:** the shared modes above and the surface guide's `Live and offline`
+  or `Log-based` note.
+- **Collects:** the APIs, resources or export formats described in the entry.
+- **Permissions / least privilege:** the [permission table](#least-privilege).
+- **Options:** names, types and descriptions are in the
+  [generated configuration reference](connectors/reference.md); entries call
+  out operational details.
+- **Fail-closed behavior:** shared limits above and connector-specific
+  incomplete conditions in the entry.
+- **Does not establish:** consult
+  [validation maturity and evidence status](#validation-maturity-and-evidence-status).
+
 ## Code
 
 ### `code.filesystem`
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
 package, …); each root yields one
-finding summarising frameworks, model providers, capabilities, models and
+finding summarizing frameworks, model providers, capabilities, models and
 evidence. Extra findings: MCP configs (`.mcp.json`, `.cursor/mcp.json`,
 `.vscode/mcp.json`, `claude_desktop_config.json`, Codex `config.toml`,
 Continue, Kiro, Amazon Q…), coding-agent configs (`CLAUDE.md`, `.claude/agents`,
@@ -214,7 +253,12 @@ for supported options, primary SDK contracts and dynamic-configuration limits.
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
-agent findings. JSON/YAML descriptions are not executed or treated as source; low-code
+agent findings. An A2A card that names its agent and declares an endpoint,
+skills or capabilities but misses other required fields still gets its own
+`protocol.a2a` framework-usage finding, tagged `incomplete-agent-card` with
+the errors in `metadata.card_errors`, never an agent finding; the errors also
+keep the scan incomplete. JSON/YAML descriptions are not
+executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
 Owner comes from `CODEOWNERS` and configured inventory. Git author/history
@@ -229,7 +273,7 @@ from the tool names the server registers outside tests (`metadata.mcp_tools`);
 comments and string examples do not establish registrations, and enum-based
 names count only the referenced members. Exceeding the per-file or project name
 limit makes coverage incomplete. Static registration evidence does not prove
-the server executed those tools. A server without recognised tools keeps the
+the server executed those tools. A server without recognized tools keeps the
 capabilities its code implies.
 
 Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
@@ -251,6 +295,8 @@ checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
 over CODEOWNERS and inventory attribution; leave it unset to attribute by
 CODEOWNERS, then the git author when `use_git` is on, then the inventory.
+`include` limits local filesystem collection to named relative paths below each root.
+Endpoint profile discovery uses it and reports unsafe or unreadable known locations as incomplete.
 `metadata` is a mapping merged into every finding's metadata. The walk skips a
 built-in list of directory names (`bin`, `build`, `dist`, `vendor`,
 `node_modules`, virtualenvs, caches, ...); a skipped non-empty `bin`, `build`,
@@ -275,7 +321,7 @@ skips import-bound analysis at any size; any other module over
 elsewhere). See the [code connector guide](connectors/code.md) for details.
 
 ### `code.github`
-Enumerates an organisation, a user or an explicit `repos:` list, fetches
+Enumerates an organization, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded
 file sample) and runs the filesystem scanner. Adds CI secret/variable *names*
 matching LLM providers. Token: a fine-grained PAT or GitHub App token with
@@ -366,7 +412,7 @@ endpoints: grant the four permissions, or accept an incomplete scan.
 
 **Use a dedicated token variable.** `token` defaults to the environment variable
 `GITHUB_TOKEN` (then `GH_TOKEN`), and so does `saas.github-apps`, which needs an
-organisation-admin token. `code.github` clones and parses untrusted repository
+organization-admin token. `code.github` clones and parses untrusted repository
 content with its token in the process, so give each connector its own variable
 (for example `token: ${GITHUB_CODE_TOKEN}` here and `token: ${GITHUB_APPS_TOKEN}`
 for `saas.github-apps`) and never export the admin token as `GITHUB_TOKEN` where
@@ -531,14 +577,34 @@ not individual timestamped transaction events. Log fields for environment
 and caller identity are evidence from the supplied export; assess the
 producer and delivery chain before treating them as verified production facts.
 
+A caller is titled **Agentic caller** when at least one agent indicator
+holds: requests carried tool definitions or responses invoked tools; a user
+agent belongs to a coding agent or agent framework; requests invoked a hosted
+agent runtime (Bedrock `InvokeAgent` or AgentCore runtimes, the Assistants
+API, Vertex AI Agent Engine, Dialogflow CX sessions; tag `agent-runtime-api`);
+requests reached an MCP endpoint (`/mcp`, or `/sse` and `/messages` on a
+host a signature identifies as an MCP server; tag `mcp-client`); a
+programmatic caller made runs of three or more model calls at distinct times
+at most 30 seconds apart (tag `agent-loop`; simultaneous calls count once); or corroborated round-the-clock activity. The last
+two are heuristics read from request times alone: a batch script or a chat
+front end that makes several calls per message has the same cadence, so read
+`metadata.agent_behaviour` before acting on the label. A caller whose
+requests mostly carry a browser user agent is never counted as a loop.
+Calling a model API is LLM use: the domains
+and names of AI SaaS apps (`*.openai.com`, `*.anthropic.com`) do not make a
+caller agentic. A product name matched in a key alias or a user name is a
+hint, never an agent indicator, and a host counts only through the one
+service it belongs to (its highest-weight signature), so browsing
+`chatgpt.com` is AI use while traffic to `api2.cursor.sh` is a coding agent.
+
 Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
 `correlation_bindings`, and `label` (or `gateway_name` when the entry has no
 label), which names the gateway on findings: it becomes the provider and the
 account of callers without a tenant/account scope.
 
-Static assets and health probes are recognised from the request path alone,
+Static assets and health probes are recognized from the request path alone,
 never its query string, and their count is reported as a scan note. In
-`key=value` text lines, quoted values honour `\"` and `\\` escapes; a line that
+`key=value` text lines, quoted values honor `\"` and `\\` escapes; a line that
 repeats a key or leaves a quote open is malformed and makes the scan incomplete.
 
 ## Low-code
@@ -587,21 +653,33 @@ Tools and triggers with unresolved agent/usecase references remain visible
 as unresolved observations, make coverage incomplete and cannot inherit
 registry approval from an unrelated parent.
 
-### `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
-Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
-Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
-GenAI/agentic providers); triggers (schedule/webhook → autonomous), code
-steps (→ code-exec), models. Live pagination is bounded by `max_pages`
-(default and maximum 1000). Make scans one `team_id`, or every team of an
-`organization_id` when `team_id` is unset.
-Zapier skips wholly blank text rows only with a recognized identity column
-(`title`, `name`, `Title`, `Zap`, `id`, or `Id`); unknown schemas are incomplete.
-An n8n workflow needs a nonempty provider ID for a usable resource identity.
-Exported blueprints without an ID retain detected AI evidence under an unresolved
-identity, make collection incomplete, and cannot be approved by a registry card.
-n8n authenticates with `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`),
-against `api_url` (env `N8N_API_URL`, for example
-`https://n8n.example.com/api/v1`).
+### `lowcode.n8n`
+n8n workflows with AI or agent steps, including LangChain nodes; triggers
+(schedule/webhook → autonomous), code steps (→ code-exec) and models. Live
+pagination is bounded by `max_pages` (default and maximum 1000). A workflow
+needs a nonempty provider ID for a usable resource identity. Exported blueprints
+without an ID retain detected AI evidence under an unresolved identity, make
+collection incomplete and cannot be approved by a registry card. Authentication
+uses `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`), against `api_url`
+(env `N8N_API_URL`, for example `https://n8n.example.com/api/v1`).
+
+### `lowcode.make`
+Make scenarios with AI modules and AI Agents; triggers (schedule/webhook →
+autonomous), code steps (→ code-exec) and models. Live pagination is bounded by
+`max_pages` (default and maximum 1000). Make scans one `team_id`, or every team
+of an `organization_id` when `team_id` is unset.
+
+### `lowcode.zapier`
+Zapier zaps and AI/Agents from account exports; triggers (schedule/webhook →
+autonomous), code steps (→ code-exec) and models. Live pagination is bounded by
+`max_pages` (default and maximum 1000). Wholly blank text rows are skipped only
+with a recognized identity column (`title`, `name`, `Title`, `Zap`, `id`, or
+`Id`); unknown schemas are incomplete.
+
+### `lowcode.workato`
+Workato recipes with GenAI/agentic providers; triggers (schedule/webhook →
+autonomous), code steps (→ code-exec), and models. Live pagination is bounded by
+`max_pages` (default and maximum 1000).
 
 ## SaaS
 
@@ -640,36 +718,41 @@ coding agents), Copilot billing/seat settings, fine-grained PATs approved for
 the org. An installation is reported when its slug or its words match an AI
 signature or an AI-like name; `include_unrecognized_apps: true` also reports
 other write-capable apps, tagged `unrecognized-app` at possible confidence.
-`token` (env `GITHUB_TOKEN`) must be an organisation-admin token. Name a variable
+`token` (env `GITHUB_TOKEN`) must be an organization-admin token. Name a variable
 of its own for it (for example `token: ${GITHUB_APPS_TOKEN}`) rather than relying
 on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
 untrusted repositories; the rule that code scans and live connectors run
 separately does not narrow a shared token's scope.
 
-### `saas.atlassian` · `saas.notion` · `saas.zoom`
-UPM user-installed apps (Jira/Confluence) and Notion bot users. Zoom's
-Marketplace list API returns approved public apps and account-created apps
+### `saas.atlassian`
+UPM user-installed apps for Jira and Confluence. Provider error envelopes make
+collection incomplete even when they include empty record arrays; valid
+observations from other pages and products remain available. The same rule applies to
+offline exports. Options: `site`
+(`https://<org>.atlassian.net`, env `ATLASSIAN_SITE`), a site admin `email` and
+`api_token` (env `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`), and `products`
+(`jira`, `confluence`; default both).
+
+### `saas.notion`
+Notion bot users. A missing or repeated pagination cursor, or reaching the live
+page cap (`max_pages`, at most 1000), makes the scan incomplete. Provider error
+envelopes make collection incomplete even when they include empty record arrays;
+valid observations from other pages remain available. The same rule applies to
+offline exports. Options: `token` (env
+`NOTION_TOKEN`), an internal integration secret whose integration has the
+*read user information* capability for `GET /v1/users`; `max_pages`; `input`
+for an offline `/v1/users` export.
+
+### `saas.zoom`
+The Marketplace list API returns approved public apps and account-created apps
 (`type=public` and `type=account_created`), including app scopes when supplied.
 See [Zoom's Marketplace List apps API](https://developers.zoom.us/docs/api/marketplace/).
 Approval or account creation does not establish that any individual installed
-or used the app; for that question, obtain a separate tenant activity or
-installation export. Notion rejects a missing/repeated pagination cursor and
-caps live pages (`max_pages`, at most 1000); either condition makes the scan
-incomplete. Zoom likewise marks denied, invalid, or truncated pages incomplete.
-Notion and Atlassian provider error envelopes make collection incomplete even
-when they include empty record arrays; the same rule applies to offline exports.
-Valid observations from other pages and products remain available.
-
-Notion options: `token` (env `NOTION_TOKEN`), an internal integration secret
-whose integration has the *read user information* capability for
-`GET /v1/users`; `max_pages`; `input` for an offline `/v1/users` export.
-
-Atlassian options: `site` (`https://<org>.atlassian.net`, env
-`ATLASSIAN_SITE`), a site admin `email` and `api_token` (env `ATLASSIAN_EMAIL`,
-`ATLASSIAN_API_TOKEN`), and `products` (`jira`, `confluence`; default both).
-Zoom options: `account_id`, `client_id` and `client_secret` (env
-`ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`) for a
-Server-to-Server OAuth app, or `access_token` (env `ZOOM_ACCESS_TOKEN`).
+or used the app; obtain a separate tenant activity or installation export to
+check that. Denied, invalid or truncated pages make the scan incomplete.
+Options: `account_id`, `client_id` and `client_secret` (env `ZOOM_ACCOUNT_ID`,
+`ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`) for a Server-to-Server OAuth app, or
+`access_token` (env `ZOOM_ACCESS_TOKEN`).
 
 ### `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
@@ -823,6 +906,67 @@ SDK objects become records through `oci.util.to_dict`, or through the model's
 declared fields when the SDK cannot be imported; an object that cannot be
 converted is skipped with a warning and makes the scan incomplete.
 
+## Endpoint
+
+### `endpoint.inventory`
+Inventories AI tools on developer workstations from a fixed list of
+documented user-scope locations below each home directory: client and
+coding-agent configurations with their MCP servers (Claude Desktop, Claude
+Code, Cursor, VS Code, Windsurf, Gemini CLI, Codex, Kiro, Amazon Q, LM
+Studio, Continue, Goose, Cline, Roo Code, Aider, OpenClaw, Copilot CLI), AI
+editor extensions, AI browser extensions (matched by product name), local
+model stores (Ollama, LM Studio, Hugging Face, GPT4All, Jan) and, with
+`shell_history: true`, AI command-line tools named in shell history (tool
+names and counts only). MCP server findings carry the static server risks
+and agent configurations carry the posture checks described in
+[risk](concepts/risk.md). Every location is opened without following
+symbolic links; a link, an unreadable location, an oversized file or an
+exhausted `max_entries` budget makes the scan incomplete.
+
+Options: `path` or `paths` (home directories; default the scanning
+account's home), `label` (device name; default the host name),
+`shell_history`, `max_entries`. Offline, `input` replays exported records or
+reads osquery `vscode_extensions`, `chrome_extensions` and `firefox_addons`
+results. See the [endpoint guide](connectors/endpoint.md).
+
+## Network
+
+### `network.logs`
+Reports, per client address, the AI services contacted in DNS, TLS and flow
+telemetry: Zeek `dns.log`, `ssl.log` and `conn.log` (TSV or JSON), Route 53
+Resolver query logs, VPC Flow Logs, and generic JSON or CSV DNS and SNI
+records. Host names match a signature's exact domain or declared wildcard,
+never a substring, and only AI host names are kept. A flow is attributed only
+by its Zeek `uid` to an AI TLS server name, or through DNS answers in the
+same input; an address that also resolved to another service's host is
+shared and attributes nothing. Coding-agent, MCP and hosted-agent services
+are tagged `agent-service`; runs of connections to a model API seconds apart
+are tagged `agent-loop`. Malformed or unrecognized records make the scan
+incomplete.
+
+Options: `format` (`zeek`, `route53`, `vpc-flow`, `generic`; default auto),
+`label` (network name; default `network`), `max_records`. See the
+[network guide](connectors/network.md).
+
+## Runtime
+
+### `runtime.processes`
+Reports AI tools seen running, per host, user and tool: coding-agent CLIs
+(also as npm packages or Python modules), AI desktop apps matched by
+executable and install path, MCP servers launched through `npx`, `uvx`,
+`uv tool run`, `pipx run` or `node`, local model servers and agent dev
+servers. Command lines never enter a finding or a `--dump-records` export:
+only the tool, the executable's base name and an MCP package name are kept.
+Offline, `input` reads osquery `processes` results, Defender
+`DeviceProcessEvents`, CrowdStrike process events or any JSON/CSV with a
+command line or executable; live mode reads `/proc` on Linux. The engine
+links these findings to endpoint findings for the same tool on the same
+device (`metadata.lifecycle`, tag `observed-running`) without changing
+scores.
+
+Options: `label` (host name for records without one), `max_processes` (live
+mode bound). See the [runtime guide](connectors/runtime.md).
+
 ## Least privilege
 
 All connectors are read-only. Prefer dedicated audit credentials:
@@ -844,6 +988,9 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs) |
 | Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
 | OCI | policy `Allow group audit to read all-resources in tenancy` |
+| Endpoint | read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written |
+| Network | read access to the exported logs; the connector needs no sensor or cloud credentials |
+| Runtime | offline: read access to the process export; live: an account that can read `/proc/<pid>/cmdline` of the processes to inventory. Nothing is written |
 
 The Azure app-settings permission exposes security-sensitive configuration;
 only grant it for the app resources being audited. Do not grant Website

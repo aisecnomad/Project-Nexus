@@ -233,6 +233,20 @@ def test_supported_inventory_formats_and_examples_still_load(tmp_path):
     root = Path(__file__).parents[2]
     assert len(Inventory.load([root / "agent-card.yaml"])) == 1
     assert len(Inventory.load([root / "examples/inventory/agents.yaml"])) == 2
+    # The bare-list example names an agent without a resource pattern: a name
+    # suggests a match for review but never sanctions a finding.
+    sanctioned = Inventory.load([root / "examples/inventory/sanctioned.yaml"])
+    assert len(sanctioned) == 1
+    copilot = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT_CONFIG,
+        title="GitHub Copilot configured in repository root",
+        resource="repo:acme/app",
+        resource_type="agent-config",
+    )
+    assert sanctioned.match(copilot) is None
+    assert copilot.metadata["registry_suggestions"] == ["sanctioned-copilot"]
     payload = {
         "metadata": {"agent_id": "approved", "classification": "Internal", "tags": ["reviewed"]},
         "discovery": {"resources": [APPROVED], "accounts": ["111"]},

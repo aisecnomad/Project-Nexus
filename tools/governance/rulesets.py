@@ -83,9 +83,16 @@ def _payload(snapshot: Any, ruleset_id: int) -> dict[str, Any]:
         or snapshot.get("source_type") != "Repository"
         or snapshot.get("source") != REPOSITORY
         or snapshot.get("name") != RULESETS[ruleset_id]
-        or any(field not in snapshot for field in _FIELDS)
     ):
         raise ValueError("ruleset response does not match the expected repository and ruleset")
+    if missing := [field for field in _FIELDS if field not in snapshot]:
+        # GitHub returns bypass_actors only to a caller with write access to the
+        # ruleset, so the read-only audit token gets a partial response. An
+        # omitted field is unknown assurance, never an empty setting.
+        raise ValueError(
+            "ruleset response omits " + ", ".join(missing) + "; the reading identity cannot see every "
+            "managed setting, so an administrator must verify a complete readback"
+        )
     payload = copy.deepcopy({field: snapshot[field] for field in _FIELDS})
     _scope(payload)
     _rules(payload)

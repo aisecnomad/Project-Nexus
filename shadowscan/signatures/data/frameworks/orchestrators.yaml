@@ -410,6 +410,9 @@ signatures:
         patterns: ['\b(?:LocalCommandLineCodeExecutor|DockerCommandLineCodeExecutor|PythonCodeExecutionTool|CodeExecutorAgent)\s*\(', '\bcode_execution_config\s*=']
         weight: 0.6
         capabilities: [code-exec]
+      - type: user_agent
+        patterns: ['(?i)\bautogen(?:[-_](?:agentchat|core|ext))?/\d', '(?i)\bag2/\d']
+        weight: 0.85
 
   - id: framework.smolagents
     name: Hugging Face smolagents

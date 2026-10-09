@@ -12,7 +12,13 @@ from typing import Any
 import pytest
 
 from tools.governance_check import GITHUB_ACTIONS_APP_ID, REQUIRED_CHECKS, check_ruleset
-from tools.release.rules import MAIN_RULESET_ID, prepare_update, verify_receipt, verify_ruleset
+from tools.release.rules import (
+    MAIN_RULESET_ID,
+    prepare_update,
+    verify_against_live,
+    verify_receipt,
+    verify_ruleset,
+)
 
 REPOSITORY = "aisecnomad/Project-Nexus"
 
@@ -418,3 +424,144 @@ def test_cli_rejects_duplicate_or_nonfinite_json(tmp_path: Path, body: str) -> N
     assert result.returncode != 0
     assert "bounded, unambiguous JSON with finite numbers" in result.stderr
     assert not output.exists()
+
+
+_UPDATED_AT = "2026-10-07T06:09:59.254+01:00"
+
+
+def _readback_and_live() -> tuple[dict[str, Any], dict[str, Any]]:
+    """An administrator readback and a read-only token's view of the same ruleset."""
+    readback = _ruleset() | {"updated_at": _UPDATED_AT, "current_user_can_bypass": "always"}
+    live = {key: copy.deepcopy(value) for key, value in readback.items() if key != "bypass_actors"}
+    live["current_user_can_bypass"] = "never"
+    return readback, live
+
+
+def _verify_live(readback: Any, live: Any) -> dict[str, Any]:
+    return verify_against_live(readback, live, repository=REPOSITORY, default_branch="main")
+
+
+def test_readback_supplies_only_the_bypass_list_the_token_cannot_see() -> None:
+    readback, live = _readback_and_live()
+    receipt = _verify_live(readback, live)
+    assert receipt["ruleset"]["bypass_actors"] == []
+    assert receipt["bypass_actors_source"].startswith("an administrator readback supplied at dispatch")
+    assert receipt["observed_updated_at"] == _UPDATED_AT
+    assert verify_receipt(receipt, repository=REPOSITORY) == receipt
+    # A live read that does show the list is the source, and must agree.
+    live["bypass_actors"] = []
+    assert _verify_live(readback, live)["bypass_actors_source"] == "the workflow's own read of the ruleset"
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["stale", "edited-rules", "live-disabled", "extra-field", "missing-field", "live-bypass-differs"],
+)
+def test_readback_must_match_every_field_of_the_live_read(case: str) -> None:
+    readback, live = _readback_and_live()
+    if case == "stale":
+        readback["updated_at"] = "2026-10-06T19:00:00.000+01:00"
+    elif case == "edited-rules":
+        _parameters(readback, "pull_request")["required_approving_review_count"] = 2
+    elif case == "live-disabled":
+        live["enforcement"] = "disabled"
+    elif case == "extra-field":
+        readback["note"] = "added by the dispatcher"
+    elif case == "missing-field":
+        del readback["node_id"]
+    else:
+        live["bypass_actors"] = [{"actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always"}]
+    with pytest.raises(ValueError, match="does not match the live ruleset"):
+        _verify_live(readback, live)
+
+
+def test_matching_readback_must_still_meet_the_policy() -> None:
+    readback, live = _readback_and_live()
+    readback["bypass_actors"] = [{"actor_type": "User", "actor_id": 123, "bypass_mode": "always"}]
+    with pytest.raises(ValueError, match="explicit empty bypass_actors"):
+        _verify_live(readback, live)
+    readback, live = _readback_and_live()
+    readback["enforcement"] = live["enforcement"] = "disabled"
+    with pytest.raises(ValueError, match="active"):
+        _verify_live(readback, live)
+    # The token's own partial view cannot stand in for the readback.
+    _, live = _readback_and_live()
+    with pytest.raises(ValueError, match="must expose bypass_actors"):
+        _verify_live(live, live)
+
+
+@pytest.mark.parametrize("value", [None, "", "yesterday", "2026-10-07", "2026-10-07T06:09:59.2540001+01:00"])
+def test_live_read_must_carry_its_timestamp(value: Any) -> None:
+    readback, live = _readback_and_live()
+    readback["updated_at"] = live["updated_at"] = value
+    with pytest.raises(ValueError, match="updated_at"):
+        _verify_live(readback, live)
+    del readback["updated_at"], live["updated_at"]
+    with pytest.raises(ValueError, match="updated_at"):
+        _verify_live(readback, live)
+
+
+def test_readback_and_live_read_must_be_objects() -> None:
+    readback, live = _readback_and_live()
+    for pair in ((None, live), (readback, []), ("{}", live)):
+        with pytest.raises(ValueError, match="must be objects"):
+            _verify_live(*pair)
+
+
+def test_unsafe_field_names_from_a_readback_are_not_echoed() -> None:
+    readback, live = _readback_and_live()
+    readback["\n::error::forged"] = 1
+    with pytest.raises(ValueError) as error:
+        _verify_live(readback, live)
+    assert "::" not in str(error.value) and "\n" not in str(error.value)
+    assert "1 other field(s)" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"bypass_actors_source": "the dispatcher promised"},
+        {"observed_updated_at": "yesterday"},
+        {"observed_updated_at": None},
+    ],
+)
+def test_saved_receipt_rejects_malformed_provenance(change: dict[str, Any]) -> None:
+    receipt = _verify_live(*_readback_and_live())
+    with pytest.raises(ValueError, match="provenance"):
+        verify_receipt(receipt | change, repository=REPOSITORY)
+    del receipt["observed_updated_at"]
+    with pytest.raises(ValueError, match="provenance"):
+        verify_receipt(receipt, repository=REPOSITORY)
+
+
+def test_cli_checks_an_administrator_readback_against_the_live_read(tmp_path: Path) -> None:
+    command, source, output = _command(tmp_path, "verify")
+    readback, live = _readback_and_live()
+    live_path = tmp_path / "live.json"
+    source.write_text(json.dumps(readback), encoding="utf-8")
+    live_path.write_text(json.dumps(live), encoding="utf-8")
+    command += ["--live", str(live_path)]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(output.read_text())["observed_updated_at"] == _UPDATED_AT
+    output.unlink()
+    live_path.write_text(json.dumps(live | {"updated_at": "2026-10-08T00:00:00Z"}), encoding="utf-8")
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    assert "does not match the live ruleset in updated_at" in result.stderr
+    assert not output.exists()
+
+
+def test_timestamps_compare_as_instants_and_other_fields_by_json_type() -> None:
+    readback, live = _readback_and_live()
+    # The same instant in another caller's offset still matches.
+    live["updated_at"] = "2026-10-07T05:09:59.254Z"
+    assert _verify_live(readback, live)["observed_updated_at"] == "2026-10-07T05:09:59.254Z"
+    live["updated_at"] = "2026-10-07T05:09:59.255Z"
+    with pytest.raises(ValueError, match="in updated_at"):
+        _verify_live(readback, live)
+    # Python's True == 1 must not let a readback change a value's JSON type.
+    readback, live = _readback_and_live()
+    readback["extra"], live["extra"] = True, 1
+    with pytest.raises(ValueError, match="in extra"):
+        _verify_live(readback, live)

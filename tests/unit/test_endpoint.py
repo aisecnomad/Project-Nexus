@@ -111,3 +111,44 @@ def test_endpoint_without_known_locations_is_a_complete_empty_scan(tmp_path: Pat
     report = json.loads(out.read_text())
     assert report["findings"] == [] and report["summary"]["complete"] is True
     assert any("no known AI client configuration" in w for s in report["stats"] for w in s["warnings"])
+
+
+def test_endpoint_linked_configuration_is_incomplete(tmp_path: Path):
+    target = tmp_path / "elsewhere.json"
+    target.write_text(MCP)
+    (tmp_path / ".mcp.json").symlink_to(target)
+    result = CliRunner().invoke(main, ["endpoint", "--home", str(tmp_path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.output)
+    assert report["summary"]["complete"] is False
+
+
+def test_endpoint_denied_configuration_is_incomplete(tmp_path: Path, monkeypatch):
+    from shadowscan import endpoint as module
+
+    def denied(path, home):
+        raise PermissionError("private configuration")
+
+    monkeypatch.setattr(module, "_exists_without_links", denied)
+    result = CliRunner().invoke(main, ["endpoint", "--home", str(tmp_path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.output)["summary"]["complete"] is False
+    assert "private configuration" not in result.output
+
+
+def test_endpoint_include_does_not_read_unselected_auxiliary_files(tmp_path: Path, monkeypatch):
+    from shadowscan.connectors.code import walk
+
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude/settings.json").write_text("{}")
+    (tmp_path / ".claude/setup.py").write_text("from setuptools import setup\nsetup()\n")
+    (tmp_path / ".gitmodules").write_text("malformed [submodule")
+    (tmp_path / "CODEOWNERS").symlink_to(tmp_path / "absent")
+
+    def forbidden_read(path):
+        raise AssertionError("unselected packaging script was read")
+
+    monkeypatch.setattr(walk, "_packaging_setup_script", forbidden_read)
+    result = CliRunner().invoke(main, ["endpoint", "--home", str(tmp_path), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["summary"]["complete"] is True

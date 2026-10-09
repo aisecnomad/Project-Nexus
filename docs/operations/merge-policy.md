@@ -11,8 +11,10 @@ approval and resolved-review-thread requirements. `Protect main` retained four
 bypass actors. Separate classic branch protection was unavailable to the
 integration used for those reads. Check the live settings rather than treating
 any dated observation as permanent. On 2026-10-04, both rulesets read back
-disabled. The available GitHub connector has no administration-write operation;
-an administrator must restore the reviewed settings and verify exact readback.
+disabled. On 2026-10-06 both read back active again with the same gaps as on
+2026-10-03, and `Protect main` still listed four bypass actors. The available
+GitHub connector has no administration-write operation; an administrator must
+restore the reviewed settings and verify exact readback.
 
 The policy retains the existing CodeQL, signature and status requirements and
 adds the aggregate `CI gate`. Required checks are bound to the GitHub Actions
@@ -110,7 +112,10 @@ has a separate read-only job that fetches both current rulesets and compares
 their repository identities and settings to the reviewed update payloads. It
 also runs on manual dispatch from `main`. A disabled rule, omitted bypass
 information, missing aggregate `CI gate`, wrong application binding, changed
-policy, malformed response or denied read fails the audit. Review any drift
+policy, malformed response or denied read fails the audit. The error names
+omitted fields (`ruleset response omits bypass_actors`) separately from
+settings that differ (`readback differs from reviewed payload: …`), so a
+withheld bypass list is not mistaken for drift. Review any drift
 before intentionally updating the versioned policy, including stronger changes.
 
 The job uses only the workflow's read-only token and never applies settings or
@@ -119,11 +124,16 @@ an administrator must verify a full readback using the procedure above; the
 failed audit does not establish that protection is absent. The audit fails
 until administrator-applied settings match the reviewed policy and the API
 returns a complete snapshot. GitHub documents that `bypass_actors` is returned
-only to a caller with write access to the ruleset; the default read-only token
-may therefore leave this audit failed with unknown assurance even after
-settings are corrected. Obtain and verify an administrator readback in that
-case; do not equate a hidden bypass list with an empty one. See the
+only to a caller with write access to the ruleset, so the default read-only
+token leaves this audit failed with unknown assurance even after settings are
+corrected: a dispatched run on 2026-10-07 reported `ruleset response omits
+bypass_actors`. Obtain and verify an administrator readback in that case; do
+not equate a hidden bypass list with an empty one. See the
 [GitHub ruleset API documentation](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset).
+The release-evidence workflow reads the ruleset with the same kind of token, so
+its dispatch takes an administrator readback that must match the token's own
+read in every other field; see the
+[publishing runbook](publishing.md).
 Adding this job does not enable protections or replace an independent human
 review.
 

@@ -100,3 +100,35 @@ def test_benign_instruction_files_carry_no_content_tags(tmp_path: Path, run_conn
     config = next(f for f in findings if f.kind == Kind.AGENT_CONFIG)
     assert not {"hidden-instructions", "remote-code-fetch", "invisible-text"} & set(config.tags)
     assert "instruction_content" not in config.metadata
+
+
+def test_oversized_instruction_inspection_is_incomplete(tmp_path: Path, run_connector):
+    from shadowscan.connectors.code.instruction_content import MAX_TEXT_BYTES
+
+    _skill(tmp_path, "large", "a" * (MAX_TEXT_BYTES + 1))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert findings
+    assert ctx.stats.incomplete
+    assert any("instruction content exceeds" in warning for warning in ctx.stats.warnings)
+
+
+def test_instruction_checks_use_the_original_snapshot(tmp_path: Path, run_connector, monkeypatch):
+    from shadowscan.connectors.code import filesystem
+
+    _skill(tmp_path, "data-sync", HIDDEN)
+    original = filesystem.read_text
+    reads = 0
+
+    def counted(path, *args, **kwargs):
+        nonlocal reads
+        if path.name == "SKILL.md":
+            reads += 1
+            if reads > 1:
+                return BENIGN
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(filesystem, "read_text", counted)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert reads == 1
+    assert any("remote-code-fetch" in finding.tags for finding in findings)

@@ -33,12 +33,22 @@ import math
 import re
 import secrets
 from collections import Counter, OrderedDict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
+from shadowscan.connectors.agent_behavior import (
+    LOOP_MAX_GAP_SECONDS,
+    LOOP_MIN_CALLS,
+    agent_operations,
+    host_service,
+    is_browser_user_agent,
+    is_generation,
+    is_mcp_request,
+    loop_cadence,
+)
 from shadowscan.connectors.base import (
     _MAX_OFFLINE_LINE_BYTES,
     BaseConnector,
@@ -62,7 +72,7 @@ from shadowscan.connectors.gateway.normalise import (  # noqa: F401
     detect_schema,
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.signatures.matcher import MatchTimeoutError, SignatureIndex
+from shadowscan.signatures.matcher import Match, MatchTimeoutError, SignatureIndex
 from shadowscan.utils.redaction import REDACTED, sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, parse_timestamp, to_iso
@@ -613,6 +623,11 @@ class _Caller:
     observations: dict[str, dict[str, Any]] = field(default_factory=dict)
     observations_dropped: int = 0
     distribution_events_dropped: Counter = field(default_factory=Counter)
+    # Behavioural agent indicators (shadowscan.connectors.agent_behavior).
+    call_times: list[float] = field(default_factory=list)
+    call_times_dropped: int = 0
+    browser_requests: int = 0
+    mcp_candidates: Counter = field(default_factory=Counter)
 
 
 # Per-caller distributions keep this many distinct keys. Counts for omitted
@@ -630,6 +645,11 @@ _MAX_TOTAL_DETAIL_KEYS = 50_000
 # absurd figure in an untrusted log must not offset real usage or be reported
 # verbatim in caller totals.
 _MAX_USAGE_VALUE = 10**15
+# Request times kept for agent-loop cadence, per caller and across callers.
+_MAX_CALL_TIMES = 1_000
+_MAX_TOTAL_CALL_TIMES = 200_000
+_MAX_MCP_CANDIDATES = 50
+_MCP_CANDIDATE_PATH = re.compile(r"(?:^|/)(?:mcp|sse|messages)/?$", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -639,6 +659,7 @@ class _DetailBudget:
     used: int = 0
     observations_omitted: int = 0
     observation_requests_omitted: int = 0
+    call_times_used: int = 0
 
 
 def _count(
@@ -716,6 +737,28 @@ def _record_interval(c: _Caller, ev: Event, retain_interval: bool) -> bool:
     c.usage_intervals_dropped += 1
     c.usage_interval_requests_dropped += ev.request_count
     return False
+
+
+def _record_behaviour(c: _Caller, ev: Event, detail_budget: _DetailBudget | None) -> None:
+    """Keep what the behavioural agent indicators need: call times, browser share, MCP endpoints."""
+    if is_browser_user_agent(ev.user_agent):
+        c.browser_requests += ev.request_count
+    if ev.path:
+        bare = str(ev.path).split("?", 1)[0][:120]
+        candidate = (str(ev.host or "")[:_MAX_LABEL_CHARS], bare)
+        if _MCP_CANDIDATE_PATH.search(bare) and (
+            candidate in c.mcp_candidates or len(c.mcp_candidates) < _MAX_MCP_CANDIDATES
+        ):
+            c.mcp_candidates[candidate] += ev.request_count
+    if ev.timestamp is None or ev.aggregated or not is_generation(ev.path, ev.model):
+        return
+    budget_left = detail_budget is None or detail_budget.call_times_used < _MAX_TOTAL_CALL_TIMES
+    if len(c.call_times) < _MAX_CALL_TIMES and budget_left:
+        c.call_times.append(ev.timestamp.timestamp())
+        if detail_budget is not None:
+            detail_budget.call_times_used += 1
+    else:
+        c.call_times_dropped += 1
 
 
 def _record_distributions(c: _Caller, ev: Event, detail_budget: _DetailBudget | None) -> None:
@@ -859,6 +902,28 @@ _CALLER_KIND_WEIGHT = {
     "user-agent": 0.2,
     "ip": 0.15,
 }
+
+
+def _caller_indicator(match: Match) -> bool:
+    """Whether a signature match says the caller itself is an agent.
+
+    AI SaaS app signatures (``identity-app``) mark an OAuth grant to ChatGPT or
+    Claude as agentic, and their domains (``*.openai.com``, ``*.anthropic.com``)
+    also cover the model APIs. Calling a model API, or naming a key after the
+    vendor, is LLM use: it does not make the caller an agent. A product name
+    matched in a key alias or a user name is a hint, not behaviour: a person
+    called Jules is not Google's Jules agent.
+    """
+    return match.signature.category != "identity-app" and match.signal.type != "name"
+
+
+def _service_indicator(owner: str | None) -> Callable[[Match], bool]:
+    """Count a host's agent indicator only from the service that owns the host."""
+
+    def accept(match: Match) -> bool:
+        return match.signature.id == owner and _caller_indicator(match)
+
+    return accept
 
 
 def _tool_use_evidence(f: Finding, c: _Caller) -> None:
@@ -1664,6 +1729,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         _record_activity(c, ev)
         interval_stored = _record_interval(c, ev, retain_interval)
         _record_distributions(c, ev, detail_budget)
+        _record_behaviour(c, ev, detail_budget)
         _record_usage(c, ev, total_cost)
         _record_observation(c, ev, detail_budget)
         return interval_stored
@@ -1694,6 +1760,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             )
         )
         _tool_use_evidence(f, c)
+        self._behaviour_evidence(f, c)
         _temporal_evidence(f, c, framework_user_agent)
         _volume_evidence(f, c)
         _assign_owner(f, c)
@@ -1704,6 +1771,84 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         f.title = self._finding_title(f, c, top_models)
         return f
 
+    def _behaviour_evidence(self, f: Finding, c: _Caller) -> None:
+        """Agent indicators from operations, MCP endpoints and call cadence (no request bodies needed)."""
+        summary: dict[str, Any] = {}
+        operations = agent_operations(c.paths)
+        if operations:
+            for op in operations:
+                if op.signature and self.index.get(op.signature) is not None:
+                    f.add_framework(op.signature)
+            total = sum(op.requests for op in operations)
+            f.add_capability("tool-use")
+            f.add_tag("agent-runtime-api")
+            f.add_evidence(
+                Evidence(
+                    signal="gateway:agent-runtime-api",
+                    description=(
+                        f"{total} request(s) invoked hosted agent runtimes: "
+                        + ", ".join(f"{op.label} ×{op.requests}" for op in operations[:5])
+                    ),
+                    weight=0.7,
+                )
+            )
+            f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
+            summary["agent_operations"] = {op.label: op.requests for op in operations[:5]}
+        mcp_hosts: dict[str, bool] = {}
+        mcp_requests = 0
+        for (host, path), n in c.mcp_candidates.items():
+            if host not in mcp_hosts:
+                mcp_hosts[host] = bool(host) and any(
+                    m.signature.id == "protocol.mcp" for m in self.index.match_domain(host)
+                )
+            if is_mcp_request(path, mcp_hosts[host]):
+                mcp_requests += n
+        if mcp_requests:
+            if self.index.get("protocol.mcp") is not None:
+                f.add_framework("protocol.mcp")
+            f.add_capability("tool-use")
+            f.add_tag("mcp-client")
+            f.add_evidence(
+                Evidence(
+                    signal="gateway:mcp-client",
+                    description=(
+                        f"{mcp_requests} request(s) to MCP server endpoints: an MCP client calling tools"
+                    ),
+                    weight=0.6,
+                )
+            )
+            f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
+            summary["mcp_requests"] = mcp_requests
+        cadence = loop_cadence(c.call_times)
+        # A browser session is a person typing, however fast the calls arrive.
+        programmatic = c.browser_requests * 2 < c.events
+        if cadence.loops and programmatic:
+            f.add_tag("agent-loop")
+            f.add_evidence(
+                Evidence(
+                    signal="gateway:agent-loop",
+                    description=(
+                        f"{cadence.loops} run(s) of {LOOP_MIN_CALLS}+ model calls at most "
+                        f"{LOOP_MAX_GAP_SECONDS:.0f}s apart (longest {cadence.longest} calls, "
+                        f"{cadence.share:.0%} of {cadence.calls} timed calls): agent-loop cadence; a batch "
+                        "script or a chat front end making several calls per message looks the same"
+                    ),
+                    weight=0.45,
+                )
+            )
+            f.metadata["agent_indicators"] = f.metadata.get("agent_indicators", 0) + 1
+        if cadence.loops:
+            summary["loop_cadence"] = {
+                "loops": cadence.loops,
+                "longest": cadence.longest,
+                "calls_in_loops": cadence.calls_in_loops,
+                "timed_calls": cadence.calls,
+                "timed_calls_dropped": c.call_times_dropped,
+                "browser_requests": c.browser_requests,
+            }
+        if summary:
+            f.metadata["agent_behaviour"] = summary
+
     def _match_signatures(self, f: Finding, c: _Caller) -> tuple[list[str], bool]:
         """Apply model, host, user agent, provider and name signatures.
 
@@ -1713,13 +1858,21 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         top_models = [m for m, _ in c.models.most_common(10)]
         f.models = top_models
         for m in top_models:
-            apply_matches(f, self.index.match_model(m), weight_scale=0.5)
+            apply_matches(f, self.index.match_model(m), weight_scale=0.5, indicator_filter=_caller_indicator)
         for h, _ in c.hosts.most_common(10):
-            apply_matches(f, self.index.match_domain(h), weight_scale=0.6)
+            host_matches = self.index.match_domain(h)
+            # A host is evidence of the one service it belongs to.
+            service = host_service(host_matches)
+            apply_matches(
+                f,
+                host_matches,
+                weight_scale=0.6,
+                indicator_filter=_service_indicator(service.signature.id if service is not None else None),
+            )
         framework_user_agent = False
         for ua, _ in c.user_agents.most_common(10):
             ua_matches = self.index.match_user_agent(ua)
-            apply_matches(f, ua_matches, weight_scale=1.0)
+            apply_matches(f, ua_matches, weight_scale=1.0, indicator_filter=_caller_indicator)
             framework_user_agent = framework_user_agent or any(
                 m.signature.category in {"framework", "coding-agent"} for m in ua_matches
             )
@@ -1729,9 +1882,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 f.add_model_provider(sid)
         if c.label != REDACTED and not c.label.startswith(_OPAQUE_LABEL_PREFIXES):
             # An opaque pseudonym cannot carry a display name; skip the pass.
-            apply_matches(f, self.index.match_name(c.label), weight_scale=0.6)
+            apply_matches(
+                f, self.index.match_name(c.label), weight_scale=0.6, indicator_filter=_caller_indicator
+            )
         for u, _ in c.users.most_common(3):
-            apply_matches(f, self.index.match_name(str(u)), weight_scale=0.4)
+            apply_matches(
+                f, self.index.match_name(str(u)), weight_scale=0.4, indicator_filter=_caller_indicator
+            )
         return top_models, framework_user_agent
 
     def _finding_metadata(self, c: _Caller, source_id: str) -> dict[str, Any]:

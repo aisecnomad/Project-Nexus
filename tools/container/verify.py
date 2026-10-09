@@ -154,8 +154,9 @@ def verify_bundle(
     purls = [component.get("purl", "") for component in components]
     if not any(isinstance(purl, str) and purl.startswith(OS_PACKAGE_PURLS[os_type]) for purl in purls):
         raise ValueError(f"container inventory is missing {os_type} packages")
+    # The purl spec lowercases PyPI names; the distribution is NexusShadowScan.
     if not any(
-        isinstance(purl, str) and purl.startswith("pkg:pypi/project-nexus-shadowscan@") for purl in purls
+        isinstance(purl, str) and purl.lower().startswith("pkg:pypi/nexusshadowscan@") for purl in purls
     ):
         raise ValueError("container inventory is missing the installed scanner Python package")
     report = _read_json(directory, "container-vulnerabilities.json")

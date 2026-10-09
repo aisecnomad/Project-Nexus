@@ -24,6 +24,8 @@ from tools.evaluation.evaluate import (
     summarize,
 )
 
+SAB_HOLDOUT = Path(__file__).parents[1] / "benchmarks" / "sab-holdout" / "corpus.json"
+
 
 def _corpus(
     files: dict[str, str],
@@ -70,6 +72,16 @@ def test_bundled_corpus_has_positive_and_hard_negative_labels():
     assert {"mcp-empty-json", "mcp-disabled-json", "py-comment-agent", "ts-block-comment-agent"} <= {
         c.id for c in cases
     }
+
+
+def test_sab_holdout_file_corpus_regressions():
+    report = evaluate(SAB_HOLDOUT)
+    assert report["passed"], [
+        (case["id"], case["assertion_failures"]) for case in report["cases"] if not case["correct"]
+    ]
+    assert report["corpus"]["type"] == "synthetic"
+    assert "not an independent" in report["corpus"]["provenance"]
+    assert len(report["cases"]) >= 15
 
 
 def test_lexer_and_toml_layout_cases_have_distinct_narrow_labels():

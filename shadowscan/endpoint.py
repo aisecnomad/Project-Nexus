@@ -94,7 +94,9 @@ def _candidate(location: EndpointLocation, home: Path, env: Mapping[str, str]) -
     return Path(base) / location.relative
 
 
-def endpoint_paths(home: Path, env: Mapping[str, str] | None = None) -> list[tuple[str, Path]]:
+def endpoint_paths(
+    home: Path, env: Mapping[str, str] | None = None, *, errors: list[str] | None = None
+) -> list[tuple[str, Path]]:
     """Existing well-known files and directories for ``home``: (client, path) pairs in a stable order.
 
     A location that is a symbolic link, or whose parent chain holds one, is
@@ -112,6 +114,10 @@ def endpoint_paths(home: Path, env: Mapping[str, str] | None = None) -> list[tup
             if not _exists_without_links(candidate, home):
                 continue
         except OSError:
+            if errors is not None:
+                errors.append(
+                    f"{location.client}: known configuration location could not be inspected safely"
+                )
             continue
         seen.add(candidate)
         found.append((location.client, candidate))
@@ -125,15 +131,15 @@ def _exists_without_links(path: Path, home: Path) -> bool:
     except FileNotFoundError:
         return False
     if stat.S_ISLNK(info.st_mode):
-        return False
+        raise OSError("configuration location is a symbolic link")
     if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
-        return False
+        raise OSError("configuration location is not a regular file or directory")
     # The components between the profile root and the location must not be links either.
     root = home if path.is_relative_to(home) else path.parents[len(path.parents) - 1]
     current = path.parent
     while current != root and root in current.parents:
         if stat.S_ISLNK(os.lstat(current).st_mode):
-            return False
+            raise OSError("configuration parent is a symbolic link")
         current = current.parent
     return True
 

@@ -1,0 +1,41 @@
+signatures:
+  - id: platform.openclaw
+    name: OpenClaw / Clawdbot / Moltbot
+    category: platform
+    vendor: OpenClaw
+    description: Local agent gateway and configuration formats; a file or port match is inventory evidence, not proof that an agent is running.
+    signals:
+      - type: file
+        globs: [openclaw.json, "**/openclaw.json", clawdbot.json, "**/clawdbot.json", moltbot.json, "**/moltbot.json"]
+        weight: 0.9
+      - type: code
+        patterns: ['(?i)\b(?:openclaw|clawdbot|moltbot)\b', ':\s*18789\b']
+        weight: 0.6
+
+  - id: coding-agent.agent-skills
+    name: Agent skill instructions
+    category: coding-agent
+    description: A SKILL.md file is an instruction artifact, not evidence that its instructions were executed.
+    signals:
+      - type: file
+        globs: [SKILL.md, "**/SKILL.md"]
+        weight: 0.75
+
+  - id: heuristic.inline-credential
+    name: High-entropy assigned credential
+    category: heuristic
+    description: A credential-like assignment with at least 16 characters and sufficient character diversity.
+    risk_notes: ["Hard-coded credentials; rotate and move to a secret store."]
+    signals:
+      - type: secret
+        # One keyword per pattern, so the literal prefilter can skip text without it.
+        patterns:
+          - '(?i)\b[A-Z_][A-Z0-9_.-]*API[_-]?KEY\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]*ACCESS[_-]?TOKEN\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]*CLIENT[_-]?SECRET\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]*PASSWORD\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '(?i)\b[A-Z_][A-Z0-9_.-]*CREDENTIAL\b[ \t]*[=:][ \t]*["'']?[A-Za-z0-9_./+=-]{16,256}'
+          - '\bghp_[A-Za-z0-9]{36}\b'
+          - '\bAKIA[A-Z0-9]{16}\b'
+        weight: 0.8
+        description: High-entropy assigned credential or recognized token prefix

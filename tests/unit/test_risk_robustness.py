@@ -15,6 +15,7 @@ import random
 import re
 from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from click.testing import CliRunner
@@ -380,7 +381,9 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
             )
         if any(s.get("auto_approve") for s in servers):
             factors.append(RiskFactor("mcp-auto-approve", "MCP tools auto-approved without confirmation", 10))
-        if any(s.get("url") and str(s.get("url")).startswith("http://") for s in servers):
+        if any(
+            s.get("url") and urlsplit(str(s.get("url")).strip()).scheme in {"http", "ws"} for s in servers
+        ):
             factors.append(RiskFactor("mcp-plain-http", "remote MCP server over plain HTTP", 10))
     if finding.kind == Kind.AGENT_CONFIG and finding.metadata.get("agent_definitions"):
         n = len(finding.metadata["agent_definitions"])
@@ -845,7 +848,7 @@ def test_builtin_tag_keys_do_not_warn(caplog, monkeypatch):
 
 # The default weights are policy: a change moves every score, so it has to be deliberate. When this
 # fails, update docs/concepts/risk.md, the changelog and the migration notes, then this digest.
-_DEFAULT_WEIGHTS_DIGEST = "55661f8d723089881dc2a4f46c5f2ad578856ba380453299b8a092a685fd59f4"
+_DEFAULT_WEIGHTS_DIGEST = "cd4ac6c379997546276b168e06024dadcb3112862d159a15245157571c5f0c41"
 
 
 def test_default_risk_weights_change_only_deliberately():

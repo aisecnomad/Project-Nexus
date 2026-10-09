@@ -1,7 +1,13 @@
 name: Release candidate evidence
 
-# Deliberately produces a review bundle only. Publishing a package or GitHub
-# release is a separate maintainer action after review and tenant acceptance.
+# Builds and attests a review bundle. Uploading it is opt-in and manual: after
+# independent review and acceptance (GOVERNANCE.md, release process), the
+# maintainer dispatches with `publish` set to testpypi or pypi. The upload job
+# then waits for approval in the protected environment of that name, checks out
+# nothing and uploads the exact attested wheel through PyPI trusted publishing;
+# no package-index token is stored anywhere. A pypi upload also requires the
+# maintainer's tag v<version> on the reviewed commit. A GitHub release stays a
+# separate maintainer action.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +23,23 @@ on:
         description: Successful push CodeQL run ID for that exact main commit
         required: true
         type: string
+      ruleset_readback:
+        description: >-
+          Administrator readback of merge ruleset 23913372, the output of
+          `gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` run as an administrator
+        required: true
+        type: string
+      publish:
+        description: >-
+          Upload the attested wheel: none (evidence only), testpypi (rehearsal)
+          or pypi (needs tag v<version> on expected_commit)
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - testpypi
+          - pypi
 
 permissions: {}
 concurrency:
@@ -79,14 +102,24 @@ jobs:
       - name: Verify current enforced merge-rule settings
         env:
           GH_TOKEN: ${{ github.token }}
+          RULESET_READBACK: ${{ inputs.ruleset_readback }}
         run: |
           set -euo pipefail
-          # Missing bypass_actors cannot prove no bypass. Keep this identity
-          # read-only; never add an administrator credential to the build job.
+          # Missing bypass_actors cannot prove no bypass, and GitHub withholds
+          # it from this token. Keep this identity read-only; never add an
+          # administrator credential to the build job. The dispatcher supplies
+          # an administrator readback instead, which must match this job's own
+          # read in every field the read returns, updated_at included.
+          if [ -z "$RULESET_READBACK" ]; then
+            echo "ruleset_readback is empty; pass an administrator readback of ruleset 23913372" >&2
+            exit 1
+          fi
           default_branch="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.default_branch')"
           gh api "repos/$GITHUB_REPOSITORY/rulesets/23913372" > "$RUNNER_TEMP/merge-rules.json"
+          printf '%s' "$RULESET_READBACK" > "$RUNNER_TEMP/merge-rules-readback.json"
           python -m tools.release.rules verify \
-            --input "$RUNNER_TEMP/merge-rules.json" \
+            --input "$RUNNER_TEMP/merge-rules-readback.json" \
+            --live "$RUNNER_TEMP/merge-rules.json" \
             --output "$CANDIDATE_DIR/merge-rule-verification.json" \
             --repository "$GITHUB_REPOSITORY" --default-branch "$default_branch" --ruleset-id 23913372
       - name: Install pinned build tools and locked runtime
@@ -116,11 +149,11 @@ jobs:
           "$RUNNER_TEMP/release-wheel/bin/python" -m pip install \
             --require-hashes --only-binary=:all: -r requirements.lock
           "$RUNNER_TEMP/release-wheel/bin/python" -m pip install \
-            --no-deps "$CANDIDATE_DIR"/project_nexus_shadowscan-*.whl
+            --no-deps "$CANDIDATE_DIR"/nexusshadowscan-*.whl
           "$RUNNER_TEMP/release-wheel/bin/python" -m pip check
           cp tests/fixtures/sample_repo/services/research-agent/app/agent.py "$RUNNER_TEMP/release-smoke.py"
           cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/release-wheel/bin/python" -c 'from importlib.metadata import distribution; import shadowscan; package = distribution("project-nexus-shadowscan"); assert package.version == shadowscan.__version__; assert any(ep.name == "shadowscan" and ep.value == "shadowscan.cli:main" for ep in package.entry_points)'
+          "$RUNNER_TEMP/release-wheel/bin/python" -c 'from importlib.metadata import distribution; import shadowscan; package = distribution("NexusShadowScan"); assert package.version == shadowscan.__version__; assert any(ep.name == "shadowscan" and ep.value == "shadowscan.cli:main" for ep in package.entry_points)'
           "$RUNNER_TEMP/release-wheel/bin/python" -m shadowscan.signatures.validate
           "$RUNNER_TEMP/release-wheel/bin/shadowscan" --help
           mkdir release-input
@@ -207,10 +240,12 @@ jobs:
     needs: [build, attest]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # This job deliberately has no OIDC token and does not publish. A future
-    # environment-protected trusted-publishing job must consume these exact
-    # attested bytes rather than checking out source and rebuilding a wheel.
+    # This job deliberately has no OIDC token and does not publish. The publish
+    # job below consumes this artifact's exact attested bytes; it never checks
+    # out source or rebuilds the wheel.
     permissions: {}
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -227,13 +262,101 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum --check SHA256SUMS
-          wheels=(project_nexus_shadowscan-*.whl)
-          [ "${#wheels[@]}" -eq 1 ] && [ -f "${wheels[0]}" ]
+          wheels=(nexusshadowscan-*.whl)
+          # `a && b` does not stop `set -e` when `a` fails; test both in one `if`.
+          if [ "${#wheels[@]}" -ne 1 ] || [ ! -f "${wheels[0]}" ]; then
+            echo "expected exactly one scanner wheel" >&2
+            exit 1
+          fi
           test -s attestations/provenance.json
           test -s attestations/sbom.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-publication-input-${{ github.sha }}
           path: publication-input/**
           if-no-files-found: error
           retention-days: 90
+
+  publication-gate:
+    needs: publication-input
+    if: inputs.publish != 'none' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Reads the release tag through the API. No checkout and no OIDC token.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}
+          path: publication-input
+          digest-mismatch: error
+      - name: Require a release version and, for pypi, its tag on the reviewed commit
+        working-directory: publication-input
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          sha256sum --check SHA256SUMS
+          wheels=(nexusshadowscan-*.whl)
+          if [ "${#wheels[@]}" -ne 1 ] || [ ! -f "${wheels[0]}" ]; then
+            echo "expected exactly one scanner wheel" >&2
+            exit 1
+          fi
+          version="${wheels[0]#nexusshadowscan-}"
+          version="${version%%-*}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
+            echo "wheel version $version is not a public release version" >&2
+            exit 1
+          fi
+          if [ "$PUBLISH" = pypi ]; then
+            # The commits API resolves tags through their fully qualified ref.
+            if ! tagged="$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/v$version" --jq .sha)"; then
+              echo "tag v$version does not exist; tag the reviewed commit $GITHUB_SHA first" >&2
+              exit 1
+            fi
+            if [ "$tagged" != "$GITHUB_SHA" ]; then
+              echo "tag v$version points at $tagged, not the reviewed commit $GITHUB_SHA" >&2
+              exit 1
+            fi
+          fi
+          echo "Publishing NexusShadowScan $version to $PUBLISH from $GITHUB_SHA"
+
+  publish:
+    needs: [publication-input, publication-gate]
+    if: inputs.publish != 'none' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job that uploads. It waits for approval in the protected
+    # environment named by `publish`, whose trusted publisher on the package
+    # index accepts this workflow and environment only. The OIDC token is its
+    # only permission; it checks out nothing and uploads the attested wheel.
+    environment:
+      name: ${{ inputs.publish }}
+      url: ${{ inputs.publish == 'testpypi' && 'https://test.pypi.org/p/NexusShadowScan' || 'https://pypi.org/p/NexusShadowScan' }}
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}
+          path: publication-input
+          digest-mismatch: error
+      - name: Stage only the attested wheel
+        run: |
+          set -euo pipefail
+          (cd publication-input && sha256sum --check SHA256SUMS)
+          wheels=(publication-input/nexusshadowscan-*.whl)
+          if [ "${#wheels[@]}" -ne 1 ] || [ ! -f "${wheels[0]}" ]; then
+            echo "expected exactly one scanner wheel" >&2
+            exit 1
+          fi
+          mkdir dist
+          cp -- "${wheels[0]}" dist/
+      - name: Upload with trusted publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+          repository-url: ${{ inputs.publish == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}

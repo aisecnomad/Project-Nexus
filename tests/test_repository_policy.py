@@ -43,6 +43,7 @@ WRITE_SCOPES = {
     ("codeql.yml", "analyze"): {"security-events"},
     ("scorecard.yml", "analysis"): {"security-events", "id-token"},
     ("release.yml", "attest"): {"attestations", "id-token"},
+    ("release.yml", "publish"): {"id-token"},
     ("docs.yml", "deploy"): {"pages", "id-token"},
     ("stale.yml", "stale"): {"issues", "pull-requests"},
     ("labels.yml", "sync"): {"issues"},
@@ -75,7 +76,7 @@ def test_wheel_validation_uses_private_workspace_and_always_cleans_up(
     checkout.mkdir()
     shutil.copyfile(ROOT / "Makefile", checkout / "Makefile")
     (checkout / "dist").mkdir()
-    (checkout / "dist" / "project_nexus_shadowscan-0.1.1-py3-none-any.whl").touch()
+    (checkout / "dist" / "nexusshadowscan-0.1.1-py3-none-any.whl").touch()
     shared_temp = tmp_path / "shared temp"
     shared_temp.mkdir()
     previous = shared_temp / "shadowscan-wheel-test"
@@ -357,8 +358,13 @@ def _run_violations(workflow_name: str, workflow: dict[str, Any]) -> list[str]:
 
 
 # Publication is a manual maintainer action (AGENTS.md). No workflow publishes a
-# package, release, image or tag; that includes the release-evidence workflow,
-# which builds and attests a review bundle only.
+# release, image or tag, and only one step uploads a package: the pinned
+# trusted-publishing action in release.yml's `publish` job, which runs only when
+# the maintainer dispatches it and approves its protected environment.
+# _release_publish_violations pins those gates; the same step anywhere else, or
+# any other upload command, is still a violation.
+SANCTIONED_UPLOAD = ("release.yml", "publish")
+_TRUSTED_PUBLISH_ACTION = re.compile(r"pypa/gh-action-pypi-publish@[0-9a-f]{40}")
 _PUBLICATION = {
     "GitHub release": re.compile(
         r"\bgh\s+release\s+(?:create|upload|edit)\b|softprops/action-gh-release|ncipollo/release-action"
@@ -380,17 +386,101 @@ def _publication_violations(text: str) -> list[str]:
     ]
 
 
+def _without_sanctioned_upload(workflow_name: str, workflow: dict[str, Any], text: str) -> str:
+    """The workflow text minus one copy of the sanctioned upload step, when that job has exactly one."""
+    if workflow_name != SANCTIONED_UPLOAD[0]:
+        return text
+    job = workflow["jobs"].get(SANCTIONED_UPLOAD[1])
+    steps = job.get("steps", []) if isinstance(job, dict) else []
+    uploads = [step.get("uses", "") for step in steps if "pypi-publish" in step.get("uses", "")]
+    if len(uploads) != 1 or not _TRUSTED_PUBLISH_ACTION.fullmatch(uploads[0]):
+        return text
+    # One copy only: a second copy of the same step in another job stays a violation.
+    return text.replace(f"uses: {uploads[0]}", "", 1)
+
+
+def _if_clauses(job: dict[str, Any]) -> set[str]:
+    expression = str(job.get("if", "")).strip().removeprefix("${{").removesuffix("}}").strip()
+    return {re.sub(r"\s+", " ", clause.strip()).replace('"', "'") for clause in expression.split("&&")}
+
+
+_PUBLISH_DISPATCH = {"inputs.publish != 'none'", "github.ref == 'refs/heads/main'"}
+_BUILD_OR_INSTALL = re.compile(r"\b(?:pip|python[\d.]*|setup\.py|twine|uv)\b")
+
+
+def _release_publish_violations(workflow: dict[str, Any]) -> list[str]:
+    """The package upload stays manual, approved, tagged and fed only the attested wheel."""
+    problems = []
+    triggers = _triggers(workflow)
+    dispatch = triggers.get("workflow_dispatch") if isinstance(triggers, dict) else None
+    publish_input = ((dispatch or {}).get("inputs") or {}).get("publish") or {}
+    if (
+        publish_input.get("type") != "choice"
+        or publish_input.get("default") != "none"
+        or publish_input.get("options") != ["none", "testpypi", "pypi"]
+    ):
+        problems.append("the publish input must be a choice of none, testpypi or pypi that defaults to none")
+    jobs = workflow["jobs"]
+    for name in ("publication-gate", "publish"):
+        job = jobs.get(name)
+        if not isinstance(job, dict):
+            problems.append(f"{name}: job is missing")
+            continue
+        if _if_clauses(job) != _PUBLISH_DISPATCH:
+            problems.append(f"{name}: must run only when the maintainer dispatches publish on main")
+        if any(step.get("uses", "").startswith("actions/checkout@") for step in job.get("steps", [])):
+            problems.append(f"{name}: must not check out source")
+    gate = jobs.get("publication-gate")
+    if isinstance(gate, dict):
+        if gate.get("permissions") != {"contents": "read"}:
+            problems.append("publication-gate: needs contents read only")
+        script = "\n".join(step.get("run", "") for step in gate.get("steps", []))
+        if (
+            '"repos/$GITHUB_REPOSITORY/commits/refs/tags/v$version"' not in script
+            or 'if [ "$tagged" != "$GITHUB_SHA" ]; then' not in script
+        ):
+            problems.append(
+                "publication-gate: a pypi upload must require tag v<version> on the reviewed commit"
+            )
+    publish = jobs.get("publish")
+    if isinstance(publish, dict):
+        needs = publish.get("needs", [])
+        if not {"publication-input", "publication-gate"} <= set([needs] if isinstance(needs, str) else needs):
+            problems.append("publish: must wait for the publication gate")
+        if publish.get("permissions") != {"id-token": "write"}:
+            problems.append("publish: the OIDC token must be its only permission")
+        environment = publish.get("environment")
+        if not isinstance(environment, dict) or environment.get("name") != "${{ inputs.publish }}":
+            problems.append("publish: must wait for approval in the protected environment named by publish")
+        steps = publish.get("steps", [])
+        downloads = [step for step in steps if step.get("uses", "").startswith("actions/download-artifact@")]
+        if not downloads or any(
+            (step.get("with") or {}).get("artifact-ids")
+            != "${{ needs.publication-input.outputs.artifact_id }}"
+            for step in downloads
+        ):
+            problems.append("publish: must upload only the attested publication-input artifact")
+        script = "\n".join(step.get("run", "") for step in steps)
+        if "sha256sum --check SHA256SUMS" not in script:
+            problems.append("publish: must verify the attested digests before uploading")
+        if _BUILD_OR_INSTALL.search(script):
+            problems.append("publish: must not build, install or upload with its own commands")
+    return problems
+
+
 def _workflow_violations(path: Path) -> list[str]:
     """Every policy violation in one workflow file; empty when the file complies."""
     workflow = _load(path)
     if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
         return [f"{path.name} is not a workflow with a jobs mapping"]
+    text = _without_sanctioned_upload(path.name, workflow, path.read_text(encoding="utf-8"))
     return [
         *_trigger_violations(workflow),
         *_job_violations(path.name, workflow),
         *_concurrency_violations(path.name, workflow),
         *_run_violations(path.name, workflow),
-        *_publication_violations(path.read_text(encoding="utf-8")),
+        *_publication_violations(text),
+        *(_release_publish_violations(workflow) if path.name == SANCTIONED_UPLOAD[0] else []),
     ]
 
 
@@ -595,6 +685,15 @@ def _replace(old: str, new: str) -> Callable[[str], str]:
     return mutate
 
 
+def _replace_last(old: str, new: str) -> Callable[[str], str]:
+    def mutate(text: str) -> str:
+        assert old in text, f"the mutation no longer applies: {old!r} is not in the file"
+        head, _, tail = text.rpartition(old)
+        return head + new + tail
+
+    return mutate
+
+
 _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif"
 
 
@@ -737,6 +836,88 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
             id="pypi-publish-action",
         ),
         pytest.param(
+            ".github/workflows/release.yml",
+            _replace("actions/upload-artifact@", "pypa/gh-action-pypi-publish@"),
+            "package upload",
+            id="second-upload-outside-publish-job",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace('          cp -- "${wheels[0]}" dist/\n', "          python -m twine upload dist/*\n"),
+            "package upload",
+            id="twine-upload-in-publish-job",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace(
+                "          mkdir dist\n", "          mkdir dist\n          pip wheel --no-deps -w dist .\n"
+            ),
+            "must not build, install or upload",
+            id="rebuild-in-publish-job",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace("        default: none\n", "        default: pypi\n"),
+            "defaults to none",
+            id="publish-by-default",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace_last(
+                "    if: inputs.publish != 'none' && github.ref == 'refs/heads/main'\n",
+                "    if: github.ref == 'refs/heads/main'\n",
+            ),
+            "publish: must run only when the maintainer dispatches publish",
+            id="publish-without-dispatch-choice",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace("      name: ${{ inputs.publish }}\n", "      name: release\n"),
+            "protected environment named by publish",
+            id="publish-outside-protected-environment",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace('if [ "$tagged" != "$GITHUB_SHA" ]; then', 'if [ -z "$tagged" ]; then'),
+            "require tag v<version> on the reviewed commit",
+            id="publish-without-tag-on-reviewed-commit",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace("/commits/refs/tags/v$version", "/commits/tags/v$version"),
+            "require tag v<version> on the reviewed commit",
+            id="publish-with-unqualified-tag-ref",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace_last(
+                "artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}",
+                "artifact-ids: ${{ needs.build.outputs.artifact_id }}",
+            ),
+            "only the attested publication-input artifact",
+            id="publish-unassembled-artifact",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace(
+                "    permissions:\n      id-token: write\n    steps:\n      - uses: actions/download",
+                "    permissions:\n      id-token: write\n      contents: write\n    steps:\n      - uses: actions/download",
+            ),
+            "publish: the OIDC token must be its only permission",
+            id="publish-with-write-token",
+        ),
+        pytest.param(
+            ".github/workflows/release.yml",
+            _replace_last(
+                "      - name: Stage only the attested wheel\n",
+                "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+                "        with:\n          persist-credentials: false\n"
+                "      - name: Stage only the attested wheel\n",
+            ),
+            "publish: must not check out source",
+            id="checkout-in-publish-job",
+        ),
+        pytest.param(
             ".github/workflows/ci.yml",
             _replace(_SELF_SCAN, _SELF_SCAN + " && gh release create v0.1.1 dist/*.whl"),
             "GitHub release",
@@ -784,8 +965,8 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         pytest.param(
             "Dockerfile",
             _replace(
-                "/opt/wheel/project_nexus_shadowscan-*.whl",
-                "/opt/wheel/project_nexus_shadowscan-*.whl requests",
+                "/opt/wheel/nexusshadowscan-*.whl",
+                "/opt/wheel/nexusshadowscan-*.whl requests",
             ),
             "pip install without --require-hashes",
             id="unhashed-no-deps-package",
@@ -1104,7 +1285,7 @@ def _container_evidence(tmp_path: Path) -> tuple[str, datetime]:
             },
             "components": [
                 {"purl": "pkg:apk/wolfi/git@2.55.0-r0?arch=x86_64&distro=20230201"},
-                {"purl": "pkg:pypi/project-nexus-shadowscan@0.1.1"},
+                {"purl": "pkg:pypi/nexusshadowscan@0.1.1"},
             ],
         },
         "container-vulnerabilities.json": {
@@ -1451,22 +1632,143 @@ def test_dco_executes_against_real_commit_ranges(tmp_path: Path, case: str, pass
 
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
 def test_workflows_do_not_publish_releases_packages_or_tags(path: Path) -> None:
-    assert not _publication_violations(path.read_text(encoding="utf-8"))
+    text = _without_sanctioned_upload(path.name, _load(path), path.read_text(encoding="utf-8"))
+    assert not _publication_violations(text)
 
 
-def test_release_workflow_stays_a_manual_evidence_bundle() -> None:
+def test_the_sanctioned_upload_is_the_only_exemption() -> None:
+    """Without its one exemption, release.yml has exactly one package upload and nothing else."""
+    text = (GITHUB / "workflows" / "release.yml").read_text(encoding="utf-8")
+    violations = _publication_violations(text)
+    assert len(violations) == 1 and violations[0].startswith("package upload: `pypi-publish`"), violations
+
+
+def test_release_workflow_uploads_only_through_the_gated_publish_job() -> None:
     workflow = _load(GITHUB / "workflows" / "release.yml")
     assert _trigger_names(workflow) == {"workflow_dispatch"}
-    assert "Deliberately produces a review bundle only." in (GITHUB / "workflows" / "release.yml").read_text(
-        encoding="utf-8"
-    )
-    # Only the attestation job holds an OIDC token, and it never checks out or
-    # runs repository code.
+    assert not _release_publish_violations(workflow)
+    # Only the attestation and publish jobs hold an OIDC token, and neither
+    # checks out or runs repository code.
     for name, job in workflow["jobs"].items():
         if (job.get("permissions") or {}).get("id-token") == "write":
-            assert name == "attest"
+            assert name in {"attest", "publish"}
             assert not any(step.get("uses", "").startswith("actions/checkout@") for step in job["steps"])
     assert workflow["jobs"]["publication-input"]["permissions"] == {}
+
+
+_REVIEWED = "a" * 40
+
+
+@pytest.mark.parametrize(
+    "target,wheels,tagged,tamper,passes",
+    [
+        pytest.param("pypi", ["0.1.1"], _REVIEWED, False, True, id="pypi-tag-on-reviewed-commit"),
+        pytest.param("pypi", ["0.1.1"], "b" * 40, False, False, id="pypi-tag-elsewhere"),
+        pytest.param("pypi", ["0.1.1"], None, False, False, id="pypi-without-tag"),
+        pytest.param("testpypi", ["0.1.1"], None, False, True, id="testpypi-rehearsal-without-tag"),
+        pytest.param("pypi", ["0.2.0rc1"], _REVIEWED, False, True, id="pypi-release-candidate"),
+        pytest.param("testpypi", ["0.1.1.dev0"], None, False, False, id="development-version"),
+        pytest.param("testpypi", ["0.1.1+local"], None, False, False, id="local-version"),
+        pytest.param("testpypi", ["0.1.0", "0.1.1"], None, False, False, id="two-wheels"),
+        pytest.param("testpypi", [], None, False, False, id="no-wheel"),
+        pytest.param("pypi", ["0.1.1"], _REVIEWED, True, False, id="tampered-wheel"),
+    ],
+)
+def test_publication_gate_executes_fail_closed(
+    tmp_path: Path, target: str, wheels: list[str], tagged: str | None, tamper: bool, passes: bool
+) -> None:
+    """Execute the gate using the fully qualified tag ref verified against GitHub."""
+    gate = _load(GITHUB / "workflows" / "release.yml")["jobs"]["publication-gate"]
+    script = next(step["run"] for step in gate["steps"] if "run" in step)
+    candidate = tmp_path / "publication-input"
+    candidate.mkdir()
+    for version in wheels:
+        (candidate / f"nexusshadowscan-{version}-py3-none-any.whl").write_bytes(version.encode())
+    sums = subprocess.run(
+        ["sha256sum", *sorted(path.name for path in candidate.iterdir())],
+        cwd=candidate,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    (candidate / "SHA256SUMS").write_text(sums, encoding="utf-8")
+    if tamper:
+        for path in candidate.glob("*.whl"):
+            path.write_bytes(b"substituted after attestation")
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "gh").write_text(
+        "#!/bin/bash\n"
+        'expected="api repos/aisecnomad/Project-Nexus/commits/refs/tags/v$EXPECTED_VERSION --jq .sha"\n'
+        '[ "$*" = "$expected" ] || { echo "unexpected gh call: $*" >&2; exit 64; }\n'
+        '[ -n "$TAGGED" ] || { echo "HTTP 404: No commit found for SHA" >&2; exit 1; }\n'
+        'printf "%s\\n" "$TAGGED"\n',
+        encoding="utf-8",
+    )
+    (stub / "gh").chmod(0o700)
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=candidate,
+        env={
+            "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}",
+            "GH_TOKEN": "not-a-real-token",
+            "PUBLISH": target,
+            "GITHUB_REPOSITORY": "aisecnomad/Project-Nexus",
+            "GITHUB_SHA": _REVIEWED,
+            "EXPECTED_VERSION": wheels[-1] if wheels else "",
+            "TAGGED": tagged or "",
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert (result.returncode == 0) is passes, result.stdout + result.stderr
+    assert "unexpected gh call" not in result.stderr
+    if passes:
+        assert f"to {target} from {_REVIEWED}" in result.stdout
+    elif target == "pypi" and len(wheels) == 1 and not tamper:
+        if tagged is None:
+            assert f"tag v{wheels[0]} does not exist" in result.stderr
+        else:
+            assert (
+                f"tag v{wheels[0]} points at {tagged}, not the reviewed commit {_REVIEWED}" in result.stderr
+            )
+
+
+@pytest.mark.parametrize(
+    "job,step", [("publication-input", "Verify the exact attested"), ("publish", "Stage only the attested")]
+)
+@pytest.mark.parametrize("count", [1, 2])
+def test_release_steps_require_exactly_one_wheel(tmp_path: Path, job: str, step: str, count: int) -> None:
+    """Regression: `[ n -eq 1 ] && [ -f w ]` let two wheels through, because `set -e` ignores `a` in `a && b`."""
+    steps = _load(GITHUB / "workflows" / "release.yml")["jobs"][job]["steps"]
+    script = next(entry["run"] for entry in steps if entry.get("name", "").startswith(step))
+    candidate = tmp_path / "publication-input"
+    (candidate / "attestations").mkdir(parents=True)
+    for name in ("provenance.json", "sbom.json"):
+        (candidate / "attestations" / name).write_text("{}", encoding="utf-8")
+    for version in ("0.1.1", "0.1.0")[:count]:
+        (candidate / f"nexusshadowscan-{version}-py3-none-any.whl").write_bytes(version.encode())
+    sums = subprocess.run(
+        ["sha256sum", *sorted(path.name for path in candidate.glob("*.whl"))],
+        cwd=candidate,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    (candidate / "SHA256SUMS").write_text(sums, encoding="utf-8")
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=candidate if job == "publication-input" else tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert (result.returncode == 0) is (count == 1), result.stdout + result.stderr
+    if job == "publish" and count == 1:
+        assert [path.name for path in (tmp_path / "dist").iterdir()] == [
+            "nexusshadowscan-0.1.1-py3-none-any.whl"
+        ]
 
 
 def test_pages_requires_explicit_manual_publication_from_main() -> None:

@@ -139,6 +139,9 @@ signatures:
       - type: code
         patterns: ['^[^\S\r\n]*mode:\s*(?:agent-chat|advanced-chat|workflow|completion)\s*$', '^[^\S\r\n]*kind:\s*app\s*$', 'agent_mode\s*:\s*\n\s*enabled\s*:\s*true']
         weight: 0.6
+      - type: file
+        globs: [dify.yml, "**/dify.yml", dify.yaml, "**/dify.yaml"]
+        weight: 0.8
       - type: env
         names: [DIFY_API_KEY, DIFY_API_URL, DIFY_BASE_URL]
         weight: 0.7
@@ -173,6 +176,9 @@ signatures:
       - type: code
         patterns: ['"category"\s*:\s*"(?:Agents|Multi Agents|Sequential Agents|Agentflow)"', '"name"\s*:\s*"(?:toolAgent|openAIFunctionAgent|conversationalAgent|reactAgentLLM|supervisor|worker|agentflow)"']
         weight: 0.9
+      - type: file
+        globs: [flowise.json, "**/flowise.json"]
+        weight: 0.8
       - type: env
         names: [FLOWISE_API_KEY, FLOWISE_USERNAME, FLOWISE_PASSWORD, FLOWISE_SECRETKEY_OVERWRITE]
         weight: 0.7

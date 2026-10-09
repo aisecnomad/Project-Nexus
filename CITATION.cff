@@ -12,9 +12,10 @@ url: https://github.com/aisecnomad/Project-Nexus/tree/main/docs
 abstract: >-
   ShadowScan discovers evidence of AI agents and related
   integrations across code repositories, identity providers,
-  LLM gateway logs, low-code platforms, SaaS apps, and cloud
-  accounts, then reconciles findings against an approved
-  inventory of Agent Cards.
+  LLM gateway logs, low-code platforms, SaaS apps, cloud
+  accounts, endpoints, network logs, and running processes,
+  then reconciles findings against an approved inventory of
+  Agent Cards.
 keywords:
   - shadow-ai
   - ai-agents
@@ -24,5 +25,5 @@ keywords:
   - langchain
   - sarif
 license: Apache-2.0
-version: 0.1.1
-# date-released is omitted: 0.1.1 is an unreleased candidate on main.
+version: 0.1.2
+date-released: 2026-10-08

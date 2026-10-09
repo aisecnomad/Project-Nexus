@@ -5,11 +5,13 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import re
 import threading
 import time
 from bisect import bisect_left, bisect_right
+from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -137,6 +139,103 @@ def _plain_search(rx: Any, text: str, context: str, timeout: float) -> Any:
 def _budgeted_search(rx: Any, text: str, context: str, timeout: float) -> Any:
     """Full per-call bookkeeping for hosts supplied by connectors rather than the tokenizer."""
     return _search(rx, text, context)
+
+
+GENERIC_CREDENTIAL = "heuristic.inline-credential"
+UNATTRIBUTED_KEY = "heuristic.unattributed-api-key"
+# An unattributed sk- value shorter than this after the prefix must look random.
+_SHORT_KEY_BODY = 32
+_VALUE_END = frozenset("\"',;")
+
+
+def _assigned_value(value: str) -> str:
+    """The value of a ``NAME = value`` or ``NAME: value`` match, or the whole text when it is no assignment.
+
+    Plain string scanning, so the cost stays linear in the match length.
+    """
+    positions = [i for i in (value.find("="), value.find(":")) if i >= 0]
+    if not positions:
+        return value
+    rest = value[min(positions) + 1 :].lstrip(" \t").lstrip("\"'")
+    for i, char in enumerate(rest):
+        if char in _VALUE_END or char.isspace():
+            return rest[:i]
+    return rest
+
+
+def _high_entropy_credential(value: str) -> bool:
+    """Require a generic assigned credential to be long and sufficiently diverse."""
+    candidate = _assigned_value(value)
+    if len(candidate) < 16:
+        return False
+    body = re.sub(r"[^A-Za-z0-9]", "", candidate)
+    if len(body) < 2 or len(set(body)) <= 2:
+        return False
+    adjacent = sum(abs(ord(left) - ord(right)) <= 1 for left, right in zip(body, body[1:], strict=False))
+    if adjacent / (len(body) - 1) >= 0.5:
+        return False
+    counts = Counter(candidate)
+    entropy = -sum((count / len(candidate)) * math.log2(count / len(candidate)) for count in counts.values())
+    return entropy >= 3.0
+
+
+def _random_key_body(body: str) -> bool:
+    """Require a short sk- key body to mix letters and digits and look random.
+
+    Hyphenated words (``sk-folding-cube-spinner-wrap``) and ticket branches
+    (``sk-1234-fix-the-login-page``) have the shape but not the randomness.
+    """
+    return (
+        any(char.isdigit() for char in body)
+        and any(char.isalpha() for char in body)
+        and sum(char in "-_" for char in body) <= 2
+        and _high_entropy_credential(body)
+    )
+
+
+def keep_file_matches(signatures: Sequence[Signature]) -> list[bool]:
+    """Which of one file's signature matches to keep.
+
+    A coding agent's own configuration file belongs to that agent: a broader
+    signature from the same vendor matching the same file would count it twice.
+    """
+    agents = {s.vendor for s in signatures if s.category == "coding-agent" and s.vendor}
+    return [s.category == "coding-agent" or s.vendor not in agents for s in signatures]
+
+
+def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[bool]:
+    """Which ``(signature id, value, line)`` secret matches to keep.
+
+    A generic assigned-credential match is kept only when its value looks
+    random and no specific credential pattern matched the same value on the
+    same line: ``OPENAI_API_KEY=sk-...`` is one OpenAI key, not two findings.
+    A short unattributed ``sk-`` value only adds keys nothing else reports: it
+    is kept when it looks random and no kept generic match covers it.
+    """
+    short = [
+        signature_id == UNATTRIBUTED_KEY and len(value) - len("sk-") < _SHORT_KEY_BODY
+        for signature_id, value, _ in matches
+    ]
+    specific: dict[int | None, list[str]] = {}
+    for (signature_id, value, line), is_short in zip(matches, short, strict=True):
+        if signature_id != GENERIC_CREDENTIAL and not is_short:
+            specific.setdefault(line, []).append(value)
+    keep = []
+    generic: dict[int | None, list[str]] = {}
+    for signature_id, value, line in matches:
+        if signature_id != GENERIC_CREDENTIAL:
+            keep.append(True)
+            continue
+        candidate = _assigned_value(value)
+        repeated = any(other in value or candidate in other for other in specific.get(line, ()))
+        keep.append(not repeated and _high_entropy_credential(value))
+        if keep[-1]:
+            generic.setdefault(line, []).append(value)
+    for position, ((_, value, line), is_short) in enumerate(zip(matches, short, strict=True)):
+        if is_short:
+            covered = any(value in other for other in generic.get(line, ()))
+            keep[position] = not covered and _random_key_body(value[len("sk-") :])
+    return keep
 
 
 # ------------------------------------------------------- domain prefilters
@@ -1044,7 +1143,9 @@ class SignatureIndex:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
 
     def match_secrets(self, text: str) -> list[Match]:
-        return self._match_regex_signals("secret", text, None, max_per_signal=5)
+        matches = self._match_regex_signals("secret", text, None, max_per_signal=5)
+        keep = keep_secret_matches([(m.signature_id, m.value, m.line) for m in matches])
+        return [match for match, kept in zip(matches, keep, strict=True) if kept]
 
     def match_user_agent(self, ua: str) -> list[Match]:
         if not ua:
@@ -1079,7 +1180,8 @@ class SignatureIndex:
                 if whole.match(key) or whole.match(base) or (tail is not None and tail.match(key)):
                     out.append(Match(sig, s, rel, s.weight))
                     break
-        return out
+        keep = keep_file_matches([m.signature for m in out])
+        return [m for m, kept in zip(out, keep, strict=True) if kept]
 
     def match_env(self, name: str) -> list[Match]:
         out: list[Match] = []

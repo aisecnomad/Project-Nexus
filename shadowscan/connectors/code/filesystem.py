@@ -77,17 +77,19 @@ from shadowscan.connectors.code.instruction_content import (
     MAX_TEXT_BYTES as MAX_INSTRUCTION_TEXT_BYTES,
 )
 from shadowscan.connectors.code.instruction_content import (
+    ContentHit,
     inspect_instruction_text,
 )
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
 from shadowscan.connectors.code.manifests import (
-    MANIFEST_PATTERN_SECONDS,
     Artifact,
     Dep,
+    _pattern_timeout,
     is_manifest_name,
     manifest_comment_projection,
     parse_manifest,
 )
+from shadowscan.connectors.code.mcp_config import _mcp_client_for, _parse_mcp_servers
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
@@ -114,6 +116,18 @@ from shadowscan.connectors.code.source_semantics import (
     SourceNotParsed,
     bound_source_matches,
 )
+from shadowscan.connectors.code.walk import (
+    DEFAULT_MAX_WALK_ENTRIES,
+    _holds_file,
+    _marks_project,
+    _nearest_root,
+    _project_root,
+    _report_name,
+    _walk_directories,
+    _WalkBudget,
+    _WalkCounters,
+    _WalkLimitError,
+)
 from shadowscan.connectors.common import (
     apply_matches,
     cap_confidence,
@@ -122,6 +136,9 @@ from shadowscan.connectors.common import (
     looks_like_placeholder,
     placeholder_reason,
 )
+from shadowscan.connectors.mcp_risk import record_server_risks
+from shadowscan.connectors.posture import CLIENT_SIGNATURES, record_posture
+from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -129,9 +146,8 @@ from shadowscan.signatures.matcher import (
     SOURCE_EXTENSIONS,
     MatchTimeoutError,
     language_for_path,
-    pattern_timeout,
 )
-from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
+from shadowscan.utils.files import open_confined_directory, read_policy_text
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
@@ -147,7 +163,7 @@ from shadowscan.utils.git import (
 )
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
-from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize, sanitize_text
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError
 from shadowscan.utils.safe_yaml import (
     YAMLIntegrityError,
@@ -186,7 +202,6 @@ _MENTION_SIGNALS = frozenset({"env", "name"})
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
 DEFAULT_MAX_NOTEBOOK_SIZE = 20 * 1024 * 1024
-DEFAULT_MAX_WALK_ENTRIES = 1_000_000
 
 DEFAULT_EXCLUDES = {
     ".git",
@@ -259,8 +274,6 @@ DISCLOSED_DEFAULT_EXCLUDES = frozenset(
 # binary, so each would be a coverage gap): it stays excluded even when
 # `default_excludes` is false.
 VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
-# Entries inspected to decide whether a skipped directory holds any file.
-_EMPTY_DIRECTORY_PROBE_ENTRIES = 256
 
 # Non-regular entries named individually per root, before the rest are summarized.
 _MAX_NON_REGULAR_NOTES = 10
@@ -365,77 +378,6 @@ def _special_file_kind(mode: int) -> str:
         if test(mode):
             return kind
     return "special file"
-
-
-PROJECT_ROOT_MARKERS = {
-    "package.json",
-    "pyproject.toml",
-    "requirements.txt",
-    "setup.py",
-    "Pipfile",
-    "go.mod",
-    "Cargo.toml",
-    "pom.xml",
-    "build.gradle",
-    "build.gradle.kts",
-    "Gemfile",
-    "composer.json",
-    "environment.yml",
-}
-
-# `setup.py` is also an ordinary module name (a package's `tracing/setup.py`,
-# a web app's `controllers/setup.py`). It marks a project only when it builds
-# a package; anything that cannot be read keeps the historical marker.
-_SETUP_SCRIPT_MAX_BYTES = 256 * 1024
-_PACKAGING_SETUP = re.compile(rb"\b(?:setuptools|distutils|skbuild)\b|(?<!def )(?<![.\w])setup\s*\(")
-
-
-def _packaging_setup_script(path: Path) -> bool:
-    try:
-        with open_confined_file(path, label="setup.py") as (stream, _):
-            head = stream.read(_SETUP_SCRIPT_MAX_BYTES)
-    except (OSError, ValueError):
-        return True
-    return _PACKAGING_SETUP.search(head) is not None
-
-
-def _marks_project(directory: Path, names: Iterable[str]) -> bool:
-    """True when ``names`` in ``directory`` include a project manifest."""
-    return any(
-        name in PROJECT_ROOT_MARKERS and (name != "setup.py" or _packaging_setup_script(directory / name))
-        for name in names
-    )
-
-
-def _holds_file(directory: Path, budget: _WalkBudget | None = None) -> bool:
-    """Whether a skipped ``directory`` holds anything that is not a directory.
-
-    Probes at most ``_EMPTY_DIRECTORY_PROBE_ENTRIES`` entries without following
-    a link (a link in place of the directory is not listed at all). A tree the
-    probe cannot finish or cannot list counts as non-empty, so the omission is
-    disclosed rather than assumed to be nothing.
-    """
-    try:
-        if directory.is_symlink():
-            return False
-    except OSError:
-        return True
-    pending = [directory]
-    inspected = 0
-    budget = budget or _WalkBudget()
-    while pending:
-        budget.check()
-        try:
-            with os.scandir(pending.pop()) as entries:
-                for entry in entries:
-                    budget.count_entry()
-                    inspected += 1
-                    if inspected > _EMPTY_DIRECTORY_PROBE_ENTRIES or not entry.is_dir(follow_symlinks=False):
-                        return True
-                    pending.append(Path(entry.path))
-        except OSError:
-            return True
-    return False
 
 
 TEXT_CONFIG_EXTENSIONS = {
@@ -587,6 +529,7 @@ class _Project:
     languages: set[str] = field(default_factory=set)
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
     coding_agent_matches: dict[str, list[tuple[Match, str, str | None]]] = field(default_factory=dict)
+    instruction_hits: dict[str, list[ContentHit]] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
@@ -595,6 +538,8 @@ class _Project:
     # Data files that declare what a deployment or a job runs with: never catalogs.
     configuration_files: set[str] = field(default_factory=set)
     mcp_tools_limited: bool = False
+    # Coding-agent signature id -> posture issues read from its settings files.
+    posture: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -655,6 +600,7 @@ class _SourceFile:
     safe_lines: list[str] | None = None  # redacted lines, produced when an excerpt first needs them
     card_kind: str | None = None  # agent manifest kind suggested by the path
     card_valid: bool = False
+    card_incomplete: bool = False  # a recognizable card that misses required declarations
     is_mcp: bool = False
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
@@ -819,15 +765,6 @@ _IAC_MODEL_RE = re.compile(
     r"""["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9._:/@-]{2,199})["']"""
 )
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
-
-
-def _pattern_timeout() -> float:
-    """Per-call ceiling for the regexes this module runs outside the signature matcher.
-
-    Like the manifest parsers, well above the matcher's 100 ms so an ordinary large file does not
-    time out under CPU contention between parallel connectors; the file's scan budget still caps it.
-    """
-    return pattern_timeout(MANIFEST_PATTERN_SECONDS)
 
 
 def _exception_name(exc: Exception) -> str:
@@ -1088,7 +1025,7 @@ class FilesystemConnector(BaseConnector):
         "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
         "include": (
             "list of paths relative to each root that limit the walk to those files and directories; "
-            "nothing else under the root is enumerated or read (an endpoint profile scan uses it; "
+            "other file contents are not read; parent directory names are listed (endpoint scans use it; "
             "default: everything)"
         ),
         "default_excludes": (
@@ -1415,11 +1352,6 @@ class FilesystemConnector(BaseConnector):
         target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
         return alias_signals <= target_signals
 
-    def _iter_files(self, root: Path) -> Iterator[tuple[str, Path, str]]:
-        """Yield (relpath, path, project_root_rel) top-down with project root tracking."""
-        for rel, path, proj, _ in self._iter_entries(root):
-            yield rel, path, proj
-
     def check_gitlink_coverage(self, root: Path) -> None:
         """Check committed gitlinks where Git is authorized: a clone or use_git=True.
 
@@ -1488,7 +1420,7 @@ class FilesystemConnector(BaseConnector):
 
     def _check_submodule_declarations(self, root: Path, rel_dir: str) -> None:
         rel = ".gitmodules" if rel_dir == "." else f"{rel_dir}/.gitmodules"
-        if self._excluded_file(rel):
+        if self._excluded_file(rel) or not self._included(rel):
             return
         try:
             text = read_policy_text(root / rel, MAX_GITMODULES_BYTES)
@@ -1555,7 +1487,10 @@ class FilesystemConnector(BaseConnector):
                 return
             dirnames[:] = kept
             proj = _nearest_root(rel_dir, roots)
-            if rel_dir != "." and _marks_project(Path(dirpath), filenames):
+            included_names = (
+                name for name in filenames if self._included(name if rel_dir == "." else f"{rel_dir}/{name}")
+            )
+            if rel_dir != "." and _marks_project(Path(dirpath), included_names):
                 roots.append(rel_dir)
                 proj = rel_dir
             for fn in sorted(filenames):
@@ -1868,6 +1803,16 @@ class FilesystemConnector(BaseConnector):
             cells=cells,
         )
         self._record_file_matches(file)
+        if any(rel in files for files in proj.coding_agent_files.values()):
+            # Inspect the same confined snapshot as every other analysis pass.
+            if len(text.encode("utf-8")) > MAX_INSTRUCTION_TEXT_BYTES:
+                self.ctx.warn(
+                    f"code.filesystem: {rel}: instruction content exceeds inspection limit; "
+                    "coverage incomplete",
+                    incomplete=True,
+                )
+            else:
+                proj.instruction_hits[rel] = inspect_instruction_text(text)
         if self.scan_secrets:
             self._detect_secrets(scan, file)
         if self._record_detection_rules(file):
@@ -2032,16 +1977,25 @@ class FilesystemConnector(BaseConnector):
             validation = parse_agent_manifest(file.rel, file.text, file.card_kind)
             self._file_errors(file.rel, validation.errors)
             file.card_valid = validation.valid
+            file.card_incomplete = validation.incomplete
         for m in file.file_matches:
             if m.signature_id == "protocol.mcp":
                 continue
             # A suggestive filename establishes neither a valid
             # manifest nor an agent. Keep coding-agent file evidence
-            # and validated product schemas; do not invent agents.
+            # and validated product schemas; do not invent agents. An
+            # incomplete card gets its own unverified finding instead.
             if file.card_kind and not file.card_valid:
                 continue
             m.extra["verified_agent"] = file.card_valid
             self._record(file.proj, m, file.rel, None)
+        issues = assess_posture(file.rel, file.text)
+        if issues:
+            for issue in issues:
+                sig_id = CLIENT_SIGNATURES[issue.client]
+                entry = {**issue.as_dict(), "file": file.rel}
+                if entry not in file.proj.posture.setdefault(sig_id, []):
+                    file.proj.posture[sig_id].append(entry)
 
     def _detect_secrets(self, scan: _ScanState, file: _SourceFile) -> None:
         """Collect provider credentials from the file text and a notebook's raw document.
@@ -2522,7 +2476,7 @@ class FilesystemConnector(BaseConnector):
         rel = file.rel
         if file.mcp_active:
             scan.mcp_files.append((rel, file.mcp_servers))
-        if file.card_kind and file.card_valid:
+        if file.card_kind and (file.card_valid or file.card_incomplete):
             if len(scan.card_files) >= _MAX_CARD_FILES:
                 self.ctx.error(
                     f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; "
@@ -2842,6 +2796,8 @@ class FilesystemConnector(BaseConnector):
             return self._codeowners_cache[root]
         rules: list[tuple[str, list[str]]] = []
         for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
+            if not self._included(cand):
+                continue
             p = root / cand
             if p.exists() or p.is_symlink():
                 try:
@@ -3242,7 +3198,10 @@ class FilesystemConnector(BaseConnector):
         for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
             apply_matches(f, [m], location=rel, snippet=snip)
         f.metadata["files"] = sorted(files)
-        self._inspect_instruction_files(f, root, sig_id, files)
+        self._inspect_instruction_files(f, proj, sig_id, files)
+        posture = proj.posture.get(sig_id, [])
+        if posture:
+            record_posture(f, posture)
         defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
         if defs:
             f.metadata["agent_definitions"] = defs
@@ -3257,23 +3216,12 @@ class FilesystemConnector(BaseConnector):
         return f
 
     @staticmethod
-    def _inspect_instruction_files(f: Finding, root: Path, sig_id: str, files: list[str]) -> None:
-        """Attach content checks (hidden comments, fetch-and-execute, invisible text) for instruction files.
-
-        The files are the coding-agent configuration this finding already
-        reports; each is re-read bounded and without following symlinks. A hit
-        adds evidence and a risk tag; the file content itself is never copied.
-        """
+    def _inspect_instruction_files(f: Finding, proj: _Project, sig_id: str, files: list[str]) -> None:
+        """Attach bounded content checks captured from the original confined file read."""
         rules: dict[str, int] = {}
         flagged: list[str] = []
-        # The scan root may itself be reached through a link (a temp dir on
-        # macOS); below it nothing is followed, as in the walk.
-        base = Path(os.path.realpath(root))
         for rel in sorted(files):
-            text = read_text(base / rel, MAX_INSTRUCTION_TEXT_BYTES)
-            if not text:
-                continue
-            hits = inspect_instruction_text(text)
+            hits = proj.instruction_hits.get(rel, [])
             if hits:
                 flagged.append(rel)
             for hit in hits:
@@ -3466,6 +3414,7 @@ class FilesystemConnector(BaseConnector):
                         weight=0.3,
                     )
                 )
+            record_server_risks(f, s, rel)
             cmd = " ".join([str(s.get("command") or "")] + [str(a) for a in s.get("args", [])]).lower()
             for capability, keywords in _MCP_CAPABILITY_KEYWORDS:
                 if any(k in cmd for k in keywords):
@@ -3488,15 +3437,60 @@ class FilesystemConnector(BaseConnector):
             f.metadata["risk_notes"] = sig.risk_notes
         return f
 
+    # Shared agent-manifest card scaffold per manifest kind: framework id,
+    # title prefix, whether the manifest name joins the title, evidence
+    # description and weight, and the capability declared by the format itself.
+    _CARD_KINDS: dict[str, tuple[str, str, bool, str, float, str | None]] = {
+        "a2a": ("protocol.a2a", "A2A agent card", True, "A2A Agent Card", 0.95, "multi-agent"),
+        "m365": (
+            "platform.m365-declarative-agent",
+            "M365 Copilot declarative agent",
+            True,
+            "Microsoft 365 declarative agent manifest",
+            0.95,
+            None,
+        ),
+        "langgraph": (
+            "framework.langgraph",
+            "LangGraph deployment manifest",
+            False,
+            "langgraph.json deployment manifest",
+            0.95,
+            None,
+        ),
+        "crewai": (
+            "framework.crewai",
+            "CrewAI agent definitions",
+            False,
+            "CrewAI agents.yaml",
+            0.9,
+            "multi-agent",
+        ),
+    }
+
     def _card_finding(self, label: str, root: Path, rel: str, text: str, kind: str) -> Finding | None:
         validation = parse_agent_manifest(rel, text, kind)
-        if not validation.valid:
+        if not validation.valid and not validation.incomplete:
             self._file_errors(rel, validation.errors)
             return None
         # Retain sibling credential context before projecting descriptive fields.
         # An opaque secret may also appear in a description, URL or dependency.
         data = sanitize(validation.data)
         f = self._base(label, root, rel, Kind.AGENT, "", "agent-manifest")
+        spec = self._CARD_KINDS.get(kind)
+        if spec:
+            fw, prefix, named, description, weight, capability = spec
+            if validation.incomplete:
+                prefix = f"Incomplete {prefix}"
+            f.title = f"{prefix}: {(data.get('name') or rel) if named else rel}"
+            f.add_framework(fw)
+            if capability and validation.valid:
+                f.add_capability(capability)
+            f.add_evidence(
+                Evidence(
+                    signal=f"file:{fw}", description=description, location=rel, weight=weight, signature=fw
+                )
+            )
         if kind == "a2a":
             self._describe_a2a_card(f, rel, data)
         elif kind == "m365":
@@ -3507,22 +3501,17 @@ class FilesystemConnector(BaseConnector):
             self._describe_crewai_agents(f, rel, data)
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
-        f.kind = Kind.AGENT
+        if validation.incomplete:
+            # Evidence of the protocol, never of an agent. Its validation
+            # errors were recorded when the file was read.
+            f.kind = Kind.FRAMEWORK_USAGE
+            f.add_tag("incomplete-agent-card")
+            f.metadata["card_errors"] = list(validation.errors)
+        else:
+            f.kind = Kind.AGENT
         return f
 
     def _describe_a2a_card(self, f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.title = f"A2A agent card: {data.get('name') or rel}"
-        f.add_framework("protocol.a2a")
-        f.add_capability("multi-agent")
-        f.add_evidence(
-            Evidence(
-                signal="file:protocol.a2a",
-                description="A2A Agent Card",
-                location=rel,
-                weight=0.95,
-                signature="protocol.a2a",
-            )
-        )
         f.metadata["agent_card"] = {
             "name": data.get("name"),
             "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
@@ -3546,17 +3535,6 @@ class FilesystemConnector(BaseConnector):
 
     @staticmethod
     def _describe_m365_agent(f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.title = f"M365 Copilot declarative agent: {data.get('name') or rel}"
-        f.add_framework("platform.m365-declarative-agent")
-        f.add_evidence(
-            Evidence(
-                signal="file:platform.m365-declarative-agent",
-                description="Microsoft 365 declarative agent manifest",
-                location=rel,
-                weight=0.95,
-                signature="platform.m365-declarative-agent",
-            )
-        )
         f.metadata["declarative_agent"] = {
             "name": data.get("name"),
             "description": truncate(sanitize_text(str(data.get("description", ""))), 300),
@@ -3574,17 +3552,6 @@ class FilesystemConnector(BaseConnector):
 
     @staticmethod
     def _describe_langgraph_manifest(f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.title = f"LangGraph deployment manifest: {rel}"
-        f.add_framework("framework.langgraph")
-        f.add_evidence(
-            Evidence(
-                signal="file:framework.langgraph",
-                description="langgraph.json deployment manifest",
-                location=rel,
-                weight=0.95,
-                signature="framework.langgraph",
-            )
-        )
         graphs = data.get("graphs", {}) or {}
         f.metadata["graphs"] = _clip(list(graphs.keys()) if isinstance(graphs, dict) else graphs)
         f.metadata["dependencies"] = _clip(data.get("dependencies"))
@@ -3595,18 +3562,6 @@ class FilesystemConnector(BaseConnector):
         f.add_capability("tool-use")
 
     def _describe_crewai_agents(self, f: Finding, rel: str, data: dict[str, Any]) -> None:
-        f.title = f"CrewAI agent definitions: {rel}"
-        f.add_framework("framework.crewai")
-        f.add_capability("multi-agent")
-        f.add_evidence(
-            Evidence(
-                signal="file:framework.crewai",
-                description="CrewAI agents.yaml",
-                location=rel,
-                weight=0.9,
-                signature="framework.crewai",
-            )
-        )
         f.metadata["agents"] = [
             {
                 "name": k,
@@ -3849,200 +3804,6 @@ def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int 
     return text if len(text) <= width else text[: width - 1] + "…"
 
 
-class _WalkLimitError(ValueError):
-    """A bounded enumeration stopped; retain findings and report incomplete coverage."""
-
-
-@dataclass
-class _WalkBudget:
-    """Bound retained directory names and all auxiliary listings within one source-tree scan."""
-
-    maximum: int = DEFAULT_MAX_WALK_ENTRIES
-    check_deadline: Callable[[], None] | None = None
-    entries: int = 0
-
-    def check(self) -> None:
-        if self.check_deadline is not None:
-            # Completion failures use the connector's single canonical error.
-            # Only entry exhaustion is recoverable inside the directory walk.
-            self.check_deadline()
-
-    def count_entry(self) -> None:
-        self.check()
-        self.entries += 1
-        if self.entries > self.maximum:
-            raise _WalkLimitError(f"max_entries ({self.maximum}) reached during directory enumeration")
-
-
-@dataclass
-class _WalkCounters:
-    """What one directory walk has examined so far, shared with its link checks."""
-
-    examined: int = 0  # files and links counted toward max_files
-    non_regular: int = 0  # entries named like analyzable content that are not regular files
-    stop_at: float | None = None  # monotonic time after which link checks stop (deadline minus margin)
-    # Directory (POSIX, relative to the root) -> project root of the files in
-    # it, so a directory holding many links lists its ancestors once.
-    project_roots: dict[str, str] = field(default_factory=dict)
-    budget: _WalkBudget = field(default_factory=_WalkBudget)
-
-
-def _project_root(
-    root: Path,
-    rel: str,
-    cache: dict[str, str] | None = None,
-    *,
-    budget: _WalkBudget | None = None,
-) -> str:
-    """The project a file at ``rel`` belongs to, as ``_iter_entries`` assigns it.
-
-    That is the deepest ancestor directory below the scan root holding a
-    project marker, or ``"."``. Used for the symlink checks only; ``cache``
-    remembers the answer for every directory the lookup passed through, so a
-    tree planted with links costs one listing per directory, not per link.
-    """
-    directory = PurePosixPath(rel).parent.as_posix()
-    if cache is not None and directory in cache:
-        return cache[directory]
-    passed: list[str] = []
-    result = "."
-    budget = budget or _WalkBudget()
-    for parent in PurePosixPath(rel).parents:
-        ancestor = parent.as_posix()
-        if ancestor == ".":
-            break
-        passed.append(ancestor)
-        try:
-            budget.check()
-            names = []
-            with os.scandir(root / ancestor) as entries:
-                for entry in entries:
-                    budget.count_entry()
-                    names.append(entry.name)
-        except OSError:
-            continue
-        if _marks_project(root / ancestor, names):
-            result = ancestor
-            break
-    if cache is not None:
-        # Every directory between the file and its project root (or the scan
-        # root) shares the answer: no marker was found below the result.
-        for ancestor in passed:
-            cache.setdefault(ancestor, result)
-    return result
-
-
-def _walk_directories(
-    top: Path, onerror: Callable[[OSError], None], *, budget: _WalkBudget | None = None
-) -> Iterator[tuple[str, list[str], list[str]]]:
-    """Walk ``top`` top-down like ``os.walk(top, followlinks=False, onerror=onerror)``, without recursion.
-
-    ``os.walk`` recurses before Python 3.12, so a tree about a thousand directories
-    deep ends in a RecursionError that discards every finding. This keeps its
-    contract: a directory is yielded before its children, a link to a directory is
-    listed in ``dirnames`` but never entered, the caller may prune or reorder
-    ``dirnames`` in place, and a directory that cannot be listed is passed to
-    ``onerror`` and skipped. Every name is charged before retention, including
-    names the caller later excludes. The shared budget also checks cancellation
-    and deadlines, and bounds auxiliary coverage probes.
-    """
-    stack = [os.fspath(top)]
-    budget = budget or _WalkBudget()
-    while stack:
-        budget.check()
-        current = stack.pop()
-        dirs: list[str] = []
-        files: list[str] = []
-        try:
-            with os.scandir(current) as entries:
-                for entry in entries:
-                    budget.count_entry()
-                    try:
-                        is_dir = entry.is_dir()
-                    except OSError:
-                        is_dir = False
-                    (dirs if is_dir else files).append(entry.name)
-        except OSError as error:
-            onerror(error)
-            continue
-        yield current, dirs, files
-        for name in reversed(dirs):
-            budget.check()
-            child = os.path.join(current, name)
-            if not os.path.islink(child):
-                stack.append(child)
-
-
-def _report_name(name: str) -> str:
-    """A report-safe form of a path or path component read from disk.
-
-    ``os.walk`` returns the bytes of a name that is not UTF-8 as lone surrogates,
-    which no reporter can encode: each becomes a ``\\xNN`` escape. Valid names are
-    returned unchanged; I/O keeps using the ``Path`` that holds the on-disk name.
-    """
-    if name.isascii():
-        return name
-    try:
-        name.encode("utf-8")
-    except UnicodeEncodeError:
-        try:
-            raw = name.encode("utf-8", errors="surrogateescape")
-        except UnicodeEncodeError:
-            raw = name.encode("utf-8", errors="backslashreplace")
-        return raw.decode("utf-8", errors="backslashreplace")
-    return name
-
-
-def _nearest_root(rel_dir: str, roots: list[str]) -> str:
-    """Discard completed branches from the active root stack during the walk."""
-    while len(roots) > 1 and rel_dir != roots[-1] and not rel_dir.startswith(roots[-1] + "/"):
-        roots.pop()
-    return roots[-1]
-
-
-def _mcp_client_for(rel: str) -> str:
-    r = rel.lower()
-    if "claude_desktop_config" in r:
-        return "Claude Desktop"
-    if ".mcp.json" in r or "/.claude/" in r:
-        return "Claude Code"
-    if ".cursor/" in r:
-        return "Cursor"
-    if ".vscode/" in r:
-        return "VS Code / Copilot"
-    if ".windsurf" in r or "codeium" in r:
-        return "Windsurf"
-    if "cline" in r:
-        return "Cline"
-    if ".roo/" in r:
-        return "Roo Code"
-    if ".codex/" in r:
-        return "OpenAI Codex"
-    if ".gemini/" in r:
-        return "Gemini CLI"
-    if ".kiro/" in r or ".amazonq/" in r:
-        return "Amazon Q / Kiro"
-    if ".continue/" in r:
-        return "Continue"
-    if "opencode" in r:
-        return "OpenCode"
-    if "smithery" in r or r.endswith("server.json"):
-        return "MCP server manifest"
-    return "generic"
-
-
-_SECRETISH = re.compile(r"(?i)(key|token|secret|password|passwd|credential|auth)")
-# Gemini CLI names its Streamable HTTP endpoint `httpUrl` (`url` is SSE).
-_MCP_URL_KEYS = ("url", "httpUrl", "serverUrl", "endpoint")
-# Spellings of one MCP server field; an entry that sets more than one is ambiguous.
-_MCP_FIELD_ALIASES: tuple[tuple[str, ...], ...] = (
-    ("env", "environment"),
-    _MCP_URL_KEYS,
-    ("type", "transport"),
-    ("autoApprove", "alwaysAllow"),
-)
-
-
 # IPython line and cell magics (%pip, %%time) and shell escapes (!pip), each
 # alone on its line, as IPython rewrites them before Python reads the cell.
 # "% name" continuing an expression is the modulo operator and stays.
@@ -4153,347 +3914,3 @@ def _redacted_source(text: str, structure: Any) -> str:
         raise
     except (ValueError, RecursionError, yaml.YAMLError):
         return sanitize_text(text)
-
-
-def _safe_source_text(rel: str, text: str) -> str:
-    """Use structured credential context while retaining source line positions."""
-    return _redacted_source(text, _structured_context(rel, text))
-
-
-# `Bearer $TOKEN`: Gemini CLI expands shell-style variables in env and headers.
-_SHELL_ENV_REFERENCE = re.compile(r"(?:[A-Za-z][\w-]*[ \t]+)?\$[A-Z_][A-Z0-9_]*")
-# `GOOGLE_APPLICATION_CREDENTIALS=/app/key.json` names a credential file; the
-# path is redacted with the rest of the argument but is not an inline secret.
-_CREDENTIAL_FILE_ARGUMENT = re.compile(
-    r"[A-Z][A-Z0-9_]*(?:CREDENTIALS|_FILE|_PATH)=(?:/|\./|\.\./|~/)[A-Za-z0-9_./@%+-]*"
-)
-
-
-# An environment value under a sensitive key is redacted wherever it repeats.
-# When that value is itself a variable reference, its repetition in an
-# argument (`-v ${KEY_FILE}:/app/key.json`) does not disclose a secret.
-_VARIABLE_REFERENCE = r"(?:\$\{\{[^}\r\n]{1,200}\}\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Z_][A-Z0-9_]*)"
-
-
-def _only_references_redacted(before: str, after: str) -> bool:
-    parts = after.split(REDACTED)
-    if len(parts) < 2:
-        return False
-    pattern = _VARIABLE_REFERENCE.join(re.escape(part) for part in parts)
-    return re.fullmatch(pattern, before) is not None
-
-
-def _args_reveal_secret(args: list[Any], sanitized: Any) -> bool:
-    """True when sanitizing changed an argument that could carry a credential value.
-
-    A credential-file path assignment and an argument whose only redacted
-    parts are variable references remain redacted, but are not inline secrets.
-    """
-    if not isinstance(sanitized, list) or len(sanitized) != len(args):
-        return bool(sanitized != args)
-    return any(
-        before != after
-        and not (
-            isinstance(before, str)
-            and isinstance(after, str)
-            and (_CREDENTIAL_FILE_ARGUMENT.fullmatch(before) or _only_references_redacted(before, after))
-        )
-        for before, after in zip(args, sanitized, strict=True)
-    )
-
-
-_WORKFLOW_PATH = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
-_EMBEDDED_MCP_MARKERS = ('"mcpServers"', '"mcp_servers"')
-
-
-def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
-    """Collect MCP servers passed as JSON strings to workflow step inputs.
-
-    Agent actions take their MCP configuration as a step input, for example
-    `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`. The
-    workflow itself is not an MCP document, so only those embedded objects
-    are parsed. Server names repeated across steps keep a numbered suffix.
-    """
-    servers: dict[str, Any] = {}
-    jobs = workflow.get("jobs") if isinstance(workflow, dict) else None
-    for job in jobs.values() if isinstance(jobs, dict) else ():
-        steps = job.get("steps") if isinstance(job, dict) else None
-        for step in steps if isinstance(steps, list) else ():
-            inputs = step.get("with") if isinstance(step, dict) else None
-            for value in inputs.values() if isinstance(inputs, dict) else ():
-                if not (
-                    isinstance(value, str)
-                    and value.lstrip().startswith("{")
-                    and any(marker in value for marker in _EMBEDDED_MCP_MARKERS)
-                ):
-                    continue
-                try:
-                    embedded = _load_json_lenient(value)
-                except (ValueError, RecursionError):
-                    errors.append("invalid embedded MCP configuration syntax")
-                    continue
-                container = (
-                    embedded.get("mcpServers", embedded.get("mcp_servers"))
-                    if isinstance(embedded, dict)
-                    else None
-                )
-                if not isinstance(container, dict):
-                    errors.append("embedded MCP servers must be an object")
-                    continue
-                for name, cfg in container.items():
-                    key, suffix = str(name), 2
-                    while key in servers:
-                        key, suffix = f"{name}#{suffix}", suffix + 1
-                    servers[key] = cfg
-    return {"mcpServers": servers} if servers else {}
-
-
-def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
-    errors = errors if errors is not None else []
-    data = _load_mcp_document(rel, text, errors)
-    if data is None:
-        return []
-    servers = _mcp_server_entries(data, errors)
-    if servers is None:
-        return []
-    out: list[dict[str, Any]] = []
-    for name, cfg in servers.items():
-        server = _mcp_server_record(name, cfg, errors)
-        if server is not None:
-            out.append(server)
-    # Each output key is generated by this parser. Preserve its schema while
-    # sanitizing all values in the context of the entire source document.
-    names = [tuple(server) for server in out]
-    projected = [[server[key] for key in keys] for server, keys in zip(out, names, strict=True)]
-    cleaned = sanitize((data, projected))[1]
-    return [dict(zip(keys, values, strict=True)) for keys, values in zip(names, cleaned, strict=True)]
-
-
-def _load_mcp_document(rel: str, text: str, errors: list[str]) -> dict[str, Any] | None:
-    data: Any  # untrusted repository content; every shape is checked below
-    try:
-        if rel.endswith(".toml"):
-            data = tomllib.loads(text)
-        elif _WORKFLOW_PATH.search(rel):
-            # GitHub's `on:` key is a YAML 1.1 boolean, so a workflow needs the
-            # configuration loader that permits non-string mapping keys.
-            data = _embedded_workflow_mcp(strict_bounded_safe_load(text, require_string_keys=False), errors)
-        elif rel.endswith((".yaml", ".yml")):
-            data = strict_bounded_safe_load(text)
-        else:
-            data = _load_json_lenient(text)
-    except (ValueError, RecursionError, yaml.YAMLError):
-        errors.append("invalid MCP configuration syntax")
-        return None
-    if not isinstance(data, dict):
-        errors.append("MCP configuration must be an object")
-        return None
-    return data
-
-
-def _mcp_server_entries(data: dict[str, Any], errors: list[str]) -> dict[Any, Any] | None:
-    """Return the server table of a client configuration or registry manifest, keyed by name."""
-    mcp = data.get("mcp", {})
-    if not isinstance(mcp, dict):
-        errors.append("MCP mcp field must be an object")
-        mcp = {}
-    containers: list[Any] = []
-    for key in ("mcp_servers", "mcpServers", "servers"):
-        if key in data:
-            containers.append(data[key])
-    if "servers" in mcp:
-        containers.append(mcp["servers"])
-    if len(containers) > 1:
-        errors.append("multiple MCP server containers are ambiguous")
-        return None
-    servers: Any = containers[0] if containers else {}
-    if servers is None:
-        servers = {}
-    if isinstance(servers, list):
-        if any(not isinstance(server, dict) for server in servers):
-            errors.append("MCP server entries must be objects")
-        named_servers: dict[str, dict[str, Any]] = {}
-        for i, server in enumerate(servers):
-            if not isinstance(server, dict):
-                continue
-            name = str(server.get("name", i))
-            if name in named_servers:
-                errors.append("duplicate MCP server names are ambiguous")
-                return None
-            named_servers[name] = server
-        servers = named_servers
-    if not servers and isinstance(data.get("name"), str) and (data.get("packages") or data.get("remotes")):
-        servers = {data["name"]: data}
-    if not isinstance(servers, dict):
-        errors.append("MCP servers must be an object or array")
-        return None
-    return servers
-
-
-def _mcp_server_record(name: Any, cfg: Any, errors: list[str]) -> dict[str, Any] | None:
-    """Project one configured server to its reported fields; None when it is not a usable entry."""
-    if not isinstance(cfg, dict):
-        errors.append("MCP server entry must be an object")
-        return None
-    if any(sum(alias in cfg for alias in aliases) > 1 for aliases in _MCP_FIELD_ALIASES):
-        # Which spelling a client honors is not knowable here; picking one
-        # could hide the credentials or endpoint the other one configures.
-        errors.append("MCP server entry contains ambiguous field aliases")
-        return None
-    env = _mcp_mapping(_mcp_alias(cfg, ("env", "environment"), {}), "env", errors)
-    headers = _mcp_mapping(cfg.get("headers", {}), "headers", errors)
-    urls = _mcp_urls(cfg, errors)
-    url = urls[0] if urls else None
-    command = cfg.get("command")
-    if command is not None and not isinstance(command, str):
-        errors.append("MCP command must be a string")
-        command = None
-    if not (command and command.strip()) and not (url and url.strip()) and not _has_mcp_package(cfg):
-        if cfg.get("disabled") is not True and cfg.get("enabled") is not False:
-            errors.append("MCP server entry has no command, URL, or valid package")
-        return None
-    args = cfg.get("args", [])
-    args = [] if args is None else args
-    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
-        errors.append("MCP args must be an array of strings")
-        args = []
-    inline_locations = _inline_secret_locations(env, headers)
-    transport = _mcp_alias(cfg, ("type", "transport"), "stdio" if command else ("http" if url else "unknown"))
-    if not isinstance(transport, str):
-        errors.append("MCP transport must be a string")
-        transport = "unknown"
-    # Project only after sanitizing with the entire config: a credential in
-    # env/headers may be repeated as an otherwise unrecognizable argument.
-    field_names = (
-        "name",
-        "transport",
-        "command",
-        "args",
-        "url",
-        "urls",
-        "env_names",
-        "headers",
-        "auto_approve",
-    )
-    clean_values = sanitize(
-        (
-            cfg,
-            [
-                str(name),
-                transport,
-                command,
-                args,
-                url,
-                urls,
-                sorted(str(key) for key in env),
-                sorted(str(key) for key in headers),
-                _mcp_alias(cfg, ("autoApprove", "alwaysAllow"), None),
-            ],
-        )
-    )[1]
-    safe = dict(zip(field_names, clean_values, strict=True))
-    inline_locations += [
-        location
-        for location, changed in (
-            ("args", _args_reveal_secret(args, safe["args"])),
-            ("url", safe["url"] != url or safe["urls"] != urls),
-            ("command", safe["command"] != command),
-        )
-        if changed
-    ]
-    safe["args"] = safe["args"][:12]
-    safe["secrets_inline"] = bool(inline_locations)
-    if inline_locations:
-        safe["secret_locations"] = inline_locations
-    safe["disabled"] = _mcp_disabled(cfg, errors)
-    return safe
-
-
-def _mcp_mapping(value: Any, section: str, errors: list[str]) -> dict[Any, Any]:
-    """Return an ``env``/``headers`` table; an absent one is empty and a malformed one is reported."""
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        errors.append(f"MCP {section} must be an object")
-        return {}
-    return value
-
-
-def _mcp_alias(cfg: dict[str, Any], aliases: tuple[str, ...], default: Any) -> Any:
-    """Return the value of the one alias present in ``cfg`` (callers reject several), else ``default``.
-
-    Presence, not truthiness, selects the field: an empty or false value must
-    not let a lower-precedence spelling supply a different one.
-    """
-    return next((cfg[key] for key in aliases if key in cfg), default)
-
-
-def _mcp_urls(cfg: dict[str, Any], errors: list[str]) -> list[str]:
-    """Return every endpoint of a server: its own URL field, then each registry remote.
-
-    Every remote is kept so detection and risk see all of them, not only the
-    first one listed.
-    """
-    urls: list[str] = []
-    direct_url = _mcp_alias(cfg, _MCP_URL_KEYS, None)
-    if direct_url is not None:
-        if not isinstance(direct_url, str):
-            errors.append("MCP url must be a string")
-        elif direct_url.strip():
-            urls.append(direct_url)
-    remotes = cfg.get("remotes")
-    if remotes is not None:
-        if not isinstance(remotes, list):
-            errors.append("MCP remotes must be an array")
-        else:
-            for remote in remotes:
-                if not isinstance(remote, dict):
-                    errors.append("MCP remote entry must be an object")
-                    continue
-                remote_url = remote.get("url")
-                if remote_url is not None and not isinstance(remote_url, str):
-                    errors.append("MCP remote url must be a string")
-                elif isinstance(remote_url, str) and remote_url.strip():
-                    urls.append(remote_url)
-    return list(dict.fromkeys(urls))
-
-
-def _has_mcp_package(cfg: dict[str, Any]) -> bool:
-    """Whether a registry entry names at least one installable package."""
-    packages = cfg.get("packages")
-    return isinstance(packages, list) and any(
-        isinstance(package, dict)
-        and isinstance(package.get("registryType"), str)
-        and isinstance(package.get("identifier"), str)
-        and package["identifier"].strip()
-        for package in packages
-    )
-
-
-def _inline_secret_locations(env: dict[Any, Any], headers: dict[Any, Any]) -> list[str]:
-    """Name the tables that hold a credential-looking literal rather than a reference."""
-    return [
-        location
-        for location, items in (("env", env.items()), ("headers", headers.items()))
-        if any(
-            isinstance(value, str)
-            and value
-            and not value.startswith("${")
-            and not _SHELL_ENV_REFERENCE.fullmatch(value)
-            and not looks_like_placeholder(value)
-            and _SECRETISH.search(str(key))
-            and len(value) >= 12
-            for key, value in items
-        )
-    ]
-
-
-def _mcp_disabled(cfg: dict[str, Any], errors: list[str]) -> bool:
-    """Whether a server is switched off; malformed activation flags count as disabled."""
-    disabled = cfg.get("disabled", False)
-    enabled = cfg.get("enabled", True)
-    if not isinstance(disabled, bool) or not isinstance(enabled, bool):
-        errors.append("MCP enabled/disabled flags must be booleans")
-        # Unknown activation state cannot substantiate an active server.
-        return True
-    return disabled or not enabled

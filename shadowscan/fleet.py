@@ -23,8 +23,9 @@ from typing import Any
 
 from shadowscan import __version__
 from shadowscan.comparison import _SCHEMA as _SCOPE_SCHEMA
+from shadowscan.comparison import _complete, _findings, _scope_digest, _summary_matches_findings
 from shadowscan.merge import merge
-from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, ScanResult, ScanStats
+from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, Risk, ScanResult, ScanStats, now_iso
 
 MAX_SOURCES = 10_000
 _STATS_FIELDS = {f.name for f in fields(ScanStats)}
@@ -38,14 +39,32 @@ def _check(report: Any, name: str) -> dict[str, Any]:
     for finding in report["findings"]:
         if not isinstance(finding, dict) or finding.get("identity_schema") != FINDING_IDENTITY_SCHEMA:
             raise ValueError(f"{name}: a finding does not carry the current identity schema")
+    _findings(report)
     return report
 
 
 def _stats(report: dict[str, Any]) -> list[ScanStats]:
+    entries = report.get("stats")
+    if not isinstance(entries, list) or not entries:
+        return []
     out = []
-    for entry in report.get("stats") or []:
-        if isinstance(entry, dict):
-            out.append(ScanStats(**{k: v for k, v in entry.items() if k in _STATS_FIELDS}))
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("report stats entries must be objects")
+        for key in ("connector", "started_at"):
+            if not isinstance(entry.get(key), str) or not entry[key].strip():
+                raise ValueError("report stats identity is malformed")
+        for key in ("errors", "warnings"):
+            value = entry.get(key, [])
+            if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+                raise ValueError("report stats diagnostics must be arrays of strings")
+        for key in ("skipped", "incomplete", "cached"):
+            if key in entry and type(entry[key]) is not bool:
+                raise ValueError("report stats completion flags must be booleans")
+        for key in ("findings", "objects_examined"):
+            if key in entry and (type(entry[key]) is not int or entry[key] < 0):
+                raise ValueError("report stats counts must be nonnegative integers")
+        out.append(ScanStats(**{k: v for k, v in entry.items() if k in _STATS_FIELDS}))
     return out
 
 
@@ -57,6 +76,8 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         raise ValueError("too many reports to merge")
     findings: list[Finding] = []
     sources_by_id: dict[str, list[str]] = {}
+    risks_by_id: dict[str, Risk] = {}
+    shadow_by_id: dict[str, bool] = {}
     stats: list[ScanStats] = []
     sources: list[dict[str, Any]] = []
     fingerprints: list[str] = []
@@ -67,12 +88,10 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     inventory_size = 0
     for name, raw in reports:
         report = _check(raw, name)
-        summary_value = report.get("summary")
-        summary: dict[str, Any] = summary_value if isinstance(summary_value, dict) else {}
         scope_value = report.get("collection_scope")
         scope: dict[str, Any] = scope_value if isinstance(scope_value, dict) else {}
-        complete = bool(summary.get("complete"))
-        fingerprint = scope.get("fingerprint") if scope.get("comparable") is True else None
+        complete = _complete(report) and _summary_matches_findings(report)
+        fingerprint = _scope_digest(report)
         if not complete:
             comparable = False
             reasons.append(f"{name}: scan incomplete")
@@ -84,13 +103,32 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         for entry in report["findings"]:
             finding = Finding.from_dict(entry)
             sources_by_id.setdefault(finding.id, []).append(name)
+            previous = risks_by_id.get(finding.id)
+            if previous is None or (finding.risk.score, finding.risk.danger_score) > (
+                previous.score,
+                previous.danger_score,
+            ):
+                risks_by_id[finding.id] = finding.risk
+            shadow_by_id[finding.id] = shadow_by_id.get(finding.id, False) or finding.shadow is not False
             findings.append(finding)
         stats.extend(_stats(report))
+        if not complete:
+            stats.append(
+                ScanStats(
+                    connector="engine.fleet",
+                    started_at=now_iso(),
+                    incomplete=True,
+                    errors=[f"{name}: source report is incomplete or has inconsistent completion evidence"],
+                )
+            )
         if isinstance(report.get("started_at"), str):
             started.append(report["started_at"])
         if isinstance(report.get("finished_at"), str):
             finished.append(report["finished_at"])
-        inventory_size = max(inventory_size, int(report.get("inventory_size") or 0))
+        size = report.get("inventory_size", 0)
+        if type(size) is not int or size < 0:
+            raise ValueError("report inventory size must be a nonnegative integer")
+        inventory_size = max(inventory_size, size)
         sources.append(
             {
                 "name": name,
@@ -104,6 +142,14 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     for finding in merged:
         names = sorted(dict.fromkeys(sources_by_id.get(finding.id, [])))
         finding.metadata["merged_from"] = names
+        # Source scans can use different risk policies. Preserve the highest
+        # observed assessment instead of rescoring with an unknown policy or
+        # retaining whichever low-risk report appeared first.
+        finding.risk = risks_by_id[finding.id]
+        finding.shadow = shadow_by_id[finding.id]
+        if finding.shadow:
+            finding.registry_match = None
+        finding.metadata["fleet_risk_aggregation"] = "maximum-source-score"
     merged.sort(key=lambda f: (-f.risk.score, f.resource, f.id))
     if comparable:
         digest = hashlib.sha256("\n".join(sorted(fingerprints)).encode()).hexdigest()

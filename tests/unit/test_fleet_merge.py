@@ -90,3 +90,45 @@ def test_merge_rejects_reports_with_another_identity_schema(tmp_path: Path):
     assert "identity schema" in result.output
     with pytest.raises(ValueError):
         merge_reports([])
+
+
+@pytest.mark.parametrize("damage", ["no-stats", "summary-only", "truncated-findings", "bad-scope"])
+def test_fleet_cannot_restore_invalid_source_completion(tmp_path: Path, damage: str):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    healthy = json.loads(path.read_text())
+    broken = json.loads(path.read_text())
+    if damage == "no-stats":
+        broken["stats"] = []
+    elif damage == "summary-only":
+        broken["summary"]["complete"] = False
+    elif damage == "truncated-findings":
+        broken["findings"] = []
+    else:
+        broken["collection_scope"]["fingerprint"] = "not-a-digest"
+    result = merge_reports([("healthy", healthy), ("broken", broken)])
+    assert result.collection_scope["comparable"] is False
+    if damage != "bad-scope":
+        assert not result.complete
+
+
+def test_fleet_preserves_highest_source_risk_in_either_order(tmp_path: Path):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    for reverse in (False, True):
+        low = json.loads(path.read_text())
+        high = json.loads(path.read_text())
+        low["findings"][0]["risk"].update(score=10, level="low")
+        low["findings"][0]["shadow"] = False
+        high["findings"][0]["risk"].update(score=90, level="critical")
+        high["findings"][0]["shadow"] = True
+        inputs = [("low", low), ("high", high)]
+        result = merge_reports(list(reversed(inputs)) if reverse else inputs)
+        assert result.findings[0].risk.score == 90
+        assert result.findings[0].shadow is True
+
+
+def test_fleet_rejects_malformed_statistics(tmp_path: Path):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    report["stats"][0]["errors"] = ""
+    with pytest.raises(ValueError, match="diagnostics"):
+        merge_reports([("broken", report)])

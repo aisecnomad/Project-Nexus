@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import random
 import re
+import string
 from collections import Counter
 
 import pytest
@@ -167,6 +169,60 @@ def test_file_env_scope_iac_and_names(index: SignatureIndex):
     }
     assert "identity-app.openai-chatgpt" in {m.signature_id for m in index.match_name("ChatGPT")}
     assert "platform.n8n" in {m.signature_id for m in index.match_image("n8nio/n8n:1.60")}
+
+
+def test_sab_holdout_file_dialects_are_inventory_only(index: SignatureIndex):
+    cases = {
+        "openclaw.json": "platform.openclaw",
+        "clawdbot.json": "platform.openclaw",
+        "moltbot.json": "platform.openclaw",
+        "opencode.json": "coding-agent.misc-rules",
+        "goose_config.yaml": "coding-agent.goose",
+        "aider.conf.yml": "coding-agent.aider",
+        "flowise.json": "platform.flowise",
+        "dify.yml": "platform.dify",
+        "SKILL.md": "coding-agent.agent-skills",
+        "AGENTS.md": "coding-agent.agents-md",
+        "agent-card.json": "protocol.a2a",
+    }
+    for filename, expected in cases.items():
+        matches = index.match_file(filename)
+        assert expected in _ids(matches), filename
+    assert not index.get("platform.openclaw").agent_indicator
+    # The personal agent's state directory, under each of its names, belongs to
+    # the coding-agent signature alone.
+    for state_file in (
+        ".openclaw/openclaw.json",
+        ".openclaw/config.json",
+        "home/.clawdbot/clawdbot.json",
+        "home/.clawdbot/config.json",
+        ".moltbot/moltbot.json",
+        "home/.moltbot/config.json",
+    ):
+        assert _ids(index.match_file(state_file)) >= {"coding-agent.openclaw"}, state_file
+        assert "platform.openclaw" not in _ids(index.match_file(state_file)), state_file
+    for other in ("config.json", "app/config.json", "openclaw/config.json"):
+        assert "coding-agent.openclaw" not in _ids(index.match_file(other)), other
+    assert not index.get("coding-agent.agent-skills").agent_indicator
+    assert "platform.openclaw" in _ids(index.match_code("gateway.port: 18789"))
+    assert "platform.flowise" in _ids(index.match_code('{"category":"Agents","name":"toolAgent"}'))
+    assert "cloud.azure-ai-foundry-agents" in _ids(
+        index.match_iac("Microsoft.CognitiveServices/accounts/projects/agents")
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "${VAR}", "changeme", "your-key-here", "a" * 32, "abcdefghijklmnop"],
+)
+def test_empty_placeholder_and_low_entropy_credentials_do_not_match(index: SignatureIndex, value: str):
+    assert index.match_secrets(f"OPENAI_API_KEY={value}") == []
+
+
+def test_high_entropy_assigned_credential_is_matched(index: SignatureIndex):
+    value = "R4nd0m9Qx2Vb7Lp6"
+    matches = index.match_secrets(f"OPENAI_API_KEY={value}")
+    assert [match.signature_id for match in matches] == ["heuristic.inline-credential"]
 
 
 def test_signature_categories_cover_all_surfaces(index: SignatureIndex):
@@ -344,6 +400,42 @@ def test_domain_suffix_spoofing_and_sk_prefixed_keys(index: SignatureIndex):
         and generic[0].signature.category == "heuristic"
         and not generic[0].agent_indicator
     )
+
+
+def test_short_unattributed_sk_keys_are_reported_only_when_random(index: SignatureIndex):
+    rng = random.Random(20261006)
+    alphabet = string.ascii_letters + string.digits
+    for length in (20, 22, 31):
+        # A digit and a letter at the end keep the synthetic body unambiguous.
+        key = "sk-" + "".join(rng.choice(alphabet) for _ in range(length - 2)) + "7q"
+        for text in (
+            f'client = OpenAI(api_key="{key}")',
+            f"Authorization: Bearer {key}",
+            f'{{"apiKey": "{key}"}}',
+            f"api_key: {key}",
+        ):
+            matches = index.match_secrets(text)
+            assert [(m.signature_id, m.value) for m in matches] == [("heuristic.unattributed-api-key", key)]
+        # An assignment the generic rule already reports keeps that match and its weight.
+        [assigned] = index.match_secrets(f"OPENAI_API_KEY={key}")
+        assert (assigned.signature_id, assigned.weight) == ("heuristic.inline-credential", 0.8)
+    assert index.match_secrets("token sk-" + "aB3dE5gH7jK9mN1pQ2s") == []  # 19 characters
+    for lookalike in (
+        "PubkeyAcceptedAlgorithms sk-ecdsa-sha2-nistp256-cert-v01@openssh.com",
+        "PubkeyAcceptedAlgorithms sk-ssh-ed25519-cert-v01@openssh.com",
+        '<div class="sk-folding-cube-spinner-wrap"></div>',
+        "git checkout -b sk-1234-fix-the-login-page",
+        "api_key = 'sk-" + "x" * 24 + "'",
+        "api_key = 'sk-" + "1234567890abcdefghijkl" + "'",
+        "api_key = 'sk-" + "abc123def456ghi789jkl0" + "'",
+    ):
+        assert index.match_secrets(lookalike) == [], lookalike
+    # A short match never takes the prefix of a longer hyphenated key.
+    longer = "sk-" + "Zx81Kq0Lm2Np4Rs6Tv8Wy" + "-" + "Ab1Cd3Ef5Gh7Ij9Kl"
+    assert [m.value for m in index.match_secrets(f"key: {longer}")] == [longer]
+    # A rejected look-alike does not hide the generic match of the same value.
+    mixed = "sk-" + "AbCdEfGhIjKlMnOpQrStUv"
+    assert _ids(index.match_secrets(f"MY_API_KEY={mixed}")) == {"heuristic.inline-credential"}
 
 
 def test_azure_openai_model_ids_need_azure_context(index: SignatureIndex):

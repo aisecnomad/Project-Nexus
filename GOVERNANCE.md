@@ -169,11 +169,21 @@ When a reviewer or maintainer steps away:
    including authorized live tenant checks where applicable. Offline tests,
    provenance and an AI-labeled corpus do not establish live tenant acceptance.
 6. Only after review and acceptance may the maintainer tag and publish the
-   candidate as a separate manual action. The evidence workflow does not
-   publish a release automatically.
+   candidate as a separate manual action: push an annotated tag `v<version>` on the
+   reviewed commit, dispatch the evidence workflow again with `publish: pypi`,
+   and approve the protected `pypi` environment. The workflow uploads only the
+   attested wheel through PyPI trusted publishing and never publishes on its
+   own; the
+   [publishing runbook](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/publishing.md)
+   has the steps.
 
-The project is unreleased. A source version string is not a release, a published
-package or proof that these steps have been completed.
+Personal signatures on release tags are optional. The default path uses an
+unsigned annotated tag protected against updates and deletion, with GitHub
+and PyPI attestations establishing the artifact's workflow provenance. Those
+attestations do not establish a personal tag signature or independent review.
+
+The package remains Alpha. A source version string or published package is
+not proof that independent review and deployment acceptance are complete.
 
 ## AI-assisted development
 

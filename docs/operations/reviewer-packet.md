@@ -58,13 +58,13 @@ review record.
 
 ## What not to trust
 
-- Severity labels or `shadow: true` as proof of unauthorized execution
-- Confidence as a calibrated probability
-- Author-written evaluation corpora as field precision or recall
-- `archive/reviews/` as an external audit
-- The `0.1.1` version string as a published release
-- GitHub Pages at <https://aisecnomad.github.io/Project-Nexus/> as the MkDocs
-  site until Pages is switched to the Docs workflow artifact
+- Treat severity labels or `shadow: true` as proof of unauthorized execution.
+- Treat confidence as a calibrated probability.
+- Treat author-written evaluation corpora as field precision or recall.
+- Treat `archive/reviews/` as an external audit.
+- Treat the `0.1.2` version string as a published release.
+- Treat GitHub Pages at <https://aisecnomad.github.io/Project-Nexus/> as the
+  MkDocs site until Pages is switched to the Docs workflow artifact.
 
 ## Suggested review slices
 
@@ -76,7 +76,7 @@ Pick one. Reading every connector is a multi-day job.
 | HTTP / origin controls | connector HTTP helpers, [security policy](../security.md) | SSRF, body budget, private-address default |
 | Inventory binding | `shadowscan/registry.py`, [inventory](../inventory.md) | When is `shadow: true` wrong? |
 | One live connector | `cloud.aws` or `identity.entra` plus its fixtures | Fail-closed on malformed pages? |
-| Release path | `.github/workflows/release.yml`, [production](../production.md) | Does anything publish a tag or package? |
+| Release path | `.github/workflows/release.yml`, [publishing runbook](publishing.md), [production](../production.md) | Can anything other than the approval-gated `publish` job upload a package, or upload anything but the attested wheel? Does anything push a tag? |
 
 For the October 1 discovery corrections, include these paired checks:
 
@@ -109,6 +109,12 @@ For the October 2 review corrections, also check:
 Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be
 effective on `main`; their presence in workflow files alone is insufficient.
+
+## Suggested deliverable
+
+A concise review record could list the SHA reviewed, commands run, review slices
+covered, findings and remaining limitations. This is a suggested record, not a
+certification of independence or release approval.
 
 ## How to record a review
 

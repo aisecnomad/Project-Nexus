@@ -54,6 +54,8 @@ def test_all_formats_render(fixtures, index):
     assert f"script-src 'sha256-{script_hash}'" in html
     assert "default-src 'none'" in html and "name='referrer' content='no-referrer'" in html
     assert set(FORMATS) == {"table", "csv", "cyclonedx", "html", "json", "markdown", "sarif"}
+    cdx = json.loads(render(result, "cyclonedx"))
+    assert cdx["bomFormat"] == "CycloneDX" and cdx["specVersion"] == "1.6"
 
 
 def test_reports_name_the_top_confidence_bucket_strong():

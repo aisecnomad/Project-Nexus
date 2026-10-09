@@ -181,6 +181,10 @@ requests, and supported agent construction/loops. It also contains positive and
 negative npm alias attribution cases added during the October 1 code review,
 and October 2 cases for named Python URL dependencies and paired active and
 commented Gradle and Dockerfile declarations, with exact finding assertions.
+October 6 cases from the head-to-head benchmark (`tools/benchmark/`) cover
+Goose's user configuration at `~/.config/goose/config.yaml` and an installed
+Cline editor extension without an MCP settings file, each with a look-alike
+negative.
 It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its
 annotation ledger remain frozen; adding regression cases does not refresh their

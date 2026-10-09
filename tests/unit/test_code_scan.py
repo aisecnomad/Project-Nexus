@@ -15,10 +15,10 @@ from shadowscan.connectors.code.filesystem import (
     DEFAULT_EXCLUDES,
     DISCLOSED_DEFAULT_EXCLUDES,
     FilesystemConnector,
-    _nearest_root,
 )
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.connectors.code.walk import _nearest_root
 from shadowscan.models import Kind
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
@@ -69,10 +69,13 @@ def test_sample_repo_scan(run_connector, fixtures):
     assert claude.metadata["agent_definitions"][0]["name"] == "code-reviewer"
     assert "autonomous" in claude.capabilities  # bypassPermissions / Bash(*)
 
-    secrets = kinds[Kind.SECRET]
-    assert len(secrets) == 1 and secrets[0].metadata["path"] == "services/research-agent/app/config.py"
-    assert {"provider.openai", "provider.anthropic"} <= set(secrets[0].model_providers)
-    for e in secrets[0].evidence:
+    by_path = {f.metadata["path"]: f for f in kinds[Kind.SECRET]}
+    # The inline GitHub token in .mcp.json is a hard-coded credential too (token-prefix rule).
+    assert set(by_path) == {"services/research-agent/app/config.py", ".mcp.json"}
+    assert [e.signal for e in by_path[".mcp.json"].evidence] == ["secret:heuristic.inline-credential"]
+    config_secret = by_path["services/research-agent/app/config.py"]
+    assert {"provider.openai", "provider.anthropic"} <= set(config_secret.model_providers)
+    for e in config_secret.evidence:
         assert "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0" not in (
             e.description + (e.snippet or "")
         ), "secret must be redacted"
@@ -154,10 +157,10 @@ def test_project_root_walk_uses_active_ancestors_for_nested_and_wide_repos(tmp_p
         project.mkdir(parents=True, exist_ok=True)
         (project / "pyproject.toml").write_text("[project]\nname='example'\n")
         (project / "bot.py").write_text("from langchain import agents\n")
-    files = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))._iter_files(
+    files = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))._iter_entries(
         tmp_path
     )
-    assigned = {rel: project for rel, _, project in files if rel.endswith("bot.py")}
+    assigned = {rel: project for rel, _, project, _ in files if rel.endswith("bot.py")}
     assert assigned == {
         "first/bot.py": "first",
         "first/nested/bot.py": "first/nested",

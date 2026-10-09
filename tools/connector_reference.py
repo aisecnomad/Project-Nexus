@@ -25,6 +25,9 @@ SURFACE_TITLES = {
     "lowcode": "Low-code",
     "saas": "SaaS",
     "cloud": "Cloud",
+    "endpoint": "Endpoint",
+    "network": "Network",
+    "runtime": "Runtime",
 }
 # Braces too: the docs build's attr_list extension reads "{...}" as attributes.
 _MARKDOWN_SPECIAL = re.compile(r"([\\*_\[\]{}|])")

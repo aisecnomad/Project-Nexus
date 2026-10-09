@@ -37,6 +37,7 @@ _BUILTIN: dict[str, str] = {
     "identity.jwt": "shadowscan.connectors.identity.jwt:JwtConnector",
     # gateway
     "gateway.logs": "shadowscan.connectors.gateway.logs:GatewayLogConnector",
+    "gateway.otel": "shadowscan.connectors.gateway.otel:OtelConnector",
     # lowcode
     "lowcode.power-platform": "shadowscan.connectors.lowcode.power_platform:PowerPlatformConnector",
     "lowcode.salesforce": "shadowscan.connectors.lowcode.salesforce:SalesforceConnector",
@@ -58,6 +59,19 @@ _BUILTIN: dict[str, str] = {
     "cloud.gcp": "shadowscan.connectors.cloud.gcp:GcpConnector",
     "cloud.azure": "shadowscan.connectors.cloud.azure:AzureConnector",
     "cloud.oci": "shadowscan.connectors.cloud.oci:OciConnector",
+    "cloud.kubernetes": "shadowscan.connectors.cloud.kubernetes:KubernetesConnector",
+    "cloud.openshift": "shadowscan.connectors.cloud.kubernetes:OpenShiftConnector",
+    # endpoint
+    "endpoint.host": "shadowscan.connectors.endpoint.runtime:HostConnector",
+    "endpoint.mcp": "shadowscan.connectors.endpoint.runtime:MCPInventoryConnector",
+    "endpoint.ollama": "shadowscan.connectors.endpoint.runtime:OllamaConnector",
+    "endpoint.models": "shadowscan.connectors.endpoint.runtime:ModelArtifactConnector",
+    "endpoint.ebpf": "shadowscan.connectors.endpoint.runtime:EbpfConnector",
+    "endpoint.inventory": "shadowscan.connectors.endpoint.inventory:EndpointInventoryConnector",
+    # network
+    "network.logs": "shadowscan.connectors.network.logs:NetworkLogConnector",
+    # runtime
+    "runtime.processes": "shadowscan.connectors.runtime.processes:RuntimeProcessConnector",
 }
 
 # Bare namespace ids ("cloud", "saas", ...) are reserved alongside built-in names.

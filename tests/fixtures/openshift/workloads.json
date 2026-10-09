@@ -1,0 +1,18 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "route.openshift.io/v1",
+      "kind": "Route",
+      "metadata": {"name": "model-api", "namespace": "ai"},
+      "spec": {"host": "models.example.invalid"}
+    },
+    {
+      "apiVersion": "serving.kserve.io/v1beta1",
+      "kind": "InferenceService",
+      "metadata": {"name": "text-model", "namespace": "ai"},
+      "spec": {}
+    }
+  ]
+}

@@ -97,7 +97,14 @@ def _setup_logging(verbose: int, quiet: bool) -> None:
     logging.getLogger("botocore").setLevel(logging.WARNING)
 
 
-def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_rows: int | None) -> None:
+def _emit(
+    result: ScanResult,
+    fmt: str,
+    output: str | None,
+    verbose: bool,
+    max_rows: int | None,
+    index: SignatureIndex | None = None,
+) -> None:
     if fmt == "table" and not output:
         try:
             print_table(result, console=console, verbose=verbose, max_rows=max_rows)
@@ -105,7 +112,7 @@ def _emit(result: ScanResult, fmt: str, output: str | None, verbose: bool, max_r
             raise click.ClickException("could not render report; result data is invalid") from None
         return
     try:
-        text = render(result, "json" if fmt == "table" else fmt)
+        text = render(result, "json" if fmt == "table" else fmt, index)
     except (OverflowError, RecursionError, TypeError, ValueError):
         # Reporter exceptions can contain attacker-controlled values. Invalid
         # plugin output (including NaN/Infinity) must fail before stdout or an
@@ -230,7 +237,9 @@ def _run_and_emit_with_deadline(
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
     try:
-        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows)
+        # The scan's own index names custom-pack signatures in the CycloneDX output.
+        index = getattr(engine, "index", None)
+        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows, index=index)
     except Exception:  # any emission failure must still release an abandoned CLI worker
         if engine.abandoned_workers:
             _exit_abandoned_workers(
@@ -538,7 +547,9 @@ class _MainGroup(click.Group):
 @click.option("-v", "--verbose", count=True, help="-v info, -vv debug")
 @click.option("-q", "--quiet", is_flag=True, help="errors only")
 def main(verbose: int, quiet: bool) -> None:
-    """ShadowScan — discover shadow AI agents across code, identity, gateways, low-code, SaaS and cloud."""
+    """ShadowScan — discover shadow AI agents across code, identity, gateways, low-code, SaaS,
+    cloud, endpoints, network logs and running processes.
+    """
     # Click answers --help and --version before this callback runs, so those
     # still work everywhere; every command fails closed on a host that cannot
     # enforce the documented path confinement (Windows, no O_NOFOLLOW).
@@ -1284,7 +1295,20 @@ def endpoint(home_dir: str | None, label: str | None, list_only: bool, opts: Sca
     """Scan this workstation's AI client configuration at its well-known locations: MCP client
     configs, coding-agent settings, user-level skills, rules and instruction files."""
     home = Path(home_dir).resolve() if home_dir else Path.home()
-    found = endpoint_paths(home)
+    discovery_errors: list[str] = []
+    found = endpoint_paths(home, errors=discovery_errors)
+    if discovery_errors:
+        now = now_iso()
+        stats = ScanStats(
+            connector="code.filesystem",
+            started_at=now,
+            finished_at=now,
+            errors=discovery_errors,
+            incomplete=True,
+        )
+        result = ScanResult(findings=[], stats=[stats], version=__version__)
+        _emit(result, opts.fmt, opts.output, False, opts.max_rows)
+        raise click.exceptions.Exit(3)
     if list_only:
         for line in describe(found, home):
             click.echo(encodable_text(terminal_text(line)))

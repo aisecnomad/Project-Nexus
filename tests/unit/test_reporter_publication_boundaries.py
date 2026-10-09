@@ -11,7 +11,7 @@ import pytest
 from rich.console import Console
 
 from shadowscan.cli import _emit
-from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface
+from shadowscan.models import Evidence, ScanResult, ScanStats
 from shadowscan.reporters import render
 from shadowscan.reporters.csv_ import render_csv
 from shadowscan.reporters.html import render_html
@@ -24,24 +24,11 @@ CONTROL_PAYLOAD = "name\x1b]52;c;Y2xpcGJvYXJk\x07\x1b[2J\x9b2J\u202ereordered"
 STATS_SECRET = "opaque-stats-publisher-credential"
 
 
-def _finding(**overrides: Any) -> Finding:
-    fields: dict[str, Any] = {
-        "surface": Surface.CODE,
-        "connector": "code.filesystem",
-        "kind": Kind.AGENT,
-        "title": "Agent",
-        "resource": "repository",
-        "resource_type": "project",
-    }
-    fields.update(overrides)
-    return Finding(**fields)
-
-
 @pytest.mark.parametrize("report_format", ["html", "csv"])
 def test_stdout_and_saved_reports_neutralize_report_controls(
-    report_format: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    make_finding, report_format: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    result = ScanResult(findings=[_finding(title=CONTROL_PAYLOAD)])
+    result = ScanResult(findings=[make_finding(title=CONTROL_PAYLOAD)])
     emitted: list[str] = []
     monkeypatch.setattr("shadowscan.cli.click.echo", emitted.append)
 
@@ -131,24 +118,24 @@ def test_table_preflights_stats_before_publishing_any_output(
 
 
 @pytest.mark.parametrize("malformed", [{"id": "ss-wrong-shape"}, 7, "ss-not-a-list"])
-def test_html_and_markdown_ignore_malformed_related_metadata(malformed: Any) -> None:
-    finding = _finding(metadata={"related": malformed})
+def test_html_and_markdown_ignore_malformed_related_metadata(make_finding, malformed: Any) -> None:
+    finding = make_finding(metadata={"related": malformed})
     result = ScanResult(findings=[finding])
 
     assert "<b>Related</b>" not in render_html(result)
     assert "**Related findings:**" not in render_markdown(result)
 
 
-def test_html_and_markdown_keep_only_string_related_ids() -> None:
-    finding = _finding(metadata={"related": [{"id": "bad"}, "ss-good", 7]})
+def test_html_and_markdown_keep_only_string_related_ids(make_finding) -> None:
+    finding = make_finding(metadata={"related": [{"id": "bad"}, "ss-good", 7]})
     result = ScanResult(findings=[finding])
 
     assert "<code>ss-good</code>" in render_html(result)
     assert "**Related findings:** `ss-good`" in render_markdown(result)
 
 
-def test_sarif_distinguishes_source_prefixes_from_remote_resource_ids() -> None:
-    finding = _finding(
+def test_sarif_distinguishes_source_prefixes_from_remote_resource_ids(make_finding) -> None:
+    finding = make_finding(
         evidence=[
             Evidence(signal="source", description="source", location="http_client.py:7"),
             Evidence(signal="source", description="source", location="projects/app/agent.py:12"),
@@ -176,7 +163,7 @@ def test_sarif_distinguishes_source_prefixes_from_remote_resource_ids() -> None:
     ]
     assert [item["region"]["startLine"] for item in physical] == [7, 12]
 
-    remote_fallback = _finding(
+    remote_fallback = make_finding(
         evidence=[Evidence(signal="remote", description="remote", location="https://example.invalid/agent")],
         metadata={"path": "projects/acme/locations/europe-west1/agents/x"},
     )
@@ -184,9 +171,9 @@ def test_sarif_distinguishes_source_prefixes_from_remote_resource_ids() -> None:
 
 
 def test_sarif_and_cli_refuse_nonfinite_plugin_values_before_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    make_finding, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    finding = _finding()
+    finding = make_finding()
     result = ScanResult(findings=[finding])
     finding.confidence = float("nan")
     with pytest.raises(ValueError, match="Out of range float values"):
@@ -207,7 +194,7 @@ def test_sarif_and_cli_refuse_nonfinite_plugin_values_before_publication(
     assert destination.read_text(encoding="utf-8") == "previous valid report"
 
 
-def test_render_dispatch_preserves_safe_nonterminal_formats() -> None:
+def test_render_dispatch_preserves_safe_nonterminal_formats(make_finding) -> None:
     """The stdout safeguard is format-scoped rather than a global report rewrite."""
-    result = ScanResult(findings=[_finding(title=CONTROL_PAYLOAD)])
+    result = ScanResult(findings=[make_finding(title=CONTROL_PAYLOAD)])
     assert render(result, "html") == render_html(result)

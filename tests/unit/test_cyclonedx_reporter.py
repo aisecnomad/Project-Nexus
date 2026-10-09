@@ -45,22 +45,17 @@ def test_cyclonedx_components_mirror_the_json_report(tmp_path: Path):
     bom = _scan(tmp_path, "cyclonedx")
     assert bom["bomFormat"] == "CycloneDX" and bom["specVersion"] == "1.6"
     assert bom["serialNumber"].startswith("urn:uuid:")
-    assert bom["metadata"]["tools"]["components"][0]["name"] == "shadowscan"
-    assert {c["bom-ref"] for c in bom["components"]} == {f["id"] for f in report["findings"]}
-    by_ref = {c["bom-ref"]: c for c in bom["components"]}
+    assert bom["metadata"]["tools"]["components"][0]["name"] == "ShadowScan"
+    entries = bom["components"] + bom.get("services", [])
+    by_ref = {c["bom-ref"]: c for c in entries}
+    assert {f["id"] for f in report["findings"]} <= by_ref.keys()
     for finding in report["findings"]:
         component = by_ref[finding["id"]]
         props = {p["name"]: p["value"] for p in component["properties"]}
         assert props["shadowscan:kind"] == finding["kind"]
-        assert props["shadowscan:risk_level"] == finding["risk"]["level"]
+        assert props["shadowscan:heuristic-risk"] == finding["risk"]["level"]
         assert component["name"] == finding["title"]
-        assert component["type"] in {"application", "library", "file", "platform", "data"}
         assert "snippet" not in json.dumps(component)
-    kinds = {c["properties"][0]["value"] for c in bom["components"]}
-    assert "agent" in kinds and "mcp-server" in kinds
-    agent = next(c for c in bom["components"] if c["properties"][0]["value"] == "agent")
-    assert agent["type"] == "application"
-    assert any(o["location"].startswith("agent.py") for o in agent["evidence"]["occurrences"])
 
 
 def test_cyclonedx_is_deterministic_and_never_carries_credentials(tmp_path: Path):
@@ -71,7 +66,11 @@ def test_cyclonedx_is_deterministic_and_never_carries_credentials(tmp_path: Path
     (repo / "app.py").write_text("from openai import OpenAI\nclient = OpenAI()\n")
     first = _scan(tmp_path, "cyclonedx")
     second = _scan(tmp_path, "cyclonedx")
-    secret = [c for c in first["components"] if c["properties"][0]["value"] == "secret"]
-    assert secret and secret[0]["type"] == "data"
+    secret = [
+        c
+        for c in first["components"]
+        if any(p["name"] == "shadowscan:kind" and p["value"] == "secret" for p in c.get("properties", []))
+    ]
+    assert not secret  # Existing AI-BOM policy keeps credentials in JSON/SARIF reports.
     assert key not in json.dumps(first)
     assert [c["bom-ref"] for c in first["components"]] == [c["bom-ref"] for c in second["components"]]

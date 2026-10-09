@@ -1,6 +1,6 @@
 # Roadmap
 
-ShadowScan is an unreleased candidate (`0.1.1` in `pyproject.toml`). This
+ShadowScan is an unreleased candidate (`0.1.2` in `pyproject.toml`). This
 roadmap is intent, not a contract. Items move only when they keep the
 fail-closed trust model.
 
@@ -27,8 +27,14 @@ fail-closed trust model.
 
 ## Next
 
-- Additional connectors on the existing six surfaces, driven by
+- Add opt-in live Kubernetes and endpoint collection, confined host/config and
+  model-artifact discovery, MCP HTTP inventory probes, and stronger baseline
+  comparison for MCP tool-definition changes.
+- Additional connectors on the existing surfaces, driven by
   [connector requests](https://github.com/aisecnomad/Project-Nexus/issues?q=label%3Aconnector-request).
+- Field validation of the endpoint, network and runtime connectors on real
+  osquery, Zeek, VPC and EDR exports, and a measured evaluation of LLM triage
+  verdicts before anyone relies on them.
 - Tighter Agent Card binding examples and inventory authoring guides.
 - Public docs screenshots of the HTML report and SARIF upload path.
 - Re-check the OpenSSF Scorecard badge after each `main` Scorecard run.
@@ -40,11 +46,10 @@ fail-closed trust model.
 
 ## Later, after independent review
 
-- First tagged release and signed artifacts. Nothing publishes
-  automatically.
-- Optional package index publish from a reviewed tag.
-- Confirm availability of the `project-nexus-shadowscan` distribution name at
-  publication time; source metadata does not reserve a package-index namespace.
+- First tagged release, published to PyPI as `NexusShadowScan` through the
+  approval-gated trusted-publishing job. Nothing publishes automatically.
+- Register the PyPI trusted publisher shortly before the first upload; a
+  pending publisher does not reserve the `NexusShadowScan` name.
 
 ## Not planned
 

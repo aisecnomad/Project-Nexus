@@ -8,6 +8,10 @@ and workflow automation tools.
     All low-code connectors support both live API collection and offline
     export analysis.
 
+See the [shared connector entry guide](../connectors.md#connector-entry-guide)
+for the common modes, permissions, options, fail-closed and evidence-limit
+references.
+
 ## `lowcode.power-platform`
 BAP admin API (environments), Power Automate admin flows, Power Apps admin
 apps (AI connector references: `shared_openai`, `shared_azureopenai`,

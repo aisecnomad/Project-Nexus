@@ -1,4 +1,4 @@
-"""Output formats: table (terminal), json, sarif, cyclonedx, csv, markdown, html."""
+"""Output formats: table (terminal), json, sarif, csv, markdown, html, cyclonedx."""
 
 from __future__ import annotations
 
@@ -11,21 +11,25 @@ from shadowscan.reporters.html import render_html
 from shadowscan.reporters.json_ import render_json
 from shadowscan.reporters.markdown import render_markdown
 from shadowscan.reporters.sarif import render_sarif
+from shadowscan.signatures import SignatureIndex
 
 RENDERERS: dict[str, Callable[[ScanResult], str]] = {
     "json": render_json,
     "sarif": render_sarif,
-    "cyclonedx": render_cyclonedx,
     "csv": render_csv,
     "markdown": render_markdown,
     "md": render_markdown,
     "html": render_html,
+    "cyclonedx": render_cyclonedx,
 }
 
 FORMATS = ["table", *sorted(k for k in RENDERERS if k != "md")]
 
 
-def render(result: ScanResult, fmt: str) -> str:
+def render(result: ScanResult, fmt: str, index: SignatureIndex | None = None) -> str:
+    """Render ``result``; ``index`` is the scan's signature index (custom packs included), when known."""
+    if fmt == "cyclonedx" and index is not None:
+        return render_cyclonedx(result, index)
     try:
         return RENDERERS[fmt](result)
     except KeyError as exc:

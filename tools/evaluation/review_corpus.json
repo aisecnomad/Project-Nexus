@@ -23,7 +23,9 @@
         "exact_findings": [
           {
             "kind": "framework-usage",
-            "product_signatures": ["framework.langgraph"],
+            "product_signatures": [
+              "framework.langgraph"
+            ],
             "provider_signatures": []
           }
         ]
@@ -356,6 +358,58 @@
           }
         ]
       }
+    },
+    {
+      "id": "goose-user-config",
+      "family": "coding-agent-config",
+      "description": "Author-written regression from the October 6 head-to-head benchmark: Goose writes its user configuration to ~/.config/goose/config.yaml, which the signature previously missed.",
+      "files": {
+        ".config/goose/config.yaml": "GOOSE_PROVIDER: openai\nGOOSE_MODEL: gpt-4o\nextensions:\n  developer:\n    enabled: true\n    name: developer\n    type: builtin\n"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.goose"
+      },
+      "present": true
+    },
+    {
+      "id": "goose-lookalike-directory",
+      "family": "coding-agent-config",
+      "description": "Author-written negative: a mongoose web-server configuration under ~/.config is not Goose.",
+      "files": {
+        ".config/mongoose/config.yaml": "listening_ports: 8080\ndocument_root: /srv/www\n"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.goose"
+      },
+      "present": false
+    },
+    {
+      "id": "cline-extension-directory",
+      "family": "coding-agent-config",
+      "description": "Author-written regression from the October 6 head-to-head benchmark: an installed Cline extension without an MCP settings file.",
+      "files": {
+        ".vscode/extensions/saoudrizwan.claude-dev-3.31.0/package.json": "{\n  \"name\": \"claude-dev\",\n  \"displayName\": \"Cline\",\n  \"publisher\": \"saoudrizwan\",\n  \"version\": \"3.31.0\",\n  \"engines\": {\n    \"vscode\": \"^1.84.0\"\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.cline"
+      },
+      "present": true
+    },
+    {
+      "id": "editor-extension-not-cline",
+      "family": "coding-agent-config",
+      "description": "Author-written negative: an ordinary editor extension in the same directory layout is not an agent.",
+      "files": {
+        ".vscode/extensions/ms-python.python-2025.14.0/package.json": "{\n  \"name\": \"python\",\n  \"displayName\": \"Python\",\n  \"publisher\": \"ms-python\",\n  \"version\": \"2025.14.0\",\n  \"engines\": {\n    \"vscode\": \"^1.95.0\"\n  }\n}\n"
+      },
+      "target": {
+        "kind": "agent-config",
+        "signature": "coding-agent.cline"
+      },
+      "present": false
     }
   ]
 }

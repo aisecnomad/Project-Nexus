@@ -1,0 +1,9 @@
+# Sanctioned inventory as a bare list of entries. `shadowscan code --inventory`
+# also accepts the `agents:` mapping in agents.yaml, Agent Capability Cards
+# (metadata.agent_id) and CSV. A name without a `resources` pattern only
+# suggests a match for review; it never marks a finding sanctioned.
+- id: sanctioned-copilot
+  name: GitHub Copilot
+  owner: platform
+  frameworks: []
+  providers: []

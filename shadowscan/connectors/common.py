@@ -35,7 +35,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from shadowscan.config import ConfigValidationError, connector_boolean
@@ -123,11 +123,14 @@ def apply_matches(
     weight_scale: float = 1.0,
     capabilities: bool = True,
     signature_capabilities: bool = True,
+    indicator_filter: Callable[[Match], bool] | None = None,
 ) -> int:
     """Attach matches to a finding as evidence, tags, frameworks and capabilities.
 
     Returns the number of *agent indicator* matches, which callers use to
-    promote a finding from ``framework-usage`` to ``agent``.
+    promote a finding from ``framework-usage`` to ``agent``. ``indicator_filter``
+    narrows which agent-indicator matches count, for a surface where a
+    signature's indicator does not describe the finding's subject.
     """
     counts: dict[str, int] = finding.metadata.setdefault("_evidence_counts", {})
     indicators = 0
@@ -148,7 +151,7 @@ def apply_matches(
                 finding.add_capability(cap)
         for t in sig.tags:
             finding.add_tag(t)
-        if m.agent_indicator:
+        if m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
             indicators += 1
         key = f"{sig.id}|{m.signal.type}"
         counts[key] = counts.get(key, 0) + 1
