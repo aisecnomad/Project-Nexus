@@ -273,6 +273,7 @@ def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str,
 
 # These JavaScript extensions may contain JSX without an explicit JSX suffix.
 _JSX_IN_JS_FILES = frozenset({".js", ".mjs", ".cjs"})
+_SHIFT_BEFORE_NAME = re.compile(r"<<[A-Za-z]")
 
 
 def noncode_ranges(
@@ -286,6 +287,11 @@ def noncode_ranges(
     if language == "python":
         return _python_ranges(text)
     if language == "javascript":
+        if dialect in _JSX_IN_JS_FILES and _SHIFT_BEFORE_NAME.search(text):
+            # A left shift before a name (`mask<<shift>limit`) reads as an opening
+            # tag under JSX and could hide code up to a later `</shift>`. Such a
+            # file is read as plain JavaScript only, even when a caller asks for JSX.
+            return _javascript_ranges(text)
         ranges, ambiguous = _javascript_ranges(text, jsx=jsx)
         if ambiguous and not jsx and dialect in _JSX_IN_JS_FILES:
             # Only accept the JSX interpretation when it closes completely.
@@ -944,7 +950,11 @@ _COMMENT_END_UNICODE = re.compile("[\n\r\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPAR
 _JAVA_UNICODE_ESCAPE = re.compile(r"(?<!\\)(\\++)u++([0-9A-Fa-f]{4})")
 # A PHP line comment also ends at a closing tag: `// note ?> html <?php code();` leaves PHP mode.
 _COMMENT_END_PHP = re.compile(r"[\n\r]|\?>")
-_RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
+# Rust raw strings: r"", byte br"" and C cr"" (Rust 1.77), with up to 255 "#".
+_RUST_RAW = re.compile(r'(?:br|rb|cr|r)(#{0,255})"')
+# A Rust character escape longer than two characters: \x7F, or \u{201C} with any "_" separators
+# (\u{1_F600}). The class excludes quotes, so scans from different quotes never overlap.
+_RUST_LONG_CHAR_ESCAPE = re.compile(r"\\x[0-9A-Fa-f]{2}|\\u\{[0-9A-Fa-f_]*+\}")
 # A Swift raw string opens with 1-255 "#" and a quote. Possessive, so that a long run of "#" costs one
 # bounded pass at each position in C instead of 255 steps of Python (13 s for a megabyte of "#").
 _SWIFT_RAW_OPEN = re.compile(r'#{1,255}+(?=")')
@@ -1314,9 +1324,13 @@ class _SourceLexer:
             return i + 1, False
         if quote == "'" and language == "rust":
             # A lifetime ('a or 'static) is code. Rust character literals
-            # contain exactly one character or an escaped character.
+            # contain exactly one character or one escape: \n, \x7F or \u{201C}.
             char = q + 1
-            char += 2 if char < size and text[char] == "\\" else 1
+            escape = _RUST_LONG_CHAR_ESCAPE.match(text, char)
+            if escape:
+                char = escape.end()
+            else:
+                char += 2 if char < size and text[char] == "\\" else 1
             if char >= size or text[char] != "'":
                 return i + 1, False
         if quote == '"' and language == "go":

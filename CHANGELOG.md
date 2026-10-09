@@ -250,6 +250,15 @@ author-written and not independent review.
 - Fixed: a `.js`, `.mjs` or `.cjs` file with JSX (React code in a `.js` file) was lexed as
   plain JavaScript and reported incomplete. Plain lexing is retried as JSX only when it fails,
   and the JSX reading is used only when it lexes completely. `.ts` files are never read as JSX.
+- Fixed (fail-open in the two changes above): a quote the Rust lexer misread opened an ordinary
+  string that now ran across lines to the next quote, masking the code in between while the file
+  reported complete. Rust C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a
+  `\x7F`, `\u{201C}` or `\u{1_F600}` escape were misread this way; both are now recognized.
+- Fixed (fail-open): a `.js`, `.mjs` or `.cjs` file with a left shift before a name
+  (`mask<<shift>limit`) is never read as JSX. The JSX reading took `<shift>` for an element and
+  could mask code up to a later `</shift>`, including the construct that made plain lexing
+  ambiguous, and report the file complete. Such a file is lexed as plain JavaScript; when that
+  reading is ambiguous the scan stays incomplete (exit 3).
 - Measured on the v2 real-world repositories (a tuning set for this change, not held out): 77 of
   the 100 lexically flagged files, excluding notebook cells, now complete. The bundled regression
   corpora (`make evaluate`) show identical outcomes with timing removed; only the scanner source
