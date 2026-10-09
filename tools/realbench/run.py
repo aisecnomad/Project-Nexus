@@ -76,6 +76,15 @@ def run_tool(
     rows: dict[str, dict[str, Any]] = {}
     lock = threading.Lock()
     started = time.time()
+    # Each finished repository is checkpointed, so a run interrupted by a
+    # container restart resumes where it stopped instead of starting over.
+    checkpoint = results / f"{adapter.name}{suffix}.partial.jsonl"
+    wanted = {repo["id"] for repo in repos}
+    if checkpoint.exists():
+        for line in checkpoint.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line) if line.strip() else None
+            if row and row.get("id") in wanted:
+                rows[row["id"]] = row
 
     def task(repo: dict[str, Any]) -> None:
         rid = repo["id"]
@@ -88,15 +97,18 @@ def run_tool(
                 fh.write(blob)
         with lock:
             rows[rid] = _row(rid, outcome, raw_sha)
+            with open(checkpoint, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rows[rid], sort_keys=True) + "\n")
             print(f"{adapter.name:14} {rid} {outcome.status:7} det={outcome.detected!s:5} "
                   f"agt={outcome.agentic!s:5} {outcome.seconds:6.1f}s", flush=True)  # fmt: skip
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        list(pool.map(task, repos))
+        list(pool.map(task, [repo for repo in repos if repo["id"] not in rows]))
     path = results / f"{adapter.name}{suffix}.jsonl"
     with open(path, "w", encoding="utf-8") as fh:
         for repo in repos:
             fh.write(json.dumps(rows[repo["id"]], sort_keys=True) + "\n")
+    checkpoint.unlink(missing_ok=True)
     statuses = [r["status"] for r in rows.values()]
     return {
         "tool": adapter.name,
