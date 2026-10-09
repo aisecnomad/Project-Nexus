@@ -111,8 +111,14 @@ delimiters are masked; `%Q` interpolation and unterminated percent strings mark
 the scan incomplete. PHP and Ruby here-document interpolation is read as code
 when the expression closes on its line, and C# raw strings honour their quote
 count and their `$` interpolation delimiters; an interpolation that continues
-on another line still marks the scan incomplete. Ruby regular expressions and
-Scala interpolation need more dialect-specific handling. Such constructs can
+on another line, or whose body holds a comment, a Ruby regular expression,
+character or percent literal, or a nested interpolation, still marks the scan
+incomplete. PHP `{$expr}` and `${expr}` in double-quoted and backtick strings
+are read as code. Rust, PHP and Ruby quoted strings may span lines only when
+they open where an expression starts; a quote after `$`, `?`, `/`, a closing
+bracket or another literal (Ruby's `$'` and `?'`, a quote inside a regular
+expression) that runs onto another line marks the scan incomplete. Ruby regular
+expressions and Scala interpolation need more dialect-specific handling. Such constructs can
 be missed or misclassified; an identified unterminated literal or ambiguous
 heredoc marks the scan incomplete. Review source evidence before using these
 languages to enforce a production policy gate.

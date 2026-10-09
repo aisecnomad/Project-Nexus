@@ -46,9 +46,10 @@ that are never silent:
   UTF-32 without a byte-order mark, UTF-7, HZ, EBCDIC code pages), makes the
   scan incomplete (exit code 3) with `binary or
   undecodable content in analyzable file`; it is never silently treated as
-  empty. Two kinds of text are read despite that: valid UTF-8 in which NUL
-  bytes are at most 1% of the bytes (or at most four), such as a source with a
-  NUL character in a string literal; and text in a legacy code page
+  empty. Two kinds of text are read despite that: a JavaScript or TypeScript
+  source that is valid UTF-8 and in which NUL bytes are at most 1% of the bytes
+  (or at most four), since the engines accept a NUL character in a string
+  literal; and text in a legacy code page
   (Windows-1252, Shift-JIS) without such NULs, decoded with replacement
   characters and noted with the warning `not valid UTF-8; undecodable bytes
   replaced and the text analyzed`. The decoder never consumes an ASCII byte,

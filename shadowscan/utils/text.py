@@ -17,8 +17,11 @@ from shadowscan.utils.redaction import credential_id
 from shadowscan.utils.safe_json import strict_json_loads
 
 _BINARY_SNIFF = 8192
-# A NUL in a string literal (``join("\x00")``) leaves source text valid UTF-8 with
-# a few NUL bytes; UTF-16 text without a byte-order mark is about half NULs.
+# A NUL character in a JavaScript or TypeScript string literal (``join("\x00")``),
+# which the engines accept, leaves source text valid UTF-8 with a few NUL bytes;
+# UTF-16 text without a byte-order mark is about half NULs. Other languages'
+# compilers reject a NUL in source, and configuration or documents have no use for one.
+_NUL_TOLERANT_SOURCE = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
 _MAX_TEXT_NUL_SHARE = 0.01
 _MIN_TEXT_NULS = 4  # allowed in any text, however short
 # Reported through ``read_text``'s ``notes`` for text that is not valid UTF-8.
@@ -171,7 +174,7 @@ def _decode_text(raw: bytes, name: str, analyzable_name: bool, notes: list[str] 
     if b"\x00" in raw[:_BINARY_SNIFF]:
         if _skips_binary(name, raw, analyzable_name):
             return None
-        text = _sparse_nul_text(raw)
+        text = _sparse_nul_text(raw) if name.lower().endswith(_NUL_TOLERANT_SOURCE) else None
         if text is None:
             raise ValueError(BINARY_CONTENT_ERROR)
         return text
@@ -230,8 +233,9 @@ def read_text(
     the mark removed, and a Python source is decoded with the codec its PEP 263
     cookie declares. Callers pass only files they would analyze, so any other
     content with a NUL byte in its first 8 KiB is reported as
-    ``BINARY_CONTENT_ERROR`` rather than ignored, unless it is valid UTF-8 in
-    which NUL bytes are at most 1% of the bytes (a NUL in a string literal).
+    ``BINARY_CONTENT_ERROR`` rather than ignored, unless it is a JavaScript or
+    TypeScript source that is valid UTF-8 and in which NUL bytes are at most 1%
+    of the bytes, or at most four (a NUL in a string literal).
     Text that is not valid UTF-8 is an error too, unless the caller passes
     ``notes`` (see ``_decode_text``). The exception is a recognised
     binary artifact (``_skips_binary``) without any file extension or, with

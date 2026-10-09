@@ -28,8 +28,9 @@ code the scanner failed to read. Each change has a regression test.
   `strict_coverage` or `include_tests`). Binary content, and parser or
   sanitization resource limits, in test code follow the same test-code policy.
   `test_resources` and `test-resources` are test directories.
-- Valid UTF-8 whose NUL bytes are at most 1% of the file (or at most four), as
-  in a source with `join('\x00')`, is text. Text in a legacy code page is read
+- A JavaScript or TypeScript source that is valid UTF-8 and whose NUL bytes
+  are at most 1% of the file (or at most four), as with `join('\x00')`, is
+  text. Other languages reject a NUL in source, so elsewhere it stays binary. Text in a legacy code page is read
   with replacement characters and a warning, since the decoder keeps every
   ASCII token; it stays a gap while a signature pattern is not ASCII.
 - A Git repository kept in the tree under another name (a bare `name.git`
@@ -91,6 +92,20 @@ regression test written from scratch, not copied from the corpus.
     expression that closes on its line is now read as code and the rest as
     text. Nowdocs and single-quoted Ruby markers are literal, and a PHP
     closing marker may be indented and followed by code (PHP 7.3).
+- An independent review of these lexer changes found inputs where they hid
+  code in a complete scan; each is fixed with a regression test. A Rust, PHP or
+  Ruby quoted string that runs onto another line marks the scan incomplete
+  unless it opened where an expression starts, so a stray quote (Ruby's `$'`
+  and `?'`, a quote in a regular expression or `%w[]` word) cannot mask the
+  lines after it. Rust `'\u{201C}'` and `'\x7f'` character literals are read
+  as such. PHP `{$expr}` and `${expr}` in double-quoted and backtick strings
+  are code, as in here-documents. A here-document interpolation whose body
+  holds a comment, a Ruby regular expression, character or percent literal,
+  or a nested interpolation marks the scan incomplete. TypeScript's non-null
+  `!` applies only to TypeScript files and only after an operand (not after a
+  keyword, `}` or a comment), and `<const T extends X>` is a type parameter
+  list. A long run of `$` in C# is lexed in linear time, and the lexer checks
+  the per-file time budget.
 - Also fixed: a C# verbatim string that starts with an escaped quote
   (`@"""a"":""b"`) was read as a raw string, and in a `.tsx` file a type
   parameter list such as `<V extends string>(props: P): R` in a type literal

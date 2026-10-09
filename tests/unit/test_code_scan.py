@@ -113,8 +113,12 @@ def test_nul_in_javascript_source_cannot_produce_complete_empty_scan(tmp_path: P
     path.write_bytes(("//\x00 ordinary comment\n" + source).encode())
     after, after_ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert any(f.kind == Kind.AGENT for f in before)
-    assert after == []
-    assert not before_ctx.stats.incomplete and after_ctx.stats.incomplete
+    # Valid UTF-8 with a few NUL characters is text: the agent is still found.
+    assert any(f.kind == Kind.AGENT for f in after)
+    assert not before_ctx.stats.incomplete and not after_ctx.stats.incomplete
+    path.write_bytes(("//" + "\x00" * 8 + " padding\n" + source).encode())
+    dense, dense_ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert dense == [] and dense_ctx.stats.incomplete
 
 
 @pytest.mark.parametrize("encoding", ["utf-8-sig", "utf-16", "utf-32"])
@@ -126,7 +130,14 @@ def test_bom_declared_source_encoding_preserves_agent_evidence(tmp_path: Path, r
     assert not ctx.stats.incomplete
 
 
-@pytest.mark.parametrize("body", [b"\xff invalid source", b"\xff\xfe\x00"])
+def test_legacy_code_page_source_is_read_with_a_warning(tmp_path: Path, run_connector):
+    (tmp_path / "agent.py").write_bytes(b"\xff invalid source")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert findings == [] and not ctx.stats.incomplete
+    assert "not valid UTF-8; undecodable bytes replaced" in " ".join(ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("body", [b"\xff\xfe\x00", b"\xff" + b"\x00" * 8])
 def test_undecodable_supported_source_is_incomplete(tmp_path: Path, run_connector, body):
     (tmp_path / "agent.py").write_bytes(body)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path))

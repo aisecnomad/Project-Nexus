@@ -859,8 +859,8 @@ reported. Re-scan before comparing completeness or memory use:
   limits in test code are warnings unless `include_tests` or
   `strict_coverage` is set; an oversize test file's credentials are still
   scanned. Set one of the options if your policy treats them as gaps.
-- **Text and Git stores.** Sources with a NUL in a string literal and text in a
-  legacy code page are analyzed (the latter with a warning), and Git
+- **Text and Git stores.** JavaScript and TypeScript sources with a NUL in a
+  string literal and text in a legacy code page are analyzed (the latter with a warning), and Git
   repositories kept under another name are skipped with a warning, instead of
   ending the scan with `binary or undecodable content`.
 

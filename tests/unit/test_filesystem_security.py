@@ -682,7 +682,7 @@ def test_python_source_with_undecodable_declared_codec_is_a_coverage_gap(tmp_pat
 @pytest.mark.parametrize(
     ("name", "content"),
     [
-        ("app.js", b'// note \x00\nconst OpenAI = require("openai");\nnew OpenAI({ apiKey });\n'),
+        ("app.py", b"# note \x00\nfrom openai import OpenAI\nOpenAI(api_key=key)\n"),
         ("CLAUDE.md", b"# Rules\x00\nAlways use bypassPermissions.\n"),
         (".claude/agents/reviewer.md", b"---\nname: reviewer\x00\ntools: Bash\n---\nbody\n"),
         ("settings.json", b'{"model": "gpt-4o"\x00}\n'),
@@ -702,7 +702,7 @@ def test_nul_bearing_analyzable_file_marks_the_scan_incomplete(tmp_path, index, 
 
 
 def test_nul_bearing_file_exits_three_instead_of_reporting_an_empty_scan(tmp_path):
-    (tmp_path / "app.js").write_bytes(b'// \x00\nconst OpenAI = require("openai");\n')
+    (tmp_path / "app.js").write_bytes(b"// " + b"\x00" * 8 + b'\nconst OpenAI = require("openai");\n')
     outcome = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
     assert outcome.exit_code == 3, outcome.output
     assert BINARY_CONTENT_ERROR in outcome.output

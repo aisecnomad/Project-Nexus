@@ -479,10 +479,12 @@ def test_external_symlinks_make_coverage_incomplete_by_default(run_connector, tm
 
 
 def test_oversize_files_make_coverage_incomplete_by_default(run_connector, tmp_path):
+    # Data files are read up to max_data_file_size, and an oversize test file
+    # is still scanned for credentials: only one over both limits is unread.
     write(tmp_path, "fixtures/cassette.yaml", "x: " + "y" * 400 + "\n")
-    _, stats = scan(run_connector, tmp_path, max_file_size=100)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, max_data_file_size=100)
     assert stats.warnings and not stats.errors and stats.incomplete
-    _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=True)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, max_data_file_size=100, strict_coverage=True)
     assert stats.errors and stats.incomplete
 
 

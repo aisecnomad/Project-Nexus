@@ -65,6 +65,15 @@ _NON_SPACE = re.compile(r"\S")
 # not change how other sources read. TypeScript's `.ts`, `.mts` and `.cts`
 # instead allow `<T>value` type assertions there and never hold JSX.
 JSX_DIALECTS = frozenset({".js", ".jsx", ".mjs", ".cjs", ".tsx"})
+# TypeScript has a postfix non-null assertion (`a[b]! / n`); JavaScript does not.
+TYPESCRIPT_DIALECTS = frozenset({".ts", ".tsx", ".mts", ".cts"})
+# Words after which `!` starts an operand: a keyword, not a value.
+_NON_OPERAND_WORDS = frozenset(
+    {
+        "as", "await", "case", "default", "delete", "do", "else", "export", "extends", "in", "instanceof",
+        "keyof", "new", "of", "return", "satisfies", "throw", "typeof", "void", "yield",
+    }
+)  # fmt: skip
 
 
 def _js_line_end(text: str, pos: int) -> int:
@@ -79,6 +88,27 @@ def _on_line_of_previous_token(text: str, pos: int) -> bool:
     while pos >= 0 and text[pos] in " \t\v\f\N{NO-BREAK SPACE}\N{ZERO WIDTH NO-BREAK SPACE}":
         pos -= 1
     return pos >= 0 and text[pos] not in _JS_LINE_TERMINATORS
+
+
+def _operand_before(text: str, pos: int) -> bool:
+    """Whether the token before ``pos`` (on its line) ends an operand: a name, a literal, `)` or `]`.
+
+    A keyword, a closing brace and a comment are not, so the `!` after them is a prefix.
+    """
+    pos -= 1
+    while pos >= 0 and text[pos] in " \t\v\f\N{NO-BREAK SPACE}\N{ZERO WIDTH NO-BREAK SPACE}":
+        pos -= 1
+    if pos < 0:
+        return False
+    char = text[pos]
+    if char in ")]\"'`":
+        return True
+    if not (char.isalnum() or char in "_$"):
+        return False
+    start = pos
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "_$"):
+        start -= 1
+    return text[start : pos + 1] not in _NON_OPERAND_WORDS
 
 
 def _skip_trivia(text: str, pos: int) -> int:
@@ -275,6 +305,9 @@ def _jsx_open_tag(
         suffix = text[pos : min(len(text), pos + 64)].lstrip()
         if suffix.startswith("="):
             return None
+        if name == "const" and re.match(r"\s+[A-Za-z_$][\w$]*\s*(?:extends\b|=|,|>)", text[pos : pos + 128]):
+            # A const type parameter: `<const T extends object>(x: T) => x`.
+            return None
         if (
             suffix.startswith("extends")
             and (len(suffix) == 7 or suffix[7].isspace() or suffix[7] in "<{")
@@ -313,7 +346,7 @@ def noncode_ranges(
     if language == "python":
         return _python_ranges(text)
     if language == "javascript":
-        return _javascript_ranges(text, jsx=jsx)
+        return _javascript_ranges(text, jsx=jsx, typescript=dialect in TYPESCRIPT_DIALECTS)
     if language in {"go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"}:
         return _other_source_ranges(text, language, dialect)
     return [], False
@@ -544,8 +577,10 @@ def _legacy_fstring_ranges(token: str, base: int, depth: int = 0) -> tuple[list[
     return sorted(spans), False
 
 
-def _javascript_ranges(text: str, *, jsx: bool = False) -> tuple[list[tuple[int, int]], bool]:
-    return _JavaScriptLexer(text, jsx).run()
+def _javascript_ranges(
+    text: str, *, jsx: bool = False, typescript: bool = False
+) -> tuple[list[tuple[int, int]], bool]:
+    return _JavaScriptLexer(text, jsx, typescript).run()
 
 
 class _JavaScriptLexer:
@@ -570,12 +605,14 @@ class _JavaScriptLexer:
         "size",
         "spans",
         "text",
+        "typescript",
     )
 
-    def __init__(self, text: str, jsx: bool) -> None:
+    def __init__(self, text: str, jsx: bool, typescript: bool = False) -> None:
         self.text = text
         self.size = len(text)
         self.jsx = jsx
+        self.typescript = typescript
         self.budget = _LookaheadBudget(self.size)
         self.spans: list[tuple[int, int]] = []
         # Template text is inert; ${...} expressions are scanned as executable code.
@@ -897,14 +934,17 @@ class _JavaScriptLexer:
                 control_pending[-1] = False
                 i += 2
             elif (
-                text[i] == "!"
+                self.typescript
+                and text[i] == "!"
                 and not can_start_regex[-1]
                 and not text.startswith("!=", i)
                 and _on_line_of_previous_token(text, i)
+                and _operand_before(text, i)
             ):
                 # After an operand on the same line, `!` is TypeScript's postfix
                 # non-null assertion, so `a[b]! / n` divides. (JavaScript has no
-                # binary `!`; after a line break ASI makes it a prefix `!`.)
+                # binary `!`; after a line break ASI makes it a prefix `!`, as
+                # after a keyword, a closing brace or a comment.)
                 control_pending[-1] = False
                 i += 1
             elif text[i] in ";:=!?%~^&|*<>+-":
@@ -938,6 +978,10 @@ class _Literal:
     verbatim: bool = False
     interpolation: str = ""
     multiline: bool = False
+    # A line break inside it makes the walk incomplete: a multi-line quoted
+    # string whose quote did not open where an expression starts may be a
+    # stray quote of a construct the lexer does not parse (see _expression_start).
+    guarded: bool = False
 
 
 @dataclass
@@ -968,6 +1012,10 @@ _PHP_HEREDOC = re.compile(r"<<<[ \t]*(['\"]?)([A-Za-z_]\w*)\1")
 # Where interpolated code starts in a here-document: PHP's `{$expr}` (the `$`
 # begins the expression) and `${expr}`, Ruby's `#{expr}`.
 _HEREDOC_INTERPOLATION = {"php": re.compile(r"\{(?=\$)|\$\{"), "ruby": re.compile(r"#\{")}
+# PHP double-quoted and backtick strings interpolate `{$expr}` and `${expr}` (see _SourceLexer._literal).
+_PHP_INTERPOLATION = "php"
+# Characters before a quote where an expression starts (an operator or an opening bracket).
+_EXPRESSION_START_CHARS = frozenset("([{,=:;!&|^~+-*%<>")
 # A C# string prefix: `$`s (interpolation braces) and `@` (verbatim). Possessive, so a long run of `$` is
 # one bounded pass in C.
 _DOTNET_STRING_PREFIX = re.compile(r'(?:\$++@?|@\$?)(?=")')
@@ -1119,8 +1167,14 @@ def _php_heredoc_close(marker: str, line: str) -> int | None:
     return after
 
 
-def _interpolation_end(text: str, start: int, end: int) -> int | None:
-    """Return the offset of the ``}`` closing an interpolation whose body starts at ``start``, or None."""
+def _interpolation_end(text: str, start: int, end: int, language: str) -> int | None:
+    """Return the offset of the ``}`` closing an interpolation whose body starts at ``start``, or None.
+
+    The body is read by counting braces outside quotes. None, which makes the
+    walk incomplete, also stands for a body this cannot read: a comment, a
+    regular expression, a character or percent literal, or a nested Ruby
+    interpolation can each hold a brace or a quote that is not code.
+    """
     depth = 1
     i = start
     while i < end:
@@ -1128,11 +1182,21 @@ def _interpolation_end(text: str, start: int, end: int) -> int | None:
         if char in "\"'":
             close = i + 1
             while close < end and text[close] != char:
+                if language == "ruby" and char == '"' and text.startswith("#{", close):
+                    return None
                 close += 2 if text[close] == "\\" else 1
             if close >= end:
                 return None
             i = close + 1
             continue
+        if char == "#" or (language == "php" and text.startswith(("//", "/*"), i)):
+            return None
+        if language == "ruby" and (
+            (char == "/" and i + 1 < end and not text[i + 1].isspace())
+            or (char == "?" and i + 1 < end and not text[i + 1].isspace())
+            or (char == "%" and i + 1 < end and not text[i + 1].isspace())
+        ):
+            return None
         if char == "{":
             depth += 1
         elif char == "}":
@@ -1163,7 +1227,9 @@ def _block_comment_end(text: str, start: int, opener: str, closer: str, *, neste
 def _literal_prefix(text: str, i: int, language: str) -> str:
     """Return the string prefix (C# ``$@``, Dart ``r``, Rust ``b``, Swift ``#``) at ``i``, if any."""
     if language == "dotnet":
-        if text[i] in "$@":
+        # Only from the start of a run of `$`: a match tried at every `$` of a
+        # long run rescans the rest of it each time.
+        if text[i] in "$@" and not (text[i] == "$" and i and text[i - 1] == "$"):
             prefix = _DOTNET_STRING_PREFIX.match(text, i)
             if prefix is not None:
                 return prefix.group()
@@ -1213,6 +1279,8 @@ def _open_literal(
         interpolation = "{"
     elif language == "ruby" and quote == '"':
         interpolation = "#{"
+    elif language == "php" and quote in '"`':
+        interpolation = _PHP_INTERPOLATION
     literal = _Literal(
         i,
         close,
@@ -1271,7 +1339,11 @@ class _SourceLexer:
     def run(self) -> tuple[list[tuple[int, int]], bool]:
         modes = self.modes
         i = 0
+        steps = 0
         while i < self.size:
+            steps += 1
+            if not steps & 0xFFF:
+                pattern_timeout()  # the per-file time budget, as the JavaScript lexer checks it
             mode = modes[-1] if modes else None
             if self.language == "php" and not self.php_code:
                 i = self._php_template(i)
@@ -1329,7 +1401,15 @@ class _SourceLexer:
         """Walk literal text to its close or to the start of an interpolation expression."""
         text, size = self.text, self.size
         while i < size:
-            if mode.interpolation and text.startswith(mode.interpolation, i):
+            if mode.interpolation == _PHP_INTERPOLATION:
+                # `{$expr}`: the `{` is text and the expression starts at `$`; `${expr}`.
+                opener = 1 if text.startswith("{$", i) else 2 if text.startswith("${", i) else 0
+                if opener:
+                    end = i + opener
+                    self.spans.append((mode.start, end))
+                    self.modes.append(_Expression("}"))
+                    return end
+            elif mode.interpolation and text.startswith(mode.interpolation, i):
                 # In C# escaped braces are text, not interpolation delimiters.
                 if mode.interpolation == "{" and text.startswith("{{", i):
                     i += 2
@@ -1353,6 +1433,9 @@ class _SourceLexer:
                 self.incomplete = True
                 return i
             else:
+                if mode.guarded and text[i] in "\r\n":
+                    mode.guarded = False
+                    self.incomplete = True
                 i += 1
         return i
 
@@ -1400,7 +1483,7 @@ class _SourceLexer:
                 if (at - 1 - before) % 2:
                     search_from = found.end()
                     continue
-            close = _interpolation_end(text, found.end(), end)
+            close = _interpolation_end(text, found.end(), end, self.language)
             if close is None:
                 self.incomplete = True
                 break
@@ -1412,13 +1495,21 @@ class _SourceLexer:
         """Handle the quote at ``q``; return the next index and whether a literal opened."""
         text, size, language = self.text, self.size, self.language
         quote = text[q]
-        if quote == "`" and language != "go":
+        if quote == "`" and language not in {"go", "php"}:
             return i + 1, False
         if quote == "'" and language == "rust":
             # A lifetime ('a or 'static) is code. Rust character literals
-            # contain exactly one character or an escaped character.
+            # contain exactly one character or an escape: `'\n'`, `'\x7f'` or
+            # `'\u{201C}'`.
             char = q + 1
-            char += 2 if char < size and text[char] == "\\" else 1
+            if char < size and text[char] == "\\":
+                if text.startswith("u{", char + 1):
+                    close = text.find("}", char + 3, char + 12)
+                    char = close + 1 if close >= 0 else char + 2
+                else:
+                    char += 4 if text.startswith("x", char + 1) else 2
+            else:
+                char += 1
             if char >= size or text[char] != "'":
                 return i + 1, False
         if quote == '"' and language == "go":
@@ -1433,8 +1524,40 @@ class _SourceLexer:
                 i += i < size and text[i] == '"'
                 return i, False
         literal, end = _open_literal(text, i, q, prefix, language, self.dialect)
+        if (
+            language in _MULTILINE_QUOTED
+            and quote in "\"'`"
+            and end == q + 1
+            and not self._expression_start(i)
+        ):
+            literal.guarded = True
         self.modes.append(literal)
         return end, True
+
+    def _expression_start(self, i: int) -> bool:
+        """Whether a literal starting at ``i`` opens where an expression starts.
+
+        The previous token is an operator or an opening bracket, or a word set
+        off by white space (``return``, a Ruby or PHP command call such as
+        ``puts`` or ``echo``), or a Ruby line break. A quote right after
+        ``$``, ``?``, ``/``, a closing bracket or another literal is not: Ruby's
+        ``$'`` and ``?'``, a quote in a regular expression or a ``%w[]`` word.
+        """
+        text = self.text
+        j = i - 1
+        while j >= 0 and i - j <= 4096 and text[j] in " \t\r\n":
+            j -= 1
+        if j < 0:
+            return True
+        spaced = j < i - 1
+        if self.language == "ruby" and "\n" in text[j + 1 : i]:
+            return True
+        char = text[j]
+        if char in _EXPRESSION_START_CHARS or (self.language == "php" and char in ".@"):
+            return True
+        if char == "?":
+            return spaced
+        return spaced and (char.isalnum() or char == "_")
 
     def _code(self, i: int, mode: _Expression | None) -> int:
         """Walk code or an interpolation expression until a literal opens, it closes or PHP code ends."""

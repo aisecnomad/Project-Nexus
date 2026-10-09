@@ -243,8 +243,8 @@ reStructuredText, HTML) are read in full up to `max_data_file_size` (default
 32 MiB, at least `max_file_size`), and credentials in a large text are matched
 in 64 KiB windows that overlap by 4 KiB, so a long file does not exhaust a
 single pattern's time allowance. An oversize test file is scanned for
-credentials only. Source with a NUL character in a string literal, text in a
-legacy code page and Git repositories kept under another name follow the
+credentials only. JavaScript or TypeScript with a NUL character in a string
+literal, text in a legacy code page and Git repositories kept under another name follow the
 rules in the [coverage policy](../scanning.md#coverage-policy). Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per

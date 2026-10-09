@@ -49,10 +49,20 @@ def _write_binary(path, kind: str) -> None:
 
 
 @pytest.mark.parametrize("strict", [False, True])
-def test_js_with_nul_in_comment_marks_scan_incomplete(tmp_path, run_connector, strict):
+def test_js_with_nul_in_comment_is_analyzed(tmp_path, run_connector, strict):
     # Node runs a script with a NUL in a comment, so skipping it silently
-    # would let a hidden agent look resolved.
+    # would let a hidden agent look resolved: it is read as the text it is.
     (tmp_path / "index.js").write_bytes(b"// agent \x00\nconst OpenAI = require('openai');\n")
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=strict
+    )
+    assert not ctx.stats.incomplete
+    assert any("provider.openai" in f.model_providers for f in findings)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_js_with_dense_nul_content_marks_scan_incomplete(tmp_path, run_connector, strict):
+    (tmp_path / "index.js").write_bytes(b"// agent " + b"\x00" * 8 + b"\nconst OpenAI = require('openai');\n")
     findings, ctx = run_connector(
         "code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=strict
     )
@@ -122,7 +132,7 @@ def test_read_text_decodes_boms_and_strips_utf8_bom(tmp_path):
 
 
 def test_read_text_reports_nul_content_without_bom(tmp_path):
-    path = tmp_path / "x.js"
+    path = tmp_path / "x.json"
     path.write_bytes(b"a\x00b")
     errors: list[str] = []
     assert read_text(path, 100, errors) is None
@@ -214,8 +224,13 @@ def test_transport_stream_like_source_comment_cannot_hide_agent_construction(
     ],
     ids=["nul-comment", "three-sync-bytes", "sync-every-packet-but-text"],
 )
-def test_nul_bearing_typescript_stays_a_coverage_gap(tmp_path, run_connector, content):
+def test_nul_bearing_typescript_is_read_never_skipped_as_video(tmp_path, run_connector, content):
+    # Packet-like bytes do not make a .ts file a transport stream: it is read as text.
     (tmp_path / "agent.ts").write_bytes(content)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete
+    assert any("provider.openai" in f.model_providers for f in findings)
+    (tmp_path / "agent.ts").write_bytes(content + b"\x00" * 64)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
 
