@@ -1718,13 +1718,13 @@ class FilesystemConnector(BaseConnector):
                     )
                     self._retain_lexical_evidence(scan.reexport_files[position:], deadline - scan.margin / 2)
                     break
-            local = _local_module_predicate(scan.root, file.path, file.proj_root)
+            resolver = scan.reexports.resolver(file.proj_root, source.is_local_module)
             with (
                 self._isolated(file.rel, "Python re-export analysis"),
                 self.index.scan_budget(seconds=budget),
             ):
                 try:
-                    self._bind_source(source, resolve_import=scan.reexports.resolver(file.proj_root, local))
+                    self._bind_source(source, resolve_import=resolver)
                 except ReexportLimitError as exc:
                     self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
                     self._bind_source(source)
