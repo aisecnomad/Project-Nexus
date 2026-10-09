@@ -783,8 +783,10 @@ def _weak_mention_signatures(
     for m, rel, _ in observations:
         if m.signature.category == "heuristic":
             continue
-        if _mention(m):
-            scaled = m.weight * (0.5 if in_tests(rel) else 1.0)
+        # A model id in a test file names what the test exercises, as a host there does.
+        if _mention(m) or (m.extra.get("model_literal") and in_tests(rel)):
+            weight = min(m.weight, MODEL_LITERAL_MAX_WEIGHT) if m.extra.get("model_literal") else m.weight
+            scaled = weight * (0.5 if in_tests(rel) else 1.0)
             strongest[m.signature_id] = max(strongest.get(m.signature_id, 0.0), scaled)
         else:
             anchored.add(m.signature_id)
@@ -954,7 +956,8 @@ _TEST_DIR_NAMES = frozenset(
     }
 )
 _TEST_FILE_RE = re.compile(
-    r"(?:^|/)(?:test_[^/]*\.py|[^/]*_test\.(?:py|go)|conftest\.py|[^/]*\.(?:test|spec)\.[cm]?[jt]sx?)$",
+    r"(?:^|/)(?:test_[^/]*\.py|[^/]*_test\.(?:py|go)|conftest\.py|[^/]*\.(?:test|spec)\.[cm]?[jt]sx?"
+    r"|tests\.rs|[^/]*_tests?\.rs)$",
     re.IGNORECASE,
 )
 # Categories whose evidence shows that a file itself talks to a model.
@@ -1044,6 +1047,14 @@ _MODEL_TOOLING_NAMES = frozenset({"qwen-code", "qwen-cli", "gpt4all", "gpt-4all"
 _MODEL_SEGMENT_RE = regex.compile(r"[-_./:@]")
 
 
+# A literal ending in a file extension names a file (``sonar-project.properties``,
+# ``gpt-4-turbo-docs.md``), never a model id; ``gpt-4.1`` ends in a digit.
+_MODEL_FILE_NAME_RE = re.compile(
+    r"\.(?:properties|json|jsonc|ya?ml|toml|ini|cfg|conf|md|mdx|txt|rst|html?|xml|csv|lock|log"
+    r"|py|[cm]?[jt]sx?|go|rs|java|kt|cs|rb|php|sh|ps1|bat)$"
+)
+
+
 def _model_lookalike(candidate: str) -> bool:
     """Whether a vendor-stemmed literal names a tool, package or product instead of a model.
 
@@ -1053,7 +1064,7 @@ def _model_lookalike(candidate: str) -> bool:
     (``_MODEL_TOOLING_NAMES``) and any id whose segments name tooling
     (``_MODEL_TOOLING_SEGMENTS``) are rejected whatever the family.
     """
-    if candidate in _MODEL_TOOLING_NAMES:
+    if candidate in _MODEL_TOOLING_NAMES or _MODEL_FILE_NAME_RE.search(candidate):
         return True
     for stem, shape in _MODEL_FAMILY_SHAPES:
         if candidate.startswith(stem):

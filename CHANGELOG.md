@@ -7,6 +7,12 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### code.filesystem
 
+- Rust test modules (`tests.rs`, `*_test.rs`, `*_tests.rs`) are test paths, and a
+  model identifier inside a test file is a weak mention like a host there: Rig's
+  `accounts/fireworks/models/...` fixture no longer adds Fireworks. A literal that
+  ends in a file extension (`sonar-project.properties`, `gpt-4-notes.md`) is never
+  read as a model identifier.
+
 - Implemented MCP servers are first-class: a Python or JavaScript server
   construction is import-bound (`FastMCP(`, `Server(` from `mcp.server` and
   `mcp.server.lowlevel`, `new McpServer(` and `new Server(` from

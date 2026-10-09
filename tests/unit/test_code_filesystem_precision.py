@@ -706,3 +706,33 @@ def test_fenced_example_in_a_readme_is_not_framework_usage(run_connector, tmp_pa
     )
     findings, stats = scan(run_connector, tmp_path)
     assert findings == [] and not stats.errors and not stats.warnings
+
+
+def test_file_names_are_never_model_ids(run_connector, tmp_path):
+    # Aider names SonarQube's configuration file in a list of special files.
+    write(tmp_path, "requirements.txt", "openai==1.0\n")
+    write(
+        tmp_path, "app/special.py", 'import openai\nNAMES = ["sonar-project.properties", "gpt-4-notes.md"]\n'
+    )
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.errors
+    project = _project(findings)
+    assert project is not None and "provider.perplexity" not in project.model_providers
+    assert not project.metadata.get("models")
+
+
+def test_rust_test_modules_are_test_paths(run_connector, tmp_path):
+    # Rig keeps provider fixtures in tests.rs modules beside the code they test.
+    write(tmp_path, "Cargo.toml", '[package]\nname = "rig-core"\n\n[dependencies]\nrig-core = "0.5"\n')
+    write(
+        tmp_path,
+        "src/providers/openai/wire/tests.rs",
+        'const M: &str = "accounts/fireworks/models/llama-3.3-70b";\n',
+    )
+    write(
+        tmp_path, "src/client/voyage_tests.rs", 'const M: &str = "accounts/fireworks/models/llama-3.3-70b";\n'
+    )
+    findings, stats = scan(run_connector, tmp_path)
+    assert not stats.errors
+    project = _project(findings)
+    assert project is not None and "provider.fireworks" not in project.model_providers

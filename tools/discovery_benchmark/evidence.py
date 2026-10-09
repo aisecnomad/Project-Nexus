@@ -766,7 +766,8 @@ def _mcp_server(rel: PurePosixPath, text: str, imports: list[tuple[str, str, int
     paths = {name.lower() for _, name, _ in imports}
 
     def has(prefix: str) -> bool:
-        return any(p == prefix or p.startswith(prefix + "/") or p.startswith(prefix + ".") for p in paths)
+        # "::" is the Rust path separator (use rmcp::handler::server::ServerHandler).
+        return any(p == prefix or p.startswith((prefix + "/", prefix + ".", prefix + "::")) for p in paths)
 
     pattern: re.Pattern[str] | None = None
     if suffix in {".py", ".ipynb"} and (
