@@ -149,6 +149,120 @@ summarizes each release for people who install and operate ShadowScan.
   Reading the separators of commented source argv stays linear: hostile text
   with `aws` in every comment of a long block no longer stalls sanitization.
 
+### Endpoint, fleet and instruction-content corrections
+
+- Endpoint profile discovery fails incomplete (exit 3) when a known location
+  cannot be inspected safely, including symbolic links and denied access. The
+  other locations are still scanned and reported in the same incomplete
+  report; before, one linked file (a stow-managed `~/.claude/settings.json`)
+  discarded the whole profile. A linked directory on the way to the known
+  locations (a stow-folded `~/.config`) is a coverage gap only when one of
+  them exists through it; `code.filesystem` `include` walks pass over such a
+  link otherwise, without following it.
+- `shadowscan endpoint` reads Windows locations from the profile's own
+  `AppData/Roaming`, never from the scanning process's `%APPDATA%`. A mounted
+  Windows profile scanned with `--home` was reported complete and empty while
+  its Claude Desktop or VS Code configuration went unread, and with `APPDATA`
+  set the operator's own configuration was reported under the target's label.
+  A scan of the user's own profile (no `--home`) whose `%APPDATA%` is
+  redirected outside it (folder redirection to a file share) is incomplete
+  (exit 3): the clients keep their configuration there, and the scan does not
+  read it.
+- `shadowscan endpoint` covers every configuration file location of
+  `endpoint.inventory` (LM Studio, Aider, OpenClaw, Goose on Windows, Cline and
+  Roo inside Cursor). Its include list no longer depends on which locations
+  exist, so a profile without AI clients gets a comparable collection scope
+  (a fleet including one stayed non-comparable and `shadowscan diff` exited 3),
+  and a client configured or removed later is a new or resolved finding rather
+  than a scope change. The default profile resolves symbolic links in `$HOME`.
+  `docs/scanning.md` describes how the command relates to `endpoint.inventory`.
+- A `code.filesystem` scan with `include` is no longer served from the
+  incremental cache, whether its root is given as `path`, `paths` or `input`:
+  fingerprinting the root read and hashed every file below it, so
+  `shadowscan endpoint --incremental` read the whole home directory.
+- In a `code.filesystem` scan with `include`, a file link whose target is not
+  selected (a `.claude/CLAUDE.md` linked to an unselected `AGENTS.md`) is a
+  coverage gap (incomplete). It counted as covered by its target, which the
+  walk never reads, so the scan was complete without the target's content.
+- `shadowscan merge` refuses a finding id that another report uses for a
+  finding with another identity (exit 1); a report that reused ids could fold
+  other machines' findings into its own. Sources are named by their path below
+  the reports' common directory, so `<host>/report.json` collections stay
+  attributable.
+- The hidden-comment check reports HTML comments of any length, and a comment
+  that is never closed where Markdown passes it through as HTML (at the start
+  of a line, below a list or quote marker, or in raw HTML), which before were
+  skipped beyond 4,000 bytes. An unclosed `<!--` in a paragraph or code span
+  is shown as text and is not reported; `<!-->` and `<!--->` are empty
+  comments. A zero-width joiner inside an emoji sequence, and the tag
+  characters of a subdivision flag (England, Scotland, Wales), no longer count
+  as invisible text.
+- Instruction content checks inspect the original confined file snapshot;
+  exceeding their 512 KiB budget marks coverage incomplete.
+- Fleet merging validates source completion, counts and collection fingerprints.
+  An incomplete source stays incomplete even alongside healthy reports. Duplicate
+  findings retain the highest observed source risk and any shadow observation;
+  risk is not recalculated using an unknown source policy.
+- Preserve the existing CycloneDX AI-BOM semantics when adding endpoint and
+  fleet commands: credentials remain in JSON/SARIF, and MCP inventories remain
+  services linked to their technologies.
+
+### October 8 benchmark follow-ups
+
+The head-to-head benchmark in `archive/reviews/head-to-head-2026-10-08.md`
+compared ShadowScan with ten open-source discovery tools on a synthetic
+estate. These changes close the gaps it measured; the benchmark is
+author-written and not independent review.
+
+- `shadowscan endpoint` scans a workstation profile at the well-known
+  locations of AI client configuration (Claude Desktop and Claude Code,
+  Cursor, Windsurf, VS Code and its Cline and Roo extensions, Gemini CLI,
+  Codex CLI, Kiro, Amazon Q, GitHub Copilot CLI, Zed, Continue, Goose,
+  OpenCode and a generic `.mcp.json`), including user-level skills, sub-agent
+  definitions, hooks, rules and instruction files, without walking the whole
+  home directory. Findings carry an `endpoint:<hostname>` resource prefix
+  (`--label` overrides it) so fleet reports keep provenance; `--list` prints
+  the locations that exist. A profile without any location is a complete,
+  empty scan with a warning, not a setup error. The `code.filesystem`
+  connector gained the `include` option that implements it: a list of paths
+  relative to each root that limits the walk to those files and directories.
+- `shadowscan merge` combines JSON reports from several machines or scans into
+  one report. Findings with the same identity merge like repeated observations
+  inside a scan; every finding records the reports it came from in
+  `metadata.merged_from`; `collection_scope.fleet.sources` lists the sources.
+  The merged report is comparable with `shadowscan diff` only when every
+  source was complete and comparable, and its own completion (exit 3) follows
+  the sources. Reports with another finding identity schema are refused.
+- The existing `--format cyclonedx` AI-BOM supports endpoint and fleet
+  reports with its established component, service, credential-exclusion and
+  completeness rules; see `docs/operations/ai-bom.md`.
+- Coding-agent configuration findings now inspect the instruction files they
+  report (skills, `CLAUDE.md`-style files, sub-agent definitions, rules and
+  hooks) for content that a rendered view hides or that executes fetched
+  code: an HTML comment holding sentences, a network fetch piped into an
+  interpreter, an inline blob decoded into one, and invisible or
+  bidirectional control characters. Hits add `content:*` evidence with the
+  file and line (never an excerpt) and the tags `hidden-instructions` (20),
+  `remote-code-fetch` (15) and `invisible-text` (10), which raise the
+  finding's risk. `metadata.instruction_content` lists the rules and files.
+- A project whose executable code constructs and serves an MCP server (the
+  SDK plus a server-construction idiom outside test code) is now typed as an
+  `mcp-server` finding titled "MCP server implementation", with
+  `metadata.mcp_server_implementation.files`, instead of low-risk LLM usage.
+  The resource and identity are unchanged. MCP client code stays as before.
+- Spring AI: `ChatClient` builder chains that register concrete tools with
+  `defaultTools(new ...)` after setting a system prompt or advisors, and
+  per-request `prompt().tools(new ...)` chains, now establish an agent; Spring
+  Boot injects the builder, so the previous pattern (`ChatClient.builder(...)
+  .defaultTools(...)` in one expression) rarely matched real services.
+- `provider.databricks` no longer treats a bare `mlflow` or `mlflow-skinny`
+  dependency as Databricks Model Serving evidence; mlflow's LLM flavors and
+  the Databricks packages still match. A classic-ML training project no
+  longer produces a low-confidence LLM-usage finding.
+- Evaluation corpus: six cases cover the typing changes (mlflow tracking
+  versus the LLM flavor, Spring AI with and without tools, a Go MCP server
+  and a TypeScript MCP client).
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

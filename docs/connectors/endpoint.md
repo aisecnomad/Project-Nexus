@@ -19,6 +19,19 @@ engine links them to `endpoint.inventory` findings for the same tool and
 device, through the tool's signature or tool id, or, for an MCP
 configuration, the running server's package.
 
+The `shadowscan endpoint` command (see
+[developer endpoints](../scanning.md#developer-endpoints)) reads every
+configuration file location listed below, plus further instruction files,
+through the `code.filesystem` connector. Its findings are code-surface
+findings with other identities than this connector's, so the two are not
+deduplicated when merged. Use `endpoint.inventory` for the device inventory
+and its lifecycle links (installed clients, extensions, local models, running
+processes), and `shadowscan endpoint` to review the content of the
+configuration and instruction files: MCP server definitions, coding-agent
+posture, credentials and hidden or fetched instructions. The command does not
+walk the client directories this connector records by existence (`~/.copilot`,
+`~/.kiro`, the OpenClaw workspace), only the configuration files in them.
+
 ## `endpoint.inventory`
 
 The connector reads a fixed list of documented user-scope locations below

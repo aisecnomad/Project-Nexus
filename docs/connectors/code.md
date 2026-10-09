@@ -432,6 +432,55 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
+### Limiting a walk with `include`
+
+`include` lists paths relative to each root; the walk enters only the
+directories that lead to them and reads only the files below them, with the
+usual excludes, limits and symlink policy still applied. Parent directory names
+are listed to reach selected files; unselected CODEOWNERS, setup scripts and
+submodule declarations are not read. Explicit `use_git` enrichment remains a
+separate metadata opt-in. Relative paths keep
+the directory context that file signatures expect (`.claude/skills/*/SKILL.md`
+only matches when `.claude/` is part of the relative path), which is why
+`shadowscan endpoint` scans a profile root with an include list rather than
+each location as its own root. Entries must be relative and may not escape the
+root; a bare string is rejected like `exclude`. A scan with `include` is never
+served from the incremental cache: fingerprinting the root would read every
+file below it, so such a scan always runs in full. A directory link that only
+lies on the way to selected paths is never followed; it is a coverage gap
+(incomplete) when a selected path exists through it, or cannot be looked up,
+and is passed over when none does, so a linked `~/.config` without any client
+configuration in it leaves an endpoint scan complete. A selected file that is
+a link to a file outside the selected paths is a coverage gap too, even when
+the target is an equivalent instruction document, because the walk never
+reads the target.
+
+```yaml
+connectors:
+  - name: code.filesystem
+    paths: [/home/dev]
+    include: [.claude, .cursor/mcp.json, .config/Claude/claude_desktop_config.json]
+    label: endpoint:dev-laptop
+```
+
+### Instruction-file content checks
+
+A coding-agent configuration finding inspects the instruction files it reports
+(skills, `CLAUDE.md`-style files, sub-agent definitions, rules, hooks) for
+content a rendered view hides or that executes fetched code: an HTML comment
+holding sentences (however long, or never closed where Markdown passes it
+through as HTML: at the start of a line, below a list or quote marker, or in
+raw HTML, where it hides the rest of the file), a network fetch piped into an
+interpreter, an inline blob decoded into one, and invisible or bidirectional
+control characters (a zero-width joiner inside an emoji sequence and the tag
+characters of a subdivision flag are not counted). A hit adds
+`content:<rule>` evidence naming the file and line, never an excerpt, and the
+risk tags `hidden-instructions`, `remote-code-fetch` or `invisible-text`
+(see [risk](../concepts/risk.md)); `metadata.instruction_content` lists the
+rules and files. The checks are bounded regexes; nothing is executed. They do
+not judge whether an instruction is malicious: a hidden comment may be a
+template note, and a documented installer may pipe to a shell. Read the file.
+
 ## `code.github`
 Enumerates an organization, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded

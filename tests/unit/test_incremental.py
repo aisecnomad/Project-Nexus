@@ -593,6 +593,35 @@ def test_irrelevant_oversized_file_is_cached_without_hashing_entire_file(tmp_pat
     assert Engine(cfg, index).run().stats[0].cached
 
 
+@pytest.mark.parametrize("root_key", ["path", "paths", "input"])
+def test_include_scan_never_fingerprints_its_root(tmp_path, index, monkeypatch, root_key):
+    # `input` names the root as `path` does: an include walk always runs in
+    # full, and the files it does not select are never opened for a digest.
+    from shadowscan import incremental
+
+    home = tmp_path / "home"
+    (home / ".cursor").mkdir(parents=True)
+    (home / ".cursor" / "mcp.json").write_text('{"mcpServers": {"fs": {"command": "npx"}}}\n')
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id_ed25519").write_text("not a real key\n")
+    root = [str(home)] if root_key == "paths" else str(home)
+    spec = ConnectorSpec(
+        "code.filesystem", {root_key: root, "include": [".cursor/mcp.json"], "use_git": False}
+    )
+    opened: list[Path] = []
+    original = incremental._file_digest
+
+    def recorded(path, *args, **kwargs):
+        opened.append(Path(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(incremental, "_file_digest", recorded)
+    for _ in range(2):
+        result = Engine(config(tmp_path, connectors=[spec]), index).run()
+        assert result.complete and not result.stats[0].cached
+    assert opened == []
+
+
 def test_literal_excluded_directory_reuses_cache_but_direct_codeowners_remains_tracked(tmp_path, index):
     cfg = config(tmp_path)
     cfg.connectors[0].config["exclude"] = ["assets", "docs"]

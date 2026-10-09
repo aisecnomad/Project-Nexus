@@ -77,6 +77,13 @@ from shadowscan.connectors.code.catalogs import (
 from shadowscan.connectors.code.dotnet_semantics import microsoft_tool_loop_matches
 from shadowscan.connectors.code.go_semantics import langchaingo_agent_matches
 from shadowscan.connectors.code.import_provenance import local_module_conflict
+from shadowscan.connectors.code.instruction_content import (
+    MAX_TEXT_BYTES as MAX_INSTRUCTION_TEXT_BYTES,
+)
+from shadowscan.connectors.code.instruction_content import (
+    ContentHit,
+    inspect_instruction_text,
+)
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
 from shadowscan.connectors.code.manifests import (
     Artifact,
@@ -537,6 +544,7 @@ class _Project:
     languages: set[str] = field(default_factory=set)
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
     coding_agent_matches: dict[str, list[tuple[Match, str, str | None]]] = field(default_factory=dict)
+    instruction_hits: dict[str, list[ContentHit]] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
@@ -927,6 +935,20 @@ def deadline_margin(remaining: float) -> float:
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
 
 
+def _validated_include(value: Any) -> frozenset[str]:
+    """``include``: relative posix paths below a root, normalized; nothing may escape or be absolute."""
+    out: set[str] = set()
+    for item in _validated_names(value, "include"):
+        normalized = item.replace("\\", "/").strip().strip("/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        parts = [part for part in normalized.split("/") if part not in ("", ".")]
+        if not parts or ".." in parts or item.startswith(("/", "\\")) or (len(item) > 1 and item[1] == ":"):
+            raise ConnectorError("code.filesystem: include entries must be relative paths below the root")
+        out.add("/".join(parts))
+    return frozenset(out)
+
+
 def _validated_names(value: Any, key: str) -> list[str]:
     """A list-typed option: a list of non-empty strings, or unset.
 
@@ -1041,6 +1063,11 @@ class FilesystemConnector(BaseConnector):
         "path": "directory to scan (or `paths`: list)",
         "paths": "list of directories to scan instead of `path`; each root keeps its own identity",
         "exclude": "list of extra directory names / glob patterns to skip (a bare string is rejected)",
+        "include": (
+            "list of paths relative to each root that limit the walk to those files and directories; "
+            "other file contents are not read; parent directory names are listed; such a scan always "
+            "runs in full, without the incremental cache (endpoint scans use it; default: everything)"
+        ),
         "default_excludes": (
             "skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE "
             "state, and build-output or vendored names such as bin, build, dist, vendor) at any depth "
@@ -1148,6 +1175,7 @@ class FilesystemConnector(BaseConnector):
             set(DEFAULT_EXCLUDES) if self.default_excludes else set(VCS_METADATA_EXCLUDES)
         ) | self._explicit_exclude_names
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
+        self.include_paths = _validated_include(ctx.get("include"))
         # Default-excluded directory names the current walk skipped, with counts.
         self._default_skipped: dict[str, int] = {}
         self.label: str | None = ctx.get("label")
@@ -1231,6 +1259,35 @@ class FilesystemConnector(BaseConnector):
         """Directory exclusion: configured names and globs."""
         return name in self.exclude_names or self._excluded_file(rel)
 
+    def _included(self, rel: str) -> bool:
+        """Whether ``rel`` is one of the configured include paths or sits below one (all, when unset)."""
+        if not self.include_paths:
+            return True
+        return any(rel == p or rel.startswith(p + "/") for p in self.include_paths)
+
+    def _leads_to_include(self, rel: str) -> bool:
+        """Whether the walk must enter directory ``rel`` to reach a configured include path."""
+        return self._included(rel) or any(p.startswith(rel + "/") for p in self.include_paths)
+
+    def _include_behind_link(self, link: Path, rel: str) -> bool:
+        """Whether a configured include path below directory link ``rel`` exists through it.
+
+        Only metadata is looked up through the link; nothing behind it is
+        listed or read. A lookup that fails for any reason other than absence
+        counts as present, so the link stays a coverage gap.
+        """
+        for selected in self.include_paths:
+            if not selected.startswith(rel + "/"):
+                continue
+            try:
+                os.lstat(link / selected[len(rel) + 1 :])
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except OSError:
+                return True
+            return True
+        return False
+
     def _excluded_file(self, rel: str) -> bool:
         """File exclusion: globs only, so a file named like an excluded directory is still scanned."""
         for g in self.exclude_globs:
@@ -1313,10 +1370,11 @@ class FilesystemConnector(BaseConnector):
         when the real target is walked and analyzed with the same semantics the
         alias path would have had: same project, same test classification, same
         source type and no file-name signal that only the alias name carries.
-        Directory links, links into excluded or unread content and config or
-        document aliases (whose parsing can depend on their path) are gaps. A
-        coding-agent instruction document linked to another one is the exception:
-        the target keeps the alias's project and test classification.
+        Directory links, links into excluded, unselected (outside ``include``)
+        or unread content and config or document aliases (whose parsing can
+        depend on their path) are gaps. A coding-agent instruction document
+        linked to another one is the exception: the target keeps the alias's
+        project and test classification.
         """
         relative = target.relative_to(root)
         target_rel = relative.as_posix()
@@ -1338,7 +1396,14 @@ class FilesystemConnector(BaseConnector):
         for depth, name in enumerate(parts[:-1], start=1):
             if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
                 return False
-        if not target.is_file() or self._excluded_file(target_rel) or _never_read_by_name(target.name):
+        # An include walk never reaches a target outside the selected paths,
+        # however equivalent the alias is.
+        if (
+            not target.is_file()
+            or self._excluded_file(target_rel)
+            or not self._included(target_rel)
+            or _never_read_by_name(target.name)
+        ):
             return False
         # Coding-agent instruction aliases (CLAUDE.md -> AGENTS.md) are the
         # same document family. The real file is scanned and the alias hides no
@@ -1431,7 +1496,7 @@ class FilesystemConnector(BaseConnector):
 
     def _check_submodule_declarations(self, root: Path, rel_dir: str) -> None:
         rel = ".gitmodules" if rel_dir == "." else f"{rel_dir}/.gitmodules"
-        if self._excluded_file(rel):
+        if self._excluded_file(rel) or not self._included(rel):
             return
         try:
             text = read_policy_text(root / rel, MAX_GITMODULES_BYTES)
@@ -1498,14 +1563,17 @@ class FilesystemConnector(BaseConnector):
                 return
             dirnames[:] = kept
             proj = _nearest_root(rel_dir, roots)
-            if rel_dir != "." and _marks_project(Path(dirpath), filenames):
+            included_names = (
+                name for name in filenames if self._included(name if rel_dir == "." else f"{rel_dir}/{name}")
+            )
+            if rel_dir != "." and _marks_project(Path(dirpath), included_names):
                 roots.append(rel_dir)
                 proj = rel_dir
             for fn in sorted(filenames):
                 walk.budget.check()
                 shown = _report_name(fn)
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
-                if self._excluded_file(rel):
+                if self._excluded_file(rel) or not self._included(rel):
                     continue
                 p = Path(dirpath) / fn
                 try:
@@ -1552,12 +1620,18 @@ class FilesystemConnector(BaseConnector):
             shown = _report_name(name)
             rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
             path = Path(dirpath) / name
+            if not self._leads_to_include(rel):
+                continue
             if self._excluded(rel, name):
                 if self._disclosed_default_exclusion(rel, name) and _holds_file(path, walk.budget):
                     self._default_skipped[name] = self._default_skipped.get(name, 0) + 1
                 continue
             try:
                 if path.is_symlink():
+                    if not self._included(rel) and not self._include_behind_link(path, rel):
+                        # The link only lies on the way to selected paths, and
+                        # none of them exists through it: nothing is lost.
+                        continue
                     if not self._skip_link(root, resolved_root, rel, path, walk):
                         return None
                     continue
@@ -1869,6 +1943,16 @@ class FilesystemConnector(BaseConnector):
             cells=cells,
         )
         self._record_file_matches(file)
+        if any(rel in files for files in proj.coding_agent_files.values()):
+            # Inspect the same confined snapshot as every other analysis pass.
+            if len(text.encode("utf-8")) > MAX_INSTRUCTION_TEXT_BYTES:
+                self.ctx.warn(
+                    f"code.filesystem: {rel}: instruction content exceeds inspection limit; "
+                    "coverage incomplete",
+                    incomplete=True,
+                )
+            else:
+                proj.instruction_hits[rel] = inspect_instruction_text(text)
         if self.scan_secrets:
             self._detect_secrets(scan, file)
         if self._record_detection_rules(file):
@@ -2967,6 +3051,8 @@ class FilesystemConnector(BaseConnector):
             return self._codeowners_cache[root]
         rules: list[tuple[str, list[str]]] = []
         for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
+            if not self._included(cand):
+                continue
             p = root / cand
             if p.exists() or p.is_symlink():
                 try:
@@ -3245,8 +3331,29 @@ class FilesystemConnector(BaseConnector):
         if evidence.env_only:
             cap_confidence(f, ENV_ONLY_MAX_CONFIDENCE)
             f.metadata["confidence_cap"] = {"reason": "env-names-only", "maximum": ENV_ONLY_MAX_CONFIDENCE}
+        server_files = self._mcp_server_files(proj, evidence)
+        if f.kind != Kind.AGENT and server_files and "protocol.mcp" in f.frameworks:
+            # The project serves tools over MCP (an SDK plus server construction in
+            # executable code) rather than merely depending on the SDK: a tool
+            # server carries the MCP risk base, not the LLM-usage one. The
+            # resource and its identity are unchanged; only the classification is.
+            f.kind = Kind.MCP_SERVER
+            f.metadata["mcp_server_implementation"] = {"files": server_files}
         f.title = self._project_title(f, proj)
         return f
+
+    @staticmethod
+    def _mcp_server_files(proj: _Project, evidence: _ProjectEvidence) -> list[str]:
+        """Files outside test code whose executable code constructs an MCP server."""
+        return sorted(
+            {
+                rel
+                for m, rel, _ in proj.matches
+                if m.signature_id == "heuristic.mcp-server"
+                and m.signal.type == "code"
+                and not evidence.in_tests(rel)
+            }
+        )
 
     def _source_agent_finding(
         self,
@@ -3406,6 +3513,7 @@ class FilesystemConnector(BaseConnector):
         for m, rel, snip in proj.coding_agent_matches.get(sig_id, []):
             apply_matches(f, [m], location=rel, snippet=snip)
         f.metadata["files"] = sorted(files)
+        self._inspect_instruction_files(f, proj, sig_id, files)
         posture = proj.posture.get(sig_id, [])
         if posture:
             record_posture(f, posture)
@@ -3421,6 +3529,31 @@ class FilesystemConnector(BaseConnector):
         finalize(f, self.index)
         f.kind = Kind.AGENT_CONFIG
         return f
+
+    @staticmethod
+    def _inspect_instruction_files(f: Finding, proj: _Project, sig_id: str, files: list[str]) -> None:
+        """Attach bounded content checks captured from the original confined file read."""
+        rules: dict[str, int] = {}
+        flagged: list[str] = []
+        for rel in sorted(files):
+            hits = proj.instruction_hits.get(rel, [])
+            if hits:
+                flagged.append(rel)
+            for hit in hits:
+                rules[hit.rule] = rules.get(hit.rule, 0) + 1
+                f.add_tag(hit.tag)
+                f.add_evidence(
+                    Evidence(
+                        signal=f"content:{hit.rule}",
+                        description=f"{hit.detail} in {rel}",
+                        location=f"{rel}:{hit.line}",
+                        weight=hit.weight,
+                        signature=sig_id,
+                        attributes={"category": "content", "rule": hit.rule, "tag": hit.tag},
+                    )
+                )
+        if flagged:
+            f.metadata["instruction_content"] = {"rules": dict(sorted(rules.items())), "files": flagged}
 
     @staticmethod
     def _apply_mcp_tools(f: Finding, server_tools: dict[str, str]) -> None:
@@ -3534,14 +3667,19 @@ class FilesystemConnector(BaseConnector):
             if self.index.get(sid)
         ]
         where = "repository root" if proj.root == "." else proj.root
-        what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
+        if f.kind == Kind.AGENT:
+            what = "Agent"
+        elif f.kind == Kind.MCP_SERVER:
+            what = "MCP server implementation"
+        else:
+            what = "LLM usage"
         detail = ", ".join(names) or ", ".join(provs)
         if not detail:
             # Only supporting technology (a search tool, a vector store,
             # tracing): name it rather than claim an LLM SDK.
             support = [s.name.split(" (", 1)[0] for sid in f.frameworks if (s := self.index.get(sid))]
             detail = ", ".join(support[:3]) or "LLM SDK"
-            if support and f.kind != Kind.AGENT:
+            if support and f.kind not in {Kind.AGENT, Kind.MCP_SERVER}:
                 what = "AI tooling"
         return f"{what} in {where}: {detail}"
 
