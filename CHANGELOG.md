@@ -47,6 +47,24 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Shadow AI agent discovery benchmark
 
+- Add `tools/evaluation/benchmark_followup_corpus.json`, 24 authored synthetic
+  cases (16 positives, 8 negatives) that reproduce the shapes behind the
+  misses and false positives observed on the 87-repository benchmark: model
+  identifiers in code, LiteLLM Bedrock routes, implemented MCP servers in
+  Python, TypeScript and Go with exact `mcp-server` and `tool-use`
+  capabilities, `AnthropicBedrock`, Voyage AI, OllamaSharp,
+  `Directory.Packages.props`, Koog, LangChain4j MCP, devcontainer sample keys
+  and a code-loaded `model-settings.yml` carrying `api_base` hosts and
+  `api_key_env` names on the recall side (a loaded settings file holding model
+  identifiers only is still an open miss, recorded in `docs/evaluation.md`);
+  Rust
+  `ToolCallback` and `create_agent(`, Hugging Face host mentions, the
+  `InferenceClient` call shape, Browserbase without Stagehand, CI images,
+  documentation catalogs, a test-defined `handoff(`, `DIFY_API_KEY` and a
+  model leaderboard on the precision side. No case carries a `known_gap`
+  waiver. `make evaluate`, CI and `docs/evaluation.md` run and describe it;
+  `tests/test_evaluation.py` pins its counts. Labels are author-written
+  reproductions of public-repository shapes, not independent review.
 - Add `tools/discovery_benchmark/`, a harness that runs ShadowScan's
   `code.filesystem` connector and other open-source code-surface discovery
   tools (Trusera ai-bom, NuGuard, AgentDiscover, Agentic Radar, SafeDep xbom

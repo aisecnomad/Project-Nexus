@@ -169,6 +169,8 @@ jobs:
             --output "$RUNNER_TEMP/shadowscan-attribution-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json \
             --output "$RUNNER_TEMP/shadowscan-current-idioms-evaluation.json"
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/benchmark_followup_corpus.json \
+            --output "$RUNNER_TEMP/shadowscan-benchmark-followup-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"

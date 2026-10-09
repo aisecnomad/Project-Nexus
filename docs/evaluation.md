@@ -63,6 +63,9 @@ python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/current_idioms_corpus.json \
   --output /tmp/nexus-current-idioms-eval.json
 python -m tools.evaluation.evaluate \
+  --corpus tools/evaluation/benchmark_followup_corpus.json \
+  --output /tmp/nexus-benchmark-followup-eval.json
+python -m tools.evaluation.evaluate \
   --corpus tools/evaluation/independent_corpus.json \
   --annotations tools/evaluation/independent_annotations.json \
   --output /tmp/nexus-independent-eval.json
@@ -235,6 +238,47 @@ definitions, so it reports SDK usage. Its first run, against the scanner before
 the October fixes, failed two cases: the AI SDK 7 tool loop was missed and the
 rule repository was reported as LLM usage. Like the other authored suites, its
 scores describe these cases only, not field precision or recall.
+
+`tools/evaluation/benchmark_followup_corpus.json` holds 24 short synthetic
+cases (16 positives, 8 negatives) written from scratch, with AI assistance,
+after the October 2026 benchmark of ShadowScan 0.1.2 on 87 public
+repositories (122 misses and 23 false positives). Each case reproduces the
+shape behind one observed miss or false positive in a few small files; the
+labels are author-written reproductions of public-repository shapes, not
+copies of third-party code and not independent review. The negatives are a
+Rust rig service declaring a `ToolCallback` trait (never Spring AI), a test
+fixture and a code comment that only name `huggingface.co`, the
+`huggingface_hub` `InferenceClient` using the OpenAI-compatible call shape
+(never `provider.openai`), the Browserbase session SDK with its API key
+(Browserbase usage, never Stagehand or an agent), a CI job running in the
+`modelcontextprotocol/python-sdk` image, a documentation site's static server
+catalog listing `BROWSERBASE_API_KEY`, a Rust `create_agent(` constructor
+without LangChain, a Pydantic AI project whose tests define `async def
+handoff(` (never the OpenAI Agents SDK), a TypeScript provider catalog naming
+`DIFY_API_KEY` (no workflow or agent), and a website leaderboard listing eight
+model identifiers, which must produce no finding at all. The positives are a
+model identifier in code without an SDK import, a LiteLLM `bedrock/anthropic.`
+route in YAML (Bedrock and Anthropic), Python FastMCP, TypeScript `McpServer`
+and Go `NewMCPServer` servers that must carry exactly the `mcp-server` and
+`tool-use` capabilities and never be agents, `AnthropicBedrock`, `voyageai`,
+OllamaSharp in a `.csproj` with a global using, `Microsoft.Extensions.AI`
+pinned in `Directory.Packages.props`, Koog in a Gradle version catalog,
+LangChain4j's MCP module, a devcontainer sample key file naming five provider
+keys beside LiteLLM (presence is asserted, not confidence: env-name evidence
+stays capped), and a `model-settings.yml` the code loads whose entries carry
+`api_base` hosts and `api_key_env` names for four providers, attributed
+without a catalog discount because a module reads the file. That last case
+exercises the referenced-file rule only. It does not reproduce the benchmark
+miss it was drawn from: a code-loaded settings file whose entries hold model
+identifiers alone (`- name: gpt-4o`, with no host or key name) still produces
+no finding, although the same identifiers in a `.py` file attribute a
+provider. That shape remains an open benchmark miss; a unit test pins it as
+documented here and fails when the scanner starts to report it, so this
+paragraph is updated rather than left stale. No case carries a `known_gap`
+waiver; every case must stay correct. Like the other authored suites, its
+scores describe these cases only, not field precision or recall. A CHANGELOG
+over 1,000,000 bytes, which the corpus file limits cannot hold, is covered by
+unit tests instead.
 
 `tools/evaluation/public_corpus.json` contains **five complete, pinned public
 files** from two external repositories: a LangGraph example and README at

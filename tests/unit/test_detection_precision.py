@@ -694,6 +694,59 @@ def test_a_data_file_the_projects_code_loads_is_configuration(tmp_path: Path, ru
     assert findings == [] and len(_catalog_notes(ctx)) == 1
 
 
+def test_a_model_id_in_code_without_an_sdk_import_records_the_model(tmp_path: Path, run_connector):
+    # Benchmark follow-up corpus, model-id-in-code: the evaluator can select
+    # kind and provider only, so the recorded model identifier is pinned here.
+    _write_tree(
+        tmp_path,
+        {
+            "app/__init__.py": "",
+            "app/settings.py": 'DEFAULTS = {"model": "claude-3-5-sonnet-20241022", "max_tokens": 1024}\n',
+        },
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    project = _project(findings)
+    assert project is not None and project.model_providers == ["provider.anthropic"]
+    assert project.metadata["models"] == ["claude-3-5-sonnet-20241022"]
+
+
+MODEL_IDS_ONLY_SETTINGS = (
+    "- name: gpt-4o\n  edit_format: diff\n"
+    "- name: claude-3-5-sonnet-20241022\n  edit_format: diff\n"
+    "- name: mistral-large-latest\n  edit_format: whole\n"
+    "- name: groq/llama-3.1-70b-versatile\n  edit_format: whole\n"
+    "- name: gemini/gemini-1.5-pro-latest\n  edit_format: whole\n"
+)
+
+
+def test_model_ids_only_in_a_loaded_data_file_stay_a_documented_open_miss(tmp_path: Path, run_connector):
+    # aider's real model-settings.yml holds model identifiers only (no host, no
+    # key name). The loader reference lifts the catalog discount, but nothing
+    # establishes a technology from a data file, so the shape is still missed.
+    # docs/evaluation.md says so; this test keeps that statement and the
+    # scanner in step, in either direction.
+    loader = (
+        "import yaml\nfrom importlib import resources\n\n\ndef load_settings():\n"
+        '    path = resources.files("aider.resources").joinpath("model-settings.yml")\n'
+        "    return yaml.safe_load(path.read_text())\n"
+    )
+    _write_tree(
+        tmp_path,
+        {"aider/models.py": loader, "aider/resources/model-settings.yml": MODEL_IDS_ONLY_SETTINGS},
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    docs = " ".join((Path(__file__).resolve().parents[2] / "docs" / "evaluation.md").read_text().split())
+    documented = "remains an open benchmark miss" in docs and "model identifiers alone" in docs
+    if _project(findings) is None:
+        assert documented, "the loaded model-ids-only miss is no longer recorded in docs/evaluation.md"
+    else:
+        assert not documented, (
+            "the scanner now reports the shape: drop the open-miss note in docs/evaluation.md"
+        )
+
+
 def test_a_crate_embedding_its_provider_catalog_is_configuration(tmp_path: Path, run_connector):
     # codex: codex-rs/model-provider-info embeds provider_catalog_overrides.json
     # with include_str!; the providers it configures were discounted as a catalog.
