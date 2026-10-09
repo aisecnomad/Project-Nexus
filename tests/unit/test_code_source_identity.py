@@ -140,6 +140,42 @@ def test_many_non_ascii_calls_on_one_line_keep_exact_offsets():
     assert all(source[start:end] == "Agent()" for start, end in names)
 
 
+@pytest.mark.parametrize("separator", ["\v", "\f", "\x85", "\u2028", "\u2029"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_literal_separators_do_not_shift_named_constructor_spans(separator, newline):
+    source = newline.join([f'note = "x{separator}y"', "worker = Agent()", ""])
+    names = named_construction_spans(source)
+    assert names == {(source.index("Agent()"), source.index("Agent()") + len("Agent()")): "worker"}
+
+
+@pytest.mark.parametrize("separator", ["\v", "\f", "\x85", "\u2028", "\u2029"])
+@pytest.mark.parametrize("granularity", ["project", "source"])
+def test_literal_separators_do_not_erase_registered_tool_execution(
+    run_connector, tmp_path, separator, granularity
+):
+    source = (
+        "from agents import Agent, function_tool\nimport subprocess\n"
+        f'note = "x{separator}y"\n'
+        "@function_tool\ndef execute(command: str):\n"
+        "    return subprocess.run(command, shell=True)\n"
+        'worker = Agent(name="Worker", tools=[execute])\n'
+    )
+    (tmp_path / "app.py").write_text(source)
+    findings, ctx = _scan(run_connector, tmp_path, agent_granularity=granularity)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    agents = [finding for finding in findings if finding.kind == Kind.AGENT]
+    assert len(agents) == 1
+    assert {"tool-use", "code-exec"} <= set(agents[0].capabilities)
+    constructor = next(
+        item for item in agents[0].evidence if item.signal == "code:framework.openai-agents-sdk"
+    )
+    execution = next(item for item in agents[0].evidence if item.signal == "code:heuristic.code-execution")
+    assert constructor.location == "app.py:7"
+    assert constructor.snippet == 'worker = Agent(name="Worker", tools=[execute])'
+    assert execution.location == "app.py:6"
+    assert execution.snippet == "return subprocess.run(command, shell=True)"
+
+
 @pytest.mark.parametrize("options", ["", ", tools=[]", ", tools=()", ", tools={}"])
 def test_missing_and_literal_empty_tools_do_not_rescan_the_ast(monkeypatch, options):
     def unexpected(*args, **kwargs):

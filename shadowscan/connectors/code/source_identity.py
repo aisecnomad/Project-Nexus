@@ -10,6 +10,7 @@ import ast
 from collections import Counter
 
 from shadowscan.connectors.code.tool_attribution import ToolRegions, python_tool_regions
+from shadowscan.utils.text import python_source_lines
 
 DEFAULT_MAX_AST_NODES = 50_000
 MAX_BINDING_LENGTH = 256
@@ -37,7 +38,7 @@ def named_construction_spans(
     except (SyntaxError, ValueError, RecursionError):
         return {}
     budget = max_ast_nodes or DEFAULT_MAX_AST_NODES
-    lines = text.splitlines(keepends=True)
+    lines = python_source_lines(text)
     offsets: list[int] = []
     total = 0
     for line in lines:

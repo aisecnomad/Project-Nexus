@@ -20,6 +20,9 @@ summarizes each release for people who install and operate ShadowScan.
 - Add opt-in `agent_granularity: source` for separate supported named Python
   construction identities. Existing project aggregation remains the default;
   source identity is static evidence, not a count of deployed runtime instances.
+- Preserve Python AST coordinates across literal control and Unicode separators,
+  so registered-tool execution evidence stays attached to the correct source
+  construction in both project and source inventory modes.
 - Reuse the scheduled governance observation implementation from PR #163:
   visible policy drift fails, withheld bypass settings remain explicitly
   unknown, and complete release verification stays strict. Retained observations

@@ -61,7 +61,7 @@ from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
 from shadowscan.utils.redaction import sanitize_text
-from shadowscan.utils.text import line_counter
+from shadowscan.utils.text import line_counter, python_source_lines
 
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
@@ -242,7 +242,7 @@ class _PythonBindings(ast.NodeVisitor):
         # evidence. Counting every bound call (``pytest.raises``, ``requests.get``)
         # against MAX_BOUND_CALLS made ordinary large files fail as incomplete.
         self.relevant = relevant
-        self.lines = text.splitlines(keepends=True)
+        self.lines = python_source_lines(text)
         self.offsets = [0]
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))

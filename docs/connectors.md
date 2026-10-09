@@ -223,7 +223,9 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 Opt-in `agent_granularity: source` gives supported uniquely named Python
 constructions separate inventory resources and constructor-specific evidence.
 Other source remains project evidence, with unsupported identity limits visible.
-This is static source inventory, not runtime instance discovery. The default
+Literal control and Unicode separators preserve Python constructor and local
+tool coordinates, including execution capabilities. This is static source
+inventory, not runtime instance discovery. The default
 `project` mode preserves existing identities; see the
 [source guide](connectors/code.md#separate-source-identities) and
 [migration notes](production.md#unreleased-review-migration). GitHub and GitLab

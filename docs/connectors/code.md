@@ -45,6 +45,8 @@ does not prove an agent construction. Literal unreachable alternatives can be
 excluded for supported shapes; scalar values assigned to names, computed
 subjects and uncertain control flow are not a general constant-propagation
 engine and remain conservative usage evidence.
+Constructor and registered-tool coordinates follow Python's physical line
+endings, so separators inside string literals do not hide execution evidence.
 
 ### Separate source identities
 
