@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -306,3 +307,119 @@ def test_source_exceeding_aws_command_limit_is_incomplete_and_withheld(tmp_path,
     assert context.stats.incomplete
     assert any("excerpts withheld" in error for error in context.stats.errors)
     assert SECRET not in json.dumps([finding.to_dict() for finding in findings])
+
+
+@pytest.mark.parametrize("setting", SETTINGS)
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Global options the CLI accepts before the subcommand, known or not.
+        "aws --no-paginate configure set {setting} {secret}",
+        "aws --cli-binary-format raw-in-base64-out configure set {setting} {secret}",
+        "aws --future-flag configure set {setting} {secret}",
+        "aws --future-option value configure set {setting} {secret}",
+        "aws configure set {setting} --future-flag {secret}",
+        # Names and executables in other cases.
+        "aws configure set {upper} {secret}",
+        "AWS configure set {setting} {secret}",
+        "Aws.EXE configure set {setting} {secret}",
+        "aws.cmd configure set {setting} {secret}",
+        "aws configure set default.{upper} {secret}",
+        # Comments between source argv elements and Python string prefixes.
+        '["aws", "configure", "set",  # store\n "{setting}", "{secret}"]',
+        '["aws",  # cli\n "configure", "set", "{setting}",\n  # value\n  "{secret}"]',
+        '["aws", "configure", "set", "{setting}",  // value\n "{secret}"]',
+        '["aws", "configure", "set", "{setting}", r"{secret}"]',
+        '[b"aws", b"configure", b"set", b"{setting}", b"{secret}"]',
+        '["aws", "configure", "set", u"{setting}", f"{secret}"]',
+        '["aws", "configure", "set", "{setting}", Rb"{secret}"]',
+        # PowerShell backtick and cmd caret continuations.
+        "aws configure set {setting} `\n  {secret}",
+        "aws configure `\r\n  set {setting} `\r\n  {secret}",
+        "aws configure set {setting} ^\n  {secret}",
+        "aws ^\r\n  configure set {setting} ^\r\n  {secret}",
+        # The executable split from its argv list.
+        'spawnSync("aws", ["configure", "set", "{setting}", "{secret}"])',
+        "spawn('aws', [\n  'configure',\n  'set',\n  '{setting}',\n  '{secret}',\n])",
+        'execFile("/usr/local/bin/aws", ["--profile", "audit", "configure", "set", "{setting}", "{secret}"])',
+        'subprocess.run("aws", ["configure", "set", "{setting}", "{secret}"])',
+        'spawn("aws", args=["configure", "set", "{setting}", "{secret}"])',
+        'subprocess.run(["aws"] + ["configure", "set", "{setting}", "{secret}"])',
+        'Command::new("aws").args(["configure", "set", "{setting}", "{secret}"])',
+        'Command::new("aws")\n    // store\n    .args(&["configure", "set", "{setting}", "{secret}"])',
+        # A bare '--' ends the options; the next word is the value.
+        "aws configure set {setting} -- {secret}",
+        '["aws", "configure", "set", "{setting}", "--", "{secret}"]',
+    ],
+)
+def test_aws_command_variants_are_redacted(command, setting):
+    source = command.format(setting=setting, upper=setting.upper(), secret=SECRET)
+    safe = sanitize_text(source)
+    assert SECRET not in safe and REDACTED in safe
+    assert safe.count("\n") == source.count("\n")
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize("unit", ["aws #", "// aws\n"])
+def test_aws_candidates_in_comment_blocks_are_read_in_linear_time(unit):
+    # Every 'aws' in a comment block read the source argv space after it to
+    # the end of that block: 200 KB of 'aws #' took about 25 s to sanitize.
+    # Linear, not fast: four times the input may take at most ten times as long.
+    small = min(_sanitize_seconds(unit * (100_000 // len(unit))) for _ in range(2))
+    large = _sanitize_seconds(unit * (400_000 // len(unit)))
+    assert large < 10 * max(small, 0.05), (small, large)
+    assert large < 60.0
+
+
+def _sanitize_seconds(text: str) -> float:
+    started = time.perf_counter()
+    try:
+        sanitize_text(text)
+    except SanitizationLimitError:  # a fail-closed limit is acceptable; a stall is not
+        pass
+    return time.perf_counter() - started
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["aws", "--no-paginate", "configure", "set", "aws_session_token", SECRET],
+        [
+            "aws",
+            "--cli-binary-format",
+            "raw-in-base64-out",
+            "configure",
+            "set",
+            "aws_secret_access_key",
+            SECRET,
+        ],
+        ["aws", "--future-option", "value", "configure", "set", "aws_secret_access_key", SECRET],
+        ["AWS", "configure", "set", "AWS_SECRET_ACCESS_KEY", SECRET],
+        ["C:\\Program Files\\Amazon\\AWSCLIV2\\AWS.EXE", "configure", "set", "aws_access_key_id", SECRET],
+        ["aws.cmd", "configure", "set", "aws_session_token", SECRET],
+        ["aws", "configure", "set", "aws_secret_access_key", "--", SECRET],
+    ],
+)
+def test_native_argv_variants_and_sibling_copies_are_withheld(argv):
+    safe = sanitize({"args": argv, "note": f"copied {SECRET}"})
+    assert SECRET not in repr(safe)
+    assert sanitize(safe) == safe
+
+
+def test_end_to_end_report_withholds_a_global_option_variant(tmp_path, index):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "tools.py").write_text(
+        "import subprocess\nfrom agents import Agent, function_tool\n"
+        "@function_tool\ndef bootstrap():\n"
+        f'    return subprocess.run("aws --no-paginate configure set aws_session_token {SECRET}", shell=True)\n'
+        "worker = Agent(name='Bootstrap', tools=[bootstrap])\n",
+        encoding="utf-8",
+    )
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"path": str(repo), "use_git": False})]),
+        index,
+    ).run()
+    assert result.complete and result.findings
+    report = result.to_json()
+    assert SECRET not in report and REDACTED in report

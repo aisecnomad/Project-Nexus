@@ -18,7 +18,10 @@ is reported as not comparable rather than guessed.
 from __future__ import annotations
 
 import hashlib
+import os
+from collections.abc import Sequence
 from dataclasses import fields
+from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
@@ -68,6 +71,21 @@ def _stats(report: dict[str, Any]) -> list[ScanStats]:
     return out
 
 
+def source_names(paths: Sequence[str]) -> list[str]:
+    """A name for each report file: its path below the files' common directory.
+
+    Reports collected as ``<host>/report.json`` keep their host directory, so
+    provenance and incomplete-source reasons say which machine they describe;
+    files in one directory keep their base name.
+    """
+    absolute = [os.path.abspath(path) for path in paths]
+    try:
+        parent = os.path.commonpath([os.path.dirname(path) for path in absolute])
+    except ValueError:  # no common directory (different drives)
+        return [Path(path).as_posix() for path in absolute]
+    return [Path(os.path.relpath(path, parent)).as_posix() for path in absolute]
+
+
 def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     """Merge ``(name, report)`` pairs into one :class:`ScanResult`; raises ``ValueError`` on bad input."""
     if not reports:
@@ -78,6 +96,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     sources_by_id: dict[str, list[str]] = {}
     risks_by_id: dict[str, Risk] = {}
     shadow_by_id: dict[str, bool] = {}
+    identity_by_id: dict[str, str] = {}
     stats: list[ScanStats] = []
     sources: list[dict[str, Any]] = []
     fingerprints: list[str] = []
@@ -102,6 +121,15 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             fingerprints.append(fingerprint)
         for entry in report["findings"]:
             finding = Finding.from_dict(entry)
+            # A report's ids are untrusted. Findings merge only when the
+            # identity their own fields describe agrees as well, so a report
+            # cannot fold another source's finding into one of its own by
+            # reusing its id. (The id itself may legitimately differ from
+            # compute_id(): a redacted resource keeps its raw-identity digest
+            # and gateway ids are keyed.)
+            identity = finding.compute_id()
+            if identity_by_id.setdefault(finding.id, identity) != identity:
+                raise ValueError(f"{name}: a finding id is already used by a finding with another identity")
             sources_by_id.setdefault(finding.id, []).append(name)
             previous = risks_by_id.get(finding.id)
             if previous is None or (finding.risk.score, finding.risk.danger_score) > (

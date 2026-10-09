@@ -124,6 +124,12 @@ def _eligible(spec: ConnectorSpec) -> bool:
         # A diff-scoped result depends on HEAD and the base ref's merge-base,
         # which the working-tree fingerprint does not cover.
         return False
+    if spec.name == "code.filesystem" and spec.config.get("include"):
+        # An include walk reads only the selected paths. The tree digest would
+        # open every file below the root (a whole home directory for
+        # ``shadowscan endpoint``), so such a scan always runs in full,
+        # whether the root is named by ``path``, ``paths`` or ``input``.
+        return False
     return spec.name == "code.filesystem" or (
         spec.name in (_CODE | _CLOUD_EXPORTS) and bool(spec.config.get("input"))
     )
