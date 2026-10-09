@@ -84,14 +84,16 @@ reports remain confidential. See the [security policy](https://github.com/aisecn
 
 Rust ordinary strings and byte strings may span physical lines; their contents
 remain literal evidence, while code after the closing quote is still scanned.
-For `.js`, `.mjs` and `.cjs` files, an incomplete plain JavaScript lexical pass
-is retried as JSX. That interpretation is accepted only when lexical analysis
-completes: JSX text stays masked and executable expressions remain visible.
-TypeScript files keep their generic/type-assertion behavior, and `.jsx`/`.tsx`
-files retain explicit JSX analysis. A JSX retry with unclosed multiline literals,
-unbalanced tags or ambiguous source is rejected, retaining incomplete coverage.
-This lexical filter does not validate every construct against the language's
-full grammar or reinterpret an already-complete plain JavaScript pass.
+C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a `\x7F` or
+`\u{201C}` escape are recognized, so a quote inside them does not open a string.
+`.js`, `.mjs` and `.cjs` files are lexed with JSX enabled, like `.jsx` and
+`.tsx`: JSX text stays masked and executable expressions remain visible. A `<`
+right after another `<` is part of a `<<` shift and never opens a JSX element,
+so `mask<<shift>limit` cannot hide code up to a later `</shift>`. TypeScript
+files (`.ts`, `.mts`, `.cts`) keep their generic/type-assertion behavior and are
+never read as JSX. Unclosed multiline literals, unbalanced tags or ambiguous
+source retain incomplete coverage. This lexical filter does not validate every
+construct against the language's full grammar.
 
 ### Separate source identities
 

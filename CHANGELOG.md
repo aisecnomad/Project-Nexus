@@ -259,11 +259,13 @@ author-written and not independent review.
   string that now ran across lines to the next quote, masking the code in between while the file
   reported complete. Rust C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a
   `\x7F`, `\u{201C}` or `\u{1_F600}` escape were misread this way; both are now recognized.
-- Fixed (fail-open): a `.js`, `.mjs` or `.cjs` file with a left shift before a name
-  (`mask<<shift>limit`) is never read as JSX. The JSX reading took `<shift>` for an element and
-  could mask code up to a later `</shift>`, including the construct that made plain lexing
-  ambiguous, and report the file complete. Such a file is lexed as plain JavaScript; when that
-  reading is ambiguous the scan stays incomplete (exit 3).
+- Fixed (fail-open): a `<` right after another `<` no longer opens a JSX element. `<<` is one
+  shift token, but in `mask<<shift>limit` the second `<` opened a `<shift>` element whose text ran
+  to a later `</shift>`. That masked code, including any construct that made the file ambiguous,
+  and the file reported complete. This affected `.js`, `.mjs`, `.cjs`, `.jsx` and `.tsx` files.
+  The code after such a shift now stays visible, and a file it leaves ambiguous stays incomplete
+  (exit 3). A `<<` elsewhere in a file (`"<<SYS>>"`, `<<EOF`, `1<<n`) does not change how its JSX
+  is read.
 - Measured on the v2 real-world repositories (a tuning set for this change, not held out): 77 of
   the 100 lexically flagged files, excluding notebook cells, now complete. The bundled regression
   corpora (`make evaluate`) show identical outcomes with timing removed; only the scanner source

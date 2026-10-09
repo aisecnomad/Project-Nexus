@@ -96,8 +96,8 @@ def test_typescript_generics_and_type_assertions_keep_executable_code_visible(di
     assert spans == []
 
 
-# In a JSX reading `<<shift>` opens an element whose text runs to the "</shift>" in the string
-# and hides `await /x/`, the plain-JavaScript construct that makes the file ambiguous.
+# Read as JSX, the `<shift>` in `mask<<shift>` would open an element whose text runs to the
+# "</shift>" in the string and hides `await /x/`, the construct that makes the file ambiguous.
 _SHIFT_AND_CLOSING_TAG = (
     "const v = mask<<shift>limit;\n"
     'const { OpenAI } = await import("openai");\n'
@@ -105,17 +105,52 @@ _SHIFT_AND_CLOSING_TAG = (
     "const r = await /x/.test(s);\n"
     'const html = "</shift>";\n'
 )
+_JSX_DIALECTS = (".js", ".mjs", ".cjs", ".jsx", ".tsx")
 
 
-@pytest.mark.parametrize("dialect", [".js", ".mjs", ".cjs"])
+@pytest.mark.parametrize("dialect", _JSX_DIALECTS)
 @pytest.mark.parametrize("jsx", [False, True])
-def test_left_shift_before_a_name_is_not_read_as_implicit_jsx(dialect: str, jsx: bool) -> None:
+def test_left_shift_before_a_name_never_opens_a_jsx_element(dialect: str, jsx: bool) -> None:
     spans, ambiguous = noncode_ranges(_SHIFT_AND_CLOSING_TAG, "javascript", dialect, jsx=jsx)
     assert ambiguous
     for executable in ("new OpenAI()", "await /x/"):
         assert not any(start <= _SHIFT_AND_CLOSING_TAG.index(executable) < end for start, end in spans)
     # Plain JavaScript with the same shift still completes.
     assert noncode_ranges("const v = mask<<shift>limit;\n", "javascript", dialect, jsx=jsx) == ([], False)
+
+
+@pytest.mark.parametrize("dialect", _JSX_DIALECTS)
+@pytest.mark.parametrize(
+    "shift",
+    [
+        'const PROMPT = "[INST] <<SYS>>\\nAnswer briefly.\\n<</SYS>>";',
+        "const bit = 1<<n;",
+        "// cat <<EOF > notes.txt",
+    ],
+)
+def test_shift_elsewhere_in_a_file_keeps_its_jsx_reading(
+    dialect: str, shift: str, tmp_path: Path, run_connector
+) -> None:
+    # Plain JavaScript reads the "/*" in the element text as a comment that runs to the JSDoc "*/" and
+    # hides the client in between, yet completes. A `<<` in a string, a comment or a shift elsewhere
+    # must not drop the file to that reading.
+    source = (
+        f'import OpenAI from "openai";\n{shift}\n'
+        "export const Help = () => <p>Only files matching src/*.js are indexed.</p>;\n"
+        "const client = new OpenAI();\n"
+        'const reply = await client.chat.completions.create({ model: "gpt-4o", messages: [] });\n'
+        "/** Reply helper. */\nexport default reply;\n"
+    )
+    # code.filesystem lexes all five dialects with JSX requested.
+    spans, ambiguous = noncode_ranges(source, "javascript", dialect, jsx=True)
+    assert not ambiguous
+    for executable in ("new OpenAI()", "client.chat.completions.create"):
+        assert not any(start <= source.index(executable) < end for start, end in spans)
+    assert any(start <= source.index("src/*.js") < end for start, end in spans)
+    (tmp_path / f"app{dialect}").write_text(source, encoding="utf-8")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)
 
 
 @pytest.mark.parametrize(
@@ -129,7 +164,7 @@ def test_left_shift_before_a_name_is_not_read_as_implicit_jsx(dialect: str, jsx:
         ("javascript", ".js", "const A = () => <p>src/*.js files</div>;\n"),
         ("javascript", ".js", "const A = () => <p>src/*.js files</p>;\nconst s = `open\n"),
         ("javascript", ".js", "const A = () => <p>src/*.js files</p>;\nawait / 2;\n"),
-        *(("javascript", dialect, _SHIFT_AND_CLOSING_TAG) for dialect in (".js", ".mjs", ".cjs")),
+        *(("javascript", dialect, _SHIFT_AND_CLOSING_TAG) for dialect in _JSX_DIALECTS),
         ("ruby", ".rb", "docs = <<DOC\n#{AiServices.builder(example)}\nDOC\n"),
     ],
 )

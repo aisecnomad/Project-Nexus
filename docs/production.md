@@ -932,7 +932,7 @@ full commit SHA before deploying it.
 | VPC flow coverage | `SKIPDATA`, invalid or contradictory statuses mark collection incomplete; `NODATA` remains a valid no-traffic record. | Pipelines must preserve exit 3 as unknown coverage and obtain complete input before accepting absence of findings. |
 | Network attribution | Connection-specific TLS evidence is retained before totals are combined; contradictory and non-AI observations cannot borrow AI attribution. | Rebaseline traffic totals and investigate reduced attributed counts; previous totals may include unrelated connections. |
 | Gateway activity | Invocation evidence requires a supported operation and provider, with its method from the same event. | Rebaseline agent indicators and capabilities. A management request, missing method or invocation attempt alone cannot establish successful execution or tool use. |
-| Source coverage | Valid Rust multiline strings, C raw strings (`cr"..."`) and `\x`/`\u{...}` character escapes, and supported JSX in JavaScript files can finish lexical analysis. A `.js`, `.mjs` or `.cjs` file with a left shift before a name (`mask<<shift`) is never read as JSX. | Re-scan prior incomplete repositories. Newly analyzed code can add findings; unresolved or unterminated syntax stays incomplete, and a JavaScript file with such a shift that plain lexing cannot finish stays incomplete (exit 3). |
+| Source coverage | Valid Rust multiline strings, C raw strings (`cr"..."`) and `\x`/`\u{...}` character escapes, and supported JSX in JavaScript files can finish lexical analysis. A `<` right after another `<` (`mask<<shift`) is part of a shift and never opens a JSX element. | Re-scan prior incomplete repositories. Newly analyzed code can add findings; unresolved, unterminated or ambiguous syntax stays incomplete (exit 3). |
 | Record exports | Strict JSON and encoded line/file/aggregate byte limits match replay; empty complete exports contain an empty record envelope. | Check the current manifest before replay. A rejected replacement retains the previous file but reports `exported: false` and `filename: null`; that file is not this run's accepted export. |
 
 Treat these as behavior changes when comparing old reports. Record scanner and
@@ -2398,9 +2398,9 @@ Redaction and lexing changes to review:
   files are lexed with JSX enabled (closing tags after expressions no
   longer read as ambiguous regex-vs-division); repositories that reported
   `incomplete source lexical analysis` for such files scan complete and may
-  gain findings there. A file with a left shift before a name
-  (`mask<<shift`) is lexed as plain JavaScript only, so it can stay
-  incomplete.
+  gain findings there. A `<` right after another `<` (`mask<<shift`) is
+  part of a shift and never opens an element, so the code after it stays
+  visible and a file it leaves ambiguous stays incomplete.
 - **Credential pass on large files.** The per-execution regex allowance
   scales linearly with input size inside the per-file wall budget, so
   keyword-dense megabyte files no longer record

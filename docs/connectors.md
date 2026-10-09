@@ -238,9 +238,11 @@ low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
 Supported Go SDK import aliases are resolved before source evidence is
-excerpted; reports remain confidential. Ordinary Rust multiline strings and
-supported JSX in `.js`, `.mjs` and `.cjs` can be analyzed without false lexical
-incompleteness. Ambiguous or unterminated source still marks the scan incomplete.
+excerpted; reports remain confidential. Ordinary Rust multiline strings, C raw
+strings, `\x`/`\u{...}` character escapes and supported JSX in `.js`, `.mjs` and
+`.cjs` can be analyzed without false lexical incompleteness; a `<<` shift never
+opens a JSX element. Ambiguous or unterminated source still marks the scan
+incomplete.
 
 Opt-in `agent_granularity: source` gives supported uniquely named Python
 constructions separate inventory resources and constructor-specific evidence.

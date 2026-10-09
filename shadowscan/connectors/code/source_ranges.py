@@ -273,7 +273,6 @@ def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str,
 
 # These JavaScript extensions may contain JSX without an explicit JSX suffix.
 _JSX_IN_JS_FILES = frozenset({".js", ".mjs", ".cjs"})
-_SHIFT_BEFORE_NAME = re.compile(r"<<[A-Za-z]")
 
 
 def noncode_ranges(
@@ -287,11 +286,6 @@ def noncode_ranges(
     if language == "python":
         return _python_ranges(text)
     if language == "javascript":
-        if dialect in _JSX_IN_JS_FILES and _SHIFT_BEFORE_NAME.search(text):
-            # A left shift before a name (`mask<<shift>limit`) reads as an opening
-            # tag under JSX and could hide code up to a later `</shift>`. Such a
-            # file is read as plain JavaScript only, even when a caller asks for JSX.
-            return _javascript_ranges(text)
         ranges, ambiguous = _javascript_ranges(text, jsx=jsx)
         if ambiguous and not jsx and dialect in _JSX_IN_JS_FILES:
             # Only accept the JSX interpretation when it closes completely.
@@ -839,6 +833,8 @@ class _JavaScriptLexer:
                 jsx
                 and text[i] == "<"
                 and can_start_regex[-1]
+                # `<<` is one shift token, so `mask<<shift>limit` opens no element.
+                and (i == 0 or text[i - 1] != "<")
                 and (opened := _jsx_open_tag(text, i, self.budget)) is not None
             ):
                 self.pending_jsx_tags.append(opened[0])
