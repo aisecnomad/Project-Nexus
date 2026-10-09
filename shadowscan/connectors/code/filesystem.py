@@ -2336,6 +2336,7 @@ class FilesystemConnector(BaseConnector):
                 max_ast_nodes=self.max_ast_nodes,
                 truncated=truncated,
                 resolve_import=resolve_import,
+                cells=file.cells,
             )
         except SourceBudgetExceeded as exc:
             # The budget is a property of the file, not of

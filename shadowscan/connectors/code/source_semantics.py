@@ -245,9 +245,12 @@ class _PythonBindings(ast.NodeVisitor):
         relevant: Callable[[_Binding], bool] | None = None,
         resolve_import: ImportResolver | None = None,
         equivalent: Callable[[_Binding, _Binding], bool] | None = None,
+        cells: Sequence[tuple[int, int]] = (),
     ):
         self.text = text
         self.resolve_import = resolve_import
+        # Where each notebook code cell starts; Jupyter runs each on its own.
+        self.cell_starts = [start for start, _ in cells]
         # Whether two import paths name one SDK symbol (a package re-export).
         self.equivalent = equivalent
         # Only calls into modules that some signature describes can produce
@@ -282,10 +285,13 @@ class _PythonBindings(ast.NodeVisitor):
     def _visit_block(self, statements: Sequence[ast.AST]) -> bool:
         """Visit a syntactic suite until an explicit, unconditional transfer.
 
-        This only proves local reachability: return/raise/break/continue and
-        constant or fully terminating if branches. Calls, exception handlers,
-        context-manager suppression and interprocedural/global mutation timing
-        are not assumed to establish that a surrounding suite terminates.
+        This only proves local reachability: return/raise/break/continue, a
+        statement calling sys.exit(), os._exit(), exit() or quit() (see
+        visit_Expr) and constant or fully terminating if branches. Other calls,
+        exception handlers, context-manager suppression and
+        interprocedural/global mutation timing are not assumed to establish
+        that a surrounding suite terminates. A notebook cell that stops does
+        not end the later cells (visit_Module).
         """
         return any(self.visit(statement) is True for statement in statements)
 
@@ -408,7 +414,17 @@ class _PythonBindings(ast.NodeVisitor):
             for name in names:
                 sites.setdefault(name, []).append((item.lineno, item.col_offset))  # type: ignore[attr-defined]
         self._binding_sites, self._star_import = sites, star
-        self.generic_visit(node)
+        if not self.cell_starts:
+            self.generic_visit(node)
+            return
+        # Jupyter runs each cell on its own: a cell that stops ('raise
+        # SystemExit', sys.exit() to halt Run All) leaves later cells runnable.
+        cells: dict[int, list[ast.stmt]] = {}
+        for statement in node.body:
+            cell = bisect_right(self.cell_starts, self.offsets[statement.lineno - 1]) - 1
+            cells.setdefault(cell, []).append(statement)
+        for statements in cells.values():
+            self._visit_block(statements)
 
     def _bound_only_within(self, name: str, node: ast.stmt) -> bool:
         """Whether ``node`` holds every binding of ``name``: before it, the name is unbound.
@@ -1232,6 +1248,7 @@ def _python_bindings(
     bindable: Callable[[ast.AST], bool] | None = None,
     resolve_import: ImportResolver | None = None,
     equivalent: Callable[[_Binding, _Binding], bool] | None = None,
+    cells: Sequence[tuple[int, int]] = (),
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     if bindable is not None and not bindable(tree):
@@ -1242,7 +1259,7 @@ def _python_bindings(
     for count, _ in enumerate(ast.walk(tree)):
         if count >= limit:
             raise SourceBudgetExceeded("source binding AST limit exceeded")
-    visitor = _PythonBindings(text, relevant, resolve_import, equivalent)
+    visitor = _PythonBindings(text, relevant, resolve_import, equivalent, cells)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
@@ -1687,6 +1704,7 @@ def bound_source_matches(
     max_ast_nodes: int | None = None,
     truncated: list[int] | None = None,
     resolve_import: ImportResolver | None = None,
+    cells: Sequence[tuple[int, int]] = (),
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -1694,7 +1712,7 @@ def bound_source_matches(
     raised so the caller can say so. It already retains lexical import and
     supporting evidence and reports lexical ambiguity. The lines of JavaScript
     calls analyzed only from their first ``MAX_CALL_TEXT`` characters are
-    appended to ``truncated``.
+    appended to ``truncated``. ``cells`` are a notebook's code cell spans.
     """
     module_matches = _ModuleMatches(index, language, is_local_module)
     tree = None
@@ -1708,6 +1726,7 @@ def bound_source_matches(
                 bindable=(lambda parsed: _python_bindable(index, parsed)) if resolve_import is None else None,
                 resolve_import=resolve_import,
                 equivalent=module_matches.equivalent,
+                cells=cells,
             )
         else:
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)

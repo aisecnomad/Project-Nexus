@@ -62,7 +62,8 @@ classification is not evidence that a deployed agent stopped executing.
 Guarded optional imports (`except ImportError: pass`, or a handler ending in
 `sys.exit()`) again keep their SDK binding, so rescans can restore agent
 classifications and tool-use capabilities that the first review correction
-lowered.
+lowered. A notebook cell that stops (`raise SystemExit`, `sys.exit()`) no longer
+hides constructions in later cells, so such notebooks can rise to agent.
 Python literals containing control or Unicode separators no longer shift AST
 coordinates; rescans can restore registered-tool execution capabilities that
 were previously lost in either project or source inventory mode.

@@ -361,7 +361,9 @@ lexed on its own, and a cell that still does not parse (a `%%bash` cell, an
 unfinished scratch cell) is left out of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
 lexical evidence retained` names it, and the other cells are bound as usual. A
-string left open in one cell no longer masks the cells after it.
+string left open in one cell no longer masks the cells after it, and a cell that
+stops (`raise SystemExit`, `sys.exit()`, `exit()` or `quit()` to halt Run All)
+ends only its own statements: the later cells stay reachable.
 
 A Python source the running interpreter cannot parse (syntax newer than it,
 such as a PEP 695 `type` statement on Python 3.11) has no import binding: its
