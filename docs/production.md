@@ -1048,7 +1048,10 @@ is not part of its identity.
   - source lexing: ordinary strings that span lines in Rust, PHP and F#; PHP 8
     attributes (`#[...]`, which are code, not comments; in PHP before 8 a `#[` line is a
     comment, so a file with `#[` is lexed both ways and only what both readings mask
-    stays masked, unless one reading leaves a string open at the end of the file); F# type variables
+    stays masked; when only the PHP 7 reading leaves a string open at the end of the
+    file it is not used, and when only the PHP 8 reading does the scan stays incomplete);
+    PHP here-documents whose closing marker is followed by code on its line
+    (`EOT)]`, allowed since PHP 7.3); F# type variables
     (`'T`) and primed names; C# verbatim strings that open with an escaped
     quote (`@"""x"" y"`); JSX in `.js`, `.mjs` and `.cjs` files, tried when the
     plain walk is ambiguous and used only if it reads the whole file cleanly

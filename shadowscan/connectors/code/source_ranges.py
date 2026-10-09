@@ -1162,8 +1162,10 @@ def _php_ranges(text: str, dialect: str | None) -> tuple[list[tuple[int, int]], 
     The scanner cannot tell which version runs a file, and the readings can mask different code: in
     `#[TODO] don't call this`, the apostrophe opens a string in the PHP 8 reading that a later one closes,
     and a file can even be valid in both versions with code that only PHP 7 runs inside a PHP 8
-    attribute's string. A reading that leaves a string or a here-document open at the end of the file is
-    not valid PHP, so the other is used alone; otherwise only what both readings mask stays masked.
+    attribute's string. Only what both readings mask stays masked. When the PHP 7 reading leaves a string
+    or a here-document open at the end of the file and the PHP 8 reading does not, PHP 7 cannot run the
+    file and the PHP 8 reading is used alone (a multi-line attribute string). The reverse is not trusted:
+    a PHP 8 construct this lexer misreads can leave the PHP 8 reading open, so the walk stays incomplete.
     """
     attributes = _SourceLexer(text, "php", dialect)
     spans, incomplete = attributes.run()
@@ -1173,8 +1175,6 @@ def _php_ranges(text: str, dialect: str | None) -> tuple[list[tuple[int, int]], 
         return spans, incomplete or comment_incomplete
     if comments.unterminated_literal and not attributes.unterminated_literal:
         return spans, incomplete
-    if attributes.unterminated_literal and not comments.unterminated_literal:
-        return comment_spans, comment_incomplete
     return _common_spans(spans, comment_spans), incomplete or comment_incomplete
 
 
@@ -1497,9 +1497,18 @@ class _SourceLexer:
         end = text.find("\n", i)
         end = size if end < 0 else end
         line = text[i:end]
-        if (language == "ruby" and line.strip() == marker) or (
-            language == "php" and re.fullmatch(r"\s*" + re.escape(marker) + r"[;,)]?\s*", line)
-        ):
+        # Since PHP 7.3 the closing marker may be indented, and code may follow it on its line (`EOT)];`):
+        # it closes wherever it is not followed by a character that continues a name.
+        closing = (
+            re.compile(r"[ \t]*" + re.escape(marker) + r"(?![0-9A-Za-z_\x80-\U0010ffff])").match(text, i, end)
+            if language == "php"
+            else None
+        )
+        if closing is not None:
+            heredocs.pop(0)
+            self.spans.append((i, closing.end()))
+            return closing.end()
+        if language == "ruby" and line.strip() == marker:
             heredocs.pop(0)
         elif (language == "ruby" and "#{" in line) or (language == "php" and ("${" in line or "{$" in line)):
             # Interpolation inside a here-document needs language parsing.

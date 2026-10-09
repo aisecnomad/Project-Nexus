@@ -344,8 +344,17 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
 - Fixed: `#[` in PHP was always read as an attribute, so a PHP 7 comment such
   as `#[TODO] don't call this` opened a string that masked the code after it.
   A PHP file with `#[` is now lexed both as PHP 8 and as PHP before 8 reads
-  it; a reading that leaves a string open at the end of the file is not used,
-  and otherwise only what both readings mask stays masked.
+  it, and only what both readings mask stays masked. When only the PHP 7
+  reading leaves a string open at the end of the file (a multi-line attribute
+  string), PHP 7 cannot run the file and the PHP 8 reading is used alone;
+  when only the PHP 8 reading does, the lexing stays incomplete, because a
+  PHP 8 construct the lexer misreads can cause it.
+- Fixed: a PHP here-document closed only at a marker alone on its line (with
+  an optional `;`, `,` or `)`). Since PHP 7.3 code may follow the marker
+  (`EOT)]`), so such a file stayed open to its end, which also made the PHP 8
+  reading of `#[Attr(<<<EOT` look invalid and let the PHP 7 reading mask code.
+  The marker now closes wherever no name character follows it, and the rest
+  of its line is lexed as code.
 - Changed: the `mcp.<vendor>.<tld>` host form of `protocol.mcp` matches
   country-code domains again (except two-letter codes that are common file
   extensions or property names, such as `py`, `md`, `rs`, `pl`, `ps`, `id` and

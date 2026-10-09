@@ -112,14 +112,46 @@ def test_a_php_hash_bracket_comment_cannot_mask_the_code_after_it(source: str):
     assert not _masked(source, spans, "OpenAI::client")
 
 
-def test_a_php_reading_that_leaves_a_string_open_is_not_used():
-    # Read as an attribute, the apostrophe opens a string that never closes, which PHP 8 rejects; the
-    # file is read as PHP 7 reads it, and that reading is complete.
+def test_a_php_8_reading_that_leaves_a_string_open_keeps_the_walk_incomplete():
+    # Read as an attribute, the apostrophe opens a string that never closes, which PHP 8 rejects. The
+    # code PHP 7 runs is not masked, but the scan does not trust that this lexer reads every PHP 8
+    # construct exactly (a misread one could leave this reading open too), so it stays incomplete.
     source = "<?php\n#[TODO] don't call the API from here\n$client = OpenAI::client();\n"
     spans, incomplete = _ranges(source, "php", ".php")
-    assert not incomplete
-    assert _masked(source, spans, "don't")
+    assert incomplete
     assert not _masked(source, spans, "OpenAI::client")
+
+
+# PHP 7.3 and later close a here-document at its marker wherever no name character follows, so code can
+# follow the marker on its line. `php -l` accepts the file below, and PHP 8.3 runs its client call.
+# Read as PHP 7, `#[Attr(<<<EOT` is a comment, and `don't` opens a string that `that's` closes.
+_PHP_HEREDOC_IN_ATTRIBUTE = (
+    "<?php\n"
+    "#[Attr(<<<EOT\n"
+    "don't\n"
+    "EOT)]\n"
+    "function f() {}\n"
+    '$client = new AI21Client(getenv("K"));\n'
+    "// that's all\n"
+)
+
+
+def test_a_php_here_document_closes_at_a_marker_followed_by_code():
+    source = "<?php\n$s = sprintf(<<<EOT\nit's %s\nEOT, $x); $client = new AI21Client($k);\n"
+    spans, incomplete = _ranges(source, "php", ".php")
+    assert not incomplete
+    assert _masked(source, spans, "it's")
+    assert not _masked(source, spans, "AI21Client")
+
+
+def test_a_php_8_attribute_with_a_here_document_cannot_hide_the_code_after_it(tmp_path):
+    spans, incomplete = _ranges(_PHP_HEREDOC_IN_ATTRIBUTE, "php", ".php")
+    assert incomplete or not _masked(_PHP_HEREDOC_IN_ATTRIBUTE, spans, "AI21Client")
+    (tmp_path / "app.php").write_text(_PHP_HEREDOC_IN_ATTRIBUTE, encoding="utf-8")
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+    report = json.loads(result.stdout)
+    assert result.exit_code in {0, 3}, result.output
+    assert any("provider.ai21" in finding["model_providers"] for finding in report["findings"])
 
 
 # --- F# and C# quote forms ---------------------------------------------------------------------------
