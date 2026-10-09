@@ -241,6 +241,11 @@ author-written and not independent review.
   they do not establish filesystem isolation. The v2 scorer also validates
   result metadata and boolean detections against the declared corpus.
   Historical result hashes are preserved; rerun the revised code separately.
+- The v2 scorer labels the entries added in v2 as held out only for a run recorded
+  before commit 7e523ba (9fdaf85 after its sign-off rewrite) tuned the Rust and JSX
+  lexer on them, which is the frozen v2 run. A run at any other commit, including
+  every run of the merged code, reports them under "Entries added in v2 (not held
+  out ...)" with the reason.
 
 ### Lexical coverage: two constructs the lexer wrongly called ambiguous
 
