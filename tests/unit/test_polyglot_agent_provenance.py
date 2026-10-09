@@ -313,6 +313,36 @@ def test_go_local_receivers_and_parameters_do_not_borrow_package_identity(tmp_pa
     assert not _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
 
 
+GO_FUNC_TYPES = ["type Hook func(int)", "type Option func(*config)", "var hook func(int) error"]
+
+
+@pytest.mark.parametrize("declaration", GO_FUNC_TYPES)
+@pytest.mark.parametrize(
+    "function",
+    [
+        "func run(agents Queue) { agents.NewExecutor() }",
+        "func run(\n\tagents Queue,\n) {\n\tagents.NewExecutor()\n}",
+    ],
+)
+def test_go_parameter_shadow_is_read_from_its_own_header(tmp_path, run_connector, declaration, function):
+    # A preceding function type ends at its newline; its func keyword is not
+    # the header whose parameter list shadows the imported package.
+    source = (
+        'package main\nimport "github.com/tmc/langchaingo/agents"\n' + declaration + "\n" + function + "\n"
+    )
+    assert not _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+
+
+@pytest.mark.parametrize("declaration", GO_FUNC_TYPES)
+def test_go_preceding_function_types_keep_unshadowed_package_proof(tmp_path, run_connector, declaration):
+    source = (
+        'package main\nimport "github.com/tmc/langchaingo/agents"\n'
+        + declaration
+        + "\nfunc run(queue Queue) { agents.NewExecutor(ctx, model) }\n"
+    )
+    assert _agent(_scan(tmp_path, run_connector, "main.go", source), "framework.langchaingo")
+
+
 def test_go_llms_import_does_not_bind_unrelated_agents_receiver(tmp_path, run_connector):
     source = (
         'package main\nimport "github.com/tmc/langchaingo/llms"\n'
