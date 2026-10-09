@@ -980,8 +980,13 @@ configuration location cannot be inspected safely; the other locations are
 still scanned and reported. Missing locations remain normal; symbolic links,
 non-regular objects and denied access are coverage failures. A linked
 directory that holds none of the locations (a stow-folded `~/.config`) is
-passed over without being followed. Instruction checks reuse the original
-confined file snapshot and mark inspection beyond 512 KiB incomplete.
+passed over without being followed. A scan of the user's own profile whose
+`%APPDATA%` is redirected outside it (folder redirection) is incomplete, since
+the Windows client configuration there is not read. In any `code.filesystem`
+scan with `include`, a file link whose target is not selected is a coverage
+gap rather than covered by a target the walk never reads. Instruction checks
+reuse the original confined file snapshot and mark inspection beyond 512 KiB
+incomplete.
 
 Rescan endpoint baselines produced by an earlier candidate. Windows locations
 now come from the profile's own `AppData/Roaming`: a mounted Windows profile
@@ -991,10 +996,12 @@ attributed to the target. The command covers every `endpoint.inventory`
 configuration file and uses the same include list for every profile, so the
 collection scope fingerprint changes once and then stays stable as clients
 come and go; empty profiles are comparable in fleet diffs. `--incremental` is
-ignored for endpoint scans because fingerprinting would read the whole
-profile. Hidden HTML comments longer than 4,000 bytes or never closed now add
-the `hidden-instructions` tag, and emoji joiners no longer add
-`invisible-text`, so `shadowscan diff` can show those findings as changed.
+ignored for endpoint scans, and for every `code.filesystem` scan with
+`include`, because fingerprinting would read the whole profile. Hidden HTML
+comments longer than 4,000 bytes, or never closed where Markdown passes them
+through as HTML, now add the `hidden-instructions` tag, and emoji joiners and
+subdivision flags no longer add `invisible-text`, so `shadowscan diff` can
+show those findings as changed.
 
 Fleet inputs must preserve completion statistics, matching summary counts and
 valid collection fingerprints. Combining an incomplete or truncated report

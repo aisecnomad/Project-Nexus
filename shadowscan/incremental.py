@@ -120,10 +120,11 @@ def _literal_excluded_directories(spec: ConnectorSpec) -> frozenset[str]:
 
 
 def _eligible(spec: ConnectorSpec) -> bool:
-    if spec.name == "code.filesystem" and spec.config.get("include") and not spec.config.get("input"):
+    if spec.name == "code.filesystem" and spec.config.get("include"):
         # An include walk reads only the selected paths. The tree digest would
         # open every file below the root (a whole home directory for
-        # ``shadowscan endpoint``), so such a scan always runs in full.
+        # ``shadowscan endpoint``), so such a scan always runs in full,
+        # whether the root is named by ``path``, ``paths`` or ``input``.
         return False
     return spec.name == "code.filesystem" or (
         spec.name in (_CODE | _CLOUD_EXPORTS) and bool(spec.config.get("input"))

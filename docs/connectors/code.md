@@ -413,7 +413,10 @@ file below it, so such a scan always runs in full. A directory link that only
 lies on the way to selected paths is never followed; it is a coverage gap
 (incomplete) when a selected path exists through it, or cannot be looked up,
 and is passed over when none does, so a linked `~/.config` without any client
-configuration in it leaves an endpoint scan complete.
+configuration in it leaves an endpoint scan complete. A selected file that is
+a link to a file outside the selected paths is a coverage gap too, even when
+the target is an equivalent instruction document, because the walk never
+reads the target.
 
 ```yaml
 connectors:
@@ -428,10 +431,12 @@ connectors:
 A coding-agent configuration finding inspects the instruction files it reports
 (skills, `CLAUDE.md`-style files, sub-agent definitions, rules, hooks) for
 content a rendered view hides or that executes fetched code: an HTML comment
-holding sentences (however long, or never closed, which hides the rest of the
-file), a network fetch piped into an interpreter, an inline blob decoded into
-one, and invisible or bidirectional control characters (a zero-width joiner
-inside an emoji sequence is not counted). A hit adds
+holding sentences (however long, or never closed where Markdown passes it
+through as HTML: at the start of a line, below a list or quote marker, or in
+raw HTML, where it hides the rest of the file), a network fetch piped into an
+interpreter, an inline blob decoded into one, and invisible or bidirectional
+control characters (a zero-width joiner inside an emoji sequence and the tag
+characters of a subdivision flag are not counted). A hit adds
 `content:<rule>` evidence naming the file and line, never an excerpt, and the
 risk tags `hidden-instructions`, `remote-code-fetch` or `invisible-text`
 (see [risk](../concepts/risk.md)); `metadata.instruction_content` lists the

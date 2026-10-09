@@ -558,7 +558,11 @@ Copilot CLI, Zed, Continue, Goose, OpenCode, LM Studio, Aider, OpenClaw and a
 generic `~/.mcp.json`. macOS, Linux and Windows paths are all checked; the
 Windows ones are the profile's own `AppData/Roaming`, never the scanning
 process's `%APPDATA%`, so `--home` on a mounted Windows profile reads that
-profile's Claude Desktop and VS Code configuration. The full list is
+profile's Claude Desktop and VS Code configuration. Without `--home`, a
+`%APPDATA%` redirected outside the profile (folder redirection to a file
+share) makes the scan incomplete (exit 3), because the clients' configuration
+there is not read. Scan the share separately, for example with `--home` set to
+the directory that holds the redirected `AppData\Roaming`. The full list is
 `shadowscan.endpoint.LOCATIONS`; it includes every configuration file the
 `endpoint.inventory` connector reads.
 

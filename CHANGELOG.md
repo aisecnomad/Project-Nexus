@@ -101,6 +101,10 @@ summarizes each release for people who install and operate ShadowScan.
   Windows profile scanned with `--home` was reported complete and empty while
   its Claude Desktop or VS Code configuration went unread, and with `APPDATA`
   set the operator's own configuration was reported under the target's label.
+  A scan of the user's own profile (no `--home`) whose `%APPDATA%` is
+  redirected outside it (folder redirection to a file share) is incomplete
+  (exit 3): the clients keep their configuration there, and the scan does not
+  read it.
 - `shadowscan endpoint` covers every configuration file location of
   `endpoint.inventory` (LM Studio, Aider, OpenClaw, Goose on Windows, Cline and
   Roo inside Cursor). Its include list no longer depends on which locations
@@ -110,17 +114,26 @@ summarizes each release for people who install and operate ShadowScan.
   than a scope change. The default profile resolves symbolic links in `$HOME`.
   `docs/scanning.md` describes how the command relates to `endpoint.inventory`.
 - A `code.filesystem` scan with `include` is no longer served from the
-  incremental cache: fingerprinting the root read and hashed every file below
-  it, so `shadowscan endpoint --incremental` read the whole home directory.
+  incremental cache, whether its root is given as `path`, `paths` or `input`:
+  fingerprinting the root read and hashed every file below it, so
+  `shadowscan endpoint --incremental` read the whole home directory.
+- In a `code.filesystem` scan with `include`, a file link whose target is not
+  selected (a `.claude/CLAUDE.md` linked to an unselected `AGENTS.md`) is a
+  coverage gap (incomplete). It counted as covered by its target, which the
+  walk never reads, so the scan was complete without the target's content.
 - `shadowscan merge` refuses a finding id that another report uses for a
   finding with another identity (exit 1); a report that reused ids could fold
   other machines' findings into its own. Sources are named by their path below
   the reports' common directory, so `<host>/report.json` collections stay
   attributable.
 - The hidden-comment check reports HTML comments of any length, and a comment
-  that is never closed, which before were skipped beyond 4,000 bytes. A
-  zero-width joiner inside an emoji sequence no longer counts as invisible
-  text.
+  that is never closed where Markdown passes it through as HTML (at the start
+  of a line, below a list or quote marker, or in raw HTML), which before were
+  skipped beyond 4,000 bytes. An unclosed `<!--` in a paragraph or code span
+  is shown as text and is not reported; `<!-->` and `<!--->` are empty
+  comments. A zero-width joiner inside an emoji sequence, and the tag
+  characters of a subdivision flag (England, Scotland, Wales), no longer count
+  as invisible text.
 - Instruction content checks inspect the original confined file snapshot;
   exceeding their 512 KiB budget marks coverage incomplete.
 - Fleet merging validates source completion, counts and collection fingerprints.

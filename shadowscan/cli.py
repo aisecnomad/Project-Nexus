@@ -42,7 +42,13 @@ from shadowscan.connectors import (
     get_connector_class,
     plugin_registry_errors,
 )
-from shadowscan.endpoint import default_label, describe, endpoint_include, endpoint_paths
+from shadowscan.endpoint import (
+    appdata_outside_profile,
+    default_label,
+    describe,
+    endpoint_include,
+    endpoint_paths,
+)
 from shadowscan.engine import Engine
 from shadowscan.errors import SetupError
 from shadowscan.fleet import merge_reports, source_names
@@ -1311,6 +1317,15 @@ def endpoint(home_dir: str | None, label: str | None, list_only: bool, opts: Sca
     home = Path(home_dir).resolve() if home_dir else Path.home().resolve()
     discovery_errors: list[str] = []
     found = endpoint_paths(home, errors=discovery_errors)
+    if not home_dir and appdata_outside_profile(home):
+        # Folder redirection: Windows clients keep their configuration below
+        # %APPDATA%, which the profile walk does not reach. An empty result
+        # there would be a gap, not an absence. --home ignores %APPDATA%,
+        # which belongs to the scanning user rather than the inspected profile.
+        discovery_errors.append(
+            "APPDATA is redirected outside the profile's AppData/Roaming; Windows client "
+            "configuration there is not scanned"
+        )
     if list_only:
         for line in describe(found, home):
             click.echo(encodable_text(terminal_text(line)))

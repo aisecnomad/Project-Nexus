@@ -1349,10 +1349,11 @@ class FilesystemConnector(BaseConnector):
         when the real target is walked and analyzed with the same semantics the
         alias path would have had: same project, same test classification, same
         source type and no file-name signal that only the alias name carries.
-        Directory links, links into excluded or unread content and config or
-        document aliases (whose parsing can depend on their path) are gaps. A
-        coding-agent instruction document linked to another one is the exception:
-        the target keeps the alias's project and test classification.
+        Directory links, links into excluded, unselected (outside ``include``)
+        or unread content and config or document aliases (whose parsing can
+        depend on their path) are gaps. A coding-agent instruction document
+        linked to another one is the exception: the target keeps the alias's
+        project and test classification.
         """
         relative = target.relative_to(root)
         target_rel = relative.as_posix()
@@ -1374,7 +1375,14 @@ class FilesystemConnector(BaseConnector):
         for depth, name in enumerate(parts[:-1], start=1):
             if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
                 return False
-        if not target.is_file() or self._excluded_file(target_rel) or _never_read_by_name(target.name):
+        # An include walk never reaches a target outside the selected paths,
+        # however equivalent the alias is.
+        if (
+            not target.is_file()
+            or self._excluded_file(target_rel)
+            or not self._included(target_rel)
+            or _never_read_by_name(target.name)
+        ):
             return False
         # Coding-agent instruction aliases (CLAUDE.md -> AGENTS.md) are the
         # same document family. The real file is scanned and the alias hides no

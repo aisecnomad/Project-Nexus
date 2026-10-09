@@ -5,10 +5,11 @@ client configuration files, user-level skills, sub-agent and instruction
 files that establish which agents a person has wired into their editor and
 terminal. Every location is a path below the profile's home directory, the
 Windows ones below its own ``AppData`` (never the scanning process's
-``%APPDATA%``, which describes another profile). Every location is checked
-for existence only; the files are then read by the ``code.filesystem``
-connector under its usual limits. Symbolic links are never followed, in line
-with the inventory and signature policy.
+``%APPDATA%``, which describes another profile; a scan of the user's own
+profile whose ``%APPDATA%`` is redirected elsewhere is incomplete). Every
+location is checked for existence only; the files are then read by the
+``code.filesystem`` connector under its usual limits. Symbolic links are never
+followed, in line with the inventory and signature policy.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import os
 import re
 import socket
 import stat
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -150,6 +151,23 @@ def _exists_without_links(path: Path, home: Path) -> bool:
             raise OSError("configuration parent is a symbolic link")
         current = current.parent
     return True
+
+
+def appdata_outside_profile(home: Path, env: Mapping[str, str] | None = None) -> bool:
+    """Whether ``%APPDATA%`` names a directory other than the profile's own ``AppData/Roaming``.
+
+    Folder redirection (a common enterprise policy) moves it to a file share,
+    and Windows clients then keep their configuration there, out of reach of
+    a scan of ``home``. Only meaningful for the scanning user's own profile.
+    """
+    env = os.environ if env is None else env
+    appdata = env.get("APPDATA")
+    if not appdata:
+        return False
+    try:
+        return Path(appdata).resolve() != (home / "AppData" / "Roaming").resolve()
+    except (OSError, RuntimeError):
+        return True
 
 
 def endpoint_include() -> list[str]:
