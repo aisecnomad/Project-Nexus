@@ -1,5 +1,11 @@
 # Real-world repository benchmark results
 
+> **Stale: measured on the original experimental branch, before merge review
+> restored fail-closed input defects (exit 3), narrowed the crawler
+> user-agent discount and returned plain `.js` files to the ambiguity-only
+> JSX retry.** These figures do not describe the merged code; the recoveries
+> credited to input defects do not hold. See [README.md](README.md).
+
 Repo surface only; every case is a public repository pinned by commit (see `benchmarks/realworld/corpus.json`). Positive means the label is `agent` or `llm`. Errors count as misses and are also shown. Read the caveats in `benchmarks/realworld/README.md` before quoting numbers.
 
 - Corpus: `corpus.json` sha256 `6469bdee66c83338…`, 34 repositories
