@@ -5,6 +5,25 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 8 benchmark remediation: symbolic links
+
+In the real-world benchmark, 11 scans were incomplete because of a symbolic
+link, and every link pointed inside its repository. Links are still never
+followed; each new rule decides from real paths and has a regression test.
+
+- A directory link into the same project (a skill directory shared between
+  coding agents, `.claude/skills -> ../.agents/skills`) is covered when every
+  file below the target, listed at its real path, is analyzed alike at its
+  alias path. File-name evidence only the alias path carries is recorded there.
+  Links into another project, a test directory or an agent-definition
+  directory, cycles, nested links and over 2,000 files stay gaps.
+- A document alias (`docs/guide/README.md -> ../../README.md`) and a
+  configuration alias with the same file name are covered like source aliases.
+- A dangling link inside the tree, whose name carries no file-name signal, is
+  noted with a warning; a dangling `.mcp.json` stays a gap.
+- A link in test code whose target is in the tree follows the test-code
+  policy, unless its name adds a file-name signal (`tests/CLAUDE.md`).
+
 ### October 8 benchmark remediation: oversize and binary content
 
 In the real-world benchmark, 26 scans were incomplete because of files over

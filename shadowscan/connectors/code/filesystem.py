@@ -475,6 +475,39 @@ MCP_CONFIG_NAMES = {
 }
 
 
+# Documentation read for credentials and file-name signals only (`.mdc` holds Cursor rules).
+_DOCUMENT_EXTENSIONS = frozenset({".md", ".mdx", ".txt", ".rst"})
+# Files below a directory link are compared one by one, at most this many.
+_MAX_ALIAS_FILES = 2_000
+
+
+def _same_path_semantics(first: str, second: str) -> bool:
+    """Whether two paths of the same content are analyzed alike, apart from their file-name signals.
+
+    Agent-definition directories parse front matter, a workflow directory reads
+    workflows, CI configuration runs coding agents, and agent manifests are
+    recognised by path; test classification sets evidence weight.
+    """
+    return (
+        _is_test_path(first) == _is_test_path(second)
+        and agent_manifest_kind(first) == agent_manifest_kind(second)
+        and any(d in first for d in _AGENT_DEFINITION_DIRS)
+        == any(d in second for d in _AGENT_DEFINITION_DIRS)
+        and (".github/workflows/" in first) == (".github/workflows/" in second)
+        and bool(_CI_CONFIGURATION.search(first)) == bool(_CI_CONFIGURATION.search(second))
+    )
+
+
+def _dangling_inside(link: Path, resolved_root: Path) -> bool:
+    """Whether ``link`` resolves, as far as it can, to a path inside the root where nothing exists."""
+    try:
+        target = link.resolve(strict=False)
+    except (OSError, ValueError, RuntimeError):
+        return False
+    inside = target == resolved_root or resolved_root in target.parents
+    return inside and not os.path.lexists(target)
+
+
 def _is_git_store(dirpath: str, dirnames: list[str], filenames: list[str]) -> bool:
     """Whether a walked directory is a Git repository store: Git's entries only and a valid HEAD."""
     if "HEAD" not in filenames or "objects" not in dirnames or "refs" not in dirnames:
@@ -1483,6 +1516,10 @@ class FilesystemConnector(BaseConnector):
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
         self._symlink_warnings: set[Path] = set()
+        # One note per root and kind for links that lose no coverage (dangling, test code).
+        self._link_notes: set[tuple[Path, str]] = set()
+        # File-name evidence at the paths of covered directory links (see _directory_alias_covered).
+        self._alias_evidence: list[tuple[str, str, list[Match]]] = []
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
 
@@ -1644,9 +1681,26 @@ class FilesystemConnector(BaseConnector):
             return _project_root(root, rel, budget=budget) == _project_root(
                 root, target_rel, budget=budget
             ) and _is_test_path(rel) == _is_test_path(target_rel)
-        # Only source aliases are equivalent without opening the link: config
-        # and document parsing can depend on the file name and directory.
-        if link_ext not in SOURCE_EXTENSIONS or Path(target.name).suffix.lower() != link_ext:
+        target_ext = Path(target.name).suffix.lower()
+        # A document is read for credentials and its file-name signals only, so a
+        # document alias (`docs/README.md -> ../README.md`) is equivalent; so is a
+        # configuration alias with the same file name, whose parsing depends on
+        # the name and on directories that file-name signals and
+        # _same_path_semantics compare.
+        document = (
+            link_ext in _DOCUMENT_EXTENSIONS
+            and target_ext in _DOCUMENT_EXTENSIONS
+            and not is_manifest_name(link_name)
+            and not is_manifest_name(target.name)
+            and not _is_coding_agent_doc(target.name)
+        )
+        configuration = link_name == target.name and link_ext in _DATA_DOCUMENT_EXTENSIONS
+        if document or configuration:
+            if not _same_path_semantics(rel, target_rel):
+                return False
+        # Other source aliases are equivalent without opening the link; other
+        # config and document parsing can depend on the file name and directory.
+        elif link_ext not in SOURCE_EXTENSIONS or target_ext != link_ext:
             return False
         # The real path must keep the alias's project ownership and evidence
         # weight; another project or a test directory would change both.
@@ -1925,6 +1979,45 @@ class FilesystemConnector(BaseConnector):
         target = _resolved_link_target(link, resolved_root)
         if target is not None and self._link_target_is_scanned(rel, target, resolved_root, walk):
             return True
+        # A name that file-name signatures read (`.mcp.json`, `CLAUDE.md`) is
+        # configuration or instructions in its own right: only the exact
+        # comparisons of _link_target_is_scanned show that nothing it names is lost.
+        alias_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(rel)}
+        if (
+            target is not None
+            and target.is_dir()
+            and not alias_signals
+            and self._directory_alias_covered(rel, target, resolved_root, walk)
+        ):
+            return True
+        if target is None and not alias_signals and _dangling_inside(link, resolved_root):
+            # Nothing exists at the target in the tree, so nothing is unread.
+            self._link_note(
+                root, "dangling", f"skipped dangling symbolic link {rel}; its target is not in the tree"
+            )
+            return True
+        target_signals = (
+            {
+                (m.signature.id, id(m.signal))
+                for m in self.index.match_file(target.relative_to(resolved_root).as_posix())
+            }
+            if target is not None and target.is_file()
+            else set()
+        )
+        if (
+            target is not None
+            and alias_signals <= target_signals
+            and not self.include_tests
+            and _is_test_path(rel)
+        ):
+            # The target is inside the tree and analyzed at its real path.
+            self._link_note(
+                root,
+                "test",
+                f"skipped symbolic link {rel} in test code; its target is analyzed at its real path",
+                incomplete=self.strict_coverage,
+            )
+            return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
         if root not in self._symlink_warnings:
@@ -1934,6 +2027,86 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"{message}; coverage incomplete")
             else:
                 self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+        return True
+
+    def _link_note(self, root: Path, kind: str, message: str, *, incomplete: bool = False) -> None:
+        """Note one link of each kind per root; a hostile tree cannot fill the report with link names."""
+        if (root, kind) not in self._link_notes:
+            self._link_notes.add((root, kind))
+            self.ctx.warn(f"code.filesystem: {message}", incomplete=incomplete)
+
+    def _directory_alias_covered(self, rel: str, target: Path, root: Path, walk: _WalkCounters) -> bool:
+        """Whether a link to a directory in the tree loses no coverage, enumerating the target, not the link.
+
+        The target must be walked in the same project, with the same test
+        classification. Every file below it, at most ``_MAX_ALIAS_FILES`` with
+        no link among them and no project inside, must be analyzed alike at its
+        alias and real paths: the same exclusion, test classification,
+        manifest kind and special directories. A file-name signal only the
+        alias path carries is recorded at that path after the walk (see
+        ``_record_alias_evidence``), provided the real file is read anyway.
+        """
+        target_rel = target.relative_to(root).as_posix()
+        if target_rel == "." or rel == target_rel or rel.startswith(target_rel + "/"):
+            return False  # a link to an ancestor is a cycle
+        parts = PurePosixPath(target_rel).parts
+        for depth, name in enumerate(parts, start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        budget, cache = walk.budget, walk.project_roots
+        project = _project_root(root, rel, cache, budget=budget)
+        if project != _project_root(root, f"{target_rel}/_", cache, budget=budget):
+            return False
+        if _is_test_path(f"{rel}/_") != _is_test_path(f"{target_rel}/_"):
+            return False
+        failed: list[OSError] = []
+        records: list[tuple[str, list[Match]]] = []
+        files = 0
+        for dirpath, dirnames, filenames in _walk_directories(target, failed.append, budget=budget):
+            sub = Path(dirpath).relative_to(target).as_posix()
+            if failed or (sub != "." and _marks_project(Path(dirpath), filenames)):
+                return False
+            alias_dir = rel if sub == "." else f"{rel}/{sub}"
+            real_dir = target_rel if sub == "." else f"{target_rel}/{sub}"
+            kept = []
+            for name in dirnames:
+                if (Path(dirpath) / name).is_symlink():
+                    return False
+                excluded = self._excluded(f"{real_dir}/{name}", name)
+                if excluded != self._excluded(f"{alias_dir}/{name}", name):
+                    return False
+                if not excluded:
+                    kept.append(name)
+            dirnames[:] = kept
+            for name in filenames:
+                files += 1
+                if files > _MAX_ALIAS_FILES or (Path(dirpath) / name).is_symlink():
+                    return False
+                alias_rel, real_rel = f"{alias_dir}/{name}", f"{real_dir}/{name}"
+                excluded = self._excluded_file(real_rel)
+                if excluded != self._excluded_file(alias_rel):
+                    return False
+                if excluded or _never_read_by_name(name):
+                    continue
+                if not _same_path_semantics(alias_rel, real_rel):
+                    return False
+                real_matches = self.index.match_file(real_rel)
+                real_keys = {(m.signature.id, id(m.signal)) for m in real_matches}
+                extra = [
+                    m
+                    for m in self.index.match_file(alias_rel)
+                    if (m.signature.id, id(m.signal)) not in real_keys
+                ]
+                if not extra:
+                    continue
+                if (
+                    not (_analyzed_by_name(name) or real_matches)
+                    or agent_manifest_kind(alias_rel) is not None
+                    or any(m.signature_id == "protocol.mcp" for m in extra)
+                ):
+                    return False  # the alias path would be read or parsed differently
+                records.append((alias_rel, extra))
+        self._alias_evidence.extend((project, alias_rel, extra) for alias_rel, extra in records)
         return True
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
@@ -2039,15 +2212,31 @@ class FilesystemConnector(BaseConnector):
             self.ctx.error(f"code.filesystem: {scan.label}: could not open the scan root safely ({reason})")
             return
         self._default_skipped = {}
+        self._alias_evidence = []
         try:
             self._walk_entries(scan)
             self._resolve_plugin_mcp(scan)
+            self._record_alias_evidence(scan)
         except _WalkLimitError as exc:
             self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
         finally:
             os.close(scan.root_fd)
             scan.root_fd = -1
         self._report_default_excluded(scan)
+
+    def _record_alias_evidence(self, scan: _ScanState) -> None:
+        """Record the file-name evidence only the paths under a covered directory link carry.
+
+        The files are analyzed at their real paths; a name such as
+        `.claude/skills/x/SKILL.md` adds coding-agent evidence that the real
+        path `.agents/skills/x/SKILL.md` does not, as scanning the alias would.
+        """
+        for project, alias_rel, matches in self._alias_evidence:
+            proj = scan.projects.setdefault(project, _Project(project))
+            for m in matches:
+                m.extra["verified_agent"] = False
+                self._record(proj, m, alias_rel, None)
+        self._alias_evidence = []
 
     def _resolve_plugin_mcp(self, scan: _ScanState) -> None:
         """Parse the MCP configuration files plugin manifests name; one that is not in the tree is a gap.

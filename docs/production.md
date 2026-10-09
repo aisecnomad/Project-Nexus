@@ -861,6 +861,12 @@ reported. Re-scan before comparing completeness or memory use:
   limits in test code are warnings unless `include_tests` or
   `strict_coverage` is set; an oversize test file's credentials are still
   scanned. Set one of the options if your policy treats them as gaps.
+- **Symbolic links.** Directory links into the same project, document
+  aliases, same-name configuration aliases, dangling links and links in test
+  code no longer make a scan incomplete when they lose no coverage (see the
+  [coverage policy](scanning.md#coverage-policy)). A covered skill-directory
+  link adds its alias-path file-name evidence, so a coding-agent configuration
+  finding can gain files.
 - **Text and Git stores.** JavaScript and TypeScript sources with a NUL in a
   string literal and text in a legacy code page are analyzed (the latter with a warning), and Git
   repositories kept under another name are skipped with a warning, instead of

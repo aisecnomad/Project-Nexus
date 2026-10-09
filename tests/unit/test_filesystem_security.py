@@ -275,9 +275,7 @@ def test_explicitly_excluded_symlink_is_outside_scan_scope(tmp_path, run_connect
     assert not ctx.stats.incomplete
 
 
-@pytest.mark.parametrize(
-    "kind", ["excluded-directory", "excluded-file", "unsupported-target", "broken-target"]
-)
+@pytest.mark.parametrize("kind", ["excluded-directory", "excluded-file", "unsupported-target"])
 @pytest.mark.parametrize("strict", [False, True])
 def test_in_root_link_to_unscanned_target_marks_incomplete(tmp_path, run_connector, kind, strict):
     repo = tmp_path / "repo"
@@ -344,7 +342,8 @@ def test_source_alias_to_test_directory_marks_incomplete(tmp_path, run_connector
 
 
 @pytest.mark.parametrize("strict", [False, True])
-def test_in_root_directory_alias_keeps_findings_but_marks_incomplete(tmp_path, run_connector, strict):
+def test_in_root_directory_alias_in_the_same_project_is_covered(tmp_path, run_connector, strict):
+    # Every file below the target is analyzed alike at its alias and real paths.
     repo = tmp_path / "repo"
     source = repo / "source"
     source.mkdir(parents=True)
@@ -353,9 +352,38 @@ def test_in_root_directory_alias_keeps_findings_but_marks_incomplete(tmp_path, r
 
     findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_in_root_directory_alias_into_another_project_keeps_findings_but_marks_incomplete(
+    tmp_path, run_connector, strict
+):
+    repo = tmp_path / "repo"
+    source = repo / "service"
+    source.mkdir(parents=True)
+    (source / "pyproject.toml").write_text("[project]\nname = 'service'\n")
+    (source / "agent.py").write_text("from crewai import Agent\n")
+    (repo / "agents").symlink_to(source, target_is_directory=True)
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
     assert ctx.stats.incomplete
     diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
     assert any("symbolic link agents" in issue for issue in diagnostics)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_dangling_in_root_link_is_noted_unless_its_name_is_configuration(tmp_path, run_connector, strict):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "agent.py").symlink_to(repo / "missing.py")
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
+    assert not ctx.stats.incomplete
+    assert any("dangling symbolic link agent.py" in issue for issue in ctx.stats.warnings)
+    (repo / ".mcp.json").symlink_to(repo / "generated" / "mcp.json")
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
+    assert ctx.stats.incomplete
 
 
 @pytest.mark.parametrize("kind", ["root", "ancestor", "dotdot"])

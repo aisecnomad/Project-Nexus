@@ -15,11 +15,28 @@ that are never silent:
   `copilot-instructions.md`) that links to another instruction document in the
   same project with the same test classification is also covered: the target is
   scanned at its real path, so the alias is not a second agent definition and
-  its alias-only file name is not reported separately. Every other link makes
-  the scan incomplete (exit code 3): directory links, whose alias paths are not
-  inspected; other configuration and document aliases, whose parsing can depend
-  on their path; aliases into another project or test directory; links into
-  excluded or unread content; links outside the root; and unresolved links.
+  its alias-only file name is not reported separately. A document alias
+  (`docs/guide/README.md -> ../../README.md`, any Markdown, text or
+  reStructuredText file) and a configuration alias with the same file name are
+  covered on the same terms, since a document is read only for credentials and
+  file-name signals, and configuration parsing depends on the name and on
+  directories that are compared (agent definitions, workflows, CI files,
+  agent manifests). A directory link into the same project, such as a skill
+  directory shared between coding agents (`.claude/skills -> ../.agents/skills`),
+  is covered when the link's own name carries no file-name signal and every
+  file below the target (at most 2,000, with no link and no other project among
+  them) is analyzed alike at its alias and real paths; file-name evidence only
+  the alias path carries (Claude Code's `.claude/skills/x/SKILL.md`) is recorded
+  at that path. The target directory is listed at its real path; the link is
+  never entered. A dangling link whose own name carries no file-name signal and
+  whose target would be inside the tree hides nothing and is noted with a
+  warning. A link under a test path whose target is in the tree, and whose name
+  adds no file-name signal, follows the test-code policy. Every other link makes
+  the scan incomplete (exit code 3): directory links into another project, a
+  test directory or an agent-definition directory; other configuration
+  aliases, whose parsing can depend on their path; aliases into another
+  project or test directory; links into excluded or unread content; links
+  outside the root; and unresolved links.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the

@@ -458,12 +458,19 @@ def test_unrelated_bound_calls_do_not_exhaust_the_binder(run_connector, tmp_path
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
 def test_internal_directory_symlinks_mark_alias_path_unscanned(run_connector, tmp_path):
+    # A directory alias whose files are analyzed alike at their real paths is
+    # covered; one whose alias path is an agent-definition directory is not.
     write(tmp_path, "certs/valid/ca.pem", "certificate\n")
     (tmp_path / "certs" / "client").mkdir()
     (tmp_path / "certs" / "client" / "ca").symlink_to(tmp_path / "certs" / "valid")
     _, stats = scan(run_connector, tmp_path, strict_coverage=True)
+    assert not stats.incomplete
+    write(tmp_path, "tools/agents/reviewer.md", "---\nname: reviewer\n---\nReview.\n")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "agents").symlink_to(tmp_path / "tools" / "agents")
+    _, stats = scan(run_connector, tmp_path, strict_coverage=True)
     assert stats.errors and stats.incomplete
-    assert any("symbolic link certs/client/ca" in issue for issue in stats.errors)
+    assert any("symbolic link .claude/agents" in issue for issue in stats.errors)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unavailable")
