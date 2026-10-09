@@ -85,7 +85,8 @@ def test_run_group_passes_stdin(tmp_path: Path) -> None:
 def _alive(pid: int) -> bool:
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # A process reaped between the open and the read fails with ESRCH.
         return False
     state = stat.rsplit(")", 1)[1].split()[0]  # the field after the command name
     return state != "Z"
