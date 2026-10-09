@@ -54,12 +54,12 @@ def test_dangling_link_outside_the_tree_stays_a_gap(tmp_path: Path, run_connecto
 
 
 def test_link_in_test_code_follows_the_test_code_policy(tmp_path: Path, run_connector) -> None:
-    # A configuration alias under another name is a gap elsewhere (see below).
+    # A configuration alias whose name is read differently is a gap elsewhere (see below).
     _write(tmp_path, {"tests/data/settings.yml": "model: gpt-4o\n"})
-    _link(tmp_path, "tests/links/config.yaml", "../data/settings.yml")
+    _link(tmp_path, "tests/links/docker-compose.yml", "../data/settings.yml")
     _, ctx = _scan(run_connector, tmp_path)
     assert not ctx.stats.incomplete
-    assert any("symbolic link tests/links/config.yaml in test code" in w for w in ctx.stats.warnings)
+    assert any("symbolic link tests/links/docker-compose.yml in test code" in w for w in ctx.stats.warnings)
     _, strict = _scan(run_connector, tmp_path, strict_coverage=True)
     assert strict.stats.incomplete
 
@@ -77,8 +77,9 @@ def test_directory_link_between_test_fixtures_is_covered(tmp_path: Path, run_con
         ("docs/guide/README.md", "../../README.md"),
         ("PLAN-video.md", "docs/plans/2026-05-24-video.md"),
         ("providers/azure/models/codestral.toml", "../../mistral/models/codestral.toml"),
+        ("providers/azure/models/gpt.toml", "../../openai/models/gpt-4o.toml"),
     ],
-    ids=["readme", "plan", "same-name-config"],
+    ids=["readme", "plan", "same-name-config", "different-name-config"],
 )
 def test_document_and_same_name_configuration_aliases_are_covered(
     tmp_path: Path, run_connector, link: str, target: str
@@ -90,9 +91,34 @@ def test_document_and_same_name_configuration_aliases_are_covered(
     assert not ctx.stats.incomplete, ctx.stats.warnings
 
 
-def test_configuration_alias_under_another_name_stays_a_gap(tmp_path: Path, run_connector) -> None:
-    _write(tmp_path, {"config/base.yaml": "model: gpt-4o\n"})
-    _link(tmp_path, "config/settings.yaml", "base.yaml")
+def test_document_alias_into_another_project_is_covered(tmp_path: Path, run_connector) -> None:
+    # A document yields credentials and file-name signals only, reported at the real file.
+    _write(
+        tmp_path,
+        {
+            "apps/a/package.json": '{"name": "a"}',
+            "packages/b/package.json": '{"name": "b"}',
+            "packages/b/README.md": "# b\n",
+        },
+    )
+    _link(tmp_path, "apps/a/README.md", "../../packages/b/README.md")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+
+
+def test_shared_skill_directory_under_codex_is_covered(tmp_path: Path, run_connector) -> None:
+    _write(tmp_path, {".agents/skills/translate/SKILL.md": SKILL})
+    _link(tmp_path, ".codex/skills", "../.agents/skills")
+    _, ctx = _scan(run_connector, tmp_path)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+
+
+def test_configuration_alias_whose_name_is_read_differently_stays_a_gap(
+    tmp_path: Path, run_connector
+) -> None:
+    # A Compose file is a deployment manifest by name; its target is not.
+    _write(tmp_path, {"config/base.yaml": "services:\n  app:\n    image: app\n"})
+    _link(tmp_path, "docker-compose.yml", "config/base.yaml")
     _, ctx = _scan(run_connector, tmp_path)
     assert ctx.stats.incomplete
 

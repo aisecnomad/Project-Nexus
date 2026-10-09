@@ -50,8 +50,10 @@ def test_module_loads_are_import_evidence(tmp_path: Path, run_connector, name: s
     [
         '// const sdk = require("@anthropic-ai/claude-agent-sdk");\nconsole.log(1);\n',
         'const help = "run require(\\"@anthropic-ai/claude-agent-sdk\\") to start";\n',
+        'const sdk = loader.require("@anthropic-ai/claude-agent-sdk");\n',
+        'type Sdk = typeof import("@anthropic-ai/claude-agent-sdk");\n',
     ],
-    ids=["comment", "string"],
+    ids=["comment", "string", "member-call", "type-query"],
 )
 def test_module_loads_in_comments_and_strings_are_not_evidence(
     tmp_path: Path, run_connector, source: str

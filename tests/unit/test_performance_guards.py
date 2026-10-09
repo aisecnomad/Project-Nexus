@@ -251,7 +251,7 @@ def test_oversize_skip_globs_is_configurable_and_validated(tmp_path, index, run_
 
 
 def test_only_oversize_agent_source_does_not_yield_a_clean_empty_result(tmp_path, index):
-    (tmp_path / "agent.py").write_text("from crewai import Agent\n" + " " * 1_000_000)
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n" + " " * 5_000_000)
     config = ScanConfig(
         connectors=[ConnectorSpec("code.filesystem", {"path": str(tmp_path), "use_git": False})], parallel=1
     )
@@ -640,7 +640,7 @@ def test_precompiled_file_globs_equal_fnmatch(index):
 def test_unreadable_entries_reserve_no_deadline_budget(tmp_path, index, monkeypatch):
     # An oversize, non-skippable source file first in walk order must not end
     # the walk: it is never read, so it reserves no matching budget.
-    (tmp_path / "a_big.py").write_bytes(b"#" * (2 * 1024 * 1024))
+    (tmp_path / "a_big.py").write_bytes(b"#" * (5 * 1024 * 1024))
     for number in range(3):
         (tmp_path / f"z_agent_{number}.py").write_text(LANGCHAIN)
     clock = _fake_clock(monkeypatch, step=1.0)

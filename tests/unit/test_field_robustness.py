@@ -198,11 +198,10 @@ def test_notebook_with_large_outputs_is_analyzed_by_code_cells(tmp_path, index):
     findings, ctx = _run(index, tmp_path, max_file_size=10_000)
     project = next(f for f in findings if f.resource_type == "project")
     assert "framework.crewai" in project.frameworks and project.kind == Kind.AGENT
-    # The saved outputs were not read for credentials: an honest gap.
-    assert ctx.stats.incomplete and not ctx.stats.errors
-    assert any("code cells analyzed" in w and "coverage incomplete" in w for w in ctx.stats.warnings)
+    # The saved outputs are read for credentials in windows at any size.
+    assert not ctx.stats.incomplete and not ctx.stats.errors
     _, strict = _run(index, tmp_path, max_file_size=10_000, strict_coverage=True)
-    assert any("saved outputs not scanned" in e for e in strict.stats.errors)
+    assert not strict.stats.incomplete
 
 
 def test_notebook_outputs_are_no_gap_when_credentials_are_not_scanned(tmp_path, index):
@@ -238,3 +237,15 @@ def test_lenient_json_keeps_a_trailing_comma_after_the_document_an_error(text):
     # rejected a comma after the document, and the regex rewrite must too.
     with pytest.raises(ValueError):
         load_json_lenient(text)
+
+
+def test_notebook_outputs_are_scanned_for_credentials(tmp_path, index):
+    key = "sk-proj-" + "Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk9Lz0Xc" * 2
+    notebook = json.loads(_notebook(CREW_CODE, 10))
+    notebook["cells"][1]["outputs"] = [
+        {"output_type": "stream", "name": "stdout", "text": [f"OPENAI_API_KEY={key}\n"]}
+    ]
+    (tmp_path / "demo.ipynb").write_text(json.dumps(notebook))
+    findings, ctx = _run(index, tmp_path)
+    assert any(f.kind == Kind.SECRET for f in findings)
+    assert key not in json.dumps([f.to_dict() for f in findings])

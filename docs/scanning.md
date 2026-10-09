@@ -16,22 +16,29 @@ that are never silent:
   same project with the same test classification is also covered: the target is
   scanned at its real path, so the alias is not a second agent definition and
   its alias-only file name is not reported separately. A document alias
-  (`docs/guide/README.md -> ../../README.md`, any Markdown, text or
-  reStructuredText file) and a configuration alias with the same file name are
-  covered on the same terms, since a document is read only for credentials and
-  file-name signals, and configuration parsing depends on the name and on
-  directories that are compared (agent definitions, workflows, CI files,
-  agent manifests). A directory link into the same project, such as a skill
-  directory shared between coding agents (`.claude/skills -> ../.agents/skills`),
-  is covered when the link's own name carries no file-name signal and every
-  file below the target (at most 2,000, with no link and no other project among
-  them) is analyzed alike at its alias and real paths; file-name evidence only
-  the alias path carries (Claude Code's `.claude/skills/x/SKILL.md`) is recorded
-  at that path. The target directory is listed at its real path; the link is
-  never entered. A dangling link whose own name carries no file-name signal and
-  whose target would be inside the tree hides nothing and is noted with a
-  warning. A link under a test path whose target is in the tree, and whose name
-  adds no file-name signal, follows the test-code policy. Every other link makes
+  (`docs/guide/README.md -> ../../README.md`, a Markdown, text or
+  reStructuredText file) whose target the walk reads as it would read the
+  alias, and a configuration alias with the same file name, are covered on the
+  same terms: a document is read only for credentials and file-name signals,
+  and configuration parsing depends on the name and on directories. Alias and
+  real paths must agree on every rule that reads a directory name: agent
+  definitions, workflows, CI files, agent manifests, coding-agent settings and
+  their permission checks (`.claude`, `.codex`, `.gemini`, goose, OpenClaw),
+  the MCP client a configuration belongs to, pipeline and catalog
+  classification, and test classification. A directory link into the same
+  project, such as a skill directory shared between coding agents
+  (`.claude/skills -> ../.agents/skills`), is covered when the link's own name
+  carries no file-name signal and every file below the target (at most 2,000,
+  with no link and no other project among them) is analyzed alike at its alias
+  and real paths; file-name evidence only the alias path carries (Claude Code's
+  `.claude/skills/x/SKILL.md`) is recorded at that path. The target directory
+  is listed at its real path; the link is never entered, and listing targets
+  stops at 20,000 entries per scan root, after which directory links are gaps.
+  A dangling link whose own name carries no file-name signal and whose target
+  would be inside the tree hides nothing and is noted with a warning. A link
+  under a test path whose target is in the tree and read at its real path (not
+  excluded, and read by name as the link would be), and whose name adds no
+  file-name signal, follows the test-code policy. Every other link makes
   the scan incomplete (exit code 3): directory links into another project, a
   test directory or an agent-definition directory; other configuration
   aliases, whose parsing can depend on their path; aliases into another
@@ -42,18 +49,17 @@ that are never silent:
   fails that file's read (incomplete) instead of reading content outside the
   root. Like a read by path, this needs only search permission on the
   directories above each file.
-* **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
+* **Oversize files** (`max_file_size`, default 4 MiB) that the scanner would
   inspect make the scan incomplete when skipped. Documentation and data files
-  (JSON, YAML, TOML, XML, Markdown, text, reStructuredText, HTML) are read and
-  analyzed in full up to `max_data_file_size` (default 32 MiB) instead; a limit
+  (JSON, YAML, TOML, XML, Markdown, text, reStructuredText, HTML) and files
+  under a test path are read and analyzed in full up to `max_data_file_size`
+  (default 32 MiB) instead; a limit
   their analysis reaches, such as the YAML parser's, still makes the scan
   incomplete. Known generated, binary and lockfile names in
   `oversize_skip_globs` are declared omissions and remain warnings, including
   when `strict_coverage` is enabled. An oversize compiled or packed binary with
-  no file extension is skipped as a smaller one is (below). An oversize file
-  under a test path is scanned for credentials only, since a recorded fixture
-  can hold a real key, and its other analysis is skipped with a warning (see
-  test code below); one too large even for that stays a gap.
+  no file extension is skipped as a smaller one is (below). A test file over
+  `max_data_file_size` stays a gap.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
   byte-order mark is decoded and the mark removed. A Python source is decoded
   with the codec its `# coding:` cookie declares. Any other file the scanner
@@ -73,11 +79,15 @@ that are never silent:
   so every ASCII token is read as written; while a loaded signature pattern
   contains a non-ASCII character, such text stays a gap. A Git repository kept
   in the tree under another name (a bare `name.git` fixture, a test's
-  `dotGit`), recognised by a valid `HEAD`, `objects/` and `refs/` and nothing
-  but Git's own entries, is skipped with a warning like the `.git` directory.
-  Binary content under a test path follows the test-code policy. A compiled or packed artifact with no file extension and a known
-  header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
-  GIF, PDF) is skipped quietly, as are names the scanner never analyzes
+  `dotGit`) is recognised by a valid `HEAD`, `objects/` and `refs/` and nothing
+  but Git's own entries, and noted with a warning. Only its binary formats are
+  skipped, each verified by path and leading bytes (zlib loose objects, packs
+  and their indexes, commit graphs, the index); its hooks and other files are
+  analyzed. Binary content under a test path is a gap like anywhere else. A
+  compiled or packed artifact with no file extension and a known header (ELF,
+  Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG, GIF, PDF,
+  WebP and other RIFF media, Ogg, FLAC, MP3, TIFF, ICO) is skipped quietly, as
+  are names the scanner never analyzes
   (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
   of binary data that carries an analyzed extension.
 * **Default-excluded directories.** The walk skips a built-in list of directory
@@ -193,11 +203,13 @@ files still do. Test suites keep malformed files on purpose, so a parse or
 validation issue in a file under a test path (an invalid `package.json` or
 agent manifest fixture) is a warning rather than a coverage gap, as the
 import-bound analysis limits in test code already are; `include_tests` or
-`strict_coverage` keeps it incomplete. The same holds for binary content, a
-parser or sanitization resource limit, and the analysis an oversize test file
-skips; its credentials are still scanned. An MCP configuration is the
-exception: its finding is not discounted in test code, so an issue in it keeps
-the scan incomplete. The test directory names include `test_resources` and
+`strict_coverage` keeps it incomplete. The same holds for a parser resource
+limit and a missing submodule under a test path. Binary content and a test
+file over `max_data_file_size` stay gaps, since test evidence is still
+reported. An MCP configuration is the other exception: its finding is not
+discounted in test code, so an issue in it keeps the scan incomplete. When an
+excerpt cannot be sanitized within its limits, anywhere, the excerpts are
+withheld with a warning and the findings kept. The test directory names include `test_resources` and
 `test-resources`.
 
 ## Incremental scans
@@ -260,7 +272,7 @@ warnings, such as skipped oversize generated files, is cached and replays those
 warnings on every hit. Corrupt, incompatible or unsafe state and
 symlink-bearing eligible inputs cause a full scan. Hashing has conservative limits:
 512 MiB total, 200,000 entries, 30 seconds per snapshot, and 64 MiB per hashed
-file; code files over `max_file_size` (default 1,000,000 bytes) are tracked by
+file; code files over `max_file_size` (default 4 MiB) are tracked by
 metadata rather than hashed. Exceeding a
 limit falls back to normal scanning. Git replacement refs, grafts or externally
 overridden history also disable reuse; HEAD and shallow boundaries are tracked.
@@ -311,7 +323,7 @@ override and private-endpoint policies, output changes and rollout checks.
 
 ## Large and generated files
 
-`code.filesystem.max_file_size` (default 1,000,000 bytes) bounds every file the
+`code.filesystem.max_file_size` (default 4 MiB) bounds every source file the
 scanner reads. A larger file is never analyzed. Whether that makes the scan
 incomplete depends on what the file could hide:
 

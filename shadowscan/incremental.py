@@ -30,6 +30,7 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN
 from shadowscan.connectors.code.filesystem import (
     DEFAULT_EXCLUDES,
+    DEFAULT_MAX_FILE_SIZE,
     DISCLOSED_DEFAULT_EXCLUDES,
     VCS_METADATA_EXCLUDES,
     _holds_file,
@@ -727,7 +728,7 @@ class IncrementalCache:
             excluded_dir_names = _literal_excluded_directories(spec)
             # The code scanners never open a file over their max_file_size, so
             # such files are tracked by metadata; a hashed file stays capped.
-            unread_above = int(spec.config.get("max_file_size", 1_000_000)) if code else None
+            unread_above = int(spec.config.get("max_file_size", DEFAULT_MAX_FILE_SIZE)) if code else None
             max_bytes = (
                 _MAX_HASH_FILE_BYTES if unread_above is None else min(unread_above, _MAX_HASH_FILE_BYTES)
             )

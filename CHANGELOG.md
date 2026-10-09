@@ -14,17 +14,24 @@ and `try` blocks, and no source evidence named the SDK. A `require("m")` or
 at the call's line, matched as the ES `import` statement would be. It
 establishes usage; an agent still needs a supported binding or other agent
 evidence. A regression test covers lazy, `try`-scoped and top-level loads, and
-loads in comments and strings.
+loads in comments and strings. After review, a member call
+(`loader.require("m")`) and a TypeScript type query (`typeof import("m")`) are
+not loads.
 
 ### October 8 benchmark remediation: findings at the connector deadline
 
 In the real-world benchmark, one large repository finished its walk inside the
 connector deadline, but reporting its findings ran past it, and the engine
-discarded every finding. `code.filesystem` now stops reporting findings 2% of
-the connector budget (at least one second) before the deadline. The findings
-already reported are kept, the scan records `connector deadline reached while
-reporting findings … after N; the rest are not reported` and is incomplete
-(exit 3). A regression test covers it.
+discarded every finding. `code.filesystem` now reserves a quarter of the walk's
+deadline margin for reporting. Every reporting loop (projects, MCP files,
+agent manifests, workflows, infrastructure, credentials) starts no new
+analysis 1.5 reserves before the deadline, nor when the slowest analysis so far
+would end past the cutoff, and reporting stops one reserve before it. The
+findings already built are kept, the scan records `connector deadline reached
+while reporting findings … after N; the rest are not reported` and is
+incomplete (exit 3). An independent review showed that the first version
+checked only the reporting loop, so one slow project analysis still ran past
+the deadline; regression tests cover slow reporting and slow project analysis.
 
 ### October 8 benchmark remediation: symbolic links
 
@@ -42,8 +49,21 @@ followed; each new rule decides from real paths and has a regression test.
   configuration alias with the same file name are covered like source aliases.
 - A dangling link inside the tree, whose name carries no file-name signal, is
   noted with a warning; a dangling `.mcp.json` stays a gap.
-- A link in test code whose target is in the tree follows the test-code
-  policy, unless its name adds a file-name signal (`tests/CLAUDE.md`).
+- A link in test code whose target is in the tree and read at its real path
+  follows the test-code policy, unless its name adds a file-name signal
+  (`tests/CLAUDE.md`). A link into excluded content (`node_modules`, `build`)
+  stays a gap.
+- An independent review found aliases these rules called covered while the
+  alias path would have been read differently; each is a gap again, with a
+  regression test. Alias and real paths must agree on every rule that reads a
+  parent directory: coding-agent settings and their permission checks
+  (`.claude`, `.codex`, `.gemini`, goose, OpenClaw), the MCP client a
+  configuration belongs to, catalog and pipeline classification, workflows,
+  CI files, agent definitions, agent manifests and test classification. A
+  document alias needs a target the walk reads as it would read the alias
+  (`README.md -> docs/index.rst` is a gap). Alias enumeration has a total
+  budget of 20,000 entries per scan root, so a link farm is a gap rather than
+  a slow scan, and alias paths escape undecodable names as the walk does.
 
 ### October 8 benchmark remediation: oversize and binary content
 
@@ -59,23 +79,36 @@ code the scanner failed to read. Each change has a regression test.
   oversize data and documentation files now complete; the rest reach the YAML
   parser's limits or the new limit and stay gaps.
 - Credentials in a text over 64 KiB are matched in 64 KiB windows that
-  overlap by 4 KiB. A single pattern run over megabytes used to exhaust its
-  0.1 s allowance and leave credential detection incomplete.
+  overlap by 4 KiB, each cut at a character that cannot be part of a token.
+  A single pattern run over megabytes used to exhaust its 0.1 s allowance and
+  leave credential detection incomplete. A credential signal that reaches 256
+  matches in one file marks that file's credential analysis incomplete
+  instead of stopping silently, so decoy placeholders cannot hide a token.
 - An oversize compiled or packed binary without an extension (`mcp-publisher`)
   is skipped as a smaller one already was.
-- An oversize file under a test path is scanned for credentials only, and its
-  other analysis is skipped with a warning (incomplete under
-  `strict_coverage` or `include_tests`). Binary content, and parser or
-  sanitization resource limits, in test code follow the same test-code policy.
-  `test_resources` and `test-resources` are test directories.
+- The default `max_file_size` is 4 MiB (was 1,000,000 bytes). Test files (fixtures,
+  recorded cassettes) are read and analyzed in full up to
+  `max_data_file_size`, like data; above it they are gaps. An earlier
+  version of this change scanned oversize test files for credentials only;
+  an independent review showed that padding a test file then hid its MCP
+  server and client evidence, so it was replaced. Binary content in test code
+  is a gap again. When an excerpt cannot be sanitized within its limits, the
+  excerpts are withheld with a warning; the file's findings are kept.
+  Notebook outputs are always scanned for credentials. `test_resources` and
+  `test-resources` are test directories.
+- WebP, WAV and AVI (RIFF), Ogg, FLAC, MP3 (ID3), TIFF and ICO content is a
+  binary artifact by its leading bytes.
 - A JavaScript or TypeScript source that is valid UTF-8 and whose NUL bytes
   are at most 1% of the file (or at most four), as with `join('\x00')`, is
   text. Other languages reject a NUL in source, so elsewhere it stays binary. Text in a legacy code page is read
   with replacement characters and a warning, since the decoder keeps every
   ASCII token; it stays a gap while a signature pattern is not ASCII.
 - A Git repository kept in the tree under another name (a bare `name.git`
-  fixture, a test's `dotGit`), recognised by a valid `HEAD`, `objects/` and
-  `refs/` and only Git's own entries, is skipped with a warning like `.git`.
+  fixture, a test's `dotGit`) is recognised by a valid `HEAD`, `objects/` and
+  `refs/` and only Git's own entries. Only its binary formats are skipped,
+  each verified by path and leading bytes (zlib loose objects, packs and their
+  indexes, commit graphs, the index); hooks and every other file in it are
+  analyzed, so a directory shaped like a store cannot hide source.
 
 ### October 8 benchmark remediation: classification and precision
 
@@ -129,6 +162,15 @@ regression test.
   tool, and provider-side `code.github` and `code.gitlab` findings carry the
   agent profile too. `make evaluate` accepts the mention and credential notes,
   which describe a decision rather than a gap.
+- A second review found that judging mentions searched the whole file once
+  per name, so a 750 KB catalog of 30,000 names timed the scan out. Each name
+  is judged once per file, and searches stop at 64 MiB of text per file; a
+  name beyond that is evidence, never a mention. The MCP configuration files
+  plugin manifests name are read once each, up to the walk's size limit for
+  their type, before the connector deadline, and a failure in one is that
+  file's error, not the scan's. A credential is titled `LLM provider
+  credential` only when a provider signature matched it; a GitHub token alone
+  is a `Hard-coded credential`.
 
 ### October 8 benchmark remediation: lexing and configuration parsing
 

@@ -360,3 +360,14 @@ def test_plain_source_directory_without_git_marker_stays_complete(tmp_path, inde
     findings, stats = _scan(tmp_path, index, use_git=True)
     assert not findings and not stats.incomplete
     forbidden.assert_not_called()
+
+
+def test_missing_submodule_under_a_test_path_follows_the_test_code_policy(tmp_path, index):
+    # A test helper checked out as a submodule (bats-assert) is test code.
+    _declare(tmp_path, "test/test_helper/bats-assert")
+    (tmp_path / "requirements.txt").write_text("langgraph\n")
+    findings, stats = _scan(tmp_path, index, use_git=False)
+    assert findings and not stats.incomplete
+    assert any("bats-assert" in w for w in stats.warnings)
+    _, strict = _scan(tmp_path, index, use_git=False, strict_coverage=True)
+    assert strict.incomplete

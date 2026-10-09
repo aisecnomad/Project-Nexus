@@ -852,29 +852,39 @@ and title out), but kinds, titles, scores and counts do:
 The third batch reads more of each repository and changes how some gaps are
 reported. Re-scan before comparing completeness or memory use:
 
-- **Larger reads.** Documentation and data files up to `max_data_file_size`
-  (default 32 MiB) are now read and analyzed, so a scan can use more memory and
-  time, and can gain findings from files it used to skip. Set
-  `max_data_file_size` to `max_file_size` to keep the previous reads; files
-  between the two limits then become coverage gaps again.
-- **Test code.** An oversize test file, binary content and parser resource
-  limits in test code are warnings unless `include_tests` or
-  `strict_coverage` is set; an oversize test file's credentials are still
-  scanned. Set one of the options if your policy treats them as gaps.
+- **Larger reads.** The default `max_file_size` is 4 MiB (was 1,000,000 bytes), and
+  documentation, data and test files up to `max_data_file_size` (default
+  32 MiB) are now read and analyzed, so a scan can use more memory and time,
+  and can gain findings from files it used to skip. Set `max_file_size: 1000000`
+  and `max_data_file_size` to the same value to keep the previous reads; files
+  between the limits then become coverage gaps again.
+- **Test code.** A missing submodule under a test path is a warning unless
+  `include_tests` or `strict_coverage` is set. Binary content, files over
+  `max_data_file_size` and MCP configuration errors in test code stay gaps. Excerpts that cannot be
+  sanitized within their limits are withheld with a warning, and the file's
+  findings are kept.
+- **Credentials.** A credential signal that reaches 256 matches in one file
+  marks the scan incomplete instead of stopping silently. A credential is
+  titled `LLM provider credential` only when a provider signature matched it;
+  a policy that keys on the title sees GitHub tokens as `Hard-coded credential`.
 - **Deadline.** A scan that reaches the connector deadline while reporting
-  findings keeps the findings already reported and is incomplete, instead of
-  the engine discarding all of them. Large repositories may still need a
-  higher `connector_timeout_seconds` to complete.
+  findings keeps the findings already built and is incomplete, instead of the
+  engine discarding all of them. Large repositories may still need a higher
+  `connector_timeout_seconds` to complete.
 - **Symbolic links.** Directory links into the same project, document
   aliases, same-name configuration aliases, dangling links and links in test
   code no longer make a scan incomplete when they lose no coverage (see the
-  [coverage policy](scanning.md#coverage-policy)). A covered skill-directory
-  link adds its alias-path file-name evidence, so a coding-agent configuration
-  finding can gain files.
+  [coverage policy](scanning.md#coverage-policy)). The alias and real paths
+  must agree on every rule that reads a directory name, so a link named
+  `.claude`, `.codex` or `.gemini` stays a gap, and a link to content the walk
+  does not read stays a gap. A covered skill-directory link adds its
+  alias-path file-name evidence, so a coding-agent configuration finding can
+  gain files.
 - **Text and Git stores.** JavaScript and TypeScript sources with a NUL in a
-  string literal and text in a legacy code page are analyzed (the latter with a warning), and Git
-  repositories kept under another name are skipped with a warning, instead of
-  ending the scan with `binary or undecodable content`.
+  string literal and text in a legacy code page are analyzed (the latter with
+  a warning). In a Git repository kept under another name, only its verified
+  binary formats are skipped, with a warning; its other files are analyzed.
+  Common media formats (WebP, Ogg, FLAC, MP3, TIFF, ICO) are binary artifacts.
 
 ### October 7 distribution rename and PyPI publication
 

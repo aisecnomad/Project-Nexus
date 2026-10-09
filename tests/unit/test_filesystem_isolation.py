@@ -183,7 +183,9 @@ def test_credentials_are_reported_when_structured_sanitization_exceeds_its_budge
     )
     findings, ctx = _scan(index, tmp_path)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
-    assert ctx.stats is not None and any("excerpts withheld" in e for e in ctx.stats.errors)
+    # The file was analyzed; only its excerpts cannot be redacted safely: a warning.
+    assert ctx.stats is not None and any("excerpts withheld" in w for w in ctx.stats.warnings)
+    assert not ctx.stats.incomplete
     assert all(not e.snippet for e in secret.evidence)
     assert SECRET not in json.dumps([f.to_dict() for f in findings])
 

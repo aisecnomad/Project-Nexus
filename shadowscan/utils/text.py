@@ -64,6 +64,13 @@ _BINARY_MAGIC: tuple[bytes, ...] = (
     b"GIF87a",
     b"GIF89a",
     b"%PDF-",
+    b"RIFF",  # WebP, WAV, AVI
+    b"OggS",
+    b"fLaC",
+    b"ID3",  # MP3
+    b"II*\x00",  # TIFF
+    b"MM\x00*",
+    b"\x00\x00\x01\x00",  # ICO
 )
 # Text codec that a PEP 263 coding cookie must not select: its decoder is not
 # linear in its input (``punycode`` re-copies its output for every code point,

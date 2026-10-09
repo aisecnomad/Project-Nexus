@@ -36,6 +36,10 @@ _MAX_CONTENTION_RETRIES = 16
 # characters, each read with the next _SECRET_OVERLAP (see _match_secret_windows).
 _SECRET_WINDOW = 64 * 1024
 _SECRET_OVERLAP = 4 * 1024
+# Characters credential tokens are made of; a window never ends between two of them.
+_TOKEN_CHAR = re.compile(r"[A-Za-z0-9_.+/=:-]")
+# Credential matches kept per signal and file; reaching the limit is incomplete detection.
+_MAX_SECRETS_PER_SIGNAL = 256
 
 
 class MatchTimeoutError(RuntimeError):
@@ -1147,14 +1151,26 @@ class SignatureIndex:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
 
     def match_secrets(self, text: str) -> list[Match]:
+        """Credential matches of ``text``, at most ``_MAX_SECRETS_PER_SIGNAL`` per signal.
+
+        Placeholders and examples are filtered by the caller, so they count
+        toward the limit; reaching it raises ``MatchTimeoutError`` and the
+        caller records incomplete credential detection, because a real
+        credential after many decoys would otherwise go unread.
+        """
         if len(text) > _SECRET_WINDOW:
-            matches = self._match_secret_windows(text)
+            matches = self._match_secret_windows(text, _MAX_SECRETS_PER_SIGNAL)
         else:
-            matches = self._match_regex_signals("secret", text, None, max_per_signal=5)
+            matches = self._match_regex_signals("secret", text, None, max_per_signal=_MAX_SECRETS_PER_SIGNAL)
+        per_signal: dict[int, int] = {}
+        for m in matches:
+            per_signal[id(m.signal)] = per_signal.get(id(m.signal), 0) + 1
+            if per_signal[id(m.signal)] >= _MAX_SECRETS_PER_SIGNAL:
+                raise MatchTimeoutError("credential matches reached the per-file limit")
         keep = keep_secret_matches([(m.signature_id, m.value, m.line) for m in matches])
         return [match for match, kept in zip(matches, keep, strict=True) if kept]
 
-    def _match_secret_windows(self, text: str, max_per_signal: int = 5) -> list[Match]:
+    def _match_secret_windows(self, text: str, max_per_signal: int) -> list[Match]:
         """Credential matches of a large text, scanned in line-aligned windows.
 
         One regex execution has a fixed CPU allowance (``REGEX_TIMEOUT_SECONDS``),
@@ -1175,6 +1191,13 @@ class SignatureIndex:
                     newline = text.rfind("\n", start, end)
                     if newline > start:
                         end = newline + 1
+                    else:
+                        # A long line: cut between tokens, so that no credential
+                        # starts inside the next window as a shorter match.
+                        cut = end
+                        while cut > start + _SECRET_WINDOW // 2 and _TOKEN_CHAR.match(text, cut - 1):
+                            cut -= 1
+                        end = cut if cut > start + _SECRET_WINDOW // 2 else end
                 window = text[start : min(size, end + _SECRET_OVERLAP)]
                 for m in self._match_regex_signals_with_budget("secret", window, None, max_per_signal, ()):
                     offset = int(m.extra.get("start", 0))

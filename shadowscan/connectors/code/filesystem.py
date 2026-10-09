@@ -69,6 +69,7 @@ import yaml
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.code.catalogs import (
     CATALOG_MIN_SIGNATURES,
+    _is_data_file,
     catalog_metadata,
     configuration_document,
     project_catalog_files,
@@ -136,7 +137,7 @@ from shadowscan.connectors.common import (
     placeholder_reason,
 )
 from shadowscan.connectors.mcp_risk import record_server_risks
-from shadowscan.connectors.posture import CLIENT_SIGNATURES, record_posture
+from shadowscan.connectors.posture import CLIENT_SIGNATURES, posture_client, record_posture
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
@@ -171,7 +172,6 @@ from shadowscan.utils.safe_yaml import (
     strict_bounded_safe_load,
 )
 from shadowscan.utils.text import (
-    BINARY_CONTENT_ERROR,
     is_binary_artifact,
     line_counter,
     notebook_to_source,
@@ -202,6 +202,11 @@ _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
 # Signals that name a product without configuring it.
 _MENTION_SIGNALS = frozenset({"env", "name"})
 
+# Files the reader accepts (source, configuration): 4 MiB. The benchmark's
+# oversize sources (generated API types, compiled Qt resources, bundles of 1 to
+# 13 MB) mostly analyzed within the per-file matching budget, which still makes
+# any file that exceeds it incomplete.
+DEFAULT_MAX_FILE_SIZE = 4 * 1024 * 1024
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
 DEFAULT_MAX_NOTEBOOK_SIZE = 20 * 1024 * 1024
@@ -478,24 +483,64 @@ MCP_CONFIG_NAMES = {
 
 # Documentation read for credentials and file-name signals only (`.mdc` holds Cursor rules).
 _DOCUMENT_EXTENSIONS = frozenset({".md", ".mdx", ".txt", ".rst"})
-# Files below a directory link are compared one by one, at most this many.
+# Files below a directory link are compared one by one, at most this many per
+# link and, with the directories, this many over all links of one scan root.
 _MAX_ALIAS_FILES = 2_000
+_MAX_ALIAS_ENTRIES_TOTAL = 20_000
+
+
+_MCP_TABLE_EXTENSIONS = frozenset({".json", ".jsonc", ".json5", ".yaml", ".yml", ".toml"})
+
+
+def _path_semantics(rel: str) -> tuple[Any, ...]:
+    """What a path's directories decide about its analysis, apart from file-name signals.
+
+    Agent-definition directories parse front matter, workflow directories read
+    workflows, CI configuration runs coding agents, agent manifests are
+    recognised by path, coding-agent settings (`.claude/settings.json`) are
+    read for permissions and posture, an MCP configuration's client is named
+    by its directory, pipeline directories are not catalogs, and test
+    classification sets evidence weight. Every rule that reads a parent
+    directory belongs here.
+    """
+    parts = PurePosixPath(rel).parts
+    return (
+        _is_test_path(rel),
+        agent_manifest_kind(rel),
+        any(d in rel for d in _AGENT_DEFINITION_DIRS),
+        ".github/workflows/" in rel,
+        ".github" in parts and "workflows" in parts,
+        bool(_CI_CONFIGURATION.search(rel)),
+        posture_client(rel),
+        is_agent_config_path(rel),
+        # Only configuration can hold an MCP table; the client name matches
+        # substrings anywhere in the path.
+        _mcp_client_for(rel) if PurePosixPath(rel).suffix.lower() in _MCP_TABLE_EXTENSIONS else None,
+        _is_data_file(rel),
+    )
 
 
 def _same_path_semantics(first: str, second: str) -> bool:
-    """Whether two paths of the same content are analyzed alike, apart from their file-name signals.
+    """Whether two paths of the same content are analyzed alike, apart from their file-name signals."""
+    return _path_semantics(first) == _path_semantics(second)
 
-    Agent-definition directories parse front matter, a workflow directory reads
-    workflows, CI configuration runs coding agents, and agent manifests are
-    recognised by path; test classification sets evidence weight.
+
+def _configuration_semantics(rel: str) -> tuple[Any, ...]:
+    """What a data file's name and directories decide about its analysis, apart from file-name signals.
+
+    Manifests, dependency and deployment files, pipeline and service
+    configuration (never catalogs), MCP client configuration names, `.env`
+    files and agent manifests are each read by name; two paths with equal
+    values here are analyzed alike for the same content.
     """
+    name = PurePosixPath(rel).name.lower()
     return (
-        _is_test_path(first) == _is_test_path(second)
-        and agent_manifest_kind(first) == agent_manifest_kind(second)
-        and any(d in first for d in _AGENT_DEFINITION_DIRS)
-        == any(d in second for d in _AGENT_DEFINITION_DIRS)
-        and (".github/workflows/" in first) == (".github/workflows/" in second)
-        and bool(_CI_CONFIGURATION.search(first)) == bool(_CI_CONFIGURATION.search(second))
+        is_manifest_name(PurePosixPath(rel).name),
+        _is_data_file(rel),
+        name in MCP_CONFIG_NAMES or name in _DEDICATED_MCP_CONFIG_NAMES or name == "server.json",
+        name.startswith(".env"),
+        name.endswith((".lock.yml", ".lock.yaml")) or "{{" in rel,
+        agent_manifest_kind(rel),
     )
 
 
@@ -507,6 +552,39 @@ def _dangling_inside(link: Path, resolved_root: Path) -> bool:
         return False
     inside = target == resolved_root or resolved_root in target.parents
     return inside and not os.path.lexists(target)
+
+
+# Git's binary formats inside a store, by path below it and leading bytes: loose
+# objects (zlib), packs, pack indexes and their companions, commit graphs, the index.
+_GIT_BINARY_PARTS: tuple[tuple[re.Pattern[str], tuple[bytes, ...]], ...] = (
+    (re.compile(r"objects/[0-9a-f]{2}/(?:[0-9a-f]{38}|[0-9a-f]{62})"), (b"\x78",)),
+    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.pack"), (b"PACK",)),
+    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.idx"), (b"\xfftOc",)),
+    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.rev"), (b"RIDX",)),
+    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.bitmap"), (b"BITM",)),
+    (re.compile(r"objects/pack/pack-(?:[0-9a-f]{40}|[0-9a-f]{64})\.mtimes"), (b"MTME",)),
+    (re.compile(r"objects/info/(?:commit-graph|commit-graphs/graph-[0-9a-f]{40,64}\.graph)"), (b"CGPH",)),
+    (re.compile(r"objects/(?:pack/)?multi-pack-index"), (b"MIDX",)),
+    (re.compile(r"index"), (b"DIRC",)),
+)
+
+
+def _git_binary_part(stores: list[str], rel: str, path: Path) -> bool:
+    """Whether ``rel`` is binary Git content of a store: a known path whose leading bytes match its format.
+
+    Only these are skipped; any other file in a store, a hook or a ref
+    included, is analyzed like a file anywhere else.
+    """
+    for store in stores:
+        if not rel.startswith(store + "/"):
+            continue
+        below = rel[len(store) + 1 :]
+        for pattern, magic in _GIT_BINARY_PARTS:
+            if pattern.fullmatch(below):
+                head = read_head(path, 8)
+                return head is not None and head.startswith(magic)
+        return False
+    return False
 
 
 def _is_git_store(dirpath: str, dirnames: list[str], filenames: list[str]) -> bool:
@@ -684,6 +762,7 @@ class _SourceFile:
     # None withholds every excerpt of the file.
     structure: Any = None
     safe_lines: list[str] | None = None  # redacted lines, produced when an excerpt first needs them
+    excerpts_withheld: bool = False  # redacting the text for excerpts reached a sanitization limit
     card_kind: str | None = None  # agent manifest kind suggested by the path
     card_valid: bool = False
     card_incomplete: bool = False  # a recognizable card that misses required declarations
@@ -951,6 +1030,9 @@ _API_PATH = re.compile(
 )
 # More occurrences of one name than this in a file are not judged one by one.
 _MAX_MENTION_OCCURRENCES = 256
+# Characters searched for mentions in one file, over all names; names beyond it
+# are evidence, not mentions. A file naming thousands of variables stays linear.
+_MENTION_SEARCH_BUDGET = 64 * 1024 * 1024
 
 
 def _calls_api(line: str, host: str) -> bool:
@@ -978,7 +1060,7 @@ class _Mentions:
     a product without using it.
     """
 
-    __slots__ = ("data_file", "folded", "keyed", "text")
+    __slots__ = ("budget", "data_file", "decided", "folded", "keyed", "text")
 
     def __init__(self, file: _SourceFile, text: str) -> None:
         head = text[:4096].lstrip().lower()
@@ -988,10 +1070,21 @@ class _Mentions:
         self.keyed = file.ext in _KEYED_EXTENSIONS
         self.text = text
         self.folded: str | None = None
+        self.budget = _MENTION_SEARCH_BUDGET
+        self.decided: dict[tuple[str, str], bool] = {}
 
     def mention(self, m: Match) -> bool:
         if not (self.data_file or self.keyed) or m.signal.type not in {"domain", "env"} or not m.value:
             return False
+        key = (m.signal.type, m.value)
+        if key not in self.decided:
+            if self.budget < len(self.text):
+                return False  # out of search budget: evidence, never a mention
+            self.budget -= len(self.text)
+            self.decided[key] = self._every_occurrence_mentions(m)
+        return self.decided[key]
+
+    def _every_occurrence_mentions(self, m: Match) -> bool:
         if m.signal.type == "domain":
             if self.folded is None:
                 self.folded = self.text.lower()
@@ -1038,7 +1131,10 @@ _MCP_CLIENT_CALL = re.compile(
     r"|modelcontextprotocol/sdk/client|\bmcp\.client\b|langchain_mcp_adapters|@langchain/mcp-adapters"
 )
 # A CommonJS or dynamic module load: `require("m")`, `import("m")`.
-_MODULE_LOAD = re.compile(r"""\b(?:require|import)\s*\(\s*(['"])([@\w./-]{1,214})\1\s*\)""")
+# Not a member call (`loader.require(...)`) and not a TypeScript type query (`typeof import("m")`).
+_MODULE_LOAD = re.compile(
+    r"""(?<![.$\w])(?<!typeof )(?:require|import)\s*\(\s*(['"])([@\w./-]{1,214})\1\s*\)"""
+)
 # Agent protocols and hosted agent services: using one builds, serves or calls an agent.
 _AGENT_TECHNOLOGIES = frozenset(
     {
@@ -1232,8 +1328,13 @@ def scan_timeout_for_size(base: float, size: int) -> float:
 
 
 def _emission_reserve(budget: float) -> float:
-    """Seconds kept after the last finding is emitted: 2% of the connector budget, at least one."""
-    return max(1.0, 0.02 * budget)
+    """Seconds kept before the deadline for reporting: a quarter of the walk's margin (``deadline_margin``).
+
+    The walk stops starting files at the margin and stops counting the rest at
+    three quarters of it; reporting starts no new analysis after 1.5 reserves
+    before the deadline and stops reporting at one.
+    """
+    return deadline_margin(budget) / 4
 
 
 def deadline_margin(remaining: float) -> float:
@@ -1370,7 +1471,7 @@ class FilesystemConnector(BaseConnector):
         ),
         "max_file_size": (
             "bytes; an analyzable larger file is skipped with incomplete coverage unless oversize_skip_globs "
-            "matches it (default 1,000,000 bytes)"
+            "matches it (default 4 MiB)"
         ),
         "oversize_skip_globs": (
             "case-insensitive file name globs; a file over max_file_size matching one is skipped with a "
@@ -1437,7 +1538,7 @@ class FilesystemConnector(BaseConnector):
         # Booleans and fractions are errors, not limits: `max_file_size: true` was a
         # 1-byte limit that skipped every file and `max_files: 1.9` silently became 1.
         self.max_file_size = _positive_limit(
-            ctx.get("max_file_size", 1_000_000), "code.filesystem: max_file_size"
+            ctx.get("max_file_size", DEFAULT_MAX_FILE_SIZE), "code.filesystem: max_file_size"
         )
         self.max_files = _positive_limit(ctx.get("max_files", 100_000), "code.filesystem: max_files")
         self.max_entries = _positive_limit(
@@ -1524,10 +1625,16 @@ class FilesystemConnector(BaseConnector):
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
         self._symlink_warnings: set[Path] = set()
+        self._emit_stop_at: float | None = None
+        self._emit_hard_stop: float | None = None
+        self._emit_last_check = 0.0
+        self._emit_slowest = 0.0
+        self._emission_cut = False
         # One note per root and kind for links that lose no coverage (dangling, test code).
         self._link_notes: set[tuple[Path, str]] = set()
         # File-name evidence at the paths of covered directory links (see _directory_alias_covered).
         self._alias_evidence: list[tuple[str, str, list[Match]]] = []
+        self._alias_entries_left = _MAX_ALIAS_ENTRIES_TOTAL
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
 
@@ -1619,11 +1726,17 @@ class FilesystemConnector(BaseConnector):
             incomplete=False,
         )
 
-    def _size_limit(self, name: str) -> int:
-        """Bytes the reader accepts for ``name``: notebooks may carry large saved outputs."""
+    def _size_limit(self, name: str, rel: str | None = None) -> int:
+        """Bytes the reader accepts for ``name`` at ``rel``.
+
+        Notebooks may carry large saved outputs, and documentation, data and
+        test files (fixtures, recorded cassettes) are read up to
+        max_data_file_size: each is analyzed in full, so a large test file is
+        never skipped unread.
+        """
         if name.lower().endswith(".ipynb"):
             return max(self.max_file_size, self.max_notebook_size)
-        if Path(name).suffix.lower() in _DATA_DOCUMENT_EXTENSIONS:
+        if Path(name).suffix.lower() in _DATA_DOCUMENT_EXTENSIONS or (rel is not None and _is_test_path(rel)):
             return max(self.max_file_size, self.max_data_file_size)
         return self.max_file_size
 
@@ -1702,8 +1815,22 @@ class FilesystemConnector(BaseConnector):
             and not is_manifest_name(target.name)
             and not _is_coding_agent_doc(target.name)
         )
-        configuration = link_name == target.name and link_ext in _DATA_DOCUMENT_EXTENSIONS
-        if document or configuration:
+        configuration = (
+            link_ext in _DATA_DOCUMENT_EXTENSIONS
+            and target_ext == link_ext
+            and _configuration_semantics(rel) == _configuration_semantics(target_rel)
+        )
+        if document:
+            # A document yields credentials and file-name signals only; the
+            # credential finding is the real file's wherever its project is.
+            # The target must be read as the alias would be: `.rst` is not.
+            target_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(target_rel)}
+            return (
+                _analyzed_by_name(link_name) == _analyzed_by_name(target.name)
+                and _same_path_semantics(rel, target_rel)
+                and alias_signals <= target_signals
+            )
+        if configuration:
             if not _same_path_semantics(rel, target_rel):
                 return False
         # Other source aliases are equivalent without opening the link; other
@@ -1782,7 +1909,14 @@ class FilesystemConnector(BaseConnector):
                     os.close(directory)
             except (OSError, ValueError):
                 pass
-            if not materialized:
+            if not materialized and not self.include_tests and _is_test_path(f"{rel}/_"):
+                # A test helper checked out as a submodule (bats-assert) is test code.
+                self.ctx.warn(
+                    f"code.filesystem: submodule {rel}: checkout is missing, empty or unsafe; "
+                    "test code, not analyzed",
+                    incomplete=self.strict_coverage,
+                )
+            elif not materialized:
                 self._submodule_gap(
                     f"submodule {rel}: checkout is missing, empty or unsafe; source coverage incomplete"
                 )
@@ -1845,18 +1979,18 @@ class FilesystemConnector(BaseConnector):
         # even when this source tree produces no findings (and no enrichment).
         if self.use_git and os.path.lexists(root / ".git"):
             self.check_gitlink_coverage(root)
+        git_stores: list[str] = []
         for dirpath, dirnames, filenames in _walk_directories(root, walk_error, budget=walk.budget):
             walk.budget.check()
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if rel_dir != "." and _is_git_store(dirpath, dirnames, filenames):
+                git_stores.append(rel_dir)
                 self.ctx.warn(
-                    f"code.filesystem: {rel_dir}: skipped Git repository store (HEAD, objects, refs); "
-                    "repository metadata is never analyzed",
+                    f"code.filesystem: {rel_dir}: Git repository store; its object database and index are "
+                    "not analyzed, its other files are",
                     incomplete=False,
                 )
-                dirnames[:] = []
-                continue
             if ".gitmodules" in filenames:
                 self._check_submodule_declarations(root, rel_dir)
             kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
@@ -1874,6 +2008,8 @@ class FilesystemConnector(BaseConnector):
                 if self._excluded_file(rel):
                     continue
                 p = Path(dirpath) / fn
+                if git_stores and _git_binary_part(git_stores, rel, p):
+                    continue
                 try:
                     if p.is_symlink():
                         if not self._skip_link(root, resolved_root, rel, p, walk):
@@ -1889,7 +2025,7 @@ class FilesystemConnector(BaseConnector):
                     if self._analyzed_name(rel, fn):
                         self._skip_non_regular(walk, root, rel, _special_file_kind(info.st_mode))
                     continue
-                if info.st_size > self._size_limit(fn) and self._oversize_skippable(rel, fn):
+                if info.st_size > self._size_limit(fn, rel) and self._oversize_skippable(rel, fn):
                     self._skip_oversize(rel, info.st_size)
                     continue
                 if _never_read_by_name(fn):
@@ -1990,11 +2126,14 @@ class FilesystemConnector(BaseConnector):
         # A name that file-name signatures read (`.mcp.json`, `CLAUDE.md`) is
         # configuration or instructions in its own right: only the exact
         # comparisons of _link_target_is_scanned show that nothing it names is lost.
-        alias_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(rel)}
+        alias_matches = self.index.match_file(rel)
+        alias_signals = {(m.signature.id, id(m.signal)) for m in alias_matches}
+        # A directory-wide glob (`.claude/**`) says nothing about the link's own name.
+        named = bool(alias_matches) and self._named_by_signature(rel, alias_matches)
         if (
             target is not None
             and target.is_dir()
-            and not alias_signals
+            and not named
             and self._directory_alias_covered(rel, target, resolved_root, walk)
         ):
             return True
@@ -2017,6 +2156,7 @@ class FilesystemConnector(BaseConnector):
             and alias_signals <= target_signals
             and not self.include_tests
             and _is_test_path(rel)
+            and self._target_walked(link.name, target, resolved_root)
         ):
             # The target is inside the tree and analyzed at its real path.
             self._link_note(
@@ -2036,6 +2176,27 @@ class FilesystemConnector(BaseConnector):
             else:
                 self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
         return True
+
+    def _target_walked(self, link_name: str, target: Path, root: Path) -> bool:
+        """Whether the walk reads a link's target at its real path as it would read the link's name.
+
+        A directory target must not be excluded, nor any directory above it; a
+        file target must also be read by name, as the link's name would be.
+        """
+        target_rel = target.relative_to(root).as_posix()
+        parts = PurePosixPath(target_rel).parts
+        directories = parts if target.is_dir() else parts[:-1]
+        for depth, name in enumerate(directories, start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        if target.is_dir():
+            return True
+        return (
+            target.is_file()
+            and not self._excluded_file(target_rel)
+            and not _never_read_by_name(target.name)
+            and (_analyzed_by_name(target.name) or not _analyzed_by_name(link_name))
+        )
 
     def _link_note(self, root: Path, kind: str, message: str, *, incomplete: bool = False) -> None:
         """Note one link of each kind per root; a hostile tree cannot fill the report with link names."""
@@ -2071,17 +2232,24 @@ class FilesystemConnector(BaseConnector):
         records: list[tuple[str, list[Match]]] = []
         files = 0
         for dirpath, dirnames, filenames in _walk_directories(target, failed.append, budget=budget):
+            # Every alias re-lists its target: a link farm must not multiply the walk.
+            self._alias_entries_left -= 1 + len(filenames)
+            if self._alias_entries_left < 0:
+                return False
             sub = Path(dirpath).relative_to(target).as_posix()
             if failed or (sub != "." and _marks_project(Path(dirpath), filenames)):
                 return False
-            alias_dir = rel if sub == "." else f"{rel}/{sub}"
-            real_dir = target_rel if sub == "." else f"{target_rel}/{sub}"
+            # Reported paths escape undecodable names as the walk does (_report_name).
+            shown_target, shown_sub = _report_name(target_rel), _report_name(sub)
+            alias_dir = rel if sub == "." else f"{rel}/{shown_sub}"
+            real_dir = shown_target if sub == "." else f"{shown_target}/{shown_sub}"
             kept = []
             for name in dirnames:
                 if (Path(dirpath) / name).is_symlink():
                     return False
-                excluded = self._excluded(f"{real_dir}/{name}", name)
-                if excluded != self._excluded(f"{alias_dir}/{name}", name):
+                shown = _report_name(name)
+                excluded = self._excluded(f"{real_dir}/{shown}", shown)
+                if excluded != self._excluded(f"{alias_dir}/{shown}", shown):
                     return False
                 if not excluded:
                     kept.append(name)
@@ -2090,6 +2258,7 @@ class FilesystemConnector(BaseConnector):
                 files += 1
                 if files > _MAX_ALIAS_FILES or (Path(dirpath) / name).is_symlink():
                     return False
+                name = _report_name(name)  # reported form from here on
                 alias_rel, real_rel = f"{alias_dir}/{name}", f"{real_dir}/{name}"
                 excluded = self._excluded_file(real_rel)
                 if excluded != self._excluded_file(alias_rel):
@@ -2125,7 +2294,7 @@ class FilesystemConnector(BaseConnector):
         signal) reserve nothing, so they cannot end the walk under a short
         deadline.
         """
-        if size > self._size_limit(path.name):
+        if size > self._size_limit(path.name, rel):
             return 0.0
         will_read = _analyzed_by_name(path.name) or bool(self.index.match_file(rel))
         return budget if will_read else 0.0
@@ -2141,12 +2310,12 @@ class FilesystemConnector(BaseConnector):
         """Record one error naming how much of the tree the connector deadline left unread.
 
         The remaining entries are only counted (a stat each, never a read).
-        Counting stops at half the margin or just before the ``max_files``
+        Counting stops at three quarters of the margin or just before the ``max_files``
         cap, so the findings already collected are still emitted in time.
         """
         remaining = 1  # the entry that could not start
         truncated = False
-        count_until = deadline - margin / 2
+        count_until = deadline - 0.75 * margin
         for _ in entries:
             remaining += 1
             if examined + remaining >= self.max_files or (
@@ -2186,18 +2355,49 @@ class FilesystemConnector(BaseConnector):
         started = time.monotonic()
         self._walk(scan)
         deadline = self.ctx.deadline
-        # The engine discards a result that completes after the deadline, so
-        # emission stops early enough for sanitization and bookkeeping: the
-        # findings already emitted are kept, and the scan is incomplete.
-        stop_at = None if deadline is None else deadline - _emission_reserve(deadline - started)
-        for emitted, finding in enumerate(self._emit_findings(scan)):
-            if stop_at is not None and time.monotonic() >= stop_at:
-                self.ctx.error(
-                    "code.filesystem: connector deadline reached while reporting findings under "
-                    f"{scan.label} after {emitted}; the rest are not reported and results are incomplete"
-                )
-                return
+        # The engine discards a result that completes after the deadline. Each
+        # emission loop starts no new analysis after ``_emit_stop_at`` (see
+        # _emission_due), so the findings already built are still reported;
+        # reporting itself stops at the hard cutoff, before the deadline.
+        reserve = _emission_reserve(deadline - started) if deadline is not None else 0.0
+        self._emit_stop_at = None if deadline is None else deadline - 1.5 * reserve
+        self._emission_cut = False
+        hard_stop = None if deadline is None else deadline - reserve
+        self._emit_hard_stop = hard_stop
+        self._emit_last_check = time.monotonic()
+        self._emit_slowest = 0.0
+        emitted = 0
+        for finding in self._emit_findings(scan):
+            if hard_stop is not None and time.monotonic() >= hard_stop:
+                self._emission_cut = True
+                break
+            emitted += 1
             yield _with_agent_profile(finding)
+        if self._emission_cut:
+            self.ctx.error(
+                "code.filesystem: connector deadline reached while reporting findings under "
+                f"{scan.label} after {emitted}; the rest are not reported and results are incomplete"
+            )
+
+    def _emission_due(self) -> bool:
+        """Whether reporting must stop starting new analysis because the connector deadline is near.
+
+        Every emission loop calls this before each analysis, so the time since
+        the previous call bounds how long one analysis took. No analysis starts
+        unless the slowest so far would still finish before the hard cutoff:
+        one slow project must not carry the findings built before it past it.
+        """
+        now = time.monotonic()
+        self._emit_slowest = max(self._emit_slowest, now - self._emit_last_check)
+        self._emit_last_check = now
+        if self._emit_stop_at is None:
+            return False
+        if now >= self._emit_stop_at or (
+            self._emit_hard_stop is not None and now + self._emit_slowest >= self._emit_hard_stop
+        ):
+            self._emission_cut = True
+            return True
+        return False
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -2233,6 +2433,7 @@ class FilesystemConnector(BaseConnector):
             return
         self._default_skipped = {}
         self._alias_evidence = []
+        self._alias_entries_left = _MAX_ALIAS_ENTRIES_TOTAL
         try:
             self._walk_entries(scan)
             self._resolve_plugin_mcp(scan)
@@ -2268,30 +2469,46 @@ class FilesystemConnector(BaseConnector):
         configuration is not parsed twice.
         """
         parsed = {rel for rel, _ in scan.mcp_files}
+        seen: set[str] = set()
+        deadline = self.ctx.deadline
         for manifest, paths in scan.plugin_mcp_refs:
             directory = PurePosixPath(manifest).parent
             plugin_root = directory.parent if directory.name == ".claude-plugin" else directory
             for path in paths:
                 target = os.path.normpath((plugin_root / path).as_posix()).replace(os.sep, "/")
                 where = f"code.filesystem: {manifest}: MCP configuration {path!r}"
+                if target in parsed or target in seen:
+                    continue  # each file is read once, however many manifests name it
+                seen.add(target)
                 if path.startswith("/") or target == ".." or target.startswith("../"):
                     self.ctx.error(f"{where} is outside the scanned tree")
                     continue
-                if target in parsed:
-                    continue
-                read_errors: list[str] = []
-                text = read_text(PurePosixPath(target), self.max_file_size, read_errors, dir_fd=scan.root_fd)
-                if text is None:
+                if deadline is not None and (
+                    time.monotonic() + self.scan_timeout >= deadline - DEADLINE_MARGIN_MIN_SECONDS
+                ):
                     self.ctx.error(
-                        f"{where} could not be read ({read_errors[0] if read_errors else 'missing'})"
+                        "code.filesystem: connector deadline reached before the MCP configuration files that "
+                        f"plugin manifests name were read (from {manifest}); results incomplete"
                     )
-                    continue
-                errors: list[str] = []
-                servers = parse_plugin_mcp_file(target, text, errors)
-                self._file_errors(target, dict.fromkeys(errors), test_policy=False)
-                if servers:
-                    scan.mcp_files.append((target, servers))
-                    parsed.add(target)
+                    return
+                with (
+                    self._isolated(target, "plugin MCP configuration analysis"),
+                    self.index.scan_budget(seconds=self.scan_timeout),
+                ):
+                    read_errors: list[str] = []
+                    limit = self._size_limit(PurePosixPath(target).name, target)
+                    text = read_text(PurePosixPath(target), limit, read_errors, dir_fd=scan.root_fd)
+                    if text is None:
+                        self.ctx.error(
+                            f"{where} could not be read ({read_errors[0] if read_errors else 'missing'})"
+                        )
+                        continue
+                    errors: list[str] = []
+                    servers = parse_plugin_mcp_file(target, text, errors)
+                    self._file_errors(target, dict.fromkeys(errors), test_policy=False)
+                    if servers:
+                        scan.mcp_files.append((target, servers))
+                        parsed.add(target)
 
     def _walk_entries(self, scan: _ScanState) -> None:
         """Start each file only while its matching budget fits before the connector deadline."""
@@ -2342,16 +2559,8 @@ class FilesystemConnector(BaseConnector):
         if not (by_name or file_matches):
             return
         named = by_name or self._named_by_signature(rel, file_matches)
-        credential_text: list[str] = []
-        loaded = self._read_source(
-            rel, path, scan.root_fd, scan.base, named=named, credentials_only=credential_text
-        )
+        loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if loaded is None:
-            for text in credential_text:
-                # An oversize test file: its credentials are scanned, nothing else.
-                file = _SourceFile(rel=rel, path=path, proj_root=proj_root, proj=proj, text=text, lang=lang,
-                                   file_matches=[], structure=None)  # fmt: skip
-                self._detect_secrets(scan, file)
             return
         text, raw_notebook, cells = loaded
         file = _SourceFile(
@@ -2396,7 +2605,6 @@ class FilesystemConnector(BaseConnector):
         base: Path | None = None,
         *,
         named: bool = True,
-        credentials_only: list[str] | None = None,
     ) -> tuple[str, str | None, _CellSpans] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
@@ -2406,16 +2614,14 @@ class FilesystemConnector(BaseConnector):
         in it. None means nothing is analyzed; the recorded diagnostics say why.
         ``named`` is False when only a directory-wide signature glob selects the
         file, so a recognised binary artifact there (an image beside coding-agent
-        rules) is skipped without a coverage gap. An oversize test file that is
-        to be scanned for credentials only is appended to ``credentials_only``
-        (see ``_oversize_gap``).
+        rules) is skipped without a coverage gap.
         """
         read_errors: list[str] = []
         notes: list[str] | None = [] if self._ascii_signatures else None
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
         text = read_text(
             on_disk,
-            self._size_limit(path.name),
+            self._size_limit(path.name, rel),
             read_errors,
             dir_fd=root_fd,
             analyzable_name=named,
@@ -2425,12 +2631,7 @@ class FilesystemConnector(BaseConnector):
             self.ctx.warn(f"code.filesystem: {rel}: {note}", incomplete=False)
         for issue in read_errors:
             if issue == "file exceeds max_file_size":
-                credential_text = self._oversize_gap(rel, on_disk, root_fd, named)
-                if credential_text is not None and credentials_only is not None:
-                    credentials_only.append(credential_text)
-            elif issue == BINARY_CONTENT_ERROR:
-                # Test suites keep binary fixtures on purpose (see _file_errors).
-                self._file_errors(rel, [issue])
+                self._oversize_gap(rel, on_disk, root_fd, named)
             else:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
         if text is None:
@@ -2448,55 +2649,28 @@ class FilesystemConnector(BaseConnector):
             return text, None, ()
         return self._notebook_source(rel, text)
 
-    def _oversize_gap(self, rel: str, on_disk: PurePosixPath, root_fd: int, named: bool) -> str | None:
+    def _oversize_gap(self, rel: str, on_disk: PurePosixPath, root_fd: int, named: bool) -> None:
         """Record a file the reader refused for its size, which no ``oversize_skip_globs`` entry declared.
 
         A compiled or packed binary without an extension (``_skips_binary``) is
-        skipped as a smaller one is. Test code follows the test-code policy for
-        analysis limits, but a recorded fixture can hold a real credential, so
-        its text, read up to the larger of max_file_size and max_data_file_size,
-        is returned to be scanned for credentials. Any other file, and a test
-        file too large for that, is a coverage gap.
+        skipped as a smaller one is. Any other file is a coverage gap: a test
+        file too, since it was already read up to max_data_file_size.
         """
-        limit = (
-            "max_data_file_size" if on_disk.suffix.lower() in _DATA_DOCUMENT_EXTENSIONS else "max_file_size"
-        )
+        data = on_disk.suffix.lower() in _DATA_DOCUMENT_EXTENSIONS or _is_test_path(rel)
+        limit = "max_data_file_size" if data else "max_file_size"
         head = read_head(on_disk, dir_fd=root_fd)
         if head is not None and is_binary_artifact(on_disk.name, head, named):
             self.ctx.warn(
                 f"code.filesystem: {rel}: skipped binary file over {limit}; binary content is never analyzed",
                 incomplete=False,
             )
-            return None
-        if not self.include_tests and _is_test_path(rel):
-            if not self.scan_secrets:
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: skipped, test file exceeds {limit}; not analyzed",
-                    incomplete=self.strict_coverage,
-                )
-                return None
-            errors: list[str] = []
-            notes: list[str] | None = [] if self._ascii_signatures else None
-            cap = max(self.max_file_size, self.max_data_file_size)
-            text = read_text(on_disk, cap, errors, dir_fd=root_fd, analyzable_name=named, notes=notes)
-            for note in notes or ():
-                self.ctx.warn(f"code.filesystem: {rel}: {note}", incomplete=False)
-            if text is not None:
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: test file exceeds {limit}; scanned for credentials only",
-                    incomplete=self.strict_coverage,
-                )
-                return text
-            if errors and errors != ["file exceeds max_file_size"]:
-                self._file_errors(rel, errors)
-                return None
+            return
         if self.strict_coverage:
             self.ctx.error(f"code.filesystem: {rel}: file exceeds {limit}")
         else:
             self.ctx.warn(
                 f"code.filesystem: {rel}: skipped, file exceeds {limit}; coverage incomplete", incomplete=True
             )
-        return None
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
         """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
@@ -2512,10 +2686,9 @@ class FilesystemConnector(BaseConnector):
         return any((m.signature.id, id(m.signal)) not in directory_wide for m in file_matches)
 
     def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None, _CellSpans] | None:
-        """Return a notebook's code cells, their spans and, within max_file_size, its raw document."""
+        """Return a notebook's code cells, their spans and its raw document (outputs hold credentials)."""
         notebook_errors: list[str] = []
-        oversized_notebook = len(document) > self.max_file_size
-        raw_notebook = None if oversized_notebook else document
+        raw_notebook = document
         sources: list[str] = []
         text = notebook_to_source(document, notebook_errors, cells=sources)
         self._file_errors(rel, dict.fromkeys(notebook_errors))
@@ -2528,16 +2701,11 @@ class FilesystemConnector(BaseConnector):
         # Unread analyzable content leaves coverage incomplete, as
         # for any oversize file; strict_coverage only raises the
         # diagnostic from a warning to an error.
+        # Saved outputs are read only for credentials, in windows at any size
+        # up to max_notebook_size (see SignatureIndex.match_secrets).
         gap: str | None = None
         if len(text) > self.max_file_size:
             gap = f"code.filesystem: {rel}: skipped, notebook code cells exceed max_file_size"
-        elif oversized_notebook and self.scan_secrets:
-            # Code cells are analyzed as usual. Saved outputs are
-            # read only for credentials, and not at this size.
-            gap = (
-                f"code.filesystem: {rel}: notebook over max_file_size; code cells analyzed, "
-                "saved outputs not scanned for credentials"
-            )
         if gap is not None:
             if self.strict_coverage:
                 self.ctx.error(gap)
@@ -2570,8 +2738,18 @@ class FilesystemConnector(BaseConnector):
             return None
 
     def _withhold_excerpts(self, rel: str, exc: Exception, stage: str = "sanitization") -> None:
-        # A resource limit is an analysis limit: test code follows the test-code policy.
-        self._file_errors(rel, [f"structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"])
+        """Record excerpts withheld from ``rel``.
+
+        Redacting already analyzed text (``sanitization``) withholds evidence
+        snippets only: a warning. Parsing the structure that gives redaction
+        its context (``parsing``) also bounds structured analysis: a gap, under
+        the test-code policy in test code.
+        """
+        message = f"structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"
+        if stage == "sanitization":
+            self.ctx.warn(f"code.filesystem: {rel}: {message}", incomplete=False)
+        else:
+            self._file_errors(rel, [message])
 
     def _file_errors(self, rel: str, issues: Iterable[str], *, test_policy: bool = True) -> None:
         """Record each issue a parser or validator reported for ``rel``.
@@ -2591,14 +2769,15 @@ class FilesystemConnector(BaseConnector):
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
-        if file.structure is None:
+        if file.structure is None or file.excerpts_withheld:
             return []
         if file.safe_lines is None:
             try:
                 file.safe_lines = _redacted_source(file.text, file.structure).splitlines()
             except (YAMLResourceLimitError, SanitizationLimitError) as exc:
+                # The file was analyzed; only its excerpts cannot be redacted safely.
                 self._withhold_excerpts(file.rel, exc)
-                file.structure = None
+                file.excerpts_withheld = True
                 file.safe_lines = []
         return file.safe_lines
 
@@ -2665,9 +2844,11 @@ class FilesystemConnector(BaseConnector):
             try:
                 raw_lines = sanitize_text(raw).splitlines()
             except SanitizationLimitError:
-                self.ctx.error(
+                # The outputs are still scanned; only their excerpts are withheld.
+                self.ctx.warn(
                     f"code.filesystem: {file.rel}: notebook excerpt sanitization incomplete; "
-                    "excerpts withheld"
+                    "excerpts withheld",
+                    incomplete=False,
                 )
         for m in self.index.match_secrets(raw):
             if (m.signature_id, m.value) in skip_values:
@@ -3175,7 +3356,13 @@ class FilesystemConnector(BaseConnector):
         for finding in self._emit_projects(scan, project_findings):
             ai_projects.add(self._owning_project(scan, finding.metadata.get("path", ".")))
             yield finding
+        if self._emission_cut:
+            # Out of time: report the project findings already built, unfolded.
+            yield from project_findings.values()
+            return
         for rel, servers in scan.mcp_files:
+            if self._emission_due():
+                break
             with self._isolated(rel, "MCP analysis"), self.index.scan_budget(seconds=self.scan_timeout):
                 ai_projects.add(self._owning_project(scan, rel))
                 yield self._mcp_finding(label, root, rel, servers)
@@ -3187,9 +3374,13 @@ class FilesystemConnector(BaseConnector):
             ai_projects.add(self._owning_project(scan, rel))
         yield from project_findings.values()
         for rel, hits in scan.workflow_files.items():
+            if self._emission_due():
+                break
             with self._isolated(rel, "workflow analysis"):
                 yield self._workflow_finding(label, root, rel, [*hits, *scan.workflow_providers.get(rel, [])])
         for rel, infra_hits in scan.infra_files.items():
+            if self._emission_due():
+                break
             with self._isolated(rel, "infrastructure analysis"):
                 yield self._infra_finding(
                     label,
@@ -3202,6 +3393,8 @@ class FilesystemConnector(BaseConnector):
                 )
         suppressed: list[str] = []
         for rel, hits in scan.secret_hits.items():
+            if self._emission_due():
+                break
             with self._isolated(rel, "credential analysis"):
                 owner = self._owning_project(scan, rel)
                 if (
@@ -3247,6 +3440,8 @@ class FilesystemConnector(BaseConnector):
         # own findings; a project finding built only from them is a duplicate.
         covered_files = scan.covered_files()
         for proj in scan.projects.values():
+            if self._emission_due():
+                return
             with self._isolated(proj.root, "project analysis"):
                 for finding in self._emit_project(scan.label, scan.root, proj, covered_files):
                     if finding.resource_type == "project":
@@ -3257,6 +3452,8 @@ class FilesystemConnector(BaseConnector):
     def _emit_manifests(self, scan: _ScanState, project_findings: dict[str, Finding]) -> Iterator[Finding]:
         """Yield agent manifest findings; a project manifest is folded into its project's finding."""
         for rel, text, kind, proj_root in scan.card_files:
+            if self._emission_due():
+                return
             with (
                 self._isolated(rel, "agent manifest analysis"),
                 self.index.scan_budget(seconds=self.scan_timeout),
@@ -4365,9 +4562,10 @@ class FilesystemConnector(BaseConnector):
         hits = list(unique.values())
         if not hits:
             return None
-        # A generic assignment pattern names no provider: say what was found.
-        generic = _generic_only(hits)
-        title = f"{'Hard-coded credential' if generic else 'LLM provider credential'} in {rel}"
+        # Only a provider signature names an LLM provider; the generic pattern
+        # (a GitHub or AWS token included) says what was found.
+        provider = any(m.signature_id != GENERIC_CREDENTIAL for m, _ in hits)
+        title = f"{'LLM provider credential' if provider else 'Hard-coded credential'} in {rel}"
         f = self._base(label, root, rel, Kind.SECRET, title, "file")
         # Test, fixture and recorded-cassette paths follow the project test-code
         # policy: half weight and an explicit tag unless test code is included.

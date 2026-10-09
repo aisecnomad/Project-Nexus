@@ -31,7 +31,7 @@ def _git_store(path: Path, head: bytes = b"ref: refs/heads/main\n") -> None:
     (path / "HEAD").write_bytes(head)
     (path / "config").write_text("[core]\n\tbare = true\n")
     (path / "index").write_bytes(b"DIRC\x00\x00\x00\x02" + b"\x00" * 64)
-    (path / "objects" / "ab" / "cdef0123456789").write_bytes(zlib.compress(b"blob 5\x00hello"))
+    (path / "objects" / "ab" / ("c" * 38)).write_bytes(zlib.compress(b"blob 5\x00hello"))
     (path / "refs" / "heads" / "main").write_text("0" * 40 + "\n")
 
 
@@ -41,7 +41,7 @@ def test_git_repository_store_is_skipped(tmp_path: Path, run_connector, name: st
     (tmp_path / "app.py").write_text(AGENT_SOURCE)
     findings, ctx = _scan(run_connector, tmp_path, include_tests=True)
     assert findings and not ctx.stats.incomplete and not ctx.stats.errors
-    assert any(f"{name}: skipped Git repository store" in w for w in ctx.stats.warnings)
+    assert any(f"{name}: Git repository store" in w for w in ctx.stats.warnings)
 
 
 def test_directory_with_other_entries_is_not_a_git_store(tmp_path: Path, run_connector) -> None:
@@ -52,14 +52,14 @@ def test_directory_with_other_entries_is_not_a_git_store(tmp_path: Path, run_con
     assert any(f.metadata.get("path") == "remote.git" for f in findings) or any(
         any(e.location.startswith("remote.git/agent.py") for e in f.evidence) for f in findings
     )
-    assert not any("skipped Git repository store" in w for w in ctx.stats.warnings)
+    assert not any("Git repository store" in w for w in ctx.stats.warnings)
     assert ctx.stats.incomplete  # its objects are still binary content
 
 
 def test_git_store_needs_a_valid_head(tmp_path: Path, run_connector) -> None:
     _git_store(tmp_path / "remote.git", head=b"not a head\n")
     _, ctx = _scan(run_connector, tmp_path)
-    assert not any("skipped Git repository store" in w for w in ctx.stats.warnings)
+    assert not any("Git repository store" in w for w in ctx.stats.warnings)
     assert ctx.stats.incomplete
 
 
@@ -95,12 +95,44 @@ def test_legacy_code_page_text_stays_a_gap_for_non_ascii_signatures(tmp_path: Pa
     assert any("binary or undecodable content" in e for e in ctx.stats.errors)
 
 
-def test_binary_content_in_test_code_follows_the_test_code_policy(tmp_path: Path, run_connector) -> None:
+def test_files_in_a_git_store_other_than_its_binary_formats_are_analyzed(
+    tmp_path: Path, run_connector
+) -> None:
+    store = tmp_path / "fixtures" / "tool"
+    _git_store(store)
+    (store / "hooks").mkdir()
+    (store / "hooks" / "agent.py").write_text(AGENT_SOURCE)
+    (store / "objects" / "pack" / "run.py").write_text(AGENT_SOURCE)
+    (store / "objects" / "ab" / ("d" * 38 + ".py")).write_text(AGENT_SOURCE)  # not an object name
+    findings, ctx = _scan(run_connector, tmp_path, include_tests=True)
+    located = {e.location.split(":")[0] for f in findings for e in f.evidence}
+    assert {"fixtures/tool/hooks/agent.py", "fixtures/tool/objects/pack/run.py"} <= located
+    assert f"fixtures/tool/objects/ab/{'d' * 38}.py" in located
+
+
+def test_binary_content_in_test_code_is_a_gap(tmp_path: Path, run_connector) -> None:
+    # Test evidence is still reported, so unread binary-looking test files are gaps.
     (tmp_path / "tests" / "data").mkdir(parents=True)
-    (tmp_path / "tests" / "data" / "dhcp").write_bytes(b"\x01\x02" + b"\x00" * 300)
     (tmp_path / "tests" / "test_encryption.ts").write_bytes(b"\x00\x01\x02" * 300)
     _, ctx = _scan(run_connector, tmp_path)
-    assert not ctx.stats.incomplete
-    assert sum("binary or undecodable content" in w for w in ctx.stats.warnings) == 2
-    _, included = _scan(run_connector, tmp_path, include_tests=True)
-    assert included.stats.incomplete
+    assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        b"RIFF\x24\x00\x00\x00WEBPVP8 ",
+        b"OggS\x00\x02",
+        b"fLaC\x00\x00\x00\x22",
+        b"ID3\x04\x00\x00",
+        b"II*\x00",
+    ],
+    ids=["webp", "ogg", "flac", "mp3", "tiff"],
+)
+def test_media_without_an_extension_is_a_binary_artifact(
+    tmp_path: Path, run_connector, header: bytes
+) -> None:
+    (tmp_path / "thumbnail").write_bytes(header + b"\x00\x01\x02\x03" * 200)
+    (tmp_path / "app.py").write_text(AGENT_SOURCE)
+    findings, ctx = _scan(run_connector, tmp_path)
+    assert findings and not ctx.stats.incomplete

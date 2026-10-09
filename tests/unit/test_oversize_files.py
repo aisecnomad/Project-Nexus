@@ -81,52 +81,42 @@ def test_other_oversize_files_stay_coverage_gaps(tmp_path: Path, run_connector, 
     assert ctx.stats.incomplete
 
 
-def test_oversize_test_file_is_scanned_for_credentials_only(tmp_path: Path, run_connector) -> None:
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_client.py").write_text(
-        f'from openai import OpenAI\nKEY = "{KEY}"\n' + "# fixture\n" * 500
+def test_large_test_file_is_analyzed_in_full(tmp_path: Path, run_connector) -> None:
+    # Padding a test file must not remove its evidence: test files are read up to
+    # max_data_file_size and analyzed like any other file there.
+    server = (
+        "from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP('t')\n\n\n@mcp.tool()\n"
+        "def shell(cmd: str) -> str:\n    return cmd\n"
     )
+    (tmp_path / "e2e").mkdir()
+    (tmp_path / "e2e" / "server.py").write_text(server + f'KEY = "{KEY}"\n' + "# padding\n" * 500)
+    (tmp_path / "requirements.txt").write_text("mcp\n")
     findings, ctx = _scan(run_connector, tmp_path, max_file_size=1_000)
     assert not ctx.stats.incomplete
-    assert any("test_client.py: test file exceeds max_file_size; scanned for credentials only" in w
-               for w in ctx.stats.warnings)  # fmt: skip
-    assert [f.kind for f in findings] == [Kind.SECRET]
-    assert KEY not in json.dumps([f.to_dict() for f in findings])
-    _, strict = _scan(run_connector, tmp_path, max_file_size=1_000, strict_coverage=True)
-    assert strict.stats.incomplete
-    _, included = _scan(run_connector, tmp_path, max_file_size=1_000, include_tests=True)
-    assert included.stats.incomplete
+    assert any(f.kind == Kind.SECRET for f in findings)
+    assert any("protocol.mcp" in f.frameworks and any(e.location.startswith("e2e/server.py") for e in f.evidence)
+               for f in findings)  # fmt: skip
 
 
-def test_oversize_test_file_without_credential_scanning_is_not_read(tmp_path: Path, run_connector) -> None:
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_client.py").write_text("from openai import OpenAI\n" + "# fixture\n" * 500)
-    _, ctx = _scan(run_connector, tmp_path, max_file_size=1_000, scan_secrets=False)
-    assert not ctx.stats.incomplete
-    assert any("test_client.py: skipped, test file exceeds max_file_size; not analyzed" in w
-               for w in ctx.stats.warnings)  # fmt: skip
-
-
-def test_test_file_too_large_for_a_credential_scan_is_a_gap(tmp_path: Path, run_connector) -> None:
+def test_test_file_over_max_data_file_size_is_a_gap(tmp_path: Path, run_connector) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_client.py").write_text("# fixture\n" * 500)
     _, ctx = _scan(run_connector, tmp_path, max_file_size=1_000, max_data_file_size=1_000)
     assert ctx.stats.incomplete
+    assert any("test_client.py: skipped, file exceeds max_data_file_size" in w for w in ctx.stats.warnings)
 
 
-def test_structured_limit_in_test_code_follows_the_test_code_policy(tmp_path: Path, run_connector) -> None:
+def test_sanitization_limit_withholds_excerpts_without_a_gap(tmp_path: Path, run_connector) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "fixture.json").write_text(
         json.dumps({"OPENAI_API_KEY": KEY, "values": list(range(110_000))})
     )
-    findings, ctx = _scan(run_connector, tmp_path)
+    findings, ctx = _scan(run_connector, tmp_path, include_tests=True)
     assert not ctx.stats.incomplete
     assert any("excerpts withheld" in w for w in ctx.stats.warnings)
     secret = next(f for f in findings if f.kind == Kind.SECRET)
     assert all(not e.snippet for e in secret.evidence)
     assert KEY not in json.dumps([f.to_dict() for f in findings])
-    _, included = _scan(run_connector, tmp_path, include_tests=True)
-    assert included.stats.incomplete and any("excerpts withheld" in e for e in included.stats.errors)
 
 
 def _line_of(text: str, value: str) -> int:
@@ -163,6 +153,37 @@ def test_credentials_on_one_long_line_are_matched_across_windows(index) -> None:
 def test_test_resource_directories_are_test_code(tmp_path: Path, run_connector, directory: str) -> None:
     (tmp_path / directory).mkdir()
     (tmp_path / directory / "browsers.py").write_text("from openai import OpenAI\n" + "# fixture\n" * 500)
-    _, ctx = _scan(run_connector, tmp_path, max_file_size=1_000)
+    findings, ctx = _scan(run_connector, tmp_path, max_file_size=1_000)
     assert not ctx.stats.incomplete
-    assert any("test file exceeds max_file_size" in w for w in ctx.stats.warnings)
+    assert any("test-code-only" in f.tags for f in findings)
+
+
+def test_decoy_placeholders_cannot_hide_a_token(index) -> None:
+    decoys = "".join(f"EXAMPLE_API_KEY=your-api-key-goes-here-{n}\n" for n in range(5))
+    token = "ghp_" + "Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7c"
+    assert any(
+        m.value.endswith(token) or token in m.value for m in index.match_secrets(decoys + f"T={token}\n")
+    )
+
+
+def test_reaching_the_credential_match_limit_is_incomplete(index) -> None:
+    decoys = "".join(f"EXAMPLE_API_KEY=your-api-key-goes-here-{n:04d}\n" for n in range(300))
+    with pytest.raises(matcher.MatchTimeoutError):
+        index.match_secrets(decoys)
+
+
+def test_a_window_cut_never_splits_a_credential(index) -> None:
+    key = "sk-proj-" + "Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk9Lz0Xc" * 2
+    filler = "x" * (matcher._SECRET_WINDOW - 30) + " "
+    text = filler + f"MY_OPENAI_API_KEY={key} " + "y " * (matcher._SECRET_WINDOW // 2)
+    values = [m.value for m in index.match_secrets(text) if key[:20] in m.value]
+    assert len({v for v in values if v.endswith(key)}) == len(values) >= 1
+
+
+def test_default_max_file_size_reads_a_two_megabyte_source(tmp_path: Path, run_connector) -> None:
+    source = "from openai import OpenAI\n\nOpenAI()\n" + "# generated table\n" * 120_000
+    (tmp_path / "app.py").write_text(source)
+    assert (tmp_path / "app.py").stat().st_size > 2_000_000
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete
+    assert any("provider.openai" in f.model_providers for f in findings)
