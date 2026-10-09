@@ -45,6 +45,10 @@ def _ordered_tools(metrics: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
 def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
     c = metrics["corpus"]
     run = metrics["run"]
+    # The repositories scored (all of them, or a partial run's `score --repos`
+    # selection): the per-repository tables list only these, so a repository
+    # that was not run is not shown as "?" or "missing".
+    scored = {repo_id for t in metrics["tools"].values() for repo_id in t.get("per_repo") or {}}
     out: list[str] = [f"# {title}", ""]
     out.append(
         f"Corpus: {c['repos']} pinned repositories ({c['positive']} positive, {c['control']} control, "
@@ -140,7 +144,7 @@ def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
     out.append("")
     out.append("## Near-miss and control repositories")
     out.append("")
-    negatives = [r for r in corpus.repos if r.klass != "positive"]
+    negatives = [r for r in corpus.repos if r.klass != "positive" and r.id in scored]
     header = [
         "Repository",
         "Class",
@@ -174,6 +178,8 @@ def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
     ]
     rows = []
     for repo in corpus.by_class("positive"):
+        if repo.id not in scored:
+            continue
         cells = [repo.path, str(len(repo.expected))]
         for _, t in _ordered_tools(metrics):
             if t["runs"].get("skipped", 0) == c["repos"]:

@@ -342,7 +342,8 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   the `runs.json` of metrics scored before it was recorded.
 - Fixed: a dispatched benchmark run of some repositories (`--repos`) is scored
   and compared over those repositories only. The unselected ones were scored
-  as missing, so the gate always reported a recall regression.
+  as missing, so the gate always reported a recall regression. Its REPORT.md
+  lists only the scored repositories; the others showed as `?` or `missing`.
 - Docs: the benchmark's isolation is described as it is: a rebuilt
   environment and a dead proxy that clients may ignore, not a network or
   filesystem sandbox; third-party tools need an externally isolated runner.

@@ -732,6 +732,25 @@ def test_score_and_compare_a_repository_subset() -> None:
     assert not bad.ok and any("recall" in reason for reason in bad.regressions)
 
 
+def test_report_of_a_repository_subset_lists_only_the_scored_repositories() -> None:
+    # A dispatched run of the control alone: the positive and the near-miss
+    # were not run, so the report has no row for them rather than "?" or "missing".
+    corpus = _tiny_corpus()
+    scopes = {"shadowscan": frozenset(taxonomy.CATEGORIES), "cdxgen": frozenset({"framework", "provider"})}
+    names = {"shadowscan": "ShadowScan", "cdxgen": "cdxgen"}
+    subset_run = _manifest()
+    subset_run["results"] = [r for r in subset_run["results"] if r["repo"] == "acme__ctl"]  # type: ignore[index]
+    metrics = score.score_all(corpus, subset_run, scopes, names, repos={"acme__ctl"})
+    text = report.render(metrics, corpus, title="T")
+    rows = [line for line in text.splitlines() if line.startswith("| acme/")]
+    assert rows == ["| acme/ctl | control | clean | clean |"]
+    # A full run still lists every repository, and a run the manifest lacks stays visible.
+    full = _manifest()
+    full["results"] = [r for r in full["results"] if r["repo"] != "acme__near"]  # type: ignore[index]
+    text = report.render(score.score_all(corpus, full, scopes, names), corpus, title="T")
+    assert "| acme/near | nearmiss | missing | missing |" in text and "| acme/demo |" in text
+
+
 def test_cli_scores_and_compares_a_dispatched_subset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
