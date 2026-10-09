@@ -344,34 +344,70 @@ def mcp_tool_names(
 # server class or builder, a tools/call handler, or a tool registration whose
 # name is not a literal (a registration table). The caller runs this only on a
 # file that imports an MCP SDK (the `protocol.mcp` import signals).
-_SERVER_MARKERS: dict[str, re.Pattern[str]] = {
-    "javascript": re.compile(
-        r"\bnew\s+(?:McpServer|FastMCP)\s*\(|\.setRequestHandler\(\s*CallToolRequestSchema\b"
-        r"|\.(?:registerTool|tool)\(\s*[A-Za-z_$][\w$.]*\s*,"
-    ),
-    "python": re.compile(r"\bFastMCP\s*\(|@[A-Za-z_]\w*\.(?:call_tool|list_tools)\s*\(\s*\)"),
-    "go": re.compile(
-        r"\bmcp\.NewServer\s*\(|\bmcp\.AddTool\s*\(|\bserver\.NewMCPServer\s*\(|\bserver\.NewServer\s*\("
-    ),
-    "rust": re.compile(r"\bimpl\s+(?:rmcp::)?ServerHandler\s+for\b|#\[\s*tool_(?:router|handler)\b"),
-    "java": re.compile(r"\bMcpServer\s*\.\s*(?:sync|async)\s*\("),
-    "dotnet": re.compile(r"\[\s*McpServerToolType\b|\.AddMcpServer\s*\(|\.WithTools(?:FromAssembly)?\b"),
+# Each server construct counts only in a file that imports the SDK's server side:
+# a client file can call `.tool(name, ...)` or a package of its own `server.NewServer`.
+_SERVER_MARKERS: dict[str, list[tuple[re.Pattern[str], re.Pattern[str]]]] = {
+    "javascript": [
+        (
+            re.compile(r"@modelcontextprotocol/sdk/server\b"),
+            re.compile(
+                r"\bnew\s+(?:McpServer|Server)\s*\(|\.setRequestHandler\(\s*CallToolRequestSchema\b"
+                r"|\.(?:registerTool|tool)\(\s*[A-Za-z_$][\w$.]*\s*,"
+            ),
+        ),
+        (re.compile(r"""["']fastmcp["']"""), re.compile(r"\bnew\s+FastMCP\s*\(")),
+    ],
+    "python": [
+        (
+            re.compile(r"^[ \t]*(?:from|import)[ \t]+(?:mcp\.server|fastmcp)\b", re.M),
+            re.compile(r"\bFastMCP\s*\(|@[A-Za-z_]\w*\.(?:call_tool|list_tools)\s*\(\s*\)"),
+        ),
+    ],
+    "go": [
+        (re.compile(r"modelcontextprotocol/go-sdk/mcp\b"), re.compile(r"\bmcp\.(?:NewServer|AddTool)\s*\(")),
+        (re.compile(r"mark3labs/mcp-go/server\b"), re.compile(r"\bserver\.NewMCPServer\s*\(")),
+        (re.compile(r"ThinkInAIXYZ/go-mcp/server\b"), re.compile(r"\bserver\.NewServer\s*\(")),
+    ],
+    "rust": [
+        (
+            re.compile(r"\brmcp\b"),
+            re.compile(r"\bimpl\s+(?:rmcp::)?ServerHandler\s+for\b|#\[\s*tool_(?:router|handler)\b"),
+        ),
+    ],
+    "java": [
+        (
+            re.compile(r"\bio\.modelcontextprotocol\.server\b"),
+            re.compile(r"\bMcpServer\s*\.\s*(?:sync|async)\s*\("),
+        ),
+    ],
+    "dotnet": [
+        (
+            re.compile(r"\bModelContextProtocol\.(?:Server|AspNetCore)\b"),
+            re.compile(r"\[\s*McpServerToolType\b|\.AddMcpServer\s*\(|\.WithTools(?:FromAssembly)?\b"),
+        ),
+    ],
 }
 
 
 def mcp_server_line(text: str, language: str | None, ignored: list[tuple[int, int]]) -> int | None:
     """The line of the first construct, outside ``ignored`` spans, that implements an MCP server."""
-    pattern = _SERVER_MARKERS.get(language or "")
-    if pattern is None:
-        return None
     starts = [start for start, _ in ignored]
     ends = [end for _, end in ignored]
-    for match in pattern.finditer(text, 0, len(text)):
-        preceding = bisect_right(starts, match.start()) - 1
-        if preceding >= 0 and match.start() < ends[preceding]:
-            continue
-        return text.count("\n", 0, match.start()) + 1
-    return None
+
+    def first(pattern: re.Pattern[str]) -> int | None:
+        for match in pattern.finditer(text, 0, len(text)):
+            preceding = bisect_right(starts, match.start()) - 1
+            if preceding < 0 or match.start() >= ends[preceding]:
+                return match.start()
+        return None
+
+    found = [
+        at
+        for server_import, construct in _SERVER_MARKERS.get(language or "", [])
+        # Import paths are string literals, which the ignored spans mask; the construct must be code.
+        if server_import.search(text) is not None and (at := first(construct)) is not None
+    ]
+    return text.count("\n", 0, min(found)) + 1 if found else None
 
 
 def _tokens(name: str) -> set[str]:

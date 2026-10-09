@@ -124,6 +124,11 @@ def test_one_executed_selection_is_a_single_action_agent(tmp_path, run_connector
         CLIENT.replace(
             "    message = response.choices[0].message", "    message = cached.choices[0].message"
         ).replace(DISPATCH, "        get_weather(**json.loads(call.function.arguments))\n"),
+        client("        import cached as call\n        get_weather(**json.loads(call.function.arguments))\n"),
+        client(
+            "        try:\n            raise ValueError\n        except ValueError as call:\n"
+            "            get_weather(**json.loads(call.function.arguments))\n"
+        ),
         # Unreachable or deferred dispatch.
         client("        return None\n        get_weather(**json.loads(call.function.arguments))\n"),
         client("        if False:\n            get_weather(**json.loads(call.function.arguments))\n"),
@@ -148,6 +153,8 @@ def test_one_executed_selection_is_a_single_action_agent(tmp_path, run_connector
         "undeclared",
         "rebound-call",
         "other-response",
+        "import-alias",
+        "except-name",
         "after-return",
         "literal-false",
         "nested-def",

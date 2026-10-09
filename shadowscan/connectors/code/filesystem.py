@@ -702,6 +702,7 @@ class _Project:
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
     # Files that implement an MCP server through an SDK construct -> its line (mcp_server_line).
     mcp_server_files: dict[str, int] = field(default_factory=dict)
+    mcp_server_counts: list[int] = field(default_factory=lambda: [0, 0])  # [outside tests, in tests]
     detection_rules: dict[str, int] = field(default_factory=dict)  # rule-pack format -> files
     detection_rule_files: list[str] = field(default_factory=list)  # the first, in walk order
     # Data files that declare what a deployment or a job runs with: never catalogs.
@@ -3392,8 +3393,13 @@ class FilesystemConnector(BaseConnector):
             self.ctx.error(f"code.filesystem: {file.rel}: {exc}; tool analysis incomplete")
             names = exc.names
         line = mcp_server_line(file.text, file.lang, ignored)
-        if line is not None and len(file.proj.mcp_server_files) < _MAX_MCP_TOOLS:
-            file.proj.mcp_server_files.setdefault(file.rel, line)
+        if line is not None:
+            # Test files have their own share: a large test suite cannot crowd out the server.
+            in_tests = _is_test_path(file.rel)
+            recorded = file.proj.mcp_server_counts
+            if recorded[in_tests] < _MAX_MCP_TOOLS and file.rel not in file.proj.mcp_server_files:
+                recorded[in_tests] += 1
+                file.proj.mcp_server_files[file.rel] = line
         for tool in names:
             known = tools.get(tool)
             if known is None:
@@ -3468,7 +3474,12 @@ class FilesystemConnector(BaseConnector):
             else:
                 definition = self._parse_agent_definition(rel, file.text)
                 if len(file.proj.agent_defs) >= _MAX_DETAILED_AGENT_DEFINITIONS:
-                    definition = {key: definition[key] for key in _SUMMARY_AGENT_FIELDS if key in definition}
+                    # Short strings only: a list-valued mode would keep its 50 clipped items.
+                    definition = {
+                        key: truncate(definition[key], 100)
+                        for key in _SUMMARY_AGENT_FIELDS
+                        if isinstance(definition.get(key), str)
+                    }
                 file.proj.agent_defs.append(definition)
 
     # ------------------------------------------------------------------ emit

@@ -124,13 +124,20 @@ kind is unchanged; these fields summarise it:
 
 Project source that registers MCP tools is reported with kind `mcp-server`
 and the title `MCP server in <project>: <protocol> (<n> tools: a, b, c, …)`.
-A file that imports an MCP SDK and constructs its server is enough when the
-tool names cannot be read statically (tools registered from a table, the
-low-level `Server` with a `tools/call` handler, `FastMCP(tools=[...])`, Rust
-`rmcp` `ServerHandler`, Go `mcp.NewServer` or `server.NewMCPServer`, Java
-`McpServer.sync`, .NET `[McpServerToolType]`); the finding then carries
-`mcp-server:implementation` evidence. A server constructed only under test
-paths does not count unless the project holds nothing else.
+A file that imports an MCP SDK's server side and constructs its server is
+enough when the tool names cannot be read statically: with
+`@modelcontextprotocol/sdk/server`, `new McpServer(`, `new Server(`, a
+`CallToolRequestSchema` handler or `.registerTool(name, …)`/`.tool(name, …)`;
+with Python `mcp.server` or `fastmcp`, `FastMCP(` or `@server.call_tool()`;
+with the Go SDKs, `mcp.NewServer`/`mcp.AddTool` (go-sdk),
+`server.NewMCPServer` (mcp-go) or `server.NewServer` (go-mcp); with `rmcp`,
+`impl ServerHandler for` or `#[tool_router]`; with Java
+`io.modelcontextprotocol.server`, `McpServer.sync`/`async`; with .NET
+`ModelContextProtocol.Server` or `.AspNetCore`, `[McpServerToolType]`,
+`.AddMcpServer(` or `.WithTools`. A client file with the same calls is not a
+server. The finding then carries `mcp-server:implementation` evidence. A
+server constructed only under test paths does not count unless the project
+holds nothing else.
 A server is not an agent itself; an agent framework in the same project still
 makes it an `agent`.
 
@@ -383,7 +390,8 @@ definition, including a YAML value PyYAML cannot construct (an impossible date,
 an integer over 4,300 digits), is reported as `invalid agent definition YAML`;
 the definition is still listed by its file name. A project lists up to 1,000
 agent definitions under `metadata.agent_definitions`: the first 50 with their
-parsed fields, later ones with only their file, name and permission mode. A
+parsed fields, later ones with only their file, name, `permissionMode` and `mode`, each a
+string of at most 100 characters. A
 further definition is skipped with `agent definition limit (1000) reached;
 definition skipped`, and the scan is incomplete.
 
@@ -391,7 +399,11 @@ Ruby source is walked with its own literals: regular expressions (`/…/` where
 an operand starts, by Ruby's rule for `/` after a command name, and `%r`),
 every percent literal (`%w %W %i %I %q %Q %s %x` and bare `%(…)`, with nested
 paired delimiters), command strings, character literals (`?"`), punctuation
-globals (`$"`, `$'`), the `__END__` data section and `class << self`.
+globals (`$"`, `$'`), the `__END__` data section and `class << self`. A
+regular expression or `%(…)` read only because a name set off by white space
+precedes it (`split /,/`) may be a local variable's division or modulo
+(`total /count`), which a lexical walk cannot tell apart: if it crosses a line
+break, the scan is incomplete.
 Interpolation in a regular expression, an interpolating percent literal, a
 command string or a here-document is read as code, nested strings included;
 one that does not close on its here-document line leaves the scan incomplete.

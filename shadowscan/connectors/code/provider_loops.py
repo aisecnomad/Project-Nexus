@@ -268,6 +268,10 @@ def _invalidate(statement: ast.AST, values: dict[str, str], budget: _Budget) -> 
                 values.pop(root, None)
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             values.pop(item.name, None)
+        elif isinstance(item, ast.alias):
+            values.pop(item.asname or item.name.split(".", 1)[0], None)  # `import cached as call`
+        elif isinstance(item, ast.ExceptHandler) and item.name:
+            values.pop(item.name, None)  # `except Exception as call:`
 
 
 def _selected_tool(
@@ -756,9 +760,25 @@ def _dispatches(
     declared_tools: set[str],
     imports: dict[str, str],
     dispatch_calls: set[int],
+    mentions: list[frozenset[str]] | None = None,
 ) -> bool:
-    """Some reachable path through ``statements`` runs a tool the model selected."""
+    """Some reachable path through ``statements`` runs a tool the model selected.
+
+    ``mentions`` holds the names each statement uses. A statement that uses
+    none of the tracked names can neither dispatch the selection nor rebind
+    it, so it is skipped without analysis unless it ends the path (a jump or a
+    literal guard); the walk ends when no name is left.
+    """
     for number, statement in enumerate(statements):
+        if not values:
+            return False
+        if (
+            mentions is not None
+            and mentions[number].isdisjoint(values)
+            and not isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise))
+            and not (isinstance(statement, ast.If) and isinstance(statement.test, ast.Constant))
+        ):
+            continue  # a jump or a literal guard still ends the path
         budget.tick()
         if isinstance(statement, (ast.Expr, ast.Return)) and statement.value is not None:
             call = _unwrap(statement.value)
@@ -867,7 +887,20 @@ def provider_tool_dispatch_lines(
     schemas = _schema_variables(tree, budget)
     helpers = _request_helpers(tree, request_calls, budget)
     lines: set[int] = set()
+
+    def names(statement: ast.stmt) -> frozenset[str]:
+        found = set()
+        for node in budget.walk(statement, nested_scopes=True):
+            if isinstance(node, ast.Name):
+                found.add(node.id)
+            elif isinstance(node, ast.alias):
+                found.add(node.asname or node.name.split(".", 1)[0])
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                found.add(node.name)
+        return frozenset(found)
+
     for block in _reachable_blocks(tree, budget):
+        block_names: list[frozenset[str]] | None = None
         for number, statement in enumerate(block):
             budget.tick()
             if isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
@@ -885,6 +918,8 @@ def provider_tool_dispatch_lines(
                 and not (tools.keys if isinstance(tools, ast.Dict) else tools.elts)
             ):
                 continue
+            if block_names is None:
+                block_names = [names(item) for item in block]  # once per block: linear, not per request
             selected: set[int] = set()
             if _dispatches(
                 [*inner, *block[number + 1 :]],
@@ -893,6 +928,7 @@ def provider_tool_dispatch_lines(
                 _declared_tools(tools, budget),
                 imports,
                 selected,
+                [*(names(item) for item in inner), *block_names[number + 1 :]],
             ):
                 lines.add(call.lineno)
                 if dispatch_calls is not None:

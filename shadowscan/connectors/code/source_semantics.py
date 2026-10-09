@@ -72,6 +72,7 @@ MAX_CALL_TEXT = 8192
 # stays bounded by the allowance plus MAX_BOUND_CALLS * MAX_CALL_TEXT.
 MAX_LONG_CALL_TEXT = 131_072
 MAX_FILE_CALL_TEXT = 1_048_576
+_PARENTHESES = re.compile(r"[()]")
 # The Python binder checks the file's matching budget every this many visited
 # nodes: its walk is pure Python, which no regex timeout covers.
 _BUDGET_CHECK_NODES = 256
@@ -1249,19 +1250,26 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
     )
     line_at = line_counter(text)
     allowance = MAX_FILE_CALL_TEXT
+    # Collect the calls first: their argument text is read below, outside the
+    # matching iterator, whose regex timeout would otherwise time that reading.
+    found: list[tuple[int, int, list[str]]] = []
     for match in rx.finditer(masked, timeout=pattern_timeout(), concurrent=False):
         parts = re.split(r"\s*\.\s*", match.group(1))
-        binding = bindings.get(parts[0])
-        if binding is None:
+        if parts[0] not in bindings:
             continue
-        if len(calls) >= MAX_BOUND_CALLS:
+        if len(found) >= MAX_BOUND_CALLS:
             raise SourceBudgetExceeded("source binding call limit exceeded")
-        opening = match.end() - 1
-        depth, end = 1, opening + 1
-        limit = opening + max(MAX_CALL_TEXT, min(MAX_LONG_CALL_TEXT, allowance))
-        while end < min(len(masked), limit) and depth:
-            depth += (masked[end] == "(") - (masked[end] == ")")
-            end += 1
+        found.append((match.start(), match.end(), parts))
+    for match_start, match_end, parts in found:
+        binding = bindings[parts[0]]
+        opening = match_end - 1
+        limit = min(len(masked), opening + max(MAX_CALL_TEXT, min(MAX_LONG_CALL_TEXT, allowance)))
+        depth, end = 1, limit
+        for paren in _PARENTHESES.finditer(masked, opening + 1, limit):
+            depth += 1 if paren.group() == "(" else -1
+            if not depth:
+                end = paren.end()
+                break
         allowance -= end - opening
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
         # A longer call is analyzed from its first characters up to that limit,
@@ -1272,10 +1280,10 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
             _Call(
                 _Binding(binding.module, symbol, binding.constructed),
                 text[opening:end],
-                line_at(match.start()),
+                line_at(match_start),
                 masked[opening:end],
                 tool_factories=tool_factories,
-                start=match.start(),
+                start=match_start,
                 end=end,
                 receiver=parts[0],
                 partial=bool(depth),

@@ -5,6 +5,35 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 9 post-holdout changes: independent review fixes
+
+An AI review of the three post-holdout commits (not an independent human
+review) reproduced one blocking and five further defects; each has a
+regression test in `tests/unit/test_post_holdout_review_fixes.py`.
+
+- Blocking: Ruby division by a local variable, parameter or block variable
+  (`avg = total /count`) was read as a regular expression that could span
+  lines, masking code while the scan reported complete. Ruby applies the
+  command-argument rule only to names that are not locals, which the walk
+  cannot know: such a literal (and a bare `%(…)` read the same way) now makes
+  the walk incomplete when it crosses a line break. On the 1,947-file Ruby
+  set this leaves one file incomplete.
+- MCP server markers now count only in a file that imports the SDK's server
+  side; Go, JavaScript and .NET clients with `server.NewServer`, `.tool(`
+  or `.WithTools` were reported as servers.
+- Test files no longer use up the server-file cap that a project's own server
+  file needs.
+- The single-dispatch walk skips statements that use none of the tracked
+  names (it still stops at jumps and literal guards) and ends when no name is
+  left; scripts with dozens of tool-offering requests exhausted its budget.
+  Import aliases and exception names now rebind a selection.
+- The JavaScript binder reads call text after matching, with a compiled
+  parenthesis search, so the matching iterator's regex timeout no longer
+  times long calls.
+- Summarized agent definitions keep `permissionMode` and `mode` only as
+  strings of at most 100 characters.
+- `def \`` (the command method) and `%=…=` strings are read correctly.
+
 ### October 9 post-holdout changes: Ruby literals and two fixed limits
 
 Informed by the post-change holdout's incomplete scans, whose most common cause
@@ -31,7 +60,7 @@ incomplete. A call is now read up to 131,072 characters while the file's
 1,048,576-character allowance lasts, then up to 8,192, so total work stays
 bounded. A project now keeps up to 1,000 agent definitions instead of 50:
 the first 50 with their parsed fields, later ones with file, name and
-permission mode only. Agent-definition matching for coding-agent findings is
+permission modes only. Agent-definition matching for coding-agent findings is
 a set lookup instead of a quadratic scan.
 
 Not addressed: F# and Kotlin lexer gaps and bundled `yarn-*.cjs` releases.

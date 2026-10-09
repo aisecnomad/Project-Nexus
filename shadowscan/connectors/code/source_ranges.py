@@ -1079,7 +1079,12 @@ _RUBY_OPERAND_KEYWORDS = frozenset(
 _RUBY_IDENTIFIER_END = re.compile(r"[A-Za-z0-9_]*[?!]?\Z")
 
 
-def _ruby_operand_start(text: str, start: int) -> bool:
+# How a `/` or `%` at an operand position was decided: not an operand, an operand
+# by syntax, or an operand only because a name set off by white space precedes it.
+_NOT_OPERAND, _OPERAND, _COMMAND_ARGUMENT = 0, 1, 2
+
+
+def _ruby_operand_start(text: str, start: int) -> int:
     """Whether a `/` or `%` at ``start`` begins a literal, by Ruby's own rule.
 
     It does after an operator, an opening bracket, a line break or a keyword
@@ -1087,37 +1092,42 @@ def _ruby_operand_start(text: str, start: int) -> bool:
     next character is not white space (``line.split /,/``). After a value (a name
     without that space, a number, a closing bracket) it divides. A symbol
     (``:/``), a method name (``.%``, ``def /``) and a global (``$/``) are code.
+
+    The command-name case is ``_COMMAND_ARGUMENT``: Ruby applies it only when
+    the name is not a local variable (``total /count`` divides), which a
+    lexical walk cannot know, so the caller treats that literal as uncertain.
     """
     if start and text[start - 1] in ":.$":
-        return False
+        return _NOT_OPERAND
     j = start - 1
     while j >= 0 and start - j <= 4096 and text[j] in " \t":
         j -= 1
     if j < 0 or text[j] in "\r\n":
-        return True
+        return _OPERAND
     char = text[j]
     if char in _EXPRESSION_START_CHARS or (
         char == "?" and not (j and (text[j - 1].isalnum() or text[j - 1] == "_"))
     ):
-        return True
+        return _OPERAND
     if not (char.isalnum() or char in "_?!"):
-        return False
+        return _NOT_OPERAND
     word = _RUBY_IDENTIFIER_END.search(text, max(0, j - 63), j + 1)
     name = word.group() if word is not None else ""
     before = text[j - len(name)] if j >= len(name) else ""
     if (before and before in "@$") or (before == ":" and text[j - len(name) - 1 : j - len(name)] != ":"):
-        return False  # an instance or global variable, or a symbol, is a value
+        return _NOT_OPERAND  # an instance or global variable, or a symbol, is a value
     if name in _RUBY_OPERAND_KEYWORDS and before != ".":
-        return True
+        return _OPERAND
     if not name or name[0].isdigit() or name == "def":
-        return False
+        return _NOT_OPERAND
     following = text[start + 1] if start + 1 < len(text) else ""
-    return j < start - 1 and following not in " \t\r\n="
+    return _COMMAND_ARGUMENT if j < start - 1 and following not in " \t\r\n=" else _NOT_OPERAND
 
 
-def _ruby_percent_literal(text: str, start: int) -> tuple[str, str, str, int] | None:
-    """(opener, closer, interpolation, text start) of a percent literal at ``start``, or None."""
+def _ruby_percent_literal(text: str, start: int) -> tuple[str, str, str, int, bool] | None:
+    """(opener, closer, interpolation, text start, uncertain) of a percent literal at ``start``, or None."""
     kind = text[start + 1] if start + 1 < len(text) else ""
+    operand = _ruby_operand_start(text, start)
     if kind in _RUBY_PERCENT_TYPES:
         at = start + 2
         # A typed literal needs a delimiter right after its letter; after a value it is modulo (`x%w`).
@@ -1126,16 +1136,18 @@ def _ruby_percent_literal(text: str, start: int) -> tuple[str, str, str, int] | 
     else:
         at = start + 1
         kind = "Q"
-        if not _ruby_operand_start(text, start):
+        if operand == _NOT_OPERAND:
             return None
     if at >= len(text):
         return None
     opener = text[at]
-    if not opener.isascii() or opener.isalnum() or opener.isspace() or opener in "\\=":
+    if not opener.isascii() or opener.isalnum() or opener.isspace() or opener == "\\":
         return None
+    if opener == "=" and (kind != "Q" or text[start + 1] != "=" or operand != _OPERAND):
+        return None  # `x %= 3` assigns; `%=text=` is a string only where an operand must start
     closer = _RUBY_PERCENT_PAIRS.get(opener, opener)
     interpolation = "#{" if kind in _RUBY_PERCENT_INTERPOLATING else ""
-    return (opener if opener != closer else ""), closer, interpolation, at + 1
+    return (opener if opener != closer else ""), closer, interpolation, at + 1, operand != _OPERAND
 
 
 def _ruby_character_end(text: str, start: int) -> int | None:
@@ -1157,6 +1169,7 @@ def _ruby_character_end(text: str, start: int) -> int | None:
 _RUBY_CHARACTER_ESCAPE = re.compile(
     r"u\{[0-9A-Fa-f ]{1,40}\}|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{1,2}|[0-7]{1,3}|(?:[CM]-\\?|c\\?)+.|.", re.S
 )
+_RUBY_DEF_BEFORE = re.compile(r"\bdef[ \t]+(?:self\.)?\Z")
 _RUBY_SINGLETON = re.compile(r"\bclass[ \t]*\Z")
 _RUBY_DATA_SECTION = re.compile(r"__END__(?:\r?\n|\Z)")
 
@@ -1604,9 +1617,13 @@ class _SourceLexer:
         text, size, language = self.text, self.size, self.language
         quote = text[q]
         if quote == "`" and (
-            language not in {"go", "php", "ruby"} or (language == "ruby" and i and text[i - 1] in ":.")
+            language not in {"go", "php", "ruby"}
+            or (
+                language == "ruby"
+                and ((i and text[i - 1] in ":.") or _RUBY_DEF_BEFORE.search(text, max(0, i - 16), i))
+            )
         ):
-            return i + 1, False  # Ruby's :` and .` name the command method
+            return i + 1, False  # Ruby's :`, .` and def ` name the command method
         if quote == "'" and language == "rust":
             # A lifetime ('a or 'static) is code. Rust character literals
             # contain exactly one character or an escape: `'\n'`, `'\x7f'` or
@@ -1747,13 +1764,28 @@ class _SourceLexer:
                 if char == "_" and (i == 0 or text[i - 1] == "\n") and _RUBY_DATA_SECTION.match(text, i):
                     return self._mask(i, size, True)  # the rest of the file is data
                 if char == "%" and (percent := _ruby_percent_literal(text, i)) is not None:
-                    opener, closer, interpolation, body = percent
+                    opener, closer, interpolation, body, uncertain = percent
+                    # One read only by the command-name rule may be a local's modulo:
+                    # crossing a line break, it makes the walk incomplete.
                     self.modes.append(
-                        _Literal(i, closer, interpolation=interpolation, multiline=True, opener=opener)
+                        _Literal(
+                            i,
+                            closer,
+                            interpolation=interpolation,
+                            multiline=True,
+                            opener=opener,
+                            guarded=uncertain,
+                        )
                     )
                     return body
-                if char == "/" and _ruby_operand_start(text, i):
-                    self.modes.append(_Literal(i, "/", interpolation="#{", multiline=True))
+                if char == "/" and (operand := _ruby_operand_start(text, i)):
+                    # `total /count` divides when `total` is a local: a regular expression
+                    # read only by the command-name rule may not cross a line break unnoticed.
+                    self.modes.append(
+                        _Literal(
+                            i, "/", interpolation="#{", multiline=True, guarded=operand == _COMMAND_ARGUMENT
+                        )
+                    )
                     return i + 1
 
             if language == "php" and text.startswith("<<<", i):
