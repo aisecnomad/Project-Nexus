@@ -253,6 +253,13 @@ baselines; rebaseline before comparing (see `docs/production.md`).
   MLflow and Cloudflare AI gateways, Agency Swarm, Rivet, Devin, Homebrew).
   Homebrew AI tools are a supporting heuristic with no product finding, so only
   its negative case can be labeled.
+- The `benchmarks/sab_realworld` harness compared package labels such as
+  `crewai` with signature IDs such as `framework.crewai`, so its signature
+  recall was always 0. Labels now match a signature whose ID names them, whose
+  dependency signal declares them, or a listed alias. The committed results,
+  generated before the agent-indicator revert, are regenerated: agent-tier
+  accuracy 0.60 (was 0.70), signature recall 0.90. The results remain
+  author-written, not independent validation.
 
 ## 0.1.2 — 2026-10-08
 

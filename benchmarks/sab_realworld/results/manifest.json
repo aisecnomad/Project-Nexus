@@ -1,9 +1,9 @@
 {
   "benchmark": "sab-realworld",
   "version": "2.0.0",
-  "timestamp": "2026-10-08T16:38:37.215272+00:00",
+  "timestamp": "2026-10-09T17:22:59.830685+00:00",
   "tool": "shadowscan",
-  "tool_version": "0.1.1",
+  "tool_version": "0.1.2",
   "python": "3.13.16",
   "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
   "corpus_metadata": {
