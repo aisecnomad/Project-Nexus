@@ -6,6 +6,16 @@ is the detailed engineering log, recorded per change, and the
 [deployment and migration guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md)
 has the full upgrade steps.
 
+## Unreleased
+
+Changes to `code.filesystem` made after scanning 326 public repositories. Reports from
+earlier builds can differ: some repositories that ended incomplete (exit 3) now finish,
+a few files that were skipped are analyzed (so a repository can gain findings, including
+credentials), and some false alarms are gone. Ambiguity, limits and timeouts still end a
+scan as incomplete. Details are in
+[CHANGELOG.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CHANGELOG.md) and the
+[candidate change history](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md).
+
 ## 0.1.2 — 2026-10-08
 
 Corrects the release workflow's production tag lookup and prepares the next

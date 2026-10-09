@@ -796,7 +796,7 @@ hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
-### October 8 real-world benchmark follow-ups
+### Real-world benchmark follow-ups (unreleased, after 0.1.2)
 
 Re-scan before comparing finding counts, confidence or exit codes with earlier
 reports. The changes below came from running ShadowScan on 326 public

@@ -3,33 +3,9 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
-## 0.1.2 — 2026-10-08
+## Unreleased
 
-### Release tag lookup correction
-
-- Fix the production publication gate to query GitHub with the fully qualified
-  `refs/tags/v<version>` ref. The previous `tags/v<version>` lookup returned
-  HTTP 422 for the existing annotated tag during release preflight. The gate still
-  requires the resolved commit to equal the reviewed workflow commit.
-- Execute the gate in regression tests against the accepted API ref format,
-  including rejection of the old lookup and of missing or mismatched tags.
-- Prepare a new version because `v0.1.1` is already immutable. Its TestPyPI
-  upload and fresh installation passed; production preflight stopped before
-  any PyPI dispatch or upload. Preserve the tag and the rehearsal evidence.
-
-## 0.1.1 — 2026-10-08
-
-### October 8 release tags without a personal signing key
-
-- Release policy now permits unsigned annotated tags on the exact reviewed
-  commit; personal SSH or GPG tag signatures are optional. The default tagging
-  command disables automatic signing for that invocation.
-- Publishing continues through the existing protected GitHub Actions workflow
-  and PyPI trusted publisher, with GitHub provenance, SBOM and PyPI publish
-  attestations. Independent review, CI and CodeQL, immutable tag protections,
-  digest checks and environment approval remain required.
-
-### October 8 real-world benchmark follow-ups
+### Real-world benchmark follow-ups
 
 Running ShadowScan on 326 public repositories (`tools/benchmark/realworld`)
 showed that 28% of scans ended incomplete (exit 3) and that most false alarms
@@ -68,6 +44,32 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
 - Added: `protocol.mcp` recognizes JSON-RPC method dispatch without an SDK, and
   `coding-agent.claude-code` recognizes `.claude/launch.json`,
   `.claude/rules/*.md`, `.claude/output-styles/*.md` and the plugin manifests.
+
+## 0.1.2 — 2026-10-08
+
+### Release tag lookup correction
+
+- Fix the production publication gate to query GitHub with the fully qualified
+  `refs/tags/v<version>` ref. The previous `tags/v<version>` lookup returned
+  HTTP 422 for the existing annotated tag during release preflight. The gate still
+  requires the resolved commit to equal the reviewed workflow commit.
+- Execute the gate in regression tests against the accepted API ref format,
+  including rejection of the old lookup and of missing or mismatched tags.
+- Prepare a new version because `v0.1.1` is already immutable. Its TestPyPI
+  upload and fresh installation passed; production preflight stopped before
+  any PyPI dispatch or upload. Preserve the tag and the rehearsal evidence.
+
+## 0.1.1 — 2026-10-08
+
+### October 8 release tags without a personal signing key
+
+- Release policy now permits unsigned annotated tags on the exact reviewed
+  commit; personal SSH or GPG tag signatures are optional. The default tagging
+  command disables automatic signing for that invocation.
+- Publishing continues through the existing protected GitHub Actions workflow
+  and PyPI trusted publisher, with GitHub provenance, SBOM and PyPI publish
+  attestations. Independent review, CI and CodeQL, immutable tag protections,
+  digest checks and environment approval remain required.
 
 ### October 7 release merge-rule check with an administrator readback
 
