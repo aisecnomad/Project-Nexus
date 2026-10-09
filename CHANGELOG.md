@@ -577,14 +577,18 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
 - Incomplete coverage is reserved for content the scan would have read. The
   remaining lockfiles (`gradle.lockfile`, `Package.resolved`,
   `Cartfile.resolved`, `deno.lock`, `pubspec.lock`, `mix.lock`, `bun.lock`,
-  `*.lockb`, `flake.lock`) are never read, and `CHANGELOG*`, `CHANGES*`,
-  `HISTORY*`, `*.log`, `*.har` and `*.snap` join the default
-  `oversize_skip_globs` (Mastra's eight `CHANGELOG.md` files over 1 MB made
-  every scan exit 3). With `scan_secrets: false`, two more kinds of oversize
-  file are skipped with a warning and the scan stays complete: a documentation
-  file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, coding-agent
-  instruction document, agent definition or file-name-signature match), whose
-  body the technology passes never read, and, without `include_tests` or
+  `*.lockb`, `flake.lock`) are never read, and `*.log`, `*.har` and `*.snap`
+  join the default `oversize_skip_globs`. Change logs are not on that list: a
+  name glob such as `CHANGELOG*` or `HISTORY*` also matches source files
+  (`history_store.py`, `changes.ts`) a scanned repository can name freely, and
+  credential detection reads change logs like any other prose, so an oversize
+  `CHANGELOG.md` stays a coverage gap while `scan_secrets` is on (Mastra's eight
+  `CHANGELOG.md` files over 1 MB keep a default scan at exit 3). With
+  `scan_secrets: false`, two more kinds of oversize file are skipped with a
+  warning and the scan stays complete: a documentation file (`.md`, `.mdc`,
+  `.mdx`, `.txt` that is not a manifest, coding-agent instruction document,
+  agent definition or file-name-signature match), whose body the technology
+  passes never read, `CHANGELOG.md` among them, and, without `include_tests` or
   `strict_coverage`, a file under a test or fixture path (pydantic-ai: 56
   recorded cassettes), whose evidence is discounted; the latter are counted
   in `skipped_oversize_test_fixtures` and summarised in one warning per root.

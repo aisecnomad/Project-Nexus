@@ -306,10 +306,9 @@ incomplete depends on what the file could hide:
   `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `Pipfile.lock`, `Cargo.lock`,
   `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`,
   `Package.resolved`, `Cartfile.resolved`, `deno.lock`, `pubspec.lock`,
-  `mix.lock`, `bun.lock`, `*.lockb`, `flake.lock`), generated change logs and
-  recordings (`CHANGELOG*`, `CHANGES*`, `HISTORY*`, `*.log`, `*.har`,
-  `*.snap`), minified bundles and source maps (`*.min.js`, `*.min.css`,
-  `*.map`), data and vector graphics (`*.svg`, `*.csv`, `*.parquet`), compiled
+  `mix.lock`, `bun.lock`, `*.lockb`, `flake.lock`), logs and recordings
+  (`*.log`, `*.har`, `*.snap`), minified bundles and source maps (`*.min.js`,
+  `*.min.css`, `*.map`), data and vector graphics (`*.svg`, `*.csv`, `*.parquet`), compiled
   or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`, `*.dll`, `*.jar`,
   `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`, `*.png`, `*.jpg`,
   `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives (`*.zip`,

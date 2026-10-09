@@ -241,13 +241,13 @@ def test_oversize_test_fixtures_are_counted(run_connector, tmp_path, index):
 
 
 @pytest.mark.parametrize(
-    "rel", ["CHANGELOG.md", "CHANGES", "HISTORY.rst", "NEWS.txt", "docs/guide.md", "notes.txt"]
+    "rel", ["CHANGELOG.md", "CHANGES.md", "HISTORY.txt", "NEWS.txt", "docs/guide.md", "notes.txt"]
 )
 def test_oversize_documentation_is_disclosed_without_a_gap(run_connector, tmp_path, rel):
     # Prose is matched by file name only (_scan_content never reads its body), so
     # with credential detection off an unread copy loses nothing: a warning, not
-    # incomplete coverage. CHANGELOG*, CHANGES* and HISTORY* are skip globs and
-    # stay complete whatever the credential setting.
+    # incomplete coverage. With credential detection on (the default) a change
+    # log is read for credentials like any other prose, so it stays a gap.
     write(tmp_path, rel, OVERSIZE)
     write(tmp_path, "app.py", "from crewai import Agent\n")
     findings, stats = scan(run_connector, tmp_path, max_file_size=100, scan_secrets=False)
@@ -255,7 +255,22 @@ def test_oversize_documentation_is_disclosed_without_a_gap(run_connector, tmp_pa
     assert [w for w in stats.warnings if rel in w and "max_file_size" in w]
     assert [f.frameworks for f in findings if f.resource_type == "project"] == [["framework.crewai"]]
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.incomplete == (rel in {"NEWS.txt", "docs/guide.md", "notes.txt"})
+    assert stats.incomplete and not stats.errors
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["history_store.py", "HistoryService.java", "changes.ts", "changelog_parser.go", "CHANGELOG.md", "CHANGES"],
+)
+def test_oversize_change_log_names_never_hide_read_content(run_connector, tmp_path, rel):
+    # A scanned repository chooses its file names: a source file or a change
+    # log over max_file_size may hide a key or SDK use, so with credential
+    # detection on (the default) it is a recorded gap, never a silent exit 0.
+    write(tmp_path, rel, f"import openai\nOPENAI_API_KEY = '{OPENAI_LIKE_KEY}'\n" + "#" * 2000 + "\n")
+    findings, stats = scan(run_connector, tmp_path, max_file_size=1000)
+    assert not findings
+    assert stats.incomplete and not stats.errors
+    assert [w for w in stats.warnings if rel in w and "coverage incomplete" in w]
 
 
 @pytest.mark.parametrize("rel", ["README.md", "docs/setup.txt", "tests/cassettes/login.yaml"])

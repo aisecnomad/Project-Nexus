@@ -419,11 +419,13 @@ root that does not affect completeness. Incomplete coverage is reserved for
 content the scan would have read. The default `oversize_skip_globs` name the
 remaining lockfiles (`gradle.lockfile`, `Package.resolved`,
 `Cartfile.resolved`, `deno.lock`, `pubspec.lock`, `mix.lock`, `bun.lock`,
-`*.lockb`, `flake.lock`) and generated files (`CHANGELOG*`, `CHANGES*`,
-`HISTORY*`, `*.log`, `*.har`, `*.snap`), so a 1.2 MB `CHANGELOG.md` is no
-longer exit 3. Credential detection reads every analyzable file, prose and
-fixtures included, so while `scan_secrets` is on (the default) an oversize
-`README.md` or recorded cassette is a coverage gap like any other unread file:
+`*.lockb`, `flake.lock`) and generated files (`*.log`, `*.har`, `*.snap`).
+Change logs are not on the list, because a name glob such as `CHANGELOG*`
+also matches source files a scanned repository names freely
+(`history_store.py`, `changes.ts`). Credential detection reads every
+analyzable file, prose and fixtures included, so while `scan_secrets` is on
+(the default) an oversize `README.md`, `CHANGELOG.md` or recorded cassette is
+a coverage gap like any other unread file:
 a key planted in it is never lost to an exit 0. With `scan_secrets: false`
 two more kinds are skipped with a warning and the scan stays complete: a
 documentation file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, a

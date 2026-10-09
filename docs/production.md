@@ -479,17 +479,21 @@ matching with a per-lookup work budget.
 
 `code.filesystem` reserves incomplete coverage (exit 3) for content it would
 have read. Since the model-identifier and corroboration changes of the next
-release, the remaining lockfile names and generated files (`CHANGELOG*`,
-`*.log`, `*.har`, `*.snap`) joined the default `oversize_skip_globs`, so a
-`CHANGELOG.md` over `max_file_size` is skipped with a warning and leaves the
-scan complete. With `scan_secrets: false`, an oversize documentation file
-(`.md`, `.txt`) and, without `include_tests`, an oversize file under a test or
-fixture path (a recorded cassette) are skipped the same way; with credential
-detection on (the default) they are read for credentials below the limit and
-stay a coverage gap above it, so no planted key is lost to an exit 0. A
-pipeline that gated on exit 3 for oversize changelogs now sees exit 0 with the
-omission named in the warnings; `strict_coverage` keeps every skip outside the
-globs a gap. See the [coverage policy](scanning.md#large-and-generated-files).
+release, the remaining lockfile names and generated files (`*.log`, `*.har`,
+`*.snap`) joined the default `oversize_skip_globs`, so such a file over
+`max_file_size` is skipped with a warning and leaves the scan complete. Change
+logs are deliberately not on that list: a name glob such as `CHANGELOG*` would
+also match source files (`history_store.py`, `changes.ts`) that a scanned
+repository names freely. With `scan_secrets: false`, an oversize documentation
+file (`.md`, `.txt`, a `CHANGELOG.md` included) and, without `include_tests`,
+an oversize file under a test or fixture path (a recorded cassette) are skipped
+with a warning; with credential detection on (the default) they are read for
+credentials below the limit and stay a coverage gap above it, so no planted key
+is lost to an exit 0. A repository with a change log over `max_file_size`
+therefore still exits 3 under the default settings; raise `max_file_size`, or
+review the file and list its path in `oversize_skip_globs` (the setting
+replaces the default list, so keep the defaults beside it). `strict_coverage`
+keeps every skip outside the globs a gap. See the [coverage policy](scanning.md#large-and-generated-files).
 
 The code scanner's IaC wildcard-action and agent front-matter patterns run on
 the bounded regex engine under the same per-input matching budget as the
