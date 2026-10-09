@@ -3,6 +3,32 @@
 The detailed engineering log, recorded per change. RELEASE_NOTES.md
 summarizes each release for people who install and operate ShadowScan.
 
+## Unreleased
+
+### Scan evidence, completeness and replay corrections
+
+- Resolve supported Go SDK import aliases before publishing credential-bearing
+  source evidence, and keep excerpts aligned with LF-based source locations when
+  literals contain carriage returns. Reports remain confidential; dynamic call
+  resolution is limited.
+- Treat VPC Flow Log `SKIPDATA`, invalid and contradictory logging statuses as
+  incomplete coverage. `NODATA` remains a valid no-traffic observation.
+- Attribute network flows by connection identity before aggregation, preserving
+  non-AI TLS evidence and refusing conflicting or ambiguous associations.
+- Bind hosted-agent invocation evidence to the HTTP method, provider and
+  execution operation from the same event. Management requests no longer imply
+  runtime activity; invocation attempts do not establish success or tool use.
+  Caller names and cadence remain hints rather than independent capability or
+  agent-execution evidence.
+- Accept ordinary Rust multiline string literals and supported JSX in `.js`,
+  `.mjs` and `.cjs` while retaining incomplete results for unresolved syntax.
+- Enforce strict JSON and replay byte limits on record exports; reject a failed
+  replacement atomically and retain valid live analysis. Empty successful exports
+  use an explicit empty record envelope that can be replayed.
+- Document baseline migration, paired review controls and repository-level field
+  acceptance. These regression changes do not establish live tenant acceptance
+  or independently measured field precision.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

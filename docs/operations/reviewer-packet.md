@@ -110,6 +110,26 @@ Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be
 effective on `main`; their presence in workflow files alone is insufficient.
 
+For the October 9 scan evidence corrections, verify these paired controls:
+
+- Supported SDK imports and aliases preserve credential redaction in every
+  exported report; unrelated imports and ordinary values retain their meaning.
+- Complete VPC flow data and no-traffic observations versus explicit collection
+  loss or conflicting statuses. Known loss must produce incomplete coverage.
+- Two different connections sharing an address and port retain their own TLS
+  attribution, including non-AI observations and conflicting identities.
+- Supported invocation operations versus management/list/poll/cancel requests;
+  method and destination must come from the same event. Invocation evidence
+  alone must not create a tool-use or successful-execution claim.
+- Valid Rust multiline strings and JSX-in-JavaScript versus ambiguous or
+  unterminated source and TypeScript generic syntax.
+- Valid and empty export roundtrips versus strict JSON and byte-limit failures;
+  a rejected replacement must preserve the prior file without accepting it as
+  this run's export, while valid collected records remain analyzable.
+
+These are authored regression controls. Keep the independent human holdout,
+provider-specific live canaries and final-revision approval as separate evidence.
+
 ## Suggested deliverable
 
 A concise review record could list the SHA reviewed, commands run, review slices
