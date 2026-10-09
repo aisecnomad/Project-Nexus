@@ -468,7 +468,9 @@ matching with a per-lookup work budget.
 The code scanner's IaC wildcard-action and agent front-matter patterns run on
 the bounded regex engine under the same per-input matching budget as the
 signature patterns, so a planted file costs at most that budget and is
-reported as an incomplete file rather than holding the connector. Symbolic
+reported as an incomplete file rather than holding the connector. The crawler
+user-agent discount tokenizes only lines naming `mozilla/`, in linear time, so
+a planted file of escaped quotes cannot hold the connector either. Symbolic
 links count toward `max_files` together with regular files, and the link
 checks stop at the connector deadline with the error `connector deadline
 reached while checking symbolic links`; findings collected before that point

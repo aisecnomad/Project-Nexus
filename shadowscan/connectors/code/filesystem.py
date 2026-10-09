@@ -477,7 +477,39 @@ def _analyzed_by_name(name: str) -> bool:
     )
 
 
-_QUOTED_VALUE_RX = re.compile(r""""(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*' """, re.VERBOSE)
+# One quoted value, matched from its opening quote; none spans a line break.
+_QUOTED_VALUE = {
+    '"': re.compile(r'"(?:[^"\\\r\n]|\\[^\r\n])*"'),
+    "'": re.compile(r"'(?:[^'\\\r\n]|\\[^\r\n])*'"),
+}
+# The next opening quote of the kinds that can still close on the line.
+_QUOTE_START = {kinds: re.compile(f"[{kinds}]") for kinds in ("\"'", '"', "'")}
+_CRAWLER_UA_MARK = re.compile("mozilla/", re.IGNORECASE)
+_LINE_BREAK = re.compile(r"[\r\n]")
+
+
+def _quoted_values(text: str, start: int, end: int) -> Iterator[tuple[int, int]]:
+    """Yield the spans of the quoted values on the line ``text[start:end]``, left to right.
+
+    A quote that never closes is scanned to the end of the line, passing
+    every later quote of its kind as an escaped character, so none of those
+    can close either. Each kind therefore fails at most once per line, and
+    a planted line of escaped quotes costs linear time, not one scan to the
+    end of the line per quote.
+    """
+    live = "\"'"
+    pos = start
+    while live:
+        quote = _QUOTE_START[live].search(text, pos, end)
+        if quote is None:
+            return
+        value = _QUOTED_VALUE[quote.group(0)].match(text, quote.start(), end)
+        if value is None:
+            live = live.replace(quote.group(0), "")
+            pos = quote.end()
+        else:
+            yield value.span()
+            pos = value.end()
 
 
 def _crawler_ua_text(text: str) -> tuple[str, str]:
@@ -489,17 +521,25 @@ def _crawler_ua_text(text: str) -> tuple[str, str]:
     provider. Only a complete quoted value with the crawler UA shape is
     discounted. Other values on its line, and later uses of the same host,
     must reach domain matching before the matcher deduplicates occurrences.
+    Only lines naming ``mozilla/`` are tokenized, each once.
     """
     spans = []
-    for match in _QUOTED_VALUE_RX.finditer(text):
-        value = match.group(0)[1:-1].lower()
-        if (
-            value.startswith("mozilla/")
-            and "(compatible;" in value
-            and ("+https://" in value or "+http://" in value)
-            and value.endswith(")")
-        ):
-            spans.append((match.start(), match.end()))
+    pos = 0
+    while (mark := _CRAWLER_UA_MARK.search(text, pos)) is not None:
+        # The line around the mark; ``pos`` is the previous line's end.
+        start = max(text.rfind("\n", pos, mark.start()), text.rfind("\r", pos, mark.start()), pos - 1) + 1
+        line_break = _LINE_BREAK.search(text, mark.end())
+        end = len(text) if line_break is None else line_break.start()
+        for value_start, value_end in _quoted_values(text, start, end):
+            value = text[value_start + 1 : value_end - 1].lower()
+            if (
+                value.startswith("mozilla/")
+                and "(compatible;" in value
+                and ("+https://" in value or "+http://" in value)
+                and value.endswith(")")
+            ):
+                spans.append((value_start, value_end))
+        pos = end
     if not spans:
         return text, ""
     content: list[str] = []

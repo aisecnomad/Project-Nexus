@@ -168,6 +168,11 @@ author-written and not independent review.
 - Crawler user-agent domain discounts apply only within a complete quoted UA
   value. A provider endpoint in another value on the same line, or a later
   occurrence of the same host, remains detection evidence.
+- The crawler user-agent pass tokenizes only lines naming `mozilla/`, in
+  linear time. An unclosed quote followed by escaped quotes made the former
+  whole-file stdlib regex pass quadratic and outside the per-file matching
+  budget: a 60 KB planted file held the walk for seconds and could let the
+  connector deadline discard every finding of the tree.
 
 ### Real-world robustness: input-defect taxonomy for code.filesystem
 

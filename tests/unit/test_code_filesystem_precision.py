@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import re
+import time
 from pathlib import Path
 
 import pytest
 
+from shadowscan.connectors.code.filesystem import _crawler_ua_text
 from shadowscan.models import Kind
 
 OPENAI_LIKE_KEY = "sk-proj-" + "Xk29fLq8Zr1mNvB4" + "tYc7Hs0pWe3Ja6Ud9GiKo5Rb2Ex"
@@ -271,3 +275,76 @@ def test_crawler_ua_does_not_hide_separate_provider_endpoint(tmp_path, run_conne
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any("provider.anthropic" in {e.signature for e in f.evidence} for f in findings)
     assert not ctx.stats.incomplete
+
+
+def _regex_crawler_spans(text: str) -> list[tuple[int, int]]:
+    """The quoted-value reading the linear tokenizer must reproduce (quadratic on unclosed quotes)."""
+    quoted = re.compile(r""""(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*'""")
+    spans = []
+    for match in quoted.finditer(text):
+        value = match.group(0)[1:-1].lower()
+        if (
+            value.startswith("mozilla/")
+            and "(compatible;" in value
+            and ("+https://" in value or "+http://" in value)
+            and value.endswith(")")
+        ):
+            spans.append(match.span())
+    return spans
+
+
+_UA = "Mozilla/5.0 (compatible; SomeBot/1.0; +https://api.anthropic.com/)"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f'{{"ua": "{_UA}"}}',
+        f"ua = '{_UA}' + \"{_UA}\"",
+        f"\"unclosed '{_UA}'",
+        f'\'unclosed "{_UA}"',
+        f'"a" "b\\" \'{_UA}\' "{_UA}"',
+        f'x = "{_UA}\\"\nnext = "{_UA}"\r\n\'{_UA}',
+        f'"\\"{_UA}\\""\n"{_UA}',
+        f"MOZILLA/ \"{_UA.upper()}\" 'mozilla/5.0 (compatible; +http://x/)'",
+        f'"{_UA}\\\n{_UA}"',
+        "no user agent here",
+    ],
+)
+def test_crawler_ua_tokenizer_matches_the_quoted_value_reading(text):
+    _assert_same_reading(text)
+
+
+def test_crawler_ua_tokenizer_matches_the_quoted_value_reading_on_random_lines():
+    fragments = ['"', "'", "\\", " ", "\n", "\r", "a", ")", "mozilla/", "(compatible;", _UA, _UA.upper()]
+    rng = random.Random(165)
+    for _ in range(5000):
+        _assert_same_reading("".join(rng.choice(fragments) for _ in range(rng.randint(0, 14))))
+
+
+def _assert_same_reading(text: str) -> None:
+    content, ua = _crawler_ua_text(text)
+    spans = _regex_crawler_spans(text)
+    assert ua == "\n".join(text[start:end] for start, end in spans), repr(text)
+    expected = list(text)
+    for start, end in spans:
+        expected[start:end] = " " * (end - start)
+    assert content == "".join(expected), repr(text)
+
+
+def test_unclosed_escaped_quotes_cost_linear_time_and_keep_other_findings(tmp_path, run_connector):
+    """An unclosed quote followed by escaped quotes made the UA pass quadratic.
+
+    The stdlib pass ignored the per-file matching budget: a 60 KB planted
+    settings.json held the walk for seconds, then failed its own analysis
+    or let the connector deadline discard every finding of the tree.
+    """
+    hostile = '{"k": "Mozilla/5.0 ' + '\\"' * 30_000 + "\n"
+    write(tmp_path, "settings.json", hostile)
+    write(tmp_path, "app.py", "from openai import OpenAI\nclient = OpenAI()\n")
+    started = time.perf_counter()
+    assert _crawler_ua_text(hostile) == (hostile, "")
+    findings, stats = scan(run_connector, tmp_path)
+    assert time.perf_counter() - started < 5
+    assert any("provider.openai" in {e.signature for e in f.evidence} for f in findings)
+    assert not stats.errors and not stats.incomplete
