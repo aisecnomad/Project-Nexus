@@ -691,13 +691,14 @@ _MCP_CAPABILITY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 class _ExcerptSource:
     """The text one file's excerpts are cut from, redacted once its analysis ends.
 
-    Excerpt lines are cut at emit time for the evidence a report keeps, from
-    the redacted lines of the file. Whether redaction exceeds a sanitization
-    limit is known only by redacting, so every file that recorded excerpted
-    evidence is redacted when its analysis ends (see ``_settle_excerpts``),
-    as the eager excerpts were, and its text is then dropped. ``structure``
-    is the credential context of ``_structured_context``; None withholds
-    every excerpt of the file.
+    Excerpt lines are cut from the redacted lines of the file and sanitized at
+    emit time for the evidence a report keeps. Whether redaction exceeds a
+    sanitization limit is known only by redacting, so every file that recorded
+    excerpted evidence is redacted when its analysis ends (see
+    ``_settle_excerpts``), as the eager excerpts were; its text and redacted
+    lines are then dropped and only the excerpts of the ``wanted`` lines are
+    kept. ``structure`` is the credential context of ``_structured_context``;
+    None withholds every excerpt of the file.
     """
 
     rel: str
@@ -705,7 +706,8 @@ class _ExcerptSource:
     text: str | None
     structure: Any
     safe_lines: list[str] | None = None  # redacted lines, produced when an excerpt first needs them
-    wanted: bool = False  # a recorded match asked for an excerpt of this file
+    wanted: set[int] = field(default_factory=set)  # lines recorded matches asked excerpts of
+    kept: dict[int, str] | None = None  # line -> excerpt, once the file's analysis ended
 
 
 class _LazyExcerpt:
@@ -719,7 +721,10 @@ class _LazyExcerpt:
         self.line = line
 
     def __call__(self) -> str:
-        return sanitize_text(_excerpt(self.connector._redacted_lines_of(self.source), self.line or 1))
+        line = self.line or 1
+        if self.source.kept is not None:
+            return sanitize_text(self.source.kept.get(line, ""))
+        return sanitize_text(_excerpt(self.connector._redacted_lines_of(self.source), line))
 
 
 # A recorded snippet: text, an excerpt produced on demand, or none.
@@ -829,6 +834,7 @@ class _SourceFile:
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
     source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
+    reexport_pending: bool = False  # queued for re-export analysis after the walk
 
     @property
     def name(self) -> str:
@@ -2601,6 +2607,8 @@ class FilesystemConnector(BaseConnector):
                     self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
                     comments = self._scan_source(scan.root, file, file.text)
                 self._scan_model_literals(file, file.text, comments, source=True)
+        for file in scan.reexport_files:
+            self._settle_excerpts(file)
         scan.reexport_files.clear()
 
     def _scan_label(self, root: Path) -> str:
@@ -2799,7 +2807,8 @@ class FilesystemConnector(BaseConnector):
             # 4. special files
             self._record_special_files(scan, file)
         finally:
-            self._settle_excerpts(file)
+            if not file.reexport_pending:
+                self._settle_excerpts(file)  # a deferred consumer is settled after its analysis
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
@@ -3013,13 +3022,19 @@ class FilesystemConnector(BaseConnector):
         Whether a sanitization limit is exceeded is known only by redacting.
         A scan whose only such failure is in a file whose matches are all
         dropped later must still be incomplete, so every file that recorded
-        a match with an excerpt is redacted when its analysis ends; the
-        redacted lines then serve its emit-time excerpts.
+        a match with an excerpt is redacted when its analysis ends. Only the
+        excerpts of the lines its matches asked for are kept for emit; a
+        re-export consumer queued for analysis after the walk is settled when
+        that analysis ends (``_resolve_reexport_sources``).
         """
         source = file.excerpts
         if source.wanted and source.safe_lines is None and source.structure is not None:
             self._redacted_lines(file)
-        source.text = None  # the redacted lines are all an excerpt needs
+        if source.safe_lines is not None:
+            # Keep the excerpts recorded matches asked for, not every line of the file.
+            source.kept = {line: _excerpt(source.safe_lines, line) for line in source.wanted}
+            source.safe_lines = None
+        source.text = None  # the kept excerpts are all an emit needs
 
     def _file_excerpt(self, file: _SourceFile, line_number: int | None, secret: str | None = None) -> str:
         return _excerpt(self._redacted_lines(file), line_number or 1, secret)
@@ -3029,7 +3044,7 @@ class FilesystemConnector(BaseConnector):
         source = file.excerpts
         if source.structure is None:
             return ""
-        source.wanted = True
+        source.wanted.add(line_number or 1)
         return _LazyExcerpt(self, source, line_number)
 
     def _record_file_matches(self, file: _SourceFile) -> None:
@@ -3295,6 +3310,7 @@ class FilesystemConnector(BaseConnector):
             return False
         scan.reexport_files.append(file)
         scan.reexport_bytes += size
+        file.reexport_pending = True
         return True
 
     def _scan_source(

@@ -773,6 +773,51 @@ def test_retained_evidence_is_excerpted_once_per_file_and_sanitized(tmp_path, in
     assert len(redacted) == 1  # several retained matches, one redaction of the file
 
 
+def _settled_sources(monkeypatch) -> list:
+    """Record each file's excerpt source as its analysis settles it."""
+    sources: list = []
+    original = FilesystemConnector._settle_excerpts
+
+    def recording(self, file):
+        original(self, file)
+        sources.append(file.excerpts)
+
+    monkeypatch.setattr(FilesystemConnector, "_settle_excerpts", recording)
+    return sources
+
+
+def test_settled_files_keep_only_their_excerpt_lines(tmp_path, index, monkeypatch):
+    # Excerpts are cut at emit time, but a settled file must not keep every
+    # redacted line until then: memory would grow with the total size of all
+    # matched files rather than with the number of excerpts.
+    body = "".join(f"value_{n} = {n}\n" for n in range(5000))
+    (tmp_path / "agent.py").write_text(f"{LANGCHAIN}{body}agent = agents.AgentExecutor()\n")
+    sources = _settled_sources(monkeypatch)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = FilesystemConnector(ctx).run()
+    (source,) = [s for s in sources if s.rel == "agent.py"]
+    retained = len(source.safe_lines or ()) + len(getattr(source, "kept", None) or ())
+    assert 0 < retained <= 4 and source.text is None
+    project = next(f for f in findings if f.resource_type == "project")
+    snippets = {e.snippet for e in project.evidence if e.location and e.location.startswith("agent.py")}
+    assert "agent = agents.AgentExecutor()" in snippets
+    assert not ctx.stats.errors
+
+
+def test_deferred_reexport_consumer_evidence_keeps_its_excerpts(tmp_path, index):
+    # A root-level consumer of a local re-export is analyzed after the walk;
+    # its evidence is excerpted from the file like any other.
+    (tmp_path / "app.py").write_text('from middle import PublicAgent\na = PublicAgent(name="helper")\n')
+    (tmp_path / "middle.py").write_text("from sdk import RuntimeAgent as PublicAgent\n")
+    (tmp_path / "sdk.py").write_text("from agents import Agent as RuntimeAgent\n")
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = FilesystemConnector(ctx).run()
+    snippets = {e.location: e.snippet for f in findings for e in f.evidence if e.location}
+    assert snippets["app.py:2"] == 'a = PublicAgent(name="helper")'
+    assert snippets["app.py:1"] == "from middle import PublicAgent"
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+
+
 def test_shared_literal_scan_equals_the_per_pass_scan(index):
     for name, text in _corpus_texts():
         language = language_for_path(name.rsplit(":", 1)[-1])

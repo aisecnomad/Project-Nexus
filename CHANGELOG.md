@@ -327,6 +327,11 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   when the project discounts a data file as a catalog that an unread reference
   could have named. A non-AI repository whose test loader listed about 200
   fixture JSON paths exited 3 although no result could change.
+- Fixed: a file's analysis keeps only the excerpts its recorded matches ask
+  for, not every redacted line until emit, so memory follows the number of
+  excerpts rather than the size of all matched files. A root-level Python
+  re-export consumer analyzed after the walk now keeps its excerpts; its
+  evidence had empty snippets unless an earlier pass had excerpted the file.
 
 ### Shadow AI agent discovery benchmark
 
