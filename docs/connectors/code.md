@@ -31,8 +31,11 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
-Confidence groups cap repeated observations of the same technology. Unsupported
-dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
+Confidence groups cap repeated observations of the same technology. A
+`require("m")` or `import("m")` call anywhere in code, also inside a function or
+a `try` block, is import evidence for module `m`, as an ES `import` statement
+would be. Unsupported dynamic imports, re-exports and uncertain bindings remain
+usage evidence. Other
 languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code

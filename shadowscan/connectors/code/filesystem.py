@@ -55,6 +55,7 @@ import stat
 import subprocess
 import time
 import tomllib
+from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
@@ -1036,6 +1037,8 @@ _MCP_CLIENT_CALL = re.compile(
     r"|StreamableHTTPClientTransport|SSEClientTransport|experimental_createMCPClient)\b"
     r"|modelcontextprotocol/sdk/client|\bmcp\.client\b|langchain_mcp_adapters|@langchain/mcp-adapters"
 )
+# A CommonJS or dynamic module load: `require("m")`, `import("m")`.
+_MODULE_LOAD = re.compile(r"""\b(?:require|import)\s*\(\s*(['"])([@\w./-]{1,214})\1\s*\)""")
 # Agent protocols and hosted agent services: using one builds, serves or calls an agent.
 _AGENT_TECHNOLOGIES = frozenset(
     {
@@ -1226,6 +1229,11 @@ def scan_timeout_for_size(base: float, size: int) -> float:
     if steps == 0 and size >= SCAN_TIMEOUT_STEP_BYTES - SCAN_TIMEOUT_BAND_HEADROOM_BYTES:
         steps = 1
     return min(base * (1 + steps), max(base, SCAN_TIMEOUT_CAP_SECONDS))
+
+
+def _emission_reserve(budget: float) -> float:
+    """Seconds kept after the last finding is emitted: 2% of the connector budget, at least one."""
+    return max(1.0, 0.02 * budget)
 
 
 def deadline_margin(remaining: float) -> float:
@@ -2175,8 +2183,20 @@ class FilesystemConnector(BaseConnector):
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         scan = _ScanState(root, self._scan_label(root))
+        started = time.monotonic()
         self._walk(scan)
-        for finding in self._emit_findings(scan):
+        deadline = self.ctx.deadline
+        # The engine discards a result that completes after the deadline, so
+        # emission stops early enough for sanitization and bookkeeping: the
+        # findings already emitted are kept, and the scan is incomplete.
+        stop_at = None if deadline is None else deadline - _emission_reserve(deadline - started)
+        for emitted, finding in enumerate(self._emit_findings(scan)):
+            if stop_at is not None and time.monotonic() >= stop_at:
+                self.ctx.error(
+                    "code.filesystem: connector deadline reached while reporting findings under "
+                    f"{scan.label} after {emitted}; the rest are not reported and results are incomplete"
+                )
+                return
             yield _with_agent_profile(finding)
 
     def _scan_label(self, root: Path) -> str:
@@ -2823,6 +2843,8 @@ class FilesystemConnector(BaseConnector):
             if ignored
             else self.index.match_imports(content_text, lang)
         )
+        if lang == "javascript":
+            imports = [*imports, *self._module_load_imports(content_text, ignored, imports)]
         for m in imports:
             if lang == "python":
                 imported = re.match(r"\s*(?:from|import)\s+([A-Za-z_]\w*(?:\.\w+)*)", m.value)
@@ -2846,6 +2868,34 @@ class FilesystemConnector(BaseConnector):
             self._record_content(file, m, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
             self._register_mcp_tools(file, ignored)
+
+    def _module_load_imports(
+        self, text: str, ignored: list[tuple[int, int]], imports: list[Match]
+    ) -> list[Match]:
+        """Import evidence of `require("m")` and `import("m")` calls, which load a module wherever they run.
+
+        The import signals describe ES `import ... from "m"` statements; a
+        CommonJS or dynamic load, also one inside a function or a `try` block,
+        loads the same module, so it is matched as that statement would be.
+        """
+        starts = [start for start, _ in ignored]
+        newlines: list[int] | None = None
+        seen = {(m.signature_id, m.line) for m in imports}
+        out: list[Match] = []
+        for call in _MODULE_LOAD.finditer(text):
+            at = bisect_right(starts, call.start()) - 1
+            if at >= 0 and call.start() < ignored[at][1]:
+                continue  # in a comment or a string
+            statement = f"import {{ example }} from '{call.group(2)}'"
+            for shared in self.index.match_import_statement(statement, "javascript"):
+                if newlines is None:
+                    newlines = [newline.start() for newline in re.finditer("\n", text)]
+                line = bisect_right(newlines, call.start()) + 1
+                if (shared.signature_id, line) in seen:
+                    continue
+                seen.add((shared.signature_id, line))
+                out.append(replace(shared, value=call.group(0), line=line, extra={}))
+        return out
 
     def _bound_matches(
         self,

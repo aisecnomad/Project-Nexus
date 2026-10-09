@@ -861,6 +861,10 @@ reported. Re-scan before comparing completeness or memory use:
   limits in test code are warnings unless `include_tests` or
   `strict_coverage` is set; an oversize test file's credentials are still
   scanned. Set one of the options if your policy treats them as gaps.
+- **Deadline.** A scan that reaches the connector deadline while reporting
+  findings keeps the findings already reported and is incomplete, instead of
+  the engine discarding all of them. Large repositories may still need a
+  higher `connector_timeout_seconds` to complete.
 - **Symbolic links.** Directory links into the same project, document
   aliases, same-name configuration aliases, dangling links and links in test
   code no longer make a scan incomplete when they lose no coverage (see the

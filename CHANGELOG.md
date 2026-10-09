@@ -5,6 +5,27 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 8 benchmark remediation: CommonJS and dynamic module loads
+
+A benchmark repository loaded the Claude Agent SDK only through
+`import("@anthropic-ai/claude-agent-sdk")` and `require` calls inside functions
+and `try` blocks, and no source evidence named the SDK. A `require("m")` or
+`import("m")` call outside comments and strings is now import evidence for `m`
+at the call's line, matched as the ES `import` statement would be. It
+establishes usage; an agent still needs a supported binding or other agent
+evidence. A regression test covers lazy, `try`-scoped and top-level loads, and
+loads in comments and strings.
+
+### October 8 benchmark remediation: findings at the connector deadline
+
+In the real-world benchmark, one large repository finished its walk inside the
+connector deadline, but reporting its findings ran past it, and the engine
+discarded every finding. `code.filesystem` now stops reporting findings 2% of
+the connector budget (at least one second) before the deadline. The findings
+already reported are kept, the scan records `connector deadline reached while
+reporting findings … after N; the rest are not reported` and is incomplete
+(exit 3). A regression test covers it.
+
 ### October 8 benchmark remediation: symbolic links
 
 In the real-world benchmark, 11 scans were incomplete because of a symbolic
