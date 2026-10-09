@@ -37,3 +37,13 @@ def test_post_tool_verification_accepts_pinned_clean_checkout(tmp_path, monkeypa
         runner, "_git", lambda args, cwd=None: (0, spec.sha if args[0] == "rev-parse" else "")
     )
     runner.verify_after_tool([spec], tmp_path, "fixture-tool")
+
+
+def test_report_never_presents_errored_negative_scans_as_clean():
+    # An incomplete scan of a `none` repository is not a clean result. The
+    # report lists those scans and gives specificity over completed scans only.
+    from tools.benchmark.realworld_report import render
+
+    text = render(Path(__file__).resolve().parents[2] / "tools" / "benchmark" / "results-realworld")
+    assert "Errors count as misses" not in text
+    assert "| Project Nexus ShadowScan | 4/9 | 4/5 |" in text

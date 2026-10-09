@@ -6,7 +6,7 @@
 > JSX retry.** These figures do not describe the merged code; the recoveries
 > credited to input defects do not hold. See [README.md](README.md).
 
-Repo surface only; every case is a public repository pinned by commit (see `benchmarks/realworld/corpus.json`). Positive means the label is `agent` or `llm`. Errors count as misses and are also shown. Read the caveats in `benchmarks/realworld/README.md` before quoting numbers.
+Repo surface only; every case is a public repository pinned by commit (see `benchmarks/realworld/corpus.json`). Positive means the label is `agent` or `llm`. An error (an incomplete or failed scan) on a positive repository counts as a miss. The shared scorer counts an error on a `none` repository as a true negative, so specificity and precision in the scored tables overstate tools that error on negatives; the section on errors on `none` repositories gives specificity over completed scans only. Read the caveats in `benchmarks/realworld/README.md` before quoting numbers.
 
 - Corpus: `corpus.json` sha256 `6469bdee66c83338…`, 34 repositories
 - Runtime: Python 3.13.16, Linux-6.18.44-fc-v80-x86_64-with-glibc2.39, 900s timeout per tool per repository
@@ -104,7 +104,10 @@ Repo surface only; every case is a public repository pinned by commit (see `benc
 |---|---|---|---|---|
 | ShadowScan (max_file_size 20 MiB) | 34 | 1 | 3 | 0.6250 |
 
-## Errors (counted as misses above)
+## Errors
+
+An error on an `agent` or `llm` repository is counted as a miss above; one on a
+`none` repository is counted as a true negative there (see the next section).
 
 - Project Nexus ShadowScan on `crewai-examples`: incomplete scan (exit 3)
 - Project Nexus ShadowScan on `gpt-researcher`: incomplete scan (exit 3)
@@ -126,6 +129,13 @@ Repo surface only; every case is a public repository pinned by commit (see `benc
 - ShadowScan (max_file_size 20 MiB) on `openai-python`: incomplete scan (exit 3)
 - ShadowScan (max_file_size 20 MiB) on `gitlab-lsp`: incomplete scan (exit 3)
 - ShadowScan (max_file_size 20 MiB) on `fdroidserver`: incomplete scan (exit 3)
+
+## Errors on repositories with no AI (`none` label)
+
+| Tool | Errored `none` scans | Specificity over completed `none` scans |
+|---|---|---|
+| Project Nexus ShadowScan | 4/9 | 5/5 |
+| ShadowScan (max_file_size 20 MiB) | 1/9 | 7/8 |
 
 ## Noise on repositories with no AI (`none` label)
 
