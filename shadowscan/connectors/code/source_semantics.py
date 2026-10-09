@@ -22,7 +22,7 @@ import ast
 import re
 import threading
 import weakref
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import ChainMap
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -1201,6 +1201,7 @@ def _drop_uncertain_bindings(
     for start, end in declaration_spans:
         declaration_mask[start:end] = " " * (end - start)
     rest = "".join(declaration_mask)
+    marks: tuple[list[int], list[int]] | None = None
     for name in list(bindings):
         escaped = re.escape(name)
         patterns = [
@@ -1211,12 +1212,83 @@ def _drop_uncertain_bindings(
             rf"(?<![\w$.]){escaped}\s*=>",
             rf"(?<![\w$.]){escaped}\s*\.\s*[\w$]+\s*=(?!=)",
             rf"\bcatch\s*\(\s*{escaped}\b",
-            rf"(?:^|[;{{}}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\b{escaped}\b[^)]*\)\s*(?::[^{{}};]+)?\{{",
         ]
         if any(
             regex.search(pattern, rest, timeout=pattern_timeout(), concurrent=False) for pattern in patterns
         ):
             del bindings[name]
+            continue
+        if marks is None:
+            marks = (
+                [match.start() for match in re.finditer(r"\)", rest)],
+                [match.start() for match in re.finditer(r"[{};]", rest)],
+            )
+        if _named_as_method_parameter(rest, escaped, *marks):
+            del bindings[name]
+
+
+def _named_as_method_parameter(rest: str, escaped: str, parentheses: list[int], terminals: list[int]) -> bool:
+    r"""Whether a method declaration lists the name (``escaped``) among its parameters.
+
+    This is ``(?:^|[;{}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\bNAME\b[^)]*\)\s*(?::[^{};]+)?\{``
+    run against the whole source, which is quadratic: every statement start that opens a
+    parenthesis rescans the text up to the next ``)`` for the name. It took more than the
+    0.1 s pattern budget on a 22 KB TypeScript file and cost the file all its analysis. The
+    windowed form does not rescan the source for each statement start; the work per use of the
+    name is bounded by the text between two ``)`` and the next brace, not by the whole source.
+    The match cannot contain a ``)`` other than its last, so it lies between the last ``)``
+    before the name and the ``{`` that ends the first ``)``'s tail (the first of ``{``, ``}``
+    and ``;`` after it). The pattern is run on that window alone, anchored at the real start
+    of the text, and only for windows around an occurrence of the name whose ``)`` is followed by
+    something that can open a body (see ``_body_after_parameters``). ``parentheses`` and
+    ``terminals`` are the sorted offsets of ``)`` and of ``{``, ``}`` and ``;`` in ``rest``.
+    """
+    method = regex.compile(
+        rf"(?:^|[;{{}}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\b{escaped}\b[^)]*\)\s*(?::[^{{}};]+)?\{{"
+    )
+    seen: set[tuple[int, int]] = set()
+    opens_body: dict[int, int] = {}  # offset of a ")" -> offset of the "{" its tail leads to, or -1
+    for named in regex.finditer(rf"\b{escaped}\b", rest, timeout=pattern_timeout(), concurrent=False):
+        after = bisect_left(parentheses, named.end())
+        if after == len(parentheses):
+            return False  # no ")" follows this occurrence or any later one
+        close = parentheses[after]
+        if close not in opens_body:
+            opens_body[close] = _body_after_parameters(rest, close, terminals)
+        terminal = opens_body[close]
+        if terminal < 0:
+            continue
+        before = bisect_left(parentheses, named.start()) - 1
+        window = (parentheses[before] + 1 if before >= 0 else 0, terminal + 1)
+        if window in seen:
+            continue
+        seen.add(window)
+        if method.search(rest, window[0], window[1], timeout=pattern_timeout(), concurrent=False):
+            return True
+    return False
+
+
+def _body_after_parameters(rest: str, close: int, terminals: list[int]) -> int:
+    r"""The offset of the ``{`` that opens a body right after the ``)`` at ``close``, or -1.
+
+    Only ``\s*(?::[^{};]+)?\{`` may follow: blanks, then optionally ``:`` and a return type with at
+    least one character and none of ``{``, ``}`` or ``;``, then the brace. Anything else cannot
+    complete the pattern, so the occurrences before this ``)`` need no window at all.
+    """
+    size = len(rest)
+    position = close + 1
+    while position < size and rest[position].isspace():
+        position += 1
+    if position >= size:
+        return -1
+    if rest[position] == "{":
+        return position
+    if rest[position] != ":":
+        return -1
+    ending = bisect_left(terminals, position + 1)
+    if ending < len(terminals) and rest[terminals[ending]] == "{" and terminals[ending] > position + 1:
+        return terminals[ending]
+    return -1
 
 
 def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> list[_Call]:

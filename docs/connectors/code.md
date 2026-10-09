@@ -192,7 +192,8 @@ them to `exclude` unless that is intended); version-control metadata (`.git`,
 same option is accepted by `code.github` and `code.gitlab` and forwarded to the
 scan of each checkout.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
-by default, as do binary content (a NUL byte) in an analyzable file, non-regular
+by default, as do binary content (NUL bytes that are not stray ones in text, see
+[scan semantics](../scanning.md)) in an analyzable file, non-regular
 entries named like configuration files, and directory nesting deeper than the
 walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
@@ -286,7 +287,13 @@ incomplete.
 Malformed YAML front matter in an agent
 definition, including a YAML value PyYAML cannot construct (an impossible date,
 an integer over 4,300 digits), is reported as `invalid agent definition YAML`;
-the definition is still listed by its file name.
+the definition is still listed by its file name. A one-line plain value that
+contains `: ` (`description: Use this agent when: ...`), as generated agent
+definitions write them, is not valid YAML but is read by coding agents, which
+quote it and parse again. So does the scanner, through the same strict loader:
+the definition is read and the warning `agent definition front matter needed its
+plain values quoted to parse` records it. Repeated fields, explicit tags and
+structure that quoting cannot repair stay errors.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server

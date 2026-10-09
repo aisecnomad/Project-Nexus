@@ -68,6 +68,7 @@ import yaml
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.code.catalogs import (
     CATALOG_MIN_SIGNATURES,
+    HostLineFilter,
     catalog_metadata,
     configuration_document,
     project_catalog_files,
@@ -1101,6 +1102,8 @@ class FilesystemConnector(BaseConnector):
         self.exclude_globs = [e for e in extra if "*" in e or "/" in e]
         # Default-excluded directory names the current walk skipped, with counts.
         self._default_skipped: dict[str, int] = {}
+        # Files that were read but not as clean text, by what was done to them (see ``_note_file``).
+        self._file_notes: dict[str, list[str]] = {}
         self.label: str | None = ctx.get("label")
         # Every labeled `paths` root has its own identity, even if the list
         # shrinks to one. The engine marks a child split for incremental reuse.
@@ -1217,6 +1220,30 @@ class FilesystemConnector(BaseConnector):
             and name not in self._explicit_exclude_names
             and not self._excluded_file(rel)
         )
+
+    def _note_file(self, rel: str, note: str) -> None:
+        """Record how a file that was analyzed in full had to be read.
+
+        These are reported once per kind, after the walk (``_report_file_notes``): hundreds of legacy-encoded
+        files must not fill the capped diagnostic channel and bury the reason a scan is incomplete.
+        ``strict_coverage`` treats each as a coverage gap, as the reader did before it read such files.
+        """
+        if self.strict_coverage:
+            self.ctx.error(f"code.filesystem: {rel}: {note}; strict_coverage treats this as a gap")
+        else:
+            self._file_notes.setdefault(note, []).append(rel)
+
+    def _report_file_notes(self, scan: _ScanState) -> None:
+        """Warn once per kind of note about the files it touched; the scan stays complete."""
+        notes, self._file_notes = self._file_notes, {}
+        where = self._root_prefix(scan.label)
+        for note, files in sorted(notes.items()):
+            shown = ", ".join(files[:5]) + (f" and {len(files) - 5} more" if len(files) > 5 else "")
+            self.ctx.warn(
+                f"code.filesystem: {where}{len(files)} file(s) analyzed in full with a note "
+                f"({note}): {shown}",
+                incomplete=False,
+            )
 
     def _report_default_excluded(self, scan: _ScanState) -> None:
         """Warn once per root about the non-empty built-in-excluded directories the walk skipped."""
@@ -1685,6 +1712,7 @@ class FilesystemConnector(BaseConnector):
             self.ctx.error(f"code.filesystem: {scan.label}: could not open the scan root safely ({reason})")
             return
         self._default_skipped = {}
+        self._file_notes = {}
         try:
             self._walk_entries(scan)
         except _WalkLimitError as exc:
@@ -1693,6 +1721,7 @@ class FilesystemConnector(BaseConnector):
             os.close(scan.root_fd)
             scan.root_fd = -1
         self._report_default_excluded(scan)
+        self._report_file_notes(scan)
 
     def _walk_entries(self, scan: _ScanState) -> None:
         """Start each file only while its matching budget fits before the connector deadline."""
@@ -1793,10 +1822,18 @@ class FilesystemConnector(BaseConnector):
         rules) is skipped without a coverage gap.
         """
         read_errors: list[str] = []
+        read_notes: list[str] = []
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
         text = read_text(
-            on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd, analyzable_name=named
+            on_disk,
+            self._size_limit(path.name),
+            read_errors,
+            dir_fd=root_fd,
+            analyzable_name=named,
+            notes=read_notes,
         )
+        for note in read_notes:
+            self._note_file(rel, note)
         for issue in read_errors:
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
@@ -2126,7 +2163,10 @@ class FilesystemConnector(BaseConnector):
             variables = self.index.match_envs_in_text(content_text)
             for m in variables:
                 self._record_content(file, m, self._file_excerpt(file, m.line))
-            for m in self.index.match_domains_in_text(content_text):
+            # Source code is never a rule list: `|| "https://api.openai.com"` continues an expression and
+            # `host, err := ...` unpacks a result.
+            skip = None if file.ext in SOURCE_EXTENSIONS else HostLineFilter(content_text)
+            for m in self.index.match_domains_in_text(content_text, skip_line=skip):
                 self._record_content(file, m, self._file_excerpt(file, m.line))
             # A deployment or CI document is configuration however many products it names.
             parsed = None if file.structure is _NO_STRUCTURE else file.structure
@@ -2754,6 +2794,7 @@ class FilesystemConnector(BaseConnector):
                     # The check above is for its diagnostic; the read itself
                     # follows no link below the root, whatever changed since.
                     errors: list[str] = []
+                    read_notes: list[str] = []
                     directory = open_confined_directory(root)
                     try:
                         content = read_text(
@@ -2761,9 +2802,12 @@ class FilesystemConnector(BaseConnector):
                             self.max_file_size,
                             errors,
                             dir_fd=directory,
+                            notes=read_notes,
                         )
                     finally:
                         os.close(directory)
+                    # Ownership comes from names in this file: bytes that were replaced could change an owner.
+                    errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
                     for issue in errors:
                         self.ctx.error(f"code.filesystem: {cand}: {issue}")
                     for line in (content or "").splitlines():
@@ -3564,6 +3608,12 @@ class FilesystemConnector(BaseConnector):
         for m, snip in hits:
             apply_matches(f, [m], location=rel, snippet=snip, weight_scale=0.5 if test_only else 1.0)
         f.add_tag("hardcoded-credential")
+        if not f.model_providers:
+            # Only the generic rules matched (an assigned PASSWORD, ACCESS_TOKEN or *_API_KEY): the value
+            # is a hard-coded credential, but nothing ties it to an LLM provider, so the title must not
+            # say so. The identity of the finding does not include its title.
+            f.title = f"Hard-coded credential in {rel}"
+            f.add_tag("unattributed-credential")
         if test_only:
             f.add_tag("test-code-only")
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
@@ -3577,14 +3627,25 @@ class FilesystemConnector(BaseConnector):
         info: dict[str, Any] = {"file": rel, "name": PurePosixPath(rel).stem}
         m = _FRONTMATTER.match(text, timeout=_pattern_timeout(), concurrent=False)
         if m:
+            quoted = _quote_glob_values(m.group(1))
             try:
-                fm = strict_bounded_safe_load(_quote_glob_values(m.group(1))) or {}
+                fm = strict_bounded_safe_load(quoted) or {}
             except (ValueError, RecursionError, yaml.YAMLError):
                 # Includes resource limits, duplicate fields, non-finite
                 # numbers, and SafeLoader's plain ValueError for an
                 # impossible date or an over-long integer.
-                self.ctx.error(f"code.filesystem: {rel}: invalid agent definition YAML")
-                fm = {}
+                try:
+                    # Coding agents read a description such as "Use this agent when: ..." although
+                    # YAML does not allow ": " in a plain scalar, by quoting it and parsing again.
+                    # So do we, through the same strict loader: a document that is still invalid,
+                    # has repeated fields or carries explicit tags stays an error.
+                    fm = strict_bounded_safe_load(_quote_plain_values(quoted)) or {}
+                    self._note_file(
+                        rel, "agent definition front matter quoted to parse (a plain value contained ': ')"
+                    )
+                except (ValueError, RecursionError, yaml.YAMLError):
+                    self.ctx.error(f"code.filesystem: {rel}: invalid agent definition YAML")
+                    fm = {}
             if isinstance(fm, dict):
                 fm = sanitize(fm)
                 for k in (
@@ -3609,6 +3670,38 @@ def _strip_comment(text: str) -> str:
     """Remove a trailing YAML comment and the blanks before it."""
     start = _COMMENT_START.search(text)
     return text if start is None else text[: start.start()].rstrip(" \t")
+
+
+def _quote_plain_values(front_matter: str) -> str:
+    """Quote the top-level plain values that YAML rejects, so the front matter can be parsed again.
+
+    A value is rejected when it contains ": ", ends in ":" or starts with "@", a backtick or "%".
+    Generated agent definitions routinely write ``description: Use this agent when: ...`` or
+    ``Examples: <example>Context: ...`` unquoted. Coding agents quote such a value and parse the
+    front matter again, so this does the same. Only a key at the start of a line followed by a
+    one-line plain value is rewritten (flow collections, block scalars, quoted values, anchors,
+    aliases and explicit tags are left alone, so they fail as before), and lines are split with
+    string methods rather than backtracking patterns: the front matter is untrusted.
+    """
+    out: list[str] = []
+    for raw in front_matter.split("\n"):
+        line = raw.rstrip("\r")
+        key, colon, rest = line.partition(":")
+        # A trailing " #" comment is not part of the value: `model: sonnet # note: fast` is valid as it is.
+        value = rest.partition(" #")[0].strip(" \t") if rest[:1] == " " else rest.strip(" \t")
+        if (
+            colon
+            and key
+            and rest[:1] in {" ", "\t"}
+            and all(character.isalnum() or character in "_-" for character in key)
+            and value
+            and value[0] not in "\"'|>[{&*!#"
+            and (": " in value or value.endswith(":") or value[0] in "@`%")
+        ):
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            line = f'{key}: "{escaped}"'
+        out.append(line)
+    return "\n".join(out)
 
 
 def _quote_glob_values(front_matter: str) -> str:

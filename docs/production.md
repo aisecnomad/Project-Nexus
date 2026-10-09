@@ -403,8 +403,9 @@ nothing at the alias path is lost (see [scan semantics](scanning.md) for the
 exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links
 leaving the root, oversized files the scanner would
-inspect and files it analyzes by name but cannot read as text (a NUL byte
-outside a UTF-8, UTF-16 or UTF-32 file with a byte-order mark) make the scan
+inspect and files it analyzes by name but cannot read as text (binary content
+with dense NUL bytes, mostly invalid UTF-8, or UTF-16 or UTF-32 without a byte-order mark; a few stray NUL
+bytes or invalid bytes in otherwise valid text do not count) make the scan
 incomplete (exit 3) by default, with a warning naming the omission.
 `strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions
@@ -788,6 +789,72 @@ These notes record behavior changes made while the 0.1.1 candidate was being
 hardened. Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 8 real-world benchmark follow-ups
+
+Re-scan before comparing finding counts, confidence or exit codes with earlier
+reports. The changes below came from running ShadowScan on 326 public
+repositories (`tools/benchmark/realworld`). They make fewer scans incomplete
+(exit 3), remove false evidence, and add some evidence that earlier builds
+missed, so a repository can gain or lose findings without any change to it.
+Finding IDs are unchanged: no identity field is touched, and a finding's title
+is not part of its identity.
+
+- **Credential titles.** A `secret` finding whose only matches are the generic
+  credential rules (an assigned `PASSWORD`, `ACCESS_TOKEN`, `CLIENT_SECRET`,
+  `CREDENTIAL` or `*_API_KEY` value, a GitHub or AWS key) is titled
+  `Hard-coded credential in <file>` and gains the tag `unattributed-credential`.
+  Before, every secret finding was titled `LLM provider credential in <file>`,
+  including a mail password, although nothing tied it to a provider. A finding
+  with an attributed provider keeps the old title and no new tag. Dashboards or
+  filters keyed on the old title for unattributed credentials should key on
+  `kind: secret` and the absence of `model_providers`. Detection, weight and
+  risk are unchanged.
+- **Fewer incomplete scans.** Each of these used to end a scan with exit 3 and
+  is now read exactly:
+  - source lexing: ordinary strings that span lines in Rust, PHP and F#; PHP 8
+    attributes (`#[...]`, which are code, not comments; in PHP before 8 a `#[` line is a comment); F# type variables
+    (`'T`) and primed names; C# verbatim strings that open with an escaped
+    quote (`@"""x"" y"`); JSX in `.js`, `.mjs` and `.cjs` files, tried when the
+    plain walk is ambiguous and used only if it reads the whole file cleanly;
+    the TypeScript non-null assertion before a division (`idle! / step`); and
+    Qt Linguist translations named `.ts`, which are XML. A construct that is
+    still ambiguous (a string left open, Ruby strings that span lines, heredoc
+    interpolation) stays incomplete.
+  - file contents: text that is not valid UTF-8 and holds no NUL byte, and
+    large UTF-8 text with a few stray NUL bytes, are analyzed instead of skipped
+    (see [scan semantics](scanning.md)); each adds a warning that leaves the
+    scan complete (one warning per kind; `strict_coverage` makes each noted file a gap, and a
+    `CODEOWNERS` file with replaced bytes is an error). Dense NUL content, text mixed with other control characters
+    and UTF-16 or UTF-32 without a byte-order mark are still coverage gaps.
+  - agent definitions: a description with `: ` in a plain value is read after
+    quoting, as coding agents read it (see the [code connector](connectors/code.md)).
+  - JavaScript and TypeScript: the check that drops an SDK binding shadowed by a
+    method parameter was quadratic in the size of the file and could exceed the
+    0.1 s pattern budget on a 22 KB source, which discarded all analysis of that
+    file (`file analysis incomplete (TimeoutError)`). It now looks only at the
+    text around each use of the name and gives the same answer.
+  Because files that used to be skipped are now analyzed, a repository can gain
+  findings, including credentials, that earlier builds could not see.
+- **Less false evidence.** The `mcp.<vendor>.<tld>` host form of `protocol.mcp`
+  now ends in one of a short list of common top-level domains, so a dotted identifier such as the
+  translation key `mcp.translator.translatekey` is no longer an MCP endpoint. A
+  host on a line of a hosts file, ad-block list, resolver configuration or
+  Clash/Surge-style rule list (`0.0.0.0 chatgpt.com`, `||api.openai.com^`,
+  `address=/api.openai.com/0.0.0.0`, `DOMAIN-SUFFIX,openai.com,PROXY`) routes or
+  blocks the host and no longer counts as use of it; the same host elsewhere
+  still counts (the filter applies to documents that are not source files, so a `host, port = ...`
+  assignment or a `||` continuation line in code is unaffected). Strings in Rust, PHP and F# that span lines are no longer read
+  as code, which removes the framework names that appeared inside them.
+- **New evidence.** `protocol.mcp` matches the JSON-RPC method names an SDK-free
+  server or client dispatches on (`tools/list`, `tools/call`, `resources/list`,
+  `resources/read`, `prompts/list`, `prompts/get`,
+  `notifications/initialized`) at a `case`, a comparison, a `method:` field or
+  the start of a line, never inside a comment or a string, at weight 0.75 (0.6
+  without import or dependency evidence, like any lexical-only match).
+  `coding-agent.claude-code` gains `.claude/launch.json`, `.claude/rules/*.md`,
+  `.claude/output-styles/*.md` and the `.claude-plugin/plugin.json` and
+  `marketplace.json` manifests, at weight 0.8.
 
 ### October 7 distribution rename and PyPI publication
 
@@ -1983,8 +2050,7 @@ New incomplete (exit 3) and configuration-error outcomes:
 
 - **Unreadable analyzable files.** A file that `code.filesystem` analyzes by
   name and that still contains a NUL byte in its first 8 KiB (a binary `.plist`
-  or `.xml`, a UTF-16 file without a byte-order mark, a stray NUL in source or
-  Markdown) is a coverage gap named `binary or undecodable content in
+  or `.xml`, a UTF-16 file without a byte-order mark) is a coverage gap named `binary or undecodable content in
   analyzable file`. Fix the file or add it to `exclude`. UTF-8, UTF-16 and
   UTF-32 files with a byte-order mark, and Python sources with a PEP 263 coding
   cookie, are now decoded and analyzed, so dependency lists, `.env` files and

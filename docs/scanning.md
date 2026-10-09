@@ -31,7 +31,21 @@ that are never silent:
   warnings, including when `strict_coverage` is enabled.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
   byte-order mark is decoded and the mark removed. A Python source is decoded
-  with the codec its `# coding:` cookie declares. Any other file the scanner
+  with the codec its `# coding:` cookie declares. Text that is not valid UTF-8
+  and has no NUL byte (Latin-1 or Windows-1252 prose, Shift-JIS comments) is
+  read with each byte that is not valid replaced by U+FFFD, except in a Python
+  source or a notebook, whose own runtime rejects it: everything the
+  scanner looks for is ASCII, which such an encoding writes the same way, so the
+  file is analyzed in full and the scan stays complete; the warning `is not
+  valid UTF-8, the bytes that are not were replaced` records it (one warning
+  per kind, listing the first files; `strict_coverage` makes each file a gap
+  instead). Content in which more than four characters and more than a tenth of the
+  first 8 KiB are not valid UTF-8, or that holds a control character other than tab, line
+  break or form feed there, is not text and stays a gap. A file of at
+  least 512 bytes that is valid UTF-8, has at most one NUL byte in 200 and holds
+  no other control character in its first 8 KiB (a TypeScript cache key joined
+  with a literal NUL) is read as text too, with the warning `stray NUL bytes in
+  text, read as text`. Any other file the scanner
   analyzes by name (source, configuration, documents, `.env`, extensionless
   files) that has a NUL byte in its first 8 KiB, or that its declared codec
   cannot decode or does not read as ASCII where the bytes are ASCII (UTF-16 or
@@ -63,13 +77,15 @@ that are never silent:
   source is available to scan, not that it matches an authentic remote commit.
 * **Undecodable or binary content** in a file whose name the scanner would
   analyze (source, manifests, `.env`, configuration, MCP and agent files,
-  notebooks) makes the scan incomplete with `binary or undecodable content in
-  analyzable file`. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  notebooks) that is not text in a supported encoding makes the scan incomplete
+  with `binary or undecodable content in analyzable file`; the rules above say
+  which invalid UTF-8 and NUL-bearing files are read instead. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
   still run a script with a NUL in a comment, so it is a gap, not an empty file;
-  this includes UTF-16 without a byte-order mark. Invalid UTF-8 and malformed
+  this includes UTF-16 without a byte-order mark and NUL-dense content. Mostly-invalid UTF-8, a Python
+  source or notebook that is not valid UTF-8, and malformed
   BOM-declared content also make coverage incomplete, with a fixed diagnostic
   that does not expose the rejected bytes. Names the scanner
   never reads (images, archives, `.bin`, compiled artifacts) stay silent, and so

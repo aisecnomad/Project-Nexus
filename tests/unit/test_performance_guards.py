@@ -574,7 +574,7 @@ def test_required_literals_groups_and_case_folding(pattern, expected):
 
 def test_shipped_packs_mostly_have_required_literals(index):
     """The prefilter only pays off when most shipped patterns carry literals; guard against regressions."""
-    for signal_type, minimum in (("code", 0.99), ("import", 1.0), ("secret", 1.0), ("image", 1.0)):
+    for signal_type, minimum in (("code", 1.0), ("import", 1.0), ("secret", 1.0), ("image", 1.0)):
         patterns = [rx.pattern for sig, s in index._by_type[signal_type] for rx in s.bounded_compiled]
         covered = sum(bool(required_literals(pattern).groups) for pattern in patterns)
         assert covered >= minimum * len(patterns), (signal_type, covered, len(patterns))

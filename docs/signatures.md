@@ -269,6 +269,10 @@ and tests, which call and test the products they detect.
   general `api.cloudflare.com`, the `huggingface.co` site) is corroboration only (weight 0.15 or less) in
   its own signal; the AI-specific hosts (`gateway.ai.cloudflare.com`, `router.huggingface.co`) carry the
   high weight, so a DNS script or a dataset download stays a low-confidence hint, not LLM usage.
+  A `re:` value must not match a dotted identifier: end it in a list of top-level domains or a fixed vendor
+  domain, because the tokenizer reads every `a.b.c` word of a source file as a host
+  (`re:^mcp\.[a-z0-9-]+\.(?:com|dev|app|ai|io|...)$`, not `\.[a-z]+$`). A host on a line of a hosts file,
+  ad-block list, resolver configuration or proxy rule list is routed or blocked, not used, and never matches.
   `gateway.logs` still treats Cloudflare Workers AI inference paths (`/accounts/<id>/ai/run/`,
   `/accounts/<id>/ai/v1/`) as LLM traffic on any host.
 * Dependency names that are also unrelated packages (the PyPI name `swarm`, which is not OpenAI Swarm) are

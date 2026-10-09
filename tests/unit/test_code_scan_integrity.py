@@ -206,18 +206,37 @@ def test_transport_stream_like_source_comment_cannot_hide_agent_construction(
 @pytest.mark.parametrize(
     "content",
     [
+        # One NUL is a large share of a file this small: it cannot be called stray.
         b"import OpenAI from 'openai'; // \x00\n",
-        # Sync bytes at the first three packet starts only: not a transport stream.
-        b"G" + b"/" * 187 + b"G" + b"/" * 187 + b"G\x00\nimport OpenAI from 'openai';\n" + b"/" * 600,
-        # A sync byte at every packet start, but the packets are text.
-        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 187) * 11,
+        # Mostly NUL, as a transport stream's padding is.
+        b"G\x00" + b"\x00" * 600 + b"\nimport OpenAI from 'openai';\n",
+        # Not valid UTF-8: the packets are binary.
+        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 186 + b"\xff") * 11,
     ],
-    ids=["nul-comment", "three-sync-bytes", "sync-every-packet-but-text"],
+    ids=["nul-comment", "mostly-nul", "binary-packets"],
 )
 def test_nul_bearing_typescript_stays_a_coverage_gap(tmp_path, run_connector, content):
     (tmp_path / "agent.ts").write_bytes(content)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # Sync bytes at the first three packet starts only: not a transport stream.
+        b"G" + b"/" * 187 + b"G" + b"/" * 187 + b"G\x00\nimport OpenAI from 'openai';\n" + b"/" * 600,
+        # A sync byte at every packet start, but the packets are text.
+        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 187) * 11,
+    ],
+    ids=["three-sync-bytes", "sync-every-packet-but-text"],
+)
+def test_text_typescript_with_a_stray_nul_is_analyzed_not_skipped(tmp_path, run_connector, content):
+    # One NUL in over a kilobyte of valid UTF-8 text: reading it finds what a skip would have hidden.
+    (tmp_path / "agent.ts").write_bytes(content)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not _gaps(ctx.stats.errors)
+    assert any("provider.openai" in finding.model_providers for finding in findings)
 
 
 @pytest.mark.parametrize("rel", [".cursor/rules/notes.bin", ".roo/rules/notes.utf16"])

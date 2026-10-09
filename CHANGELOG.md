@@ -5,6 +5,46 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## 0.1.1 — Unreleased
 
+### October 8 real-world benchmark follow-ups
+
+Running ShadowScan on 326 public repositories (`tools/benchmark/realworld`)
+showed that 28% of scans ended incomplete (exit 3) and that most false alarms
+came from two causes. Each item below was reproduced on a specific repository
+before it was changed, has a regression test, and leaves finding IDs unchanged.
+`docs/production.md` lists the effect on reports.
+
+- Fixed: the JavaScript check that drops an SDK binding shadowed by a method
+  parameter ran a quadratic pattern over the whole source. On a 22 KB
+  TypeScript file it exceeded the 0.1 s pattern budget, the whole file's
+  analysis was lost and the scan was incomplete. It now runs the same pattern
+  on the window around each use of the name; a test compares it with the
+  original pattern on generated inputs.
+- Fixed: the source lexers called these ambiguous (exit 3) and, where they
+  mis-read them, treated string text as code: ordinary strings that span lines
+  in Rust, PHP and F# (`.fs`; F# scripts are not scanned); PHP 8 attributes (a `#[` line in PHP before 8 is a comment and now reads as code), which were read as comments; F# type
+  variables and primed names; C# `@"""` verbatim strings; JSX in `.js` files;
+  the TypeScript non-null assertion before a division; and Qt translation files
+  named `.ts`. Strings that stay ambiguous (unclosed, Ruby, heredoc
+  interpolation) still end the scan as incomplete.
+- Fixed: a file with a few stray NUL bytes in otherwise valid UTF-8 text, or
+  text that is not valid UTF-8 and has no NUL byte, was skipped whole and made
+  the scan incomplete. Both are read now and add a warning; dense NUL content
+  and UTF-16/32 without a byte-order mark remain gaps. Content that is mostly invalid UTF-8 or holds
+  control characters stays a gap. Notes are one warning per kind; `strict_coverage` treats each as a gap.
+- Fixed: agent definition front matter with `: ` in a plain value was
+  `invalid agent definition YAML`. It is quoted and parsed again through the
+  same strict loader, as coding agents do.
+- Fixed: `re:^mcp\.[a-z0-9-]+\.[a-z]+$` matched dotted identifiers such as
+  `mcp.translator.translatekey`. It now ends in one of a short list of common top-level domains.
+- Fixed: a host on a hosts-file, ad-block, resolver or proxy-rule line counted
+  as use of that product. The filter applies to non-source documents only.
+- Changed: a `secret` finding with no attributed provider is titled
+  `Hard-coded credential in <file>` and tagged `unattributed-credential`
+  instead of `LLM provider credential in <file>`.
+- Added: `protocol.mcp` recognizes JSON-RPC method dispatch without an SDK, and
+  `coding-agent.claude-code` recognizes `.claude/launch.json`,
+  `.claude/rules/*.md`, `.claude/output-styles/*.md` and the plugin manifests.
+
 ### October 7 release merge-rule check with an administrator readback
 
 - Fixed: the release-evidence workflow could never pass its merge-rule step.

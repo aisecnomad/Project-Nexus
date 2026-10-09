@@ -79,7 +79,7 @@ name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 
 ## Frameworks & products recognized
 
-220 signatures / 1018 signals, YAML-defined with explicit opt-in overrides:
+220 signatures / 1020 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, AutoGen/AG2, Hugging Face smolagents, OpenAI Agents SDK, OpenAI Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
@@ -270,8 +270,9 @@ root make coverage incomplete (exit 3) by default. `--strict-coverage`
 its name is never read (for example, a lockfile or image), or when it is a source
 file whose target is analyzed in the same project with the same test
 classification. Directory links are incomplete because their alias paths are
-not scanned. A file analyzed by name but unreadable as text (a NUL byte outside
-UTF-8, UTF-16 or UTF-32 with a byte-order mark) is also a gap. Non-empty
+not scanned. A file analyzed by name but unreadable as text (dense NUL bytes,
+mostly invalid UTF-8, or UTF-16 or UTF-32 without a byte-order mark) is also a gap;
+legacy-encoded text and a few stray NUL bytes are analyzed with a warning. Non-empty
 `bin/`, `build/`, `dist/`, `vendor/` and similar directories skipped by default
 are listed in a warning; `--no-default-excludes` scans them. Evidence found only
 in test or fixture code cannot establish an agent unless `--include-tests` is set.

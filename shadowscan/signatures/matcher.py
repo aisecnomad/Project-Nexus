@@ -1238,11 +1238,20 @@ class SignatureIndex:
                     out.append(Match(sig, s, h, s.weight))
         return out
 
-    def match_domains_in_text(self, text: str) -> list[Match]:
-        with self._input_budget():
-            return self._match_domains_in_text_with_budget(text)
+    def match_domains_in_text(
+        self, text: str, *, skip_line: Callable[[str], bool] | None = None
+    ) -> list[Match]:
+        """Find signature hosts in ``text``; ``skip_line`` names the lines whose hosts do not count.
 
-    def _match_domains_in_text_with_budget(self, text: str) -> list[Match]:
+        A line the predicate accepts (a hosts-file or proxy-rule entry) is passed over, and the same
+        host still counts where it occurs on another line.
+        """
+        with self._input_budget():
+            return self._match_domains_in_text_with_budget(text, skip_line)
+
+    def _match_domains_in_text_with_budget(
+        self, text: str, skip_line: Callable[[str], bool] | None = None
+    ) -> list[Match]:
         out: list[Match] = []
         seen: set[str] = set()
         newlines: list[int] | None = None
@@ -1300,6 +1309,13 @@ class SignatureIndex:
             if newlines is None:
                 newlines = [newline.start() for newline in re.finditer("\n", text)]
             line = bisect_right(newlines, m.start()) + 1
+            if skip_line is not None:
+                # Rule formats lead their lines, so only the start of a (possibly minified) line is read.
+                first = newlines[line - 2] + 1 if line > 1 else 0
+                last = newlines[line - 1] if line - 1 < len(newlines) else len(text)
+                if skip_line(text[first : min(last, first + _SKIP_LINE_CHARS)]):
+                    seen.discard(key)  # the host may still be used on another line
+                    continue
             matched_signatures: set[str] = set()
             for match in matches:
                 if match.signature_id in matched_signatures:
@@ -1343,6 +1359,8 @@ class SignatureIndex:
 
 
 _HOST_TOKEN_RX = re.compile(r"[a-z0-9.-]+", re.IGNORECASE)
+# Characters of a line that `match_domains_in_text` hands its `skip_line` predicate.
+_SKIP_LINE_CHARS = 256
 _STATEMENT_CACHE_LIMIT = 65_536
 _STATEMENT_CACHE_MAX_LENGTH = 256
 _STATEMENT_CACHE_MAX_CHARS = 4 * 1024 * 1024

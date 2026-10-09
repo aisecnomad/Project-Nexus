@@ -21,6 +21,10 @@ signatures:
       - type: file
         globs: [".claude/commands/*.md", "**/.claude/commands/*.md", ".claude/skills/*/SKILL.md", "**/.claude/skills/*/SKILL.md", ".claude/hooks/*", "**/.claude/hooks/*"]
         weight: 0.8
+      - type: file
+        globs: [".claude/launch.json", "**/.claude/launch.json", ".claude/rules/*.md", "**/.claude/rules/*.md", ".claude/output-styles/*.md", "**/.claude/output-styles/*.md", ".claude-plugin/plugin.json", "**/.claude-plugin/plugin.json", ".claude-plugin/marketplace.json", "**/.claude-plugin/marketplace.json"]
+        weight: 0.8
+        description: Claude Code project launch configuration, rules, output styles and plugin manifests
       - type: code
         patterns: ['uses:\s*anthropics/claude-code-action', 'uses:\s*anthropics/claude-code-base-action', 'npx\s+@anthropic-ai/claude-code', 'claude\s+-p\s+', 'claude\s+--dangerously-skip-permissions']
         weight: 0.95
