@@ -88,6 +88,15 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Source identity, guarded import and AWS command review fixes
 
+- Resolve the tool regions of every verified construction in a file in one
+  pass. A module registering many named agents with a shared `tools=TOOLS`
+  list, attribute or factory no longer exceeds the per-file deadline in
+  `agent_granularity: source` mode and drops to an incomplete file.
+- Keep a registered tool's execution evidence on the project finding when an
+  unresolved construction, a positional or unpacked construction, a method or
+  decorator registration, or a dispatch loop in the same file can also reach
+  it. Approving a named source binding no longer hides that capability from
+  the shadow project finding; tools only named bindings reach still move to them.
 - Restore guarded optional imports after the try/except join correction: a
   name only that try statement binds agrees with handlers that leave it
   unbound, handlers ending in `sys.exit()`, `os._exit()`, `exit()` or `quit()`

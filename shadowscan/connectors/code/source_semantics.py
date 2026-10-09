@@ -1815,6 +1815,8 @@ def bound_source_matches(
                 raise SourceBudgetExceeded(str(exc)) from exc
         found[0].extra["registered_tool_regions"] = regions.bodies
         found[0].extra["registered_tool_declarations"] = regions.declarations
+        # Tools reached other than through a constructor's own options.
+        found[0].extra["registered_tool_paths"] = bool(registrations or dispatch_calls)
         for match in found:
             span = match.extra.get("bound_call_span")
             if (

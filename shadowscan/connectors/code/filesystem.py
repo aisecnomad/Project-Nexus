@@ -616,6 +616,8 @@ class _SourceFile:
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
     source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
+    # Tool regions a project-level construction, registration or dispatch path may also reach.
+    project_tool_regions: list[tuple[int, int]] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -2253,17 +2255,28 @@ class FilesystemConnector(BaseConnector):
                 if m.extra.get("verified_agent") and m.extra.get("bound_call_span")
             }
             regions: dict[tuple[int, int], ToolRegions] = {}
+            unresolved: list[tuple[int, int]] = []
             names = named_construction_spans(
                 content_text,
                 max_ast_nodes=self.max_ast_nodes,
                 verified_spans=verified,
                 tool_regions=regions,
+                unresolved_regions=unresolved,
             )
             file.source_agent_regions = [
                 (start, end, names[span])
                 for span, region in regions.items()
                 for start, end in (*region.bodies, *region.declarations)
             ]
+            if any(
+                m.extra.get("registered_tool_paths")
+                or (m.extra.get("verified_agent") and not m.extra.get("bound_call_span"))
+                for m in bound
+            ):
+                # Decorator registrations and dispatch loops are not source
+                # identities; whatever tools they reach stay project evidence.
+                unresolved = [(0, len(content_text))]
+            file.project_tool_regions = unresolved
             for m in bound:
                 span = m.extra.get("bound_call_span")
                 if span is not None and tuple(span) in verified and tuple(span) in names:
@@ -2477,6 +2490,10 @@ class FilesystemConnector(BaseConnector):
                     }
                     if bindings:
                         m.extra["source_agent_bindings"] = sorted(bindings)
+                        if _within(m.extra.get("start", -1), file.project_tool_regions):
+                            # A construction left in the project may run this
+                            # tool too: its findings keep the capability as well.
+                            m.extra["source_agent_shared"] = True
             elif (m.signature_id, id(m.signal), m.line) in bound_signals or (
                 _bundled_signature(m.signature) and not _within(m.extra.get("start", -1), unbound)
             ):
@@ -3026,6 +3043,8 @@ class FilesystemConnector(BaseConnector):
                     if bindings and rel not in covered_files:
                         for binding in bindings:
                             groups.setdefault((rel, binding), []).append(observation)
+                        if match.extra.get("source_agent_shared"):
+                            remaining.append(observation)
                     else:
                         remaining.append(observation)
                 for (rel, binding), source_observations in sorted(groups.items()):

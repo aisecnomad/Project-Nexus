@@ -25,6 +25,7 @@ def named_construction_spans(
     max_ast_nodes: int | None = None,
     verified_spans: set[tuple[int, int]] | None = None,
     tool_regions: dict[tuple[int, int], ToolRegions] | None = None,
+    unresolved_regions: list[tuple[int, int]] | None = None,
 ) -> dict[tuple[int, int], str]:
     """Return stable scoped names of direct, unique, straight-line assignments.
 
@@ -32,6 +33,11 @@ def named_construction_spans(
     global/nonlocal writes, attributes and unbound expressions are excluded.
     The same AST-node budget as source binding applies; an unsupported or
     over-budget input yields no identities rather than guessing from lines.
+
+    With ``verified_spans``, ``tool_regions`` receives each verified named
+    construction's keyword tool regions, all resolved in one tool pass.
+    ``unresolved_regions`` receives what verified constructions without an
+    identity can reach; the whole text when one's registrations are opaque.
     """
     try:
         tree = ast.parse(text)
@@ -50,6 +56,7 @@ def named_construction_spans(
     external: set[tuple[tuple[str, ...], str]] = set()
     wildcards: set[tuple[str, ...]] = set()
     candidates: list[tuple[tuple[str, ...], str, ast.Call]] = []
+    calls: list[ast.Call] = []
     pending: list[tuple[ast.AST, tuple[str, ...], bool]] = [(tree, (), False)]
     count = 0
     while pending:
@@ -93,6 +100,8 @@ def named_construction_spans(
             call, target = node.value, node.target
         if not blocked and isinstance(call, ast.Call) and isinstance(target, ast.Name):
             candidates.append((scope, target.id, call))
+        if isinstance(node, ast.Call) and verified_spans is not None:
+            calls.append(node)
         # TryStar is available from Python 3.11, the minimum supported version.
         blocked = blocked or isinstance(node, (*_CONTROL, ast.TryStar))
         pending.extend((child, scope, blocked) for child in ast.iter_child_nodes(node))
@@ -113,6 +122,9 @@ def named_construction_spans(
         if call.end_lineno is None or call.end_col_offset is None:
             continue
         eligible.append((scope, binding, call))
+    calls = [call for call in calls if call.end_lineno is not None and call.end_col_offset is not None]
+    for call in (*(call for _, _, call in eligible), *calls):
+        assert call.end_lineno is not None and call.end_col_offset is not None
         coordinates.setdefault(call.lineno, set()).add(call.col_offset)
         coordinates.setdefault(call.end_lineno, set()).add(call.end_col_offset)
     positions: dict[tuple[int, int], int] = {}
@@ -126,51 +138,75 @@ def named_construction_spans(
             chars += len(encoded[previous:column].decode("utf-8"))
             positions[(line_number, column)] = chars
             previous = column
-    found: dict[tuple[int, int], str] = {}
-    shared_regions: dict[tuple[tuple[str, ...], str, tuple[str, ...]], ToolRegions] = {}
-    for scope, binding, call in eligible:
+
+    def span_of(call: ast.Call) -> tuple[int, int]:
         assert call.end_lineno is not None and call.end_col_offset is not None
-        span = (
-            positions[(call.lineno, call.col_offset)],
-            positions[(call.end_lineno, call.end_col_offset)],
+        return positions[(call.lineno, call.col_offset)], positions[(call.end_lineno, call.end_col_offset)]
+
+    found = {span_of(call): binding for _, binding, call in eligible}
+    if tool_regions is None or verified_spans is None:
+        return found
+    scopes = {id(call): scope for scope, _, call in eligible}
+    requested: list[ast.Call] = []
+    owners: dict[tuple[int, int], ast.Call] = {}
+    shared_regions: dict[tuple[tuple[str, ...], str, tuple[str, ...]], ast.Call] = {}
+    opaque = False
+    for call in calls:
+        span = span_of(call)
+        if span not in verified_spans:
+            continue
+        # Only the keyword tools argument qualifies here. Positional
+        # factories need their resolved SDK symbol, unavailable in this
+        # identity pass, and remain project-level context.
+        tools = next((keyword.value for keyword in call.keywords if keyword.arg == "tools"), None)
+        keywords = [keyword.arg for keyword in call.keywords]
+        literal_keywords = None not in keywords and len(set(keywords)) == len(keywords)
+        # Unpacked, duplicate or positional options can register tools this
+        # keyword pass cannot see, so they may share any registered body.
+        opaque = opaque or not literal_keywords or (tools is None and bool(call.args))
+        empty = (
+            isinstance(tools, (ast.List, ast.Tuple, ast.Set))
+            and not tools.elts
+            or isinstance(tools, ast.Dict)
+            and not tools.keys
         )
-        found[span] = binding
-        if tool_regions is not None and verified_spans is not None and span in verified_spans:
-            # Only the keyword tools argument qualifies here. Positional
-            # factories need their resolved SDK symbol, unavailable in this
-            # identity pass, and remain project-level context.
-            tools = next((keyword.value for keyword in call.keywords if keyword.arg == "tools"), None)
-            empty = (
-                isinstance(tools, (ast.List, ast.Tuple, ast.Set))
-                and not tools.elts
-                or isinstance(tools, ast.Dict)
-                and not tools.keys
-            )
-            # Missing/empty tool registrations have no local bodies. Avoid a
-            # complete AST/tool pass for every such construction in a large
-            # file while preserving its independent inventory identity.
-            if tools is None or empty:
+        # Missing/empty tool registrations have no local bodies and need no
+        # tool pass, preserving each one's independent inventory identity.
+        if tools is None or empty:
+            if span in found:
                 tool_regions[span] = ToolRegions()
+            continue
+        if (
+            span in found
+            and isinstance(tools, (ast.List, ast.Tuple))
+            and all(isinstance(entry, ast.Name) for entry in tools.elts)
+            and literal_keywords
+        ):
+            # Literal names resolve against the same unique lexical scope.
+            # The tool pass rejects rebinding and wildcard imports globally,
+            # so identical registrations in that scope share its result.
+            # Unpacked/duplicate keywords keep the resolver's opaque path.
+            region_key = (
+                scopes[id(call)],
+                type(tools).__name__,
+                tuple(entry.id for entry in tools.elts if isinstance(entry, ast.Name)),
+            )
+            if region_key in shared_regions:
+                owners[span] = shared_regions[region_key]
                 continue
-            keywords = [keyword.arg for keyword in call.keywords]
-            if (
-                isinstance(tools, (ast.List, ast.Tuple))
-                and all(isinstance(entry, ast.Name) for entry in tools.elts)
-                and None not in keywords
-                and len(set(keywords)) == len(keywords)
-            ):
-                # Literal names resolve against the same unique lexical scope.
-                # The tool pass rejects rebinding and wildcard imports globally,
-                # so identical registrations in that scope share its result.
-                # Unpacked/duplicate keywords keep the resolver's opaque path.
-                region_key = (
-                    scope,
-                    type(tools).__name__,
-                    tuple(entry.id for entry in tools.elts if isinstance(entry, ast.Name)),
-                )
-                if region_key not in shared_regions:
-                    shared_regions[region_key] = python_tool_regions(text, tree, [(call, None)], [], set())
-                tool_regions[span] = shared_regions[region_key]
-            else:
-                tool_regions[span] = python_tool_regions(text, tree, [(call, None)], [], set())
+            shared_regions[region_key] = call
+        requested.append(call)
+        owners[span] = call
+    resolved: dict[int, ToolRegions] = {}
+    if requested:
+        # One pass for the whole file: a registry of many agents must not
+        # repeat the whole-file tool analysis for every construction.
+        python_tool_regions(text, tree, [(call, None) for call in requested], [], set(), each=resolved)
+    for span, call in owners.items():
+        if span in found:
+            tool_regions[span] = resolved[id(call)]
+        elif unresolved_regions is not None:
+            unresolved_regions.extend((*resolved[id(call)].bodies, *resolved[id(call)].declarations))
+    if unresolved_regions is not None and (opaque or not verified_spans <= {span_of(call) for call in calls}):
+        unresolved_regions.append((0, len(text)))
     return found

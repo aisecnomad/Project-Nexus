@@ -105,8 +105,13 @@ Local execution sinks are linked for the existing supported keyword `tools=`
 forms. Positional tool factories and later method registration remain project
 context and do not transfer execution capabilities to a source identity.
 The project finding retains remaining technology and unsupported-construction
-evidence. A project inventory approval does not approve these separate source
-resources; broad resource globs still have their explicitly configured scope.
+evidence. A tool body that a construction left in the project, a method or
+decorator registration, a dispatch loop, or a construction with positional or
+unpacked options in the same file can also reach stays project evidence too,
+so the project keeps that execution capability. All named constructions in a
+file share one tool-attribution pass. A project inventory approval does not
+approve these separate source resources; broad resource globs still have their
+explicitly configured scope.
 
 The default `agent_granularity: project` keeps existing aggregation. The source
 option does not count runtime instances and does not split notebooks, arbitrary languages,

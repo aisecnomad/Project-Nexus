@@ -34,12 +34,16 @@ def python_tool_regions(
     constructors: list[tuple[ast.Call, int | None]],
     registrations: list[tuple[ast.Call | None, int, bool]],
     dispatch_calls: set[int],
+    *,
+    each: dict[int, ToolRegions] | None = None,
 ) -> ToolRegions:
     """Resolve literal registrations and uniquely named local helper calls.
 
     The caller supplies only import-bound constructors and registrations.
     Rebinding, wildcard imports, foreign scopes and unresolved tool collections
     establish no local body. AST traversal shares the source matching deadline.
+    With ``each``, every constructor's own regions are also stored under
+    ``id(call)``; literal collections still resolve against all constructors.
     """
     if not constructors and not registrations and not dispatch_calls:
         return ToolRegions()
@@ -249,127 +253,149 @@ def python_tool_regions(
         if (region := callee_span(node)) is not None:
             regions.append(region)
 
-    selected: dict[int, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda] = {}
-    configured_objects: list[tuple[int, int]] = []
-
-    def select(value: ast.AST | None, scope: int) -> ast.AST | None:
-        if isinstance(value, ast.Lambda):
-            if id(value) not in selected:
-                selected[id(value)] = value
-                return value
-        elif isinstance(value, ast.Call):
-            record_callee(value.func, configured_objects)
-        elif isinstance(value, ast.Name) and (resolved := binding_scope(value.id, scope)) is not None:
-            function = definitions.get((resolved, value.id))
-            if function is not None:
-                if id(function) not in selected:
-                    selected[id(function)] = function
-                    return function
-            elif (created := objects.get((resolved, value.id))) is not None:
-                record_callee(created.func, configured_objects)
-        return None
-
     literals = python_provider_tool_literals(
         tree,
         {id(call) for call, _ in constructors},
         {id(call): position for call, position in constructors if position is not None},
     )
-    for call, position in constructors:
-        keywords = [keyword.arg for keyword in call.keywords]
-        if None in keywords or len(set(keywords)) != len(keywords):
-            continue
-        scope = scopes.get(id(call), id(tree))
-        value: ast.AST | None = next(
-            (keyword.value for keyword in call.keywords if keyword.arg == "tools"), None
-        )
-        if value is None and position is not None and len(call.args) > position:
-            if not any(isinstance(argument, ast.Starred) for argument in call.args[: position + 1]):
-                value = call.args[position]
-        if isinstance(value, ast.Name):
-            value = literals.get(id(call), {}).get(value.id)
-        values = (
-            value.elts
-            if isinstance(value, (ast.List, ast.Tuple, ast.Set))
-            else value.values
-            if isinstance(value, ast.Dict) and all(key is not None for key in value.keys)
-            else ()
-        )
-        for entry in values:
-            select(entry, scope)
-    decorator_lines = {line for _, line, decorated in registrations if decorated}
-    for node in nodes:
-        if (
-            isinstance(node, _FUNCTIONS)
-            and id(node) in live
-            and any(decorator.lineno in decorator_lines for decorator in node.decorator_list)
-        ):
-            selected[id(node)] = node
-    for registration, _, decorated in registrations:
-        if registration is not None and not decorated and registration.args:
-            select(registration.args[0], scopes.get(id(registration), id(tree)))
 
-    # Follow direct calls into unambiguous lexical function bindings. Aliases,
-    # attributes and imported implementations remain contextual observations.
-    queue: list[ast.AST] = list(selected.values())
-    for node in nodes:
-        if isinstance(node, ast.Call) and id(node) in dispatch_calls and id(node) in live:
-            record_callee(node.func, configured_objects)
-            if isinstance(node.func, ast.Name) and (chosen := select(node.func, scopes[id(node)])):
-                queue.append(chosen)
-    visited: set[int] = set()
-    bodies: list[tuple[int, int]] = list(configured_objects)
-    declarations: list[tuple[int, int]] = []
-    while queue:
-        function = queue.pop()
-        if id(function) in visited:
-            continue
-        visited.add(id(function))
-        if isinstance(function, _FUNCTIONS):
-            declarations.extend(
-                (max(0, span(decorator)[0] - 1), span(decorator)[1]) for decorator in function.decorator_list
+    def resolve(
+        requested: list[tuple[ast.Call, int | None]],
+        registered: list[tuple[ast.Call | None, int, bool]],
+        dispatched: set[int],
+    ) -> ToolRegions:
+        selected: dict[int, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda] = {}
+        configured_objects: list[tuple[int, int]] = []
+
+        def select(value: ast.AST | None, scope: int) -> ast.AST | None:
+            if isinstance(value, ast.Lambda):
+                if id(value) not in selected:
+                    selected[id(value)] = value
+                    return value
+            elif isinstance(value, ast.Call):
+                record_callee(value.func, configured_objects)
+            elif isinstance(value, ast.Name) and (resolved := binding_scope(value.id, scope)) is not None:
+                function = definitions.get((resolved, value.id))
+                if function is not None:
+                    if id(function) not in selected:
+                        selected[id(function)] = function
+                        return function
+                elif (created := objects.get((resolved, value.id))) is not None:
+                    record_callee(created.func, configured_objects)
+            return None
+
+        for call, position in requested:
+            keywords = [keyword.arg for keyword in call.keywords]
+            if None in keywords or len(set(keywords)) != len(keywords):
+                continue
+            scope = scopes.get(id(call), id(tree))
+            value: ast.AST | None = next(
+                (keyword.value for keyword in call.keywords if keyword.arg == "tools"), None
             )
-            body: list[ast.AST] = list(function.body)
-        else:
-            assert isinstance(function, ast.Lambda)
-            body = [function.body]
-        while body:
-            node = body.pop()
-            pattern_timeout()
-            if id(node) not in live:
-                continue
-            if isinstance(node, (*_FUNCTIONS, ast.Lambda)):
-                # Creating a deferred function still evaluates its defaults
-                # and decorators. Its uncalled body remains contextual.
-                body.extend(node.args.defaults)
-                body.extend(default for default in node.args.kw_defaults if default is not None)
-                if isinstance(node, _FUNCTIONS):
-                    body.extend(node.decorator_list)
-                    for decorator in node.decorator_list:
-                        if isinstance(decorator, (ast.Name, ast.Lambda)) and (
-                            chosen := select(decorator, scopes[id(decorator)])
-                        ):
-                            queue.append(chosen)
-                continue
-            if isinstance(node, ast.ClassDef):
-                # A class body runs immediately; its methods are deferred and
-                # are handled by the function-object rule above.
-                body.extend(node.body)
-                body.extend(node.bases)
-                body.extend(keyword.value for keyword in node.keywords)
-                body.extend(node.decorator_list)
-                continue
-            if isinstance(node, ast.If) and isinstance(node.test, ast.Constant):
-                body.extend(node.body if node.test.value else node.orelse)
-                continue
-            if isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and not node.test.value:
-                body.extend(node.orelse)
-                continue
-            if isinstance(node, ast.Call):
-                # Keep only the invoked expression. A deferred lambda inside
-                # its arguments is not established as an executed callback.
-                record_callee(node.func, bodies)
-                if isinstance(node.func, (ast.Name, ast.Lambda)):
-                    if chosen := select(node.func, scopes[id(node)]):
+            if value is None and position is not None and len(call.args) > position:
+                if not any(isinstance(argument, ast.Starred) for argument in call.args[: position + 1]):
+                    value = call.args[position]
+            if isinstance(value, ast.Name):
+                value = literals.get(id(call), {}).get(value.id)
+            values = (
+                value.elts
+                if isinstance(value, (ast.List, ast.Tuple, ast.Set))
+                else value.values
+                if isinstance(value, ast.Dict) and all(key is not None for key in value.keys)
+                else ()
+            )
+            for entry in values:
+                select(entry, scope)
+        # Whole-file scans run only for paths that need them, so resolving
+        # one constructor costs its own registrations and reachable bodies.
+        decorator_lines = {line for _, line, decorated in registered if decorated}
+        if decorator_lines:
+            for node in nodes:
+                if (
+                    isinstance(node, _FUNCTIONS)
+                    and id(node) in live
+                    and any(decorator.lineno in decorator_lines for decorator in node.decorator_list)
+                ):
+                    selected[id(node)] = node
+        for registration, _, decorated in registered:
+            if registration is not None and not decorated and registration.args:
+                select(registration.args[0], scopes.get(id(registration), id(tree)))
+
+        # Follow direct calls into unambiguous lexical function bindings. Aliases,
+        # attributes and imported implementations remain contextual observations.
+        queue: list[ast.AST] = list(selected.values())
+        if dispatched:
+            for node in nodes:
+                if isinstance(node, ast.Call) and id(node) in dispatched and id(node) in live:
+                    record_callee(node.func, configured_objects)
+                    if isinstance(node.func, ast.Name) and (chosen := select(node.func, scopes[id(node)])):
                         queue.append(chosen)
-            body.extend(ast.iter_child_nodes(node))
-    return ToolRegions(tuple(sorted(set(bodies))), tuple(sorted(set(declarations))))
+        visited: set[int] = set()
+        bodies: list[tuple[int, int]] = list(configured_objects)
+        declarations: list[tuple[int, int]] = []
+        while queue:
+            function = queue.pop()
+            if id(function) in visited:
+                continue
+            visited.add(id(function))
+            if isinstance(function, _FUNCTIONS):
+                declarations.extend(
+                    (max(0, span(decorator)[0] - 1), span(decorator)[1])
+                    for decorator in function.decorator_list
+                )
+                body: list[ast.AST] = list(function.body)
+            else:
+                assert isinstance(function, ast.Lambda)
+                body = [function.body]
+            while body:
+                node = body.pop()
+                pattern_timeout()
+                if id(node) not in live:
+                    continue
+                if isinstance(node, (*_FUNCTIONS, ast.Lambda)):
+                    # Creating a deferred function still evaluates its defaults
+                    # and decorators. Its uncalled body remains contextual.
+                    body.extend(node.args.defaults)
+                    body.extend(default for default in node.args.kw_defaults if default is not None)
+                    if isinstance(node, _FUNCTIONS):
+                        body.extend(node.decorator_list)
+                        for decorator in node.decorator_list:
+                            if isinstance(decorator, (ast.Name, ast.Lambda)) and (
+                                chosen := select(decorator, scopes[id(decorator)])
+                            ):
+                                queue.append(chosen)
+                    continue
+                if isinstance(node, ast.ClassDef):
+                    # A class body runs immediately; its methods are deferred and
+                    # are handled by the function-object rule above.
+                    body.extend(node.body)
+                    body.extend(node.bases)
+                    body.extend(keyword.value for keyword in node.keywords)
+                    body.extend(node.decorator_list)
+                    continue
+                if isinstance(node, ast.If) and isinstance(node.test, ast.Constant):
+                    body.extend(node.body if node.test.value else node.orelse)
+                    continue
+                if (
+                    isinstance(node, ast.While)
+                    and isinstance(node.test, ast.Constant)
+                    and not node.test.value
+                ):
+                    body.extend(node.orelse)
+                    continue
+                if isinstance(node, ast.Call):
+                    # Keep only the invoked expression. A deferred lambda inside
+                    # its arguments is not established as an executed callback.
+                    record_callee(node.func, bodies)
+                    if isinstance(node.func, (ast.Name, ast.Lambda)):
+                        if chosen := select(node.func, scopes[id(node)]):
+                            queue.append(chosen)
+                body.extend(ast.iter_child_nodes(node))
+        return ToolRegions(tuple(sorted(set(bodies))), tuple(sorted(set(declarations))))
+
+    if each is not None:
+        # Resolve every constructor alone against the tables built once
+        # above: separate identities must not repeat this whole-file pass.
+        for call, position in constructors:
+            each[id(call)] = resolve([(call, position)], [], set())
+    return resolve(constructors, registrations, dispatch_calls)
