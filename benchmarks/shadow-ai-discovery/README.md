@@ -215,7 +215,55 @@ uploads `runs.json`, `metrics.json`, `REPORT.md` and `compare.json` as an
 artifact. Publishing a new baseline stays a manual step: copy the scrubbed
 run into `results/<date>/` and describe what changed in this README.
 
-## Results: run of 2026-10-08
+## Results: ShadowScan after the benchmark-driven changes (2026-10-09)
+
+`results/2026-10-09/` re-runs ShadowScan alone, at the commit recorded in its
+`runs.json`, against the corpus as labeled now (839 expected facts); the other
+tools' rows are their 2026-10-08 runs, re-normalized with the fixed adapters
+and scored against the same labels. This directory is the baseline that
+`compare` and the weekly workflow use.
+
+| ShadowScan, in-scope value level | 2026-10-08 run | 2026-10-09 run |
+|---|---|---|
+| Precision | 97.9% | 99.8% |
+| Recall | 87.2% | 94.8% |
+| F1 | 92.2% | 97.2% |
+| False positives / misses | 16 / 109 | 2 / 44 |
+| MCP F1 (`mcp:sdk`, `mcp:server`) | 75% | 99% |
+| Provider F1 | 91% | 96% |
+| Positives detected, controls and near-misses flagged | 65/65, 0/10, 1/12 | 65/65, 0/10, 0/12 |
+
+What changed and how to read it:
+
+* The gains come from model identifiers and LiteLLM-style routes as provider
+  evidence, long-tail SDK, credential and manifest signatures, an `mcp-server`
+  capability for code that implements an MCP server, a narrower catalog
+  discount, and precision rules that stop lexical idioms, low-weight mentions,
+  CI job images and test-path mentions from establishing a technology. Each
+  change has unit tests, and the synthetic reproductions in
+  `tools/evaluation/benchmark_followup_corpus.json` gate them in `make
+  evaluate`.
+* These numbers are the same author's labels and the same corpus the changes
+  were driven by, so they measure fit to this corpus, not production
+  precision. The labels were audited against every tool's false positives in
+  both directions (four labeling gaps fixed, none of them removing a
+  ShadowScan miss), but a held-out corpus and an independent labeler are the
+  missing controls.
+* The two remaining false positives are model names in provider lists
+  (Cohere embeddings in Roo Code, Voyage models in browser-use's gateway
+  catalog). Of the 44 misses, 37 are providers (mostly named only by model
+  ids or routes the scanner does not read as evidence, such as Ollama, Mistral
+  and Bedrock ids in configuration or example code); the other seven are two
+  `.claude/` files that are not recognized coding-agent surfaces, the Claude
+  Agent SDK imported only from its own examples, one Python MCP server in
+  smolagents, LiteLLM in Roo Code, Roo Code's `mcp.json` locale files, and
+  one CDK Bedrock construct.
+* Timings are not comparable with the 2026-10-08 table: the ShadowScan re-run
+  used two workers, the earlier run six on four CPUs. Single-worker
+  measurements of the performance changes, with identical findings, are in the
+  CHANGELOG.
+
+## Results: run of 2026-10-08 (before the changes)
 
 `results/2026-10-08/` holds the scrubbed run manifest (`runs.json`, with every
 tool's normalized facts and mapped evidence per repository), `metrics.json`,
