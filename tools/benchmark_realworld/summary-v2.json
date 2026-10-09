@@ -1,0 +1,1959 @@
+{
+  "surfaces": {
+    "repo": {
+      "agent-bom": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 19,
+          "fp": 8,
+          "fn": 38,
+          "tn": 16,
+          "positives": 57,
+          "negatives": 24,
+          "errors": 36,
+          "recall": [
+            0.3333333333333333,
+            0.2249380607515073,
+            0.4627748841994856
+          ],
+          "specificity": [
+            0.6666666666666666,
+            0.4670631683813174,
+            0.8202780967270225
+          ],
+          "precision": 0.7037037037037037,
+          "f1": 0.4523809523809524,
+          "balanced_accuracy": 0.5,
+          "balanced_accuracy_ci": [
+            0.38377192982456143,
+            0.6129385964912281
+          ],
+          "mcc": 0.0,
+          "mcc_ci": [
+            -0.22941573387056174,
+            0.21773176328462976
+          ],
+          "balanced_accuracy_completed": 0.7864372469635628,
+          "balanced_accuracy_no_hard_negatives": 0.5514705882352942
+        },
+        "errors_by_category": {
+          "incomplete": 36
+        },
+        "strata": {
+          "ai-app": {
+            "positives": 47,
+            "detected_positives": 18,
+            "negatives": 0,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 6,
+            "detected_positives": 1,
+            "negatives": 12,
+            "false_positives": 5
+          },
+          "ordinary": {
+            "positives": 4,
+            "detected_positives": 0,
+            "negatives": 12,
+            "false_positives": 3
+          },
+          "dotfiles": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 0,
+            "false_positives": 0
+          }
+        }
+      },
+      "agentdiscover": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 42,
+          "fp": 7,
+          "fn": 15,
+          "tn": 17,
+          "positives": 57,
+          "negatives": 24,
+          "errors": 0,
+          "recall": [
+            0.7368421052631579,
+            0.6102342073651618,
+            0.8335421340202692
+          ],
+          "specificity": [
+            0.7083333333333334,
+            0.5083230633550337,
+            0.8508535180303913
+          ],
+          "precision": 0.8571428571428571,
+          "f1": 0.7924528301886793,
+          "balanced_accuracy": 0.7225877192982456,
+          "balanced_accuracy_ci": [
+            0.6129385964912281,
+            0.8267543859649122
+          ],
+          "mcc": 0.4158160176403932,
+          "mcc_ci": [
+            0.21220205318330976,
+            0.608497920381897
+          ],
+          "balanced_accuracy_completed": 0.7225877192982456,
+          "balanced_accuracy_no_hard_negatives": 0.8406862745098038
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 47,
+            "detected_positives": 37,
+            "negatives": 0,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 6,
+            "detected_positives": 3,
+            "negatives": 12,
+            "false_positives": 6
+          },
+          "ordinary": {
+            "positives": 4,
+            "detected_positives": 2,
+            "negatives": 12,
+            "false_positives": 1
+          },
+          "dotfiles": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 0,
+            "false_positives": 0
+          }
+        }
+      },
+      "ai-detector": {
+        "supported": false
+      },
+      "cisco-aibom": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 45,
+          "fp": 8,
+          "fn": 12,
+          "tn": 16,
+          "positives": 57,
+          "negatives": 24,
+          "errors": 11,
+          "recall": [
+            0.7894736842105263,
+            0.6671387891680949,
+            0.8752545169696542
+          ],
+          "specificity": [
+            0.6666666666666666,
+            0.4670631683813174,
+            0.8202780967270225
+          ],
+          "precision": 0.8490566037735849,
+          "f1": 0.8181818181818182,
+          "balanced_accuracy": 0.7280701754385965,
+          "balanced_accuracy_ci": [
+            0.6129385964912281,
+            0.8344298245614035
+          ],
+          "mcc": 0.4379500603440643,
+          "mcc_ci": [
+            0.22941573387056174,
+            0.6433217753219446
+          ],
+          "balanced_accuracy_completed": 0.826549491211841,
+          "balanced_accuracy_no_hard_negatives": 0.7769607843137255
+        },
+        "errors_by_category": {
+          "timeout": 11
+        },
+        "strata": {
+          "ai-app": {
+            "positives": 47,
+            "detected_positives": 39,
+            "negatives": 0,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 6,
+            "detected_positives": 4,
+            "negatives": 12,
+            "false_positives": 5
+          },
+          "ordinary": {
+            "positives": 4,
+            "detected_positives": 2,
+            "negatives": 12,
+            "false_positives": 3
+          },
+          "dotfiles": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 0,
+            "false_positives": 0
+          }
+        }
+      },
+      "cisco-mcp-scanner": {
+        "supported": false
+      },
+      "claw-hunter": {
+        "supported": false
+      },
+      "mcp-audit": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 28,
+          "fp": 5,
+          "fn": 29,
+          "tn": 19,
+          "positives": 57,
+          "negatives": 24,
+          "errors": 0,
+          "recall": [
+            0.49122807017543857,
+            0.3661628241840743,
+            0.6174010150238727
+          ],
+          "specificity": [
+            0.7916666666666666,
+            0.5952954674681133,
+            0.9075517464714814
+          ],
+          "precision": 0.8484848484848485,
+          "f1": 0.6222222222222222,
+          "balanced_accuracy": 0.6414473684210527,
+          "balanced_accuracy_ci": [
+            0.5296052631578947,
+            0.7423245614035088
+          ],
+          "mcc": 0.2628998435739287,
+          "mcc_ci": [
+            0.06592685147442633,
+            0.45530731799525687
+          ],
+          "balanced_accuracy_completed": 0.6414473684210527,
+          "balanced_accuracy_no_hard_negatives": 0.588235294117647
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 47,
+            "detected_positives": 23,
+            "negatives": 0,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 6,
+            "detected_positives": 2,
+            "negatives": 12,
+            "false_positives": 1
+          },
+          "ordinary": {
+            "positives": 4,
+            "detected_positives": 3,
+            "negatives": 12,
+            "false_positives": 4
+          },
+          "dotfiles": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 0,
+            "false_positives": 0
+          }
+        }
+      },
+      "safedep-vet": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 20,
+          "fp": 0,
+          "fn": 37,
+          "tn": 24,
+          "positives": 57,
+          "negatives": 24,
+          "errors": 0,
+          "recall": [
+            0.3508771929824561,
+            0.2400042200916009,
+            0.480581046443498
+          ],
+          "specificity": [
+            1.0,
+            0.8620237953250198,
+            1.0
+          ],
+          "precision": 1.0,
+          "f1": 0.5194805194805194,
+          "balanced_accuracy": 0.6754385964912281,
+          "balanced_accuracy_ci": [
+            0.6140350877192983,
+            0.7368421052631579
+          ],
+          "mcc": 0.3715508621180127,
+          "mcc_ci": [
+            0.28371703515501445,
+            0.4588314677411235
+          ],
+          "balanced_accuracy_completed": 0.6754385964912281,
+          "balanced_accuracy_no_hard_negatives": 0.6764705882352942
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 47,
+            "detected_positives": 16,
+            "negatives": 0,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 6,
+            "detected_positives": 2,
+            "negatives": 12,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 4,
+            "detected_positives": 2,
+            "negatives": 12,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 0,
+            "false_positives": 0
+          }
+        }
+      },
+      "shadow-mcp": {
+        "supported": false
+      },
+      "shadowscan-dedicated": {
+        "supported": false
+      },
+      "shadowscan": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 26,
+          "fp": 9,
+          "fn": 31,
+          "tn": 15,
+          "positives": 57,
+          "negatives": 24,
+          "errors": 38,
+          "recall": [
+            0.45614035087719296,
+            0.3337260558309283,
+            0.5840931402088065
+          ],
+          "specificity": [
+            0.625,
+            0.42709962442674276,
+            0.7884063244045122
+          ],
+          "precision": 0.7428571428571429,
+          "f1": 0.5652173913043478,
+          "balanced_accuracy": 0.5405701754385965,
+          "balanced_accuracy_ci": [
+            0.4155701754385965,
+            0.6557017543859649
+          ],
+          "mcc": 0.07479403996652773,
+          "mcc_ci": [
+            -0.1435236983141478,
+            0.2884299752006152
+          ],
+          "balanced_accuracy_completed": 0.9411764705882353,
+          "balanced_accuracy_no_hard_negatives": 0.5073529411764706
+        },
+        "errors_by_category": {
+          "incomplete": 38
+        },
+        "strata": {
+          "ai-app": {
+            "positives": 47,
+            "detected_positives": 19,
+            "negatives": 0,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 6,
+            "detected_positives": 4,
+            "negatives": 12,
+            "false_positives": 4
+          },
+          "ordinary": {
+            "positives": 4,
+            "detected_positives": 3,
+            "negatives": 12,
+            "false_positives": 5
+          },
+          "dotfiles": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 0,
+            "false_positives": 0
+          }
+        }
+      },
+      "snyk-agent-scan": {
+        "supported": false
+      }
+    },
+    "endpoint": {
+      "agent-bom": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 4,
+          "fp": 12,
+          "fn": 3,
+          "tn": 62,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            0.5714285714285714,
+            0.2504583645276572,
+            0.8417801447485302
+          ],
+          "specificity": [
+            0.8378378378378378,
+            0.7376018659372965,
+            0.9047293642002805
+          ],
+          "precision": 0.25,
+          "f1": 0.34782608695652173,
+          "balanced_accuracy": 0.7046332046332047,
+          "balanced_accuracy_ci": [
+            0.5144787644787645,
+            0.8745173745173744
+          ],
+          "mcc": 0.2888379881999309,
+          "mcc_ci": [
+            0.027674379083812095,
+            0.5320378116865689
+          ],
+          "balanced_accuracy_completed": 0.7046332046332047,
+          "balanced_accuracy_no_hard_negatives": 0.6919642857142857
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 1,
+            "negatives": 27,
+            "false_positives": 7
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 3,
+            "negatives": 34,
+            "false_positives": 5
+          }
+        }
+      },
+      "agentdiscover": {
+        "supported": false
+      },
+      "ai-detector": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 2,
+          "fp": 5,
+          "fn": 5,
+          "tn": 69,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            0.2857142857142857,
+            0.08221892400405678,
+            0.6410655481673808
+          ],
+          "specificity": [
+            0.9324324324324325,
+            0.8513880607414608,
+            0.9707959138346378
+          ],
+          "precision": 0.2857142857142857,
+          "f1": 0.2857142857142857,
+          "balanced_accuracy": 0.609073359073359,
+          "balanced_accuracy_ci": [
+            0.4527027027027027,
+            0.778957528957529
+          ],
+          "mcc": 0.21814671814671815,
+          "mcc_ci": [
+            -0.08699176724016801,
+            0.5382675785894573
+          ],
+          "balanced_accuracy_completed": 0.609073359073359,
+          "balanced_accuracy_no_hard_negatives": 0.6037946428571428
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 0,
+            "negatives": 27,
+            "false_positives": 3
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 2,
+            "negatives": 34,
+            "false_positives": 2
+          }
+        }
+      },
+      "cisco-aibom": {
+        "supported": false
+      },
+      "cisco-mcp-scanner": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 0,
+          "fp": 0,
+          "fn": 7,
+          "tn": 74,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            0.0,
+            5.551115123125783e-17,
+            0.35433043506668743
+          ],
+          "specificity": [
+            1.0,
+            0.950650220603614,
+            1.0
+          ],
+          "precision": null,
+          "f1": 0.0,
+          "balanced_accuracy": 0.5,
+          "balanced_accuracy_ci": [
+            0.5,
+            0.5
+          ],
+          "mcc": null,
+          "mcc_ci": [
+            null,
+            null
+          ],
+          "balanced_accuracy_completed": 0.5,
+          "balanced_accuracy_no_hard_negatives": 0.5
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 0,
+            "negatives": 27,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 0,
+            "negatives": 34,
+            "false_positives": 0
+          }
+        }
+      },
+      "claw-hunter": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 0,
+          "fp": 0,
+          "fn": 7,
+          "tn": 74,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            0.0,
+            5.551115123125783e-17,
+            0.35433043506668743
+          ],
+          "specificity": [
+            1.0,
+            0.950650220603614,
+            1.0
+          ],
+          "precision": null,
+          "f1": 0.0,
+          "balanced_accuracy": 0.5,
+          "balanced_accuracy_ci": [
+            0.5,
+            0.5
+          ],
+          "mcc": null,
+          "mcc_ci": [
+            null,
+            null
+          ],
+          "balanced_accuracy_completed": 0.5,
+          "balanced_accuracy_no_hard_negatives": 0.5
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 0,
+            "negatives": 27,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 0,
+            "negatives": 34,
+            "false_positives": 0
+          }
+        }
+      },
+      "mcp-audit": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 0,
+          "fp": 0,
+          "fn": 7,
+          "tn": 74,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            0.0,
+            5.551115123125783e-17,
+            0.35433043506668743
+          ],
+          "specificity": [
+            1.0,
+            0.950650220603614,
+            1.0
+          ],
+          "precision": null,
+          "f1": 0.0,
+          "balanced_accuracy": 0.5,
+          "balanced_accuracy_ci": [
+            0.5,
+            0.5
+          ],
+          "mcc": null,
+          "mcc_ci": [
+            null,
+            null
+          ],
+          "balanced_accuracy_completed": 0.5,
+          "balanced_accuracy_no_hard_negatives": 0.5
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 0,
+            "negatives": 27,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 0,
+            "negatives": 34,
+            "false_positives": 0
+          }
+        }
+      },
+      "safedep-vet": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 7,
+          "fp": 16,
+          "fn": 0,
+          "tn": 58,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            1.0,
+            0.6456695649333126,
+            1.0
+          ],
+          "specificity": [
+            0.7837837837837838,
+            0.6772627498746149,
+            0.8622954834409498
+          ],
+          "precision": 0.30434782608695654,
+          "f1": 0.4666666666666667,
+          "balanced_accuracy": 0.8918918918918919,
+          "balanced_accuracy_ci": [
+            0.8445945945945945,
+            0.9324324324324325
+          ],
+          "mcc": 0.4884085285053935,
+          "mcc_ci": [
+            0.40101223274460196,
+            0.6199117199573988
+          ],
+          "balanced_accuracy_completed": 0.8918918918918919,
+          "balanced_accuracy_no_hard_negatives": 0.8828125
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 1,
+            "negatives": 27,
+            "false_positives": 9
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 1
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 6,
+            "negatives": 34,
+            "false_positives": 6
+          }
+        }
+      },
+      "shadow-mcp": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 0,
+          "fp": 0,
+          "fn": 7,
+          "tn": 74,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            0.0,
+            5.551115123125783e-17,
+            0.35433043506668743
+          ],
+          "specificity": [
+            1.0,
+            0.950650220603614,
+            1.0
+          ],
+          "precision": null,
+          "f1": 0.0,
+          "balanced_accuracy": 0.5,
+          "balanced_accuracy_ci": [
+            0.5,
+            0.5
+          ],
+          "mcc": null,
+          "mcc_ci": [
+            null,
+            null
+          ],
+          "balanced_accuracy_completed": 0.5,
+          "balanced_accuracy_no_hard_negatives": 0.5
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 0,
+            "negatives": 27,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 0,
+            "negatives": 34,
+            "false_positives": 0
+          }
+        }
+      },
+      "shadowscan-dedicated": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 7,
+          "fp": 0,
+          "fn": 0,
+          "tn": 74,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            1.0,
+            0.6456695649333126,
+            1.0
+          ],
+          "specificity": [
+            1.0,
+            0.950650220603614,
+            1.0
+          ],
+          "precision": 1.0,
+          "f1": 1.0,
+          "balanced_accuracy": 1.0,
+          "balanced_accuracy_ci": [
+            1.0,
+            1.0
+          ],
+          "mcc": 1.0,
+          "mcc_ci": [
+            1.0,
+            1.0
+          ],
+          "balanced_accuracy_completed": 1.0,
+          "balanced_accuracy_no_hard_negatives": 1.0
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 1,
+            "negatives": 27,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 6,
+            "negatives": 34,
+            "false_positives": 0
+          }
+        }
+      },
+      "shadowscan": {
+        "supported": false
+      },
+      "snyk-agent-scan": {
+        "supported": true,
+        "cell": {
+          "n": 81,
+          "tp": 3,
+          "fp": 1,
+          "fn": 4,
+          "tn": 73,
+          "positives": 7,
+          "negatives": 74,
+          "errors": 0,
+          "recall": [
+            0.42857142857142855,
+            0.15821985525146975,
+            0.7495416354723428
+          ],
+          "specificity": [
+            0.9864864864864865,
+            0.9273464348015678,
+            0.9976105365965432
+          ],
+          "precision": 0.75,
+          "f1": 0.5454545454545454,
+          "balanced_accuracy": 0.7075289575289575,
+          "balanced_accuracy_ci": [
+            0.5511583011583011,
+            0.915057915057915
+          ],
+          "mcc": 0.5382675785894573,
+          "mcc_ci": [
+            0.1723369655646452,
+            0.8339596643750292
+          ],
+          "balanced_accuracy_completed": 0.7075289575289575,
+          "balanced_accuracy_no_hard_negatives": 0.7064732142857143
+        },
+        "errors_by_category": {},
+        "strata": {
+          "ai-app": {
+            "positives": 1,
+            "detected_positives": 1,
+            "negatives": 27,
+            "false_positives": 0
+          },
+          "hard-negative": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 10,
+            "false_positives": 0
+          },
+          "ordinary": {
+            "positives": 0,
+            "detected_positives": 0,
+            "negatives": 3,
+            "false_positives": 0
+          },
+          "dotfiles": {
+            "positives": 6,
+            "detected_positives": 2,
+            "negatives": 34,
+            "false_positives": 1
+          }
+        }
+      }
+    }
+  },
+  "composite": {
+    "agent-bom": {
+      "surfaces": [
+        "repo",
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 0.6023166023166023
+    },
+    "agentdiscover": {
+      "surfaces": [
+        "repo"
+      ],
+      "undefined_on": [],
+      "value": 0.7225877192982456
+    },
+    "ai-detector": {
+      "surfaces": [
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 0.609073359073359
+    },
+    "cisco-aibom": {
+      "surfaces": [
+        "repo"
+      ],
+      "undefined_on": [],
+      "value": 0.7280701754385965
+    },
+    "cisco-mcp-scanner": {
+      "surfaces": [
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 0.5
+    },
+    "claw-hunter": {
+      "surfaces": [
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 0.5
+    },
+    "mcp-audit": {
+      "surfaces": [
+        "repo",
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 0.5707236842105263
+    },
+    "safedep-vet": {
+      "surfaces": [
+        "repo",
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 0.7836652441915599
+    },
+    "shadow-mcp": {
+      "surfaces": [
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 0.5
+    },
+    "shadowscan-dedicated": {
+      "surfaces": [
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 1.0
+    },
+    "shadowscan": {
+      "surfaces": [
+        "repo"
+      ],
+      "undefined_on": [],
+      "value": 0.5405701754385965
+    },
+    "snyk-agent-scan": {
+      "surfaces": [
+        "endpoint"
+      ],
+      "undefined_on": [],
+      "value": 0.7075289575289575
+    }
+  },
+  "estate": {
+    "agent-bom": 0.6023166023166023,
+    "agentdiscover": 0.6112938596491229,
+    "ai-detector": 0.5545366795366795,
+    "cisco-aibom": 0.6140350877192983,
+    "cisco-mcp-scanner": 0.5,
+    "claw-hunter": 0.5,
+    "mcp-audit": 0.5707236842105263,
+    "safedep-vet": 0.7836652441915599,
+    "shadow-mcp": 0.5,
+    "shadowscan-dedicated": 0.75,
+    "shadowscan": 0.5202850877192983,
+    "snyk-agent-scan": 0.6037644787644787
+  },
+  "paired": {
+    "repo": {
+      "agent-bom": {
+        "n": 81,
+        "reference_only_right": 17,
+        "tool_only_right": 11,
+        "mcnemar_p": 0.34492845088243484
+      },
+      "agentdiscover": {
+        "n": 81,
+        "reference_only_right": 16,
+        "tool_only_right": 34,
+        "mcnemar_p": 0.015346677832630107
+      },
+      "cisco-aibom": {
+        "n": 81,
+        "reference_only_right": 9,
+        "tool_only_right": 29,
+        "mcnemar_p": 0.0016580525261815637
+      },
+      "mcp-audit": {
+        "n": 81,
+        "reference_only_right": 19,
+        "tool_only_right": 25,
+        "mcnemar_p": 0.4513808323961257
+      },
+      "safedep-vet": {
+        "n": 81,
+        "reference_only_right": 19,
+        "tool_only_right": 22,
+        "mcnemar_p": 0.755228657504631
+      }
+    },
+    "endpoint": {}
+  },
+  "held_out": {
+    "repo": {
+      "agent-bom": {
+        "n": 42,
+        "tp": 6,
+        "fp": 4,
+        "fn": 22,
+        "tn": 10,
+        "positives": 28,
+        "negatives": 14,
+        "errors": 23,
+        "recall": [
+          0.21428571428571427,
+          0.1021246033289788,
+          0.3953858565372187
+        ],
+        "specificity": [
+          0.7142857142857143,
+          0.4535091567010681,
+          0.8827862135542308
+        ],
+        "precision": 0.6,
+        "f1": 0.3157894736842105,
+        "balanced_accuracy": 0.4642857142857143,
+        "balanced_accuracy_ci": [
+          0.3214285714285714,
+          0.6071428571428571
+        ],
+        "mcc": -0.07905694150420949,
+        "mcc_ci": [
+          -0.4005963724010764,
+          0.21437323142813605
+        ],
+        "balanced_accuracy_completed": 0.8295454545454546,
+        "balanced_accuracy_no_hard_negatives": 0.45416666666666666
+      },
+      "agentdiscover": {
+        "n": 42,
+        "tp": 21,
+        "fp": 2,
+        "fn": 7,
+        "tn": 12,
+        "positives": 28,
+        "negatives": 14,
+        "errors": 0,
+        "recall": [
+          0.75,
+          0.5664432968100104,
+          0.8732350508070668
+        ],
+        "specificity": [
+          0.8571428571428571,
+          0.6005862050302965,
+          0.9599060787285351
+        ],
+        "precision": 0.9130434782608695,
+        "f1": 0.8235294117647058,
+        "balanced_accuracy": 0.8035714285714286,
+        "balanced_accuracy_ci": [
+          0.6785714285714286,
+          0.9107142857142857
+        ],
+        "mcc": 0.5750335777679776,
+        "mcc_ci": [
+          0.3429971702850177,
+          0.7973815320737668
+        ],
+        "balanced_accuracy_completed": 0.8035714285714286,
+        "balanced_accuracy_no_hard_negatives": 0.8958333333333333
+      },
+      "ai-detector": null,
+      "cisco-aibom": {
+        "n": 42,
+        "tp": 20,
+        "fp": 4,
+        "fn": 8,
+        "tn": 10,
+        "positives": 28,
+        "negatives": 14,
+        "errors": 6,
+        "recall": [
+          0.7142857142857143,
+          0.5294071156670428,
+          0.8474600394333092
+        ],
+        "specificity": [
+          0.7142857142857143,
+          0.4535091567010681,
+          0.8827862135542308
+        ],
+        "precision": 0.8333333333333334,
+        "f1": 0.7692307692307693,
+        "balanced_accuracy": 0.7142857142857143,
+        "balanced_accuracy_ci": [
+          0.5714285714285714,
+          0.8571428571428572
+        ],
+        "mcc": 0.408248290463863,
+        "mcc_ci": [
+          0.11180339887498948,
+          0.6765100914917384
+        ],
+        "balanced_accuracy_completed": 0.8116883116883117,
+        "balanced_accuracy_no_hard_negatives": 0.725
+      },
+      "cisco-mcp-scanner": null,
+      "claw-hunter": null,
+      "mcp-audit": {
+        "n": 42,
+        "tp": 14,
+        "fp": 4,
+        "fn": 14,
+        "tn": 10,
+        "positives": 28,
+        "negatives": 14,
+        "errors": 0,
+        "recall": [
+          0.5,
+          0.32633127457293465,
+          0.6736687254270654
+        ],
+        "specificity": [
+          0.7142857142857143,
+          0.4535091567010681,
+          0.8827862135542308
+        ],
+        "precision": 0.7777777777777778,
+        "f1": 0.6086956521739131,
+        "balanced_accuracy": 0.6071428571428572,
+        "balanced_accuracy_ci": [
+          0.4642857142857143,
+          0.75
+        ],
+        "mcc": 0.2041241452319315,
+        "mcc_ci": [
+          -0.10206207261596575,
+          0.4735570640442169
+        ],
+        "balanced_accuracy_completed": 0.6071428571428572,
+        "balanced_accuracy_no_hard_negatives": 0.55
+      },
+      "safedep-vet": {
+        "n": 42,
+        "tp": 11,
+        "fp": 0,
+        "fn": 17,
+        "tn": 14,
+        "positives": 28,
+        "negatives": 14,
+        "errors": 0,
+        "recall": [
+          0.39285714285714285,
+          0.2356568654157959,
+          0.5759095570340281
+        ],
+        "specificity": [
+          1.0,
+          0.7846891972623643,
+          1.0
+        ],
+        "precision": 1.0,
+        "f1": 0.5641025641025641,
+        "balanced_accuracy": 0.6964285714285714,
+        "balanced_accuracy_ci": [
+          0.6071428571428571,
+          0.7857142857142857
+        ],
+        "mcc": 0.421211769587116,
+        "mcc_ci": [
+          0.28867513459481287,
+          0.5547001962252291
+        ],
+        "balanced_accuracy_completed": 0.6964285714285714,
+        "balanced_accuracy_no_hard_negatives": 0.6875
+      },
+      "shadow-mcp": null,
+      "shadowscan-dedicated": null,
+      "shadowscan": {
+        "n": 42,
+        "tp": 10,
+        "fp": 5,
+        "fn": 18,
+        "tn": 9,
+        "positives": 28,
+        "negatives": 14,
+        "errors": 23,
+        "recall": [
+          0.35714285714285715,
+          0.2070582950773768,
+          0.5416969348557219
+        ],
+        "specificity": [
+          0.6428571428571429,
+          0.38764423103907397,
+          0.8365526824644587
+        ],
+        "precision": 0.6666666666666666,
+        "f1": 0.46511627906976744,
+        "balanced_accuracy": 0.5,
+        "balanced_accuracy_ci": [
+          0.3392857142857143,
+          0.6428571428571429
+        ],
+        "mcc": 0.0,
+        "mcc_ci": [
+          -0.33541019662496846,
+          0.2857142857142857
+        ],
+        "balanced_accuracy_completed": 1.0,
+        "balanced_accuracy_no_hard_negatives": 0.39583333333333337
+      },
+      "snyk-agent-scan": null
+    },
+    "endpoint": {
+      "agent-bom": {
+        "n": 40,
+        "tp": 3,
+        "fp": 5,
+        "fn": 3,
+        "tn": 29,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          0.5,
+          0.1876163064826506,
+          0.8123836935173494
+        ],
+        "specificity": [
+          0.8529411764705882,
+          0.6987194350454783,
+          0.9355055855521753
+        ],
+        "precision": 0.375,
+        "f1": 0.42857142857142855,
+        "balanced_accuracy": 0.6764705882352942,
+        "balanced_accuracy_ci": [
+          0.48039215686274506,
+          0.8725490196078431
+        ],
+        "mcc": 0.3150630189063022,
+        "mcc_ci": [
+          -0.03500700210070024,
+          0.6651330399133046
+        ],
+        "balanced_accuracy_completed": 0.6764705882352942,
+        "balanced_accuracy_no_hard_negatives": 0.6764705882352942
+      },
+      "agentdiscover": null,
+      "ai-detector": {
+        "n": 40,
+        "tp": 2,
+        "fp": 2,
+        "fn": 4,
+        "tn": 32,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          0.3333333333333333,
+          0.09677141110578041,
+          0.700006684861608
+        ],
+        "specificity": [
+          0.9411764705882353,
+          0.80906393095719,
+          0.9837173447898772
+        ],
+        "precision": 0.5,
+        "f1": 0.4,
+        "balanced_accuracy": 0.6372549019607843,
+        "balanced_accuracy_ci": [
+          0.45588235294117646,
+          0.8186274509803921
+        ],
+        "mcc": 0.32673201960653564,
+        "mcc_ci": [
+          -0.11961783342433499,
+          0.7278401572166631
+        ],
+        "balanced_accuracy_completed": 0.6372549019607843,
+        "balanced_accuracy_no_hard_negatives": 0.6372549019607843
+      },
+      "cisco-aibom": null,
+      "cisco-mcp-scanner": {
+        "n": 40,
+        "tp": 0,
+        "fp": 0,
+        "fn": 6,
+        "tn": 34,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          0.0,
+          2.7755575615628914e-17,
+          0.3903342879021653
+        ],
+        "specificity": [
+          1.0,
+          0.8984854458466761,
+          0.9999999999999999
+        ],
+        "precision": null,
+        "f1": 0.0,
+        "balanced_accuracy": 0.5,
+        "balanced_accuracy_ci": [
+          0.5,
+          0.5
+        ],
+        "mcc": null,
+        "mcc_ci": [
+          null,
+          null
+        ],
+        "balanced_accuracy_completed": 0.5,
+        "balanced_accuracy_no_hard_negatives": 0.5
+      },
+      "claw-hunter": {
+        "n": 40,
+        "tp": 0,
+        "fp": 0,
+        "fn": 6,
+        "tn": 34,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          0.0,
+          2.7755575615628914e-17,
+          0.3903342879021653
+        ],
+        "specificity": [
+          1.0,
+          0.8984854458466761,
+          0.9999999999999999
+        ],
+        "precision": null,
+        "f1": 0.0,
+        "balanced_accuracy": 0.5,
+        "balanced_accuracy_ci": [
+          0.5,
+          0.5
+        ],
+        "mcc": null,
+        "mcc_ci": [
+          null,
+          null
+        ],
+        "balanced_accuracy_completed": 0.5,
+        "balanced_accuracy_no_hard_negatives": 0.5
+      },
+      "mcp-audit": {
+        "n": 40,
+        "tp": 0,
+        "fp": 0,
+        "fn": 6,
+        "tn": 34,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          0.0,
+          2.7755575615628914e-17,
+          0.3903342879021653
+        ],
+        "specificity": [
+          1.0,
+          0.8984854458466761,
+          0.9999999999999999
+        ],
+        "precision": null,
+        "f1": 0.0,
+        "balanced_accuracy": 0.5,
+        "balanced_accuracy_ci": [
+          0.5,
+          0.5
+        ],
+        "mcc": null,
+        "mcc_ci": [
+          null,
+          null
+        ],
+        "balanced_accuracy_completed": 0.5,
+        "balanced_accuracy_no_hard_negatives": 0.5
+      },
+      "safedep-vet": {
+        "n": 40,
+        "tp": 6,
+        "fp": 6,
+        "fn": 0,
+        "tn": 28,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          1.0,
+          0.6096657120978346,
+          1.0
+        ],
+        "specificity": [
+          0.8235294117647058,
+          0.6648626260015724,
+          0.9165103095462768
+        ],
+        "precision": 0.5,
+        "f1": 0.6666666666666666,
+        "balanced_accuracy": 0.9117647058823529,
+        "balanced_accuracy_ci": [
+          0.8529411764705883,
+          0.9705882352941176
+        ],
+        "mcc": 0.641688947919748,
+        "mcc_ci": [
+          0.4886249331128279,
+          0.8401680504168059
+        ],
+        "balanced_accuracy_completed": 0.9117647058823529,
+        "balanced_accuracy_no_hard_negatives": 0.9117647058823529
+      },
+      "shadow-mcp": {
+        "n": 40,
+        "tp": 0,
+        "fp": 0,
+        "fn": 6,
+        "tn": 34,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          0.0,
+          2.7755575615628914e-17,
+          0.3903342879021653
+        ],
+        "specificity": [
+          1.0,
+          0.8984854458466761,
+          0.9999999999999999
+        ],
+        "precision": null,
+        "f1": 0.0,
+        "balanced_accuracy": 0.5,
+        "balanced_accuracy_ci": [
+          0.5,
+          0.5
+        ],
+        "mcc": null,
+        "mcc_ci": [
+          null,
+          null
+        ],
+        "balanced_accuracy_completed": 0.5,
+        "balanced_accuracy_no_hard_negatives": 0.5
+      },
+      "shadowscan-dedicated": {
+        "n": 40,
+        "tp": 6,
+        "fp": 0,
+        "fn": 0,
+        "tn": 34,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          1.0,
+          0.6096657120978346,
+          1.0
+        ],
+        "specificity": [
+          1.0,
+          0.8984854458466761,
+          0.9999999999999999
+        ],
+        "precision": 1.0,
+        "f1": 1.0,
+        "balanced_accuracy": 1.0,
+        "balanced_accuracy_ci": [
+          1.0,
+          1.0
+        ],
+        "mcc": 1.0,
+        "mcc_ci": [
+          1.0,
+          1.0
+        ],
+        "balanced_accuracy_completed": 1.0,
+        "balanced_accuracy_no_hard_negatives": 1.0
+      },
+      "shadowscan": null,
+      "snyk-agent-scan": {
+        "n": 40,
+        "tp": 2,
+        "fp": 1,
+        "fn": 4,
+        "tn": 33,
+        "positives": 6,
+        "negatives": 34,
+        "errors": 0,
+        "recall": [
+          0.3333333333333333,
+          0.09677141110578041,
+          0.700006684861608
+        ],
+        "specificity": [
+          0.9705882352941176,
+          0.8508442670731406,
+          0.9947890937237309
+        ],
+        "precision": 0.6666666666666666,
+        "f1": 0.4444444444444444,
+        "balanced_accuracy": 0.6519607843137255,
+        "balanced_accuracy_ci": [
+          0.4852941176470588,
+          0.8333333333333333
+        ],
+        "mcc": 0.4120169817949316,
+        "mcc_ci": [
+          -0.06726727939963124,
+          0.7934920476158722
+        ],
+        "balanced_accuracy_completed": 0.6519607843137255,
+        "balanced_accuracy_no_hard_negatives": 0.6519607843137255
+      }
+    }
+  },
+  "extras": {
+    "tree_diagnostic": {
+      "shadowscan": {
+        "n": 41,
+        "tp": 0,
+        "fp": 34,
+        "fn": 1,
+        "tn": 6,
+        "positives": 1,
+        "negatives": 40,
+        "errors": 17,
+        "recall": [
+          0.0,
+          0.0,
+          0.7934506856227626
+        ],
+        "specificity": [
+          0.15,
+          0.07061187717320358,
+          0.2907232436648971
+        ],
+        "precision": 0.0,
+        "f1": 0.0,
+        "balanced_accuracy": 0.075,
+        "balanced_accuracy_ci": [
+          0.025,
+          0.1375
+        ],
+        "mcc": -0.3484660262185848,
+        "mcc_ci": [
+          -0.5627314338711377,
+          -0.24579802006254378
+        ],
+        "balanced_accuracy_completed": null,
+        "balanced_accuracy_no_hard_negatives": 0.03333333333333333
+      },
+      "cisco-aibom": {
+        "n": 41,
+        "tp": 0,
+        "fp": 34,
+        "fn": 1,
+        "tn": 6,
+        "positives": 1,
+        "negatives": 40,
+        "errors": 5,
+        "recall": [
+          0.0,
+          0.0,
+          0.7934506856227626
+        ],
+        "specificity": [
+          0.15,
+          0.07061187717320358,
+          0.2907232436648971
+        ],
+        "precision": 0.0,
+        "f1": 0.0,
+        "balanced_accuracy": 0.075,
+        "balanced_accuracy_ci": [
+          0.025,
+          0.1375
+        ],
+        "mcc": -0.3484660262185848,
+        "mcc_ci": [
+          -0.5627314338711377,
+          -0.26111648393354675
+        ],
+        "balanced_accuracy_completed": null,
+        "balanced_accuracy_no_hard_negatives": 0.03333333333333333
+      },
+      "agentdiscover": {
+        "n": 41,
+        "tp": 1,
+        "fp": 26,
+        "fn": 0,
+        "tn": 14,
+        "positives": 1,
+        "negatives": 40,
+        "errors": 0,
+        "recall": [
+          1.0,
+          0.20654931437723745,
+          1.0
+        ],
+        "specificity": [
+          0.35,
+          0.2213452887317629,
+          0.5049411916274231
+        ],
+        "precision": 0.037037037037037035,
+        "f1": 0.07142857142857142,
+        "balanced_accuracy": 0.675,
+        "balanced_accuracy_ci": [
+          0.6,
+          0.75
+        ],
+        "mcc": 0.1138550085106622,
+        "mcc_ci": [
+          0.0778498944161523,
+          0.1543033499620919
+        ],
+        "balanced_accuracy_completed": 0.675,
+        "balanced_accuracy_no_hard_negatives": 0.65
+      }
+    },
+    "determinism": {
+      "repo_cases": 41,
+      "differences": [
+        {
+          "case": "rw-19-mcpconfig:repo",
+          "published": "error/False/0",
+          "dedicated": "ok/True/1",
+          "published_note": "incomplete scan (exit 3)",
+          "dedicated_note": "framework-usage"
+        }
+      ]
+    },
+    "sensitivity": {
+      "tools": {
+        "agent-bom": {
+          "status_changed": [],
+          "cells": {
+            "repo": {
+              "n": 81,
+              "tp": 19,
+              "fp": 8,
+              "fn": 38,
+              "tn": 16,
+              "positives": 57,
+              "negatives": 24,
+              "errors": 36,
+              "recall": [
+                0.3333333333333333,
+                0.2249380607515073,
+                0.4627748841994856
+              ],
+              "specificity": [
+                0.6666666666666666,
+                0.4670631683813174,
+                0.8202780967270225
+              ],
+              "precision": 0.7037037037037037,
+              "f1": 0.4523809523809524,
+              "balanced_accuracy": 0.5,
+              "balanced_accuracy_ci": [
+                0.381578947368421,
+                0.6096491228070176
+              ],
+              "mcc": 0.0,
+              "mcc_ci": [
+                -0.21507784868735744,
+                0.21387718780597065
+              ],
+              "balanced_accuracy_completed": 0.7864372469635628,
+              "balanced_accuracy_no_hard_negatives": 0.5514705882352942
+            },
+            "endpoint": {
+              "n": 81,
+              "tp": 4,
+              "fp": 12,
+              "fn": 3,
+              "tn": 62,
+              "positives": 7,
+              "negatives": 74,
+              "errors": 0,
+              "recall": [
+                0.5714285714285714,
+                0.2504583645276572,
+                0.8417801447485302
+              ],
+              "specificity": [
+                0.8378378378378378,
+                0.7376018659372965,
+                0.9047293642002805
+              ],
+              "precision": 0.25,
+              "f1": 0.34782608695652173,
+              "balanced_accuracy": 0.7046332046332047,
+              "balanced_accuracy_ci": [
+                0.5106177606177607,
+                0.8745173745173744
+              ],
+              "mcc": 0.2888379881999309,
+              "mcc_ci": [
+                0.018138385629001975,
+                0.5523962896105147
+              ],
+              "balanced_accuracy_completed": 0.7046332046332047,
+              "balanced_accuracy_no_hard_negatives": 0.6919642857142857
+            }
+          }
+        },
+        "cisco-aibom": {
+          "status_changed": [],
+          "cells": {
+            "repo": {
+              "n": 81,
+              "tp": 45,
+              "fp": 8,
+              "fn": 12,
+              "tn": 16,
+              "positives": 57,
+              "negatives": 24,
+              "errors": 11,
+              "recall": [
+                0.7894736842105263,
+                0.6671387891680949,
+                0.8752545169696542
+              ],
+              "specificity": [
+                0.6666666666666666,
+                0.4670631683813174,
+                0.8202780967270225
+              ],
+              "precision": 0.8490566037735849,
+              "f1": 0.8181818181818182,
+              "balanced_accuracy": 0.7280701754385965,
+              "balanced_accuracy_ci": [
+                0.6096491228070176,
+                0.831140350877193
+              ],
+              "mcc": 0.4379500603440643,
+              "mcc_ci": [
+                0.23017357832946575,
+                0.6433217753219446
+              ],
+              "balanced_accuracy_completed": 0.826549491211841,
+              "balanced_accuracy_no_hard_negatives": 0.7769607843137255
+            }
+          }
+        },
+        "shadowscan": {
+          "status_changed": [],
+          "cells": {
+            "repo": {
+              "n": 81,
+              "tp": 26,
+              "fp": 9,
+              "fn": 31,
+              "tn": 15,
+              "positives": 57,
+              "negatives": 24,
+              "errors": 38,
+              "recall": [
+                0.45614035087719296,
+                0.3337260558309283,
+                0.5840931402088065
+              ],
+              "specificity": [
+                0.625,
+                0.42709962442674276,
+                0.7884063244045122
+              ],
+              "precision": 0.7428571428571429,
+              "f1": 0.5652173913043478,
+              "balanced_accuracy": 0.5405701754385965,
+              "balanced_accuracy_ci": [
+                0.41885964912280704,
+                0.6557017543859649
+              ],
+              "mcc": 0.07479403996652773,
+              "mcc_ci": [
+                -0.1435236983141478,
+                0.2867696673382022
+              ],
+              "balanced_accuracy_completed": 0.9411764705882353,
+              "balanced_accuracy_no_hard_negatives": 0.5073529411764706
+            }
+          }
+        }
+      },
+      "cases_rerun": 90
+    },
+    "labels": {
+      "text": "Three blinded labelers (B2, C2, D2) labelled the 43 repository candidates added in v2. The v1 labels stand unchanged for the 41 earlier repositories. Unanimous: 40. Disagreements, each adjudicated by reading the cited lines: 3. Fleiss' kappa, three-way labels: 0.91; positive versus none: 1.00. Pairwise Cohen's kappa: B2-C2 0.92, B2-D2 0.89, C2-D2 0.93. Endpoint entries (40) are labelled by the path rule (protocol section 6), so no labeler is involved. Labels are model-based, not human review.\n"
+    },
+    "rerun_plan": {
+      "agent-bom": 39,
+      "agentdiscover": 0,
+      "ai-detector": 0,
+      "cisco-aibom": 11,
+      "cisco-mcp-scanner": 0,
+      "claw-hunter": 0,
+      "mcp-audit": 0,
+      "safedep-vet": 0,
+      "shadow-mcp": 0,
+      "shadowscan-dedicated": 0,
+      "shadowscan": 40,
+      "snyk-agent-scan": 0
+    }
+  },
+  "manifest": {
+    "entries": 124,
+    "version": 2
+  }
+}

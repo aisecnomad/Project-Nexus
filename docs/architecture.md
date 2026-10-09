@@ -19,7 +19,7 @@
                                    │                    │  reconcile with Inventory (shadow?) → Risk → sort
                                    └─────────┬──────────┘
                                              ▼
-              table · json · sarif · csv · markdown · html · cyclonedx   (reporters)
+              table · json · sarif · csv · markdown · html · cyclonedx · ocsf   (reporters)
 ```
 
 ## Modules
@@ -33,6 +33,8 @@
 | `shadowscan/connectors/common.py` | turning matches into evidence / frameworks / capabilities, permission classification, blob scanning, merging the metadata of duplicate findings |
 | `shadowscan/connectors/<surface>/` | one module per data source |
 | `shadowscan/connectors/code/remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
+| `shadowscan/connectors/code/source_semantics.py` | bounded Python import binding, reachability and tool attribution, including literal comprehension exclusions |
+| `shadowscan/connectors/code/polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py` | bounded lexical import and scope checks for supported Go agent constructors and .NET automatic tool invocation; no cross-file type resolution |
 | `shadowscan/utils/http.py` | shared HTTPS client: destination policy, retries, 16 MiB response limit and whole-body read deadline |
 | `shadowscan/utils/files.py` | confined reads: no link followed in any path component, directories opened for traversal only (`O_PATH` on Linux) |
 | `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |
@@ -62,6 +64,15 @@
    name them.
 5. Reporters render. SARIF carries `file:line` for code findings and logical
    locations elsewhere; HTML is self-contained.
+
+Record exports are sanitized and published atomically with owner-only
+permissions. Each JSONL line must be strict JSON and fit the replay line limit;
+the whole file must fit both the configured per-file and aggregate input limits,
+including newline bytes. A rejected record marks the scan incomplete and
+prevents publication of the entire new export, preserving any prior file.
+Encoding and export-size failures retain the original records for live analysis;
+a sanitizer safety rejection skips the unsafe record before analysis. Successful
+empty collections produce an explicit empty inventory instead of a zero-byte file.
 
 Merging keeps the first observation's owner and metadata and unions evidence,
 frameworks, capabilities, tags, permissions and models. Metadata that combines

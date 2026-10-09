@@ -479,6 +479,22 @@ def line_counter(text: str) -> Callable[[int], int]:
     return line_at
 
 
+def python_source_lines(text: str) -> list[str]:
+    """Keep original physical lines for Python AST byte-column coordinates.
+
+    Python accepts LF, CRLF and CR as source line endings. Other separators
+    accepted by str.splitlines() are literal content and must not shift later
+    constructor or registered-tool spans.
+    """
+    lines: list[str] = []
+    start = 0
+    for match in re.finditer(r"\r\n|\r|\n", text):
+        lines.append(text[start : match.end()])
+        start = match.end()
+    lines.append(text[start:])
+    return lines
+
+
 _URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*+://", re.IGNORECASE)
 
 

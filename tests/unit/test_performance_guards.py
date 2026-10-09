@@ -109,15 +109,19 @@ def test_root_starting_inside_the_margin_records_the_error_for_every_file(tmp_pa
     assert len(ctx.stats.errors) == 1 and "after 0 of 3 files" in ctx.stats.errors[0]
 
 
-def test_remaining_count_is_bounded_by_max_files(tmp_path, index, monkeypatch):
+def test_deadline_remainder_is_exact_within_max_files(tmp_path, index, monkeypatch):
     _tree(tmp_path, count=8)
     clock = _fake_clock(monkeypatch, step=1.0)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False, "max_files": 6}, index=index, deadline=clock[0] + 5.5
     )
     FilesystemConnector(ctx).run()
-    # Counting stops before the walk would record a second, max_files error.
-    assert len(ctx.stats.errors) == 1 and "after 4 of at least 6 files" in ctx.stats.errors[0]
+    # The buffered walk records both truths distinctly: enumeration stopped at
+    # max_files, and the deadline left an exactly-counted remainder of the
+    # entries that were enumerated (never the lazy walk's "at least N").
+    assert len(ctx.stats.errors) == 2
+    assert any("max_files (6) reached" in error for error in ctx.stats.errors)
+    assert any("after 4 of 6 files" in error for error in ctx.stats.errors)
 
 
 def test_cancellation_mid_walk_is_not_reported_per_file(tmp_path, index, monkeypatch):
@@ -165,18 +169,21 @@ def test_scan_timeout_scales_with_file_size_and_is_capped(base, size, expected):
 def test_scan_tree_opens_a_size_scaled_budget_per_file(tmp_path, index, monkeypatch):
     (tmp_path / "small.py").write_text(LANGCHAIN)
     (tmp_path / "index.json").write_text(json.dumps({"entries": ["x" * 100] * 3200}))  # about 330 KiB
-    recorded: list[float] = []
+    recorded: list[tuple[float, int | None]] = []
     original = SignatureIndex.scan_budget
 
-    def scan_budget(self, seconds=2.0):
-        recorded.append(seconds)
-        return original(self, seconds=seconds)
+    def scan_budget(self, seconds=2.0, *, chars=None):
+        recorded.append((seconds, chars))
+        return original(self, seconds=seconds, chars=chars)
 
     monkeypatch.setattr(SignatureIndex, "scan_budget", scan_budget)
     ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False, "scan_timeout": 1.0}, index=index)
     FilesystemConnector(ctx).run()
     assert not ctx.stats.errors
-    assert sorted(recorded)[0] == 1.0 and 2.0 in recorded
+    seconds = sorted(budget for budget, _ in recorded)
+    assert seconds[0] == 1.0 and 2.0 in seconds
+    # The walk declares each file's size so the per-execution allowance scales.
+    assert all(chars is not None and chars > 0 for _, chars in recorded)
 
 
 # --------------------------------------------------------- oversize files

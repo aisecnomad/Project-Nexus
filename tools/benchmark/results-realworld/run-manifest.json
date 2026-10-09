@@ -1,0 +1,119 @@
+{
+  "corpus": "corpus.json",
+  "corpus_sha256": "6469bdee66c83338710003cdf19e1dcc22ae13cdcd3cf6b2c8de657954acda04",
+  "corpus_metadata": {
+    "name": "ShadowScan real-world repository benchmark",
+    "type": "real-world",
+    "surface": "repo",
+    "retrieved_at": "2026-10-08",
+    "provenance": "Public repositories pinned by commit; labels assigned by the benchmark author by inspecting each checkout at the pinned commit, before any tool ran on the corpus. Not an independent or field-adjudicated sample.",
+    "labels": {
+      "agent": 22,
+      "llm": 3,
+      "none": 9
+    }
+  },
+  "cases_run": 34,
+  "timeout_seconds": 900,
+  "python": "3.13.16",
+  "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+  "checkouts_dirtied_by_tool": {},
+  "runs": [
+    {
+      "tool": "grep-baseline",
+      "display": "Naive grep baseline",
+      "source": "this repository (tools/benchmark/realworld_adapters.py)",
+      "surfaces": {
+        "repo": "fixed regex set over paths and text file contents (no .git)"
+      },
+      "wall_seconds": 218.8,
+      "ok": 34,
+      "error": 0,
+      "n/a": 0
+    },
+    {
+      "tool": "safedep-vet",
+      "display": "SafeDep vet (code scan)",
+      "source": "safedep/vet",
+      "surfaces": {
+        "repo": "vet code scan on the checkout; any AI code-analysis finding"
+      },
+      "wall_seconds": 1283.4,
+      "ok": 33,
+      "error": 1,
+      "n/a": 0
+    },
+    {
+      "tool": "agentic-radar",
+      "display": "Agentic Radar (SplxAI)",
+      "source": "splx-ai/agentic-radar",
+      "surfaces": {
+        "repo": "scan <framework> --export-graph-json per framework; any graph with an agent node"
+      },
+      "wall_seconds": 438.4,
+      "ok": 33,
+      "error": 1,
+      "n/a": 0
+    },
+    {
+      "tool": "shadowscan",
+      "display": "Project Nexus ShadowScan",
+      "source": "aisecnomad/Project-Nexus",
+      "surfaces": {
+        "repo": "code.filesystem on the pinned checkout, default options"
+      },
+      "wall_seconds": 283.3,
+      "ok": 19,
+      "error": 15,
+      "n/a": 0
+    },
+    {
+      "tool": "agentdiscover",
+      "display": "AgentDiscover Scanner",
+      "source": "Defend-AI-Tech-Inc/agent-discover-scanner",
+      "surfaces": {
+        "repo": "scan --format sarif + audit --skip-layers 2,3,4,5, empty HOME"
+      },
+      "wall_seconds": 197.7,
+      "ok": 34,
+      "error": 0,
+      "n/a": 0
+    },
+    {
+      "tool": "agent-bom",
+      "display": "agent-bom",
+      "source": "msaad00/agent-bom",
+      "surfaces": {
+        "repo": "scan <checkout> --no-scan --offline (inventory only), empty HOME"
+      },
+      "wall_seconds": 486.1,
+      "ok": 34,
+      "error": 0,
+      "n/a": 0
+    },
+    {
+      "tool": "cisco-aibom",
+      "display": "Cisco AI BOM",
+      "source": "cisco-ai-defense/aibom",
+      "surfaces": {
+        "repo": "analyze on the pinned checkout; Tier-3 LLM classifier unreachable"
+      },
+      "wall_seconds": 4002.7,
+      "ok": 30,
+      "error": 4,
+      "n/a": 0
+    },
+    {
+      "tool": "shadowscan-tuned",
+      "display": "ShadowScan (max_file_size 20 MiB)",
+      "source": "aisecnomad/Project-Nexus",
+      "surfaces": {
+        "repo": "code.filesystem, max_file_size raised to 20 MiB, otherwise default"
+      },
+      "wall_seconds": 291.3,
+      "ok": 22,
+      "error": 12,
+      "n/a": 0
+    }
+  ]
+}

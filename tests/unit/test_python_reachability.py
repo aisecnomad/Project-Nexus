@@ -157,3 +157,118 @@ def test_unreachable_assignment_still_declares_a_python_function_local(tmp_path)
         tmp_path, IMPORT + f"def build():\n    while False:\n        Agent = dict\n    return {CONSTRUCT}\n"
     )
     assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        f"[{CONSTRUCT} for item in []]",
+        f"{{{CONSTRUCT} for item in ()}}",
+        f"{{item: {CONSTRUCT} for item in {{}}}}",
+        f"{{{CONSTRUCT}: item for item in ''}}",
+        f"({CONSTRUCT} for item in b'')",
+        f"[{CONSTRUCT} for item in [] if {CONSTRUCT}]",
+        f"[{CONSTRUCT} for item in [1] for other in []]",
+        f"[{CONSTRUCT} for item in [1] for other in () if {CONSTRUCT}]",
+        f"[{CONSTRUCT} for item in [] for other in [{CONSTRUCT}]]",
+        f"[{CONSTRUCT} for item in [1] if False for other in [{CONSTRUCT}]]",
+        f"[{CONSTRUCT} for item in [1] if False if {CONSTRUCT}]",
+    ],
+)
+def test_empty_comprehension_paths_do_not_construct_agents(tmp_path, expression):
+    findings = scan(tmp_path, IMPORT + f"result = {expression}\n")
+    assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
+    assert all(f.metadata["agent_indicators"] == 0 for f in findings)
+
+
+@pytest.mark.parametrize("condition", ["False", "0", "None", "''", "[]", "()", "{}"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "[CONSTRUCT for item in [1] if CONDITION]",
+        "{CONSTRUCT for item in [1] if CONDITION}",
+        "{item: CONSTRUCT for item in [1] if CONDITION}",
+        "(CONSTRUCT for item in [1] if CONDITION)",
+    ],
+)
+def test_false_comprehension_filters_do_not_construct_agents(tmp_path, template, condition):
+    expression = template.replace("CONSTRUCT", CONSTRUCT).replace("CONDITION", condition)
+    findings = scan(tmp_path, IMPORT + f"result = {expression}\n")
+    assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        f"[{CONSTRUCT} for item in [1]]",
+        f"{{{CONSTRUCT} for item in [1]}}",
+        f"{{item: {CONSTRUCT} for item in [1]}}",
+        f"({CONSTRUCT} for item in [1])",
+        f"[{CONSTRUCT} for item in inputs]",
+        f"[{CONSTRUCT} for item in range(0)]",
+        f"[{CONSTRUCT} for item in [*inputs]]",
+        f"[{CONSTRUCT} for item in {{**inputs}}]",
+        f"[{CONSTRUCT} for item in [] + []]",
+        f"[{CONSTRUCT} for item in [1] if enabled]",
+        f"[{CONSTRUCT} for item in [1] if True]",
+        f"[{CONSTRUCT} for item in [1] if [*inputs]]",
+        f"[None for Agent in [{CONSTRUCT}] if False]",
+        f"(None for Agent in [{CONSTRUCT}] if False)",
+        f"[None for item in [1] if {CONSTRUCT} if False]",
+        f"[None for item in [1] if {CONSTRUCT} for other in []]",
+        f"[None for item in [1] for other in [{CONSTRUCT}] if False]",
+    ],
+)
+def test_potential_comprehension_and_evaluated_prefix_calls_remain_detectable(tmp_path, expression):
+    # As with a function definition, a generator body is potential static
+    # construction evidence. Finding it does not assert the generator was run.
+    findings = scan(tmp_path, IMPORT + f"result = {expression}\n")
+    assert len(findings) == 1 and findings[0].kind == Kind.AGENT
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"[Agent for Agent in []]\n{CONSTRUCT}\n",
+        f"[{CONSTRUCT} for Agent in [dict]]\n{CONSTRUCT}\n",
+        f"[{CONSTRUCT} for item in []]\n{CONSTRUCT}\n",
+        f"[{CONSTRUCT} for item in [1] if False]\n{CONSTRUCT}\n",
+    ],
+)
+def test_comprehension_locals_and_early_exit_preserve_enclosing_imports(tmp_path, body):
+    findings = scan(tmp_path, IMPORT + body)
+    assert len(findings) == 1 and findings[0].kind == Kind.AGENT
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        f"[{CONSTRUCT} for item in [1] if {CONSTRUCT} for Agent in builders]",
+        f"[item for item in [1] for Agent in [{CONSTRUCT}]]",
+        f"({CONSTRUCT} for item in [1] if {CONSTRUCT} for Agent in builders)",
+    ],
+)
+def test_later_comprehension_target_is_local_in_earlier_filters_and_iterables(tmp_path, expression):
+    findings = scan(tmp_path, IMPORT + f"result = {expression}\n")
+    assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        f"[{CONSTRUCT} async for item in []]",
+        f"({CONSTRUCT} async for item in [])",
+        f"[{CONSTRUCT} async for item in stream]",
+    ],
+)
+def test_async_comprehension_does_not_assume_synchronous_iterability(tmp_path, expression):
+    findings = scan(tmp_path, IMPORT + f"async def build():\n    return {expression}\n")
+    assert len(findings) == 1 and findings[0].kind == Kind.AGENT
+
+
+def test_false_async_comprehension_filter_removes_result_construction(tmp_path):
+    findings = scan(
+        tmp_path,
+        IMPORT + f"async def build():\n    return [{CONSTRUCT} async for item in stream if False]\n",
+    )
+    assert findings and all(f.kind == Kind.FRAMEWORK_USAGE for f in findings)

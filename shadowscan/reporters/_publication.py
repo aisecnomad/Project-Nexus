@@ -18,6 +18,15 @@ _TERMINAL_CONTROLS = re.compile(
 )
 
 
+def has_inventory(result: ScanResult) -> bool:
+    """Include empty supplied inventories and results made by older direct callers."""
+    return (
+        result.inventory_present
+        or result.inventory_size > 0
+        or any(f.shadow is not None for f in result.findings)
+    )
+
+
 def visible_controls(value: str, keep: str = "") -> str:
     """Render terminal controls in a saved report visibly, leaving the ``keep`` characters as data.
 

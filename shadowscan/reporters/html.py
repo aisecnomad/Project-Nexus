@@ -9,7 +9,12 @@ import json
 
 from shadowscan.compliance import compliance_references
 from shadowscan.models import ScanResult
-from shadowscan.reporters._publication import publication_stats, related_finding_ids, visible_controls
+from shadowscan.reporters._publication import (
+    has_inventory,
+    publication_stats,
+    related_finding_ids,
+    visible_controls,
+)
 
 _CSS = (
     "\n"
@@ -131,7 +136,7 @@ def render_html(result: ScanResult) -> str:
         )
     parts.append("<div class='stats'>")
     parts.append(f"<div class='stat'><b>{s['total']}</b>findings</div>")
-    if result.inventory_size:
+    if has_inventory(result):
         parts.append(
             f"<div class='stat'><b class='shadow'>{s['shadow']}</b>shadow (unregistered)</div>"
             f"<div class='stat'><b>{_e(result.inventory_size)}</b>registered agents</div>"

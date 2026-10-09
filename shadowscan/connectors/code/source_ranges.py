@@ -716,6 +716,10 @@ class _JavaScriptLexer:
         # ``}``, none of which ends in ``/``. Comments do not count, so
         # ``<div /* note */>`` is not self-closing.
         slash = False
+        # Whether the last significant character was ``=``: an ``<`` there is a
+        # brace-less JSX attribute value (``title=<span>…</span>``), which is
+        # legal JSX; anywhere else ``<`` inside a tag keeps the generic walk.
+        equals = False
         while i < size:
             # Comments may separate attributes; their text is never an
             # attribute string or expression.
@@ -738,11 +742,22 @@ class _JavaScriptLexer:
                     return self._unterminated(start)
                 i = end + 1
                 slash = False
+                equals = False
                 continue
             if text[i] == "{":
                 spans.append((start, i + 1))
                 self._enter_expression("jsx_expression")
                 return i + 1
+            if text[i] == "<" and equals:
+                # Brace-less JSX element as an attribute value. Only a span that
+                # _jsx_open_tag accepts starts a child element; a stray ``<``
+                # falls through to the generic walk and still fails closed.
+                opened = _jsx_open_tag(text, i, self.budget)
+                if opened is not None:
+                    spans.append((start, i))
+                    modes.append(("jsx_tag", i))
+                    self.pending_jsx_tags.append(opened[0])
+                    return opened[1]
             if text[i] == ">":
                 spans.append((start, i + 1))
                 name = self.pending_jsx_tags.pop()
@@ -750,14 +765,15 @@ class _JavaScriptLexer:
                 i += 1
                 modes.pop()
                 if self_closing:
-                    if modes[-1][0] == "jsx_text":
-                        modes[-1] = ("jsx_text", i)
+                    if modes[-1][0] in {"jsx_tag", "jsx_text"}:
+                        modes[-1] = (modes[-1][0], i)
                 else:
                     self.open_jsx_tags.append(name)
                     modes.append(("jsx_text", i))
                 return i
             if not text[i].isspace():
                 slash = text[i] == "/"
+                equals = text[i] == "="
             i += 1
             if i == size:
                 return self._unterminated(start)

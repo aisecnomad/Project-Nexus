@@ -1,9 +1,10 @@
 """Conservative import-bound calls for Python and common JavaScript/TypeScript.
 
 This is static evidence of construction, not execution. Python uses its AST;
-JavaScript uses a bounded lexical resolver for imports and direct calls. Dynamic
-imports, re-exports and uncertain/shadowed JavaScript bindings remain supporting
-framework evidence. No scanned code is imported or executed.
+JavaScript uses a bounded lexical resolver for imports and direct calls. A
+filesystem-supplied resolver can bind Python imports through already-read,
+import-only project-root shims. Other dynamic imports, re-exports and uncertain
+bindings remain supporting framework evidence. No scanned code is imported or executed.
 
 Python AST work and JavaScript literal-branch tokens are capped at 50,000 per
 file; JavaScript statement nesting is bounded to 128 levels and source calls to
@@ -11,9 +12,9 @@ file; JavaScript statement nesting is bounded to 128 levels and source calls to
 cannot resolve to any signature skips the binder at any size, since it could
 yield no evidence (``_python_bindable``, linear in the file and bounded to 4,096
 statement matches). Regex operations share the scanner's per-input deadline.
-Other source languages do not use this resolver: filesystem
-classification requires matching import/dependency evidence for their lexical
-framework signals, and caps uncorroborated code evidence at 0.6.
+Other source languages use separate narrow Java/Go/C# proofs where supported;
+their lexical framework signals require matching import/dependency evidence,
+and uncorroborated lexical code evidence is capped at 0.6.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from shadowscan.connectors.code.provider_tools import (
     provider_tools_disabled,
     python_provider_tool_literals,
 )
+from shadowscan.connectors.code.python_reexports import ImportResolver
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.connectors.code.source_capabilities import (
     CONFIGURED_FRAMEWORKS,
@@ -61,7 +63,7 @@ from shadowscan.signatures import Match, SignatureIndex
 from shadowscan.signatures.loader import Signal, Signature
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout, required_literals
 from shadowscan.utils.redaction import sanitize_text
-from shadowscan.utils.text import line_counter
+from shadowscan.utils.text import line_counter, python_source_lines
 
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
@@ -236,13 +238,19 @@ def _symbol_tail(symbol: str) -> str:
 
 
 class _PythonBindings(ast.NodeVisitor):
-    def __init__(self, text: str, relevant: Callable[[_Binding], bool] | None = None):
+    def __init__(
+        self,
+        text: str,
+        relevant: Callable[[_Binding], bool] | None = None,
+        resolve_import: ImportResolver | None = None,
+    ):
         self.text = text
+        self.resolve_import = resolve_import
         # Only calls into modules that some signature describes can produce
         # evidence. Counting every bound call (``pytest.raises``, ``requests.get``)
         # against MAX_BOUND_CALLS made ordinary large files fail as incomplete.
         self.relevant = relevant
-        self.lines = text.splitlines(keepends=True)
+        self.lines = python_source_lines(text)
         self.offsets = [0]
         for line in self.lines:
             self.offsets.append(self.offsets[-1] + len(line))
@@ -274,9 +282,9 @@ class _PythonBindings(ast.NodeVisitor):
         return any(self.visit(statement) is True for statement in statements)
 
     def generic_visit(self, node: ast.AST) -> None:
-        # Generic constructs (notably try suites) keep their existing bounded
-        # lexical traversal, but a return cannot make later statements in the
-        # same suite into reachable construction evidence.
+        # A return cannot make later statements in a generic suite into
+        # reachable construction evidence. Branching statements have their own
+        # visitors so mutually exclusive suites never overwrite one another.
         for _, value in ast.iter_fields(node):
             if isinstance(value, list):
                 if value and all(isinstance(item, ast.stmt) for item in value):
@@ -302,6 +310,24 @@ class _PythonBindings(ast.NodeVisitor):
         for name in set().union(*outcomes):
             prior = before.get(name)
             before[name] = prior if all(outcome.get(name, prior) == prior for outcome in outcomes) else None
+
+    @staticmethod
+    def _join_outcomes(
+        before: MutableMapping[str, _Binding | None], outcomes: Sequence[Mapping[str, _Binding | None]]
+    ) -> None:
+        """Merge explicit branch writes without a names-by-branches cross product."""
+        observed: dict[str, tuple[_Binding | None, int, bool]] = {}
+        for outcome in outcomes:
+            for name, value in outcome.items():
+                candidate, count, agrees = observed.get(name, (value, 0, True))
+                observed[name] = (candidate, count + 1, agrees and value == candidate)
+        for name, (candidate, count, agrees) in observed.items():
+            # A branch without a write leaves the prior binding intact. A new
+            # binding therefore requires agreement in every branch, while an
+            # unchanged one can also agree with branches that omit the name.
+            before[name] = (
+                candidate if agrees and (count == len(outcomes) or candidate == before.get(name)) else None
+            )
 
     @staticmethod
     def _changes(
@@ -451,6 +477,10 @@ class _PythonBindings(ast.NodeVisitor):
             binding = (
                 _Binding(node.module or "", alias.name) if not node.level and alias.name != "*" else None
             )
+            if binding is not None and self.resolve_import is not None:
+                resolved = self.resolve_import(binding.module, binding.symbol)
+                if resolved is not None:
+                    binding = _Binding(*resolved)
             self.scopes[-1][alias.asname or alias.name] = binding
             if binding:
                 self.imports.append((binding, node.lineno))
@@ -598,20 +628,26 @@ class _PythonBindings(ast.NodeVisitor):
         self.visit(node.iter)
         # Empty literal collections cannot enter a synchronous for body.
         # Async iteration and calls (including range()) are not evaluated.
-        if not isinstance(node, ast.AsyncFor) and (
-            isinstance(node.iter, (ast.List, ast.Tuple, ast.Set))
-            and not node.iter.elts
-            or isinstance(node.iter, ast.Dict)
-            and not node.iter.keys
-            or isinstance(node.iter, ast.Constant)
-            and isinstance(node.iter.value, (str, bytes))
-            and not node.iter.value
-        ):
+        if not isinstance(node, ast.AsyncFor) and self._empty_literal_iterable(node.iter):
             return self._visit_block(node.orelse)
         has_break = self._visit_loop(node.body, node.target)
         return self._loop_else(node.orelse, has_break=has_break)
 
     visit_AsyncFor = visit_For
+
+    @staticmethod
+    def _empty_literal_iterable(node: ast.AST) -> bool:
+        # No evaluation, name resolution or recursion: unpackings, calls and
+        # dynamic containers cannot prove that an iteration is empty.
+        return (
+            isinstance(node, (ast.List, ast.Tuple, ast.Set))
+            and not node.elts
+            or isinstance(node, ast.Dict)
+            and not node.keys
+            or isinstance(node, ast.Constant)
+            and isinstance(node.value, (str, bytes))
+            and not node.value
+        )
 
     def visit_While(self, node: ast.While) -> bool:
         self.visit(node.test)
@@ -655,37 +691,187 @@ class _PythonBindings(ast.NodeVisitor):
         # The first iterable is evaluated in the outer scope; targets and the
         # result expression live in the comprehension's implicit local scope.
         self.visit(node.generators[0].iter)
-        self.scopes.append({})
+        # All targets are locals throughout that scope, including targets of
+        # later generators. An earlier filter cannot resolve a later target to
+        # an enclosing import (Python would raise UnboundLocalError).
+        locals_: dict[str, _Binding | None] = {
+            target.id: None
+            for generator in node.generators
+            for target in ast.walk(generator.target)
+            if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store)
+        }
+        self.scopes.append(locals_)
         self.scope_kinds.append("comprehension")
-        for number, generator in enumerate(node.generators):
-            if number:
-                self.visit(generator.iter)
-            self._store(generator.target)
-            for condition in generator.ifs:
-                self.visit(condition)
-        if isinstance(node, ast.DictComp):
-            self.visit(node.key)
-            self.visit(node.value)
-        else:
-            self.visit(node.elt)
-        self.scopes.pop()
-        self.scope_kinds.pop()
+        try:
+            for number, generator in enumerate(node.generators):
+                if number:
+                    self.visit(generator.iter)
+                if not generator.is_async and self._empty_literal_iterable(generator.iter):
+                    return
+                self._store(generator.target)
+                for condition in generator.ifs:
+                    # The filter itself can construct an agent even when a
+                    # later filter or iterable prevents the result expression.
+                    self.visit(condition)
+                    if (
+                        isinstance(condition, ast.Constant)
+                        and not condition.value
+                        or self._empty_literal_iterable(condition)
+                    ):
+                        return
+            # Generator bodies are lazy, but remain potential construction
+            # evidence, like function bodies. Only provably unreachable bodies
+            # are removed; no consumption or runtime execution is inferred.
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+        finally:
+            self.scopes.pop()
+            self.scope_kinds.pop()
 
     visit_ListComp = _comprehension
     visit_SetComp = _comprehension
     visit_DictComp = _comprehension
     visit_GeneratorExp = _comprehension
 
-    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
-        if node.type:
+    def visit_ExceptHandler(self, node: ast.ExceptHandler, *, visit_type: bool = True) -> bool:
+        if visit_type and node.type:
             self.visit(node.type)
         if node.name:
             self.scopes[-1][node.name] = None
-        self._visit_block(node.body)
+        stopped = self._visit_block(node.body)
+        # Python deletes the exception alias when leaving a handler. A deleted
+        # local must not resolve to an imported name in an enclosing scope.
+        if node.name:
+            self.scopes[-1][node.name] = None
+        return stopped
 
-    def visit_Match(self, node: ast.Match) -> None:
+    @staticmethod
+    def _suite_may_raise(statements: Sequence[ast.stmt]) -> bool:
+        """Recognize only trivial suites whose exception handlers cannot run.
+
+        Names, assignments, imports and calls stay potentially raising. This is
+        a local syntactic check, not an evaluator or an exception-type solver.
+        """
+        for statement in statements:
+            if isinstance(statement, ast.Pass) or (
+                isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
+            ):
+                continue
+            if isinstance(statement, ast.Return) and (
+                statement.value is None or isinstance(statement.value, ast.Constant)
+            ):
+                return False
+            if isinstance(statement, (ast.Break, ast.Continue)):
+                return False
+            return True
+        return False
+
+    def visit_Try(self, node: ast.Try | ast.TryStar) -> bool:
+        before = self.scopes[-1]
+        self.scopes[-1] = ChainMap({}, before)
+        body_stopped = self._visit_block(node.body)
+        body_changes = dict(self._changes(self.scopes[-1], before))
+        may_raise = self._suite_may_raise(node.body)
+        # A handler may start before any body assignment or after a partial
+        # statement. No body-written name has certain provenance at entry.
+        exceptional: dict[str, _Binding | None] = dict.fromkeys(body_changes)
+        outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
+        normal_stopped = body_stopped
+        if not body_stopped:
+            normal_stopped = self._visit_block(node.orelse)
+        normal = self._changes(self.scopes[-1], before)
+        outcomes.append(normal)
+        if not normal_stopped:
+            continuing.append(normal)
+        final_may_raise = may_raise or not body_stopped and self._suite_may_raise(node.orelse)
+        # Else/handler suites can also fail after only some assignments. Their
+        # partial writes matter to calls in finally, though their exceptions do
+        # not reach the continuation after this try statement.
+        final_exceptional: dict[str, _Binding | None] = dict.fromkeys(normal)
+
+        if may_raise:
+            for handler in node.handlers:
+                exception_entry = ChainMap(exceptional, before)
+                self.scopes[-1] = ChainMap({}, exception_entry)
+                if handler.type:
+                    self.visit(handler.type)
+                    type_changes = self._changes(self.scopes[-1], exception_entry)
+                    # Clause tests run in order until one matches. A failed
+                    # test's assignments can affect a later test/body, unlike
+                    # the mutually exclusive bodies of ordinary except suites.
+                    exceptional.update(dict.fromkeys(type_changes))
+                stopped = self.visit_ExceptHandler(handler, visit_type=False)
+                changes = self._changes(self.scopes[-1], before)
+                outcomes.append(changes)
+                if not stopped:
+                    continuing.append(changes)
+                final_exceptional.update(dict.fromkeys(changes))
+                if isinstance(node, ast.TryStar):
+                    # Several except* suites can run in order for disjoint
+                    # subgroups. Later suites cannot assume an earlier one left
+                    # its input unchanged; keep every earlier write uncertain.
+                    exceptional.update(dict.fromkeys(changes))
+
+        self.scopes[-1] = before
+        joined: dict[str, _Binding | None] = {}
+        joined_scope = ChainMap(joined, before)
+        self._join_outcomes(joined_scope, continuing or outcomes)
+        final_stopped = False
+        if node.finalbody:
+            # finally runs on normal, handled, transferred and unhandled paths.
+            # Its calls need provenance valid across all of them, even though
+            # unhandled exceptions do not reach code after the whole try.
+            final_entry: dict[str, _Binding | None] = {}
+            final_scope = ChainMap(final_entry, before)
+            final_paths = [*outcomes, final_exceptional] if final_may_raise else outcomes
+            self._join_outcomes(final_scope, final_paths)
+            self.scopes[-1] = ChainMap({}, final_scope)
+            final_stopped = self._visit_block(node.finalbody)
+            final_changes = self._changes(self.scopes[-1], final_scope)
+            joined.update(final_changes)
+            self.scopes[-1] = before
+        before.update(joined)
+        return final_stopped or not continuing
+
+    visit_TryStar = visit_Try
+
+    @staticmethod
+    def _pattern_matches(pattern: ast.pattern, subject: ast.expr) -> bool | None:
+        """Narrow direct literals and irrefutable captures, without evaluating code."""
+        if isinstance(pattern, ast.MatchAs):
+            if pattern.pattern is None:
+                return True
+            return _PythonBindings._pattern_matches(pattern.pattern, subject)
+        if isinstance(pattern, ast.MatchOr):
+            matches = [_PythonBindings._pattern_matches(part, subject) for part in pattern.patterns]
+            return True if True in matches else None if None in matches else False
+        if isinstance(subject, ast.Constant):
+            if isinstance(pattern, ast.MatchSingleton):
+                return subject.value is pattern.value
+            if isinstance(pattern, ast.MatchValue) and isinstance(pattern.value, ast.Constant):
+                return subject.value == pattern.value.value
+        return None
+
+    def visit_Match(self, node: ast.Match) -> bool:
         self.visit(node.subject)
+        before = self.scopes[-1]
+        # Failed patterns may leave captures bound, and a failed guard may
+        # assign names before the next case is attempted. Preserve uncertainty
+        # from these paths without leaking a successful case's body writes.
+        fallback: dict[str, _Binding | None] = {}
+        fallback_scope = ChainMap(fallback, before)
+        outcomes: list[Mapping[str, _Binding | None]] = []
+        continuing: list[Mapping[str, _Binding | None]] = []
+        exhaustive = False
         for case in node.cases:
+            matches = self._pattern_matches(case.pattern, node.subject)
+            if matches is False:
+                continue
+            self.scopes[-1] = ChainMap({}, fallback_scope)
             for pattern in ast.walk(case.pattern):
                 if isinstance(pattern, (ast.MatchAs, ast.MatchStar)) and pattern.name:
                     self.scopes[-1][pattern.name] = None
@@ -693,7 +879,24 @@ class _PythonBindings(ast.NodeVisitor):
                     self.scopes[-1][pattern.rest] = None
             if case.guard:
                 self.visit(case.guard)
-            self._visit_block(case.body)
+            guard_changes = dict(self._changes(self.scopes[-1], fallback_scope))
+            guard = bool(case.guard.value) if isinstance(case.guard, ast.Constant) else None
+            if case.guard is None or guard is None or guard:
+                stopped = self._visit_block(case.body)
+                changes = self._changes(self.scopes[-1], before)
+                outcomes.append(changes)
+                if not stopped:
+                    continuing.append(changes)
+            if matches is True and (case.guard is None or guard is True):
+                exhaustive = True
+                break
+            self._join_into(fallback_scope, [guard_changes])
+        if not exhaustive:
+            outcomes.append(fallback)
+            continuing.append(fallback)
+        self.scopes[-1] = before
+        self._join_outcomes(before, continuing or outcomes)
+        return not continuing
 
     def visit_If(self, node: ast.If) -> bool:
         self.visit(node.test)
@@ -723,9 +926,7 @@ class _PythonBindings(ast.NodeVisitor):
                 continuing.append(outcome)
         self.scopes[-1] = before
         joined = continuing or outcomes
-        for name in set().union(*joined):
-            values = [outcome.get(name, before.get(name)) for outcome in joined]
-            before[name] = values[0] if all(value == values[0] for value in values[1:]) else None
+        self._join_outcomes(before, joined)
         return not continuing
 
 
@@ -935,6 +1136,7 @@ def _python_bindings(
     relevant: Callable[[_Binding], bool] | None = None,
     max_nodes: int | None = None,
     bindable: Callable[[ast.AST], bool] | None = None,
+    resolve_import: ImportResolver | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     if bindable is not None and not bindable(tree):
@@ -945,7 +1147,7 @@ def _python_bindings(
     for count, _ in enumerate(ast.walk(tree)):
         if count >= limit:
             raise SourceBudgetExceeded("source binding AST limit exceeded")
-    visitor = _PythonBindings(text, relevant)
+    visitor = _PythonBindings(text, relevant, resolve_import)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
@@ -1447,6 +1649,7 @@ def bound_source_matches(
     is_local_module: Callable[[str], bool] | None = None,
     max_ast_nodes: int | None = None,
     truncated: list[int] | None = None,
+    resolve_import: ImportResolver | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -1464,7 +1667,9 @@ def bound_source_matches(
                 text,
                 module_matches.relevant,
                 max_ast_nodes,
-                bindable=lambda parsed: _python_bindable(index, parsed),
+                # The single-file proof cannot see a project-local export.
+                bindable=(lambda parsed: _python_bindable(index, parsed)) if resolve_import is None else None,
+                resolve_import=resolve_import,
             )
         else:
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)

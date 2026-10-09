@@ -1,0 +1,265 @@
+{
+  "positives": [
+    {
+      "id": "A01",
+      "path": "repos/svc-research-agent/app/agent.py",
+      "category": "agent-framework",
+      "detail": "LangGraph create_react_agent + LangChain tools + ChatOpenAI"
+    },
+    {
+      "id": "A02",
+      "path": "repos/svc-research-agent/app/config.py",
+      "category": "credential",
+      "detail": "Hardcoded OpenAI API key fallback"
+    },
+    {
+      "id": "A03",
+      "path": "repos/svc-research-agent/.mcp.json",
+      "category": "mcp-client-config",
+      "detail": "Project-level Claude Code MCP config with two servers and an env token"
+    },
+    {
+      "id": "A04",
+      "path": "repos/svc-research-agent/requirements.txt",
+      "category": "dependency-manifest",
+      "detail": "Agent framework and MCP SDK dependencies"
+    },
+    {
+      "id": "A05",
+      "path": "repos/crew-sales-bot/crew/agents.py",
+      "category": "agent-framework",
+      "detail": "CrewAI Agent/Task/Crew with Anthropic model and web tools"
+    },
+    {
+      "id": "A06",
+      "path": "repos/crew-sales-bot/.cursor/mcp.json",
+      "category": "mcp-client-config",
+      "detail": "Cursor project MCP config with a remote SSE server and bearer header"
+    },
+    {
+      "id": "A07",
+      "path": "repos/crew-sales-bot/pyproject.toml",
+      "category": "dependency-manifest",
+      "detail": "CrewAI and Anthropic SDK dependencies"
+    },
+    {
+      "id": "A08",
+      "path": "repos/web-assistant-ts/src/assistant.ts",
+      "category": "agent-framework",
+      "detail": "Vercel AI SDK generateText with tools + OpenAI Agents JS Agent/run"
+    },
+    {
+      "id": "A09",
+      "path": "repos/web-assistant-ts/src/mcp-client.ts",
+      "category": "mcp-client-impl",
+      "detail": "MCP TypeScript SDK client over stdio"
+    },
+    {
+      "id": "A10",
+      "path": "repos/web-assistant-ts/.vscode/mcp.json",
+      "category": "mcp-client-config",
+      "detail": "VS Code workspace MCP config with a database URI in env"
+    },
+    {
+      "id": "A11",
+      "path": "repos/web-assistant-ts/package.json",
+      "category": "dependency-manifest",
+      "detail": "AI SDK, OpenAI Agents, and MCP SDK dependencies"
+    },
+    {
+      "id": "A12",
+      "path": "repos/web-assistant-ts/src/config.ts",
+      "category": "credential",
+      "detail": "Hardcoded Anthropic API key fallback"
+    },
+    {
+      "id": "A13",
+      "path": "repos/go-mcp-server/main.go",
+      "category": "mcp-server-impl",
+      "detail": "Go MCP server exposing a shell-executing tool"
+    },
+    {
+      "id": "A14",
+      "path": "repos/go-mcp-server/go.mod",
+      "category": "dependency-manifest",
+      "detail": "mcp-go dependency"
+    },
+    {
+      "id": "A15",
+      "path": "repos/java-spring-agent/src/main/java/com/acme/agent/AssistantService.java",
+      "category": "agent-framework",
+      "detail": "Spring AI ChatClient with @Tool functions and memory"
+    },
+    {
+      "id": "A16",
+      "path": "repos/java-spring-agent/pom.xml",
+      "category": "dependency-manifest",
+      "detail": "Spring AI OpenAI starter dependency"
+    },
+    {
+      "id": "A17",
+      "path": "repos/n8n-ops-flows/workflows/ticket-triage-agent.json",
+      "category": "lowcode-workflow",
+      "detail": "n8n workflow with an AI Agent node, OpenAI model, and HTTP tool"
+    },
+    {
+      "id": "A19",
+      "path": "repos/infra-terraform/bedrock_agent.tf",
+      "category": "iac-agent",
+      "detail": "Terraform-managed Amazon Bedrock agent with a Lambda action group"
+    },
+    {
+      "id": "A20",
+      "path": "repos/infra-terraform/azure_ai.tf",
+      "category": "iac-ai-service",
+      "detail": "Terraform-managed Azure OpenAI account and model deployment"
+    },
+    {
+      "id": "A21",
+      "path": "repos/infra-terraform/.github/workflows/claude.yml",
+      "category": "ci-agent",
+      "detail": "GitHub Actions workflow running a coding agent with write permissions"
+    },
+    {
+      "id": "A23",
+      "path": "repos/autogen-team/team/run_team.py",
+      "category": "agent-framework",
+      "detail": "AutoGen AgentChat team with MCP tools"
+    },
+    {
+      "id": "A24",
+      "path": "repos/autogen-team/team/summarizer.py",
+      "category": "agent-framework",
+      "detail": "PydanticAI Agent with a tool on a Gemini model"
+    },
+    {
+      "id": "A25",
+      "path": "repos/autogen-team/requirements.txt",
+      "category": "dependency-manifest",
+      "detail": "AutoGen, PydanticAI, and Gemini SDK dependencies"
+    },
+    {
+      "id": "A26",
+      "path": "repos/agent-skill-pack/.claude/skills/deploy-helper/SKILL.md",
+      "category": "agent-skill",
+      "detail": "Benign Claude Code skill"
+    },
+    {
+      "id": "A27",
+      "path": "repos/agent-skill-pack/.claude/skills/data-sync/SKILL.md",
+      "category": "agent-skill-malicious",
+      "detail": "Skill with hidden exfiltration instruction, curl-pipe-bash, base64 payload"
+    },
+    {
+      "id": "A28",
+      "path": "repos/agent-skill-pack/.claude/settings.json",
+      "category": "coding-agent-config",
+      "detail": "Claude Code settings with broad permissions and a network hook"
+    },
+    {
+      "id": "A29",
+      "path": "repos/agent-skill-pack/CLAUDE.md",
+      "category": "coding-agent-config",
+      "detail": "CLAUDE.md project instructions"
+    },
+    {
+      "id": "W01",
+      "path": "workstation/home/.config/Claude/claude_desktop_config.json",
+      "category": "mcp-client-config",
+      "detail": "Claude Desktop config: filesystem server + locally poisoned server"
+    },
+    {
+      "id": "W02",
+      "path": "workstation/home/.cursor/mcp.json",
+      "category": "mcp-client-config",
+      "detail": "Cursor user config: remote HTTP server + GitHub server with token in env"
+    },
+    {
+      "id": "W03",
+      "path": "workstation/home/.codeium/windsurf/mcp_config.json",
+      "category": "mcp-client-config",
+      "detail": "Windsurf MCP config"
+    },
+    {
+      "id": "W04",
+      "path": "workstation/home/.config/Code/User/mcp.json",
+      "category": "mcp-client-config",
+      "detail": "VS Code user-level MCP config"
+    },
+    {
+      "id": "W05",
+      "path": "workstation/home/.claude.json",
+      "category": "mcp-client-config",
+      "detail": "Claude Code user-scope MCP servers with Slack bot token"
+    },
+    {
+      "id": "W06",
+      "path": "workstation/home/.gemini/settings.json",
+      "category": "mcp-client-config",
+      "detail": "Gemini CLI settings with an MCP server"
+    },
+    {
+      "id": "W07",
+      "path": "workstation/home/.claude/skills/helpful-formatter/SKILL.md",
+      "category": "agent-skill",
+      "detail": "Benign user-level skill"
+    },
+    {
+      "id": "W08",
+      "path": "workstation/home/.claude/skills/repo-sync/SKILL.md",
+      "category": "agent-skill-malicious",
+      "detail": "User-level skill with hidden exfiltration + curl-pipe-sh"
+    },
+    {
+      "id": "W09",
+      "path": "workstation/home/mcp-servers/poisoned_server.py",
+      "category": "mcp-server-poisoned",
+      "detail": "Local MCP server whose tool description carries a tool-poisoning instruction"
+    },
+    {
+      "id": "W10",
+      "path": "workstation/home/projects/acme-app/.mcp.json",
+      "category": "mcp-client-config",
+      "detail": "Project-scoped MCP config nested under a projects directory"
+    }
+  ],
+  "negatives": [
+    {
+      "id": "N06",
+      "path": "repos/n8n-ops-flows/workflows/weekly-report.json",
+      "detail": "n8n workflow with no AI nodes"
+    },
+    {
+      "id": "N07",
+      "path": "repos/infra-terraform/vpc.tf",
+      "detail": "Plain VPC Terraform"
+    },
+    {
+      "id": "N01",
+      "path": "repos/plain-flask-api/app.py",
+      "detail": "Flask CRUD API, no AI"
+    },
+    {
+      "id": "N02",
+      "path": "repos/ml-training-pipeline/train.py",
+      "detail": "PyTorch/sklearn training script: AI/ML but not an agent"
+    },
+    {
+      "id": "N03",
+      "path": "repos/docs-site/docs/support/agents.md",
+      "detail": "Docs about human support agents"
+    },
+    {
+      "id": "N05",
+      "path": "repos/node-express-app/src/userAgent.js",
+      "detail": "HTTP user-agent parsing and https.Agent keep-alive: keyword trap"
+    }
+  ],
+  "ambiguous": [
+    {
+      "id": "X01",
+      "path": "repos/tests-only-agent/tests/test_llm_mock.py",
+      "detail": "Agent code present only under tests/: a test-only experiment"
+    }
+  ]
+}

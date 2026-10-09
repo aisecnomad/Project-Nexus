@@ -110,25 +110,53 @@ require weakening the rules or merging the probe.
 The weekly [dependency and governance audit](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/audit.yml)
 has a separate read-only job that fetches both current rulesets and compares
 their repository identities and settings to the reviewed update payloads. It
-also runs on manual dispatch from `main`. A disabled rule, omitted bypass
-information, missing aggregate `CI gate`, wrong application binding, changed
-policy, malformed response or denied read fails the audit. The error names
-omitted fields (`ruleset response omits bypass_actors`) separately from
-settings that differ (`readback differs from reviewed payload: …`), so a
-withheld bypass list is not mistaken for drift. Review any drift
-before intentionally updating the versioned policy, including stronger changes.
+also runs on manual dispatch from `main`. A disabled rule, missing aggregate
+`CI gate`, wrong application binding, changed policy, malformed response or
+denied read fails the audit. A withheld `bypass_actors` field is the only allowed
+omission: visible controls are still checked, while bypass assurance remains
+explicitly unknown. Review any drift before intentionally updating the
+versioned policy, including stronger changes.
+
+The `observe` command retains one machine-readable observation per ruleset and
+writes a scoped result to the workflow summary. Both rulesets are checked even
+if one fails. The workflow retains observation artifacts for 90 days, including
+failed reads and policy mismatches. Its exit status measures the visible-control
+check; a successful job with a partial observation does **not** establish that
+the repository has no bypass actors.
+
+Each retained observation records a UTC `input_identity.recorded_at` timestamp
+and SHA-256 digests of the same bounded snapshot and expected-policy text used
+for verification. Digests cover UTF-8 text after removal of an optional leading
+byte-order mark; the command reads each input once and never retains its payload
+in the observation. A denied API read leaves the snapshot digest null, even if
+the failed command printed valid JSON. An unreadable or oversized input also
+has no inspected-text digest. Retain independently fetched source snapshots in
+restricted audit storage when later comparison is needed. These hashes bind
+content; the local timestamp does not authenticate the response's origin or
+establish that GitHub's settings were unchanged after the read.
+
+| Observation `status` | What was checked | Required action |
+|---|---|---|
+| `complete` | Every managed setting, including the visible bypass list, matched the reviewed policy. | Retain the snapshot; review freshness, origin and other protections separately. |
+| `partial` | All visible managed settings matched; only `bypass_actors` was withheld. | Obtain and strictly verify a complete administrator readback before relying on no-bypass assurance. |
+| `failed` | API access, parsing, identity, required fields or policy comparison failed. | Resolve the failed read or investigate the policy difference; no matching-policy assurance is provided. |
+
+Partial observations contain `complete_readback_verified: false`,
+`unknown_fields: ["bypass_actors"]` and `administrator_readback_required: true`.
+They never insert an empty bypass list into the API response. If GitHub returns
+a bypass list, it must match the reviewed empty list; an unexpected actor or
+malformed value fails. Only the explicit `observe` command accepts the one
+withheld field. The `verify` and `plan` commands still require full snapshots.
 
 The job uses only the workflow's read-only token and never applies settings or
 supplies an administrator credential. If GitHub withholds part of the response,
-an administrator must verify a full readback using the procedure above; the
-failed audit does not establish that protection is absent. The audit fails
-until administrator-applied settings match the reviewed policy and the API
-returns a complete snapshot. GitHub documents that `bypass_actors` is returned
-only to a caller with write access to the ruleset, so the default read-only
-token leaves this audit failed with unknown assurance even after settings are
-corrected: a dispatched run on 2026-10-07 reported `ruleset response omits
-bypass_actors`. Obtain and verify an administrator readback in that case; do
-not equate a hidden bypass list with an empty one. See the
+an administrator must verify a full readback using the procedure above; neither
+partial nor failed observation establishes that protection is absent. GitHub
+documents that `bypass_actors` is returned only to a caller with write access to
+the ruleset. A dispatched run on 2026-10-07 failed on that withheld field; the
+scoped observation now preserves useful monitoring of visible controls without
+claiming complete assurance. Do not equate a hidden bypass list with an empty
+one. See the
 [GitHub ruleset API documentation](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset).
 The release-evidence workflow reads the ruleset with the same kind of token, so
 its dispatch takes an administrator readback that must match the token's own
