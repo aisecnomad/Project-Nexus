@@ -47,9 +47,11 @@ that may be import-only; a larger ordinary module stays unresolved. Reaching a
 required source or chain budget marks the scan incomplete and preserves available
 per-file evidence. A consumer whose imports resolve through no shim keeps the
 single-file proof that lets a large file without signature imports finish
-complete. Queued consumers are analyzed after the walk under its deadline rule:
-each starts only while its matching budget and the walk's safety margin fit,
-and any left unanalyzed is named and makes the scan incomplete.
+complete. A queued consumer's imports and code patterns are matched during the
+walk; its import binding runs after the walk under the walk's deadline rule,
+starting only while its matching budget and the walk's safety margin fit. A
+consumer left unbound is named, keeps that lexical evidence and makes the scan
+incomplete.
 
 Packages, nested source layouts, dynamic imports, other re-exports and uncertain
 bindings remain usage evidence when ordinary signatures identify them.

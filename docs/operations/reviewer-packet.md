@@ -146,7 +146,8 @@ these paired cases:
   or executable shim. Inspect the declared source-analysis limits and verify
   that scanned code is never imported or executed. A large ordinary local module
   or a consumer whose imports resolve through no shim must keep its complete
-  result; a queued consumer must not start inside the deadline margin.
+  result; a queued consumer's binding must not start inside the deadline
+  margin, and a consumer left unbound must keep its lexical evidence.
 - A complete governance readback versus a read-only response with withheld
   bypass settings. Visible-policy drift must fail the monitor; a partial result
   must identify unknown fields and must never satisfy full release verification.

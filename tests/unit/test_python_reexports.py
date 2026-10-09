@@ -326,8 +326,9 @@ def test_queued_consumers_keep_the_walk_deadline_margin(tmp_path, index, monkeyp
 
 def test_queued_consumer_whose_budget_does_not_fit_is_skipped_alone(tmp_path, index, monkeypatch):
     # The walk finishes with 5 s left: a 900 KiB consumer's 8 s budget no
-    # longer fits, but an ordinary queued consumer's still does.
-    large = "from b_helpers import helper\n" + "x = 1\n" * (900 * 1024 // 6)
+    # longer fits, but an ordinary queued consumer's still does. The skipped
+    # consumer keeps the imports the walk matched.
+    large = "from b_helpers import helper\nimport anthropic\n" + "x = 1\n" * (900 * 1024 // 6)
     (tmp_path / "a_large.py").write_text(large)
     (tmp_path / "a_small.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
     (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
@@ -341,6 +342,54 @@ def test_queued_consumer_whose_budget_does_not_fit_is_skipped_alone(tmp_path, in
     assert ctx.stats.objects_examined == 7 and ctx.stats.incomplete
     assert [error for error in ctx.stats.errors if "deadline" in error] == [
         "code.filesystem: a_large.py: Python re-export analysis skipped; the remaining connector deadline "
-        "cannot cover its 8s matching budget"
+        "cannot cover its 8s matching budget; lexical evidence retained"
     ]
     assert _uses_openai(findings)
+    assert any("provider.anthropic" in finding.model_providers for finding in findings)
+
+
+def test_queued_consumer_left_unbound_keeps_its_lexical_evidence(tmp_path, index, monkeypatch):
+    # The walk reads and matches the consumer under its own budget. When the
+    # binding pass after the walk no longer fits, the imports and code
+    # patterns it matched remain evidence, as they would without the queue.
+    (tmp_path / "a_app.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
+    (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
+    for number in range(3):
+        (tmp_path / f"z_agent_{number}.py").write_text("from langchain import agents\n")
+    clock = _fake_clock(monkeypatch)
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 5.5
+    )
+    findings = filesystem.FilesystemConnector(ctx).run()
+    assert ctx.stats.incomplete
+    assert any("a_app.py" in error and "re-export" in error for error in ctx.stats.errors)
+    assert _uses_openai(findings)
+    assert any("framework.langchain" in finding.frameworks for finding in findings)
+
+
+def test_retained_lexical_evidence_stops_at_half_the_margin(tmp_path, index, monkeypatch):
+    # Recording the stopped consumers must leave the emission its time, as
+    # the walk's own final count does.
+    for name in ("a_app.py", "b_app.py"):
+        (tmp_path / name).write_text(_OPENAI_CONSUMER.replace("helpers", "c_helpers"))
+    (tmp_path / "c_helpers.py").write_text("def helper():\n    return 1\n")
+    for number in range(2):
+        (tmp_path / f"z_agent_{number}.py").write_text("from langchain import agents\n")
+    clock = _fake_clock(monkeypatch)
+    record = filesystem.FilesystemConnector._record_source
+    recorded = []
+
+    def slow_record(self, source, bound, unbound):
+        if source.file.rel in {"a_app.py", "b_app.py"}:
+            recorded.append(source.file.rel)
+            clock[0] += 1.4
+        return record(self, source, bound, unbound)
+
+    monkeypatch.setattr(filesystem.FilesystemConnector, "_record_source", slow_record)
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 5.5
+    )
+    filesystem.FilesystemConnector(ctx).run()
+    assert recorded == ["a_app.py"]
+    assert ctx.stats.incomplete
+    assert any("a_app.py and 1 other queued files" in error for error in ctx.stats.errors)

@@ -18,8 +18,9 @@ For network connection attribution and hosted-agent invocation, see
   not proof of deployment or execution; see the [source guide](connectors/code.md).
   Rerun affected source scans before comparing totals. A re-export source or
   chain budget, or a connector deadline that leaves a queued root-level
-  consumer unanalyzed, marks the scan incomplete. Ordinary local modules,
-  however large, do not.
+  consumer's import binding unanalyzed, marks the scan incomplete; ordinary
+  local modules, however large, do not. A consumer left unbound keeps its
+  lexical import and code evidence.
 - A scheduled governance audit can verify visible controls while reporting
   bypass settings as unknown. Do not use that partial observation as the complete
   ruleset evidence required for release or rollout. See the
