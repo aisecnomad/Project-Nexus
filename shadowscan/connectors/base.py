@@ -81,6 +81,10 @@ def _non_negative_limit(value: Any, name: str) -> int:
     return _integer_option(value, name, 0, "a non-negative integer")
 
 
+class _ExportReplayLimitError(ValueError):
+    """A credential-free export limit diagnostic; analysis can still use the original record."""
+
+
 class ConnectorContext:
     """Runtime context handed to a connector."""
 
@@ -441,37 +445,74 @@ class BaseConnector(ABC):
 
         The original records are used for analysis but are never written to disk.
         JWT inputs are excluded entirely via the ``_NoDump`` marker.
+        Every published line and file fits the same connector's replay byte
+        limits. Export byte/JSON encoding failures mark collection incomplete
+        while leaving original records available for analysis. Sanitizer safety
+        rejection skips the unsafe record before either export or analysis.
+        Any rejected record prevents publication of the entire new export.
         """
         target = Path(path)
         fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
         written = 0
         rejected = False
+        max_file_bytes = min(self.max_input_file_bytes, self.max_input_bytes)
+        encoder = json.JSONEncoder(default=str, allow_nan=False)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            with os.fdopen(fd, "wb") as fh:
                 for rec in records:
                     offset = fh.tell()
                     try:
-                        encoded_chars = 0
                         clean = sanitize(rec, env_values_are_secrets=not self._ENV_VALUES_ARE_CONFIGURATION)
-                        for chunk in json.JSONEncoder(default=str).iterencode(clean):
-                            encoded_chars += len(chunk)
-                            if encoded_chars > self._MAX_OFFLINE_FILE_BYTES:
-                                raise SanitizationLimitError("export record size limit exceeded")
-                            fh.write(chunk)
-                        fh.write("\n")
                     except SanitizationLimitError:
-                        # iterencode may already have written part of this
-                        # record. Roll it back before accepting any later one.
-                        fh.seek(offset)
-                        fh.truncate()
                         rejected = True
                         self.ctx.error(
                             f"{self.name}: export record rejected: sanitization safety limit exceeded"
                         )
                         continue
-                    written += 1
+                    try:
+                        record_bytes = 0
+                        for chunk in encoder.iterencode(clean):
+                            self.ctx.check_deadline()
+                            encoded = chunk.encode("utf-8")
+                            record_bytes += len(encoded)
+                            # The newline is part of the importer's line and
+                            # file byte budgets, including at an exact boundary.
+                            if record_bytes + 1 > _MAX_OFFLINE_LINE_BYTES:
+                                raise _ExportReplayLimitError(
+                                    "encoded record exceeds the replay line byte limit"
+                                )
+                            if offset + record_bytes + 1 > max_file_bytes:
+                                raise _ExportReplayLimitError(
+                                    "encoded export exceeds the replay file byte limit"
+                                )
+                            fh.write(encoded)
+                        fh.write(b"\n")
+                    except _ExportReplayLimitError as exc:
+                        # Remove the partial line before considering later
+                        # records. Export limits do not erase valid analysis.
+                        fh.seek(offset)
+                        fh.truncate()
+                        rejected = True
+                        self.ctx.error(f"{self.name}: export record omitted: {exc}")
+                    except (TypeError, ValueError):
+                        # JSON encoding exceptions can echo data (for example
+                        # an unsupported mapping key). Keep only a fixed reason.
+                        fh.seek(offset)
+                        fh.truncate()
+                        rejected = True
+                        self.ctx.error(f"{self.name}: export record omitted: record is not strict JSON")
+                    else:
+                        written += 1
                     yield rec
-            if written or not rejected:
+                if not written and not rejected:
+                    # A zero-byte file is not an explicitly empty inventory.
+                    empty = b'{"records": []}\n'
+                    if len(empty) > max_file_bytes:
+                        rejected = True
+                        self.ctx.error(f"{self.name}: empty export exceeds the replay file byte limit")
+                    else:
+                        fh.write(empty)
+            if not rejected:
                 self.ctx.publish_replace(temporary, target)
                 self.ctx.dump_path = str(target)
         finally:

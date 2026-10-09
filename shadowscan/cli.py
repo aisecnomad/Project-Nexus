@@ -11,6 +11,7 @@ import sys
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import IO, Any, NoReturn, TypeVar
 
 import click
@@ -41,9 +42,11 @@ from shadowscan.connectors import (
     get_connector_class,
     plugin_registry_errors,
 )
+from shadowscan.endpoint import default_label, describe, endpoint_paths, endpoint_roots
 from shadowscan.engine import Engine
 from shadowscan.errors import SetupError
-from shadowscan.models import Finding, ScanResult, Surface
+from shadowscan.fleet import merge_reports
+from shadowscan.models import Finding, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
@@ -1275,6 +1278,95 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
         raise click.exceptions.Exit(3)
     if fail_on_new and (comparison["new"] or any(_risk_rose(change) for change in comparison["changed"])):
         raise click.exceptions.Exit(2)
+
+
+# ----------------------------------------------------------------- endpoint
+@main.command()
+@click.option(
+    "--home",
+    "home_dir",
+    type=click.Path(exists=True, file_okay=False),
+    default=None,
+    help="profile directory to inspect (default: the current user's home)",
+)
+@click.option(
+    "--label", default=None, help="resource prefix for every finding (default: endpoint:<hostname>)"
+)
+@click.option(
+    "--list",
+    "list_only",
+    is_flag=True,
+    help="print the known locations that exist under the profile and exit without scanning",
+)
+@scan_options
+def endpoint(home_dir: str | None, label: str | None, list_only: bool, opts: ScanOptions) -> None:
+    """Scan this workstation's AI client configuration at its well-known locations: MCP client
+    configs, coding-agent settings, user-level skills, rules and instruction files."""
+    home = Path(home_dir).resolve() if home_dir else Path.home()
+    discovery_errors: list[str] = []
+    found = endpoint_paths(home, errors=discovery_errors)
+    if discovery_errors:
+        now = now_iso()
+        stats = ScanStats(
+            connector="code.filesystem",
+            started_at=now,
+            finished_at=now,
+            errors=discovery_errors,
+            incomplete=True,
+        )
+        result = ScanResult(findings=[], stats=[stats], version=__version__)
+        _emit(result, opts.fmt, opts.output, False, opts.max_rows)
+        raise click.exceptions.Exit(3)
+    if list_only:
+        for line in describe(found, home):
+            click.echo(encodable_text(terminal_text(line)))
+        if not found:
+            err_console.print(
+                Text(terminal_text(f"no known AI client configuration locations exist under {home}"))
+            )
+        return
+    verbose: int = main.verbose  # type: ignore[attr-defined]
+    if not found:
+        # Nothing to read is a complete, empty result, not a setup failure: the
+        # profile simply has no AI client wired in. The note stays in the report.
+        now = now_iso()
+        note = f"no known AI client configuration locations exist under {home}"
+        stats = ScanStats(connector="code.filesystem", started_at=now, finished_at=now, warnings=[note])
+        result = ScanResult(findings=[], stats=[stats], version=__version__)
+        _emit(result, opts.fmt, opts.output, verbose >= 1, opts.max_rows)
+        raise click.exceptions.Exit(_exit_code(result, opts.fail_on))
+    # Each profile root is walked only along the known locations below it, so
+    # the relative paths keep the `.claude/`, `.cursor/` context the file
+    # signatures expect and nothing else in the profile is read.
+    roots, include = endpoint_roots(found, home)
+    config: dict[str, Any] = {
+        "paths": [str(path) for path in roots],
+        "include": include,
+        "label": label or default_label(),
+        "scan_secrets": True,
+    }
+    _run_scan(opts.config([ConnectorSpec(name="code.filesystem", config=config)]), opts)
+
+
+# -------------------------------------------------------------------- merge
+@main.command("merge")
+@click.argument("reports", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("-f", "--format", "fmt", type=click.Choice(FORMATS), default="table", help="output format")
+@click.option("-o", "--output", type=click.Path(), default=None, help="write the merged report to a file")
+@click.option("--max-rows", type=int, default=None, help="limit rows printed in table mode")
+def merge_command(reports: tuple[str, ...], fmt: str, output: str | None, max_rows: int | None) -> None:
+    """Combine JSON reports from several machines or scans into one fleet report.
+
+    Findings with the same identity merge; every finding records the reports it
+    came from. The result is incomplete (exit 3) when any source was."""
+    loaded = [(os.path.basename(path), _load_report(path)) for path in reports]
+    try:
+        result = merge_reports(loaded)
+    except ValueError as exc:
+        raise click.ClickException(sanitize_text(str(exc))) from None
+    verbose: int = main.verbose  # type: ignore[attr-defined]
+    _emit(result, fmt, output, verbose >= 1, max_rows)
+    raise click.exceptions.Exit(_exit_code(result, None))
 
 
 def _risk_rose(change: dict[str, Any]) -> bool:

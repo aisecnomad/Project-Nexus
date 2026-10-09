@@ -22,6 +22,7 @@ Offline input: n/a (path is the input).
 | `path` | directory to scan (or `paths`: list) |
 | `paths` | list of directories to scan instead of `path`; each root keeps its own identity |
 | `exclude` | list of extra directory names / glob patterns to skip (a bare string is rejected) |
+| `include` | list of paths relative to each root that limit the walk to those files and directories; other file contents are not read; parent directory names are listed (endpoint scans use it; default: everything) |
 | `default_excludes` | skip the built-in directory names (VCS metadata, caches, virtualenvs, dependency trees, IDE state, and build-output or vendored names such as bin, build, dist, vendor) at any depth (default true); a skipped non-empty bin/build/dist/out/target/obj/coverage/vendor/third\_party/thirdparty/external directory is reported as a warning. false scans all of them, including node\_modules and virtualenvs unless `exclude` names them; VCS metadata (.git, .hg, .svn) is never scanned |
 | `max_file_size` | bytes; an analyzable larger file is skipped with incomplete coverage unless oversize\_skip\_globs matches it (default 1,000,000 bytes) |
 | `oversize_skip_globs` | case-insensitive file name globs; a file over max\_file\_size matching one is skipped with a warning even under strict\_coverage (default: lockfiles, minified bundles, source maps, images, fonts, archives and compiled artifacts) |
@@ -34,6 +35,7 @@ Offline input: n/a (path is the input).
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
+| `agent_granularity` | project (default) \| source; source additionally inventories unique named straight-line Python agent constructions by file and scoped binding; other source remains project evidence |
 | `label` | prefix for resource ids (e.g. 'github:org/repo'); defaults to the path |
 | `root_ids` | unique stable IDs aligned with paths, for resource identity across checkout moves |
 | `account` | account label recorded on every finding (default none) |
@@ -66,6 +68,7 @@ Offline input: directory of cloned repositories.
 | `default_excludes` | see code.filesystem (default true) |
 | `strict_coverage` | see code.filesystem (default false) |
 | `include_tests` | see code.filesystem (default false) |
+| `agent_granularity` | project (default) \| source; see code.filesystem |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
@@ -101,6 +104,7 @@ Offline input: directory of cloned projects.
 | `default_excludes` | see code.filesystem (default true) |
 | `strict_coverage` | see code.filesystem (default false) |
 | `include_tests` | see code.filesystem (default false) |
+| `agent_granularity` | project (default) \| source; see code.filesystem |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |

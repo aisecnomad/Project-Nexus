@@ -7,6 +7,108 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## Unreleased attribution migration
+
+After upgrading to the discovery-attribution corrections, rerun the affected
+network, gateway and source scans before comparing totals:
+
+- Network byte and flow totals can decrease when unrelated connections share a
+  destination address. Retain connection UIDs and endpoint fields in the input
+  exports so service attribution can use the individual connection. The fixed
+  attribution budget now counts UID-separated connection groups, so a capture
+  with many connections to one address can reach it sooner. A capacity limit
+  marks coverage incomplete; split large exports into controlled analysis scopes
+  instead of treating omitted traffic as zero.
+- Gateway findings can lose the `tool-use` capability or the "Agentic caller"
+  title when their only evidence was management API traffic or request cadence.
+  Preserve HTTP method and service-host metadata; a path alone does not establish
+  that a hosted agent was invoked. A lower classification is not proof that an
+  agent stopped running.
+- Supported local Python re-exports can expose agent construction previously
+  reported only as framework usage. This remains static integration evidence,
+  not proof of deployment or execution; see the [source guide](connectors/code.md).
+- A scheduled governance audit can verify visible controls while reporting
+  bypass settings as unknown. Do not use that partial observation as the complete
+  ruleset evidence required for release or rollout. See the
+  [merge-policy procedure](operations/merge-policy.md).
+
+The scanner-source fingerprint changes with these fixes. Preserve earlier
+reports as historical observations and rebuild comparison baselines under the
+new reviewed revision; do not interpret incomparable findings as resolved.
+
+Before using the changed classifications for enforcement, commission a fresh
+holdout using the [frozen field-evaluation procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+Include shared-IP traffic, agent management reads, invocation attempts, ordinary
+batch calls and modular agent code. Label provider identity, operation type and
+attributed volume as well as agent presence. Freeze repository/family sampling
+and acceptance thresholds before showing scanner results to reviewers. These
+new authored regressions must be excluded from that holdout.
+
+Collect complete and permission-denied tenant canary receipts for every intended
+deployment scope. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+currently supports static code, AWS and Slack; it cannot grant acceptance to
+network, gateway or other connectors by implication. Keep those scopes in
+analyst-reviewed use until their own approved validation is available. A code
+change cannot substitute for human labels, approved tenant credentials or live
+acceptance receipts.
+
+## Unreleased review migration
+
+After upgrading to the review corrections, rescan source and regenerate retained
+reports. Python `try` and `match` alternatives no longer transfer their last
+visited binding to another path. Supported literal unreachable alternatives
+remain excluded; uncertain branches retain usage evidence. A lower agent
+classification is not evidence that a deployed agent stopped executing.
+Python literals containing control or Unicode separators no longer shift AST
+coordinates; rescans can restore registered-tool execution capabilities that
+were previously lost in either project or source inventory mode.
+
+For separate source inventory bindings, explicitly select
+`agent_granularity: source` on `code.filesystem`, `code.github` or `code.gitlab`.
+The supported subset is import-proved Python constructors assigned to a unique
+simple name in a straight-line module, class or function scope in a `.py` file. Each supported binding
+uses its source file and qualified binding as a separate resource identity;
+unrelated line insertions do not change it. Renaming a file or binding changes
+the identity. Dynamic, repeated, control-flow-dependent and unnamed constructions
+retain project evidence and expose identity limitations; this option does not
+enumerate deployed instances, split notebooks or follow every source language.
+
+Review generated inventory stubs for each source finding. A project resource
+approval does not approve a separate source resource; a broad inventory glob
+can intentionally match both and must be reviewed for that scope. Keep previous
+reports and establish a fresh baseline after changing granularity or scanner
+revision. Source identity and source-analysis changes alter the collection
+fingerprint, so incomparable observations cannot establish resolution.
+
+Supported AWS CLI positional credential settings are now sanitized in command
+text and argument arrays. Regenerate old reports, exports and cached evidence
+under the reviewed revision; changing the scanner cannot erase already retained
+copies. Continue to protect audit artifacts and follow the credential handling
+policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+The additive JSON `inventory_present` field distinguishes an explicitly supplied
+empty inventory from a scan without inventory reconciliation. CSV now retains
+the entire sanitized permission list, including permissions beyond position 30.
+
+The scheduled governance audit can pass its visible-policy checks while its
+retained observation reports partial assurance. Inspect `unknown_fields` and
+`complete_readback_verified`; an omitted bypass list is never evidence of no
+bypass actors. Complete administrator readback remains required by the strict
+verification and release paths. After deployment, retain an actual scheduled or
+dispatched audit run and both ruleset observations, then verify a fresh complete
+administrator readback against the reviewed policy. Synthetic workflow tests
+do not establish the deployed token's response or assurance.
+
+Before enabling enforcement, commission a fresh blinded holdout that includes
+exception handling, pattern matching, multiple constructions per project,
+ambiguous bindings and registered versus unregistered source agents. Freeze
+sampling, labels and acceptance thresholds before showing results to reviewers;
+exclude the new authored regression fixtures. Follow
+[rollout acceptance](#rollout-acceptance) for complete and permission-denied
+tenant canaries. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+supports static code, AWS and Slack; passing those scopes does not grant
+acceptance to other connectors. Human labels and live receipts remain pending
+until operators supply them.
+
 Use this operator sequence; dated candidate notes remain under
 [Candidate change history](#candidate-change-history) and describe differences
 between candidate builds, not between releases.
@@ -39,8 +141,11 @@ record or deployment acceptance evidence.
 
 The scheduled dependency and governance audit checks both live merge rulesets
 against the versioned desired policy. Its GitHub token is read-only: a green
-audit records a matching policy snapshot, while a failed or unavailable read
-does not establish protection. Repository administrators must apply the
+job establishes that the visible managed fields match, but its retained
+observation can still report partial assurance because GitHub withholds bypass
+settings. Read `complete_readback_verified` and `unknown_fields` in each
+observation; never interpret an omitted bypass list as empty. A failed or
+unavailable read does not establish protection. Repository administrators must apply the
 [reviewed ruleset updates](operations/merge-policy.md) and verify fresh API
 readback. The audit neither changes settings nor substitutes for independent
 human review or tenant acceptance.
@@ -315,6 +420,19 @@ record. Use fresh disposable workers and immutable inputs; these controls do not
 turn Git or the scanner into a process sandbox.
 
 ## Resource limits and incomplete scans
+
+Record dumps are JSONL and obey offline replay's 4 MiB encoded-byte line limit,
+including the newline. Each connector export also obeys the smaller of its
+`max_input_file_bytes` and `max_input_bytes` limits: 32 MiB by default. The hard
+file ceiling stays 64 MiB. Export-size and strict-JSON serialization rejections
+make the scan incomplete while preserving valid original records for analysis.
+Sanitizer safety-limit rejections skip the unsafe record and make the scan
+incomplete. Any of these rejections aborts dump publication and preserves a
+prior file; the manifest marks the new export `exported: false`.
+A partial dump is not complete evidence. Use smaller collection scopes or raise the
+configured file/total limits within their hard ceilings when appropriate.
+The line limit is fixed, so a single oversize record requires an upstream
+export with bounded records rather than a larger file limit.
 
 Shared HTTP JSON responses are streamed and limited to 16 MiB of decoded
 content by default. Each network attempt has a response-acquisition budget of
@@ -796,10 +914,108 @@ lexical source matches even for signatures with an agent-indicator flag.
 
 ## Candidate change history
 
-These notes record behavior changes made while the 0.1.1 candidate was being
-hardened. Read them when you have baselines, reports or inventories produced
+These notes record unreleased corrections and earlier candidate changes.
+Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 9 scan evidence corrections (unreleased)
+
+This source candidate includes corrections reviewed from the existing discovery,
+redaction/replay and lexer work. It does not change the published 0.1.2 artifact,
+create a release, or establish live tenant acceptance. Select and review a new
+full commit SHA before deploying it.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Source reports | Supported Go SDK aliases are resolved before credential redaction and source excerpting; embedded carriage returns no longer shift LF-based excerpts. | Regenerate affected reports and restrict older reports as confidential. Dynamic calls and arbitrary credential encodings still need operator review. |
+| VPC flow coverage | `SKIPDATA`, invalid or contradictory statuses mark collection incomplete; `NODATA` remains a valid no-traffic record. | Pipelines must preserve exit 3 as unknown coverage and obtain complete input before accepting absence of findings. |
+| Network attribution | Connection-specific TLS evidence is retained before totals are combined; contradictory and non-AI observations cannot borrow AI attribution. | Rebaseline traffic totals and investigate reduced attributed counts; previous totals may include unrelated connections. |
+| Gateway activity | Invocation evidence requires a supported operation and provider, with its method from the same event. | Rebaseline agent indicators and capabilities. A management request, missing method or invocation attempt alone cannot establish successful execution or tool use. |
+| Source coverage | Valid Rust multiline strings and supported JSX in JavaScript files can finish lexical analysis. | Re-scan prior incomplete repositories. Newly analyzed code can add findings; unresolved or unterminated syntax stays incomplete. |
+| Record exports | Strict JSON and encoded line/file/aggregate byte limits match replay; empty complete exports contain an empty record envelope. | Check the current manifest before replay. A rejected replacement retains the previous file but reports `exported: false` and `filename: null`; that file is not this run's accepted export. |
+
+Treat these as behavior changes when comparing old reports. Record scanner and
+signature fingerprints, exact configuration and input scope alongside new
+baselines. For oversized exports, narrow the collection scope or deliberately
+adjust the configured file/aggregate limits within their hard ceilings; the
+encoded JSONL line limit remains 4 MiB including its newline. Sanitization
+safety-limit failures remain incomplete even when other records are analyzable.
+
+The [reviewer packet](operations/reviewer-packet.md) lists paired controls for
+these changes. Before enforcement, obtain a fresh human-labeled holdout using
+the [repository-level procedure](evaluation.md#repository-level-field-acceptance)
+and exact-scope authorized [tenant canaries](canaries.md). The existing automated
+acceptance gate supports only local-code, AWS and Slack deployments; other
+connector families need their own approved validation. No fixture, mock, AI
+review or reused benchmark can be relabeled as that evidence.
+
+### October 8 discovery classification and lifecycle corrections (unreleased)
+
+Regenerate reports and comparison baselines with the reviewed candidate.
+Supported SDK credential argument recognition is applied before evidence
+publication; redaction remains defense in depth, and reports remain confidential.
+
+Source classification becomes more conservative for standalone .NET tool
+definitions, unrelated Go receivers, and provably unreachable Python
+comprehension clauses. Supported .NET automatic invocation and Go agent
+constructors retain import-bound positive evidence. These are static candidate
+classifications and do not establish deployed execution. Unknown dynamic
+bindings remain potential or framework-usage evidence.
+C# tool-mode expressions whose type or alias name is locally shadowed also
+remain unproven; a lookalike `Auto` member cannot establish automatic invocation.
+
+Lifecycle links now require the same complete device value, compared after
+trimming and case normalization. Standardize endpoint and runtime exports on
+the same canonical immutable device identifier or full hostname. A short name
+does not implicitly alias a FQDN, and different DNS suffixes remain distinct.
+Repeat correlation clears derived endpoint activity tags when their process
+observations disappear; native runtime observations remain intact. Confidence
+and risk are unchanged by these links.
+
+Use the [repository-level acceptance procedure](evaluation.md#repository-level-field-acceptance)
+for full repositories that exceed the bounded evaluation runner's limits.
+New authored regression cases are development evidence. Independent human
+annotation and authorized provider-specific tenant acceptance still require
+their own evidence and cannot be inferred from a passing CI run.
+
+### October 9 endpoint and fleet completeness corrections
+
+Endpoint discovery stops with an incomplete report (exit 3) if any known
+configuration location cannot be inspected safely. Missing locations remain
+normal; symbolic links, non-regular objects and denied access are coverage
+failures. Instruction checks reuse the original confined file snapshot and
+mark inspection beyond 512 KiB incomplete.
+
+Fleet inputs must preserve completion statistics, matching summary counts and
+valid collection fingerprints. Combining an incomplete or truncated report
+with a healthy one does not restore completeness. When duplicate observations
+have different assessments, the highest source risk is retained, and a shadow
+observation remains shadow. Source risk policies are not silently replaced by
+the merging workstation's defaults. Rescan to replace baselines produced by
+an earlier candidate; these safeguards do not establish field validation.
+
+### October 8 classification and risk follow-ups
+
+Re-scan before comparing risk to reports from an earlier candidate. Three
+things change what a report says without any repository change. A project
+whose executable code constructs and serves an MCP server is now an
+`mcp-server` finding (base weight 15) titled "MCP server implementation"
+instead of a `framework-usage` finding (base weight 5); its resource and
+identity are unchanged, so `shadowscan diff` reports it as changed, not new.
+Coding-agent configuration findings now carry the tags `hidden-instructions`
+(20), `remote-code-fetch` (15) and `invisible-text` (10) when the instruction
+files they report contain hidden comment content, fetch-and-execute or
+decode-and-execute pipelines, or invisible characters; the evidence names the
+file and line only. A bare `mlflow` dependency no longer produces a
+`provider.databricks` finding, so such findings resolve on re-scan; that is a
+detection correction, not remediation. Spring AI services that register tools
+on an injected `ChatClient.Builder` chain become `agent` findings. The new
+`shadowscan endpoint` and `shadowscan merge` commands add collection and
+aggregation paths; the existing CycloneDX AI-BOM semantics are retained. None of this is
+field-validated: the changes were driven by an author-written benchmark
+(`archive/reviews/head-to-head-2026-10-08.md`) and are covered by regression
+tests and evaluation cases only.
 
 ### October 7 distribution rename and PyPI publication
 
