@@ -89,7 +89,7 @@ report it without penalty, but it is not required. Documentation-only mentions
 use of them. A `package.json` alias (`"name-v1": "npm:@scope/name@range"`)
 names the real package.
 
-The labels were revised once after the first run (corpus v2, 836 expected
+The labels were revised after the first run (corpus v2, 839 expected
 facts): auditing every tool's false positives against the raw reports found
 three labeling gaps (an npm alias, the `portkey-ai` PyPI package, the
 `api.replicate.com` host) and the documentation-tree rule above; the audit
@@ -98,7 +98,10 @@ misses or false positives (ids such as `provider.voyage-ai` and
 `framework.microsoft-extensions-ai` were mapped by name rules instead of by
 their exact slug, `protocol.mcp` counted as SDK usage without dependency,
 import or code evidence, and two ids resembled products the taxonomy does not
-track). Rescored against corpus v2 with the fixed adapters, the 2026-10-08 run
+track). A second audit, of ShadowScan's own false positives after the
+detection changes, found that the labeler never matched Rust `use rmcp::...`
+imports, so three Rust MCP servers (`impl ServerHandler for`) were unlabeled;
+they are labeled now. Rescored against corpus v2 with the fixed adapters, the 2026-10-08 run
 gives ShadowScan in-scope precision 97.8%, recall 87.5%, F1 92.3% (17 false
 positives, 106 misses); every other tool moves by at most 0.2 points.
 

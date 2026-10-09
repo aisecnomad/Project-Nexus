@@ -58,6 +58,12 @@
      ]
     },
     {
+     "fact": "mcp:server",
+     "evidence": [
+      "code:examples/rmcp/src/main.rs:16 (ServerHandler)"
+     ]
+    },
+    {
      "fact": "provider:anthropic",
      "evidence": [
       "idiom:crates/rig-bedrock/src/completion.rs:52 (claude-haiku)",
@@ -1986,7 +1992,8 @@
      "fact": "mcp:server",
      "evidence": [
       "code:.github/scripts/pr-review-mcp.py:14 (FastMCP()",
-      "code:examples/mcp-wiki/src/mcp_wiki/server.py:12 (FastMCP()"
+      "code:crates/goose-mcp/src/lib.rs:9 (ServerHandler)",
+      "code:crates/goose-mcp/src/mcp_server_runner.rs:41 (ServerHandler)"
      ]
     },
     {
@@ -5539,6 +5546,14 @@
      ]
     },
     {
+     "fact": "mcp:server",
+     "evidence": [
+      "code:codex-rs/rmcp-client/src/bin/rmcp_test_server.rs:7 (ServerHandler)",
+      "code:codex-rs/rmcp-client/src/bin/test_stdio_server.rs:13 (ServerHandler)",
+      "code:codex-rs/rmcp-client/src/bin/test_streamable_http_server.rs:29 (ServerHandler)"
+     ]
+    },
+    {
      "fact": "provider:azure-openai",
      "evidence": [
       "host:codex-rs/cli/src/doctor.rs:3645 (.openai.azure.com)",
@@ -5742,6 +5757,14 @@
       "manifest:codex-rs/Cargo.toml (rmcp)",
       "manifest:codex-rs/app-server/Cargo.toml (rmcp)",
       "manifest:codex-rs/app-server-protocol/Cargo.toml (rmcp)"
+     ]
+    },
+    {
+     "fact": "mcp:server",
+     "evidence": [
+      "code:codex-rs/rmcp-client/src/bin/rmcp_test_server.rs:7 (ServerHandler)",
+      "code:codex-rs/rmcp-client/src/bin/test_stdio_server.rs:13 (ServerHandler)",
+      "code:codex-rs/rmcp-client/src/bin/test_streamable_http_server.rs:29 (ServerHandler)"
      ]
     },
     {
