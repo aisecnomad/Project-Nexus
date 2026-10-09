@@ -62,7 +62,7 @@ review record.
 - Treat confidence as a calibrated probability.
 - Treat author-written evaluation corpora as field precision or recall.
 - Treat `archive/reviews/` as an external audit.
-- Treat the `0.1.1` version string as a published release.
+- Treat the `0.1.2` version string as a published release.
 - Treat GitHub Pages at <https://aisecnomad.github.io/Project-Nexus/> as the
   MkDocs site until Pages is switched to the Docs workflow artifact.
 

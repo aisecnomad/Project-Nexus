@@ -325,10 +325,10 @@ and [connector permissions](https://github.com/aisecnomad/Project-Nexus/blob/mai
 
 ## Supported versions
 
-No version has been released: there is no tag, published package or signed
-artifact, and `0.1.1` in `pyproject.toml` names an unreleased candidate. Only
-`main` receives fixes, with no backport. Report issues against the full commit
-SHA of `main` or the pinned revision you deployed, not a version number.
+Version `0.1.2` is an alpha version. Fixes land on `main`; there is no
+released-version backport commitment. Report the installed release version
+and artifact identity, or the full commit SHA for a source installation.
+Publication does not establish production acceptance for your environment.
 
 ## Reporting
 
@@ -350,8 +350,9 @@ rather than assuming the scanner protects a compromised host.
 
 ### What to include
 
-- The full scanner commit SHA, connector and collection mode. The unreleased
-  package version alone does not identify the revision.
+- The scanner release version and artifact identity, or full commit SHA for
+  a source installation, plus the connector and collection mode. A candidate
+  version alone does not identify a source revision.
 - A minimal synthetic reproduction or public repository and commit, with
   expected and observed behavior.
 - The security impact, affected artifacts and who could access them.

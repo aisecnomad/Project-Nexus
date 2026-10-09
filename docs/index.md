@@ -50,7 +50,7 @@ severity as an enforcement threshold.
 
 ## Project status and deployment
 
-ShadowScan is unreleased and maintained by one maintainer with AI assistance.
+ShadowScan is an alpha project maintained by one maintainer with AI assistance.
 Automated checks and bundled regression corpora do not establish independent
 human review or production accuracy. Independent human review is required
 before a tagged release. Review and pin the exact revision you deploy, and
@@ -78,4 +78,4 @@ use the [support guide](https://github.com/aisecnomad/Project-Nexus/blob/main/SU
 or follow the [contribution guide](contributing.md). Maintainer-scoped
 [good first issues](https://github.com/aisecnomad/Project-Nexus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 are a starting point when available. Keep credentials and private exports out of
-public issues. Version 0.1.1 remains unreleased; deploy only a reviewed full commit SHA.
+public issues. For deployment, pin a reviewed full commit SHA and retain its release evidence.

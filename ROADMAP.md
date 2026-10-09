@@ -1,6 +1,6 @@
 # Roadmap
 
-ShadowScan is an unreleased candidate (`0.1.1` in `pyproject.toml`). This
+ShadowScan is an unreleased candidate (`0.1.2` in `pyproject.toml`). This
 roadmap is intent, not a contract. Items move only when they keep the
 fail-closed trust model.
 
