@@ -409,7 +409,11 @@ only matches when `.claude/` is part of the relative path), which is why
 each location as its own root. Entries must be relative and may not escape the
 root; a bare string is rejected like `exclude`. A scan with `include` is never
 served from the incremental cache: fingerprinting the root would read every
-file below it, so such a scan always runs in full.
+file below it, so such a scan always runs in full. A directory link that only
+lies on the way to selected paths is never followed; it is a coverage gap
+(incomplete) when a selected path exists through it, or cannot be looked up,
+and is passed over when none does, so a linked `~/.config` without any client
+configuration in it leaves an endpoint scan complete.
 
 ```yaml
 connectors:

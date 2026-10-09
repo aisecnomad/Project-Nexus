@@ -978,9 +978,10 @@ their own evidence and cannot be inferred from a passing CI run.
 Endpoint discovery marks the report incomplete (exit 3) if any known
 configuration location cannot be inspected safely; the other locations are
 still scanned and reported. Missing locations remain normal; symbolic links,
-non-regular objects and denied access are coverage failures. Instruction
-checks reuse the original confined file snapshot and mark inspection beyond
-512 KiB incomplete.
+non-regular objects and denied access are coverage failures. A linked
+directory that holds none of the locations (a stow-folded `~/.config`) is
+passed over without being followed. Instruction checks reuse the original
+confined file snapshot and mark inspection beyond 512 KiB incomplete.
 
 Rescan endpoint baselines produced by an earlier candidate. Windows locations
 now come from the profile's own `AppData/Roaming`: a mounted Windows profile

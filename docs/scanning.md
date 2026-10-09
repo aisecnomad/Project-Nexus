@@ -569,12 +569,14 @@ list is the same for every profile, so the collection scope of a workstation
 stays comparable when clients are configured or removed: `shadowscan diff`
 reports them as new or resolved findings. A location that is a link, sits
 below one, or cannot be inspected is not read and makes the scan incomplete
-(exit 3); every other location is still read and reported. The default profile
-is the current user's home with symbolic links resolved (`$HOME` is trusted as
-`--home` is), so a home below a linked `/home` works. `--home DIR` inspects
-another profile (a mounted image, a fleet collection directory); `--list`
-prints the locations that exist and exits (exit 3 if one could not be
-inspected). Findings carry the resource prefix `endpoint:<hostname>`; `--label`
+(exit 3); every other location is still read and reported. A linked directory
+holding none of the locations (a stow-folded `~/.config` without client
+configuration) is passed over and does not make the scan incomplete. The
+default profile is the current user's home with symbolic links resolved
+(`$HOME` is trusted as `--home` is), so a home below a linked `/home` works.
+`--home DIR` inspects another profile (a mounted image, a fleet collection
+directory); `--list` prints the locations that exist and exits (exit 3 if one
+could not be inspected). Findings carry the resource prefix `endpoint:<hostname>`; `--label`
 replaces it, for example with an asset tag, so that merged fleet reports stay
 attributable. A profile with none of the locations is a complete, empty scan
 whose stats carry a warning, not a setup error (exit 0 unless `--fail-on`

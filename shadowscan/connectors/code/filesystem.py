@@ -1248,6 +1248,25 @@ class FilesystemConnector(BaseConnector):
         """Whether the walk must enter directory ``rel`` to reach a configured include path."""
         return self._included(rel) or any(p.startswith(rel + "/") for p in self.include_paths)
 
+    def _include_behind_link(self, link: Path, rel: str) -> bool:
+        """Whether a configured include path below directory link ``rel`` exists through it.
+
+        Only metadata is looked up through the link; nothing behind it is
+        listed or read. A lookup that fails for any reason other than absence
+        counts as present, so the link stays a coverage gap.
+        """
+        for selected in self.include_paths:
+            if not selected.startswith(rel + "/"):
+                continue
+            try:
+                os.lstat(link / selected[len(rel) + 1 :])
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except OSError:
+                return True
+            return True
+        return False
+
     def _excluded_file(self, rel: str) -> bool:
         """File exclusion: globs only, so a file named like an excluded directory is still scanned."""
         for g in self.exclude_globs:
@@ -1580,6 +1599,10 @@ class FilesystemConnector(BaseConnector):
                 continue
             try:
                 if path.is_symlink():
+                    if not self._included(rel) and not self._include_behind_link(path, rel):
+                        # The link only lies on the way to selected paths, and
+                        # none of them exists through it: nothing is lost.
+                        continue
                     if not self._skip_link(root, resolved_root, rel, path, walk):
                         return None
                     continue

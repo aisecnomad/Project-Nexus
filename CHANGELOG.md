@@ -92,7 +92,10 @@ summarizes each release for people who install and operate ShadowScan.
   cannot be inspected safely, including symbolic links and denied access. The
   other locations are still scanned and reported in the same incomplete
   report; before, one linked file (a stow-managed `~/.claude/settings.json`)
-  discarded the whole profile.
+  discarded the whole profile. A linked directory on the way to the known
+  locations (a stow-folded `~/.config`) is a coverage gap only when one of
+  them exists through it; `code.filesystem` `include` walks pass over such a
+  link otherwise, without following it.
 - `shadowscan endpoint` reads Windows locations from the profile's own
   `AppData/Roaming`, never from the scanning process's `%APPDATA%`. A mounted
   Windows profile scanned with `--home` was reported complete and empty while

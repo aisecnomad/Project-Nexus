@@ -303,3 +303,42 @@ def test_endpoint_scans_safe_locations_beside_a_linked_one(tmp_path: Path):
     assert ".cursor/mcp.json" in resources and "claude_desktop_config.json" in resources
     errors = [e for s in report["stats"] for e in s["errors"]]
     assert any("could not be inspected safely" in e for e in errors), errors
+
+
+def test_endpoint_linked_directory_without_known_locations_stays_complete(tmp_path: Path):
+    # GNU stow can fold a whole ~/.config into one link. Nothing the scan looks
+    # for exists through it, so the profile scan is complete; a known location
+    # behind the link still makes it incomplete, and is not read.
+    home = tmp_path / "home"
+    (home / ".cursor").mkdir(parents=True)
+    (home / ".cursor" / "mcp.json").write_text(MCP)
+    config = tmp_path / "dotfiles" / "config"
+    (config / "nvim").mkdir(parents=True)
+    (config / "nvim" / "init.vim").write_text("set number\n")
+    (home / ".config").symlink_to(config)
+    code, report = _endpoint_report(home, tmp_path / "report.json")
+    assert code == 0, report["stats"]
+    assert report["summary"]["complete"] is True and report["findings"]
+    (config / "Claude").mkdir()
+    (config / "Claude" / "claude_desktop_config.json").write_text(MCP)
+    code, report = _endpoint_report(home, tmp_path / "report.json")
+    assert code == 3
+    assert report["summary"]["complete"] is False
+    assert "claude_desktop_config.json" not in " ".join(f["resource"] for f in report["findings"])
+
+
+def test_include_walk_passes_over_a_link_with_no_selected_path_behind_it(tmp_path: Path, run_connector):
+    root, shared = tmp_path / "root", tmp_path / "shared"
+    root.mkdir()
+    (shared / "guides").mkdir(parents=True)
+    (shared / "guides" / "style.md").write_text("Use tabs.\n")
+    (root / "docs").symlink_to(shared)
+    (root / ".mcp.json").write_text(MCP)
+    include = ["docs/agents/AGENTS.md", ".mcp.json"]
+    findings, ctx = run_connector("code.filesystem", path=str(root), include=include, use_git=False)
+    assert findings and not ctx.stats.incomplete and not ctx.stats.errors, ctx.stats.warnings
+    (shared / "agents").mkdir()
+    (shared / "agents" / "AGENTS.md").write_text("Run the tests before committing.\n")
+    findings, ctx = run_connector("code.filesystem", path=str(root), include=include, use_git=False)
+    assert ctx.stats.incomplete
+    assert not any("AGENTS.md" in finding.resource for finding in findings)
