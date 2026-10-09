@@ -27,7 +27,7 @@ The protocol is [`PROTOCOL.md`](PROTOCOL.md). Results are in [`results/`](result
 | `build_manifest.py` | Builds `corpus.json` from `labels/`; SHAs and licenses come from the checkouts |
 | `cases.py` | Manifest validation, fail-closed checkout check, home-view labels, redaction |
 | `adapters.py` | Adapters for `vet`, `mcp-audit` and `shadow-mcp`, the tool list, version pins |
-| `run.py` | Runs each tool on each case as `nobody`, in network and PID namespaces |
+| `run.py` | Runs tools as a non-root account in user, network and PID namespaces |
 | `score.py` | Metrics, intervals, McNemar tests, kappa, stratum counts, and `REPORT.md` |
 | `install_tools.sh` | Installs every tool at its pinned version |
 | `results/` | Committed verdicts (JSONL), run manifest, `REPORT.md`, summary |
@@ -44,7 +44,8 @@ bash tools/benchmark_realworld/install_tools.sh /opt/rwbench/tools
 # 2. Checkouts: clone each manifest repository under --checkout-root at its pinned SHA.
 #    The runner refuses any checkout that is not at its pinned commit.
 
-# 3. Run and score
+# 3. Run and score as a non-root account in a disposable, externally isolated VM/container.
+#    Use fresh results/raw directories for the current runner; user namespaces must be available.
 python -m tools.benchmark_realworld.run --manifest tools/benchmark_realworld/corpus.json \
   --checkout-root /home/user --tool-root /opt/rwbench/tools \
   --results tools/benchmark_realworld/results --raw /opt/rwbench/raw --self-check
@@ -54,10 +55,27 @@ python -m tools.benchmark_realworld.score --results tools/benchmark_realworld/re
 
 ## Safety
 
-- Each tool runs as user `nobody`, with an empty environment, `HOME` set to
-  the case directory, no network, and a private PID namespace.
+- The current runner refuses root before reading the manifest or creating outputs.
+  Each tool runs as the invoking non-root user in fresh user, network and PID
+  namespaces, with an empty environment and a case-specific `HOME`. Namespace
+  creation failures are tool errors; there is no unsandboxed fallback.
+- Run only in a disposable VM/container externally isolated from secrets and
+  valuable files, using an account dedicated to this run. These namespaces do
+  **not** isolate the host filesystem: tools and concurrent cases share the
+  invoking UID and can access that account's files. They are not a complete
+  sandbox against hostile commands.
+- Output and scratch directories are private to the invoking UID. Output writes
+  reject symbolic-link paths and atomically replace regular files without
+  following a target link. The runner does not change the process umask.
 - Repository trees are copied without `.git` and without symbolic links.
   Links are never followed.
 - Secret-shaped strings are redacted before any tool output is written.
 - Some tools can start MCP servers named in a repository's configuration
   (Cisco MCP Scanner). Those commands run inside the sandbox above.
+
+The 2026-10-09 runner hardening changes the verdict-code hash. Stored v1/v2
+results remain historical evidence from the earlier runner; their hashes and
+verdicts have not been rewritten. Its network/PID namespaces and `nobody` drop
+did not establish the earlier protocol's claim of filesystem write confinement.
+A new scored run needs fresh result directories and new provenance; the current
+v2 scorer intentionally refuses the historical manifests against changed code.

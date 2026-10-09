@@ -127,6 +127,16 @@ def test_coverage_reports_missing_and_extra_rows() -> None:
 
     full = on_repo("rw-90-x:repo")
     assert coverage_problems(full, doc) == []
+    for field, invalid in (
+        ("label", "none"),
+        ("family", "ordinary"),
+        ("surface", "endpoint"),
+        ("detected", "false"),
+        ("status", "unexpected"),
+    ):
+        corrupted = on_repo("rw-90-x:repo")
+        corrupted["shadowscan"][0][field] = invalid
+        assert any(field in p for p in coverage_problems(corrupted, doc))
     missing = dict(full)
     del missing["shadowscan"]
     assert any("shadowscan" in p for p in coverage_problems(missing, doc))

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,8 @@ import tools.benchmark.adapters as base
 import tools.benchmark_realworld.adapters as realworld
 from tools.benchmark.adapters import Run, ToolEnv, set_run_as
 from tools.benchmark_realworld.adapters import ADAPTERS_V2
-from tools.benchmark_realworld.cases import RealCase, build_cases_v2, validate_manifest
-from tools.benchmark_realworld.run import NOBODY, _run_one
+from tools.benchmark_realworld.cases import RealCase, build_cases_v2, sanitize_note, validate_manifest
+from tools.benchmark_realworld.run import _private_directory, _run_one
 
 ROOT = Path("/home/user")
 TOOLS = Path("/opt/rwbench/tools")
@@ -35,7 +36,7 @@ CALLS: list[tuple[str, int, str]] = []  # (configuration, exit code, last stderr
 def _spy(original: Callable[..., Run]) -> Callable[..., Run]:
     def wrapped(cmd: list[str], **kwargs: Any) -> Run:
         code, out, err, secs = original(cmd, **kwargs)
-        last = err.strip().splitlines()[-1][:90] if err and err.strip() else ""
+        last = sanitize_note(err.strip().splitlines()[-1], limit=90) if err and err.strip() else ""
         CALLS.append((CURRENT["tool"], code, last))
         return code, out, err, secs
 
@@ -50,42 +51,49 @@ def _positive_and_clean(cases: list[RealCase], surface: str) -> list[tuple[str, 
 
 
 def main() -> int:
-    os.umask(0)  # as run.py does: work folders must be writable by the unprivileged tool
+    if os.geteuid() == 0 or os.getuid() == 0:
+        print(
+            "refusing root: use a non-root account in a disposable, externally isolated machine",
+            file=sys.stderr,
+        )
+        return 2
     wanted = set(os.environ.get("PROBE_TOOLS", "").split(",")) - {""}
     cases = build_cases_v2(validate_manifest(json.loads(CORPUS.read_text(encoding="utf-8"))), ROOT)
     env = ToolEnv(root=TOOLS, python=str(TOOLS / "venvs" / "shadowscan" / "bin" / "python"))
-    set_run_as(NOBODY)
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    SCRATCH.chmod(0o777)
-    with (
-        patch.object(base, "_isolated", _spy(base._isolated)),
-        patch.object(realworld, "_isolated", _spy(realworld._isolated)),
-    ):
-        for adapter in ADAPTERS_V2:
-            if wanted and adapter.name not in wanted:
-                continue
-            CURRENT["tool"] = adapter.name
-            for surface in adapter.surfaces:
-                for kind, case in _positive_and_clean(cases, surface):
-                    CALLS.clear()
-                    outcome = _run_one(adapter, case, env, SCRATCH, ROOT)
-                    print(
-                        json.dumps(
-                            {
-                                "tool": adapter.name,
-                                "surface": surface,
-                                "case": case.case_id,
-                                "kind": kind,
-                                "status": outcome.status,
-                                "detected": outcome.detected,
-                                "note": outcome.note[:70],
-                                "exit_codes": [code for _, code, _ in CALLS],
-                                "stderr_tail": [last for _, _, last in CALLS][-1:],
-                            }
-                        ),
-                        flush=True,
-                    )
-    return 0
+    os.close(_private_directory(SCRATCH))
+    set_run_as((), user_namespace=True)
+    try:
+        with (
+            patch.object(base, "_isolated", _spy(base._isolated)),
+            patch.object(realworld, "_isolated", _spy(realworld._isolated)),
+        ):
+            for adapter in ADAPTERS_V2:
+                if wanted and adapter.name not in wanted:
+                    continue
+                CURRENT["tool"] = adapter.name
+                for surface in adapter.surfaces:
+                    for kind, case in _positive_and_clean(cases, surface):
+                        CALLS.clear()
+                        outcome = _run_one(adapter, case, env, SCRATCH, ROOT)
+                        print(
+                            json.dumps(
+                                {
+                                    "tool": adapter.name,
+                                    "surface": surface,
+                                    "case": case.case_id,
+                                    "kind": kind,
+                                    "status": outcome.status,
+                                    "detected": outcome.detected,
+                                    "note": outcome.note[:70],
+                                    "exit_codes": [code for _, code, _ in CALLS],
+                                    "stderr_tail": [last for _, _, last in CALLS][-1:],
+                                }
+                            ),
+                            flush=True,
+                        )
+        return 0
+    finally:
+        set_run_as(())
 
 
 if __name__ == "__main__":

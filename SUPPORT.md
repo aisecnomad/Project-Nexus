@@ -1,6 +1,6 @@
 # Support
 
-ShadowScan is an unreleased, volunteer-maintained project. Support is best
+ShadowScan is an alpha, volunteer-maintained project. Support is best
 effort; there is no guaranteed response time, commercial support commitment,
 or production service-level agreement. A version string or successful scan
 does not establish production acceptance for your environment.
@@ -23,10 +23,10 @@ instead of posting duplicates.
 
 ## Troubleshoot before reporting
 
-1. Record the full scanner commit SHA, Python version, operating system and
+1. Record the scanner release version, Python version, operating system and
    affected connector. In a source checkout, use `git rev-parse HEAD`; for an
-   installed wheel, retain the source SHA from the build or installation record.
-   `0.1.1` alone cannot identify an unreleased revision.
+   installed wheel, retain its hash and source SHA from the release evidence
+   or build record. A candidate version alone cannot identify a source revision.
 2. Check [connector documentation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md)
    for supported input modes, required SDK extras and read-only permissions.
    Do not broaden permissions simply to make an error disappear.
@@ -62,10 +62,10 @@ would expose a vulnerability or confidential data.
 
 ## Supported revisions and triage
 
-Only the current `main` branch receives fixes; the project has no released
-version or backport commitment. Report the exact revision you used even if it
-is older. A maintainer may ask you to try a reviewed newer revision in an
-isolated environment to determine whether the problem is already fixed.
+Fixes land on `main`; there is no released-version backport commitment.
+Report the exact release or source revision you used even if it is older.
+A maintainer may ask you to try a reviewed newer revision in an isolated
+environment to determine whether the problem is already fixed.
 
 Maintainers prioritize impact, reproducibility and available capacity. Security
 and data-integrity concerns need private assessment first; actionable bugs and

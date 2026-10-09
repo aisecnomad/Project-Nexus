@@ -112,14 +112,12 @@ through PyPI trusted publishing. The uploaded wheel is the same file that job
 attests on GitHub, so you can check a downloaded wheel against this repository:
 
 ```bash
-python -m pip download --no-deps --dest wheels NexusShadowScan==0.1.1
-gh attestation verify wheels/nexusshadowscan-0.1.1-py3-none-any.whl --repo aisecnomad/Project-Nexus
+python -m pip download --no-deps --dest wheels NexusShadowScan==0.1.2
+gh attestation verify wheels/nexusshadowscan-0.1.2-py3-none-any.whl --repo aisecnomad/Project-Nexus
 ```
 
-Until the maintainer publishes the first release, `pip install NexusShadowScan`
-finds nothing; use the reviewed-revision install below. A plain `pip install`
-resolves dependencies from the live index. For a deployment, prefer the
-hash-locked install.
+A plain `pip install` resolves dependencies from the live index. For a
+deployment, prefer the hash-locked install.
 
 ### Deployment install (reviewed revision, hash-locked)
 
@@ -140,7 +138,7 @@ source .venv/bin/activate
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/nexusshadowscan-0.1.1-*.whl
+python -m pip install --no-deps dist/nexusshadowscan-0.1.2-*.whl
 ```
 
 The checked-in runtime lock includes the core scanner and cloud dependencies.
@@ -149,7 +147,7 @@ wheel from this reviewed commit; see
 [locked installs and release evidence](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#install-from-a-reviewed-revision)
 for validation and artifact-retention requirements.
 
-The source version string `0.1.1` is not, by itself, evidence of a published or
+The source version string `0.1.2` is not, by itself, evidence of a published or
 signed artifact; the package index and the release evidence are. Python 3.11,
 3.12, or 3.13 is required and covered by CI; 3.14 is excluded until the CI matrix and
 hash-locked dependency sets cover it. Core dependencies include `click`, `rich`,
@@ -463,14 +461,18 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
 
 ## Project status
 
-* **Release state.** There is no tag, published package, or signed artifact yet.
+* **Release state.** Version `0.1.2` is prepared for public alpha distribution
+  as `NexusShadowScan`. Confirm publication and artifact identity on
+  [PyPI](https://pypi.org/project/NexusShadowScan/0.1.2/) and the
+  [GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2).
   The package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Project-Nexus/tree/main/archive/reviews) are AI-assisted, not third-party reviews.
-* **What is independently reviewed: nothing yet.** Every pull request runs CI
-  and CodeQL, but no merged pull request currently carries an approval from a second
-  person. Independent human review is required before any tagged release; see
+* **Independent review.** [PR #159](https://github.com/aisecnomad/Project-Nexus/pull/159#pullrequestreview-5458962521)
+  received a non-author approval from `immanueldahunsi-Project-Nexus` after merge.
+  Its reviewed source tree matches the `0.1.1` candidate. That approval does not
+  cover later changes; each release candidate requires independent review. See
   the [review and merge policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy). The
   intended branch ruleset is versioned in
   [.github/rulesets/require-ci-and-review.json](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/rulesets/require-ci-and-review.json).

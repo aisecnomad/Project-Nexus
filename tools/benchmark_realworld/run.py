@@ -4,7 +4,8 @@
   --checkout-root /home/user --tool-root /opt/rwbench/tools
   --results tools/benchmark_realworld/results --raw /opt/rwbench/raw``
 
-Every case runs as user ``nobody`` inside fresh network and PID namespaces, with
+The runner refuses root. Every case runs as the invoking user inside fresh user,
+network and PID namespaces, with
 an empty environment and ``HOME`` set to the case directory. A checkout that is
 not at its pinned commit stops the run before any tool starts. Raw tool output
 goes to ``--raw``, outside the repository, after redaction; the committed
@@ -18,7 +19,9 @@ import hashlib
 import json
 import os
 import platform
+import secrets
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -39,10 +42,8 @@ from tools.benchmark_realworld.cases import (
     validate_manifest,
 )
 
-# Drop to ``nobody`` inside the namespaces (see ``tools.benchmark.adapters``).
-NOBODY = ("setpriv", "--reuid=65534", "--regid=65534", "--clear-groups")
 SANDBOX = (
-    "unshare --net --pid --fork --mount-proc; setpriv nobody; empty environment; "
+    "unshare --user --map-current-user --net --pid --fork --mount-proc; non-root runner; empty environment; "
     "HOME=case; no .git, no symlinks"
 )
 ROOT = Path(__file__).resolve().parents[2]
@@ -91,7 +92,7 @@ def provenance_conflict(previous: dict[str, Any], provenance: dict[str, Any], na
 def _run_one(adapter: Adapter, case: RealCase, env: ToolEnv, scratch: Path, checkout_root: Path) -> Outcome:
     """One adapter on one case. Any exception is an error outcome, never a negative."""
     work = Path(tempfile.mkdtemp(prefix=f"{adapter.name}-", dir=scratch))
-    work.chmod(0o777)
+    work.chmod(0o700)
     try:
         outcome = adapter.run(case, work, env)
     except Exception as exc:  # noqa: BLE001 - a broken adapter or report is an error, not a negative
@@ -103,11 +104,60 @@ def _run_one(adapter: Adapter, case: RealCase, env: ToolEnv, scratch: Path, chec
     return outcome
 
 
+def _private_directory(path: Path) -> int:
+    """Create/open a private output directory without following any symbolic-link component.
+
+    The returned directory descriptor pins the parent used by atomic output writes.
+    Existing parent directories are only traversed; only the requested directory is made private.
+    """
+    absolute = Path(os.path.abspath(path))
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(absolute.anchor, flags)
+    try:
+        for part in absolute.parts[1:]:
+            try:
+                os.mkdir(part, mode=0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        if os.fstat(fd).st_uid != os.geteuid():
+            raise PermissionError(f"output directory is not owned by the invoking user: {path}")
+        os.fchmod(fd, 0o700)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Atomically replace a private regular output; reject symlinks and other special files."""
+    parent = _private_directory(path.parent)
+    temporary = f".benchmark-{secrets.token_hex(16)}"
+    try:
+        try:
+            current = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            current = None
+        if current is not None and not stat.S_ISREG(current.st_mode):
+            raise ValueError(f"refusing non-regular output: {path}")
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        os.close(parent)
+
+
 def _write_raw(raw_dir: Path, tool: str, case_id: str, raw: dict[str, str]) -> None:
     for name, text in raw.items():
         path = raw_dir / tool / case_id.replace(":", "_") / Path(name).name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(redact(text), encoding="utf-8")
+        _write_private(path, redact(text))
 
 
 def run_tool(
@@ -143,9 +193,10 @@ def run_tool(
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         list(pool.map(task, cases))
-    with (results / f"{adapter.name}.jsonl").open("w", encoding="utf-8") as fh:
-        for case in cases:
-            fh.write(json.dumps(rows[case.case_id], sort_keys=True) + "\n")
+    _write_private(
+        results / f"{adapter.name}.jsonl",
+        "".join(json.dumps(rows[case.case_id], sort_keys=True) + "\n" for case in cases),
+    )
     statuses = [r["status"] for r in rows.values()]
     return {
         "tool": adapter.name,
@@ -210,8 +261,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Work directories are created world-writable so the unprivileged tool runs can write to them.
-    os.umask(0)
+    # Tool-configured commands are untrusted. No root process may consume their files.
+    if os.geteuid() == 0 or os.getuid() == 0:
+        parser.error("refusing root: use a non-root account in a disposable, externally isolated machine")
     manifest_bytes = args.manifest.read_bytes()
     doc = json.loads(manifest_bytes)
     version = int(doc.get("version", 1))  # v1 manifests carry no version field
@@ -258,46 +310,45 @@ def main(argv: list[str] | None = None) -> int:
 
     tool_root = args.tool_root.resolve()
     env = ToolEnv(root=tool_root, python=str(tool_root / "venvs" / "shadowscan" / "bin" / "python"))
-    args.results.mkdir(parents=True, exist_ok=True)
-    args.raw.mkdir(parents=True, exist_ok=True)
-    args.scratch.mkdir(parents=True, exist_ok=True)
-    args.scratch.chmod(0o777)
-    set_run_as(NOBODY)
+    for directory in (args.results, args.raw, args.scratch):
+        os.close(_private_directory(directory))
+    set_run_as((), user_namespace=True)
 
-    summaries: list[dict[str, Any]] = []
-    for adapter in adapters:
-        summary = run_tool(
-            adapter, cases, env, args.results, args.raw, args.scratch, args.checkout_root, args.workers
-        )
-        summary["only_cases_sha256"] = only_sha  # each tool may run its own case list
-        summaries.append(summary)
-        print(json.dumps(summary), flush=True)
+    try:
+        summaries: list[dict[str, Any]] = []
+        for adapter in adapters:
+            summary = run_tool(
+                adapter, cases, env, args.results, args.raw, args.scratch, args.checkout_root, args.workers
+            )
+            summary["only_cases_sha256"] = only_sha  # each tool may run its own case list
+            summaries.append(summary)
+            print(json.dumps(summary), flush=True)
 
-    self_result = None
-    if args.self_check:
-        self_result = self_check(ROOT, env, args.scratch, args.raw)
-        (args.results / "self-check.json").write_text(
-            json.dumps(self_result, indent=2) + "\n", encoding="utf-8"
-        )
+        self_result = None
+        if args.self_check:
+            self_result = self_check(ROOT, env, args.scratch, args.raw)
+            _write_private(args.results / "self-check.json", json.dumps(self_result, indent=2) + "\n")
 
-    manifest = {
-        **provenance,
-        "manifest": args.manifest.name,
-        "protocol": args.protocol.name if args.protocol else None,
-        "only_cases": args.only_cases.name if args.only_cases else None,
-        "workers": args.workers,
-        "repos": len(repos),
-        "cases": len(cases),
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-        "finished_utc": datetime.now(UTC).isoformat(timespec="seconds"),
-        "runs": [r for r in previous.get("runs", []) if r["tool"] not in names] + summaries,
-        "self_check": self_result,
-        "subset": subset,
-        "shadowscan_commit": checkout_head(ROOT),
-    }
-    previous_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    return 0
+        manifest = {
+            **provenance,
+            "manifest": args.manifest.name,
+            "protocol": args.protocol.name if args.protocol else None,
+            "only_cases": args.only_cases.name if args.only_cases else None,
+            "workers": args.workers,
+            "repos": len(repos),
+            "cases": len(cases),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "finished_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+            "runs": [r for r in previous.get("runs", []) if r["tool"] not in names] + summaries,
+            "self_check": self_result,
+            "subset": subset,
+            "shadowscan_commit": checkout_head(ROOT),
+        }
+        _write_private(previous_path, json.dumps(manifest, indent=2) + "\n")
+        return 0
+    finally:
+        set_run_as(())
 
 
 if __name__ == "__main__":

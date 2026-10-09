@@ -1,6 +1,6 @@
 # Deployment and migration
 
-This is the rollout guide for the unreleased 0.1.1 candidate. It covers reviewed
+This is the rollout guide for version 0.1.2. It covers reviewed
 revisions, installation, validation, rollout, operation and migration.
 
 Automated validation establishes implementation behavior. Production rollout
@@ -18,6 +18,12 @@ merge rules. A versioned policy, merged pull request or passing CI does not
 establish independent human review. The [merge gate and review status](#merge-gate-and-review-status)
 section records the available evidence and commands for checking current
 enforcement. Independent human review is required before any tagged release.
+
+Release tags are annotated; personal tag signatures are optional. Verify the
+downloaded wheel's digest and GitHub provenance as described in the
+[publishing runbook](operations/publishing.md#per-release). Workflow
+attestations identify the artifact's origin and do not replace the review
+record or deployment acceptance evidence.
 
 ## Contents
 
@@ -79,7 +85,7 @@ From the reviewed checkout, in a clean virtual environment:
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/nexusshadowscan-0.1.1-*.whl
+python -m pip install --no-deps dist/nexusshadowscan-0.1.2-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
 shadowscan --help

@@ -62,14 +62,16 @@ Run = tuple[int, str, str, float]
 
 # A privilege-drop prefix (for example ``setpriv`` to ``nobody``) applied inside
 # the namespaces. Empty by default, so the synthetic benchmark is unchanged; the
-# real-world runner sets it because it scans untrusted repositories.
+# the real-world runner instead opts into a namespace mapped to its non-root UID.
 _RUN_AS: tuple[str, ...] = ()
+_USER_NAMESPACE = False
 
 
-def set_run_as(prefix: tuple[str, ...]) -> None:
+def set_run_as(prefix: tuple[str, ...], *, user_namespace: bool = False) -> None:
     """Run every isolated command behind ``prefix``."""
-    global _RUN_AS
+    global _RUN_AS, _USER_NAMESPACE
     _RUN_AS = tuple(prefix)
+    _USER_NAMESPACE = user_namespace
 
 
 def _isolated(cmd: list[str], *, env: dict[str, str], cwd: Path, stdin: str | None = None) -> Run:
@@ -78,7 +80,8 @@ def _isolated(cmd: list[str], *, env: dict[str, str], cwd: Path, stdin: str | No
     A fresh PID namespace hides the host's processes, so a tool that lists
     running processes sees only its own and cannot report the benchmark host.
     """
-    full = ["unshare", "--net", "--pid", "--fork", "--mount-proc", "--", *_RUN_AS, *cmd]
+    mapping = ["--user", "--map-current-user"] if _USER_NAMESPACE else []
+    full = ["unshare", *mapping, "--net", "--pid", "--fork", "--mount-proc", "--", *_RUN_AS, *cmd]
     return _run_group(full, env=env, cwd=cwd, stdin=stdin, timeout=TIMEOUT_S)
 
 
@@ -254,9 +257,7 @@ class ShadowScan(Adapter):
         "network": "gateway.logs on a JSON access log",
     }
 
-    def _scan(
-        self, connector: dict[str, Any], work: Path, env: ToolEnv, home: Path | None = None
-    ) -> Outcome:
+    def _scan(self, connector: dict[str, Any], work: Path, env: ToolEnv, home: Path | None = None) -> Outcome:
         cfg = work / "shadowscan.yaml"
         cfg.write_text(json.dumps({"connectors": [connector]}), encoding="utf-8")
         out = work / "report.json"
@@ -1007,11 +1008,16 @@ class AIDetector(Adapter):
     ) -> tuple[int, list[dict[str, Any]] | None, str, float]:
         script = work / "detect-shadow-ai.sh"
         shutil.copyfile(env.checkout("shamo0_AI-Detector") / "detect-shadow-ai.sh", script)
-        for p in (work, *work.rglob("*")):
-            os.chmod(p, 0o755 if p.is_dir() else 0o644)
-        os.chmod(work.parent, 0o755)
-        # Already unprivileged when the real-world runner sets _RUN_AS (setgroups fails for a non-root user).
-        drop = [] if _RUN_AS else ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"]
+        if not _USER_NAMESPACE:
+            for p in (work, *work.rglob("*")):
+                os.chmod(p, 0o755 if p.is_dir() else 0o644)
+            os.chmod(work.parent, 0o755)
+        # A user-namespace run already uses the unprivileged operator account.
+        drop = (
+            []
+            if _RUN_AS or _USER_NAMESPACE
+            else ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"]
+        )
         cmd = [*drop, "bash", str(script)]
         environ = {**_base_env(home, work), "SHADOW_AI_REPORT": "json", "SHADOW_AI_NETWORK": "false"}
         code, stdout, stderr, secs = _isolated(cmd, env=environ, cwd=work)

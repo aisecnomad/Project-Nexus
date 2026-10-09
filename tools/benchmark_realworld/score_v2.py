@@ -247,10 +247,19 @@ def summarize(rows_by_tool: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
 
 def coverage_problems(rows_by_tool: dict[str, list[dict[str, Any]]], doc: dict[str, Any]) -> list[str]:
     """Every configuration needs one row per manifest case on each surface it is run on."""
-    expected: set[str] = set()
+    expected_metadata: dict[str, dict[str, Any]] = {}
     for entry in validate_manifest(doc):
         for surface in surfaces_of(entry):
-            expected.add(f"{entry['id']}:{'repo' if surface == 'repo' else 'home'}")
+            case_id = f"{entry['id']}:{'repo' if surface == 'repo' else 'home'}"
+            metadata = {
+                "surface": "repo" if surface == "repo" else "endpoint",
+                "family": entry["stratum"],
+            }
+            if surface == "repo":
+                metadata["label"] = entry["label"]
+            expected_metadata[case_id] = metadata
+    expected = set(expected_metadata)
+    endpoint_labels: dict[str, str] = {}
     problems = []
     names = {adapter.name for adapter in ADAPTERS_V2}
     for adapter in ADAPTERS_V2:
@@ -266,6 +275,26 @@ def coverage_problems(rows_by_tool: dict[str, list[dict[str, Any]]], doc: dict[s
         repeated = [case for case, n in Counter(r["case"] for r in rows).items() if n > 1]
         if repeated:
             problems.append(f"{adapter.name}: {len(repeated)} cases have more than one row")
+        for row in rows:
+            case_id = row["case"]
+            row_metadata = expected_metadata.get(case_id)
+            if row_metadata is None:
+                continue
+            for key, value in row_metadata.items():
+                if row.get(key) != value:
+                    problems.append(f"{adapter.name}: {case_id} {key} differs from the manifest")
+            if row_metadata["surface"] == "endpoint":
+                label = row.get("label")
+                if label not in ("client", "none"):
+                    problems.append(f"{adapter.name}: {case_id} has an invalid endpoint label")
+                elif case_id in endpoint_labels and endpoint_labels[case_id] != label:
+                    problems.append(f"{adapter.name}: {case_id} endpoint label differs between tools")
+                else:
+                    endpoint_labels[case_id] = label
+            if row.get("status") not in ("ok", "error", "n/a"):
+                problems.append(f"{adapter.name}: {case_id} has an invalid status")
+            if not isinstance(row.get("detected"), bool):
+                problems.append(f"{adapter.name}: {case_id} detected must be a boolean")
         supported = set(adapter.surfaces)
         if any(r["status"] == "n/a" and r["surface"] in supported for r in rows):
             problems.append(f"{adapter.name}: a row is n/a on a surface the configuration runs")

@@ -364,3 +364,157 @@ def test_redacted_json_is_still_json(text: str, leaked: str | None) -> None:
     json.loads(out)  # raises when the redaction broke the structure
     if leaked is not None:
         assert leaked not in out
+
+
+# --- merge review: the runner must never process tool-controlled files as root ------------------
+
+
+def test_realworld_runner_refuses_root_before_reading_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools.benchmark_realworld import run
+
+    monkeypatch.setattr(run.os, "geteuid", lambda: 0)
+    with pytest.raises(SystemExit) as exc:
+        run.main(
+            [
+                "--manifest",
+                str(tmp_path / "missing.json"),
+                "--checkout-root",
+                str(tmp_path / "checkouts"),
+                "--tool-root",
+                str(tmp_path / "tools"),
+                "--results",
+                str(tmp_path / "results"),
+                "--raw",
+                str(tmp_path / "raw"),
+                "--scratch",
+                str(tmp_path / "scratch"),
+            ]
+        )
+    assert exc.value.code == 2
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_private_result_write_refuses_symlink_target_and_parent(tmp_path: Path) -> None:
+    from tools.benchmark_realworld.run import _write_private
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("preserve", encoding="utf-8")
+    output = tmp_path / "results"
+    output.mkdir()
+    (output / "report.json").symlink_to(outside)
+    with pytest.raises(ValueError, match="non-regular"):
+        _write_private(output / "report.json", "overwrite")
+    linked = tmp_path / "linked"
+    linked.symlink_to(output, target_is_directory=True)
+    with pytest.raises(OSError):
+        _write_private(linked / "other.json", "overwrite")
+    assert outside.read_text(encoding="utf-8") == "preserve"
+    assert not (output / "other.json").exists()
+
+
+def test_private_result_writes_are_atomic_and_private(tmp_path: Path) -> None:
+    import stat
+
+    from tools.benchmark_realworld.run import _write_private
+
+    output = tmp_path / "new" / "report.json"
+    _write_private(output, "first")
+    _write_private(output, "second")
+    assert output.read_text(encoding="utf-8") == "second"
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert stat.S_IMODE(output.parent.stat().st_mode) == 0o700
+    assert list(output.parent.iterdir()) == [output]
+
+
+def test_unprivileged_namespace_mapping_is_explicit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools.benchmark import adapters
+
+    calls = []
+
+    def fake_group(full: list[str], **kwargs: Any) -> tuple[int, str, str, float]:
+        calls.append(full)
+        return 0, "", "", 0.0
+
+    monkeypatch.setattr(adapters, "_run_group", fake_group)
+    try:
+        adapters.set_run_as((), user_namespace=True)
+        adapters._isolated(["tool"], env={}, cwd=tmp_path)
+        assert calls[0][:4] == ["unshare", "--user", "--map-current-user", "--net"]
+        assert "setpriv" not in calls[0]
+    finally:
+        adapters.set_run_as(())
+
+
+def test_realworld_nonroot_setup_uses_private_paths_and_preserves_umask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools.benchmark import adapters
+    from tools.benchmark_realworld import run
+
+    manifest = tmp_path / "corpus.json"
+    manifest.write_text('{"version": 2}', encoding="utf-8")
+    monkeypatch.setattr(run.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(run.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(run, "validate_manifest", lambda doc: [])
+    monkeypatch.setattr(run, "build_cases_v2", lambda repos, root: [])
+    monkeypatch.setattr(run, "ADAPTERS_V2", ())
+    monkeypatch.setattr(run, "checkout_head", lambda root: "a" * 40)
+    monkeypatch.setattr(run.os, "umask", lambda mode: pytest.fail("runner must not change the umask"))
+    # The test process may itself be root; emulate directories owned by the mocked operator.
+    original_fstat = run.os.fstat
+
+    def operator_stat(fd: int) -> Any:
+        from types import SimpleNamespace
+
+        info = original_fstat(fd)
+        return SimpleNamespace(st_uid=1000, st_mode=info.st_mode)
+
+    monkeypatch.setattr(run.os, "fstat", operator_stat)
+    try:
+        assert (
+            run.main(
+                [
+                    "--manifest",
+                    str(manifest),
+                    "--checkout-root",
+                    str(tmp_path),
+                    "--tool-root",
+                    str(tmp_path),
+                    "--results",
+                    str(tmp_path / "results"),
+                    "--raw",
+                    str(tmp_path / "raw"),
+                    "--scratch",
+                    str(tmp_path / "scratch"),
+                ]
+            )
+            == 0
+        )
+        assert adapters._USER_NAMESPACE is False
+        assert json.loads((tmp_path / "results" / "run-manifest.json").read_text())["cases"] == 0
+        assert (tmp_path / "scratch").stat().st_mode & 0o777 == 0o700
+    finally:
+        adapters.set_run_as(())
+
+
+@pytest.mark.parametrize("uid,euid", [(0, 1000), (1000, 0)])
+def test_exit_probe_refuses_root_before_reading_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], uid: int, euid: int
+) -> None:
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[2] / "tools/benchmark_realworld/v2/exit-probe/exit_probe.py"
+    spec = importlib.util.spec_from_file_location("benchmark_exit_probe_test", script)
+    assert spec is not None and spec.loader is not None
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    monkeypatch.setattr(probe.os, "getuid", lambda: uid)
+    monkeypatch.setattr(probe.os, "geteuid", lambda: euid)
+    monkeypatch.setattr(probe.os, "umask", lambda mode: pytest.fail("probe must not change the umask"))
+    monkeypatch.setattr(probe, "CORPUS", tmp_path / "missing.json")
+    monkeypatch.setattr(probe, "SCRATCH", tmp_path / "scratch")
+    assert probe.main() == 2
+    assert "refusing root" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []

@@ -10,3 +10,13 @@
 5c604df2e7bd59420f66dd0574f0c8cf6198903be75c3d94f447b407b5710877  /home/user/Project-Nexus/tests/unit/test_benchmark_realworld_review2.py
 a410546da439eacb9d92bf7c145f6ca793ecec9b740598958b35f03395018712  /home/user/Project-Nexus/tests/unit/test_benchmark_realworld_review_fixes.py
 # tools/benchmark/adapters.py is left unformatted: it is part of the verdict-code hash in the v2 run manifest.
+
+# Merge-review correction: 2026-10-09
+# tools/benchmark/adapters.py was reformatted to satisfy the required format gate.
+# Subsequent benchmark safety fixes also change the verdict-code hash. The stored
+# run manifests and frozen evidence remain unchanged: they describe the original
+# code, available at commit a602f9bd9684a86e6f2669f17e3146660b6bf2d4.
+# Current-code provenance checks must reject those historical runs. Use a new
+# results directory for reruns; never rewrite their hashes to claim new validation.
+# The exit-code probe was updated to the same non-root/private-directory/user-namespace
+# contract; its historical JSONL probe outputs remain unchanged.
