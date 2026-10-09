@@ -162,6 +162,21 @@ author-written and not independent review.
   inspect the actual filenames.
 - Keep semantic rejections and lexical corroboration checks authoritative when
   a signature signal declares an agent indicator.
+- A `diff_base` (`--diff-base`) scan of `code.filesystem` is no longer a
+  comparable inventory. Its `collection_scope` is `comparable: false` with
+  the reason "diff-scoped collection is not a repository inventory", so
+  `shadowscan diff` lists earlier findings outside the diff window as unknown
+  instead of resolved. The connector warning now says that unchanged files were
+  not scanned, even when the report holds no finding.
+- `--incremental` never reuses a diff-scoped result. The cache fingerprint
+  covers the working tree, not HEAD or the base ref's merge-base, so a squashed
+  or rebased branch with an unchanged tree replayed a stale change set.
+- `--diff-base` applies only to local PATHS. Combined with `--github-*` or
+  `--gitlab-group` it previously crashed with a configuration traceback; remote
+  repositories in the same run are now scanned in full, and `--diff-base`
+  without PATHS is a usage error.
+- A changed path that is not valid UTF-8 now takes the documented full-scan
+  fallback instead of failing the connector with no findings.
 
 ## 0.1.2 — 2026-10-08
 

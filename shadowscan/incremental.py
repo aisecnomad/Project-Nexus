@@ -120,6 +120,10 @@ def _literal_excluded_directories(spec: ConnectorSpec) -> frozenset[str]:
 
 
 def _eligible(spec: ConnectorSpec) -> bool:
+    if spec.name == "code.filesystem" and spec.config.get("diff_base"):
+        # A diff-scoped result depends on HEAD and the base ref's merge-base,
+        # which the working-tree fingerprint does not cover.
+        return False
     return spec.name == "code.filesystem" or (
         spec.name in (_CODE | _CLOUD_EXPORTS) and bool(spec.config.get("input"))
     )

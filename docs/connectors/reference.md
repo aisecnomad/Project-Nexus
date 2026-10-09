@@ -42,7 +42,7 @@ Offline input: n/a (path is the input).
 | `owner` | owner recorded on every finding; overrides CODEOWNERS and inventory attribution (default: CODEOWNERS, then git author when use\_git, then inventory) |
 | `provider` | provider label recorded on findings (default filesystem) |
 | `metadata` | mapping merged into every finding's metadata |
-| `diff_base` | git ref to diff against (branch, tag, or SHA); only files changed since this ref are scanned, plus manifests and environment files for cross-file context. Requires a local .git directory. Falls back to a full scan when the ref cannot be resolved |
+| `diff_base` | git ref to diff against (branch, tag, or SHA); only files committed between its merge-base and HEAD are scanned, plus dependency manifests and .env files for context. Uncommitted, untracked and submodule changes are not scanned. The report is not a repository inventory: `shadowscan diff` never resolves findings from it and --incremental never reuses it. Requires Git 2.45+ and a local .git directory; falls back to a full scan when the diff cannot be computed |
 
 Also accepted: `input`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
 

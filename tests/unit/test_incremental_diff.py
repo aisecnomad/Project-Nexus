@@ -7,6 +7,8 @@ Covers ``validate_diff_base``, ``diff_changed_files``, the
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -266,3 +268,179 @@ def test_diff_base_is_registered_config_key() -> None:
     """``diff_base`` must be a documented config key."""
     keys = FilesystemConnector.config_keys
     assert "diff_base" in keys
+
+
+# =========================================================================
+# A diff-scoped scan is never a repository inventory
+# =========================================================================
+
+_CREW_AGENT = (
+    "from crewai import Agent, Crew, Task\n"
+    'researcher = Agent(role="r", goal="g", backstory="b")\n'
+    'crew = Crew(agents=[researcher], tasks=[Task(description="d", agent=researcher)])\n'
+    "crew.kickoff()\n"
+)
+
+
+def _diff_reports(monkeypatch, changed: set[str]) -> None:
+    """Have the connector see ``changed`` as the committed diff, whatever Git is installed."""
+    import shadowscan.utils.git as git_utils
+
+    monkeypatch.setattr(git_utils, "diff_changed_files", lambda root, ref, ctx, **_: frozenset(changed))
+
+
+def test_diff_scoped_reports_are_not_comparable_and_never_resolve(tmp_path: Path, monkeypatch) -> None:
+    """A diff window that skips an existing agent must not read as its resolution."""
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+    from shadowscan.comparison import compare_reports
+
+    repo = tmp_path / "repo"
+    (repo / "svc").mkdir(parents=True)
+    (repo / "svc" / "agent.py").write_text(_CREW_AGENT)
+    (repo / "README.md").write_text("# service\n")
+    reports = []
+    # The agent's branch, then a later branch that changes only the README.
+    for number, changed in enumerate(({"svc/agent.py"}, {"README.md"})):
+        _diff_reports(monkeypatch, changed)
+        out = tmp_path / f"report{number}.json"
+        result = CliRunner().invoke(
+            main, ["code", str(repo), "--diff-base", "main", "--format", "json", "--output", str(out)]
+        )
+        assert result.exit_code == 0, result.output
+        reports.append(json.loads(out.read_text()))
+    first, second = reports
+    agents = [finding for finding in first["findings"] if finding["kind"] == "agent"]
+    assert len(agents) == 1
+    assert second["findings"] == []
+    for report in reports:
+        assert report["collection_scope"]["comparable"] is False
+        assert report["collection_scope"]["reason"] == "diff-scoped collection is not a repository inventory"
+        warnings = [warning for stat in report["stats"] for warning in stat["warnings"]]
+        assert any("not a repository inventory" in warning for warning in warnings), warnings
+    comparison = compare_reports(first, second)
+    assert comparison["comparable"] is False
+    assert comparison["resolved"] == []
+    assert [finding["id"] for finding in comparison["unknown"]] == [agents[0]["id"]]
+
+
+def test_diff_scoped_scan_is_never_replayed_from_the_incremental_cache(
+    tmp_path: Path, index, monkeypatch
+) -> None:
+    """Squashing commits changes the diff but not the working tree the cache fingerprints."""
+    from shadowscan.config import ConnectorSpec, ScanConfig
+    from shadowscan.engine import Engine
+    from shadowscan.models import Kind
+
+    repo = tmp_path / "repo"
+    (repo / "svc").mkdir(parents=True)
+    (repo / "svc" / "agent.py").write_text(_CREW_AGENT)
+    (repo / "README.md").write_text("# service\n")
+    config = ScanConfig(
+        connectors=[ConnectorSpec("code.filesystem", {"path": str(repo), "diff_base": "HEAD~1"})],
+        incremental=True,
+        state_dir=str(tmp_path / "state"),
+        parallel=1,
+    )
+    _diff_reports(monkeypatch, {"README.md"})
+    first = Engine(config, index).run()
+    assert not first.findings
+    _diff_reports(monkeypatch, {"README.md", "svc/agent.py"})
+    second = Engine(config, index).run()
+    stats = next(stat for stat in second.stats if stat.connector == "code.filesystem")
+    assert not stats.cached
+    assert any(finding.kind == Kind.AGENT for finding in second.findings)
+
+
+@pytest.mark.parametrize(
+    "remote", [["--github-repo", "octo/example"], ["--github-org", "octo"], ["--gitlab-group", "group"]]
+)
+def test_diff_base_without_local_paths_is_a_usage_error(remote: list[str]) -> None:
+    from click.testing import CliRunner
+
+    from shadowscan.cli import main
+
+    result = CliRunner().invoke(main, ["code", *remote, "--diff-base", "main"])
+    # A usage error (exit 1 in this CLI), not a ConfigValidationError traceback.
+    assert result.exit_code == 1, result.output
+    assert "--diff-base applies only to local PATHS" in result.output
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_diff_base_with_remote_repositories_applies_only_to_local_paths(tmp_path: Path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    import shadowscan.cli as cli
+
+    captured = []
+    monkeypatch.setattr(cli, "_run_scan", lambda config, opts: captured.append(config))
+    result = CliRunner().invoke(
+        cli.main,
+        [
+            "code",
+            str(tmp_path),
+            "--github-repo",
+            "octo/example",
+            "--gitlab-group",
+            "group",
+            "--diff-base",
+            "main",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    specs = {spec.name: spec.config for spec in captured[0].connectors}
+    assert specs["code.filesystem"]["diff_base"] == "main"
+    assert "diff_base" not in specs["code.github"]
+    assert "diff_base" not in specs["code.gitlab"]
+
+
+def test_non_utf8_diff_output_is_a_diff_error(tmp_path: Path, index, monkeypatch) -> None:
+    """Undecodable diff output takes the documented full-scan fallback instead of failing the connector."""
+    import shadowscan.utils.git as git_utils
+    from shadowscan.connectors.base import ConnectorContext
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(git_utils, "require_local_git_metadata", lambda root, timeout: None)
+
+    def undecodable(*args, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"notes_\xff.txt", 6, 7, "invalid start byte")
+
+    monkeypatch.setattr(git_utils, "run_bounded_metadata", undecodable)
+    with pytest.raises(git_utils.DiffError, match="not valid UTF-8"):
+        git_utils.diff_changed_files(tmp_path, "main", ConnectorContext(config={}, index=index))
+
+
+@pytest.mark.requires_git_2_45
+def test_non_utf8_changed_path_falls_back_to_a_full_scan(tmp_path: Path, run_connector) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    (repo / "agent.py").write_text(_CREW_AGENT)
+    _git(repo, "add", "agent.py")
+    # Stage the non-UTF-8 name through the index so no filesystem has to accept it.
+    blob = _git(repo, "hash-object", "-w", "agent.py").stdout.strip()
+    subprocess.run(
+        [
+            b"git",
+            b"-C",
+            os.fsencode(repo),
+            b"update-index",
+            b"--add",
+            b"--cacheinfo",
+            b"100644," + blob.encode() + b",notes_\xff.txt",
+        ],
+        check=True,
+        capture_output=True,
+        env=safe_git_env(),
+    )
+    _git(repo, "commit", "-m", "add agent", "--quiet")
+
+    findings, ctx = run_connector("code.filesystem", path=str(repo), diff_base="main~1")
+
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert any("not valid UTF-8" in warning and "full scan" in warning for warning in ctx.stats.warnings)
+    assert any(
+        finding.kind.value == "agent" and "framework.crewai" in finding.frameworks for finding in findings
+    )
+    assert all("diff-scan" not in finding.tags for finding in findings)

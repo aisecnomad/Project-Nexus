@@ -1253,9 +1253,11 @@ class FilesystemConnector(BaseConnector):
         "provider": "provider label recorded on findings (default filesystem)",
         "metadata": "mapping merged into every finding's metadata",
         "diff_base": (
-            "git ref to diff against (branch, tag, or SHA); only files changed since this ref are scanned, "
-            "plus manifests and environment files for cross-file context. Requires a local .git directory. "
-            "Falls back to a full scan when the ref cannot be resolved"
+            "git ref to diff against (branch, tag, or SHA); only files committed between its merge-base and "
+            "HEAD are scanned, plus dependency manifests and .env files for context. Uncommitted, untracked "
+            "and submodule changes are not scanned. The report is not a repository inventory: `shadowscan "
+            "diff` never resolves findings from it and --incremental never reuses it. Requires Git 2.45+ "
+            "and a local .git directory; falls back to a full scan when the diff cannot be computed"
         ),
     }
     shared_config_keys: ClassVar[dict[str, str]] = {}  # scans a checkout, not an export file
@@ -1900,8 +1902,12 @@ class FilesystemConnector(BaseConnector):
                 incomplete=False,
             )
             return None
+        # Operator intent, like --only: not a coverage gap, but the report must say
+        # that unchanged files were not read, even when it holds no finding.
         self.ctx.warn(
-            f"code.filesystem: diff-base {self.diff_base!r}: {len(changed)} changed file(s)",
+            f"code.filesystem: diff-scoped scan against {self.diff_base!r}: only {len(changed)} changed "
+            "file(s) plus dependency manifests and .env files were scanned; unchanged files were not "
+            "scanned, so this report is not a repository inventory",
             incomplete=False,
         )
         return changed
@@ -2011,8 +2017,8 @@ class FilesystemConnector(BaseConnector):
     def _diff_included(rel: str, diff_files: frozenset[str]) -> bool:
         """Whether a file should be scanned in diff mode.
 
-        Always included: files in the diff set, manifests, env files, and
-        config files whose content contextualizes code changes.
+        Always included: files in the diff set, dependency manifests and
+        ``.env*`` files, whose content contextualizes code changes.
         """
         if rel in diff_files:
             return True

@@ -659,7 +659,10 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
 @click.option(
     "--diff-base",
     default=None,
-    help="git ref to diff against; only changed files are scanned (plus manifests and .env for context)",
+    help=(
+        "local PATHS only: git ref to diff against; only committed changes are scanned (plus manifests and "
+        ".env for context), and the report cannot resolve findings in `shadowscan diff`"
+    ),
 )
 @scan_options
 def code(
@@ -686,10 +689,14 @@ def code(
         common["strict_coverage"] = True
     if include_tests:
         common["include_tests"] = True
-    if diff_base:
-        common["diff_base"] = diff_base
+    if diff_base and not paths:
+        raise click.UsageError("--diff-base applies only to local PATHS")
     if paths:
-        specs.append(ConnectorSpec(name="code.filesystem", config={"paths": list(paths), **common}))
+        local: dict[str, Any] = {"paths": list(paths), **common}
+        if diff_base:
+            # Remote repositories in the same run are always scanned in full.
+            local["diff_base"] = diff_base
+        specs.append(ConnectorSpec(name="code.filesystem", config=local))
     if github_org or github_repo:
         gh: dict[str, Any] = {**common}
         if github_org:
