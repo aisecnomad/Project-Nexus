@@ -60,8 +60,7 @@ POSITIVES = {
     },
     "framework.r-ai": {
         "R/triage.R": (
-            "library(ellmer)\n\n"
-            'classify <- function(text) chat_openai(model = "gpt-4o-mini")$chat(text)\n'
+            'library(ellmer)\n\nclassify <- function(text) chat_openai(model = "gpt-4o-mini")$chat(text)\n'
         ),
     },
     "framework.rust-ai": {
