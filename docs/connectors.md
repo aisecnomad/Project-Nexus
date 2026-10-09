@@ -238,7 +238,9 @@ Python and common JavaScript/TypeScript constructors are resolved against import
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
 Confidence groups cap repeated observations of the same technology. Unsupported
-dynamic imports, re-exports and uncertain bindings remain usage evidence. Other
+dynamic imports, re-exports and uncertain bindings remain usage evidence. Narrow
+Go and C# proofs additionally require imported receivers and supported tool flows;
+C# automatic tool modes require an unshadowed SDK type or alias. Other
 languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code

@@ -13,6 +13,8 @@ summarizes each release for people who install and operate ShadowScan.
 - Keep standalone .NET tool definitions and unrelated Go receivers as
   framework usage. Recognize supported import-bound .NET automatic tool
   invocation and Go agent construction without claiming runtime execution.
+  Shadowed C# tool-mode names cannot borrow an SDK type or alias's automatic
+  invocation meaning.
 - Exclude Python comprehension results and later clauses that cannot execute
   because a literal iterable is empty or a preceding filter is false.
 - Match lifecycle observations by the complete case-insensitive device value.

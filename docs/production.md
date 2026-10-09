@@ -820,6 +820,8 @@ comprehension clauses. Supported .NET automatic invocation and Go agent
 constructors retain import-bound positive evidence. These are static candidate
 classifications and do not establish deployed execution. Unknown dynamic
 bindings remain potential or framework-usage evidence.
+C# tool-mode expressions whose type or alias name is locally shadowed also
+remain unproven; a lookalike `Auto` member cannot establish automatic invocation.
 
 Lifecycle links now require the same complete device value, compared after
 trimming and case normalization. Standardize endpoint and runtime exports on

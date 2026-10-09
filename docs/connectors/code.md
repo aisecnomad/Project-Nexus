@@ -37,6 +37,7 @@ Supported Go LangChain agent constructors require the imported agent-package
 receiver, with local shadowing excluded. For Microsoft.Extensions.AI, a
 standalone function declaration is tool context; supported automatic invocation
 with concrete nonempty tools and a response call can establish an agent.
+Tool-mode type and alias names must remain unshadowed to prove automatic invocation.
 These bounded checks do not resolve arbitrary types or cross-file bindings.
 Other languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency

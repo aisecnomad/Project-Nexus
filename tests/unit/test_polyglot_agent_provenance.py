@@ -160,6 +160,37 @@ def test_dotnet_unknown_member_receiver_cannot_borrow_local_client(tmp_path, run
     )
 
 
+@pytest.mark.parametrize(
+    "imports, name",
+    [
+        ("using Microsoft.Extensions.AI;", "ChatToolMode"),
+        ("using Microsoft.Extensions.AI; using Mode = Microsoft.Extensions.AI.ChatToolMode;", "Mode"),
+    ],
+)
+def test_dotnet_shadowed_tool_mode_cannot_borrow_sdk_enum_identity(tmp_path, run_connector, imports, name):
+    body = (
+        CS_CLIENT
+        + CS_OPTIONS
+        + f"var {name} = new {{ Auto = Microsoft.Extensions.AI.ChatToolMode.None }}; "
+        + f"options.ToolMode = {name}.Auto; "
+        + CS_REQUEST
+    )
+    assert not _agent(
+        _scan(tmp_path, run_connector, "App.cs", _cs(body, imports=imports)),
+        "framework.microsoft-extensions-ai",
+    )
+
+
+@pytest.mark.parametrize("mode", ["Auto", "RequireAny"])
+def test_dotnet_unshadowed_tool_mode_alias_retains_agent_proof(tmp_path, run_connector, mode):
+    imports = "using Microsoft.Extensions.AI; using Mode = Microsoft.Extensions.AI.ChatToolMode;"
+    body = CS_CLIENT + CS_OPTIONS + f"options.ToolMode = Mode.{mode}; " + CS_REQUEST
+    assert _agent(
+        _scan(tmp_path, run_connector, "App.cs", _cs(body, imports=imports)),
+        "framework.microsoft-extensions-ai",
+    )
+
+
 @pytest.mark.parametrize("alias", ["agents", "sdk", "executor"])
 @pytest.mark.parametrize("factory", ["NewExecutor", "NewOneShotAgent", "NewConversationalAgent"])
 def test_go_exact_agents_import_and_aliases_bind_constructors(tmp_path, run_connector, alias, factory):

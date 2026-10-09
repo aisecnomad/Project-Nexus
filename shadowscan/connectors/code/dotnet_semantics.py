@@ -253,6 +253,8 @@ class _Proof:
             return True
         path, cursor = self.source.path(start)
         root, _, tail = path.partition(".")
+        if any(root in scope for scope in self.scopes):
+            return False
         resolved = self.imports.get(root, root)
         if tail:
             resolved += "." + tail
