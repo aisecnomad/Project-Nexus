@@ -60,7 +60,17 @@ receiver, with local shadowing excluded. For Microsoft.Extensions.AI, a
 standalone function declaration is tool context; supported automatic invocation
 with concrete nonempty tools and a response call can establish an agent.
 Tool-mode type and alias names must remain unshadowed to prove automatic invocation.
-These bounded checks do not resolve arbitrary types or cross-file bindings.
+Target-typed `new()` takes the SDK type of its local declaration or, as a
+response call's options argument, `ChatOptions`; later `Tools.Add(...)` calls are
+not followed.
+These bounded checks do not resolve arbitrary types or cross-file bindings, so
+`UseFunctionInvocation()` middleware, including a dependency-injection
+registration, stays a lexical agent indicator with tool use that needs matching
+import or dependency corroboration. An explicitly constructed
+`FunctionInvokingChatClient` is not a lexical indicator; registered through
+dependency injection or held in fields, it is reported as framework usage. Only
+C# files that name `Microsoft.Extensions.AI` run the tool-loop proof and its
+token budget.
 Other languages, and framework code patterns from custom signature packs in any
 language, use lexical signatures and require matching framework import/dependency
 corroboration before agent classification; uncorroborated lexical framework code

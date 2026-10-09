@@ -39,6 +39,27 @@ summarizes each release for people who install and operate ShadowScan.
   invocation and Go agent construction without claiming runtime execution.
   Shadowed C# tool-mode names cannot borrow an SDK type or alias's automatic
   invocation meaning.
+- Keep Microsoft.Extensions.AI `UseFunctionInvocation()` middleware as an
+  agent indicator with tool use, still requiring matching import or dependency
+  evidence. Clients that this middleware configures, including
+  dependency-injected ones, provider constructor chains and target-typed
+  options remain agents, as before these corrections. An explicitly
+  constructed `FunctionInvokingChatClient` is not a lexical indicator: when it
+  is registered through dependency injection or held in fields, the per-file
+  proof cannot follow it and the project is reported as framework usage,
+  where an `AIFunctionFactory.Create` tool previously made it an agent.
+- The C# tool-loop proof reads target-typed `new()` in a local declaration of
+  an SDK type and in a response call's options argument, so an explicit
+  `FunctionInvokingChatClient` with `ChatOptions options = new() { Tools = ... }`
+  remains an agent.
+- C# files that never name `Microsoft.Extensions.AI` skip the tool-loop proof,
+  so a large file calling an unrelated `GetResponseAsync` no longer exhausts
+  its token budget and marks the scan incomplete.
+- A Go function type declared on the preceding line, such as
+  `type Option func(...)` or one whose result ends in `interface{}` or
+  `struct{}`, no longer hides a parameter that shadows the imported
+  LangChainGo agents package, and its own parameters no longer shadow the
+  package in the function that follows.
 - Exclude Python comprehension results and later clauses that cannot execute
   because a literal iterable is empty or a preceding filter is false.
 - Match lifecycle observations by the complete case-insensitive device value.
