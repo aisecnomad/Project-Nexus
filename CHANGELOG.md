@@ -89,14 +89,21 @@ summarizes each release for people who install and operate ShadowScan.
 ### Source identity, guarded import and AWS command review fixes
 
 - Resolve the tool regions of every verified construction in a file in one
-  pass. A module registering many named agents with a shared `tools=TOOLS`
-  list, attribute or factory no longer exceeds the per-file deadline in
-  `agent_granularity: source` mode and drops to an incomplete file.
-- Keep a registered tool's execution evidence on the project finding when an
-  unresolved construction, a positional or unpacked construction, a method or
-  decorator registration, or a dispatch loop in the same file can also reach
-  it. Approving a named source binding no longer hides that capability from
-  the shadow project finding; tools only named bindings reach still move to them.
+  pass that reads each tool body once. A module registering many named agents
+  with a shared `tools=TOOLS` list of branching tools no longer exceeds the
+  per-file deadline in `agent_granularity: source` mode and drops to an
+  incomplete file.
+- Keep a tool's execution evidence on the project finding when anything other
+  than a named construction's literal tools list can reach it: an unresolved
+  or unpacked construction, a computed tools value (`get_tools()`,
+  `[lookup] + extra`, `[*EXTRA]`, `Box.tools`, a conditional or comprehension),
+  a positional list, another call that receives the function
+  (`bind_tools([lookup])`), a method, lambda or local decorator, a decorator or
+  method registration, a dispatch loop, or `globals()`, `eval` and `exec`.
+  Approving a named source binding no longer hides that capability from the
+  shadow project finding. Tools that only named literal lists and direct calls
+  reach still move to the named findings; a positional model string
+  (`Agent('openai:gpt-4o')`) no longer keeps every tool on the project.
 - Restore guarded optional imports after the try/except join correction: a
   name only that try statement binds agrees with handlers that leave it
   unbound, handlers ending in `sys.exit()`, `os._exit()`, `exit()` or `quit()`

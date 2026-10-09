@@ -37,7 +37,10 @@ def named_construction_spans(
     With ``verified_spans``, ``tool_regions`` receives each verified named
     construction's keyword tool regions, all resolved in one tool pass.
     ``unresolved_regions`` receives what verified constructions without an
-    identity can reach; the whole text when one's registrations are opaque.
+    identity can reach, and what a local function reaches when other code
+    can obtain it (passed elsewhere, stored, wrapped or computed into tools:
+    see ``python_tool_regions``); the whole text when one construction's
+    options are unpacked or repeated.
     """
     try:
         tree = ast.parse(text)
@@ -148,6 +151,7 @@ def named_construction_spans(
         return found
     scopes = {id(call): scope for scope, _, call in eligible}
     requested: list[ast.Call] = []
+    duplicates: list[ast.Call] = []
     owners: dict[tuple[int, int], ast.Call] = {}
     shared_regions: dict[tuple[tuple[str, ...], str, tuple[str, ...]], ast.Call] = {}
     opaque = False
@@ -161,9 +165,10 @@ def named_construction_spans(
         tools = next((keyword.value for keyword in call.keywords if keyword.arg == "tools"), None)
         keywords = [keyword.arg for keyword in call.keywords]
         literal_keywords = None not in keywords and len(set(keywords)) == len(keywords)
-        # Unpacked, duplicate or positional options can register tools this
-        # keyword pass cannot see, so they may share any registered body.
-        opaque = opaque or not literal_keywords or (tools is None and bool(call.args))
+        # Unpacked or duplicate options can register tools this keyword pass
+        # cannot see, so they may share any registered body. A local function
+        # in a positional option is a reference the tool pass's escapes find.
+        opaque = opaque or not literal_keywords
         empty = (
             isinstance(tools, (ast.List, ast.Tuple, ast.Set))
             and not tools.elts
@@ -193,20 +198,33 @@ def named_construction_spans(
             )
             if region_key in shared_regions:
                 owners[span] = shared_regions[region_key]
+                duplicates.append(call)
                 continue
             shared_regions[region_key] = call
         requested.append(call)
         owners[span] = call
     resolved: dict[int, ToolRegions] = {}
+    escapes: list[tuple[int, int]] = []
     if requested:
         # One pass for the whole file: a registry of many agents must not
         # repeat the whole-file tool analysis for every construction.
-        python_tool_regions(text, tree, [(call, None) for call in requested], [], set(), each=resolved)
+        python_tool_regions(
+            text,
+            tree,
+            [(call, None) for call in requested],
+            [],
+            set(),
+            each=resolved,
+            escapes=escapes,
+            duplicates=duplicates,
+        )
     for span, call in owners.items():
         if span in found:
             tool_regions[span] = resolved[id(call)]
         elif unresolved_regions is not None:
             unresolved_regions.extend((*resolved[id(call)].bodies, *resolved[id(call)].declarations))
-    if unresolved_regions is not None and (opaque or not verified_spans <= {span_of(call) for call in calls}):
-        unresolved_regions.append((0, len(text)))
+    if unresolved_regions is not None:
+        unresolved_regions.extend(escapes)
+        if opaque or not verified_spans <= {span_of(call) for call in calls}:
+            unresolved_regions.append((0, len(text)))
     return found

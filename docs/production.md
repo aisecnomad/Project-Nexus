@@ -76,9 +76,11 @@ unrelated line insertions do not change it. Renaming a file or binding changes
 the identity. Dynamic, repeated, control-flow-dependent and unnamed constructions
 retain project evidence and expose identity limitations; this option does not
 enumerate deployed instances, split notebooks or follow every source language.
-Execution capabilities of a tool that such a construction, a registration or a
-dispatch loop can also reach stay on the project finding as well as on each
-named source finding; approving a named binding does not hide them.
+Execution capabilities of a tool that such a construction, a registration, a
+dispatch loop or other code that obtains the function (a computed tools value,
+`bind_tools`, a wrapper, method or local decorator) can also reach stay on the
+project finding as well as on each named source finding; approving a named
+binding does not hide them.
 
 Review generated inventory stubs for each source finding. A project resource
 approval does not approve a separate source resource; a broad inventory glob
