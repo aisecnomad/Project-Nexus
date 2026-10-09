@@ -4,10 +4,10 @@
 measured on a fresh, pre-registered holdout of 140 repositories. See
 [results-holdout/FINDINGS.md](results-holdout/FINDINGS.md) (targets, comparison
 with the first run, remaining gaps) and [results-holdout/REPORT.md](results-holdout/REPORT.md).
+None of the pre-registered targets was met.
 
 **Second holdout:** pre-registered in [PROTOCOL.md §14](PROTOCOL.md#14-second-holdout-pre-registered-before-its-draw)
 to measure the changes made after the first holdout, on 140 new repositories.
-None of the pre-registered targets was met.
 
 This harness measures how well open-source tools find generative-AI use and AI
 agents in **real public repositories**. The corpus is 183 GitHub and GitLab
