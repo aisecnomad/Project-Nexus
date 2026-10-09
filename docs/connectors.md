@@ -273,8 +273,14 @@ from the tool names the server registers outside tests (`metadata.mcp_tools`);
 comments and string examples do not establish registrations, and enum-based
 names count only the referenced members. Exceeding the per-file or project name
 limit makes coverage incomplete. Static registration evidence does not prove
-the server executed those tools. A server without recognized tools keeps the
-capabilities its code implies.
+the server executed those tools. A project that implements a server (an
+import-bound `FastMCP(`, `Server(`, `new McpServer(` or `new Server(` from the
+SDK, or a Go, Java, .NET or Rust server idiom corroborated by the SDK's import or
+dependency) carries the `mcp-server` capability, is titled `MCP server in ...`
+and describes the server under `metadata.mcp_server` (constructions, languages,
+transports); a server's vendor-neutral idioms imply no capability beyond the
+execution sinks its code shows, with or without recognized tool names (see
+[Code connectors](connectors/code.md)).
 
 Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
 `url`, `serverUrl` and `endpoint`; an entry with more than one of them is

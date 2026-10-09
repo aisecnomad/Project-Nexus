@@ -752,6 +752,19 @@ def test_mcp_server_idioms_carry_the_mcp_server_capability(index: SignatureIndex
     assert all(m.capabilities() == ["tool-use"] for m in mcp)
 
 
+def test_mcp_server_idioms_match_only_in_their_language(index: SignatureIndex) -> None:
+    rust = "impl ServerHandler for Counter {\n"
+    assert "protocol.mcp" in _ids(index.match_code(rust, "rust"))
+    assert not [m for m in index.match_code(rust, "python") if m.signature_id == "protocol.mcp"]
+    assert not [m for m in index.match_code(rust, "javascript") if m.signature_id == "protocol.mcp"]
+    java = "McpSyncServer server = McpServer.sync(transport).build();\n"
+    assert "protocol.mcp" in _ids(index.match_code(java, "java"))
+    for language in ("python", "javascript", "go", "dotnet", "rust"):
+        assert not [m for m in index.match_code(java, language) if m.signature_id == "protocol.mcp"], language
+    # Kotlin sources classify as java, so the gate admits them.
+    assert "protocol.mcp" in _ids(index.match_code(java, language_for_path("Server.kt")))
+
+
 def test_bare_server_class_is_ambiguous_mcp_server_evidence(index: SignatureIndex) -> None:
     # The low-level SDK class shares its name with every HTTP server class, so
     # the pattern is ambiguous: the code connector counts it only with an MCP

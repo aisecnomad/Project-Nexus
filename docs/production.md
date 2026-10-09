@@ -818,7 +818,13 @@ on a `--fail-on` threshold. Findings for projects that expose an MCP server
 capability, which scores 5 risk points like `tool-use`, so their default risk
 rises by 5 without any repository change; a custom `risk_weights.capabilities`
 table may set `mcp-server` explicitly, and the default-weight digest pinned in
-the tests changed with it. Model-id attribution also moved: path-like strings
+the tests changed with it. The project finding of an implemented server is
+retitled on re-scan from `LLM usage in <dir>: ...` to `MCP server in <dir>:
+...` (finding identity and ids are unchanged; the title is prose), so a
+dashboard or filter keyed on `LLM usage in` titles sees those findings move
+to the new title. A project that only uses an MCP client next to an HTTP or
+socket server class constructed as `Server(` keeps its `LLM usage in` title
+and `tool-use` alone. Model-id attribution also moved: path-like strings
 such as `gpt-4-turbo-docs.md`, `command-line` or `claude-code-action` no
 longer attribute OpenAI, Cohere or Anthropic, LiteLLM-style routes
 (`bedrock/`, `vertex_ai/`, `openrouter/`, `ollama/`...) attribute the routed

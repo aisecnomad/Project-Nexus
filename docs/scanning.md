@@ -588,8 +588,12 @@ and CI documents, files under `.devcontainer/` or a top-level `config/`,
 name, outside documentation and website directories (see
 [Code connectors](connectors/code.md)). MCP servers
 for files and databases carry the `data-access` capability, browser servers
-`browsing`, and shells `code-exec`. In gateway logs, round-the-clock activity
-keeps the informational `always-on` tag but only marks a caller as agentic,
+`browsing`, and shells `code-exec`; a project that implements an MCP server
+(an import-bound `FastMCP(` or `new McpServer(`, or a Go, Java, .NET or Rust
+server idiom corroborated by the SDK) carries `mcp-server`, the capability of
+exposing tools to other agents, and is titled `MCP server in ...` with the
+server described under `metadata.mcp_server`. In gateway logs, round-the-clock
+activity keeps the informational `always-on` tag but only marks a caller as agentic,
 with the `autonomous` capability, when tool use, an agent-framework user agent,
 a service or principal identity, or missing end-user attribution corroborates
 it. `tools/evaluation/corpus.json` carries regression cases for each rule.

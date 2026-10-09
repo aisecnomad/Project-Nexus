@@ -5,6 +5,46 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### code.filesystem
+
+- Implemented MCP servers are first-class: a Python or JavaScript server
+  construction is import-bound (`FastMCP(`, `Server(` from `mcp.server` and
+  `mcp.server.lowlevel`, `new McpServer(` and `new Server(` from
+  `@modelcontextprotocol/sdk/server/*`, `fastmcp`, `mcp-framework`) and
+  recorded as `import-bound MCP server construction` evidence that replaces the
+  lexical match of its line, so the low-level `Server` class is told apart from
+  `http.server` and Node `http` servers. The ambiguous `Server(` pattern never
+  establishes a server, so an MCP client next to an `aiohttp`, `socketserver`
+  or `socket.io` server keeps `tool-use` alone, and a lexical `FastMCP(` or
+  `new McpServer(` the binder did not resolve counts only in a file that
+  imports an SDK server module (a local class of that name does not);
+  `registerTool`/`tool` callbacks on a
+  low-level `Server` receiver link to their execution bodies like `McpServer`
+  ones. The lexical Go, Java, .NET and Rust idioms carry `mcp-server` only
+  when the SDK is imported or declared somewhere in the project; otherwise the
+  capability is withheld (listed under `metadata.potential_capabilities`) and
+  the evidence stays capped `uncorroborated-lexical`.
+- The project finding of an implemented server is titled `MCP server in
+  <dir>: ...` (finding identity is unchanged; the title is prose) and carries
+  `metadata.mcp_server` with `constructions` (`file`, `line`, `construct`,
+  `language`, `bound`; at most 50, `constructions_limited` disclosed),
+  `languages` and `transports` (`stdio`, `http`). Constructions in test paths
+  are left out unless `include_tests` is set. An implemented server with no
+  recognized tool names now suppresses vendor-neutral heuristics other than
+  execution sinks, as a server with recognized tools already did. MCP client
+  configurations keep `tool-use` only.
+
+### CycloneDX
+
+- A finding with the `mcp-server` capability (other than an MCP
+  configuration) publishes the server it implements as a `services[]` entry in
+  group `mcp-server` (`shadowscan:mcp-server:<digest>`), with
+  `shadowscan:mcp:implementation=source`, `languages`, `transport` when the
+  code names exactly one, `tools` and `files` (capped at 20 and 10, the caps
+  disclosed as `tools-omitted`/`files-omitted` and in the `incomplete`
+  composition); the project stays an `application` component that depends on
+  it. The benchmark adapter maps the capability to the `mcp:server` fact.
+
 ### Shadow AI agent discovery benchmark
 
 - Add `tools/discovery_benchmark/`, a harness that runs ShadowScan's

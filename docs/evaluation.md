@@ -206,8 +206,8 @@ annotation ledger remain frozen; adding regression cases does not refresh their
 independence. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
 
-`tools/evaluation/current_idioms_corpus.json` holds 24 short synthetic cases
-(17 positives, 7 negatives) written from scratch, with AI assistance, in the
+`tools/evaluation/current_idioms_corpus.json` holds 28 short synthetic cases
+(17 positives, 11 negatives) written from scratch, with AI assistance, in the
 shape current SDK documentation uses. The positives are an AI SDK 7 chat route
 whose `streamText` call loops over imported tools with `stopWhen:
 isStepCount(5)`, an AI SDK 6 `ToolLoopAgent`, OpenAI Agents SDK agents in
@@ -220,11 +220,16 @@ OpenAI chat-completions loop that dispatches the selected function. The hard
 negatives are a plain AI SDK 7 chat route, a multi-step call without tools, a
 tool loop disabled with `toolChoice: 'none'`, single chat-completions and
 Messages API calls without tools, a local `agents` package whose `Agent` and
-`Runner` classes are not the OpenAI SDK, and a repository of Semgrep, Sigma and
+`Runner` classes are not the OpenAI SDK, a repository of Semgrep, Sigma and
 gitleaks rules that name LLM keys and hosts, which must produce no finding at
-all. The positives also assert an agent finding attributed to the expected
-product or provider. One case is a `known_gap`: a single-step `generateText`
-call with an imported executable tool is model-selected dispatch, but without a
+all, a Python FastMCP server and a TypeScript `McpServer`, each of which must
+be reported as `framework-usage` with exactly the `mcp-server` and `tool-use`
+capabilities and never as an agent, HTTP and socket servers imported under
+the name `Server`, which must produce no finding, and an MCP client next to
+`aiohttp` and `socket.io` servers constructed as `Server(`, which must keep
+`tool-use` alone and no `mcp-server`. The positives also assert an
+agent finding attributed to the expected product or provider. One case is a
+`known_gap`: a single-step `generateText` call with an imported executable tool is model-selected dispatch, but without a
 stop condition the scanner only recognizes inline `tool({ execute })`
 definitions, so it reports SDK usage. Its first run, against the scanner before
 the October fixes, failed two cases: the AI SDK 7 tool loop was missed and the

@@ -277,6 +277,27 @@ def test_mcp_server_capabilities_come_from_registered_tools(tmp_path, index):
     assert "data-access" in found["fs"].capabilities and found["fs"].metadata["mcp_tools"] == ["write_file"]
     assert "autonomous" not in found["thinking"].capabilities
     assert found["fs"].risk.score >= found["thinking"].risk.score
+    # Both projects implement a server, whatever their tools imply.
+    assert all("mcp-server" in f.capabilities for f in found.values())
+    assert all(
+        f.metadata["mcp_server"]["constructions"][0]["file"].endswith("/index.ts") for f in found.values()
+    )
+
+
+def test_low_level_sdk_server_is_bound_and_http_servers_are_not(tmp_path, index):
+    files = {
+        "low/package.json": '{"dependencies": {"@modelcontextprotocol/sdk": "^1.17.0"}}',
+        "low/index.ts": 'import { Server } from "@modelcontextprotocol/sdk/server/index.js";\n'
+        'const server = new Server({ name: "low", version: "1" }, { capabilities: {} });\n',
+        "web/package.json": '{"dependencies": {"socket.io": "^4.8.0"}}',
+        "web/index.ts": 'import { Server } from "http";\nconst server = new Server();\nserver.listen(8000);\n',
+    }
+    found = {f.metadata["path"]: f for f in _projects(_run(index, _write(tmp_path, files))[0])}
+    assert set(found) == {"low"}
+    assert "mcp-server" in found["low"].capabilities
+    assert [c["construct"] for c in found["low"].metadata["mcp_server"]["constructions"]] == [
+        "@modelcontextprotocol/sdk/server/index.js:Server("
+    ]
 
 
 @pytest.mark.parametrize(

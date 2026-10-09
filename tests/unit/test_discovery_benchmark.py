@@ -659,6 +659,28 @@ def test_shadowscan_slug_mapping_prefers_exact_taxonomy_values() -> None:
     assert _slug_facts("provider.openai-compatible") == frozenset()  # a call shape, not a vendor
 
 
+def test_shadowscan_mcp_server_capability_is_the_server_fact(tmp_path: Path) -> None:
+    def report(capabilities: list[str]) -> set[str]:
+        finding = {
+            "kind": "framework-usage",
+            "resource": "repo",
+            "frameworks": ["protocol.mcp"],
+            "model_providers": [],
+            "capabilities": capabilities,
+            "evidence": [
+                {"signal": "code:protocol.mcp", "signature": "protocol.mcp", "location": "server.py:5"}
+            ],
+        }
+        (tmp_path / "report.json").write_text(
+            json.dumps({"findings": [finding], "stats": []}), encoding="utf-8"
+        )
+        return set(ShadowScanAdapter().normalize(tmp_path).facts)
+
+    assert report(["tool-use", "mcp-server"]) == {"mcp:sdk", "mcp:server"}
+    # A client (tool-use only) or a server idiom the SDK does not corroborate is SDK usage, not a server.
+    assert report(["tool-use"]) == {"mcp:sdk"}
+
+
 def test_shadowscan_protocol_needs_sdk_evidence(tmp_path: Path) -> None:
     from tools.discovery_benchmark.adapters.shadowscan import ShadowScanAdapter
 

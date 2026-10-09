@@ -400,6 +400,9 @@ def test_mcp_tool_server_code_does_not_imply_autonomous_agent(tmp_path: Path, ru
     assert len(findings) == 1
     assert findings[0].kind == Kind.FRAMEWORK_USAGE
     assert "protocol.mcp" in findings[0].frameworks
+    # It exposes tools over MCP; that is a capability of the project, not agency.
+    assert "mcp-server" in findings[0].capabilities
+    assert findings[0].metadata["agent_indicators"] == 0
 
 
 def test_maven_comments_are_neither_dependencies_nor_code(tmp_path: Path, run_connector):

@@ -235,6 +235,65 @@ def _symbol_tail(symbol: str) -> str:
     return ".".join(parts[-2:]) if len(parts) > 1 and parts[-2][:1].isupper() else parts[-1]
 
 
+# The server classes of the MCP SDKs, by the module path that exports them. An
+# import-bound call of one of these constructs a server the project implements,
+# evidence the lexical patterns cannot give for the low-level ``Server`` class,
+# which shares its name with every HTTP server class.
+_MCP_SERVER_CLASSES = frozenset({"FastMCP", "Server", "MCPServer", "McpServer"})
+_MCP_PYTHON_SERVER_MODULES = ("mcp.server", "fastmcp")
+_MCP_JAVASCRIPT_SERVER_MODULES = frozenset({"@modelcontextprotocol/sdk/server", "fastmcp", "mcp-framework"})
+_MCP_SERVER_CONSTRUCTION = "import-bound MCP server construction"
+
+
+def _mcp_server_construction(language: str, call: _Call) -> tuple[str, str] | None:
+    """The (class, module) an import-bound MCP server construction names, else None.
+
+    Python resolves the qualified name (``mcp.server.Server`` through ``import
+    mcp`` as well as ``from mcp.server import Server``); JavaScript binds the
+    imported class to its module specifier. A method on a constructed server
+    (``mcp.tool``, ``server.run``) is not a construction.
+    """
+    binding = call.binding
+    if binding.constructed:
+        return None
+    if language == "python":
+        qualified = ".".join(filter(None, (binding.module, binding.symbol)))
+        module, _, symbol = qualified.rpartition(".")
+        if symbol not in _MCP_SERVER_CLASSES or not module:
+            return None
+        if any(module == root or module.startswith(root + ".") for root in _MCP_PYTHON_SERVER_MODULES):
+            return symbol, module
+        return None
+    symbol = binding.symbol.rpartition(".")[2]
+    if symbol not in _MCP_SERVER_CLASSES:
+        return None
+    module = binding.module
+    if module in _MCP_JAVASCRIPT_SERVER_MODULES or module.startswith("@modelcontextprotocol/sdk/server/"):
+        return symbol, module
+    return None
+
+
+def _mcp_server_match(signature: Signature, call: _Call, symbol: str, module: str) -> Match:
+    """The bound evidence of one MCP server construction (see ``_mcp_server_construction``)."""
+    return Match(
+        signature,
+        Signal(
+            type="code",
+            weight=0.9,
+            capabilities=["mcp-server"],
+            description=_MCP_SERVER_CONSTRUCTION,
+        ),
+        sanitize_text(f"{module}:{symbol}("),
+        0.9,
+        line=call.line,
+        extra={
+            "verified_agent": False,
+            "bound_call_span": (call.start, call.end),
+            "mcp_server_construction": {"symbol": symbol, "module": module},
+        },
+    )
+
+
 class _PythonBindings(ast.NodeVisitor):
     def __init__(self, text: str, relevant: Callable[[_Binding], bool] | None = None):
         self.text = text
@@ -1446,6 +1505,20 @@ def bound_source_matches(
             tool_literals.get(id(call.node), {}),
             tool_literal_cache,
         )
+        construction = _mcp_server_construction(language, call) if "protocol.mcp" in signatures else None
+        if construction is not None:
+            # The bound construction stands for the pattern match of the same
+            # call; the caller drops the lexical match of its line as well.
+            evidence = [
+                match
+                for match in evidence
+                if not (
+                    match.signature_id == "protocol.mcp"
+                    and match.signal.type == "code"
+                    and "mcp-server" in match.signal.capabilities
+                )
+            ]
+            evidence.append(_mcp_server_match(signatures["protocol.mcp"], call, *construction))
         found.extend(evidence)
         if (
             language == "javascript"
@@ -1457,9 +1530,10 @@ def bound_source_matches(
             javascript_constructors.append((call.start, call.end))
         if (
             language == "javascript"
-            and call.binding.symbol == "McpServer"
+            and call.binding.symbol in {"McpServer", "Server"}
             and call.binding.module.startswith("@modelcontextprotocol/sdk/server/")
         ):
+            # registerTool/tool callbacks on the high-level and low-level servers
             mcp_constructors.append((call.start, call.end))
         if call.node is not None and any(match.extra.get("verified_agent") for match in evidence):
             symbol = _symbol_tail(call.binding.symbol)

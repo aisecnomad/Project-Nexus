@@ -209,6 +209,9 @@ class ShadowScanAdapter:
                     facts.update(_slug_facts(sig))
             else:  # agent, framework-usage, ai-app, local-model, cloud-resource ...
                 sdk_backed = _sdk_backed_protocols(finding)
+                capabilities = finding.get("capabilities") or []
+                if isinstance(capabilities, list) and "mcp-server" in capabilities:
+                    facts.add("mcp:server")  # the project implements an MCP server
                 for sig in signatures:
                     if sig == "protocol.a2a" and resource.endswith(".json"):
                         facts.add("a2a:agent-card")

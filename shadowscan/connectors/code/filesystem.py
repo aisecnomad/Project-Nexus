@@ -198,6 +198,24 @@ _PROJECT_MANIFESTS = frozenset({"crewai", "langgraph"})
 
 # Registered MCP tool names retained per project.
 _MAX_MCP_TOOLS = 200
+# Server constructions listed under metadata.mcp_server; the capability does not
+# depend on the list, so the bound is disclosed on the finding, not a coverage gap.
+_MAX_MCP_SERVER_CONSTRUCTIONS = 50
+# The transport an MCP server code match names (metadata.mcp_server.transports).
+_MCP_TRANSPORTS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("stdio", re.compile(r"\b(?:stdio_server|StdioServerTransport)\s*\(")),
+    ("http", re.compile(r"\b(?:StreamableHTTP\w*|SseServerTransport|SSEServerTransport)\s*\(")),
+)
+# Server idioms that register tools or run a server rather than construct one.
+_MCP_REGISTRATION_RE = re.compile(
+    r"\A@|\.(?:tool|registerTool|list_tools|call_tool|run)\s*\(|\A\[McpServerTool"
+)
+# An import of an MCP SDK's server module (Python or JavaScript). A lexical
+# construction pattern in a file that binds no server class is server evidence
+# only next to such an import; otherwise it may name a local class.
+_MCP_SERVER_IMPORT_RE = re.compile(
+    r"\bmcp\.server\b|\bfastmcp\b|@modelcontextprotocol/sdk/server\b|[\"']mcp-framework[\"']"
+)
 # Detection-rule pack paths listed in a project finding's metadata.
 _MAX_LISTED_RULE_FILES = 20
 
@@ -603,6 +621,9 @@ class _Project:
     # Data files the project's code, notebooks and shell scripts load by name: never catalogs.
     referenced_data_files: set[str] = field(default_factory=set)
     mcp_tools_limited: bool = False
+    # MCP server constructions (file, line, construct, language, bound), in walk order.
+    mcp_server_constructions: list[dict[str, Any]] = field(default_factory=list)
+    mcp_server_constructions_limited: bool = False
     # Coding-agent signature id -> posture issues read from its settings files.
     posture: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
@@ -825,9 +846,18 @@ class _ProjectEvidence:
         self.server_tools = {
             tool: rel for tool, rel in mcp_tools.items() if self.test_only or not self.in_tests(rel)
         }
-        # A tool server's capabilities come from its tools. When none were
-        # recognised, its other evidence still implies what the code can do.
-        self.mcp_server = bool(self.server_tools) and {
+        # The project implements an MCP server: a server construction, transport
+        # or tool registration outside tests, corroborated by the SDK (an
+        # import binding, or library evidence for a lexical pattern).
+        self.server_implemented = any(
+            self.mcp_server_evidence(m, rel) and m.signature_id not in self.uncorroborated
+            for m, rel, _ in self.matches
+        )
+        # A tool server's capabilities come from its tools; vendor-neutral idioms
+        # in its code describe the tools, not an agent. Execution sinks still
+        # count (see implies_capabilities), as do the capabilities its own
+        # protocol evidence implies when no tool name was recognised.
+        self.mcp_server = (bool(self.server_tools) or self.server_implemented) and {
             m.signature_id for m, _, _ in self.matches if m.signature.category != "heuristic"
         } == {"protocol.mcp"}
 
@@ -842,6 +872,24 @@ class _ProjectEvidence:
         they join neither ``frameworks[]`` nor ``model_providers[]``.
         """
         return signature_id not in self.uncorroborated and signature_id not in self.weak_mentions
+
+    def mcp_server_evidence(self, match: Match, rel: str) -> bool:
+        """Whether ``match`` is MCP server code evidence that counts (not test-only).
+
+        The ambiguous ``Server(`` pattern names HTTP and socket servers in
+        projects that only use an MCP client, and a lexical construction the
+        binder did not resolve in a file without the SDK's server import may
+        name a local class: neither establishes a server. The bound
+        construction, the specific idioms and their registrations do.
+        """
+        return (
+            match.signature_id == "protocol.mcp"
+            and match.signal.type == "code"
+            and "mcp-server" in match.signal.capabilities
+            and not match.signal.ambiguous
+            and not match.extra.get("mcp_construction_unbound")
+            and (self.test_only or not self.in_tests(rel))
+        )
 
     def verified_indicator(self, match: Match) -> bool:
         if match.signature.category == "heuristic" or match.signature_id == "protocol.mcp":
@@ -2662,7 +2710,16 @@ class FilesystemConnector(BaseConnector):
         file_uses_llm = any(
             m.signature.category in _LLM_CATEGORIES for m in (*imports, *code_matches, *bound)
         )
-        self._record_code_matches(file, code_matches, file_uses_llm, bound, unbound=unbound)
+        self._record_code_matches(
+            file,
+            code_matches,
+            file_uses_llm,
+            bound,
+            unbound=unbound,
+            mcp_server_imported=any(
+                m.signature_id == "protocol.mcp" and _MCP_SERVER_IMPORT_RE.search(m.value) for m in imports
+            ),
+        )
         for m in bound:
             # A call the binder resolved to its import establishes the library;
             # the flag tells emit-time corroboration (_uncorroborated_signatures)
@@ -2671,6 +2728,7 @@ class FilesystemConnector(BaseConnector):
             self._record_content(file, recorded, self._file_excerpt(file, m.line))
         if any(m.signature_id == "protocol.mcp" for m in (*imports, *code_matches, *bound)):
             self._register_mcp_tools(file, ignored)
+            self._record_mcp_server_constructions(file, code_matches, bound)
         return _comment_spans(content_text, ignored)
 
     def _scan_model_literals(
@@ -2855,9 +2913,12 @@ class FilesystemConnector(BaseConnector):
         bound: list[Match],
         *,
         unbound: Sequence[tuple[int, int]] = (),
+        mcp_server_imported: bool = False,
     ) -> None:
         # The binder's evidence for a signal on a line replaces its lexical match.
         bound_signals = {(m.signature_id, id(m.signal), m.line) for m in bound}
+        # So does an import-bound MCP server construction for the server pattern of its line.
+        construction_lines = {m.line for m in bound if "mcp_server_construction" in m.extra}
         configured_spans = {
             m.extra["configured_call_span"] for m in bound if "configured_call_span" in m.extra
         }
@@ -2879,6 +2940,19 @@ class FilesystemConnector(BaseConnector):
                 # corroborating library evidence at emit time.
                 m.extra["lexical_source"] = file.lang
             elif m.signature.category != "framework":
+                if m.signature_id == "protocol.mcp" and "mcp-server" in m.signal.capabilities:
+                    if m.line in construction_lines:
+                        continue  # the bound construction is the evidence of this line
+                    if (
+                        not m.signal.ambiguous
+                        and not mcp_server_imported
+                        and not _MCP_REGISTRATION_RE.search(m.value)
+                        and not any(pattern.search(m.value) for _, pattern in _MCP_TRANSPORTS)
+                    ):
+                        # ``FastMCP(`` or ``new McpServer(`` the binder did not
+                        # resolve, in a file that imports no MCP server module:
+                        # the class may be local. Evidence, but not a server.
+                        m.extra["mcp_construction_unbound"] = True
                 if m.signature_id in {
                     "heuristic.tool-use",
                     "heuristic.code-execution",
@@ -2964,6 +3038,52 @@ class FilesystemConnector(BaseConnector):
                     )
             elif _is_test_path(known) and not _is_test_path(file.rel):
                 tools[tool] = file.rel  # prefer where deployed code registers it
+
+    def _record_mcp_server_constructions(
+        self, file: _SourceFile, code_matches: list[Match], bound: list[Match]
+    ) -> None:
+        """Remember where a source file constructs an MCP server, bounded per project.
+
+        Only recorded evidence counts (a lexical match the bound construction of
+        its line replaced is not listed twice), and only constructions: tool
+        registrations, transports and ``run`` calls carry the same capability but
+        describe the server, not where it is built. The ambiguous ``Server(``
+        pattern is listed only through its import binding, and a lexical
+        construction in a Python or JavaScript file without the SDK's server
+        import is not listed (see ``_record_code_matches``).
+        """
+        proj = file.proj
+        constructions: dict[tuple[int, str], Match] = {}
+        for m in (*bound, *code_matches):
+            if (
+                m.signature_id != "protocol.mcp"
+                or m.signal.type != "code"
+                or "mcp-server" not in m.signal.capabilities
+                or m.signal.ambiguous
+                or m.extra.get("mcp_construction_unbound")
+                or (m.signature_id, id(m.signal), m.value, file.rel, m.line) not in proj.seen
+            ):
+                continue
+            if "mcp_server_construction" not in m.extra and (
+                _MCP_REGISTRATION_RE.search(m.value)
+                or any(pattern.search(m.value) for _, pattern in _MCP_TRANSPORTS)
+            ):
+                continue
+            # The binder and the lexical pass observe one transport call alike.
+            constructions.setdefault((m.line or 0, m.value), m)
+        for (line, _), m in sorted(constructions.items()):
+            if len(proj.mcp_server_constructions) >= _MAX_MCP_SERVER_CONSTRUCTIONS:
+                proj.mcp_server_constructions_limited = True
+                return
+            proj.mcp_server_constructions.append(
+                {
+                    "file": file.rel,
+                    "line": line,
+                    "construct": m.value,
+                    "language": file.lang,
+                    "bound": "mcp_server_construction" in m.extra,
+                }
+            )
 
     def _scan_config(self, scan: _ScanState, file: _SourceFile, content_text: str) -> None:
         """Match recognized configuration shapes and collect the model nodes of exported workflows."""
@@ -3688,6 +3808,20 @@ class FilesystemConnector(BaseConnector):
             applied = (
                 replace(m, signal=replace(m.signal, capabilities=observed)) if observed is not None else m
             )
+            if "mcp-server" in applied.signal.capabilities and not evidence.server_implemented:
+                # The capability follows the implemented server (see
+                # mcp_server_evidence). A server idiom in a project without the
+                # SDK anywhere (a Rust or Go source whose crate or module is not
+                # declared), the ambiguous ``Server(`` class next to an MCP client
+                # import, or an unbound ``McpServer(`` of a local class stays
+                # evidence but does not establish one.
+                applied = replace(
+                    applied,
+                    signal=replace(
+                        applied.signal,
+                        capabilities=[c for c in applied.signal.capabilities if c != "mcp-server"],
+                    ),
+                )
             contextual = bool(m.extra.get("contextual_capabilities"))
             if contextual:
                 applied = replace(applied, weight=0.0)
@@ -3769,6 +3903,8 @@ class FilesystemConnector(BaseConnector):
             }
         if proj.agent_defs:
             f.metadata["agent_definitions"] = proj.agent_defs
+        if evidence.server_implemented:
+            f.metadata["mcp_server"] = self._mcp_server_metadata(proj, evidence)
         # Installed SDKs, imports and endpoint strings establish framework
         # use. MCP code/config alone establishes a tool server/client, not
         # an agent capable of choosing actions or planning.
@@ -3785,6 +3921,31 @@ class FilesystemConnector(BaseConnector):
             for m, rel, _ in matches
         ):
             f.metadata["agent_classification"] = "openai-responses-tool-dispatch"
+
+    @staticmethod
+    def _mcp_server_metadata(proj: _Project, evidence: _ProjectEvidence) -> dict[str, Any]:
+        """Describe the MCP server a project implements: where it is built, in what, over which transports.
+
+        Constructions in tests are left out unless the project is only tests
+        (as for the tools it registers); the bound on the list is disclosed.
+        """
+        counted = [(m, rel) for m, rel, _ in evidence.matches if evidence.mcp_server_evidence(m, rel)]
+        constructions = [
+            c for c in proj.mcp_server_constructions if evidence.test_only or not evidence.in_tests(c["file"])
+        ]
+        languages = {c["language"] for c in constructions if c["language"]}
+        languages.update(lang for _, rel in counted if (lang := language_for_path(rel)))
+        transports = {
+            transport for m, _ in counted for transport, pattern in _MCP_TRANSPORTS if pattern.search(m.value)
+        }
+        metadata: dict[str, Any] = {
+            "constructions": constructions,
+            "languages": sorted(languages),
+            "transports": sorted(transports),
+        }
+        if proj.mcp_server_constructions_limited:
+            metadata["constructions_limited"] = True
+        return metadata
 
     def _coding_agent_finding(
         self,
@@ -3938,6 +4099,11 @@ class FilesystemConnector(BaseConnector):
         ]
         where = "repository root" if proj.root == "." else proj.root
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
+        if f.kind != Kind.AGENT and "mcp_server" in f.metadata:
+            # The project exposes tools over MCP rather than calling a model
+            # (metadata.mcp_server). The title is prose: finding identity
+            # (resource and discriminator) is unchanged.
+            what = "MCP server"
         detail = ", ".join(names) or ", ".join(provs)
         if not detail:
             # Only supporting technology (a search tool, a vector store,

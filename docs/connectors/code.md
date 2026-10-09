@@ -456,6 +456,48 @@ separate execution-sink evidence. Empty, explicitly disabled or unverified
 provider tool options do not establish configured tool-use; supported
 import-bound requests and linked enabled dispatch provide that evidence.
 
+A project that implements an MCP server carries the `mcp-server` capability:
+it exposes tools to other agents, which is distinct from `tool-use` (the
+protocol signature's own capability, a project that calls tools) and never
+makes the project an agent. In Python and JavaScript the construction is
+import-bound (`FastMCP(`, `Server(` from `mcp.server` or
+`mcp.server.lowlevel`, `new McpServer(` or `new Server(` from
+`@modelcontextprotocol/sdk/server/*`, `fastmcp`, `mcp-framework`), so the
+low-level `Server` class is told apart from `http.server` and Node `http`
+servers, which produce nothing; the bound construction replaces the lexical
+pattern match of its line. Next to an MCP client import (`ClientSession`, the
+SDK's `client` modules) an `aiohttp`, `socketserver` or `socket.io` class
+constructed as `Server(` stays low-weight evidence of the ambiguous pattern
+and establishes neither the capability nor a server: only a bound
+construction, a specific idiom (`FastMCP(`, `new McpServer(`, a tool
+registration, a transport) counts. A lexical `FastMCP(` or `new McpServer(`
+that the binder did not resolve counts only in a file that imports an SDK
+server module (`mcp.server`, `fastmcp`, `@modelcontextprotocol/sdk/server`,
+`mcp-framework`, for example after `from mcp.server.fastmcp import *`); it is
+then listed with `bound: false`. Elsewhere the class may be a local one and the
+match stays evidence without the capability. In Go, Java, .NET and Rust the server idioms
+(`server.NewMCPServer(`, `mcp.NewServer(`, `McpServer.sync(`, `.AddMcpServer(`,
+`[McpServerTool`, `impl ServerHandler for`) are lexical patterns gated to their
+language; without the SDK's import or dependency anywhere in the project they
+stay capped `uncorroborated-lexical` evidence, the capability is listed under
+`metadata.potential_capabilities` and no server is reported. Constructions in
+test paths imply no server unless `include_tests` is set, like registered
+tools. The finding is titled `MCP server in <dir>: ...` and carries
+`metadata.mcp_server`: `constructions` (`file`, `line`, `construct`,
+`language`, `bound`, which is `false` for lexical Go, Java, .NET and Rust
+idioms and for a Python or JavaScript construction resolved by its file's
+server import rather than by the binder; at most 50, with
+`constructions_limited: true` when more exist, which is a listing bound and
+not a coverage gap), `languages` and the
+`transports` the code names (`stdio`, `http`). Tool registrations, transports
+and `run` calls are server evidence but are not listed as constructions. In an
+implemented server, vendor-neutral idioms (an agent loop, a memory variable)
+describe its tools rather than an agent and imply no capability, as they
+already did for a server with recognized tool names; execution sinks still
+count. An MCP client configuration (`.mcp.json` and the like) is a
+`mcp-server` finding but is not a server implementation and does not carry the
+capability.
+
 An MCP server entry that declares itself disabled (`disabled: true` or
 `enabled: false`) is still reported. The flag is client-specific (Cline and Roo
 honor it, Claude Code's `.mcp.json` does not) and the repository sets it, so
