@@ -194,10 +194,9 @@ author-written and not independent review.
 
 - The JS/TS/TSX lexer now lexes brace-less JSX elements as attribute values
   (`title=<span>…</span>`), a legal construct that marked real repositories
-  incomplete, and JSX is lexed in plain `.js`/`.mjs`/`.cjs` files too
-  (React-in-.js is routine; a closing tag after an expression previously
-  tripped the regex-vs-division ambiguity). Malformed JSX still fails
-  closed.
+  incomplete. Plain `.js`/`.mjs`/`.cjs` files keep the JSX retry that applies
+  only when the plain reading is ambiguous and the JSX reading completes.
+  Malformed JSX still fails closed.
 - Credential detection scales its per-execution regex allowance linearly
   with declared input size (`LINEAR_SECONDS_PER_MILLION_CHARS`, floor
   0.1 s, always inside the per-file wall budget), so keyword-dense
