@@ -147,10 +147,8 @@ filesystem or network activity.
 
 ## Validation maturity and evidence status
 
-The unreleased attribution corrections distinguish individual network
-connections, hosted-agent execution from management traffic, and a bounded
-subset of Python re-exports. See the [network](connectors/network.md),
-[gateway](connectors/gateway.md) and [code](connectors/code.md) guides, plus the
+The unreleased attribution corrections resolve a bounded subset of Python
+re-exports. See the [code](connectors/code.md) guide and the
 [migration notes](production.md#unreleased-attribution-migration). Regression
 coverage for these cases does not change the field-evaluation or live-acceptance
 status below.

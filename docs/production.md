@@ -9,24 +9,17 @@ passing unit suite does not establish complete coverage of a particular estate.
 
 ## Unreleased attribution migration
 
-After upgrading to the discovery-attribution corrections, rerun the affected
-network, gateway and source scans before comparing totals:
+This section covers the Python re-export and governance observation changes.
+For network connection attribution and hosted-agent invocation, see
+[October 9 scan evidence corrections](#october-9-scan-evidence-corrections-unreleased).
 
-- Network byte and flow totals can decrease when unrelated connections share a
-  destination address. Retain connection UIDs and endpoint fields in the input
-  exports so service attribution can use the individual connection. The fixed
-  attribution budget now counts UID-separated connection groups, so a capture
-  with many connections to one address can reach it sooner. A capacity limit
-  marks coverage incomplete; split large exports into controlled analysis scopes
-  instead of treating omitted traffic as zero.
-- Gateway findings can lose the `tool-use` capability or the "Agentic caller"
-  title when their only evidence was management API traffic or request cadence.
-  Preserve HTTP method and service-host metadata; a path alone does not establish
-  that a hosted agent was invoked. A lower classification is not proof that an
-  agent stopped running.
 - Supported local Python re-exports can expose agent construction previously
   reported only as framework usage. This remains static integration evidence,
   not proof of deployment or execution; see the [source guide](connectors/code.md).
+  Rerun affected source scans before comparing totals. A re-export source or
+  chain budget, or a connector deadline that leaves a queued root-level
+  consumer unanalyzed, marks the scan incomplete. Ordinary local modules,
+  however large, do not.
 - A scheduled governance audit can verify visible controls while reporting
   bypass settings as unknown. Do not use that partial observation as the complete
   ruleset evidence required for release or rollout. See the
@@ -36,21 +29,16 @@ The scanner-source fingerprint changes with these fixes. Preserve earlier
 reports as historical observations and rebuild comparison baselines under the
 new reviewed revision; do not interpret incomparable findings as resolved.
 
-Before using the changed classifications for enforcement, commission a fresh
-holdout using the [frozen field-evaluation procedure](evaluation.md#build-a-genuinely-held-out-field-set).
-Include shared-IP traffic, agent management reads, invocation attempts, ordinary
-batch calls and modular agent code. Label provider identity, operation type and
-attributed volume as well as agent presence. Freeze repository/family sampling
-and acceptance thresholds before showing scanner results to reviewers. These
-new authored regressions must be excluded from that holdout.
+Before using the changed source classifications for enforcement, commission a
+fresh holdout using the [frozen field-evaluation procedure](evaluation.md#build-a-genuinely-held-out-field-set).
+Include modular agent code: import-only re-exports, cycles, shadowed bindings
+and executable shims. Freeze repository/family sampling and acceptance
+thresholds before showing scanner results to reviewers. These new authored
+regressions must be excluded from that holdout.
 
-Collect complete and permission-denied tenant canary receipts for every intended
-deployment scope. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
-currently supports static code, AWS and Slack; it cannot grant acceptance to
-network, gateway or other connectors by implication. Keep those scopes in
-analyst-reviewed use until their own approved validation is available. A code
-change cannot substitute for human labels, approved tenant credentials or live
-acceptance receipts.
+The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+supports static code, AWS and Slack. A code change cannot substitute for human
+labels, approved tenant credentials or live acceptance receipts.
 
 Use this operator sequence; dated candidate notes remain under
 [Candidate change history](#candidate-change-history) and describe differences
