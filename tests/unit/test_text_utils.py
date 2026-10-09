@@ -222,9 +222,7 @@ def test_read_text_reads_a_large_text_file_with_a_stray_nul(tmp_path, name):
     errors: list[str] = []
     notes: list[str] = []
     text = read_text(tmp_path / name, 10_000, errors, notes=notes)
-    # The NUL is removed, as bash removes it from a script; the lines stay where they were.
-    assert text == data.decode().replace("\x00", "")
-    assert text.count("\n") == data.count(b"\n")
+    assert text == data.decode()
     assert errors == []
     assert notes == [STRAY_NUL_NOTE]
 

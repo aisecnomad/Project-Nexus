@@ -318,8 +318,13 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
 
 - Fixed: stray NUL bytes read as text were left in the analyzed text, so
   `api.open<NUL>ai.com` or `OPENAI_<NUL>API_KEY` in a shell script, which bash
-  runs as `api.openai.com` and `OPENAI_API_KEY`, matched nothing. They are now
-  removed before analysis (line numbers are unchanged).
+  runs as `api.openai.com` and `OPENAI_API_KEY`, matched nothing. The code
+  connector now matches names in the text without its NUL bytes (line numbers
+  are unchanged). Node and PHP keep NUL bytes, and removing one can join
+  `/<NUL>*` into a comment opener or `?<NUL>>` into a PHP closing tag that
+  masks the code after it, so a source file with NUL bytes is lexed both with
+  and without them: only what both readings mask stays masked, and the file's
+  lexing is incomplete unless both readings agree.
 - Fixed: the JSX walk read valid JavaScript as elements and masked the code
   between them: `yield <a> 1` and `await <a> 1` in a script (where both words
   are names) and the second `<` of a left shift (`mask<<shift>limit`). In

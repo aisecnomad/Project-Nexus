@@ -46,9 +46,14 @@ that are never silent:
   least 512 bytes that is valid UTF-8, has at most one NUL byte in 200 and holds
   no other control character in its first 8 KiB (a TypeScript cache key joined
   with a literal NUL) is read as text too, with the warning `stray NUL bytes in
-  text, read as text`. Its NUL bytes are removed before it is analyzed, as bash
+  text, read as text`. Names are matched in it without its NUL bytes, as bash
   removes them from a script, so a NUL cannot split a host or variable name
-  (`api.open<NUL>ai.com` is matched as `api.openai.com`). Any other file the scanner
+  (`api.open<NUL>ai.com` is matched as `api.openai.com`). Node and PHP keep NUL
+  bytes, and removing one can join two characters into a comment opener
+  (`/<NUL>*`) or a PHP closing tag (`?<NUL>>`), so a source file is lexed both
+  with and without them: only text that both readings take for a comment or a
+  string is masked, and the file's lexing is incomplete (exit code 3) unless
+  both readings agree. Any other file the scanner
   analyzes by name (source, configuration, documents, `.env`, extensionless
   files) that has a NUL byte in its first 8 KiB, or that its declared codec
   cannot decode or does not read as ASCII where the bytes are ASCII (UTF-16 or

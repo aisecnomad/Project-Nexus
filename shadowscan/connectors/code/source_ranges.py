@@ -12,7 +12,7 @@ import io
 import re
 import tokenize
 import xml.etree.ElementTree as ET
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -325,6 +325,33 @@ def noncode_ranges(
     if language in {"go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"}:
         return _other_source_ranges(text, language, dialect)
     return [], False
+
+
+def nul_reading_ranges(
+    text: str,
+    spans: list[tuple[int, int]],
+    language: str | None,
+    dialect: str | None = None,
+    *,
+    jsx: bool = False,
+) -> tuple[list[tuple[int, int]], bool]:
+    """Lex ``text``, a source with NUL bytes, and combine it with ``spans``, its ignored spans without them.
+
+    Bash drops NUL bytes, but Node and PHP keep them, and removing one can join two characters into a
+    token: the regular expression `/<NUL>*/` becomes a comment opener that masks the code after it, and
+    `?<NUL>>` in a PHP comment a closing tag. Either reading may be the one that runs, so only what both
+    mask is returned, in offsets of the text without the NUL bytes, and the lexing is incomplete unless
+    both readings are complete and mask the same text.
+    """
+    kept, incomplete = noncode_ranges(text, language, dialect, jsx=jsx)
+    nuls = [match.start() for match in re.finditer("\x00", text)]
+    # An offset less the NUL bytes before it is the same place in the text without them.
+    moved = _merged_spans(
+        [(start - bisect_left(nuls, start), end - bisect_left(nuls, end)) for start, end in kept]
+    )
+    moved = [span for span in moved if span[0] < span[1]]
+    spans = [span for span in _merged_spans(spans) if span[0] < span[1]]
+    return _common_spans(moved, spans), incomplete or moved != spans
 
 
 def _xml_data_document(text: str) -> bool:

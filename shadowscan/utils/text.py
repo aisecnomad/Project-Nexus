@@ -147,9 +147,8 @@ def _stray_nul_text(raw: bytes) -> str | None:
     A NUL in the sniff window used to make the whole file a coverage gap, whatever else it held, so
     the source around it was never analyzed. Binary data fails at least one of the tests below (it is
     not valid UTF-8, it holds other control characters, or it is far more than 0.5% NUL), so it stays
-    a gap. The NUL bytes are removed from the text returned: bash drops them from a script, so
-    `api.open<NUL>ai.com` runs as `api.openai.com`, and left in place they would split the names the
-    scanner matches. Line numbers are unchanged.
+    a gap. The NUL bytes stay in the text returned: bash drops them from a script, but Node and PHP keep
+    them, so what they mean is for the caller to decide.
     """
     if len(raw) < _STRAY_NUL_MIN_BYTES or raw.count(b"\x00") * _SPARSE_NUL_RATIO > len(raw):
         return None
@@ -159,7 +158,7 @@ def _stray_nul_text(raw: bytes) -> str | None:
         return None
     if any(ord(character) in _BINARY_CONTROLS for character in text[:_BINARY_SNIFF]):
         return None
-    return text.replace("\x00", "")
+    return text
 
 
 # The share of replacement characters in any bounded window above which "text that is not UTF-8" is
@@ -257,9 +256,8 @@ def read_text(
     ``analyzable_name`` False, any recognised artifact: the caller then reads
     the file only because of the directory it is in, such as an image kept
     beside coding-agent rules; and a large text file with a few stray NUL bytes
-    (``_stray_nul_text``), which is read with them removed. Text that is not
-    valid UTF-8 and holds no NUL is read with the invalid bytes replaced
-    (``_decode_utf8``). Both are analyzed in full,
+    (``_stray_nul_text``). Text that is not valid UTF-8 and holds no NUL is read
+    with the invalid bytes replaced (``_decode_utf8``). Both are analyzed in full,
     so they are not gaps: ``notes`` receives a short description of each for the
     caller to report. Limits and I/O failures are reported to callers that track
     completeness.

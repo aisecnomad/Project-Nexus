@@ -1062,8 +1062,9 @@ is not part of its identity.
     still ambiguous (a string left open, Ruby strings that span lines, heredoc
     interpolation) stays incomplete.
   - file contents: text that is not valid UTF-8 and holds no NUL byte, and
-    large UTF-8 text with a few stray NUL bytes (removed before analysis, as bash
-    removes them from a script), are analyzed instead of skipped
+    large UTF-8 text with a few stray NUL bytes (names are matched without them,
+    as bash removes them from a script; a source file is lexed with and without
+    them and is incomplete when the readings differ), are analyzed instead of skipped
     (see [scan semantics](scanning.md)); each adds a warning that leaves the
     scan complete (one warning per kind; `strict_coverage` makes each noted file a gap, and a
     `CODEOWNERS` file with replaced bytes is an error). Dense NUL content, text mixed with other control characters

@@ -10,7 +10,9 @@ import stat
 import time
 
 import pytest
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.models import Kind
 from shadowscan.utils.text import host_of, read_text
@@ -253,6 +255,58 @@ def test_stray_nul_bytes_cannot_split_a_host_or_env_name_that_bash_runs(tmp_path
     (tmp_path / "run.sh").write_bytes(script)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete or any("provider.openai" in finding.model_providers for finding in findings)
+
+
+_SOURCE_PADDING = b"// " + b"padding text for a module of an ordinary size " * 14 + b"\n"
+
+
+# Node and PHP keep NUL bytes (`node --check` and `php -l` accept each file, and with a stub client each
+# runs its call), but without them two characters join into a comment opener or a closing tag. Lexed only
+# with the NUL bytes removed, the client code was masked and the scan was complete and empty.
+@pytest.mark.parametrize(
+    ("name", "content", "provider"),
+    [
+        # The regular expression `/<NUL>*/` becomes a comment that runs to `/* end */`.
+        (
+            "app.js",
+            _SOURCE_PADDING
+            + b"const zeros = /\x00*/g;\n"
+            + b'const OpenAI = require("openai");\n'
+            + b'new OpenAI().chat.completions.create({ model: "gpt-4o", messages: [] });\n'
+            + b"/* end */\n",
+            "provider.openai",
+        ),
+        # `/<NUL>/` becomes a line comment that hides the rest of its line.
+        (
+            "app.js",
+            _SOURCE_PADDING + b'const r = /\x00/; const OpenAI = require("openai"); new OpenAI();\n',
+            "provider.openai",
+        ),
+        # In a PHP comment `?<NUL>>` becomes a closing tag, which makes the code after it template text.
+        (
+            "app.php",
+            b"<?php\n" + _SOURCE_PADDING + b"// note ?\x00>\n" + b'$client = new AI21Client(getenv("K"));\n',
+            "provider.ai21",
+        ),
+    ],
+    ids=["js-regex-star", "js-regex-slash", "php-closing-tag"],
+)
+def test_a_removed_nul_byte_cannot_make_a_comment_that_hides_code(tmp_path, name, content, provider):
+    (tmp_path / name).write_bytes(content)
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+    report = json.loads(result.stdout)
+    assert result.exit_code == 3, result.output
+    assert report["summary"]["complete"] is False
+    assert any(provider in finding["model_providers"] for finding in report["findings"])
+
+
+def test_a_nul_byte_inside_a_string_leaves_a_source_complete(tmp_path, run_connector):
+    # Both readings mask the same string, so the lexing is complete.
+    source = _SOURCE_PADDING + b'const key = "a\x00b";\nconst OpenAI = require("openai");\nnew OpenAI();\n'
+    (tmp_path / "app.js").write_bytes(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)
 
 
 @pytest.mark.parametrize("rel", [".cursor/rules/notes.bin", ".roo/rules/notes.utf16"])

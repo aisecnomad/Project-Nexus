@@ -124,7 +124,7 @@ from shadowscan.connectors.code.semantic_config import (
     structured_code_matches,
 )
 from shadowscan.connectors.code.source_identity import named_construction_spans
-from shadowscan.connectors.code.source_ranges import noncode_ranges
+from shadowscan.connectors.code.source_ranges import noncode_ranges, nul_reading_ranges
 from shadowscan.connectors.code.source_semantics import (
     MAX_CALL_TEXT,
     SourceBudgetExceeded,
@@ -675,6 +675,7 @@ class _SourceFile:
     text: str  # analyzed text; a notebook's code cells
     lang: str | None
     file_matches: list[Match]
+    nul_text: str | None = None  # the text as read, when its NUL bytes were removed from ``text``
     raw_notebook: str | None = None  # a notebook's raw document, scanned for credentials
     # Credential context for excerpt redaction (see _structured_context).
     # None withholds every excerpt of the file.
@@ -2146,12 +2147,19 @@ class FilesystemConnector(BaseConnector):
         if loaded is None:
             return
         text, raw_notebook, cells = loaded
+        nul_text = None
+        if "\x00" in text and path.suffix.lower() != ".ipynb":
+            # Bash drops NUL bytes from a script, so `api.open<NUL>ai.com` runs as api.openai.com: names
+            # are matched without them. Node and PHP keep them, so a source file is also lexed as it was
+            # read (``_scan_source``). Lines do not move.
+            nul_text, text = text, text.replace("\x00", "")
         file = _SourceFile(
             rel=rel,
             path=path,
             proj_root=proj_root,
             proj=proj,
             text=text,
+            nul_text=nul_text,
             lang="python" if path.suffix.lower() == ".ipynb" else lang,
             file_matches=file_matches,
             raw_notebook=raw_notebook,
@@ -2642,7 +2650,13 @@ class FilesystemConnector(BaseConnector):
             # noncode_ranges when the plain walk is ambiguous: in a script,
             # `yield <a> 1` and `mask<<shift>limit` are comparisons that a
             # JSX walk from the start would read as elements.
-            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
+            jsx = ext in {".jsx", ".tsx"}
+            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=jsx)
+            if file.nul_text is not None:
+                ignored, nul_ambiguous = nul_reading_ranges(
+                    manifest_comment_projection(file.rel, file.nul_text), ignored, lang, ext, jsx=jsx
+                )
+                ambiguous = ambiguous or nul_ambiguous
         if ambiguous:
             self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
         imports = (
