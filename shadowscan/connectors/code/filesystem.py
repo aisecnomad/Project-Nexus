@@ -92,6 +92,7 @@ from shadowscan.connectors.code.catalogs import (
     configuration_document,
     project_catalog_files,
     referenced_data_files,
+    references_could_change,
 )
 from shadowscan.connectors.code.dotnet_semantics import microsoft_tool_loop_matches
 from shadowscan.connectors.code.go_semantics import langchaingo_agent_matches
@@ -745,6 +746,9 @@ class _Project:
     configuration_files: set[str] = field(default_factory=set)
     # Data files the project's code, notebooks and shell scripts load by name: never catalogs.
     referenced_data_files: set[str] = field(default_factory=set)
+    # Loader files whose reference list was truncated, with the limit messages:
+    # a coverage gap only if the project discounts a data file (see _emit_project).
+    reference_limits: list[tuple[str, list[str]]] = field(default_factory=list)
     mcp_tools_limited: bool = False
     # MCP server constructions (file, line, construct, language, bound), in walk order.
     mcp_server_constructions: list[dict[str, Any]] = field(default_factory=list)
@@ -3271,7 +3275,10 @@ class FilesystemConnector(BaseConnector):
                 file.proj.configuration_files.add(file.rel)
         if file.ext in LOADER_EXTENSIONS:
             # A data file that code loads by name is configuration, not a catalog.
-            file.proj.referenced_data_files.update(referenced_data_files(content_text, limits=catalog_limits))
+            limits: list[str] = []
+            file.proj.referenced_data_files.update(referenced_data_files(content_text, limits=limits))
+            if limits:
+                file.proj.reference_limits.append((file.rel, limits))
         self._file_errors(file.rel, catalog_limits)
 
     def _defer_reexport_source(self, scan: _ScanState, file: _SourceFile) -> bool:
@@ -4300,6 +4307,10 @@ class FilesystemConnector(BaseConnector):
         covered_files: frozenset[str] = frozenset(),
     ) -> Iterator[Finding]:
         catalogs = project_catalog_files(proj, proj.configuration_files, proj.referenced_data_files)
+        if proj.reference_limits and references_could_change(catalogs):
+            # An unread reference could have named a data file discounted here.
+            for rel, issues in proj.reference_limits:
+                self._file_errors(rel, issues)
         observations = self._project_observations(proj, catalogs)
         # Evidence held back only because it sits in a catalog is listed in the
         # project finding (catalog_mentions) or, without one, in a scan note.

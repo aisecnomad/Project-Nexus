@@ -595,29 +595,68 @@ def test_model_literal_limit_counts_only_vendor_stem_literals(run_connector, tmp
     assert not [w for w in stats.warnings if "model identifiers" in w]
 
 
+# A mention-only data file naming five providers: a catalog unless code loads it.
+PROVIDER_LIST = json.dumps(
+    {
+        "providers": [
+            f"https://{host}/v1"
+            for host in (
+                "api.openai.com",
+                "api.anthropic.com",
+                "api.mistral.ai",
+                "api.cohere.ai",
+                "api.groq.com",
+            )
+        ]
+    }
+)
+
+
+def _reference_loader(limit_kind: str) -> str:
+    from shadowscan.connectors.code.catalogs import MAX_PATH_LITERALS, MAX_REFERENCES_PER_FILE
+
+    if limit_kind == "path-literals":
+        return 'load("a.json")\n' * MAX_PATH_LITERALS
+    return "".join(f'load("file-{n}.json")\n' for n in range(MAX_REFERENCES_PER_FILE))
+
+
 @pytest.mark.parametrize("limit_kind", ["assignments", "path-literals", "references"])
 def test_catalog_analysis_limits_make_the_scan_incomplete(run_connector, tmp_path, limit_kind):
-    from shadowscan.connectors.code.catalogs import (
-        MAX_ASSIGNMENT_LINES,
-        MAX_PATH_LITERALS,
-        MAX_REFERENCES_PER_FILE,
-    )
+    from shadowscan.connectors.code.catalogs import MAX_ASSIGNMENT_LINES
 
     if limit_kind == "assignments":
         content = "OTHER_VALUE=1\n" * MAX_ASSIGNMENT_LINES + "OPENAI_API_KEY=configured\n"
         write(tmp_path, "etc/settings.cfg", content)
     else:
-        content = (
-            'load("a.json")\n' * MAX_PATH_LITERALS
-            if limit_kind == "path-literals"
-            else "".join(f'load("file-{n}.json")\n' for n in range(MAX_REFERENCES_PER_FILE))
-        )
-        write(tmp_path, "app.py", content + 'load("late.json")\n')
+        # The unread reference names the provider list the project discounts as
+        # a catalog: read, it would make that file configuration.
+        write(tmp_path, "app.py", _reference_loader(limit_kind) + 'load("late.json")\n')
+        write(tmp_path, "late.json", PROVIDER_LIST)
     # Other successfully analyzed files retain their findings.
     write(tmp_path, "requirements.txt", "openai==1.0\n")
     findings, stats = scan(run_connector, tmp_path, scan_secrets=False)
     assert stats.incomplete
     assert any("catalog" in error and "limit exceeded" in error for error in stats.errors)
+    assert _project(findings).model_providers == ["provider.openai"]
+
+
+@pytest.mark.parametrize("limit_kind", ["path-literals", "references"])
+def test_reference_limits_without_a_discounted_catalog_keep_coverage_complete(
+    run_connector, tmp_path, limit_kind
+):
+    # Data-file references only lift the catalog discount. A test loader that
+    # lists hundreds of fixture paths in a project with no catalog candidate
+    # leaves nothing the unread references could change.
+    fixtures = "".join(f'load("fixtures/case_{n}.json")\n' for n in range(210))
+    write(tmp_path, "tests/load_cases.py", fixtures)
+    write(tmp_path, "app.py", _reference_loader(limit_kind) + 'load("late.json")\n')
+    findings, stats = scan(run_connector, tmp_path)
+    assert not findings
+    assert not stats.errors and not stats.incomplete
+    # Beside an AI project too, as long as nothing is discounted as a catalog.
+    write(tmp_path, "requirements.txt", "openai==1.0\n")
+    findings, stats = scan(run_connector, tmp_path, scan_secrets=False)
+    assert not stats.errors and not stats.incomplete
     assert _project(findings).model_providers == ["provider.openai"]
 
 

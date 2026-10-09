@@ -260,7 +260,10 @@ passes are bounded: a data file is judged on its first 10,000 assignment lines
 and a loader is read for its first 2,000 quoted data-file literals (at most 400
 distinct names). If unread content could change the configuration classification,
 the limit is reported as incomplete coverage (exit 3), while observed evidence
-is retained. A
+is retained. A truncated reference list can only lift a discount, so it is a
+gap only when the project discounts a data file outside documentation and
+website directories as a catalog; a test loader listing hundreds of fixture
+paths in a project without one leaves the scan complete. A
 model identifier found in a data file is
 a mention like a domain or a variable name (a pricing table of model ids is a
 catalog); one selected by a manifest or IaC file still anchors. A data file

@@ -18,6 +18,7 @@ from shadowscan.connectors.code.catalogs import (
     configuration_document,
     project_catalog_files,
     referenced_data_files,
+    references_could_change,
 )
 from shadowscan.signatures import Match, Signal, Signature
 
@@ -474,6 +475,14 @@ def test_referenced_data_files_are_bounded_per_file():
         'load("a.json")\n' * MAX_PATH_LITERALS + 'load("late.json")\n', limits=limits
     ) == {"a.json"}
     assert limits == ["catalog data-file reference literal limit exceeded; later literals were not read"]
+
+
+def test_truncated_references_matter_only_for_a_catalog_they_could_exempt():
+    # References lift the discount of a data file outside documentation and
+    # website directories; nothing else can change when one is unread.
+    assert not references_could_change(frozenset())
+    assert not references_could_change(frozenset({"docs/providers.yaml", "website/_data/models.yml"}))
+    assert references_could_change(frozenset({"docs/providers.yaml", "config/providers.json"}))
 
 
 def test_a_data_file_the_projects_code_loads_is_configuration():

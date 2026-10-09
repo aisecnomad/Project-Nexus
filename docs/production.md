@@ -122,6 +122,9 @@ from the analyzed prefix remain available; review the unread content
 separately before using an incomplete result for an assurance decision.
 Catalog assignment and data-file reference limits likewise mark coverage
 incomplete when unread content could change the configuration classification.
+A truncated reference list is reported only when the project discounts a data
+file as a catalog that an unread reference could have named; otherwise the
+unread references change nothing and the scan stays complete.
 
 Text decoding examines every bounded window before accepting replacement
 characters. A plain-text prefix does not exempt a binary body from incomplete

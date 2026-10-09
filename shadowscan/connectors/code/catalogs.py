@@ -416,6 +416,17 @@ def referenced_data_files(text: str, *, limits: list[str] | None = None) -> set[
     return found
 
 
+def references_could_change(catalogs: AbstractSet[str]) -> bool:
+    """Whether a data-file reference left unread could have kept one of ``catalogs`` from being a catalog.
+
+    A reference only lifts the catalog discount (``_loaded_by_code``), never for
+    a file under a documentation or website directory, and only shrinks the set
+    ``catalog_files`` returns. A truncated reference list therefore changes
+    nothing in a project that discounts no other data file.
+    """
+    return any(not _documentation_path(rel) for rel in catalogs)
+
+
 def _referenced(rel: str, referenced: Collection[str]) -> bool:
     """Whether a recorded reference names ``rel`` by its basename or by a trailing path."""
     if not referenced:

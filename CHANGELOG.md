@@ -323,6 +323,10 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   `command-line`) made the scan incomplete (exit 3) with nothing unread.
 - Fixed: truncated catalog assignment and data-file reference analysis also
   marks coverage incomplete while preserving the evidence already read.
+- Fixed: a truncated data-file reference list marks coverage incomplete only
+  when the project discounts a data file as a catalog that an unread reference
+  could have named. A non-AI repository whose test loader listed about 200
+  fixture JSON paths exited 3 although no result could change.
 
 ### Shadow AI agent discovery benchmark
 
