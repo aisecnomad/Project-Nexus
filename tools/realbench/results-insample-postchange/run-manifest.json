@@ -1,0 +1,37 @@
+{
+ "manifest": "corpus.json",
+ "manifest_sha256": "a800235820cf168c29abc9f6d410a55af8ac15f56423d8d2008ff6ae3b569c97",
+ "repositories": 183,
+ "finished_at": "2026-10-09T08:33:40+00:00",
+ "shadowscan_commit": "c30aaacdd0be4cfb2091448f5197ab1a8379d9ea",
+ "commit_at_finish": "c30aaacdd0be4cfb2091448f5197ab1a8379d9ea",
+ "python": "3.13.16",
+ "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+ "tool_commits": {
+  "Defend-AI-Tech-Inc_agent-discover-scanner": "a3756cda779a6a46088a3290c77027b0ea5d83c9",
+  "ak2dev_agentguard-v1": "6d4f75d762a350a2ffc43377acb501d44c9d0c67",
+  "alebgl77_open-shadow-ai": "715044e079c48ec522ef50cb3ee9f927c4666e6d",
+  "cisco-ai-defense_aibom": "8d7bec099d5ddcd24dbda13a9777f3cf11e2c325",
+  "cisco-ai-defense_mcp-scanner": "f817899d9391b099f395acd5ae7ff435dccf2a47",
+  "giggsoinc_PatronAI": "79bdcc88bd0bd9b9642a05800f55654eef626b7f",
+  "knostic_AgentSonar": "8658b67741eb002e8937e3f7c8f3afac9daab148",
+  "msaad00_agent-bom": "26ed7c15841f9abf7dec70c66c49441ccd317d55",
+  "msaad00_agent-bom-latest": "129615f810e4153cf054a9514bded451ad6b2120",
+  "safedep_vet": "568cb0e1c90685dd89f07f91c64e97a49228a47f",
+  "snyk_agent-scan": "69ce32c6e5ae67e5d688efee9e9c45f7de7046c4"
+ },
+ "runs": [
+  {
+   "tool": "shadowscan",
+   "display": "Project Nexus ShadowScan",
+   "source": "aisecnomad/Project-Nexus",
+   "mode": "scan with one code.filesystem connector on the checkout, defaults, use_git false",
+   "agentic_rule": "any finding with metadata.agentic true (PROTOCOL.md \u00a713.3); the first run used a finding of kind agent, agent-config, bot-app, mcp-server, workflow (the tool's own agent kinds), kept as agentic_kinds",
+   "file": "shadowscan.jsonl",
+   "wall_seconds": 466.1,
+   "ok": 167,
+   "partial": 16,
+   "error": 0
+  }
+ ]
+}
