@@ -324,8 +324,23 @@ def test_request_forms_with_tool_feedback_are_agents(index, tmp_path, form):
 
 
 @pytest.mark.parametrize("form", sorted(REQUESTS))
-def test_request_forms_without_tool_feedback_are_not_agents(index, tmp_path, form):
-    assert _loop_kind(index, tmp_path, form, feedback="    print(results)\n") == Kind.FRAMEWORK_USAGE
+def test_request_forms_without_tool_feedback_are_single_actions(index, tmp_path, form):
+    # The selected command still runs once: an agent by rubric A2, without the loop's evidence.
+    assert _loop_kind(index, tmp_path, form, feedback="    print(results)\n") == Kind.AGENT
+
+
+@pytest.mark.parametrize("form", sorted(REQUESTS))
+def test_request_forms_that_run_nothing_are_not_agents(index, tmp_path, form):
+    kind = _loop_kind(
+        index,
+        tmp_path,
+        form,
+        feedback="    print(results)\n",
+        **{
+            'subprocess.run(block.input["cmd"], shell=True, capture_output=True, text=True).stdout': "repr(block.input)"
+        },
+    )
+    assert kind == Kind.FRAMEWORK_USAGE
 
 
 def test_unused_stream_and_unparsed_raw_response_prove_nothing(index, tmp_path):

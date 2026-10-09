@@ -177,24 +177,8 @@ def test_disabled_provider_selection_cannot_establish_dispatch(tmp_path, run_con
             "        handler = functions[call.function.name]\n        handler = unrelated_handler\n        result = handler(**json.loads(call.function.arguments))",
         ),
         LOOP.replace('"name": "resolve_ticket"', '"name": "different_tool"'),
-        LOOP.replace('"content": json.dumps(result)', '"content": "static result"'),
-        LOOP.replace('"tool_call_id": call.id', '"tool_call_id": "unrelated"'),
-        LOOP.replace('"role": "tool"', '"role": "user"'),
-        LOOP.replace("        messages.append({", "        unrelated.append({"),
-        LOOP.replace(
-            "    message = response.choices[0].message",
-            "    messages = []\n    message = response.choices[0].message",
-        ),
-        LOOP.replace("while True:\n", "while True:\n    messages = []\n"),
-        LOOP.replace(
-            "    message = response.choices[0].message",
-            "    messages.clear()\n    message = response.choices[0].message",
-        ),
         LOOP.replace('tools=[{"type": "function", "function": {"name": "resolve_ticket"}}]', "tools=[]"),
         LOOP.replace('tools=[{"type": "function", "function": {"name": "resolve_ticket"}}]', "tools=None"),
-        LOOP.replace(
-            "        messages.append({", "        result = 'not dispatched'\n        messages.append({"
-        ),
         LOOP.replace(
             "        result = resolve_ticket(**json.loads(call.function.arguments))",
             "        result = lambda: resolve_ticket(**json.loads(call.function.arguments))",
@@ -263,12 +247,6 @@ def test_connected_anthropic_tool_loop_is_an_agent(tmp_path, run_connector, sour
     "source",
     [
         ANTHROPIC_LOOP.replace(
-            '            messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": block.id, "content": output}]})\n',
-            "            print(output)\n",
-        ),
-        ANTHROPIC_LOOP.replace('"content": output}', '"content": "done"}'),
-        ANTHROPIC_LOOP.replace('"tool_use_id": block.id', '"tool_use_id": "unrelated"'),
-        ANTHROPIC_LOOP.replace(
             'subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout',
             "log(block.input)",
         ),
@@ -285,10 +263,6 @@ def test_connected_anthropic_tool_loop_is_an_agent(tmp_path, run_connector, sour
             'subprocess.run(block.input["command"], shell=True, capture_output=True, text=True).stdout',
             "bash(**block.input)",
         ).replace("while True:\n", "tools = other_tools\nwhile True:\n"),
-        ANTHROPIC_LOOP.split("    for block in response.content:")[0]
-        + COLLECTED_RESULTS.replace("    messages.append(", "    other.append("),
-        ANTHROPIC_LOOP.split("    for block in response.content:")[0]
-        + COLLECTED_RESULTS.replace("    messages.append(", "    results = []\n    messages.append("),
         ANTHROPIC_LOOP.replace("    for block in response.content:", "    for block in saved_blocks:"),
         ANTHROPIC_LOOP.replace("while True:", "while False:"),
     ],
@@ -297,6 +271,53 @@ def test_disconnected_or_inert_anthropic_tool_code_is_not_an_agent(tmp_path, run
     findings, ctx = scan(tmp_path, run_connector, source)
     assert not ctx.stats.incomplete, ctx.stats.errors
     assert not any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        LOOP.replace('"content": json.dumps(result)', '"content": "static result"'),
+        LOOP.replace('"tool_call_id": call.id', '"tool_call_id": "unrelated"'),
+        LOOP.replace('"role": "tool"', '"role": "user"'),
+        LOOP.replace("        messages.append({", "        unrelated.append({"),
+        LOOP.replace(
+            "    message = response.choices[0].message",
+            "    messages = []\n    message = response.choices[0].message",
+        ),
+        LOOP.replace("while True:\n", "while True:\n    messages = []\n"),
+        LOOP.replace(
+            "    message = response.choices[0].message",
+            "    messages.clear()\n    message = response.choices[0].message",
+        ),
+        LOOP.replace(
+            "        messages.append({", "        result = 'not dispatched'\n        messages.append({"
+        ),
+        ANTHROPIC_LOOP.replace(
+            '            messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": block.id, "content": output}]})\n',
+            "            print(output)\n",
+        ),
+        ANTHROPIC_LOOP.replace('"content": output}', '"content": "done"}'),
+        ANTHROPIC_LOOP.replace('"tool_use_id": block.id', '"tool_use_id": "unrelated"'),
+        ANTHROPIC_LOOP.split("    for block in response.content:")[0]
+        + COLLECTED_RESULTS.replace("    messages.append(", "    other.append("),
+        ANTHROPIC_LOOP.split("    for block in response.content:")[0]
+        + COLLECTED_RESULTS.replace("    messages.append(", "    results = []\n    messages.append("),
+    ],
+)
+def test_dispatch_without_feedback_is_a_single_selected_action(tmp_path, run_connector, source):
+    # Rubric A2 needs one executed model selection, not a loop: the program
+    # still runs the tool the model chose, but nothing proves it repeats.
+    findings, ctx = scan(tmp_path, run_connector, source)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    (agent,) = [finding for finding in findings if finding.kind == Kind.AGENT]
+    assert (agent.metadata["agent_type"], agent.metadata["agentic"]) == ("tool-loop", True)
+    assert "tool-use" in agent.capabilities
+    if not any(evidence.signal == "code:heuristic.agent-loop" for evidence in agent.evidence):
+        assert "autonomous" not in agent.capabilities  # one dispatch proves no repetition
+    assert not any("conversation feedback" in evidence.description for evidence in agent.evidence)
+    assert any(
+        "import-bound model-selected tool dispatch:" in evidence.description for evidence in agent.evidence
+    )
 
 
 @pytest.mark.parametrize(

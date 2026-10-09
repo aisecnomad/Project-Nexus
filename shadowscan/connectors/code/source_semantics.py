@@ -41,7 +41,7 @@ from shadowscan.connectors.code.javascript_tool_attribution import (
     javascript_tool_regions,
 )
 from shadowscan.connectors.code.langgraph_semantics import langgraph_agent_lines
-from shadowscan.connectors.code.provider_loops import provider_tool_loop_lines
+from shadowscan.connectors.code.provider_loops import provider_tool_dispatch_lines, provider_tool_loop_lines
 from shadowscan.connectors.code.provider_tools import (
     ProviderLiteralCache,
     has_provider_tools,
@@ -178,9 +178,9 @@ _FACTORIES = {
 
 
 # A provider SDK request that offers the model tools lets the model choose
-# actions. That is tool-use capability and provider attribution; only the
-# dispatch/feedback loop recognized by ``provider_loops`` shows that the program
-# executes what the model selected.
+# actions. That is tool-use capability and provider attribution; only a
+# dispatch recognized by ``provider_loops`` (a single selected call, or the
+# dispatch/feedback loop) shows that the program executes what the model selected.
 _TOOL_REQUEST_METHODS = re.compile(
     r"(?:^|\.)(?:create|stream|parse|converse|converse_stream|generate_content|generateContent|"
     r"send_message|chat)$"
@@ -201,6 +201,8 @@ _LOOP_REQUESTS: dict[str, tuple[str, frozenset[str]]] = {
                 for api in ("", "beta.")
                 for method in ("create", "with_raw_response.create", "stream")
             }
+            # The module-level client and the pre-1.0 ``openai.ChatCompletion`` API.
+            | {"chat.completions.create", "ChatCompletion.create", "ChatCompletion.acreate"}
         ),
     ),
     "anthropic": (
@@ -1781,6 +1783,26 @@ def _protocol_evidence(
                     ),
                     "provider tool-selection/dispatch/feedback loop",
                     0.9,
+                    line=line,
+                    extra={"verified_agent": True},
+                )
+            )
+        looped = {match.line for match in found}
+        for line in provider_tool_dispatch_lines(tree, requests.provider, dispatch_calls=dispatch_calls):
+            if line in looped:
+                continue
+            found.append(
+                Match(
+                    protocol,
+                    Signal(
+                        type="code",
+                        weight=0.85,
+                        agent_indicator=True,
+                        capabilities=["tool-use"],
+                        description="import-bound model-selected tool dispatch",
+                    ),
+                    "provider selected-tool dispatch",
+                    0.85,
                     line=line,
                     extra={"verified_agent": True},
                 )

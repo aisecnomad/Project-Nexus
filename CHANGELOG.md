@@ -5,6 +5,33 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 9 post-holdout changes: one executed tool selection is an agent
+
+Also informed by the holdout's in-sample diagnosis. The benchmark rubric (A2)
+counts code that sends tool definitions to a model and runs at least one call
+the model selects. ShadowScan's Python recognizer required a loop that fed the
+result back to the conversation, so programs that run the selected tool once
+were reported as LLM usage. A new recognizer
+(`provider_tool_dispatch_lines`) accepts an import-bound OpenAI Chat
+Completions or Anthropic Messages request that offers tools, followed in the
+same block by a call to a declared tool, to the callable looked up by the
+returned tool name, or to an execution sink fed with the model's arguments.
+Such a project is an `agent` (`agent_type` `tool-loop`) with `tool-use`
+evidence `import-bound model-selected tool dispatch`; only the feedback loop
+adds `autonomous`, as for the Responses API's single selected action. The
+recognizer also reads an indexed call (`message.tool_calls[0]`) and a registry
+`.get(name)` lookup, and the request table now includes the module-level
+`openai.chat.completions.create` and the pre-1.0 `openai.ChatCompletion.create`.
+This changes an earlier contract: 13 cases in
+`test_provider_loop_semantics.py` and three in `test_field_precision.py`, where
+the tool runs but its result is not fed back, were "not an agent" and are now
+single-action agents; their tests now assert that they carry no loop evidence
+and, absent another loop idiom, no `autonomous` capability. Cases where nothing
+selected by the model runs stay non-agents, with new negative tests for
+printing, fixed handlers, rebound or foreign selections, unreachable, deferred
+and string-only code. JavaScript, TypeScript and Go dispatch through helpers or
+injected registries (two in-sample misses each) is not recognized.
+
 ### October 9 post-holdout changes: MCP servers from SDK server constructs
 
 These changes were informed by the post-change holdout

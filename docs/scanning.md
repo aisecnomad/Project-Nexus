@@ -565,6 +565,18 @@ options. Extra statements, nested scopes, mutations and dynamic options cannot
 establish this proof. Unsupported shapes, including files longer than such a
 program can be, still produce ordinary SDK evidence and leave coverage complete.
 
+Python OpenAI Chat Completions (including the module-level client and the
+pre-1.0 `openai.ChatCompletion.create`) and Anthropic Messages requests follow
+the same split. A request that offers tools, followed in the same block by a
+call to a tool the literal schema declares, to the callable looked up by the
+returned tool name (`handlers[call.function.name]`, `handlers.get(...)`), or to
+an execution sink fed with the model's arguments, is a single selected action:
+an agent with `tool-use`. `autonomous` still requires the dispatch/feedback
+loop. The recognizer follows `if`, `try` and tool-call iteration in that block;
+it does not follow helper functions, instance attributes or other modules.
+JavaScript, TypeScript and Go code that dispatches a model's selection through
+such indirection is still reported as model usage.
+
 Several rules keep weak observations from producing strong or high-risk
 findings. A credential whose value looks like a documentation placeholder
 (`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`

@@ -108,7 +108,7 @@ kind is unchanged; these fields summarise it:
 | `agent_type` | Kind | Agentic | Meaning |
 |---|---|---|---|
 | `framework-agent` | `agent` | yes | a project whose agent framework constructs an agent |
-| `tool-loop` | `agent` | yes | an agent without an agent framework: the program's own loop dispatches the tools a model selects |
+| `tool-loop` | `agent` | yes | an agent without an agent framework: the program's own code runs a tool a model selected, once or in a feedback loop |
 | `agent-definition` | `agent` | yes | an agent manifest or card (A2A, M365, CrewAI, LangGraph) |
 | `mcp-server` | `mcp-server` | yes | source that registers MCP tools for whichever agent connects |
 | `mcp-server` | `mcp-server` | yes | an MCP registry manifest (`server.json`) for the repository's own server |

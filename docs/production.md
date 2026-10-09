@@ -805,6 +805,13 @@ changes below are not measured on fresh data.
   change, the kind weighs more in the risk score, CycloneDX lists it under
   `services[]`, and `shadowscan diff` shows the finding as changed, not new.
   Finding identity is unchanged.
+- **More tool-calling agents.** A Python OpenAI Chat Completions or Anthropic
+  Messages request that offers tools and is followed by running the tool the
+  model selected is now an `agent` finding (`agent_type` `tool-loop`,
+  `agentic`) with `tool-use`, even when the result is not fed back to the
+  model. Such projects were `framework-usage` findings. Only a feedback loop
+  adds the `autonomous` capability. Review policies that gate on `agent`
+  findings or on `agentic`.
 
 ### October 8 benchmark remediation
 

@@ -129,8 +129,24 @@ def _value(node: ast.AST, values: dict[str, str]) -> str | None:
             return "function-name"
         if node.attr == "id" and parent == "tool":
             return "tool-id"
-    if isinstance(node, ast.Subscript) and _value(node.slice, values) == "function-name":
-        return "dispatcher"
+    if isinstance(node, ast.Subscript):
+        if _value(node.slice, values) == "function-name":
+            return "dispatcher"
+        if (
+            isinstance(node.slice, ast.Constant)
+            and type(node.slice.value) is int
+            and _value(node.value, values) == "calls"
+        ):
+            return "tool"  # message.tool_calls[0] is one selected call
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and len(node.args) == 1
+        and not node.keywords
+        and _value(node.args[0], values) == "function-name"
+    ):
+        return "dispatcher"  # registry.get(call.function.name)
     return None
 
 
@@ -254,6 +270,18 @@ def _invalidate(statement: ast.AST, values: dict[str, str], budget: _Budget) -> 
             values.pop(item.name, None)
 
 
+def _selected_tool(
+    call: ast.Call, values: dict[str, str], declared_tools: set[str], imports: dict[str, str]
+) -> bool:
+    """The call runs a declared tool, the callable the model named, or an execution sink."""
+    return (
+        isinstance(call.func, ast.Name)
+        and call.func.id in declared_tools
+        or _value(call.func, values) == "dispatcher"
+        or _execution_sink(call.func, imports)
+    )
+
+
 def _assign(
     statement: ast.stmt,
     values: dict[str, str],
@@ -279,13 +307,7 @@ def _assign(
         )
         arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
         if any(_depends(argument, values, "arguments", budget) for argument in arguments):
-            target_is_tool = (
-                isinstance(call.func, ast.Name)
-                and call.func.id in declared_tools
-                or _value(call.func, values) == "dispatcher"
-                or _execution_sink(call.func, imports)
-            )
-            if dispatch and target_is_tool:
+            if dispatch and _selected_tool(call, values, declared_tools, imports):
                 kind = "result"
                 if dispatch_calls is not None:
                     dispatch_calls.add(id(call))
@@ -724,4 +746,155 @@ def provider_tool_loop_lines(
                 lines.add(call.lineno)
                 if dispatch_calls is not None:
                     dispatch_calls.update(selected_calls)
+    return sorted(lines)
+
+
+def _dispatches(
+    statements: list[ast.stmt],
+    values: dict[str, str],
+    budget: _Budget,
+    declared_tools: set[str],
+    imports: dict[str, str],
+    dispatch_calls: set[int],
+) -> bool:
+    """Some reachable path through ``statements`` runs a tool the model selected."""
+    for number, statement in enumerate(statements):
+        budget.tick()
+        if isinstance(statement, (ast.Expr, ast.Return)) and statement.value is not None:
+            call = _unwrap(statement.value)
+            if (
+                isinstance(call, ast.Call)
+                and any(
+                    _depends(argument, values, "arguments", budget)
+                    for argument in [*call.args, *(keyword.value for keyword in call.keywords)]
+                )
+                and _selected_tool(call, values, declared_tools, imports)
+            ):
+                dispatch_calls.add(id(call))
+                return True  # a bare or returned dispatch runs the tool all the same
+        if isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
+            return False
+        if isinstance(statement, ast.If) and isinstance(statement.test, ast.Constant):
+            selected = statement.body if bool(statement.test.value) else statement.orelse
+            following = [*selected, *statements[number + 1 :]]
+            return _dispatches(following, values, budget, declared_tools, imports, dispatch_calls)
+        branches: list[tuple[list[ast.stmt], dict[str, str]]] = []
+        if isinstance(statement, ast.If):
+            branches = [(statement.body, values.copy()), (statement.orelse, values.copy())]
+        elif isinstance(statement, ast.Try):
+            branches = [(statement.body, values.copy())]
+        elif (
+            isinstance(statement, (ast.For, ast.AsyncFor))
+            and isinstance(statement.target, ast.Name)
+            and _value(statement.iter, values) == "calls"
+        ):
+            local = values.copy()
+            local[statement.target.id] = "tool"
+            branches = [(statement.body, local)]
+        if branches:
+            for branch, local in branches:
+                found: set[int] = set()
+                if _dispatches(branch, local, budget, declared_tools, imports, found):
+                    dispatch_calls.update(found)
+                    return True
+            _invalidate(statement, values, budget)  # nothing bound inside a branch is trusted after it
+            continue
+        found = set()
+        _assign(
+            statement,
+            values,
+            budget,
+            dispatch=True,
+            declared_tools=declared_tools,
+            imports=imports,
+            dispatch_calls=found,
+        )
+        if found:
+            dispatch_calls.update(found)
+            return True
+    return False
+
+
+def _reachable_blocks(tree: ast.AST, budget: _Budget) -> Iterator[list[ast.stmt]]:
+    """Statement lists that can run: literal-false guards and empty literal loops are skipped."""
+    pending: list[list[ast.stmt]] = [tree.body] if isinstance(tree, ast.Module) else []
+    while pending:
+        block = pending.pop()
+        yield block
+        for statement in block:
+            budget.tick()
+            if isinstance(statement, (ast.If, ast.While)) and isinstance(statement.test, ast.Constant):
+                pending.append(statement.body if bool(statement.test.value) else statement.orelse)
+            elif isinstance(statement, (ast.For, ast.AsyncFor)) and (
+                isinstance(statement.iter, (ast.List, ast.Tuple)) and not statement.iter.elts
+            ):
+                pending.append(statement.orelse)
+            else:
+                for field in ("body", "orelse", "finalbody"):
+                    inner = getattr(statement, field, None)
+                    if isinstance(inner, list) and inner and isinstance(inner[0], ast.stmt):
+                        pending.append(inner)
+                for part in getattr(statement, "handlers", None) or getattr(statement, "cases", None) or []:
+                    pending.append(part.body)
+            if isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
+                break  # what follows in this block never runs
+
+
+def provider_tool_dispatch_lines(
+    tree: ast.AST, request_calls: set[int], *, dispatch_calls: set[int] | None = None
+) -> list[int]:
+    """Return request lines whose selected tool call is executed, with or without feedback.
+
+    This is rubric A2's minimum: the program sends tool definitions to an
+    import-bound OpenAI chat-completion or Anthropic messages request and runs
+    a call the model selected from its response, in the statements that follow
+    the request in the same block. The target must be a tool the literal schema
+    declares, the callable looked up by the returned tool name, or an execution
+    sink fed with the model's arguments. Unlike ``provider_tool_loop_lines`` it
+    proves neither repetition nor feedback, so it does not imply autonomy.
+    """
+    if not request_calls:
+        return []
+    budget = _Budget()
+    if not any(
+        isinstance(node, ast.Call)
+        and id(node) in request_calls
+        and any(keyword.arg == "tools" for keyword in node.keywords)
+        for node in budget.walk(tree, nested_scopes=True)
+    ):
+        return []  # nothing offers tools: skip the whole-module analyses below
+    imports = _imports(tree, budget)
+    schemas = _schema_variables(tree, budget)
+    helpers = _request_helpers(tree, request_calls, budget)
+    lines: set[int] = set()
+    for block in _reachable_blocks(tree, budget):
+        for number, statement in enumerate(block):
+            budget.tick()
+            if isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)):
+                break
+            request = _loop_request(statement, request_calls, helpers)
+            if request is None:
+                continue
+            call, response, kind, _, tools, inner = request
+            if tools is None:
+                continue
+            if isinstance(tools, ast.Name):
+                tools = schemas.get(tools.id, tools)
+            if isinstance(tools, ast.Constant) or (
+                isinstance(tools, (ast.List, ast.Tuple, ast.Dict))
+                and not (tools.keys if isinstance(tools, ast.Dict) else tools.elts)
+            ):
+                continue
+            selected: set[int] = set()
+            if _dispatches(
+                [*inner, *block[number + 1 :]],
+                {response: kind},
+                budget,
+                _declared_tools(tools, budget),
+                imports,
+                selected,
+            ):
+                lines.add(call.lineno)
+                if dispatch_calls is not None:
+                    dispatch_calls.update(selected)
     return sorted(lines)

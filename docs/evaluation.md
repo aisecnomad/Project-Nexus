@@ -483,7 +483,9 @@ One provider-loop recognizer covers linked Python OpenAI
 Chat Completions calls, model-returned tool-call arguments, dispatch and tool
 results appended to the same request history. Dispatch must target an explicitly
 declared inline tool name or a callable selected by the model-returned function
-name; parsing or converting arguments is insufficient. Another recognizer covers
+name; parsing or converting arguments is insufficient. A weaker variant accepts
+one such dispatch after the request without the feedback (rubric A2's minimum);
+it establishes `tool-use` but not `autonomous`. Another recognizer covers
 Python OpenAI Responses tool loops when the returned
 function name and arguments reach a dispatched handler, its result is fed back
 with the matching call ID, the originating call is forwarded into the request
