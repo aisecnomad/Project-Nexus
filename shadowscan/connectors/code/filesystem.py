@@ -165,9 +165,12 @@ from shadowscan.utils.safe_yaml import (
     strict_bounded_safe_load,
 )
 from shadowscan.utils.text import (
+    BINARY_CONTENT_ERROR,
+    is_binary_artifact,
     line_counter,
     notebook_to_source,
     parse_timestamp,
+    read_head,
     read_text,
     redact,
     truncate,
@@ -196,6 +199,29 @@ _MENTION_SIGNALS = frozenset({"env", "name"})
 # Saved outputs (plots, tables, logs) routinely push small notebooks past
 # max_file_size. Their code cells are still analyzed up to this size.
 DEFAULT_MAX_NOTEBOOK_SIZE = 20 * 1024 * 1024
+# Documentation and data files are read in full up to this size: an API
+# specification, a dataset or a changelog routinely passes max_file_size, and
+# their analysis (structure, names, hosts, credentials) stays linear in size.
+# Source code keeps max_file_size, whose lexing and import binding cost more.
+DEFAULT_MAX_DATA_FILE_SIZE = 32 * 1024 * 1024
+_DATA_DOCUMENT_EXTENSIONS = frozenset(
+    {
+        ".json",
+        ".jsonc",
+        ".json5",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".xml",
+        ".md",
+        ".mdc",
+        ".mdx",
+        ".txt",
+        ".rst",
+        ".html",
+        ".htm",
+    }
+)
 
 DEFAULT_EXCLUDES = {
     ".git",
@@ -442,6 +468,32 @@ MCP_CONFIG_NAMES = {
     "server.json",  # MCP registry manifest
     "smithery.yaml",
 }
+
+
+def _is_git_store(dirpath: str, dirnames: list[str], filenames: list[str]) -> bool:
+    """Whether a walked directory is a Git repository store: Git's entries only and a valid HEAD."""
+    if "HEAD" not in filenames or "objects" not in dirnames or "refs" not in dirnames:
+        return False
+    if not {*dirnames, *filenames} <= _GIT_STORE_ENTRIES:
+        return False
+    objects = os.path.join(dirpath, "objects")
+    try:
+        if os.path.islink(objects) or not all(
+            _GIT_OBJECT_DIRS.fullmatch(name) for name in os.listdir(objects)
+        ):
+            return False
+    except OSError:
+        return False
+    # HEAD's first bytes are only compared with Git's format, never reported.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        with os.fdopen(os.open(os.path.join(dirpath, "HEAD"), flags), "rb") as head_file:
+            if not stat.S_ISREG(os.fstat(head_file.fileno()).st_mode):
+                return False
+            head = head_file.read(256)
+    except OSError:
+        return False
+    return _GIT_HEAD.fullmatch(head) is not None
 
 
 def _analyzed_by_name(name: str) -> bool:
@@ -715,6 +767,22 @@ class _ProjectEvidence:
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 
+# A Git repository kept in the tree under another name (a bare `name.git`
+# fixture, a test's `dotGit`): compressed objects and binary indexes, never
+# analyzed, like the `.git` directory itself. Only Git's own entries may sit
+# beside HEAD, objects/ and refs/, and objects/ holds only Git's directories.
+_GIT_STORE_ENTRIES = frozenset(
+    {
+        "HEAD", "config", "description", "index", "packed-refs", "shallow", "info", "hooks", "logs",
+        "objects", "refs", "modules", "worktrees", "lfs", "branches", "rr-cache", "FETCH_HEAD",
+        "ORIG_HEAD", "MERGE_HEAD", "MERGE_MSG", "MERGE_MODE", "CHERRY_PICK_HEAD", "REVERT_HEAD",
+        "AUTO_MERGE", "BISECT_LOG", "COMMIT_EDITMSG", "gitk.cache", "sequencer", "rebase-merge",
+        "rebase-apply",
+    }
+)  # fmt: skip
+_GIT_OBJECT_DIRS = re.compile(r"[0-9a-f]{2}|pack|info")
+_GIT_HEAD = re.compile(rb"(?:ref: refs/\S+|[0-9a-f]{40}|[0-9a-f]{64})\s*")
+
 # Test suites routinely construct agents to exercise a library. Evidence found
 # only there describes the library's tests, not a deployed agent, so it cannot
 # establish an agent on its own unless ``include_tests`` is set.
@@ -733,6 +801,8 @@ _TEST_DIR_NAMES = frozenset(
         "testdata",
         "test_data",
         "test-data",
+        "test_resources",
+        "test-resources",
         "e2e",
     }
 )
@@ -1175,6 +1245,10 @@ class FilesystemConnector(BaseConnector):
             "stop after this many filesystem entries inspected during directory enumeration, including "
             "directories, skipped entries and coverage probes (default 1000000); exhaustion is incomplete"
         ),
+        "max_data_file_size": (
+            "bytes; a documentation or data file (JSON, YAML, TOML, XML, Markdown, text, HTML) up to this "
+            "size is read and analyzed in full even when larger than max_file_size (default 32 MiB)"
+        ),
         "max_notebook_size": (
             "bytes; a Jupyter notebook up to this size is read with its code cells analyzed as source even "
             "when saved outputs make the file larger than max_file_size (default 20 MiB); outputs of such a "
@@ -1238,6 +1312,9 @@ class FilesystemConnector(BaseConnector):
         self.max_notebook_size: int = ctx.get("max_notebook_size", DEFAULT_MAX_NOTEBOOK_SIZE)
         if type(self.max_notebook_size) is not int or self.max_notebook_size < 1:
             raise ConnectorError("code.filesystem: max_notebook_size must be a positive integer")
+        self.max_data_file_size = _positive_limit(
+            ctx.get("max_data_file_size", DEFAULT_MAX_DATA_FILE_SIZE), "code.filesystem: max_data_file_size"
+        )
         if self.max_ast_nodes is not None and (
             type(self.max_ast_nodes) is not int or not 1_000 <= self.max_ast_nodes <= 2_000_000
         ):
@@ -1246,6 +1323,16 @@ class FilesystemConnector(BaseConnector):
             ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS))
         )
         self.scan_secrets = config_boolean(ctx.get("scan_secrets", True), "scan_secrets")
+        # Text that is not valid UTF-8 is read with replacement characters only
+        # while every signature matches ASCII text (see read_text's notes).
+        self._ascii_signatures = all(
+            all(
+                text.isascii()
+                for text in (*signal.patterns, *signal.values, *signal.names, *signal.globs, *signal.prefixes)
+            )
+            for signature in ctx.index.signatures.values()
+            for signal in signature.signals
+        )
         self.report_generic_credentials = config_boolean(
             ctx.get("report_generic_credentials", False), "report_generic_credentials"
         )
@@ -1395,6 +1482,8 @@ class FilesystemConnector(BaseConnector):
         """Bytes the reader accepts for ``name``: notebooks may carry large saved outputs."""
         if name.lower().endswith(".ipynb"):
             return max(self.max_file_size, self.max_notebook_size)
+        if Path(name).suffix.lower() in _DATA_DOCUMENT_EXTENSIONS:
+            return max(self.max_file_size, self.max_data_file_size)
         return self.max_file_size
 
     def _oversize_skippable(self, rel: str, name: str) -> bool:
@@ -1602,6 +1691,14 @@ class FilesystemConnector(BaseConnector):
             walk.budget.check()
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
+            if rel_dir != "." and _is_git_store(dirpath, dirnames, filenames):
+                self.ctx.warn(
+                    f"code.filesystem: {rel_dir}: skipped Git repository store (HEAD, objects, refs); "
+                    "repository metadata is never analyzed",
+                    incomplete=False,
+                )
+                dirnames[:] = []
+                continue
             if ".gitmodules" in filenames:
                 self._check_submodule_declarations(root, rel_dir)
             kept = self._walked_directories(root, resolved_root, dirpath, rel_dir, dirnames, walk)
@@ -1904,8 +2001,16 @@ class FilesystemConnector(BaseConnector):
         if not (by_name or file_matches):
             return
         named = by_name or self._named_by_signature(rel, file_matches)
-        loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
+        credential_text: list[str] = []
+        loaded = self._read_source(
+            rel, path, scan.root_fd, scan.base, named=named, credentials_only=credential_text
+        )
         if loaded is None:
+            for text in credential_text:
+                # An oversize test file: its credentials are scanned, nothing else.
+                file = _SourceFile(rel=rel, path=path, proj_root=proj_root, proj=proj, text=text, lang=lang,
+                                   file_matches=[], structure=None)  # fmt: skip
+                self._detect_secrets(scan, file)
             return
         text, raw_notebook, cells = loaded
         file = _SourceFile(
@@ -1941,7 +2046,14 @@ class FilesystemConnector(BaseConnector):
         self._record_special_files(scan, file)
 
     def _read_source(
-        self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
+        self,
+        rel: str,
+        path: Path,
+        root_fd: int,
+        base: Path | None = None,
+        *,
+        named: bool = True,
+        credentials_only: list[str] | None = None,
     ) -> tuple[str, str | None, _CellSpans] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
@@ -1951,19 +2063,31 @@ class FilesystemConnector(BaseConnector):
         in it. None means nothing is analyzed; the recorded diagnostics say why.
         ``named`` is False when only a directory-wide signature glob selects the
         file, so a recognised binary artifact there (an image beside coding-agent
-        rules) is skipped without a coverage gap.
+        rules) is skipped without a coverage gap. An oversize test file that is
+        to be scanned for credentials only is appended to ``credentials_only``
+        (see ``_oversize_gap``).
         """
         read_errors: list[str] = []
+        notes: list[str] | None = [] if self._ascii_signatures else None
         on_disk = PurePosixPath(path.relative_to(base).as_posix()) if base is not None else PurePosixPath(rel)
         text = read_text(
-            on_disk, self._size_limit(path.name), read_errors, dir_fd=root_fd, analyzable_name=named
+            on_disk,
+            self._size_limit(path.name),
+            read_errors,
+            dir_fd=root_fd,
+            analyzable_name=named,
+            notes=notes,
         )
+        for note in notes or ():
+            self.ctx.warn(f"code.filesystem: {rel}: {note}", incomplete=False)
         for issue in read_errors:
-            if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
-                    incomplete=True,
-                )
+            if issue == "file exceeds max_file_size":
+                credential_text = self._oversize_gap(rel, on_disk, root_fd, named)
+                if credential_text is not None and credentials_only is not None:
+                    credentials_only.append(credential_text)
+            elif issue == BINARY_CONTENT_ERROR:
+                # Test suites keep binary fixtures on purpose (see _file_errors).
+                self._file_errors(rel, [issue])
             else:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
         if text is None:
@@ -1980,6 +2104,56 @@ class FilesystemConnector(BaseConnector):
         if path.suffix.lower() != ".ipynb":
             return text, None, ()
         return self._notebook_source(rel, text)
+
+    def _oversize_gap(self, rel: str, on_disk: PurePosixPath, root_fd: int, named: bool) -> str | None:
+        """Record a file the reader refused for its size, which no ``oversize_skip_globs`` entry declared.
+
+        A compiled or packed binary without an extension (``_skips_binary``) is
+        skipped as a smaller one is. Test code follows the test-code policy for
+        analysis limits, but a recorded fixture can hold a real credential, so
+        its text, read up to the larger of max_file_size and max_data_file_size,
+        is returned to be scanned for credentials. Any other file, and a test
+        file too large for that, is a coverage gap.
+        """
+        limit = (
+            "max_data_file_size" if on_disk.suffix.lower() in _DATA_DOCUMENT_EXTENSIONS else "max_file_size"
+        )
+        head = read_head(on_disk, dir_fd=root_fd)
+        if head is not None and is_binary_artifact(on_disk.name, head, named):
+            self.ctx.warn(
+                f"code.filesystem: {rel}: skipped binary file over {limit}; binary content is never analyzed",
+                incomplete=False,
+            )
+            return None
+        if not self.include_tests and _is_test_path(rel):
+            if not self.scan_secrets:
+                self.ctx.warn(
+                    f"code.filesystem: {rel}: skipped, test file exceeds {limit}; not analyzed",
+                    incomplete=self.strict_coverage,
+                )
+                return None
+            errors: list[str] = []
+            notes: list[str] | None = [] if self._ascii_signatures else None
+            cap = max(self.max_file_size, self.max_data_file_size)
+            text = read_text(on_disk, cap, errors, dir_fd=root_fd, analyzable_name=named, notes=notes)
+            for note in notes or ():
+                self.ctx.warn(f"code.filesystem: {rel}: {note}", incomplete=False)
+            if text is not None:
+                self.ctx.warn(
+                    f"code.filesystem: {rel}: test file exceeds {limit}; scanned for credentials only",
+                    incomplete=self.strict_coverage,
+                )
+                return text
+            if errors and errors != ["file exceeds max_file_size"]:
+                self._file_errors(rel, errors)
+                return None
+        if self.strict_coverage:
+            self.ctx.error(f"code.filesystem: {rel}: file exceeds {limit}")
+        else:
+            self.ctx.warn(
+                f"code.filesystem: {rel}: skipped, file exceeds {limit}; coverage incomplete", incomplete=True
+            )
+        return None
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
         """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
@@ -2053,9 +2227,8 @@ class FilesystemConnector(BaseConnector):
             return None
 
     def _withhold_excerpts(self, rel: str, exc: Exception, stage: str = "sanitization") -> None:
-        self.ctx.error(
-            f"code.filesystem: {rel}: structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"
-        )
+        # A resource limit is an analysis limit: test code follows the test-code policy.
+        self._file_errors(rel, [f"structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"])
 
     def _file_errors(self, rel: str, issues: Iterable[str]) -> None:
         """Record each issue a parser or validator reported for ``rel``.

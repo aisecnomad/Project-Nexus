@@ -26,9 +26,17 @@ that are never silent:
   root. Like a read by path, this needs only search permission on the
   directories above each file.
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
-  inspect make the scan incomplete when skipped. Known generated, binary and
-  lockfile names in `oversize_skip_globs` are declared omissions and remain
-  warnings, including when `strict_coverage` is enabled.
+  inspect make the scan incomplete when skipped. Documentation and data files
+  (JSON, YAML, TOML, XML, Markdown, text, reStructuredText, HTML) are read and
+  analyzed in full up to `max_data_file_size` (default 32 MiB) instead; a limit
+  their analysis reaches, such as the YAML parser's, still makes the scan
+  incomplete. Known generated, binary and lockfile names in
+  `oversize_skip_globs` are declared omissions and remain warnings, including
+  when `strict_coverage` is enabled. An oversize compiled or packed binary with
+  no file extension is skipped as a smaller one is (below). An oversize file
+  under a test path is scanned for credentials only, since a recorded fixture
+  can hold a real key, and its other analysis is skipped with a warning (see
+  test code below); one too large even for that stays a gap.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
   byte-order mark is decoded and the mark removed. A Python source is decoded
   with the codec its `# coding:` cookie declares. Any other file the scanner
@@ -38,7 +46,18 @@ that are never silent:
   UTF-32 without a byte-order mark, UTF-7, HZ, EBCDIC code pages), makes the
   scan incomplete (exit code 3) with `binary or
   undecodable content in analyzable file`; it is never silently treated as
-  empty. A compiled or packed artifact with no file extension and a known
+  empty. Two kinds of text are read despite that: valid UTF-8 in which NUL
+  bytes are at most 1% of the bytes (or at most four), such as a source with a
+  NUL character in a string literal; and text in a legacy code page
+  (Windows-1252, Shift-JIS) without such NULs, decoded with replacement
+  characters and noted with the warning `not valid UTF-8; undecodable bytes
+  replaced and the text analyzed`. The decoder never consumes an ASCII byte,
+  so every ASCII token is read as written; while a loaded signature pattern
+  contains a non-ASCII character, such text stays a gap. A Git repository kept
+  in the tree under another name (a bare `name.git` fixture, a test's
+  `dotGit`), recognised by a valid `HEAD`, `objects/` and `refs/` and nothing
+  but Git's own entries, is skipped with a warning like the `.git` directory.
+  Binary content under a test path follows the test-code policy. A compiled or packed artifact with no file extension and a known
   header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
   GIF, PDF) is skipped quietly, as are names the scanner never analyzes
   (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
@@ -156,7 +175,10 @@ files still do. Test suites keep malformed files on purpose, so a parse or
 validation issue in a file under a test path (an invalid `package.json` or
 agent manifest fixture) is a warning rather than a coverage gap, as the
 import-bound analysis limits in test code already are; `include_tests` or
-`strict_coverage` keeps it incomplete.
+`strict_coverage` keeps it incomplete. The same holds for binary content, a
+parser or sanitization resource limit, and the analysis an oversize test file
+skips; its credentials are still scanned. The test directory names include
+`test_resources` and `test-resources`.
 
 ## Incremental scans
 
@@ -165,8 +187,10 @@ inputs, connector options, signature definitions and scanner implementation is
 unchanged. The fingerprint is a SHA-256 digest over the content of every file the
 scanner can read plus the size, modification and change times, mode, device and
 inode of every file and directory, so a fresh checkout at a new inode does not hit
-the cache. Files over `max_file_size` contribute only that metadata: the scanner
-never opens them, so their bytes cannot change the result. Inventory approval,
+the cache. Files over `max_file_size` contribute only that metadata. The scanner
+never opens most of them; notebooks and documentation or data files that it
+reads beyond that limit are tracked the same way, and an edit changes their
+change time, which the metadata includes. Inventory approval,
 risk scoring and runtime correlation always run again. New, edited and deleted
 files invalidate the affected repository.
 

@@ -847,6 +847,23 @@ and title out), but kinds, titles, scores and counts do:
   from reports. The scan names the files in a note (a warning; the scan
   stays complete).
 
+The third batch reads more of each repository and changes how some gaps are
+reported. Re-scan before comparing completeness or memory use:
+
+- **Larger reads.** Documentation and data files up to `max_data_file_size`
+  (default 32 MiB) are now read and analyzed, so a scan can use more memory and
+  time, and can gain findings from files it used to skip. Set
+  `max_data_file_size` to `max_file_size` to keep the previous reads; files
+  between the two limits then become coverage gaps again.
+- **Test code.** An oversize test file, binary content and parser resource
+  limits in test code are warnings unless `include_tests` or
+  `strict_coverage` is set; an oversize test file's credentials are still
+  scanned. Set one of the options if your policy treats them as gaps.
+- **Text and Git stores.** Sources with a NUL in a string literal and text in a
+  legacy code page are analyzed (the latter with a warning), and Git
+  repositories kept under another name are skipped with a warning, instead of
+  ending the scan with `binary or undecodable content`.
+
 ### October 7 distribution rename and PyPI publication
 
 The distribution is renamed from `project-nexus-shadowscan` to

@@ -192,7 +192,7 @@ and local `use_git: true` also inventory committed gitlinks using the hardened
 metadata path. No submodule is initialized or fetched; see the detailed
 [coverage policy](../scanning.md#coverage-policy) for scope and limitations.
 
-Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
+Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_data_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_secrets`, `report_generic_credentials`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
@@ -237,7 +237,15 @@ scan of each checkout.
 Unread oversized source files and symlinks leaving the root make a scan incomplete
 by default, as do binary content (a NUL byte) in an analyzable file, non-regular
 entries named like configuration files, and directory nesting deeper than the
-walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
+walker supports; `strict_coverage` promotes their diagnostics to errors.
+Documentation and data files (JSON, YAML, TOML, XML, Markdown, text,
+reStructuredText, HTML) are read in full up to `max_data_file_size` (default
+32 MiB, at least `max_file_size`), and credentials in a large text are matched
+in 64 KiB windows that overlap by 4 KiB, so a long file does not exhaust a
+single pattern's time allowance. An oversize test file is scanned for
+credentials only. Source with a NUL character in a string literal, text in a
+legacy code page and Git repositories kept under another name follow the
+rules in the [coverage policy](../scanning.md#coverage-policy). Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
 root that does not affect completeness. See the coverage policy in

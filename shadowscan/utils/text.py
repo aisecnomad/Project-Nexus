@@ -17,6 +17,12 @@ from shadowscan.utils.redaction import credential_id
 from shadowscan.utils.safe_json import strict_json_loads
 
 _BINARY_SNIFF = 8192
+# A NUL in a string literal (``join("\x00")``) leaves source text valid UTF-8 with
+# a few NUL bytes; UTF-16 text without a byte-order mark is about half NULs.
+_MAX_TEXT_NUL_SHARE = 0.01
+_MIN_TEXT_NULS = 4  # allowed in any text, however short
+# Reported through ``read_text``'s ``notes`` for text that is not valid UTF-8.
+UNDECODABLE_TEXT_NOTE = "not valid UTF-8; undecodable bytes replaced and the text analyzed"
 # Reported by ``read_text`` for a NUL-bearing file that is not text in any
 # encoding it decodes and not a binary artifact it may skip (``_skips_binary``).
 # Callers pass only files they would analyze, so this is a coverage gap, never
@@ -130,8 +136,30 @@ def _python_source_text(raw: bytes) -> str | None:
         raise ValueError(BINARY_CONTENT_ERROR) from None
 
 
-def _decode_text(raw: bytes, name: str, analyzable_name: bool) -> str | None:
-    """Decode file content for analysis; None for a recognised binary artifact (``_skips_binary``)."""
+def _dense_nuls(raw: bytes) -> bool:
+    """Whether NUL bytes are too frequent for ``raw`` to be text (see ``_MAX_TEXT_NUL_SHARE``)."""
+    return raw.count(b"\x00") > max(_MIN_TEXT_NULS, len(raw) * _MAX_TEXT_NUL_SHARE)
+
+
+def _sparse_nul_text(raw: bytes) -> str | None:
+    """Valid UTF-8 whose few NUL bytes are characters of the text, such as a NUL in a string literal."""
+    if _dense_nuls(raw):
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _decode_text(raw: bytes, name: str, analyzable_name: bool, notes: list[str] | None = None) -> str | None:
+    """Decode file content for analysis; None for a recognised binary artifact (``_skips_binary``).
+
+    With ``notes``, text that is not valid UTF-8 (a legacy code page such as
+    Windows-1252 or Shift-JIS) is decoded with replacement characters and
+    ``UNDECODABLE_TEXT_NOTE`` is appended: the decoder never consumes an ASCII
+    byte, so every ASCII token stays as it was. Without ``notes`` it is
+    ``BINARY_CONTENT_ERROR``.
+    """
     for bom, codec in _BOM_CODECS:
         if raw.startswith(bom):
             decoded = raw.decode(codec)
@@ -143,12 +171,41 @@ def _decode_text(raw: bytes, name: str, analyzable_name: bool) -> str | None:
     if b"\x00" in raw[:_BINARY_SNIFF]:
         if _skips_binary(name, raw, analyzable_name):
             return None
-        raise ValueError(BINARY_CONTENT_ERROR)
+        text = _sparse_nul_text(raw)
+        if text is None:
+            raise ValueError(BINARY_CONTENT_ERROR)
+        return text
     if name.lower().endswith(".py"):
         declared = _python_source_text(raw)
         if declared is not None:
             return declared
-    return raw.decode("utf-8")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # Binary content whose first NUL comes after the sniffed prefix is not text either.
+        if notes is None or _dense_nuls(raw):
+            raise
+    notes.append(UNDECODABLE_TEXT_NOTE)
+    return raw.decode("utf-8", errors="replace")
+
+
+def read_head(path: PurePath, size: int = _BINARY_SNIFF, *, dir_fd: int | None = None) -> bytes | None:
+    """Return up to ``size`` leading bytes of a regular file, or None when it cannot be read.
+
+    The file is opened as ``read_text`` opens it, without following a link in
+    any path component.
+    """
+    try:
+        with open_confined_file(path, label="file", dir_fd=dir_fd) as (fh, _):
+            head: bytes = fh.read(size)
+            return head
+    except (OSError, ValueError):
+        return None
+
+
+def is_binary_artifact(name: str, head: bytes, analyzable_name: bool) -> bool:
+    """Whether a file starting with ``head`` is a binary artifact ``read_text`` skips (``_skips_binary``)."""
+    return b"\x00" in head[:_BINARY_SNIFF] and _skips_binary(name, head, analyzable_name)
 
 
 def read_text(
@@ -158,6 +215,7 @@ def read_text(
     *,
     dir_fd: int | None = None,
     analyzable_name: bool = True,
+    notes: list[str] | None = None,
 ) -> str | None:
     """Read a bounded regular file without following a symlink in any path component.
 
@@ -172,7 +230,10 @@ def read_text(
     the mark removed, and a Python source is decoded with the codec its PEP 263
     cookie declares. Callers pass only files they would analyze, so any other
     content with a NUL byte in its first 8 KiB is reported as
-    ``BINARY_CONTENT_ERROR`` rather than ignored. The exception is a recognised
+    ``BINARY_CONTENT_ERROR`` rather than ignored, unless it is valid UTF-8 in
+    which NUL bytes are at most 1% of the bytes (a NUL in a string literal).
+    Text that is not valid UTF-8 is an error too, unless the caller passes
+    ``notes`` (see ``_decode_text``). The exception is a recognised
     binary artifact (``_skips_binary``) without any file extension or, with
     ``analyzable_name`` False, any recognised artifact: the caller then reads
     the file only because of the directory it is in, such as an image kept
@@ -188,7 +249,7 @@ def read_text(
             raw = fh.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise ValueError("file exceeds max_file_size")
-        return _decode_text(raw, path.name, analyzable_name)
+        return _decode_text(raw, path.name, analyzable_name, notes)
     except (OSError, ValueError) as exc:
         if errors is not None:
             # Do not embed raw file contents or exception messages in reports.

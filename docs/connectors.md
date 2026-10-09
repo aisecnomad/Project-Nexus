@@ -299,7 +299,7 @@ reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
-`max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
+`max_data_file_size`, `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
 `report_generic_credentials`, `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
 checkouts. `account`, `owner` and `provider` set the corresponding finding

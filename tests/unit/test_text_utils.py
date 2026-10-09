@@ -145,14 +145,24 @@ def test_read_text_utf32le_bom_is_not_mistaken_for_utf16le(tmp_path):
 
 @pytest.mark.parametrize("name", ["app.js", "CLAUDE.md", "settings.json", "Dockerfile", "run"])
 def test_read_text_reports_nul_content_of_an_analyzable_file(tmp_path, name):
-    (tmp_path / name).write_bytes(b"// note \x00 hidden\nconst OpenAI = require('openai');\n")
+    (tmp_path / name).write_bytes(b"// note \x00\x00\x00\x00\x00 hidden\nconst OpenAI = require('openai');\n")
     errors: list[str] = []
     assert read_text(tmp_path / name, 1000, errors) is None
     assert errors == [BINARY_CONTENT_ERROR]
 
 
+@pytest.mark.parametrize("name", ["app.js", "CLAUDE.md", "settings.json", "Dockerfile", "run"])
+def test_read_text_reads_utf8_with_a_few_nul_characters(tmp_path, name):
+    # A NUL character in a string literal (`join('\x00')`) keeps source text valid UTF-8.
+    content = b"// note \x00 kept\nconst OpenAI = require('openai');\n"
+    (tmp_path / name).write_bytes(content)
+    errors: list[str] = []
+    assert read_text(tmp_path / name, 1000, errors) == content.decode()
+    assert errors == []
+
+
 def test_read_text_binary_error_names_neither_file_nor_content(tmp_path):
-    (tmp_path / "secret-name.js").write_bytes(b"token-in-content\x00")
+    (tmp_path / "secret-name.js").write_bytes(b"token-in-content" + b"\x00" * 8)
     errors: list[str] = []
     read_text(tmp_path / "secret-name.js", 1000, errors)
     assert errors == ["binary or undecodable content in analyzable file"]

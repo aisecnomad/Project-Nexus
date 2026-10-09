@@ -194,30 +194,40 @@ OVERSIZE = "x: " + "y" * 400 + "\n"
 )
 def test_oversize_recorded_fixtures_stay_coverage_gaps(run_connector, tmp_path, rel):
     # Recorded fixtures can hold real credentials; skipping them unread is the
-    # operator's decision (oversize_skip_globs), never a silent default.
+    # operator's decision (oversize_skip_globs), never a silent default. Data
+    # files are read up to max_data_file_size, and an oversize test file is
+    # still scanned for credentials, so only one over both limits is unread.
     write(tmp_path, rel, OVERSIZE)
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
+    assert not stats.errors and not stats.incomplete
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, max_data_file_size=100)
     assert stats.warnings and not stats.errors and stats.incomplete
 
 
 def test_operator_skip_globs_declare_recorded_fixtures_omitted(run_connector, tmp_path):
     write(tmp_path, "tests/cassettes/session.yaml", OVERSIZE)
-    _, stats = scan(run_connector, tmp_path, max_file_size=100, oversize_skip_globs=["*/cassettes/*"])
+    _, stats = scan(
+        run_connector,
+        tmp_path,
+        max_file_size=100,
+        max_data_file_size=100,
+        oversize_skip_globs=["*/cassettes/*"],
+    )
     assert stats.warnings and not stats.errors and not stats.incomplete
 
 
 @pytest.mark.parametrize(
     "rel",
     [
-        "tests/test_big.py",
         "docs/seed-memory/loader.py",
         "config/settings.yaml",
         "src/agent.py",
     ],
 )
 def test_oversize_source_and_config_stay_coverage_gaps(run_connector, tmp_path, rel):
+    # An oversize test file is scanned for credentials (see test_oversize_files).
     write(tmp_path, rel, OVERSIZE)
-    _, stats = scan(run_connector, tmp_path, max_file_size=100)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, max_data_file_size=100)
     assert stats.warnings and not stats.errors and stats.incomplete
-    _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=True)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, max_data_file_size=100, strict_coverage=True)
     assert stats.errors and stats.incomplete

@@ -5,6 +5,37 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### October 8 benchmark remediation: oversize and binary content
+
+In the real-world benchmark, 26 scans were incomplete because of files over
+`max_file_size` and 10 because of binary content. Most of those files were
+data, documentation, test fixtures, compiled tools or Git object stores, not
+code the scanner failed to read. Each change has a regression test.
+
+- Documentation and data files (JSON, YAML, TOML, XML, Markdown, text,
+  reStructuredText, HTML) are read and analyzed in full up to the new
+  `max_data_file_size` option (default 32 MiB; also forwarded by `code.github`
+  and `code.gitlab`). Source keeps `max_file_size`. 40 of the benchmark's 46
+  oversize data and documentation files now complete; the rest reach the YAML
+  parser's limits or the new limit and stay gaps.
+- Credentials in a text over 64 KiB are matched in 64 KiB windows that
+  overlap by 4 KiB. A single pattern run over megabytes used to exhaust its
+  0.1 s allowance and leave credential detection incomplete.
+- An oversize compiled or packed binary without an extension (`mcp-publisher`)
+  is skipped as a smaller one already was.
+- An oversize file under a test path is scanned for credentials only, and its
+  other analysis is skipped with a warning (incomplete under
+  `strict_coverage` or `include_tests`). Binary content, and parser or
+  sanitization resource limits, in test code follow the same test-code policy.
+  `test_resources` and `test-resources` are test directories.
+- Valid UTF-8 whose NUL bytes are at most 1% of the file (or at most four), as
+  in a source with `join('\x00')`, is text. Text in a legacy code page is read
+  with replacement characters and a warning, since the decoder keeps every
+  ASCII token; it stays a gap while a signature pattern is not ASCII.
+- A Git repository kept in the tree under another name (a bare `name.git`
+  fixture, a test's `dotGit`), recognised by a valid `HEAD`, `objects/` and
+  `refs/` and only Git's own entries, is skipped with a warning like `.git`.
+
 ### October 8 benchmark remediation: classification and precision
 
 The benchmark's agent task needs to know what a finding describes, not only

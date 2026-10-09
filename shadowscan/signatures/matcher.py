@@ -32,6 +32,10 @@ DEFAULT_SCAN_BUDGET_SECONDS = 2.0
 # this thread has used its own 100 ms CPU allowance. Keep retries finite and
 # inside the original per-pattern CPU and per-input wall deadlines.
 _MAX_CONTENTION_RETRIES = 16
+# Credential matching over a larger text runs in windows of this many
+# characters, each read with the next _SECRET_OVERLAP (see _match_secret_windows).
+_SECRET_WINDOW = 64 * 1024
+_SECRET_OVERLAP = 4 * 1024
 
 
 class MatchTimeoutError(RuntimeError):
@@ -1143,9 +1147,46 @@ class SignatureIndex:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans)
 
     def match_secrets(self, text: str) -> list[Match]:
-        matches = self._match_regex_signals("secret", text, None, max_per_signal=5)
+        if len(text) > _SECRET_WINDOW:
+            matches = self._match_secret_windows(text)
+        else:
+            matches = self._match_regex_signals("secret", text, None, max_per_signal=5)
         keep = keep_secret_matches([(m.signature_id, m.value, m.line) for m in matches])
         return [match for match, kept in zip(matches, keep, strict=True) if kept]
+
+    def _match_secret_windows(self, text: str, max_per_signal: int = 5) -> list[Match]:
+        """Credential matches of a large text, scanned in line-aligned windows.
+
+        One regex execution has a fixed CPU allowance (``REGEX_TIMEOUT_SECONDS``),
+        so a credential pattern run over megabytes at once times out. Each window
+        is scanned together with the next ``_SECRET_OVERLAP`` characters and keeps
+        the matches that start inside it: a credential that crosses a window
+        boundary is still matched whole, because credential patterns match
+        single tokens far shorter than the overlap. The input budget still
+        covers the whole text.
+        """
+        out: list[Match] = []
+        hits: dict[int, int] = {}
+        with self._input_budget():
+            start, lines, size = 0, 0, len(text)
+            while start < size:
+                end = min(size, start + _SECRET_WINDOW)
+                if end < size:
+                    newline = text.rfind("\n", start, end)
+                    if newline > start:
+                        end = newline + 1
+                window = text[start : min(size, end + _SECRET_OVERLAP)]
+                for m in self._match_regex_signals_with_budget("secret", window, None, max_per_signal, ()):
+                    offset = int(m.extra.get("start", 0))
+                    if offset >= end - start or hits.get(id(m.signal), 0) >= max_per_signal:
+                        continue
+                    hits[id(m.signal)] = hits.get(id(m.signal), 0) + 1
+                    m.line = (m.line or 1) + lines
+                    m.extra = {"start": offset + start, "end": int(m.extra.get("end", offset)) + start}
+                    out.append(m)
+                lines += text.count("\n", start, end)
+                start = end
+        return out
 
     def match_user_agent(self, ua: str) -> list[Match]:
         if not ua:
