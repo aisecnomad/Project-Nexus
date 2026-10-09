@@ -113,6 +113,20 @@ def test_dotnet_function_invocation_middleware_requires_library_corroboration(tm
     assert all(not finding.capabilities for finding in findings)
 
 
+def test_dotnet_large_file_without_the_sdk_namespace_stays_complete(tmp_path, run_connector):
+    # WebRequest.GetResponseAsync shares the SDK's method name. A file that never
+    # names Microsoft.Extensions.AI cannot bind the proof, so it must not spend
+    # the proof's token budget and turn an ordinary .NET scan incomplete.
+    statement = "total += Compute(request.Alpha, request.Beta, {}) * Scale(request.Gamma, request.Delta);\n"
+    body = (
+        "".join(statement.format(i) for i in range(2600)) + "using var response = await r.GetResponseAsync();"
+    )
+    source = _cs(body, "WebRequest r, Request request", "using System.Net;")
+    assert source.count("\n") > 2500
+    assert len(polyglot_bindings._TOKEN.findall(source)) > polyglot_bindings.MAX_TOKENS
+    assert not _agent(_scan(tmp_path, run_connector, "Big.cs", source), "framework.microsoft-extensions-ai")
+
+
 @pytest.mark.parametrize(
     "client",
     [

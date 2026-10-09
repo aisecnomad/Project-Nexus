@@ -43,6 +43,9 @@ summarizes each release for people who install and operate ShadowScan.
   agent indicator with tool use, still requiring matching import or dependency
   evidence. Dependency-injected clients, provider constructor chains and
   target-typed options remain agents, as before these corrections.
+- C# files that never name `Microsoft.Extensions.AI` skip the tool-loop proof,
+  so a large file calling an unrelated `GetResponseAsync` no longer exhausts
+  its token budget and marks the scan incomplete.
 - Exclude Python comprehension results and later clauses that cannot execute
   because a literal iterable is empty or a preceding filter is false.
 - Match lifecycle observations by the complete case-insensitive device value.

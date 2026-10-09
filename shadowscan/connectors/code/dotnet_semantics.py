@@ -378,7 +378,10 @@ def microsoft_tool_loop_matches(
     index: SignatureIndex, text: str, ignored: list[tuple[int, int]]
 ) -> list[Match]:
     signature = index.signatures.get("framework.microsoft-extensions-ai")
-    if signature is None or not any(method in text for method in _RESPONSES):
+    # Every binding the proof accepts (namespace import, alias or qualified
+    # name) spells the namespace. Other files, such as WebRequest callers of
+    # GetResponseAsync, cannot prove a loop and must not spend token budgets.
+    if signature is None or _NAMESPACE not in text or not any(method in text for method in _RESPONSES):
         return []
     proof = _Proof(source_tokens(text, ignored, "C#"))
     result: list[Match] = []
