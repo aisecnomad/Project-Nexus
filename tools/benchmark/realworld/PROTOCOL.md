@@ -2,13 +2,17 @@
 
 This is the protocol for a benchmark that runs open-source Shadow-AI / agent-discovery tools on real
 public repositories. It was written, and the oracle, registry, sampling code, corpus manifest, adapters
-and scoring code were frozen, before any tool was run on a scored repository. **Nothing here is committed
-to version control** (the maintainer asked for a report, not a commit), so the order of events is *not*
-evidenced by git history. What is evidenced instead is `results/freeze.json`: the SHA-256 of every file
+and scoring code were frozen, before any tool was run on a scored repository. **Nothing here was committed
+to version control while the benchmark ran** (the maintainer asked for a report, not a commit); the files
+were committed after the run, in the pull request that added this directory, so the order of events is
+*not* evidenced by git history. What is evidenced instead is `results/freeze.json`: the SHA-256 of every file
 that defines the benchmark, written before the scored run and re-checked by `run.py --freeze` when the run
 starts, and repeated in `results/run-manifest.json`. That record proves which files produced the numbers.
-It does not prove when they were written, and it is self-attested. Section 12 lists what changed after an
-independent design review, and which choices were made after looking at the calibration split.
+Files edited after the run (documentation wording, the renamed test path, URL validation in `frames.py`)
+no longer match it, so `freeze --check` names them.
+It does not prove when they were written, and it is self-attested. Section 12 lists what changed after a
+separate-agent design review (not human, not independent), and which choices were made after looking at
+the calibration split.
 
 ## 1. Question
 
@@ -98,7 +102,7 @@ path rules, content markers for workflow exports and infrastructure-as-code, and
   tools' (6-33%). `vocab_overlap.py` therefore records, for each registry technology, which tools' own source
   mentions it (`registry/vocab-overlap.json`), and the scorer adds the `shared-vocab` label variant and
   reports every tool's recall on positives that rest only on ShadowScan-mentioned technologies (section 7).
-  `tests/test_benchmark_realworld.py` checks that the oracle imports only the standard library.
+  `tests/test_benchmark_realworld_sampled.py` checks that the oracle imports only the standard library.
 * Evidence kinds: declared dependency (manifests across PyPI, npm, Go, Maven/Gradle, NuGet, crates, gems,
   Composer, pub), parsed import (Python by AST, others by anchored regex, comments skipped), well-known path
   (works for symlinks), content marker, and weak marker (an API host or key variable *name* in a
@@ -294,16 +298,16 @@ python -m tools.benchmark.realworld.report --summary OUT/summary.json --run-mani
 Requires root (namespaces, cgroups) and a user named `rwb`; use a disposable machine. `sample.py` and
 `frames.py` are provenance tooling: live registries change, the manifest is the artifact.
 
-## 12. Changes after the independent design review and the first calibration run
+## 12. Changes after the separate-agent design review and the first calibration run
 
-An independent reviewer (a separate agent given only the files, not my conclusions) read the design before the
-scored run. Its blocking findings and what was done:
+A separate-agent reviewer (another AI agent given only the files, not my conclusions; not human, not
+independent) read the design before the scored run. Its blocking findings and what was done:
 
 | Finding | Action |
 |---|---|
 | The headline pooled every frame class although this protocol said lists and searches were not pooled | `score.py` now has four classes; the headline scope is `probability`; npm and GitLab-search frames are `search`; pooled figures are labelled descriptive |
 | The registry is not independent of ShadowScan and also defines strata | Independence claims removed; vocabulary overlap measured; `shared-vocab` variant and vocabulary-split recall added; limits stated in section 10. The strata were not redrawn |
-| Pre-registration was not evidenced | Nothing is committed (maintainer's instruction); a hash freeze replaces the claim, and the text above says what it does and does not prove |
+| Pre-registration was not evidenced | Nothing was committed during the run (maintainer's instruction); a hash freeze replaces the claim, and the text above says what it does and does not prove |
 | The symlink check was lexical and bypassable; tools saw the host file system | Physical-resolution fixpoint; stored corpus re-audited; `pivot_root` jail with a self-test |
 | The incompleteness policy favoured ShadowScan | Partial scans are errors in the headline for every tool, with the lenient policy as a sensitivity analysis; ShadowScan configuration variants added |
 | Adapter reading rules (vet dropped CrewAI signatures; agent-bom's source scan was not enabled outside Python; schema checks missing) | Fixed, see section 5 |
