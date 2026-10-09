@@ -2638,14 +2638,11 @@ class FilesystemConnector(BaseConnector):
         if file.cells:
             ignored, ambiguous = _cell_noncode_ranges(content_text, file.cells)
         else:
-            # JSX is lexed in plain .js/.mjs/.cjs too: React ecosystems
-            # (Docusaurus, CRA) put JSX there routinely, and without JSX
-            # modes a closing tag after an expression trips the
-            # regex-vs-division ambiguity and fails real files closed.
-            # Plain JavaScript has no generics, so tag-shaped spans at
-            # expression positions are even less ambiguous than in .tsx.
-            jsx = ext in {".jsx", ".tsx", ".js", ".mjs", ".cjs"}
-            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=jsx)
+            # JSX in plain .js/.mjs/.cjs (Docusaurus, CRA) is tried by
+            # noncode_ranges when the plain walk is ambiguous: in a script,
+            # `yield <a> 1` and `mask<<shift>limit` are comparisons that a
+            # JSX walk from the start would read as elements.
+            ignored, ambiguous = noncode_ranges(content_text, lang, ext, jsx=ext in {".jsx", ".tsx"})
         if ambiguous:
             self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
         imports = (
