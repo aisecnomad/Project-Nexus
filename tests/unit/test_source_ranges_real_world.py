@@ -13,7 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
-from shadowscan.connectors.code.source_ranges import noncode_ranges
+from shadowscan.connectors.code.source_ranges import _javascript_ranges, noncode_ranges
 
 
 def _ranges(source: str, language: str, dialect: str):
@@ -187,8 +187,10 @@ def test_a_javascript_file_the_jsx_walk_cannot_close_stays_ambiguous():
     assert incomplete
 
 
-# Valid sloppy-mode scripts (Node's vm.Script accepts both) in which a "<" the JSX walk would read as an
-# element is a comparison or a shift: `(yield < a) > 1` and `(mask << shift) > limit`. Each closes the
+# Valid sloppy-mode scripts (Node's vm.Script accepts each) in which a "<" the JSX walk would read as an
+# element is a comparison or a shift: `(yield < a) > 1` and `(mask << shift) > limit`. `of` after an
+# operand (here after automatic semicolon insertion) is a name too, and so is a name the walk cuts before
+# a keyword at a zero-width non-joiner, a combining mark or a Unicode escape. Each closes the
 # "element" with a later `b </a>/.source` and uses `await / 2` to make the plain walk ambiguous, which
 # is what triggers the JSX retry. Read as JSX, the client code between them was masked and the scan
 # looked complete.
@@ -218,6 +220,27 @@ _NOT_JSX = {
         "var w = await / 2 / 1;\n"
         "var q = r </shift>/.source;\n"
     ),
+    "of-after-asi": (
+        "var of = 0, a = 2, b = 1;\n"
+        "var t = b\n"
+        "of <a> 1;\n"
+        'const OpenAI = require("openai");\n'
+        "const client = new OpenAI();\n"
+        'client.chat.completions.create({model: "gpt-4o", messages: []});\n'
+        "var w = await / 2 / 1;\n"
+        "var u = b </a>/.source;\n"
+    ),
+    **{
+        f"keyword-after-{kind}": (
+            f"var a{joint}typeof = 0, a = 2, b = 1;\n"
+            f"var t = a{joint}typeof <a> 1;\n"
+            'const OpenAI = require("openai");\n'
+            "const client = new OpenAI();\n"
+            "var w = await / 2 / 1;\n"
+            "var u = b </a>/.source;\n"
+        )
+        for kind, joint in (("zwnj", "\u200c"), ("combining-mark", "\u0301"), ("escape", "\\u{62}"))
+    },
 }
 
 
@@ -241,6 +264,28 @@ def test_a_script_read_as_jsx_cannot_hide_its_client_from_a_scan(tmp_path, sourc
     assert result.exit_code == 3, result.output
     assert report["summary"]["complete"] is False
     assert any("provider.openai" in finding["model_providers"] for finding in report["findings"])
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "return <b>{x}</b>;",
+        "render(<b>{x}</b>, root);",
+        "const make = () => <b>{x}</b>;",
+        "return (<div>{x}</div>);",
+        "case 1: return <b>{x}</b>;",
+        "return void <b>{x}</b>;",
+        "throw <b>{x}</b>;",
+        "x = typeof <b>{x}</b>;",
+    ],
+)
+def test_the_jsx_retry_still_reads_elements_after_punctuation_and_reserved_words(line: str):
+    # A closing tag after an expression makes the plain walk ambiguous; the JSX walk reads the file.
+    source = f"function f(x) {{\n  switch (x) {{ default: {line} }}\n}}\nconst later = new OpenAI();\n"
+    assert _javascript_ranges(source)[1]
+    spans, incomplete = noncode_ranges(source, "javascript", ".js")
+    assert not incomplete
+    assert not _masked(source, spans, "later")
 
 
 def test_jsx_files_still_read_an_element_after_yield_and_await():

@@ -327,11 +327,14 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
   lexing is incomplete unless both readings agree.
 - Fixed: the JSX walk read valid JavaScript as elements and masked the code
   between them: `yield <a> 1` and `await <a> 1` in a script (where both words
-  are names) and the second `<` of a left shift (`mask<<shift>limit`). In
-  `.js`, `.mjs` and `.cjs` files JSX is now only tried when the plain walk is
-  ambiguous, and not used after `yield` or `await` or in a file with such a
-  shift; the scan then stays incomplete. Before, the code connector lexed
-  these files as JSX from the start.
+  are names), `of <a> 1` after an operand, a keyword cut out of a longer name
+  (`a<ZWNJ>typeof <a> 1`, likewise at a combining mark or a `\u{...}` escape)
+  and the second `<` of a left shift (`mask<<shift>limit`). In `.js`, `.mjs`
+  and `.cjs` files JSX is now only tried when the plain walk is ambiguous, and
+  not used where an element follows a word other than a reserved word that
+  cannot be a name (`return`, `typeof`, `case` and the like) or in a file with
+  such a shift; the scan then stays incomplete. Before, the code connector
+  lexed these files as JSX from the start.
 - Fixed: a `.ts` or `.tsx` file that started with `<TS>` or `<tileset` was
   masked whole as a Qt translation or Tiled tileset, although `<TS>expr` is a
   type assertion and `<TS></TS>` a JSX element. Only a file that opens with an

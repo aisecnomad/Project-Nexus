@@ -48,6 +48,12 @@ _CONTROL_HEADS = frozenset({"catch", "for", "if", "switch", "while", "with"})
 # Keywords in a module, generator or async function but ordinary names in a script:
 # without a parse, a `/` after one of them cannot be classified.
 _AMBIGUOUS_REGEX_WORDS = frozenset({"await", "yield"})
+# The regular-expression prefix words that no script can use as a name. Where JSX is only tried
+# (``noncode_ranges``), an element is read after punctuation or one of these. After any other word
+# (`yield`, `await`, or `of` after an operand) a "<" may be a comparison in a script, as it is after a
+# keyword the walk cut out of a longer name at a zero-width joiner, a combining mark or an escape
+# (`a\u200ctypeof <a> 1`).
+_ELEMENT_PREFIX_WORDS = _REGEX_PREFIX_WORDS - {"await", "of", "yield"}
 _MAX_REGEX_LENGTH = 8192
 # Extensions whose source is TypeScript (a postfix "!" asserts non-null), and plain JavaScript extensions
 # in which React code keeps JSX anyway.
@@ -314,8 +320,8 @@ def noncode_ranges(
             # followed by an unterminated regular expression. Valid JavaScript has no "<" where an
             # expression starts, so the JSX walk is only used when it reads the whole file cleanly.
             # Two exceptions are valid JavaScript that this walk would read as an element: the second
-            # "<" of a left shift, and a "<" after `yield` or `await`, which are names in a script
-            # (`yield <a> 1` compares); the retry is not used for either.
+            # "<" of a left shift, and a "<" after a word that can be a name in a script (`yield <a> 1`
+            # compares; see ``_ELEMENT_PREFIX_WORDS``); the retry is not used for either.
             retried, retried_incomplete = _javascript_ranges(
                 text, jsx=True, typescript=typescript, implicit_jsx=True
             )
@@ -884,6 +890,7 @@ class _JavaScriptLexer:
             self.control_parens,
         )
         member_at = -1  # offset of the name after the latest single `.` or `?.`
+        word_at = word_end = -1  # the latest word that is not a property name
         while i < size:
             if text.startswith("//", i):
                 end = _js_line_end(text, i + 2)
@@ -931,6 +938,14 @@ class _JavaScriptLexer:
                 and can_start_regex[-1]
                 and (opened := _jsx_open_tag(text, i, self.budget)) is not None
             ):
+                if self.implicit_jsx and word_at >= 0 and _skip_trivia(text, word_end) == i:
+                    before = text[word_at - 1] if word_at else " "
+                    if (
+                        text[word_at:word_end] not in _ELEMENT_PREFIX_WORDS
+                        or before in "\\}\u200c\u200d"
+                        or ("a" + before).isidentifier()
+                    ):
+                        self.incomplete = True
                 self.pending_jsx_tags.append(opened[0])
                 modes.append(("jsx_tag", i))
                 can_start_regex[-1] = False
@@ -948,6 +963,7 @@ class _JavaScriptLexer:
                     can_start_regex[-1] = False
                     control_pending[-1] = False
                 else:
+                    word_at, word_end = start, i
                     # `of` is a keyword only after an operand (`for (x of /re/)`);
                     # where an operand is expected it is an ordinary name.
                     can_start_regex[-1] = word in _REGEX_PREFIX_WORDS and (
@@ -955,12 +971,8 @@ class _JavaScriptLexer:
                     )
                     control_pending[-1] = word in _CONTROL_HEADS
                     if word in _AMBIGUOUS_REGEX_WORDS:
-                        # Nor can a "<" after one in a file that may be a script: an element there
-                        # is a comparison when the word is a name.
                         following = _skip_trivia(text, i)
-                        if 0 <= following < size and (
-                            text[following] == "/" or (self.implicit_jsx and text[following] == "<")
-                        ):
+                        if 0 <= following < size and text[following] == "/":
                             self.incomplete = True
             elif text[i].isdigit():
                 i += 1

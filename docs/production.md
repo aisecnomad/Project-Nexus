@@ -1052,8 +1052,10 @@ is not part of its identity.
     (`'T`) and primed names; C# verbatim strings that open with an escaped
     quote (`@"""x"" y"`); JSX in `.js`, `.mjs` and `.cjs` files, tried when the
     plain walk is ambiguous and used only if it reads the whole file cleanly
-    (never after `yield` or `await`, which are names in a script, nor in a file
-    with a left shift such as `mask<<shift>limit`: the scan stays incomplete);
+    (an element must follow punctuation or a reserved word that cannot be a name,
+    such as `return`; after `yield`, `await`, `of` or a keyword cut out of a longer
+    name such as `a<ZWNJ>typeof`, all names in a script, and in a file with a left
+    shift such as `mask<<shift>limit`, the scan stays incomplete);
     the TypeScript non-null assertion before a division (`idle! / step`); and
     Qt Linguist translations and Tiled tilesets named `.ts` or `.tsx`, which are
     XML: only a file that opens with an XML declaration or a document type
