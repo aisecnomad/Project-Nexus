@@ -50,6 +50,9 @@ class Outcome:
     seconds: float = 0.0
     note: str = ""
     raw: dict[str, str] = field(default_factory=dict)
+    # ShadowScan only (PROTOCOL.md §13.3): the original kind-list rule, kept for the
+    # secondary analysis while ``agentic`` follows the scanner's metadata.agentic.
+    agentic_kinds: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -178,13 +181,20 @@ class Adapter:
 SHADOWSCAN_AGENTIC = frozenset({"agent", "mcp-server", "agent-config", "bot-app", "workflow"})
 
 
+def shadowscan_agentic(findings: list[dict[str, Any]]) -> bool:
+    """PROTOCOL.md §13.3: any finding the scanner itself marks agentic (``metadata.agentic``)."""
+    return any((f.get("metadata") or {}).get("agentic") is True for f in findings)
+
+
 class ShadowScan(Adapter):
     name = "shadowscan"
     display = "Project Nexus ShadowScan"
     source = "aisecnomad/Project-Nexus"
     mode = "scan with one code.filesystem connector on the checkout, defaults, use_git false"
     agentic_rule = (
-        "a finding of kind " + ", ".join(sorted(SHADOWSCAN_AGENTIC)) + " (the tool's own agent kinds)"
+        "any finding with metadata.agentic true (PROTOCOL.md §13.3); the first run used a finding of kind "
+        + ", ".join(sorted(SHADOWSCAN_AGENTIC))
+        + " (the tool's own agent kinds), kept as agentic_kinds"
     )
 
     def scan(self, repo: Path, work: Path, env: ToolEnv) -> Outcome:
@@ -212,7 +222,8 @@ class ShadowScan(Adapter):
         return Outcome(
             status,
             detected=bool(findings),
-            agentic=bool(set(kinds) & SHADOWSCAN_AGENTIC),
+            agentic=shadowscan_agentic(findings),
+            agentic_kinds=bool(set(kinds) & SHADOWSCAN_AGENTIC),
             items=len(findings),
             kinds=kinds,
             paths=collect_paths(locations, repo),

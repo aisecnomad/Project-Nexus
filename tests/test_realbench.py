@@ -283,3 +283,25 @@ def test_apply_records_every_changed_label() -> None:
         "reviewed": True, "changed": True, "from": "none", "from_assistant": False, "reason": "calls a model",
     }  # fmt: skip
     assert out["evidence"][0]["path"] == "a.py"
+
+
+def test_shadowscan_agentic_follows_the_scanner_metadata() -> None:
+    # PROTOCOL.md §13.3: the scanner's own metadata.agentic, not the kind list.
+    from tools.realbench.adapters import shadowscan_agentic
+
+    assistant = {
+        "kind": "agent-config",
+        "metadata": {"agent_type": "coding-assistant-config", "agentic": False},
+    }
+    server = {"kind": "framework-usage", "metadata": {"agent_type": "mcp-client", "agentic": True}}
+    assert shadowscan_agentic([assistant]) is False
+    assert shadowscan_agentic([assistant, server]) is True
+    assert shadowscan_agentic([{"kind": "agent"}]) is False  # a report without the field claims nothing
+
+
+def test_rows_keep_the_kind_rule_for_shadowscan_only() -> None:
+    from tools.realbench.adapters import Outcome
+    from tools.realbench.run import _row
+
+    assert _row("h001", Outcome("ok", agentic=False, agentic_kinds=True), None)["agentic_kinds"] is True
+    assert "agentic_kinds" not in _row("h001", Outcome("ok", agentic=True), None)

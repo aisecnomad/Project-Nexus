@@ -544,6 +544,13 @@ MCC at least 0.75; T1 specificity at least 0.97.
    shared blind spot would agree with itself; the post-run adjudication
    (§9) still reviews every repository where a tool disagrees.
 
+4. **Adapter rule, as implemented.** §13.3 is implemented in
+   `adapters.shadowscan_agentic`: a ShadowScan row's `agentic` is true when
+   any finding's `metadata.agentic` is true. The row also keeps the first
+   run's kind-list value as `agentic_kinds`; the secondary analysis scores a
+   copy of the ShadowScan rows with `agentic` replaced by it. Other tools'
+   rows are unchanged.
+
 Label summary at the holdout freeze: 67 `agent`, 28 `llm` and 45 `none`.
 10 of the `none` are assistant-only, which leaves 130 repositories in the
 primary analysis.

@@ -57,6 +57,7 @@ def _row(rid: str, outcome: Outcome, raw_sha: str | None) -> dict[str, Any]:
         "seconds": round(outcome.seconds, 2),
         "note": redact(outcome.note) if outcome.note else "",
         "raw_sha256": raw_sha,
+        **({"agentic_kinds": outcome.agentic_kinds} if outcome.agentic_kinds is not None else {}),
     }
 
 
