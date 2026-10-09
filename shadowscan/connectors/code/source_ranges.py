@@ -271,7 +271,7 @@ def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str,
     return name, pos
 
 
-# Extensions whose sources may hold JSX even without a ``jsx`` marker (React and other JSX in ``.js``).
+# These JavaScript extensions may contain JSX without an explicit JSX suffix.
 _JSX_IN_JS_FILES = frozenset({".js", ".mjs", ".cjs"})
 
 
@@ -288,8 +288,8 @@ def noncode_ranges(
     if language == "javascript":
         ranges, ambiguous = _javascript_ranges(text, jsx=jsx)
         if ambiguous and not jsx and dialect in _JSX_IN_JS_FILES:
-            # Plain lexing failed on a ``.js`` file, which may hold JSX. The JSX reading is used only when
-            # it lexes completely; a genuinely unterminated literal stays ambiguous under both readings.
+            # Only accept the JSX interpretation when it closes completely.
+            # TypeScript retains its normal treatment of generic/type syntax.
             jsx_ranges, jsx_ambiguous = _javascript_ranges(text, jsx=True)
             if not jsx_ambiguous:
                 return jsx_ranges, False
@@ -689,6 +689,10 @@ class _JavaScriptLexer:
         # ``}``, none of which ends in ``/``. Comments do not count, so
         # ``<div /* note */>`` is not self-closing.
         slash = False
+        # Whether the last significant character was ``=``: an ``<`` there is a
+        # brace-less JSX attribute value (``title=<span>…</span>``), which is
+        # legal JSX; anywhere else ``<`` inside a tag keeps the generic walk.
+        equals = False
         while i < size:
             # Comments may separate attributes; their text is never an
             # attribute string or expression.
@@ -711,11 +715,22 @@ class _JavaScriptLexer:
                     return self._unterminated(start)
                 i = end + 1
                 slash = False
+                equals = False
                 continue
             if text[i] == "{":
                 spans.append((start, i + 1))
                 self._enter_expression("jsx_expression")
                 return i + 1
+            if text[i] == "<" and equals:
+                # Brace-less JSX element as an attribute value. Only a span that
+                # _jsx_open_tag accepts starts a child element; a stray ``<``
+                # falls through to the generic walk and still fails closed.
+                opened = _jsx_open_tag(text, i, self.budget)
+                if opened is not None:
+                    spans.append((start, i))
+                    modes.append(("jsx_tag", i))
+                    self.pending_jsx_tags.append(opened[0])
+                    return opened[1]
             if text[i] == ">":
                 spans.append((start, i + 1))
                 name = self.pending_jsx_tags.pop()
@@ -723,14 +738,15 @@ class _JavaScriptLexer:
                 i += 1
                 modes.pop()
                 if self_closing:
-                    if modes[-1][0] == "jsx_text":
-                        modes[-1] = ("jsx_text", i)
+                    if modes[-1][0] in {"jsx_tag", "jsx_text"}:
+                        modes[-1] = (modes[-1][0], i)
                 else:
                     self.open_jsx_tags.append(name)
                     modes.append(("jsx_text", i))
                 return i
             if not text[i].isspace():
                 slash = text[i] == "/"
+                equals = text[i] == "="
             i += 1
             if i == size:
                 return self._unterminated(start)
@@ -1132,7 +1148,7 @@ def _open_literal(
         and not (prefix == "r" or "@" in prefix or prefix.startswith("#") or triple and language == "dotnet"),
         verbatim="@" in prefix,
         interpolation=interpolation,
-        # Rust allows a line break inside an ordinary string literal, so such a literal stays open across it.
+        # Ordinary Rust strings and byte strings may span physical lines.
         multiline=triple or quote == "`" or "@" in prefix or (language == "rust" and quote == '"'),
     )
     return literal, q + len(opener)

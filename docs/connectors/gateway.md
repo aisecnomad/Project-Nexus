@@ -54,17 +54,61 @@ endpoint) is not a static asset. Static files under an inference-like prefix
 
 A caller is titled **Agentic caller** when at least one agent indicator
 holds: requests carried tool definitions or responses invoked tools; a user
-agent belongs to a coding agent or agent framework; requests invoked a hosted
-agent runtime (Bedrock `InvokeAgent` or AgentCore runtimes, the Assistants
-API, Vertex AI Agent Engine, Dialogflow CX sessions; tag `agent-runtime-api`);
-requests reached an MCP endpoint (`/mcp`, or `/sse` and `/messages` on a
-host a signature identifies as an MCP server; tag `mcp-client`); a
-programmatic caller made runs of three or more model calls at distinct times
-at most 30 seconds apart (tag `agent-loop`; simultaneous calls count once); or corroborated round-the-clock activity. The last
-two are heuristics read from request times alone: a batch script or a chat
-front end that makes several calls per message has the same cadence, so read
-`metadata.agent_behaviour` before acting on the label. A caller whose
-requests mostly carry a browser user agent is never counted as a loop.
+agent belongs to a coding agent or agent framework; requests targeted a hosted
+agent invocation operation; requests reached an MCP endpoint (`/mcp`, or `/sse`
+and `/messages` on a known MCP host; tag `mcp-client`); or corroborated
+round-the-clock activity.
+
+Hosted invocation classification (tag `agent-runtime-api`) requires an HTTP
+`POST`, an exact invocation path, and the matching service host **from the same
+record**. Supported operations are Bedrock `InvokeAgent`, AgentCore runtime
+invocations, OpenAI/Azure Assistants run creation or tool-output submission,
+Vertex AI Agent Engine queries, and Dialogflow CX `detectIntent` or
+`serverStreamingDetectIntent` session invocation. Listing,
+reading, creating or deleting assistant definitions and updating/cancelling
+runs do not count. Paths alone, a provider name, an unknown upstream host or a
+missing method do not prove invocation. Native Vertex audit logs can instead
+identify an exact `ReasoningEngineExecutionService.QueryReasoningEngine` or
+`StreamQueryReasoningEngine` RPC on the `aiplatform.googleapis.com` service.
+Requests to these operations establish attempted invocation; they do not prove
+successful execution or add `tool-use` capability without separate tool
+evidence. In particular, a 403 remains a failed attempt.
+
+HTTP methods are read from `request_method`, `method`, `http_method`,
+`cs-method`, `http.method`, `request.method`, `httpRequest.requestMethod`,
+`proxy_server_request.method`, or `properties.httpMethod`. Access logs can
+also retain the method from an HTTP request line. Preserve the provider
+hostname in `host` when exporting gateway/proxy records; the proxy's own host
+does not identify an upstream provider. Absolute URLs, custom domains, private
+endpoint aliases, and unrecognized route prefixes are not mapped to these
+operations. Export a path and the canonical upstream host; unsupported aliases
+remain ordinary service-contact evidence. Managed cloud-service host matches
+alone also do not add agent or tool-use indicators; product names in caller or
+end-user labels do not establish capabilities either.
+
+Operation matching follows the provider request contracts: [Bedrock
+InvokeAgent](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_InvokeAgent.html),
+[AgentCore InvokeAgentRuntime](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeAgentRuntime.html),
+[AgentCore service endpoints](https://docs.aws.amazon.com/general/latest/gr/bedrock_agentcore.html),
+and the [Vertex execution service](https://docs.cloud.google.com/dotnet/docs/reference/Google.Cloud.AIPlatform.V1/latest/Google.Cloud.AIPlatform.V1.ReasoningEngineExecutionServiceClient).
+Additional route contracts are [OpenAI thread runs](https://developers.openai.com/api/reference/python/resources/beta),
+[Azure thread runs](https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/threads),
+[Vertex queries](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.reasoningEngines/query),
+[Vertex streaming queries](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.reasoningEngines/streamQuery),
+and [Dialogflow server streaming](https://docs.cloud.google.com/dialogflow/cx/docs/reference/rest/v3/projects.locations.agents.sessions/serverStreamingDetectIntent).
+OpenAI Assistants paths remain supported for historical exports; the
+[service was sunset on 26 August 2026](https://developers.openai.com/api/docs/assistants/migration).
+
+A programmatic caller making runs of three or more model calls at distinct
+times at most 30 seconds apart receives the informational `agent-loop` tag.
+Simultaneous calls count once. Cadence alone does **not** promote a caller to
+**Agentic caller**: a batch script or chat front end can produce the same
+pattern. Management operations and HTTP requests without a supported
+generation path and `POST` method are excluded. Native model records may
+supply a model and native operation instead. A caller whose requests mostly
+carry a browser user agent is never tagged as a loop. Inspect
+`metadata.agent_behaviour` alongside corroborating evidence.
+
 Calling a model API is LLM use: the domains
 and names of AI SaaS apps (`*.openai.com`, `*.anthropic.com`) do not make a
 caller agentic. A product name matched in a key alias or a user name is a

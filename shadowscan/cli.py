@@ -11,6 +11,7 @@ import sys
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import IO, Any, NoReturn, TypeVar
 
 import click
@@ -41,9 +42,11 @@ from shadowscan.connectors import (
     get_connector_class,
     plugin_registry_errors,
 )
+from shadowscan.endpoint import default_label, describe, endpoint_paths, endpoint_roots
 from shadowscan.engine import Engine
 from shadowscan.errors import SetupError
-from shadowscan.models import Finding, ScanResult, Surface
+from shadowscan.fleet import merge_reports
+from shadowscan.models import Finding, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.table import print_table
@@ -653,6 +656,16 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
     is_flag=True,
     help="let test and fixture code establish agents at full weight",
 )
+@click.option(
+    "--triage",
+    is_flag=True,
+    help="fast subset scan (manifests, MCP/agent configs, flows, IaC); always exits incomplete",
+)
+@click.option(
+    "--diff-base",
+    default=None,
+    help="git ref to diff against; only changed files are scanned (plus manifests and .env for context)",
+)
 @scan_options
 def code(
     paths: tuple[str, ...],
@@ -665,6 +678,8 @@ def code(
     no_secrets: bool,
     strict_coverage: bool,
     include_tests: bool,
+    triage: bool,
+    diff_base: str | None,
     opts: ScanOptions,
 ) -> None:
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and
@@ -677,6 +692,10 @@ def code(
         common["strict_coverage"] = True
     if include_tests:
         common["include_tests"] = True
+    if triage:
+        common["triage"] = True
+    if diff_base:
+        common["diff_base"] = diff_base
     if paths:
         specs.append(ConnectorSpec(name="code.filesystem", config={"paths": list(paths), **common}))
     if github_org or github_repo:
@@ -1223,7 +1242,15 @@ def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str)
         "an incomplete comparison still exits 3"
     ),
 )
-def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
+@click.option(
+    "--shadow-only",
+    is_flag=True,
+    help=(
+        "display only findings whose shadow field is true (unmatched against the supplied "
+        "inventory); counts, incompleteness reasons and exit codes still cover every finding"
+    ),
+)
+def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool, shadow_only: bool) -> None:
     """Compare reports; missing findings require complete, comparable scans to resolve."""
     try:
         comparison = compare_reports(
@@ -1232,7 +1259,27 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
         )
     except (ValueError, TypeError, OSError):
         raise click.ClickException("invalid comparison input; expected two ShadowScan JSON reports") from None
+
+    def displayed(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # shadow is tri-state: None means no inventory was supplied, which is
+        # not evidence the finding is shadow, so only shadow=True passes.
+        if not shadow_only:
+            return records
+        return [d for d in records if d.get("shadow") is True]
+
     if as_json:
+        # The JSON document always carries the full comparison (never make a
+        # filtered view look complete); the filter adds a view alongside it.
+        if shadow_only:
+            comparison = {
+                **comparison,
+                "shadow_only_view": {
+                    key: [d["id"] for d in displayed(comparison[key])]
+                    for key in ("new", "resolved", "unknown", "changed")
+                    if key != "changed"
+                }
+                | {"changed": [c["after"]["id"] for c in comparison["changed"] if c["after"].get("shadow")]},
+            }
         click.echo(json.dumps(comparison, indent=2, default=str))
     else:
         keys = ("new", "resolved", "unknown", "changed")
@@ -1255,10 +1302,12 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
             ("<", local_baseline),
             (">", local_current),
         ):
-            for d in sorted(records, key=lambda d: -d["risk"]["score"]):
+            for d in sorted(displayed(records), key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
                 console.print(terminal_text(line), markup=False, highlight=False)
         for change in changed:
+            if shadow_only and change["after"].get("shadow") is not True:
+                continue
             x, y = change["before"], change["after"]
             fields_changed = ", ".join(change["changed_fields"])
             line = f"  ~ {y['title']}: {fields_changed} (risk {x['risk']['score']} → {y['risk']['score']})"
@@ -1267,6 +1316,95 @@ def diff(baseline: str, current: str, as_json: bool, fail_on_new: bool) -> None:
         raise click.exceptions.Exit(3)
     if fail_on_new and (comparison["new"] or any(_risk_rose(change) for change in comparison["changed"])):
         raise click.exceptions.Exit(2)
+
+
+# ----------------------------------------------------------------- endpoint
+@main.command()
+@click.option(
+    "--home",
+    "home_dir",
+    type=click.Path(exists=True, file_okay=False),
+    default=None,
+    help="profile directory to inspect (default: the current user's home)",
+)
+@click.option(
+    "--label", default=None, help="resource prefix for every finding (default: endpoint:<hostname>)"
+)
+@click.option(
+    "--list",
+    "list_only",
+    is_flag=True,
+    help="print the known locations that exist under the profile and exit without scanning",
+)
+@scan_options
+def endpoint(home_dir: str | None, label: str | None, list_only: bool, opts: ScanOptions) -> None:
+    """Scan this workstation's AI client configuration at its well-known locations: MCP client
+    configs, coding-agent settings, user-level skills, rules and instruction files."""
+    home = Path(home_dir).resolve() if home_dir else Path.home()
+    discovery_errors: list[str] = []
+    found = endpoint_paths(home, errors=discovery_errors)
+    if discovery_errors:
+        now = now_iso()
+        stats = ScanStats(
+            connector="code.filesystem",
+            started_at=now,
+            finished_at=now,
+            errors=discovery_errors,
+            incomplete=True,
+        )
+        result = ScanResult(findings=[], stats=[stats], version=__version__)
+        _emit(result, opts.fmt, opts.output, False, opts.max_rows)
+        raise click.exceptions.Exit(3)
+    if list_only:
+        for line in describe(found, home):
+            click.echo(encodable_text(terminal_text(line)))
+        if not found:
+            err_console.print(
+                Text(terminal_text(f"no known AI client configuration locations exist under {home}"))
+            )
+        return
+    verbose: int = main.verbose  # type: ignore[attr-defined]
+    if not found:
+        # Nothing to read is a complete, empty result, not a setup failure: the
+        # profile simply has no AI client wired in. The note stays in the report.
+        now = now_iso()
+        note = f"no known AI client configuration locations exist under {home}"
+        stats = ScanStats(connector="code.filesystem", started_at=now, finished_at=now, warnings=[note])
+        result = ScanResult(findings=[], stats=[stats], version=__version__)
+        _emit(result, opts.fmt, opts.output, verbose >= 1, opts.max_rows)
+        raise click.exceptions.Exit(_exit_code(result, opts.fail_on))
+    # Each profile root is walked only along the known locations below it, so
+    # the relative paths keep the `.claude/`, `.cursor/` context the file
+    # signatures expect and nothing else in the profile is read.
+    roots, include = endpoint_roots(found, home)
+    config: dict[str, Any] = {
+        "paths": [str(path) for path in roots],
+        "include": include,
+        "label": label or default_label(),
+        "scan_secrets": True,
+    }
+    _run_scan(opts.config([ConnectorSpec(name="code.filesystem", config=config)]), opts)
+
+
+# -------------------------------------------------------------------- merge
+@main.command("merge")
+@click.argument("reports", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("-f", "--format", "fmt", type=click.Choice(FORMATS), default="table", help="output format")
+@click.option("-o", "--output", type=click.Path(), default=None, help="write the merged report to a file")
+@click.option("--max-rows", type=int, default=None, help="limit rows printed in table mode")
+def merge_command(reports: tuple[str, ...], fmt: str, output: str | None, max_rows: int | None) -> None:
+    """Combine JSON reports from several machines or scans into one fleet report.
+
+    Findings with the same identity merge; every finding records the reports it
+    came from. The result is incomplete (exit 3) when any source was."""
+    loaded = [(os.path.basename(path), _load_report(path)) for path in reports]
+    try:
+        result = merge_reports(loaded)
+    except ValueError as exc:
+        raise click.ClickException(sanitize_text(str(exc))) from None
+    verbose: int = main.verbose  # type: ignore[attr-defined]
+    _emit(result, fmt, output, verbose >= 1, max_rows)
+    raise click.exceptions.Exit(_exit_code(result, None))
 
 
 def _risk_rose(change: dict[str, Any]) -> bool:

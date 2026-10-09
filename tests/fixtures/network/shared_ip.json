@@ -1,0 +1,9 @@
+[
+  {"client":"10.0.0.1","query":"api.openai.com","answers":["203.0.113.5"]},
+  {"client":"10.0.0.1","dst_ip":"203.0.113.5","dst_port":443,"uid":"C-openai","sni":"api.openai.com","ts":1759132800},
+  {"client":"10.0.0.1","dst_ip":"203.0.113.5","dst_port":443,"uid":"C-openai","bytes_out":100,"bytes_in":50,"ts":1759132800},
+  {"client":"10.0.0.1","dst_ip":"203.0.113.5","dst_port":443,"uid":"C-other","sni":"cdn.example.net","ts":1759132805},
+  {"client":"10.0.0.1","dst_ip":"203.0.113.5","dst_port":443,"uid":"C-other","bytes_out":1000000,"bytes_in":500000,"ts":1759132805},
+  {"client":"10.0.0.1","dst_ip":"203.0.113.5","dst_port":443,"uid":"C-anthropic","sni":"api.anthropic.com","ts":1759132810},
+  {"client":"10.0.0.1","dst_ip":"203.0.113.5","dst_port":443,"uid":"C-anthropic","bytes_out":200,"bytes_in":70,"ts":1759132810}
+]

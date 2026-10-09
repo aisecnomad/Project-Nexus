@@ -158,7 +158,7 @@ def test_live_mode_outside_linux_is_refused(run_connector, monkeypatch):
 
 def test_lifecycle_links_endpoint_configuration_to_running_processes(index, tmp_path):
     rows = [
-        {"hostIdentifier": "dev-laptop-07.corp.example", "columns": {"pid": "1", "uid": "1000",
+        {"hostIdentifier": "dev-laptop-07", "columns": {"pid": "1", "uid": "1000",
          "cmdline": "/home/dana/.local/bin/claude", "name": "claude"}},
         {"host": "dev-laptop-07", "user": "dana",
          "cmdline": "npx -y @modelcontextprotocol/server-github@2025.4.8"},
@@ -186,7 +186,7 @@ def test_lifecycle_links_endpoint_configuration_to_running_processes(index, tmp_
     assert "observed-running" in by["Local models stored for Ollama on dev-laptop-07 (~dana)"].tags
     assert "lifecycle" not in by["OpenAI Codex CLI running on other-host (dana)"].metadata
     assert "lifecycle" not in by["MCP server: mcp-server-unrelated running on dev-laptop-07 (dana)"].metadata
-    running = by["Claude Code running on dev-laptop-07.corp.example (uid-1000)"]
+    running = by["Claude Code running on dev-laptop-07 (uid-1000)"]
     assert running.metadata["lifecycle"]["states"] == ["configured", "running"]
 
     # Idempotent: a second pass replaces, never duplicates.

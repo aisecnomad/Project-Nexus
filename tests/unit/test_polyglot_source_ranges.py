@@ -91,7 +91,9 @@ def test_polyglot_examples_do_not_create_agents(
         ),
         (
             "Agent.cs",
-            "using Microsoft.Extensions.AI;\nclass App { void Run() { AIFunctionFactory.Create(foo); } }\n",
+            "using Microsoft.Extensions.AI;\nclass App { async System.Threading.Tasks.Task Run("
+            "IChatClient inner, AIFunction tool) { var client = new FunctionInvokingChatClient(inner); "
+            'await client.GetResponseAsync("request", new ChatOptions { Tools = [tool] }); } }\n',
             "framework.microsoft-extensions-ai",
         ),
         (

@@ -79,7 +79,7 @@ def _surrogate_result() -> ScanResult:
     return ScanResult(findings=[finding], stats=[ScanStats(connector="code.filesystem", started_at="now")])
 
 
-@pytest.mark.parametrize("fmt", ["json", "sarif", "csv", "markdown", "html", "table"])
+@pytest.mark.parametrize("fmt", ["json", "sarif", "cyclonedx", "csv", "markdown", "html", "table"])
 def test_lone_surrogates_do_not_stop_a_report_written_to_a_file(tmp_path, fmt, monkeypatch):
     monkeypatch.setattr("shadowscan.cli.console", Console(file=io.StringIO(), width=200))
     monkeypatch.setattr("shadowscan.cli.err_console", Console(file=io.StringIO(), width=200))
@@ -99,7 +99,7 @@ def test_a_lone_surrogate_is_written_as_a_visible_escape(tmp_path):
     assert encodable_text("plain ✓ \U0001f916") == "plain ✓ \U0001f916"
 
 
-@pytest.mark.parametrize("fmt", ["json", "sarif", "csv", "markdown", "html", "table"])
+@pytest.mark.parametrize("fmt", ["json", "sarif", "cyclonedx", "csv", "markdown", "html", "table"])
 def test_lone_surrogates_do_not_stop_a_report_written_to_stdout(fmt, capsys):
     _emit(_surrogate_result(), fmt, None, verbose=False, max_rows=None)
     out = capsys.readouterr().out

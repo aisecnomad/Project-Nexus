@@ -598,6 +598,101 @@ def validate_git_ref(name: str | None) -> str | None:
     return value
 
 
+_DIFF_BASE_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/~^-]{0,254}$")
+
+
+def validate_diff_base(ref: str | None) -> str | None:
+    """Return *ref* if it is a safe revision for ``git diff``, otherwise None.
+
+    Accepts branch names, tags, SHAs and revision suffixes like ``HEAD~3``
+    or ``main^2``. Rejects option-like strings, path traversals, and
+    ``@{…}`` reflog syntax.
+    """
+    if not isinstance(ref, str) or not ref:
+        return None
+    if not _DIFF_BASE_RX.fullmatch(ref):
+        return None
+    if ref.startswith("-") or ref.startswith("/") or ref.endswith(("/", ".")):
+        return None
+    if "@{" in ref or "\\" in ref or "//" in ref:
+        return None
+    return ref
+
+
+class DiffError(ValueError):
+    """The diff-base revision could not be resolved or compared."""
+
+
+def diff_changed_files(
+    root: str | os.PathLike[str],
+    base_ref: str,
+    ctx: ConnectorContext,
+    *,
+    timeout: float = 30.0,
+) -> frozenset[str]:
+    """Return relative POSIX paths changed between *base_ref* and HEAD.
+
+    Uses the hardened metadata environment (no network, no hooks, no lazy
+    fetch). The merge-base is computed automatically (three-dot diff).
+    Raises ``DiffError`` on failure so the caller can fall back to a full
+    scan instead of silently missing files.
+    """
+    validated = validate_diff_base(base_ref)
+    if validated is None:
+        raise DiffError(f"invalid diff-base ref: {base_ref!r}")
+    root_str = os.fspath(root)
+    if not root_str or "\x00" in root_str:
+        raise DiffError("invalid repository root")
+    marker = Path(root_str) / ".git"
+    if not os.path.lexists(marker):
+        raise DiffError("not a git repository")
+    try:
+        require_local_git_metadata(Path(root_str), timeout=min(timeout, 10.0))
+    except ValueError as exc:
+        raise DiffError(f"git metadata preflight refused: {exc}") from None
+    env = metadata_git_env()
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    try:
+        result = run_bounded_metadata(
+            [
+                *metadata_git_argv_prefix(),
+                "-C",
+                root_str,
+                "diff",
+                "--name-only",
+                "--diff-filter=ACDMRT",
+                "-z",
+                f"{validated}...HEAD",
+            ],
+            env=env,
+            ctx=ctx,
+            timeout=timeout,
+            max_bytes=8 * 1024 * 1024,
+            strict_utf8=True,
+        )
+    except MetadataTimeoutError:
+        raise DiffError("git diff timed out") from None
+    except MetadataOutputLimitError:
+        raise DiffError("git diff output exceeded size limit") from None
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise DiffError(f"git diff failed: {exc}") from None
+    if result.returncode != 0:
+        raise DiffError(f"git diff exited with status {result.returncode}; is {base_ref!r} a valid ref?")
+    output = result.stdout
+    if not output:
+        return frozenset()
+    paths: set[str] = set()
+    for entry in output.split("\0"):
+        # NUL-delimited Git paths preserve whitespace as part of the filename.
+        if not entry:
+            continue
+        posix = entry.replace(os.sep, "/")
+        if ".." in posix.split("/") or posix.startswith("/"):
+            continue
+        paths.add(posix)
+    return frozenset(paths)
+
+
 def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Environment for git child processes.
 

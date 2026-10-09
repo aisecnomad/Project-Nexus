@@ -33,6 +33,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -76,6 +77,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -119,6 +121,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -162,6 +165,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -205,6 +209,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -248,6 +253,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -291,6 +297,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -334,6 +341,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -377,6 +385,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -420,6 +429,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -463,6 +473,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -506,6 +517,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -549,6 +561,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -592,6 +605,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -635,6 +649,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -678,6 +693,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -721,6 +737,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -764,6 +781,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -807,6 +825,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -850,6 +869,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -893,6 +913,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -936,6 +957,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -979,6 +1001,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1022,6 +1045,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1065,6 +1089,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1108,6 +1133,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1151,6 +1177,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1194,6 +1221,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1237,6 +1265,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1280,6 +1309,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1323,6 +1353,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1366,6 +1397,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1409,6 +1441,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1452,6 +1485,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1495,6 +1529,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1538,6 +1573,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1581,6 +1617,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1624,6 +1661,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1667,6 +1705,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1710,6 +1749,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1753,6 +1793,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1796,6 +1837,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1839,6 +1881,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1882,6 +1925,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1925,6 +1969,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -1968,6 +2013,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2011,6 +2057,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2054,6 +2101,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2097,6 +2145,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2140,6 +2189,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2183,6 +2233,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2226,6 +2277,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2269,6 +2321,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2312,6 +2365,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2355,6 +2409,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2398,6 +2453,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2441,6 +2497,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2484,6 +2541,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2527,6 +2585,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2570,6 +2629,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2613,6 +2673,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2656,6 +2717,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2699,6 +2761,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2742,6 +2805,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2785,6 +2849,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2828,6 +2893,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2871,6 +2937,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2914,6 +2981,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2957,6 +3025,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3000,6 +3069,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3043,6 +3113,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3086,6 +3157,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3129,6 +3201,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3172,6 +3245,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3215,6 +3289,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3258,6 +3333,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3301,6 +3377,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3344,6 +3421,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3387,6 +3465,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -3430,6 +3509,7 @@
     "cost": 0.0,
     "status": "",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",

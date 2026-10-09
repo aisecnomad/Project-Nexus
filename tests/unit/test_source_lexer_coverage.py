@@ -1,77 +1,107 @@
-"""Lexical coverage: a construct the language allows must not make a complete scan incomplete, and a
-genuinely unterminated literal must still do so. Fail closed is kept; only false ambiguity goes."""
+"""Valid source syntax keeps coverage complete without exposing inert examples as code."""
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 
 from shadowscan.connectors.code.source_ranges import noncode_ranges
+from shadowscan.models import Kind
 
 
+@pytest.mark.parametrize("prefix", ["", "b"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_rust_multiline_strings_mask_examples_and_preserve_following_code(prefix: str, newline: str) -> None:
+    source = (
+        f'fn main() {{ let docs = {prefix}"{newline}AgentBuilder::new(fake){newline}";'
+        f"{newline}let agent = AgentBuilder::new(real); }}{newline}"
+    )
+    spans, ambiguous = noncode_ranges(source, "rust", ".rs")
+    assert not ambiguous
+    fake, real = source.index("AgentBuilder"), source.rindex("AgentBuilder")
+    assert any(start <= fake < end for start, end in spans)
+    assert not any(start <= real < end for start, end in spans)
+
+
+@pytest.mark.parametrize("dialect", [".js", ".mjs", ".cjs"])
 @pytest.mark.parametrize(
-    ("language", "dialect", "text"),
+    "component",
     [
-        # Rust allows a line break inside an ordinary string literal, and a byte string may continue a line.
-        ("rust", None, 'fn f() {\n    let s = "\n{matches} matches\n";\n}\n'),
-        ("rust", None, 'fn f() {\n    let s = &b"\\\n# Test\n";\n}\n'),
-        # JSX in a .js file: plain lexing fails, and the JSX reading lexes completely.
-        ("javascript", ".js", "function A() {\n  return <>{children}</>;\n}\n"),
-        ("javascript", ".mjs", "const A = () => <>{x}</>;\n"),
-        ("javascript", ".js", "export const A = () => <p>match src/*.js files</p>;\n"),
-        # Plain JavaScript is unchanged by the JSX reading.
-        ("javascript", ".js", "if (a < b && c > d) { x = 1; }\n"),
+        "<>{createReactAgent({})}</>",
+        "<p>match src/*.js files {createReactAgent({})}</p>",
+        "<div><p>src/*.js and createReactAgent(fake)</p>{createReactAgent({})}</div>",
     ],
 )
-def test_constructs_the_language_allows_do_not_make_lexing_incomplete(
-    language: str, dialect: str | None, text: str
-) -> None:
-    assert noncode_ranges(text, language, dialect)[1] is False
+def test_jsx_in_javascript_masks_text_and_preserves_expressions(dialect: str, component: str) -> None:
+    source = f"const View = () => {component};\nconst agent = createReactAgent(real);\n"
+    spans, ambiguous = noncode_ranges(source, "javascript", dialect)
+    assert not ambiguous
+    for executable in ("createReactAgent({})", "createReactAgent(real)"):
+        assert not any(start <= source.index(executable) < end for start, end in spans)
+    if "createReactAgent(fake)" in source:
+        assert any(start <= source.index("createReactAgent(fake)") < end for start, end in spans)
+
+
+@pytest.mark.parametrize("dialect", [".ts", ".mts", ".cts", None])
+def test_implicit_jsx_does_not_apply_to_typescript_or_unspecified_dialect(dialect: str | None) -> None:
+    assert noncode_ranges("const View = () => <p>match src/*.js files</p>;\n", "javascript", dialect)[1]
+
+
+@pytest.mark.parametrize("dialect", [".ts", ".mts", ".cts"])
+def test_typescript_generics_and_type_assertions_keep_executable_code_visible(dialect: str) -> None:
+    source = (
+        "const identity = <T>(value: T): T => value;\n"
+        "const agent = <Agent>createReactAgent({});\n"
+        "const constrained = <T extends object>(value: T) => createReactAgent(value);\n"
+    )
+    spans, ambiguous = noncode_ranges(source, "javascript", dialect)
+    assert not ambiguous
+    assert spans == []
 
 
 @pytest.mark.parametrize(
-    ("language", "dialect", "text"),
+    ("language", "dialect", "source"),
     [
-        ("rust", None, 'fn f() {\n    let s = "abc\n}\n'),
+        ("rust", ".rs", 'fn main() { let s = "abc\nAgentBuilder::new(fake);\n'),
+        ("rust", ".rs", 'fn main() { let s = b"\\\nabc\nAgentBuilder::new(fake);\n'),
         ("javascript", ".js", "const s = `abc\nconst t = 1;\n"),
-        ("javascript", ".js", "/* open\nconst t = 1;\n"),
+        ("javascript", ".mjs", "/* open\nconst t = 1;\n"),
+        ("javascript", ".cjs", "const A = () => <><p>src/*.js files</p>;\n"),
+        ("javascript", ".js", "const A = () => <p>src/*.js files</div>;\n"),
+        ("javascript", ".js", "const A = () => <p>src/*.js files</p>;\nconst s = `open\n"),
+        ("javascript", ".js", "const A = () => <p>src/*.js files</p>;\nawait / 2;\n"),
+        ("ruby", ".rb", "docs = <<DOC\n#{AiServices.builder(example)}\nDOC\n"),
     ],
 )
-def test_genuinely_unterminated_literals_stay_incomplete(
-    language: str, dialect: str | None, text: str
+def test_ambiguous_or_unterminated_source_stays_incomplete(
+    language: str, dialect: str, source: str, tmp_path: Path, run_connector
 ) -> None:
-    assert noncode_ranges(text, language, dialect)[1] is True
-
-
-def test_ruby_heredoc_interpolation_stays_incomplete_and_masked() -> None:
-    # Interpolated Ruby is not scanned as code: the scanner's matchers are not Ruby-aware, so a closed
-    # interpolation such as #{AiServices.builder(x)} would report a Java framework in a Ruby file.
-    text = "docs = <<DOC\n#{AiServices.builder(example)}\nDOC\n"
-    spans, ambiguous = noncode_ranges(text, "ruby")
-    index = text.index("AiServices")
-    assert ambiguous is True and any(start <= index < end for start, end in spans)
-
-
-def test_typescript_is_never_read_as_jsx() -> None:
-    # The same text is complete as JSX in a .js file, but a .ts file has no JSX reading: it stays incomplete.
-    text = "export const A = () => <p>match src/*.js files</p>;\n"
-    assert noncode_ranges(text, "javascript", ".ts")[1] is True
-
-
-def test_rust_multiline_string_keeps_the_scan_complete(tmp_path: Path, run_connector) -> None:
-    (tmp_path / "main.rs").write_text('fn main() {\n    println!("\n{x}\n");\n}\n', encoding="utf-8")
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path))
-    assert not ctx.stats.incomplete and not ctx.stats.errors
-
-
-def test_jsx_in_a_js_file_keeps_the_scan_complete(tmp_path: Path, run_connector) -> None:
-    (tmp_path / "App.js").write_text("export function App({ children }) {\n  return <>{children}</>;\n}\n")
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path))
-    assert not ctx.stats.incomplete and not ctx.stats.errors
-
-
-def test_unterminated_rust_string_still_marks_the_scan_incomplete(tmp_path: Path, run_connector) -> None:
-    (tmp_path / "main.rs").write_text('fn main() {\n    let s = "abc\n}\n', encoding="utf-8")
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert noncode_ranges(source, language, dialect)[1]
+    (tmp_path / f"sample{dialect}").write_text(source, encoding="utf-8")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
+    assert any("incomplete source lexical analysis" in error for error in ctx.stats.errors)
+
+
+@pytest.mark.parametrize(
+    ("filename", "framework"),
+    [("multiline.rs", "framework.rig"), ("Component.js", "framework.langgraph")],
+)
+def test_offline_source_fixture_keeps_real_agent_and_excludes_literal_examples(
+    filename: str, framework: str, tmp_path: Path, fixtures: Path, run_connector
+) -> None:
+    shutil.copyfile(fixtures / "source_lexer" / filename, tmp_path / filename)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    agents = [
+        finding for finding in findings if finding.kind == Kind.AGENT and framework in finding.frameworks
+    ]
+    assert len(agents) == 1
+    code_locations = [
+        evidence.location for evidence in agents[0].evidence if evidence.signal.startswith("code:")
+    ]
+    assert f"{filename}:8" in code_locations
+    # The Rust signature also recognizes AgentBuilder in the import on line 1.
+    assert set(code_locations) <= {f"{filename}:1", f"{filename}:8"}

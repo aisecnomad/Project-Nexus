@@ -10,7 +10,7 @@ from rich.table import Table
 from rich.text import Text
 
 from shadowscan.models import Finding, ScanResult
-from shadowscan.reporters._publication import publication_stats, without_connector_prefix
+from shadowscan.reporters._publication import has_inventory, publication_stats, without_connector_prefix
 from shadowscan.utils.output import terminal_text
 
 _LEVEL_STYLE = {
@@ -45,7 +45,7 @@ def _header(result: ScanResult) -> Text:
     if not result.complete:
         header.append("INCOMPLETE SCAN  •  ", style="bold red")
     header.append(f"{s['total']} findings", style="bold")
-    if result.inventory_size:
+    if has_inventory(result):
         header.append(f"  •  {s['shadow']} shadow", style="bold red")
         header.append(f" (inventory: {result.inventory_size} registered agents)", style="dim")
     header.append("  •  ")
@@ -104,7 +104,8 @@ def print_table(
 
     table = Table(show_lines=True, expand=True, header_style="bold", pad_edge=False)
     table.add_column("Risk", no_wrap=True, min_width=13)
-    if result.inventory_size:
+    show_shadow = has_inventory(result)
+    if show_shadow:
         table.add_column("Shadow", no_wrap=True, min_width=7)
     table.add_column("Surface", no_wrap=True, min_width=8)
     table.add_column("Kind", no_wrap=True, min_width=12, overflow="fold")
@@ -116,7 +117,7 @@ def print_table(
     for f in rows:
         tech = ", ".join(t.split(".", 1)[-1] for t in (f.frameworks + f.model_providers)[:5])
         cells: list[RenderableType] = [_level(f)]
-        if result.inventory_size:
+        if show_shadow:
             if f.shadow:
                 cells.append(Text("SHADOW", style="bold red"))
             else:
