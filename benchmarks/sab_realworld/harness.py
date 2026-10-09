@@ -105,6 +105,10 @@ def _materialize(case: RealWorldCase, root: Path) -> None:
         target.write_text(content, encoding="utf-8")
 
 
+class IncompleteScanError(RuntimeError):
+    """The connector finished without complete coverage of the case."""
+
+
 def _scan(case: RealWorldCase, root: Path, index: Any) -> dict[str, Any]:
     ctx = ConnectorContext(
         config={
@@ -119,6 +123,11 @@ def _scan(case: RealWorldCase, root: Path, index: Any) -> dict[str, Any]:
     started = time.perf_counter()
     findings = FilesystemConnector(ctx).run()
     elapsed = time.perf_counter() - started
+    # The connector records failures instead of raising. A scan that did not
+    # finish is not an answer: an empty incomplete scan must never score as a
+    # correct negative, so it becomes an error row.
+    if ctx.stats.incomplete or ctx.stats.errors or ctx.stats.skipped:
+        raise IncompleteScanError("scan incomplete: " + "; ".join(ctx.stats.errors[:3]))
     detected = len(findings) > 0
     agentic = any(
         f.kind.value in {"agent", "mcp-server", "agent-config", "bot-app", "workflow"}
@@ -424,7 +433,7 @@ def render_report(summary: dict[str, Any], manifest: dict[str, Any]) -> str:
     lines.append(f"- **Families**: {len(summary['by_family'])}")
     lines.append(f"- **Timestamp**: {manifest['timestamp']}")
     lines.append(f"- **Python**: {manifest['python']}")
-    lines.append(f"- **Errors**: {summary['error_count']}")
+    lines.append(f"- **Errors** (incomplete or failed scans, excluded from the metrics): {summary['error_count']}")
     lines.append("")
 
     o = summary["overall"]
@@ -590,13 +599,13 @@ def main() -> int:
     print(f"Cases: {o['n']}  F1: {o['f1']}  MCC: {o['mcc']}  "
           f"TP: {o['tp']} FP: {o['fp']} FN: {o['fn']} TN: {o['tn']}")
     if summary["error_count"]:
-        print(f"Errors: {summary['error_count']}")
+        print(f"Errors: {summary['error_count']} (excluded from the metrics above)")
 
     for surface, m in sorted(summary["by_surface"].items()):
         print(f"  [{surface}] F1: {m['f1']}  N: {m['n']}")
     print(f"  Best-surface F1: {summary['best_surface_f1']} ({summary['best_surface_name']})")
     print(f"  Surface-normalized F1: {summary['surface_normalized_f1']}")
-    return 0
+    return 1 if summary["error_count"] else 0
 
 
 if __name__ == "__main__":

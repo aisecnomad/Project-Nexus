@@ -16,9 +16,9 @@
 - **Surfaces**: endpoint, repo
 - **Categories**: 9
 - **Families**: 130
-- **Timestamp**: 2026-10-09T17:22:59.830685+00:00
+- **Timestamp**: 2026-10-09T19:07:55.337180+00:00
 - **Python**: 3.13.16
-- **Errors**: 0
+- **Errors** (incomplete or failed scans, excluded from the metrics): 0
 
 ## Overall Results
 
