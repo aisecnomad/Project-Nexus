@@ -86,7 +86,9 @@ def secret_pattern_throughput(signatures: Sequence[Signature]) -> list[str]:
     A credential pattern that cannot sweep the keyword-dense worst-case corpus
     within that allowance would time out on real megabyte files and fail
     scans closed, so it must be rewritten rather than shipped. Timing takes
-    the best of three attempts, which discards scheduler contention.
+    the CPU time of the matching thread, best of three attempts, so wall time
+    lost to scheduler contention on a shared runner never counts against a
+    pattern. The wall-clock timeout only stops a pathological pattern.
     """
     from shadowscan.signatures.matcher import LINEAR_SECONDS_PER_MILLION_CHARS
 
@@ -101,7 +103,7 @@ def secret_pattern_throughput(signatures: Sequence[Signature]) -> list[str]:
             for pattern, compiled in zip(signal.patterns, signal.bounded_compiled, strict=True):
                 best = None
                 for _ in range(_THROUGHPUT_ATTEMPTS):
-                    started = time.perf_counter()
+                    started = time.thread_time()
                     try:
                         # Bound a pathological pattern instead of hanging the
                         # validator; a timeout is far beyond the allowance.
@@ -110,7 +112,7 @@ def secret_pattern_throughput(signatures: Sequence[Signature]) -> list[str]:
                     except TimeoutError:
                         best = 4 * allowance
                         break
-                    elapsed = time.perf_counter() - started
+                    elapsed = time.thread_time() - started
                     best = elapsed if best is None or elapsed < best else best
                 if best is not None and best > allowance:
                     problems.append(
