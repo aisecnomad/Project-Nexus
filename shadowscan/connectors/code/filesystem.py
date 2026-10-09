@@ -2601,7 +2601,9 @@ class FilesystemConnector(BaseConnector):
             # domain_text keeps the original line structure the rule-list filter reads.
             skip = None if file.ext in SOURCE_EXTENSIONS else HostLineFilter(content_text)
             domain_text, ua_text = _crawler_ua_text(content_text)
-            for m in self.index.match_domains_in_text(domain_text, skip_line=skip):
+            for m in self.index.match_domains_in_text(
+                domain_text, skip_line=skip, source=file.ext in SOURCE_EXTENSIONS
+            ):
                 self._record_content(file, m, self._file_excerpt(file, m.line))
             if ua_text:
                 ua_hosts = [str(m.value) for m in self.index.match_domains_in_text(ua_text)]

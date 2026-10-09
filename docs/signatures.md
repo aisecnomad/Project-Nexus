@@ -278,7 +278,11 @@ and tests, which call and test the products they detect.
   A `re:` value must not match a dotted identifier: end it in a list of top-level domains or a fixed vendor
   domain, because the tokenizer reads every `a.b.c` word of a source file as a host
   (`re:^mcp\.[a-z0-9-]+\.(?:com|dev|app|ai|io|...)$`, not `\.[a-z]+$`), and leave out two-letter codes
-  that are also common file extensions or property names (`py`, `md`, `rs`, `id`, `in`). A host on a line of a hosts file,
+  that are also common file extensions or property names (`py`, `md`, `rs`, `id`, `in`) and words that
+  name properties or methods (`info`, `page`, `live`). For `protocol.mcp` the matcher also refuses a
+  candidate followed by a call, an index, an underscore or an assignment (`mcp.logger.info("x")`), and in a
+  source file one that does not come right after a quote, a URL's `//` or a user name's `@` and has no
+  `/mcp` or `/sse` path after it (`y = mcp.result.no`). A host on a line of a hosts file,
   ad-block list, resolver configuration or proxy rule list is routed or blocked, not used, and never matches.
   `gateway.logs` still treats Cloudflare Workers AI inference paths (`/accounts/<id>/ai/run/`,
   `/accounts/<id>/ai/v1/`) as LLM traffic on any host.

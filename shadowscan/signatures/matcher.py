@@ -1289,18 +1289,20 @@ class SignatureIndex:
         return out
 
     def match_domains_in_text(
-        self, text: str, *, skip_line: Callable[[str], bool] | None = None
+        self, text: str, *, skip_line: Callable[[str], bool] | None = None, source: bool = False
     ) -> list[Match]:
         """Find signature hosts in ``text``; ``skip_line`` names the lines whose hosts do not count.
 
         A line the predicate accepts (a hosts-file or proxy-rule entry) is passed over, and the same
-        host still counts where it occurs on another line.
+        host still counts where it occurs on another line. ``source`` says ``text`` is program source,
+        where a host is written in a string or a URL: there an MCP host candidate that does not start
+        one (`y = mcp.result.no`) is an object's property, not a host.
         """
         with self._input_budget():
-            return self._match_domains_in_text_with_budget(text, skip_line)
+            return self._match_domains_in_text_with_budget(text, skip_line, source)
 
     def _match_domains_in_text_with_budget(
-        self, text: str, skip_line: Callable[[str], bool] | None = None
+        self, text: str, skip_line: Callable[[str], bool] | None = None, source: bool = False
     ) -> list[Match]:
         out: list[Match] = []
         seen: set[str] = set()
@@ -1355,6 +1357,20 @@ class SignatureIndex:
                 # like mcp.zapier.com) is MCP only on an MCP path.
                 matches = [match for match in matches if (match.signature_id == _MCP_SIGNATURE) == mcp_path]
                 if not matches:
+                    continue
+            if any(match.signature_id == _MCP_SIGNATURE for match in matches) and (
+                _CODE_AFTER_NAME_RX.match(text, m.end())
+                or (
+                    source
+                    and not mcp_path
+                    and not _STRING_OR_URL_BEFORE.search(text, max(0, m.start() - 2), m.start())
+                )
+            ):
+                # `mcp.logger.info("x")`, `mcp.client.is_connected()`, `mcp.session.page = 2` and, in
+                # source, `y = mcp.result.no` name an object called mcp in code, not an MCP host.
+                matches = [match for match in matches if match.signature_id != _MCP_SIGNATURE]
+                if not matches:
+                    seen.discard(key)  # the same name may still be a host elsewhere
                     continue
             if newlines is None:
                 newlines = [newline.start() for newline in re.finditer("\n", text)]
@@ -1418,6 +1434,12 @@ _STATEMENT_CACHE_MAX_CHARS = 4 * 1024 * 1024
 # MCP server at api.githubcopilot.com/mcp/ beside the Copilot API itself.
 _MCP_PATH_RX = re.compile(r"(?::\d{1,5})?/(?:mcp|sse)(?=[/?#\"'\s)\]]|$)", re.IGNORECASE)
 _MCP_SIGNATURE = "protocol.mcp"
+# What follows a dotted name in code and never a host: a call or an index, the rest of a name the host
+# tokenizer stops at (an underscore or a non-ASCII letter), or an assignment or comparison.
+_CODE_AFTER_NAME_RX = re.compile(r"[(\[_]|[^\W\d_]|[ \t]*=")
+# What a host in program source comes right after: a quote, a URL's "//", or the "@" after its user name
+# (not a decorator's "@").
+_STRING_OR_URL_BEFORE = re.compile(r"(?:[\"'`]|//|\w@)\Z")
 # Underscores delimit disjoint alphanumeric groups; neither tokenizer has nested
 # ambiguous repetition. Both operate under the shared input deadline.
 _ENV_RX = re.compile(r"\b[A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+){1,6}\b")

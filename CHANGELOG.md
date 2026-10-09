@@ -358,8 +358,14 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
 - Changed: the `mcp.<vendor>.<tld>` host form of `protocol.mcp` matches
   country-code domains again (except two-letter codes that are common file
   extensions or property names, such as `py`, `md`, `rs`, `pl`, `ps`, `id` and
-  `in`) and more generic ones (`page`, `live`, `info`, `biz`, `pro`, `space`
-  and others), so `mcp.example.de` is an MCP endpoint again.
+  `in`) and more generic ones (`biz`, `digital`, `club` and others, but not
+  words that name properties or methods such as `info`, `page` or `live`), so
+  `mcp.example.de` is an MCP endpoint again. A `protocol.mcp` host candidate
+  followed by a call, an index, an underscore or an assignment
+  (`MCP.LOGGER.info("x")`, `mcp.client.is_connected()`, `mcp.session.page = 2`)
+  is code, not a host, and in a source file a candidate counts only where a
+  string or a URL starts with it (`"mcp.vendor.de"`, `https://mcp.vendor.de`,
+  or followed by an `/mcp` or `/sse` path), so `y = mcp.result.no` is not one.
 
 ## 0.1.2 — 2026-10-08
 

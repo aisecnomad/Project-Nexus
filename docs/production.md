@@ -1086,9 +1086,14 @@ is not part of its identity.
 - **Less false evidence.** The `mcp.<vendor>.<tld>` host form of `protocol.mcp`
   now ends in a country-code domain (except two-letter codes that are common file
   extensions or property names, such as `py`, `md`, `rs`, `pl`, `ps`, `id` and `in`)
-  or one of a list of generic top-level domains (`host` is left out), so a dotted
-  identifier such as the translation key `mcp.translator.translatekey` is no longer
-  an MCP endpoint while `mcp.example.de` still is. A
+  or one of a list of generic top-level domains (`host`, `info`, `page`, `live` and
+  other property or method names are left out), so a dotted identifier such as the
+  translation key `mcp.translator.translatekey` is no longer an MCP endpoint while
+  `mcp.example.de` still is. A `protocol.mcp` candidate followed by a call, an index,
+  an underscore or an assignment (`MCP.LOGGER.info("x")`, `mcp.client.is_connected()`,
+  `mcp.session.page = 2`) is code, and in a source file a candidate counts only where
+  a string or a URL starts with it or an `/mcp` or `/sse` path follows it, so the
+  property read `y = mcp.result.no` is not an endpoint. A
   host on a line of a hosts file, ad-block list, resolver configuration or
   Clash/Surge-style rule list (`0.0.0.0 chatgpt.com`, `||api.openai.com^`,
   `address=/api.openai.com/0.0.0.0`, `DOMAIN-SUFFIX,openai.com,PROXY`) routes or
