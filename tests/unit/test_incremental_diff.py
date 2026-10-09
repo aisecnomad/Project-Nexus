@@ -37,6 +37,11 @@ def _init_repo(root: Path) -> None:
     subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True, env=env)
     _git(root, "config", "user.email", "test@example.test", env=env)
     _git(root, "config", "user.name", "Test", env=env)
+    # Git 2.47+ runs auto-maintenance detached after a commit; its lock file in
+    # .git/objects can vanish mid-walk and make the metadata preflight refuse
+    # the repository. The other git-metadata tests disable it the same way.
+    _git(root, "config", "maintenance.auto", "false", env=env)
+    _git(root, "config", "gc.auto", "0", env=env)
     (root / "requirements.txt").write_text("langchain\n")
     (root / "app.py").write_text("import langchain\n")
     _git(root, "add", ".", env=env)
