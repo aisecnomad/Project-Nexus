@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from shadowscan.connectors.code.filesystem import DEFAULT_OVERSIZE_SKIP_GLOBS, FilesystemConnector
 from shadowscan.models import Kind
 
 OPENAI_LIKE_KEY = "sk-proj-" + "Xk29fLq8Zr1mNvB4" + "tYc7Hs0pWe3Ja6Ud9GiKo5Rb2Ex"
@@ -278,6 +279,14 @@ def test_oversize_change_log_names_never_hide_read_content(run_connector, tmp_pa
     assert not findings
     assert stats.incomplete and not stats.errors
     assert [w for w in stats.warnings if rel in w and "coverage incomplete" in w]
+
+
+def test_change_logs_are_not_documented_as_a_default_oversize_skip():
+    # The connector reference is generated from this description: naming change
+    # logs there told operators an oversize CHANGELOG.md is skipped with exit 0.
+    prefixes = ("changelog", "changes", "history")
+    assert not [glob for glob in DEFAULT_OVERSIZE_SKIP_GLOBS if glob.lower().startswith(prefixes)]
+    assert "changelog" not in FilesystemConnector.config_keys["oversize_skip_globs"].lower()
 
 
 @pytest.mark.parametrize("rel", ["README.md", "docs/setup.txt", "tests/cassettes/login.yaml"])

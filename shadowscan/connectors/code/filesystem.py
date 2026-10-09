@@ -1774,8 +1774,8 @@ class FilesystemConnector(BaseConnector):
         ),
         "oversize_skip_globs": (
             "case-insensitive file name globs; a file over max_file_size matching one is skipped with a "
-            "warning even under strict_coverage (default: lockfiles, changelogs, logs, HAR and snapshot "
-            "files, minified bundles, source maps, images, fonts, archives and compiled artifacts)"
+            "warning even under strict_coverage (default: lockfiles, logs, HAR and snapshot files, "
+            "minified bundles, source maps, images, fonts, archives and compiled artifacts)"
         ),
         "max_files": "stop after this many files and symbolic links (default 100000)",
         "max_entries": (
