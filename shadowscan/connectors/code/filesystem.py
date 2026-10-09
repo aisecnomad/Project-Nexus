@@ -2315,7 +2315,13 @@ class FilesystemConnector(BaseConnector):
                 try:
                     if path.is_symlink():
                         if not (_analyzed_by_name(name) or self.index.match_file(alias_rel)):
-                            continue  # nothing is read at that path, link or copy (an image)
+                            # Nothing is read at that path, link or copy (an image), as long
+                            # as the link stays in the root, as _skip_link requires anywhere.
+                            nested = _resolved_link_target(path, resolved_root)
+                            if (nested is not None and nested.is_file()) or _dangling_inside(
+                                path, resolved_root
+                            ):
+                                continue
                         return False
                     info = path.stat()
                 except OSError:

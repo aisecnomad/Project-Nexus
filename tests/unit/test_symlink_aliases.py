@@ -702,3 +702,15 @@ def test_random_link_layouts_report_what_their_copies_report(tmp_path: Path, sam
     for link, target in links:
         _link(root, link, target)
     same_as_copy(root)
+
+
+def test_unread_link_below_a_linked_directory_leaving_the_root_is_a_gap(
+    tmp_path: Path, run_connector
+) -> None:
+    root = tmp_path / "repo"
+    _write(root, {"node_modules/pkg/a.py": "import openai\n"})
+    _write(tmp_path, {"outside/logo.png": "png"})
+    _link(root, "node_modules/pkg/logo.png", "../../../outside/logo.png")
+    _link(root, "lib", "node_modules/pkg")
+    _, ctx = _scan(run_connector, root)
+    assert ctx.stats.incomplete

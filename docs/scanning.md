@@ -26,8 +26,8 @@ that are never silent:
   warning; it marks no project. Every other link makes the scan incomplete (exit code 3):
   links that leave the root or do not resolve, a link whose target cannot be
   inspected, a cycle (a link inside its own target), an unreadable directory, a
-  link that the scanner would read or a `.gitmodules` file below a linked
-  directory, and links beyond the 20,000-entry budget.
+  `.gitmodules` file below a linked directory or a link there that the scanner
+  would read or that leaves the root, and links beyond the 20,000-entry budget.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the

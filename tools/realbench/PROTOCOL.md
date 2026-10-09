@@ -551,6 +551,17 @@ MCC at least 0.75; T1 specificity at least 0.97.
    copy of the ShadowScan rows with `agentic` replaced by it. Other tools'
    rows are unchanged.
 
+5. **Code freeze.** ShadowScan's code is frozen at the commit that adds this
+   entry; each holdout result file's `run-manifest.json` names it as
+   `shadowscan_commit`. Before the freeze, five independent AI code reviews
+   and a final short one examined the changes; every defect they reproduced
+   was fixed with a regression test, and their reports were summarized in
+   the commit messages. They are AI reviews, not independent human review.
+   Development, including two in-sample smoke runs on the original corpus,
+   used only the original corpus and synthetic repositories; no holdout
+   checkout was opened. The freeze came later than planned because the
+   symbolic-link handling was redesigned during review (see `CHANGELOG.md`).
+
 Label summary at the holdout freeze: 67 `agent`, 28 `llm` and 45 `none`.
 10 of the `none` are assistant-only, which leaves 130 repositories in the
 primary analysis.

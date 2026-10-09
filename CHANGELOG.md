@@ -94,8 +94,9 @@ second provider, test fixtures and dangling links.
   nothing where it points; and excluded link names, Git store parts and
   `CODEOWNERS` that are in-root links are handled as copies. A seeded test
   compares 40 random link layouts with their copies. Below a directory link,
-  a link whose name is never read (an image) and carries no file-name signal
-  hides nothing, as the walk skips it; any other link there stays a gap.
+  a link whose name is never read (an image), that carries no file-name signal
+  and that points inside the root hides nothing, as the walk skips it; any
+  other link there stays a gap.
 
 ### October 8 benchmark remediation: oversize and binary content
 
