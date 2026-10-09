@@ -20,12 +20,13 @@ and uncorroborated lexical code evidence is capped at 0.6.
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 import threading
 import weakref
 from bisect import bisect_right
 from collections import ChainMap
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -243,9 +244,12 @@ class _PythonBindings(ast.NodeVisitor):
         text: str,
         relevant: Callable[[_Binding], bool] | None = None,
         resolve_import: ImportResolver | None = None,
+        equivalent: Callable[[_Binding, _Binding], bool] | None = None,
     ):
         self.text = text
         self.resolve_import = resolve_import
+        # Whether two import paths name one SDK symbol (a package re-export).
+        self.equivalent = equivalent
         # Only calls into modules that some signature describes can produce
         # evidence. Counting every bound call (``pytest.raises``, ``requests.get``)
         # against MAX_BOUND_CALLS made ordinary large files fail as incomplete.
@@ -261,6 +265,10 @@ class _PythonBindings(ast.NodeVisitor):
         self._loop_transfers: list[_LoopTransfers] = []
         self.decorator_calls: set[int] = set()
         self._visited = 0
+        # Where the module binds each name, recorded once from the module node.
+        # A star import may bind any name; None means no module was visited.
+        self._binding_sites: dict[str, list[tuple[int, int]]] | None = None
+        self._star_import = True
 
     def visit(self, node: ast.AST) -> Any:
         self._visited += 1
@@ -313,20 +321,37 @@ class _PythonBindings(ast.NodeVisitor):
 
     @staticmethod
     def _join_outcomes(
-        before: MutableMapping[str, _Binding | None], outcomes: Sequence[Mapping[str, _Binding | None]]
+        before: MutableMapping[str, _Binding | None],
+        outcomes: Sequence[Mapping[str, _Binding | None]],
+        *,
+        unbound: Collection[str] = frozenset(),
+        equivalent: Callable[[_Binding, _Binding], bool] | None = None,
     ) -> None:
-        """Merge explicit branch writes without a names-by-branches cross product."""
+        """Merge explicit branch writes without a names-by-branches cross product.
+
+        Names in ``unbound`` had no binding before the branches. A branch that
+        omits one leaves it unbound, where calling it raises NameError instead
+        of constructing another object, so that branch agrees with any binding.
+        """
         observed: dict[str, tuple[_Binding | None, int, bool]] = {}
         for outcome in outcomes:
             for name, value in outcome.items():
                 candidate, count, agrees = observed.get(name, (value, 0, True))
-                observed[name] = (candidate, count + 1, agrees and value == candidate)
+                same = value == candidate or (
+                    equivalent is not None
+                    and value is not None
+                    and candidate is not None
+                    and equivalent(value, candidate)
+                )
+                observed[name] = (candidate, count + 1, agrees and same)
         for name, (candidate, count, agrees) in observed.items():
             # A branch without a write leaves the prior binding intact. A new
             # binding therefore requires agreement in every branch, while an
             # unchanged one can also agree with branches that omit the name.
             before[name] = (
-                candidate if agrees and (count == len(outcomes) or candidate == before.get(name)) else None
+                candidate
+                if agrees and (count == len(outcomes) or name in unbound or candidate == before.get(name))
+                else None
             )
 
     @staticmethod
@@ -359,6 +384,71 @@ class _PythonBindings(ast.NodeVisitor):
         if node.cause is not None:
             self.visit(node.cause)
         return True
+
+    def visit_Module(self, node: ast.Module) -> None:
+        sites: dict[str, list[tuple[int, int]]] = {}
+        star = False
+        for item in ast.walk(node):
+            names: list[str] = []
+            if isinstance(item, ast.Name) and isinstance(item.ctx, (ast.Store, ast.Del)):
+                names = [item.id]
+            elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names = [item.name]
+            elif isinstance(item, (ast.Import, ast.ImportFrom)):
+                star = star or any(alias.name == "*" for alias in item.names)
+                names = [alias.asname or alias.name.split(".")[0] for alias in item.names]
+            elif isinstance(item, ast.arg):
+                names = [item.arg]
+            elif isinstance(item, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and item.name:
+                names = [item.name]
+            elif isinstance(item, ast.MatchMapping) and item.rest:
+                names = [item.rest]
+            elif isinstance(item, (ast.Global, ast.Nonlocal)):
+                names = list(item.names)
+            for name in names:
+                sites.setdefault(name, []).append((item.lineno, item.col_offset))  # type: ignore[attr-defined]
+        self._binding_sites, self._star_import = sites, star
+        self.generic_visit(node)
+
+    def _bound_only_within(self, name: str, node: ast.stmt) -> bool:
+        """Whether ``node`` holds every binding of ``name``: before it, the name is unbound.
+
+        Using it then raises NameError (not a builtin or star-imported name).
+        Any other binding anywhere in the module, including a later or looped
+        one, keeps the name's earlier state uncertain.
+        """
+        if (
+            self._binding_sites is None
+            or self._star_import
+            or name in vars(builtins)
+            or node.end_lineno is None
+            or node.end_col_offset is None
+        ):
+            return False
+        start, end = (node.lineno, node.col_offset), (node.end_lineno, node.end_col_offset)
+        return all(start <= site <= end for site in self._binding_sites.get(name, ()))
+
+    def visit_Expr(self, node: ast.Expr) -> bool:
+        self.visit(node.value)
+        # sys.exit() raises SystemExit and os._exit() ends the process; like a
+        # raise, neither continues the suite. Only import-bound functions and
+        # the site exit()/quit() builtins qualify, never a module's own binding.
+        if not isinstance(node.value, ast.Call):
+            return False
+        function = node.value.func
+        binding = self._resolve(function)
+        if binding is not None:
+            return not binding.constructed and (binding.module, binding.symbol) in {
+                ("sys", "exit"),
+                ("os", "_exit"),
+            }
+        return (
+            isinstance(function, ast.Name)
+            and function.id in {"exit", "quit"}
+            and self._binding_sites is not None
+            and not self._star_import
+            and function.id not in self._binding_sites
+        )
 
     def visit_Break(self, node: ast.Break) -> bool:
         self._record_loop_transfer(is_break=True)
@@ -777,7 +867,11 @@ class _PythonBindings(ast.NodeVisitor):
         may_raise = self._suite_may_raise(node.body)
         # A handler may start before any body assignment or after a partial
         # statement. No body-written name has certain provenance at entry.
-        exceptional: dict[str, _Binding | None] = dict.fromkeys(body_changes)
+        # A name only this statement binds is either bound by the body or
+        # still unbound there (a guarded optional import): it stays absent at
+        # handler entry and agrees with the bound paths when left alone.
+        unbound = {name for name in body_changes if self._bound_only_within(name, node)}
+        exceptional: dict[str, _Binding | None] = {name: None for name in body_changes if name not in unbound}
         outcomes: list[Mapping[str, _Binding | None]] = []
         continuing: list[Mapping[str, _Binding | None]] = []
         normal_stopped = body_stopped
@@ -819,7 +913,7 @@ class _PythonBindings(ast.NodeVisitor):
         self.scopes[-1] = before
         joined: dict[str, _Binding | None] = {}
         joined_scope = ChainMap(joined, before)
-        self._join_outcomes(joined_scope, continuing or outcomes)
+        self._join_outcomes(joined_scope, continuing or outcomes, unbound=unbound, equivalent=self.equivalent)
         final_stopped = False
         if node.finalbody:
             # finally runs on normal, handled, transferred and unhandled paths.
@@ -1137,6 +1231,7 @@ def _python_bindings(
     max_nodes: int | None = None,
     bindable: Callable[[ast.AST], bool] | None = None,
     resolve_import: ImportResolver | None = None,
+    equivalent: Callable[[_Binding, _Binding], bool] | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     if bindable is not None and not bindable(tree):
@@ -1147,7 +1242,7 @@ def _python_bindings(
     for count, _ in enumerate(ast.walk(tree)):
         if count >= limit:
             raise SourceBudgetExceeded("source binding AST limit exceeded")
-    visitor = _PythonBindings(text, relevant, resolve_import)
+    visitor = _PythonBindings(text, relevant, resolve_import, equivalent)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
@@ -1498,6 +1593,20 @@ class _ModuleMatches:
         """Whether calls through ``binding`` can carry evidence: its module resolves to a signature."""
         return bool(self(binding))
 
+    def equivalent(self, first: _Binding, second: _Binding) -> bool:
+        """Whether two import paths of one package name the same symbol of the same signatures.
+
+        ``from crewai import Agent`` and ``from crewai.agent import Agent`` are
+        alternatives for one class; another package or symbol never is.
+        """
+        return (
+            first.symbol == second.symbol
+            and first.constructed == second.constructed
+            and first.module.split(".")[0] == second.module.split(".")[0]
+            and bool(signatures := {match.signature_id for match in self(first)})
+            and signatures == {match.signature_id for match in self(second)}
+        )
+
     def _lookup(self, binding: _Binding) -> list[Match]:
         index, language = self.index, self.language
         if language == "python":
@@ -1598,6 +1707,7 @@ def bound_source_matches(
                 # The single-file proof cannot see a project-local export.
                 bindable=(lambda parsed: _python_bindable(index, parsed)) if resolve_import is None else None,
                 resolve_import=resolve_import,
+                equivalent=module_matches.equivalent,
             )
         else:
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)

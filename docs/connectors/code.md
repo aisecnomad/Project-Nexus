@@ -61,10 +61,18 @@ that code ran or that a deployment is autonomous.
 
 Python exception handlers and pattern-match alternatives join only bindings
 that agree across possible paths. A binding from the last visited alternative
-does not prove an agent construction. Literal unreachable alternatives can be
-excluded for supported shapes; scalar values assigned to names, computed
-subjects and uncertain control flow are not a general constant-propagation
-engine and remain conservative usage evidence.
+does not prove an agent construction. A guarded optional import
+(`try: from agents import Agent` / `except ImportError: pass`) keeps its
+binding when that try statement holds every binding of the name in the
+module: a handler that leaves the name unbound cannot construct another
+object. Handlers ending in `sys.exit()`, `os._exit()` or the `exit()`/`quit()`
+builtins do not continue, and alternative import paths of one package symbol
+(`crewai.Agent`, `crewai.agent.Agent`) agree. Any other binding of the name in
+the module (earlier, later, in a loop or through `global`), a handler
+rebinding, a star import or a same-named builtin keeps the name uncertain.
+Literal unreachable alternatives can be excluded for supported shapes; scalar
+values assigned to names, computed subjects and uncertain control flow are not
+a general constant-propagation engine and remain conservative usage evidence.
 Constructor and registered-tool coordinates follow Python's physical line
 endings, so separators inside string literals do not hide execution evidence.
 

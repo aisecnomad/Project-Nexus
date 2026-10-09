@@ -59,6 +59,10 @@ reports. Python `try` and `match` alternatives no longer transfer their last
 visited binding to another path. Supported literal unreachable alternatives
 remain excluded; uncertain branches retain usage evidence. A lower agent
 classification is not evidence that a deployed agent stopped executing.
+Guarded optional imports (`except ImportError: pass`, or a handler ending in
+`sys.exit()`) again keep their SDK binding, so rescans can restore agent
+classifications and tool-use capabilities that the first review correction
+lowered.
 Python literals containing control or Unicode separators no longer shift AST
 coordinates; rescans can restore registered-tool execution capabilities that
 were previously lost in either project or source inventory mode.

@@ -88,6 +88,12 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Source identity, guarded import and AWS command review fixes
 
+- Restore guarded optional imports after the try/except join correction: a
+  name only that try statement binds agrees with handlers that leave it
+  unbound, handlers ending in `sys.exit()`, `os._exit()`, `exit()` or `quit()`
+  do not continue, and alternative import paths of one package symbol agree.
+  Other bindings of the name in the module, handler rebinding, star imports
+  and same-named builtins stay uncertain.
 - Withhold `aws configure set` credential values after unlisted or newer global
   options (`--no-paginate`, `--cli-binary-format`), in other letter cases and
   for `aws.cmd`, across PowerShell and cmd continuations, with comments or
