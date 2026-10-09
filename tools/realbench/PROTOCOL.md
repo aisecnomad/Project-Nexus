@@ -631,4 +631,37 @@ adjusted:
 
 ### 14.5 Deviations
 
-None yet.
+1. **Late start of three B batches.** The session runs at most 20 subagents
+   at once, so B12–B14 started as A batches finished. They used the same
+   prompt, inputs and model, and could not see other labels; the access audit
+   below covers them.
+2. **One repository labelled in a separate B run.** B14's annotator stopped
+   on g014 (the model's safety classifier; the repository collects API keys)
+   and did not label it. A separate run, B15, received the same instructions
+   with g014 alone and a note that only model use is classified; it labelled
+   g014, in agreement with annotator A.
+3. **A repository whose content changed upstream.** g076's recorded URL now
+   holds a different project than its old name suggests. The clone comes from
+   that URL at the draw, and the label describes its files.
+4. **Lower search effort than in the first holdout.** The annotators made 773
+   tool calls in all: A 35–56 per batch of 14 and B 7–30 per batch of 10,
+   against A 56–92 and B 36–65 in the first holdout. B12 made 11 calls for 10
+   repositories. Agreement is still high (three-class κ 0.93, T1 κ 0.97, T2
+   κ 0.94, assistant flag κ 0.98, 7 disagreements), and the cited paths
+   overlap by 0.48 on average, less than in the first holdout (0.63), so the
+   two sides found evidence separately. Fewer searches can leave a miss both
+   sides share; the post-run adjudication of §9 reviews every repository
+   where a tool disagrees with a label.
+
+**Access audit** (`labels-holdout2/annotation-audit.json`). All 773 tool calls
+of the 25 annotator runs were scanned for access to the other side's files,
+other batches, the first holdout, ShadowScan's source, tool output,
+manifests and broad listings. It found no violations; the two raw hits name
+a file inside a checkout.
+
+**Adjudication.** The adjudicator decided the 7 disagreements
+(`labels-holdout2/adjudication-prerun.jsonl`).
+
+Label summary at the freeze: 62 `agent`, 28 `llm` and 50 `none`. 6 of the
+`none` are assistant-only, which leaves 134 repositories in the primary
+analysis.

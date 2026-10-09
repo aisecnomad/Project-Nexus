@@ -1,0 +1,131 @@
+{
+ "agreement": {
+  "assistant_artifacts": {
+   "agreement": 0.9929,
+   "kappa": 0.9821
+  },
+  "label": {
+   "agreement": 0.9571,
+   "kappa": 0.9328
+  },
+  "t1_genai": {
+   "agreement": 0.9857,
+   "kappa": 0.9692
+  },
+  "t2_agent": {
+   "agreement": 0.9714,
+   "kappa": 0.9419
+  }
+ },
+ "annotators": 25,
+ "b15_note": "B14's annotator stopped on g014 (safety classifier) without labelling it; a separate B run (B15) with the same instructions labelled g014 alone.",
+ "effort_note": "Annotators made fewer tool calls than in the first holdout (A 35-56 per 14 repositories, B 11-30 per 10; first holdout A 56-92, B 36-65). B12 made 11 calls for 10 repositories. Agreement stayed high and every disagreement was adjudicated, but lower search effort can leave a shared miss undetected; the post-run adjudication reviews every repository where a tool disagrees.",
+ "evidence_overlap_mean": 0.482,
+ "identical_evidence_sets": 26,
+ "method": "Each second-holdout annotator's tool calls (shell commands, file reads and searches) were scanned for paths of the other side's packets, labels or working directories, other batches' files on the same side, the first holdout's checkouts, packets and labels, the adjudication packets, ShadowScan's source, the synthetic benchmark, the manifests, adapters, the packet builder, draw logs, tool installs, probes, the first-run corpus, results, quarantine and the coordinator's scratch directory, and for listings or searches of a shared parent directory, of all of /home/user/rwbench or of a system root. The label validator command is exempt.",
+ "per_batch": {
+  "A01": {
+   "tool_calls": 43,
+   "violations": 0
+  },
+  "A02": {
+   "tool_calls": 45,
+   "violations": 0
+  },
+  "A03": {
+   "tool_calls": 39,
+   "violations": 0
+  },
+  "A04": {
+   "tool_calls": 56,
+   "violations": 0
+  },
+  "A05": {
+   "tool_calls": 40,
+   "violations": 0
+  },
+  "A06": {
+   "tool_calls": 35,
+   "violations": 0
+  },
+  "A07": {
+   "tool_calls": 47,
+   "violations": 0
+  },
+  "A08": {
+   "tool_calls": 43,
+   "violations": 0
+  },
+  "A09": {
+   "tool_calls": 51,
+   "violations": 0
+  },
+  "A10": {
+   "tool_calls": 53,
+   "violations": 0
+  },
+  "B01": {
+   "tool_calls": 23,
+   "violations": 0
+  },
+  "B02": {
+   "tool_calls": 22,
+   "violations": 0
+  },
+  "B03": {
+   "tool_calls": 28,
+   "violations": 0
+  },
+  "B04": {
+   "tool_calls": 24,
+   "violations": 0
+  },
+  "B05": {
+   "tool_calls": 22,
+   "violations": 0
+  },
+  "B06": {
+   "tool_calls": 15,
+   "violations": 0
+  },
+  "B07": {
+   "tool_calls": 26,
+   "violations": 0
+  },
+  "B08": {
+   "tool_calls": 30,
+   "violations": 0
+  },
+  "B09": {
+   "tool_calls": 20,
+   "violations": 0
+  },
+  "B10": {
+   "tool_calls": 24,
+   "violations": 0
+  },
+  "B11": {
+   "tool_calls": 19,
+   "violations": 0
+  },
+  "B12": {
+   "tool_calls": 11,
+   "violations": 0
+  },
+  "B13": {
+   "tool_calls": 27,
+   "violations": 0
+  },
+  "B14": {
+   "tool_calls": 23,
+   "violations": 0
+  },
+  "B15": {
+   "tool_calls": 7,
+   "violations": 0
+  }
+ },
+ "tool_calls": 773,
+ "violations": 0,
+ "violations_reviewed": "The 2 raw hits (A01) name engine/utils/provider_adapters.py inside the g005 checkout, not the benchmark's adapters.py; 0 real violations."
+}
