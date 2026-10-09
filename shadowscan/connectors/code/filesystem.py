@@ -455,25 +455,40 @@ def _analyzed_by_name(name: str) -> bool:
     )
 
 
-_UA_BOT_RX = re.compile(r"\bbot/\d", re.IGNORECASE)
+_QUOTED_VALUE_RX = re.compile(r""""(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*' """, re.VERBOSE)
 
 
-def _ua_string_context(line: str, host: str) -> bool:
-    """Whether a provider-domain mention sits inside a crawler user-agent string.
+def _crawler_ua_text(text: str) -> tuple[str, str]:
+    """Separate quoted crawler UA values from other text, preserving offsets.
 
     User-agent parsers and crawler lists quote strings such as
     ``Mozilla/5.0 (compatible; HuggingFace-Bot/1.0; +https://huggingface.co/)``;
     the domain there identifies the bot's operator, never use of the
-    provider. Markers are deliberately UA-specific so single-URL inputs
-    (MCP server URLs, agent-card endpoints) can never match.
+    provider. Only a complete quoted value with the crawler UA shape is
+    discounted. Other values on its line, and later uses of the same host,
+    must reach domain matching before the matcher deduplicates occurrences.
     """
-    lowered = line.lower()
-    if "mozilla/" in lowered or "compatible;" in lowered:
-        return True
-    host_lowered = host.lower()
-    if f"+https://{host_lowered}" in lowered or f"+http://{host_lowered}" in lowered:
-        return True
-    return bool(_UA_BOT_RX.search(lowered))
+    spans = []
+    for match in _QUOTED_VALUE_RX.finditer(text):
+        value = match.group(0)[1:-1].lower()
+        if (
+            value.startswith("mozilla/")
+            and "(compatible;" in value
+            and ("+https://" in value or "+http://" in value)
+            and value.endswith(")")
+        ):
+            spans.append((match.start(), match.end()))
+    if not spans:
+        return text, ""
+    content: list[str] = []
+    ua: list[str] = []
+    previous = 0
+    for start, end in spans:
+        content.extend((text[previous:start], " " * (end - start)))
+        ua.append(text[start:end])
+        previous = end
+    content.append(text[previous:])
+    return "".join(content), "\n".join(ua)
 
 
 def _scan_priority(rel: str, name: str) -> int:
@@ -1964,27 +1979,21 @@ class FilesystemConnector(BaseConnector):
     def _input_defect(self, rel: str, issue: str) -> None:
         """Record a defect attributable to the file's own content.
 
-        A malformed, template or undecodable file is evidence about the
-        repository, not a scanner inability: real checkouts routinely carry
-        intentionally invalid files (cookiecutter templates, fixtures, link
-        farms past structured limits). The file and issue are named in the
-        report, and the scan stays complete; the scanner's own failures
-        (lexing, matching, deadlines) still fail closed elsewhere.
-        ``strict_coverage`` keeps the previous behavior: every defect is an
-        error and the scan is incomplete.
+        Templates and fixtures may be intentionally malformed, but the
+        scanner cannot establish their content as fully analyzed. Preserve
+        valid neighboring findings and always mark coverage incomplete.
+        ``strict_coverage`` promotes the diagnostic from warning to error;
+        both forms fail closed.
         """
         message = f"code.filesystem: {rel}: input defect: {issue}"
         if self.strict_coverage:
             self.ctx.error(message)
         else:
-            self.ctx.warn(message, incomplete=False)
+            self.ctx.warn(message, incomplete=True)
 
-    # Issues that downstream consumers reject exactly as the scanner does:
-    # a file that fails these cannot configure a client or install a
-    # dependency either, so nothing scannable hides behind it. Integrity
-    # and ambiguity issues (duplicate keys, conflicting dialects, shape
-    # violations in otherwise-valid documents) are NOT here — parsers
-    # diverge on those, which is an evasion channel, so they fail closed.
+    # Syntax/shape defects get a distinct diagnostic so operators can find
+    # templates and fixtures. This taxonomy never changes completeness:
+    # downstream parsers or templating stages may interpret content differently.
     _SYNTAX_DEFECT_PREFIXES = (
         "invalid TOML",
         "invalid JSON",
@@ -1996,11 +2005,9 @@ class FilesystemConnector(BaseConnector):
     def _file_errors(self, rel: str, issues: Iterable[str], *, defect: bool = False) -> None:
         """Record parser or validator issues for ``rel``.
 
-        ``defect`` permits routing pure syntax failures — issues every
-        downstream consumer rejects identically (see
-        ``_SYNTAX_DEFECT_PREFIXES``) — through :meth:`_input_defect`, which
-        keeps the scan complete. Any other issue, and every issue when
-        ``defect`` is false, stays an error and fails the scan closed.
+        ``defect`` routes recognized input failures through
+        :meth:`_input_defect` for a distinct diagnostic. Every issue marks
+        coverage incomplete, regardless of diagnostic severity.
         """
         for issue in issues:
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
@@ -2234,25 +2241,13 @@ class FilesystemConnector(BaseConnector):
             variables = self.index.match_envs_in_text(content_text)
             for m in variables:
                 self._record_content(file, m, self._file_excerpt(file, m.line))
-            content_lines: list[str] | None = None
-            ua_discounted: list[str] = []
-            for m in self.index.match_domains_in_text(content_text):
-                if content_lines is None:
-                    content_lines = content_text.splitlines()
-                line_text = ""
-                if m.line and m.line <= len(content_lines):
-                    line_text = content_lines[m.line - 1]
-                if _ua_string_context(line_text, str(m.value)):
-                    # A crawler user-agent string names the provider's site;
-                    # it is bot *detection* data, not use of the provider.
-                    # The matcher keeps one match per host and file, so a
-                    # genuine use of the same host on a later line of this
-                    # file is covered by its import/env/code evidence instead.
-                    ua_discounted.append(str(m.value))
-                    continue
+            domain_text, ua_text = _crawler_ua_text(content_text)
+            for m in self.index.match_domains_in_text(domain_text):
                 self._record_content(file, m, self._file_excerpt(file, m.line))
-            if ua_discounted:
-                self._note_ua_mentions(file.rel, ua_discounted)
+            if ua_text:
+                ua_hosts = [str(m.value) for m in self.index.match_domains_in_text(ua_text)]
+                if ua_hosts:
+                    self._note_ua_mentions(file.rel, ua_hosts)
             # A deployment or CI document is configuration however many products it names.
             parsed = None if file.structure is _NO_STRUCTURE else file.structure
             if configuration_document(file.rel, content_text, parsed, {m.value for m in variables}):

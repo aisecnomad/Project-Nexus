@@ -2147,14 +2147,18 @@ Redaction and lexing changes to review:
 
 ### Real-world robustness migration (unreleased)
 
-- **Input defects keep scans complete.** A checkout's own malformed content —
+- **Crawler user-agent domains.** The provider-domain discount applies only
+  inside a complete quoted crawler UA value. A separate endpoint on the
+  same line, or another occurrence of that host later in the file, remains
+  evidence. A user-agent marker elsewhere on a line cannot suppress it.
+- **Input defects remain incomplete.** A checkout's own malformed content —
   invalid TOML/JSON (cookiecutter templates, fixtures), invalid structured
   configuration or agent-manifest syntax, an MCP configuration whose servers
   value is not an object or array — is now a per-file `input defect:` warning
-  and the scan completes (exit 0) instead of exiting 3. Pipelines that
-  treated exit 3 as "malformed file present" should alert on the warning
-  text instead, or set `strict_coverage: true`, which restores every defect
-  as an error. Integrity and ambiguity failures (duplicate keys, conflicting
+  that preserves partial findings while keeping the scan incomplete (exit 3).
+  `strict_coverage: true` promotes that diagnostic to an error; it is not
+  needed to enforce incomplete coverage. There is no completeness exemption
+  for malformed templates or fixtures. Integrity and ambiguity failures (duplicate keys, conflicting
   MCP dialects, YAML resource limits, undecodable analyzable files,
   unscanned symlink targets) are unchanged and still fail closed.
 - **Flow exports with agent nodes are agents.** `code.filesystem` now emits

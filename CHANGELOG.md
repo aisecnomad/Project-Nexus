@@ -5,21 +5,25 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+- Crawler user-agent domain discounts apply only within a complete quoted UA
+  value. A provider endpoint in another value on the same line, or a later
+  occurrence of the same host, remains detection evidence.
+
 ### Real-world robustness: input-defect taxonomy for code.filesystem
 
-- Pure syntax failures that every downstream consumer rejects identically —
-  invalid TOML/JSON in committed templates and fixtures, invalid structured
-  configuration syntax, invalid agent manifests, an MCP configuration whose
-  servers value is not an object or array — are now file-attributed
-  **input-defect warnings** that keep the scan complete, instead of errors
-  that failed the whole scan closed (exit 3). The file and issue are always
-  named in the report; nothing is dropped silently. Integrity and ambiguity
+- Malformed input — invalid TOML/JSON in committed templates and fixtures,
+  invalid structured configuration syntax, invalid agent manifests, or an
+  MCP configuration whose servers value is not an object or array — produces
+  file-attributed
+  **input-defect warnings** that preserve partial findings and still fail
+  the scan closed (exit 3). The file and issue are always named in the
+  report; nothing is dropped silently. Integrity and ambiguity
   failures (duplicate keys, conflicting dialects, resource-limit hits,
   undecodable analyzable files, unscanned symlink targets) still fail
   closed, because parsers diverge on those and they could hide content.
-  `strict_coverage: true` restores the previous behavior in full. Operators
-  who alerted on exit 3 for malformed-template repositories should read the
-  migration note in docs/production.md.
+  `strict_coverage: true` promotes input-defect warnings to errors; both
+  settings mark the scan incomplete. There is no completeness exemption for
+  malformed templates or fixtures.
 
 ### Lexing, matching and walk-order robustness (real-world benchmark fixes)
 

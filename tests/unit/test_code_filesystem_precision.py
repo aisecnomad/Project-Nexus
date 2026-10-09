@@ -250,3 +250,24 @@ def test_provider_domain_outside_ua_strings_still_counts(tmp_path, run_connector
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any("provider.anthropic" in {e.signature for e in f.evidence} for f in findings)
     assert not any("user-agent" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("indent", [None, 2])
+@pytest.mark.parametrize(
+    "user_agent",
+    [
+        "Mozilla/5.0",
+        "Mozilla/5.0 (compatible; SomeBot/1.0; +https://api.anthropic.com/)",
+    ],
+)
+def test_crawler_ua_does_not_hide_separate_provider_endpoint(tmp_path, run_connector, indent, user_agent):
+    (tmp_path / "settings.json").write_text(
+        json.dumps(
+            {"user_agent": user_agent, "endpoint": "https://api.anthropic.com/v1/messages"},
+            indent=indent,
+        )
+        + "\n"
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any("provider.anthropic" in {e.signature for e in f.evidence} for f in findings)
+    assert not ctx.stats.incomplete

@@ -7,9 +7,9 @@
 The corpus manifest pins every repository to a commit. ``--fetch`` clones each
 missing repository and checks out its pinned commit; a run refuses to score a
 checkout that is missing, at the wrong commit, or dirty (fail closed, never
-silently scan the wrong tree). After each tool the corpus is re-verified: a
-tool that wrote into a checkout is recorded and the checkout restored, so no
-tool scans another tool's droppings.
+silently scan the wrong tree). After each tool the pinned commit and entire
+working tree, including ignored files, are re-verified. A changed checkout
+stops the run before another tool runs; evidence is never silently restored.
 
 Rows reuse the synthetic benchmark's schema, so ``tools.benchmark.score`` and
 its Wilson/bootstrap/McNemar machinery apply unchanged.
@@ -98,16 +98,16 @@ def verify(specs: list[RepoSpec], corpus_dir: Path) -> list[str]:
         code, head = _git(["rev-parse", "HEAD"], dest)
         if code != 0 or head != spec.sha:
             problems.append(f"{spec.repo_id}: at {head[:12]}, manifest pins {spec.sha[:12]}")
-        code, status = _git(["status", "--porcelain"], dest)
+        code, status = _git(["status", "--porcelain", "--untracked-files=all", "--ignored"], dest)
         if code != 0 or status:
             problems.append(f"{spec.repo_id}: working tree dirty")
     return problems
 
 
-def restore(spec: RepoSpec, corpus_dir: Path) -> None:
-    dest = corpus_dir / spec.repo_id
-    _git(["checkout", "--", "."], dest)
-    _git(["clean", "-fdxq"], dest)
+def verify_after_tool(specs: list[RepoSpec], corpus_dir: Path, name: str) -> None:
+    problems = verify(specs, corpus_dir)
+    if problems:
+        raise RuntimeError(f"corpus integrity changed after {name}; run stopped: {'; '.join(problems)}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -156,21 +156,11 @@ def main(argv: list[str] | None = None) -> int:
     env = adapters_mod.ToolEnv(root=args.tool_root.resolve(), python=sys.executable)
     scratch = Path(tempfile.mkdtemp(prefix="realworld-bench-")).resolve()
     runs: list[dict[str, Any]] = []
-    dirtied: dict[str, list[str]] = {}
     try:
         for name in wanted:
             adapter = available[name]
             summary = run_tool(adapter, cases, env, args.results, args.workers, scratch)
-            dirty = [
-                spec.repo_id
-                for spec in specs
-                if _git(["status", "--porcelain"], corpus_dir / spec.repo_id)[1]
-            ]
-            if dirty:
-                dirtied[name] = dirty
-                for spec in specs:
-                    if spec.repo_id in dirty:
-                        restore(spec, corpus_dir)
+            verify_after_tool(specs, corpus_dir, name)
             runs.append(summary)
             print(json.dumps(summary), flush=True)
     finally:
@@ -187,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         "timeout_seconds": args.timeout,
         "python": platform.python_version(),
         "platform": platform.platform(),
-        "checkouts_dirtied_by_tool": {**previous.get("checkouts_dirtied_by_tool", {}), **dirtied},
+        "checkouts_dirtied_by_tool": previous.get("checkouts_dirtied_by_tool", {}),
         "runs": kept + runs,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

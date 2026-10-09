@@ -16,6 +16,11 @@ author-written, and *"real repositories, laptops and logs are messier."*
 > [docs/evaluation.md](../../docs/evaluation.md) for what ShadowScan accepts
 > as evidence.
 
+The stored post-fix results describe the original experimental branch. Merge
+review retained fail-closed coverage for malformed inputs and narrowed crawler
+UA discounts; those stored metrics do not validate the revised code. A new run
+at the reviewed commit is required before attributing those metrics to it.
+
 ## Corpus
 
 | Label | Count | What it holds |
@@ -46,12 +51,18 @@ agent node appears only as a README link).
 
 ## Tools and how each is run
 
-Everything runs through `tools/benchmark/realworld_run.py` in fresh network
-and PID namespaces with a minimal environment: no tool can reach a vendor
-API, OSV, an LLM, or a remote MCP server, and no tool sees credentials. The
+Subprocess tools run through `tools/benchmark/realworld_run.py` in fresh
+network and PID namespaces with a minimal environment: vendor APIs, OSV,
+LLMs and remote MCP servers are unreachable, and credentials are not passed
+in the environment. These namespaces do not isolate the host filesystem;
+the in-process grep baseline also has host filesystem access. Run only in a
+disposable externally isolated machine with no credentials, sensitive mounts
+or unrelated work. The
 timeout is 900 s per tool per repository. A checkout that is missing, at the
-wrong commit, or dirty fails the run; after each tool the corpus is
-re-verified and any checkout a tool wrote into is recorded and restored.
+wrong commit, or dirty (including ignored files) fails the run. After each
+tool the pinned commit and working tree are re-verified. Any change stops
+the run before the next tool; the runner does not reset or clean evidence.
+Discard that incomplete run and use a clean checkout and new results directory.
 
 | Tool | Scored | Detection rule ("detected" when…) |
 |---|---|---|
