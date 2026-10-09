@@ -124,6 +124,31 @@ def test_deadline_remainder_is_exact_within_max_files(tmp_path, index, monkeypat
     assert any("after 4 of 6 files" in error for error in ctx.stats.errors)
 
 
+def test_listing_stops_in_time_to_scan_the_listed_files(tmp_path, index, monkeypatch):
+    # Listing alone would cross the deadline: each entry costs 1 s and the
+    # tree has 30. Files may start until 1017 (20 s minus a 1 s margin and a
+    # 2 s matching budget); listing takes half of that window (until
+    # 1008.5), so 9 entries are listed and every one of them is scanned.
+    _tree(tmp_path, count=30)
+    clock = _fake_clock(monkeypatch, step=0.0)
+    count_entry = FilesystemConnector._count_entry
+
+    def slow_count_entry(self, walk, root):
+        clock[0] += 1.0
+        return count_entry(self, walk, root)
+
+    monkeypatch.setattr(FilesystemConnector, "_count_entry", slow_count_entry)
+    ctx = ConnectorContext(
+        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 20.0
+    )
+    findings = FilesystemConnector(ctx).run()
+    assert not ctx.stats.skipped and ctx.stats.incomplete
+    assert ctx.stats.objects_examined == 9
+    assert len(ctx.stats.errors) == 1
+    assert re.search(r"connector deadline: listing stopped after 9 entries", ctx.stats.errors[0])
+    assert any("framework.langchain" in finding.frameworks for finding in findings)
+
+
 def test_cancellation_mid_walk_is_not_reported_per_file(tmp_path, index, monkeypatch):
     _tree(tmp_path)
     cancelled = threading.Event()

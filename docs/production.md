@@ -476,7 +476,11 @@ checks stop at the connector deadline with the error `connector deadline
 reached while checking symbolic links`; findings collected before that point
 are kept and the scan is incomplete (exit 3). A checkout with more links than
 the remaining `max_files` budget needs a larger `max_files` or an `exclude`
-entry for the link directories.
+entry for the link directories. The walk lists a root's entries before it
+scans them in priority order; listing stops after half of the time in which a
+file can still start, with the error `connector deadline: listing stopped
+after N entries`, so the listed files are still scanned and their findings
+kept. The scan is incomplete (exit 3).
 
 YAML manifest artifact matching uses a shared one-second deadline and gives
 each bounded line chunk no more than the remaining manifest pattern budget.

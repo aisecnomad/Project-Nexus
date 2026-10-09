@@ -333,6 +333,11 @@ files ... results incomplete`), and returns the findings collected so far. The
 engine keeps those findings and reports the scan incomplete (exit 3), so a large
 tree yields partial inventory rather than nothing. Split roots share the deadline;
 a root that starts inside the margin records that error for all of its files.
+Each root's entries are listed first and scanned in priority order (manifests and
+agent or MCP configuration first, source last, smaller files before larger).
+Listing stops after half of the time in which a file can still start and records
+`connector deadline: listing stopped after N entries`, so a large tree or a root
+that inherits a nearly spent deadline still scans the entries it listed.
 
 On expiry, the engine discards that connector's results, records incomplete
 coverage and the reason, retains other completed connectors' findings, and

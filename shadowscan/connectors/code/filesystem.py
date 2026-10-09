@@ -367,6 +367,9 @@ SCAN_TIMEOUT_CAP_SECONDS = 10.0
 # discards a result that arrives after the deadline.
 DEADLINE_MARGIN_FRACTION = 0.05
 DEADLINE_MARGIN_MIN_SECONDS = 0.25
+# The walk lists every entry before it scans any. Listing may use this share
+# of the time in which a file can still start; the rest scans what it listed.
+ENUMERATION_DEADLINE_SHARE = 0.5
 
 # Generated or locked files the walker never reads at any size.
 _NEVER_READ_SUFFIXES = (".min.js", ".min.css", ".map", ".pyc", ".lock")
@@ -1148,6 +1151,26 @@ def deadline_margin(remaining: float) -> float:
     return max(DEADLINE_MARGIN_MIN_SECONDS, DEADLINE_MARGIN_FRACTION * remaining)
 
 
+def enumeration_deadline(now: float, deadline: float, margin: float, scan_timeout: float) -> float:
+    """Return the monotonic time after which the walk stops listing entries.
+
+    A large tree, a slow filesystem or a root inheriting a nearly spent
+    deadline must not spend it all on listing, leaving no file scanned.
+    Listing takes ``ENUMERATION_DEADLINE_SHARE`` of the time in which a
+    file's matching budget still fits before the margin. When no file can
+    start any more, listing only counts the remainder for the deadline
+    diagnostic, until half the margin is left.
+    """
+    window = deadline - margin - scan_timeout - now
+    return now + ENUMERATION_DEADLINE_SHARE * window if window > 0 else deadline - margin / 2
+
+
+def _check_enumeration_time(walk: _WalkCounters) -> None:
+    """Stop listing at ``walk.enumerate_until``; the entries listed so far are still scanned."""
+    if walk.enumerate_until is not None and time.monotonic() >= walk.enumerate_until:
+        raise _WalkLimitError(f"connector deadline: listing stopped after {walk.examined} entries")
+
+
 def _validated_include(value: Any) -> frozenset[str]:
     """``include``: relative posix paths below a root, normalized; nothing may escape or be absolute."""
     out: set[str] = set()
@@ -1731,10 +1754,12 @@ class FilesystemConnector(BaseConnector):
         # connector deadline, as file analysis does in _walk_entries, so a tree
         # planted with links cannot hold the walk past it.
         deadline = self.ctx.deadline
-        walk = _WalkCounters(
-            stop_at=None if deadline is None else deadline - deadline_margin(deadline - time.monotonic()),
-            budget=_WalkBudget(self.max_entries, self.ctx.check_deadline),
-        )
+        walk = _WalkCounters(budget=_WalkBudget(self.max_entries, self.ctx.check_deadline))
+        if deadline is not None:
+            now = time.monotonic()
+            margin = deadline_margin(deadline - now)
+            walk.stop_at = deadline - margin
+            walk.enumerate_until = enumeration_deadline(now, deadline, margin, self.scan_timeout)
 
         resolved_root = Path(os.path.realpath(root))
 
@@ -1760,6 +1785,7 @@ class FilesystemConnector(BaseConnector):
             self.check_gitlink_coverage(root)
         for dirpath, dirnames, filenames in _walk_directories(root, walk_error, budget=walk.budget):
             walk.budget.check()
+            _check_enumeration_time(walk)
             rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
             rel_dir = "." if rel_dir == "." else _report_name(rel_dir)
             if ".gitmodules" in filenames:
@@ -1777,6 +1803,7 @@ class FilesystemConnector(BaseConnector):
                 proj = rel_dir
             for fn in sorted(filenames):
                 walk.budget.check()
+                _check_enumeration_time(walk)
                 shown = _report_name(fn)
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
                 if self._excluded_file(rel) or not self._included(rel):
@@ -2071,8 +2098,10 @@ class FilesystemConnector(BaseConnector):
         source last — with smaller files before larger within each class and
         the deterministic walk order breaking ties. A deadline therefore
         degrades predictably: whatever is cut is the largest, lowest-signal
-        tail, and the remainder is reported exactly. Each entry carries its
-        own project root, so ordering never changes attribution.
+        tail, and the remainder is reported exactly. Listing itself stops at
+        ``enumeration_deadline``, leaving time to scan the listed entries.
+        Each entry carries its own project root, so ordering never changes
+        attribution.
         """
         deadline = self.ctx.deadline
         margin = deadline_margin(deadline - time.monotonic()) if deadline is not None else 0.0
@@ -2080,9 +2109,9 @@ class FilesystemConnector(BaseConnector):
         try:
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
-            # Enumeration hit max_entries: the files already enumerated are
-            # still scanned (in priority order) so partial findings survive,
-            # and the limit is recorded exactly as the lazy walk did.
+            # Enumeration hit max_entries or its share of the deadline: the
+            # files already enumerated are still scanned (in priority order)
+            # so partial findings survive, and the limit is recorded.
             self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
         entries.sort(key=lambda entry: (_scan_priority(entry[0], entry[1].name), entry[3]))
         examined = 0

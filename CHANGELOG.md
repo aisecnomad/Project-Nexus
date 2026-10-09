@@ -209,7 +209,12 @@ author-written and not independent review.
   dependency manifests, MCP and coding-agent configuration first, source
   files last, smaller before larger — so a connector deadline cuts the
   largest, lowest-signal tail first, and the deadline diagnostic now
-  reports the exact remainder (never "at least N").
+  reports the exact remainder (never "at least N"). Listing stops after half
+  of the time in which a file can still start (`connector deadline: listing
+  stopped after N entries`), so a large tree, a slow filesystem or a root
+  inheriting a nearly spent deadline still scans the entries it listed
+  instead of spending the deadline on enumeration. The scan stays
+  incomplete (exit 3).
 
 ### Classification and precision
 
