@@ -140,6 +140,13 @@ class TestDiffChangedFiles:
         assert "app.py" in result
         assert "requirements.txt" not in result
 
+    @pytest.mark.parametrize("name", [" agent.py", "agent.py ", "agent\npart.py", "agent\tpart.py"])
+    def test_preserves_exact_filename(self, repo: Path, ctx, name: str) -> None:
+        (repo / name).write_text("from crewai import Agent\nworker = Agent()\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "add agent", "--quiet")
+        assert self.diff(repo, "main~1", ctx) == frozenset({name})
+
     def test_invalid_ref_raises(self, repo: Path, ctx) -> None:
         with pytest.raises(self.DiffError, match="invalid diff-base ref"):
             self.diff(repo, "--evil", ctx)

@@ -16,6 +16,14 @@ for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
 ## `code.filesystem`
+
+Optional `diff_base` accepts a local Git branch, tag, or revision. It scans
+committed changes from the merge base to HEAD plus manifests, environment and
+configuration context. Findings carry `diff-scan` and `metadata.diff_scan`;
+this is a scoped change scan, not a complete repository inventory. Git paths
+retain their exact whitespace. If the revision cannot be resolved, collection
+falls back to a full scan with a warning.
+
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
 package, …); each root yields one

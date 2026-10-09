@@ -54,6 +54,6 @@ confirmed finding.
   control.
 - A second maintainer who can reject the author's change.
 
-None of that is met by the `0.1.1` candidate. The package is an unreleased
+None of that is established by publishing `0.1.2`. The package remains
 alpha. Pin a reviewed commit SHA. Treat every report as confidential. Confirm
 each hit before registering, blocking, or telling anyone the estate is covered.

@@ -994,3 +994,6 @@ The Azure app-settings permission exposes security-sensitive configuration;
 only grant it for the app resources being audited. Do not grant Website
 Contributor solely for this read operation. See Microsoft's
 [permission definitions](https://learn.microsoft.com/en-us/azure/role-based-access-control/permissions/web-and-mobile).
+
+The `code.filesystem` connector also accepts `diff_base` for a scoped scan of
+committed changes. See the [code guide](connectors/code.md) for scope and fallback behavior.

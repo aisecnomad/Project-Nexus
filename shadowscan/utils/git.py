@@ -683,7 +683,7 @@ def diff_changed_files(
         return frozenset()
     paths: set[str] = set()
     for entry in output.split("\0"):
-        entry = entry.strip()
+        # NUL-delimited Git paths preserve whitespace as part of the filename.
         if not entry:
             continue
         posix = entry.replace(os.sep, "/")

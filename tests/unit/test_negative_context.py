@@ -207,10 +207,7 @@ class TestNegativeContextIntegration:
 
     def test_mixed_normal_and_docs_not_tagged(self, tmp_path, run_connector):
         (tmp_path / "docs").mkdir()
-        (tmp_path / "docs" / "guide.py").write_text(
-            "from openai import OpenAI\n"
-            "client = OpenAI()\n"
-        )
+        (tmp_path / "docs" / "guide.py").write_text("from openai import OpenAI\nclient = OpenAI()\n")
         (tmp_path / "app.py").write_text(
             "from openai import OpenAI\n"
             "client = OpenAI()\n"
@@ -223,10 +220,7 @@ class TestNegativeContextIntegration:
 
     def test_negative_context_metadata_recorded(self, tmp_path, run_connector):
         (tmp_path / "examples").mkdir()
-        (tmp_path / "examples" / "demo.py").write_text(
-            "from openai import OpenAI\n"
-            "client = OpenAI()\n"
-        )
+        (tmp_path / "examples" / "demo.py").write_text("from openai import OpenAI\nclient = OpenAI()\n")
         (tmp_path / "app.py").write_text(
             "from openai import OpenAI\n"
             "client = OpenAI()\n"
@@ -267,3 +261,15 @@ class TestNegativeContextIntegration:
         proj.risk = assess(proj)
         factor_reasons = [f.description for f in proj.risk.factors]
         assert any("documentation" in r for r in factor_reasons)
+
+
+@pytest.mark.parametrize("extra", [{"verified_agent": False}, {"lexical_source": True}])
+def test_signal_indicator_respects_semantic_verification(extra):
+    from shadowscan.connectors.code.filesystem import _ProjectEvidence
+    from shadowscan.signatures.loader import Signal, Signature
+    from shadowscan.signatures.matcher import Match
+
+    signature = Signature(id="framework.test", name="Test", category="framework")
+    match = Match(signature, Signal(type="code", agent_indicator=True), "Agent()", 0.8, extra=extra)
+    evidence = _ProjectEvidence([(match, "app.py", None)], discount_tests=True, mcp_tools={})
+    assert not evidence.verified_indicator(match)
