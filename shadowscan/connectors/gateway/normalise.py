@@ -55,6 +55,7 @@ class Event:
     cost: float = 0.0
     status: str | None = None
     path: str | None = None
+    method: str | None = None  # HTTP verb, distinct from a native API operation name
     metadata: dict[str, Any] = field(default_factory=dict)
     schema: str = "generic"
     scope: dict[str, str] = field(default_factory=dict)
@@ -1076,4 +1077,25 @@ NORMALISERS: dict[str, Normaliser] = {
 
 def _normalise(rec: dict[str, Any], schema: str) -> Event | None:
     """Build an Event from a raw record; an unknown schema id uses the generic normaliser."""
-    return NORMALISERS.get(schema, _normalise_generic)(rec)
+    event = NORMALISERS.get(schema, _normalise_generic)(rec)
+    if event is not None:
+        method = get_path(
+            rec,
+            "request_method",
+            "method",
+            "http_method",
+            "cs-method",
+            "http.method",
+            "request.method",
+            "httpRequest.requestMethod",
+            "proxy_server_request.method",
+            "properties.httpMethod",
+        )
+        if method is None and event.schema == "access-log" and isinstance(rec.get("request"), str):
+            parts = rec["request"].split()
+            if len(parts) == 3 and parts[2].startswith("HTTP/"):
+                method = parts[0]
+        if method is not None and not isinstance(method, str):
+            raise ConnectorError("gateway.logs: normalized method must be a string")
+        event.method = method.upper() if method else None
+    return event

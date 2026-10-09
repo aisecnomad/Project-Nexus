@@ -1,0 +1,27 @@
+{"time": "2025-09-01T09:00:00Z", "remote_user": "openai-run", "request_uri": "/v1/threads/thread_1/runs", "host": "api.openai.com", "status": 200, "request_method": "POST"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "tool-submission", "request_uri": "/v1/threads/thread_1/runs/run_1/submit_tool_outputs", "host": "api.openai.com", "status": 200, "request_method": "POST"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "bedrock-run", "request_uri": "/agents/A/agentAliases/B/sessions/s/text", "host": "bedrock-agent-runtime.us-east-1.amazonaws.com", "status": 200, "request_method": "POST"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "azure-run", "request_uri": "/openai/threads/thread_1/runs", "host": "sample.openai.azure.com", "status": 403, "request_method": "POST"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "inventory-job", "request_uri": "/v1/assistants", "host": "api.openai.com", "status": 200, "request_method": "GET"}
+{"time": "2025-09-01T09:00:05Z", "remote_user": "inventory-job", "request_uri": "/v1/assistants", "host": "api.openai.com", "status": 200, "request_method": "GET"}
+{"time": "2025-09-01T09:00:10Z", "remote_user": "inventory-job", "request_uri": "/v1/assistants", "host": "api.openai.com", "status": 200, "request_method": "GET"}
+{"time": "2025-09-01T09:00:15Z", "remote_user": "inventory-job", "request_uri": "/v1/assistants", "host": "api.openai.com", "status": 200, "request_method": "GET"}
+{"time": "2025-09-01T09:00:20Z", "remote_user": "inventory-job", "request_uri": "/v1/assistants", "host": "api.openai.com", "status": 200, "request_method": "GET"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "run-list", "request_uri": "/v1/threads/thread_1/runs", "host": "api.openai.com", "status": 200, "request_method": "GET"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "run-read", "request_uri": "/v1/threads/thread_1/runs/run_1", "host": "api.openai.com", "status": 200, "request_method": "GET"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "assistant-delete", "request_uri": "/v1/assistants/a", "host": "api.openai.com", "status": 200, "request_method": "DELETE"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "assistant-create", "request_uri": "/v1/assistants", "host": "api.openai.com", "status": 200, "request_method": "POST"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "method-missing", "request_uri": "/v1/threads/thread_1/runs", "host": "api.openai.com", "status": 200}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "wrong-service", "request_uri": "/v1/threads/thread_1/runs", "host": "api.anthropic.com", "status": 200, "request_method": "POST"}
+{"time": "2025-09-01T09:00:00Z", "remote_user": "mixed-provenance", "request_uri": "/v1/threads/thread_1/runs", "host": "api.openai.com", "status": 200, "request_method": "GET"}
+{"time": "2025-09-01T09:00:05Z", "remote_user": "mixed-provenance", "request_uri": "/v1/assistants", "host": "api.openai.com", "status": 200, "request_method": "POST"}
+{"time": "2025-09-01T09:00:10Z", "remote_user": "mixed-provenance", "request_uri": "/v1/threads/thread_1/runs", "host": "api.anthropic.com", "status": 200, "request_method": "POST"}
+{"timestamp": "2025-09-01T09:00:00Z", "protoPayload": {"serviceName": "aiplatform.googleapis.com", "methodName": "google.cloud.aiplatform.v1.ReasoningEngineExecutionService.QueryReasoningEngine", "authenticationInfo": {"principalEmail": "native-vertex"}, "resourceName": "projects/p/locations/us-central1/reasoningEngines/1"}}
+{"remote_user": "runtime-read", "host": "bedrock-agent-runtime.us-east-1.amazonaws.com", "request_method": "GET", "request_uri": "/agents/A/agentAliases/B/sessions/s/text", "status": 200}
+{"remote_user": "control-plane-read", "host": "bedrock-agentcore-control.us-east-1.amazonaws.com", "request_method": "GET", "request_uri": "/runtimes/abc/invocations", "status": 200}
+{"remote_user": "session-list", "host": "dialogflow.googleapis.com", "request_method": "GET", "request_uri": "/v3/projects/p/locations/global/agents/a", "status": 200}
+{"remote_user": "agentcore-run", "host": "bedrock-agentcore.us-east-1.amazonaws.com", "request_method": "POST", "request_uri": "/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A123456789012%3Aruntime%2Fagent_a/invocations?qualifier=DEFAULT", "status": 200}
+{"remote_user": "vertex-query", "host": "us-central1-aiplatform.googleapis.com", "request_method": "POST", "request_uri": "/v1/projects/p/locations/us-central1/reasoningEngines/123:query", "status": 200}
+{"remote_user": "dialogflow-stream", "host": "us-central1-dialogflow.googleapis.com", "request_method": "POST", "request_uri": "/v3/projects/p/locations/us-central1/agents/a/environments/e/sessions/s:serverStreamingDetectIntent", "status": 200}
+{"remote_user": "dialogflow-wrong-stream-path", "host": "us-central1-dialogflow.googleapis.com", "request_method": "POST", "request_uri": "/v3/projects/p/locations/us-central1/agents/a/sessions/s:streamingDetectIntent", "status": 404}
+{"remote_user": "agentcore-reader", "host": "bedrock-agentcore-control.us-east-1.amazonaws.com", "request_method": "GET", "request_uri": "/runtimes", "status": 200}

@@ -1,9 +1,10 @@
 """Conservative import-bound calls for Python and common JavaScript/TypeScript.
 
 This is static evidence of construction, not execution. Python uses its AST;
-JavaScript uses a bounded lexical resolver for imports and direct calls. Dynamic
-imports, re-exports and uncertain/shadowed JavaScript bindings remain supporting
-framework evidence. No scanned code is imported or executed.
+JavaScript uses a bounded lexical resolver for imports and direct calls. A
+filesystem-supplied resolver can bind Python imports through already-read,
+import-only project-root shims. Other dynamic imports, re-exports and uncertain
+bindings remain supporting framework evidence. No scanned code is imported or executed.
 
 Python AST work and JavaScript literal-branch tokens are capped at 50,000 per
 file; JavaScript statement nesting is bounded to 128 levels and source calls to
@@ -11,9 +12,9 @@ file; JavaScript statement nesting is bounded to 128 levels and source calls to
 cannot resolve to any signature skips the binder at any size, since it could
 yield no evidence (``_python_bindable``, linear in the file and bounded to 4,096
 statement matches). Regex operations share the scanner's per-input deadline.
-Other source languages do not use this resolver: filesystem
-classification requires matching import/dependency evidence for their lexical
-framework signals, and caps uncorroborated code evidence at 0.6.
+Other source languages use separate narrow Java/Go/C# proofs where supported;
+their lexical framework signals require matching import/dependency evidence,
+and uncorroborated lexical code evidence is capped at 0.6.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from shadowscan.connectors.code.provider_tools import (
     provider_tools_disabled,
     python_provider_tool_literals,
 )
+from shadowscan.connectors.code.python_reexports import ImportResolver
 from shadowscan.connectors.code.responses_loops import responses_dispatch_lines, responses_tool_loop_lines
 from shadowscan.connectors.code.source_capabilities import (
     CONFIGURED_FRAMEWORKS,
@@ -236,8 +238,14 @@ def _symbol_tail(symbol: str) -> str:
 
 
 class _PythonBindings(ast.NodeVisitor):
-    def __init__(self, text: str, relevant: Callable[[_Binding], bool] | None = None):
+    def __init__(
+        self,
+        text: str,
+        relevant: Callable[[_Binding], bool] | None = None,
+        resolve_import: ImportResolver | None = None,
+    ):
         self.text = text
+        self.resolve_import = resolve_import
         # Only calls into modules that some signature describes can produce
         # evidence. Counting every bound call (``pytest.raises``, ``requests.get``)
         # against MAX_BOUND_CALLS made ordinary large files fail as incomplete.
@@ -469,6 +477,10 @@ class _PythonBindings(ast.NodeVisitor):
             binding = (
                 _Binding(node.module or "", alias.name) if not node.level and alias.name != "*" else None
             )
+            if binding is not None and self.resolve_import is not None:
+                resolved = self.resolve_import(binding.module, binding.symbol)
+                if resolved is not None:
+                    binding = _Binding(*resolved)
             self.scopes[-1][alias.asname or alias.name] = binding
             if binding:
                 self.imports.append((binding, node.lineno))
@@ -616,20 +628,26 @@ class _PythonBindings(ast.NodeVisitor):
         self.visit(node.iter)
         # Empty literal collections cannot enter a synchronous for body.
         # Async iteration and calls (including range()) are not evaluated.
-        if not isinstance(node, ast.AsyncFor) and (
-            isinstance(node.iter, (ast.List, ast.Tuple, ast.Set))
-            and not node.iter.elts
-            or isinstance(node.iter, ast.Dict)
-            and not node.iter.keys
-            or isinstance(node.iter, ast.Constant)
-            and isinstance(node.iter.value, (str, bytes))
-            and not node.iter.value
-        ):
+        if not isinstance(node, ast.AsyncFor) and self._empty_literal_iterable(node.iter):
             return self._visit_block(node.orelse)
         has_break = self._visit_loop(node.body, node.target)
         return self._loop_else(node.orelse, has_break=has_break)
 
     visit_AsyncFor = visit_For
+
+    @staticmethod
+    def _empty_literal_iterable(node: ast.AST) -> bool:
+        # No evaluation, name resolution or recursion: unpackings, calls and
+        # dynamic containers cannot prove that an iteration is empty.
+        return (
+            isinstance(node, (ast.List, ast.Tuple, ast.Set))
+            and not node.elts
+            or isinstance(node, ast.Dict)
+            and not node.keys
+            or isinstance(node, ast.Constant)
+            and isinstance(node.value, (str, bytes))
+            and not node.value
+        )
 
     def visit_While(self, node: ast.While) -> bool:
         self.visit(node.test)
@@ -673,21 +691,45 @@ class _PythonBindings(ast.NodeVisitor):
         # The first iterable is evaluated in the outer scope; targets and the
         # result expression live in the comprehension's implicit local scope.
         self.visit(node.generators[0].iter)
-        self.scopes.append({})
+        # All targets are locals throughout that scope, including targets of
+        # later generators. An earlier filter cannot resolve a later target to
+        # an enclosing import (Python would raise UnboundLocalError).
+        locals_: dict[str, _Binding | None] = {
+            target.id: None
+            for generator in node.generators
+            for target in ast.walk(generator.target)
+            if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store)
+        }
+        self.scopes.append(locals_)
         self.scope_kinds.append("comprehension")
-        for number, generator in enumerate(node.generators):
-            if number:
-                self.visit(generator.iter)
-            self._store(generator.target)
-            for condition in generator.ifs:
-                self.visit(condition)
-        if isinstance(node, ast.DictComp):
-            self.visit(node.key)
-            self.visit(node.value)
-        else:
-            self.visit(node.elt)
-        self.scopes.pop()
-        self.scope_kinds.pop()
+        try:
+            for number, generator in enumerate(node.generators):
+                if number:
+                    self.visit(generator.iter)
+                if not generator.is_async and self._empty_literal_iterable(generator.iter):
+                    return
+                self._store(generator.target)
+                for condition in generator.ifs:
+                    # The filter itself can construct an agent even when a
+                    # later filter or iterable prevents the result expression.
+                    self.visit(condition)
+                    if (
+                        isinstance(condition, ast.Constant)
+                        and not condition.value
+                        or self._empty_literal_iterable(condition)
+                    ):
+                        return
+            # Generator bodies are lazy, but remain potential construction
+            # evidence, like function bodies. Only provably unreachable bodies
+            # are removed; no consumption or runtime execution is inferred.
+            if isinstance(node, ast.DictComp):
+                self.visit(node.key)
+                self.visit(node.value)
+            else:
+                self.visit(node.elt)
+        finally:
+            self.scopes.pop()
+            self.scope_kinds.pop()
 
     visit_ListComp = _comprehension
     visit_SetComp = _comprehension
@@ -1094,6 +1136,7 @@ def _python_bindings(
     relevant: Callable[[_Binding], bool] | None = None,
     max_nodes: int | None = None,
     bindable: Callable[[ast.AST], bool] | None = None,
+    resolve_import: ImportResolver | None = None,
 ) -> tuple[list[_Call], list[tuple[_Binding, int]], ast.AST]:
     tree = ast.parse(text)
     if bindable is not None and not bindable(tree):
@@ -1104,7 +1147,7 @@ def _python_bindings(
     for count, _ in enumerate(ast.walk(tree)):
         if count >= limit:
             raise SourceBudgetExceeded("source binding AST limit exceeded")
-    visitor = _PythonBindings(text, relevant)
+    visitor = _PythonBindings(text, relevant, resolve_import)
     visitor.visit(tree)
     return visitor.calls, visitor.imports, tree
 
@@ -1534,6 +1577,7 @@ def bound_source_matches(
     is_local_module: Callable[[str], bool] | None = None,
     max_ast_nodes: int | None = None,
     truncated: list[int] | None = None,
+    resolve_import: ImportResolver | None = None,
 ) -> list[Match]:
     """Return import and call evidence whose module provenance is resolved.
 
@@ -1551,7 +1595,9 @@ def bound_source_matches(
                 text,
                 module_matches.relevant,
                 max_ast_nodes,
-                bindable=lambda parsed: _python_bindable(index, parsed),
+                # The single-file proof cannot see a project-local export.
+                bindable=(lambda parsed: _python_bindable(index, parsed)) if resolve_import is None else None,
+                resolve_import=resolve_import,
             )
         else:
             calls, imports = _javascript_bindings(text, ignored, module_matches.relevant)

@@ -232,7 +232,7 @@ def test_export_path_is_confirmed_only_after_successful_publication(tmp_path, in
     assert not ctx.stats.incomplete
 
 
-def test_rejected_export_record_preserves_valid_neighbors_without_partial_json(tmp_path, index):
+def test_rejected_export_record_preserves_live_neighbors_without_publishing_partial_export(tmp_path, index):
     class ExportProbe(_OfflineProbe):
         _MAX_OFFLINE_FILE_BYTES = 256
 
@@ -245,10 +245,11 @@ def test_rejected_export_record_preserves_valid_neighbors_without_partial_json(t
     ctx = ConnectorContext(config={"_dump_path": str(target)}, index=index)
     ExportProbe(ctx).run()
     assert ctx.stats.incomplete
-    assert ctx.stats.objects_examined == 2
-    assert ctx.dump_path == str(target)
-    assert [json.loads(line) for line in target.read_text().splitlines()] == [{"id": "first"}, {"id": "last"}]
-    assert list(tmp_path.iterdir()) == [target]
+    # A valid record can exceed the export byte budget without being unsafe
+    # to analyze. Export incompleteness must not erase its live analysis.
+    assert ctx.stats.objects_examined == 3
+    assert ctx.dump_path is None and not target.exists()
+    assert not list(tmp_path.iterdir())
 
 
 def test_legacy_redact_uses_stable_opaque_identity():

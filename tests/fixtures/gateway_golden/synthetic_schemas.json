@@ -952,6 +952,7 @@
     "cost": 0.0021,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": null,
     "metadata": {
      "trace_id": "pk-trace-1",
      "metadata": {
@@ -995,6 +996,7 @@
     "cost": 0.0001,
     "status": "",
     "path": "/v1/messages",
+    "method": null,
     "metadata": {
      "trace_id": "pk-trace-2",
      "metadata": {
@@ -1037,6 +1039,7 @@
     "cost": 0.0004,
     "status": "200",
     "path": "/openai/v1/chat/completions",
+    "method": null,
     "metadata": {
      "plugin": "plugin-1",
      "route": "openai-chat",
@@ -1078,6 +1081,7 @@
     "cost": 0.0,
     "status": "401",
     "path": "/anthropic/v1/messages",
+    "method": null,
     "metadata": {
      "plugin": null,
      "route": "anthropic-messages",
@@ -1119,6 +1123,7 @@
     "cost": 0.0091,
     "status": "200",
     "path": "/v1/messages",
+    "method": null,
     "metadata": {
      "gateway_id": "acme-ai-gw",
      "cached": false,
@@ -1163,6 +1168,7 @@
     "cost": 0.0003,
     "status": "True",
     "path": "chat",
+    "method": null,
     "metadata": {
      "gateway_id": "acme-ai-gw",
      "cached": true,
@@ -1206,6 +1212,7 @@
     "cost": 0.0,
     "status": "500",
     "path": "text-generation",
+    "method": null,
     "metadata": {
      "gateway_id": "acme-ai-gw",
      "cached": null,
@@ -1247,6 +1254,7 @@
     "cost": 0.0007,
     "status": "200",
     "path": "https://api.openai.com/v1/chat/completions",
+    "method": null,
     "metadata": {
      "properties": {
       "Helicone-Property-App": "support-bot",
@@ -1289,6 +1297,7 @@
     "cost": 0.0011,
     "status": "200",
     "path": null,
+    "method": null,
     "metadata": {
      "properties": {
       "Helicone-Property-App": "digest-cron",
@@ -1331,6 +1340,7 @@
     "cost": 0.0003,
     "status": "DEFAULT",
     "path": "support-agent",
+    "method": null,
     "metadata": {
      "trace": "tr-1",
      "tags": [
@@ -1374,6 +1384,7 @@
     "cost": 0.004,
     "status": "ERROR",
     "path": "nightly-summary",
+    "method": null,
     "metadata": {
      "trace": "tr-2",
      "tags": null,
@@ -1415,6 +1426,7 @@
     "cost": 0.0,
     "status": "ok",
     "path": "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+    "method": null,
     "metadata": {
      "project": "acme-prod",
      "location": "us-central1",
@@ -1461,6 +1473,7 @@
     "cost": 0.0,
     "status": "7",
     "path": "google.cloud.aiplatform.v1.ReasoningEngineExecutionService.QueryReasoningEngine",
+    "method": null,
     "metadata": {
      "project": "acme-prod",
      "location": "us-central1",
@@ -1503,6 +1516,7 @@
     "cost": 0.0,
     "status": null,
     "path": "api_key.created",
+    "method": null,
     "metadata": {
      "project": "proj_1",
      "num_requests": null,
@@ -1546,6 +1560,7 @@
     "cost": 0.0,
     "status": null,
     "path": "project.updated",
+    "method": null,
     "metadata": {
      "project": "proj_1",
      "num_requests": null,
@@ -1589,6 +1604,7 @@
     "cost": 0.0,
     "status": null,
     "path": null,
+    "method": null,
     "metadata": {
      "project": "proj_1",
      "num_requests": 15,
@@ -1632,6 +1648,7 @@
     "cost": 0.0,
     "status": null,
     "path": null,
+    "method": null,
     "metadata": {
      "project": "proj_1",
      "num_requests": 4,
@@ -1675,6 +1692,7 @@
     "cost": 0.0,
     "status": null,
     "path": null,
+    "method": null,
     "metadata": {
      "project": "proj_2",
      "num_requests": 30,
@@ -1718,6 +1736,7 @@
     "cost": 0.0,
     "status": null,
     "path": null,
+    "method": null,
     "metadata": {
      "project": "proj_1",
      "num_requests": null,
@@ -1761,6 +1780,7 @@
     "cost": 0.0,
     "status": null,
     "path": "completion",
+    "method": null,
     "metadata": {
      "project": null,
      "num_requests": 12,
@@ -1804,6 +1824,7 @@
     "cost": 0.0,
     "status": null,
     "path": "standard",
+    "method": null,
     "metadata": {
      "workspace": "wrkspc_01",
      "service_tier": "standard"
@@ -1844,6 +1865,7 @@
     "cost": 0.0,
     "status": null,
     "path": "0-200k",
+    "method": null,
     "metadata": {
      "workspace": "wrkspc_02",
      "service_tier": null
@@ -1884,6 +1906,7 @@
     "cost": 0.001,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": null,
     "metadata": {},
     "schema": "generic",
     "scope": {},
@@ -1921,6 +1944,7 @@
     "cost": 0.0002,
     "status": "200",
     "path": "https://api.anthropic.com/v1/messages",
+    "method": null,
     "metadata": {},
     "schema": "generic",
     "scope": {},
@@ -1958,6 +1982,7 @@
     "cost": 0.0,
     "status": "",
     "path": null,
+    "method": null,
     "metadata": {},
     "schema": "generic",
     "scope": {},
@@ -1995,6 +2020,7 @@
     "cost": 0.0,
     "status": "",
     "path": "/api/chat",
+    "method": null,
     "metadata": {},
     "schema": "generic",
     "scope": {},
@@ -2036,6 +2062,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": 1024
@@ -2076,6 +2103,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/messages",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": 2048
@@ -2116,6 +2144,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "https://api.openai.com:443/v1/embeddings",
+    "method": "POST",
     "metadata": {
      "method": null,
      "bytes": null
@@ -2156,6 +2185,7 @@
     "cost": 0.0,
     "status": "429",
     "path": "/v1/chat/completions?stream=true",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": "0"
@@ -2196,6 +2226,7 @@
     "cost": 0.0005,
     "status": "success",
     "path": "aembedding",
+    "method": null,
     "metadata": {
      "request_tags": [
       "batch"
@@ -2238,6 +2269,7 @@
     "cost": 0.02,
     "status": "success",
     "path": "acompletion",
+    "method": null,
     "metadata": {
      "request_tags": null,
      "cache_hit": null
@@ -2278,6 +2310,7 @@
     "cost": 0.0,
     "status": "ThrottlingException",
     "path": "InvokeModel",
+    "method": null,
     "metadata": {
      "account": "123456789012",
      "region": "us-west-2",
@@ -2323,6 +2356,7 @@
     "cost": 0.0,
     "status": "ok",
     "path": "InvokeModel",
+    "method": null,
     "metadata": {
      "account": "123456789012",
      "region": "eu-west-1",
@@ -2366,6 +2400,7 @@
     "cost": 0.0,
     "status": "",
     "path": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+    "method": null,
     "metadata": {},
     "schema": "generic",
     "scope": {},
@@ -2403,6 +2438,7 @@
     "cost": 0.0,
     "status": "",
     "path": null,
+    "method": null,
     "metadata": {},
     "schema": "generic",
     "scope": {},
@@ -2440,6 +2476,7 @@
     "cost": 0.0,
     "status": "",
     "path": null,
+    "method": null,
     "metadata": {},
     "schema": "generic",
     "scope": {},
@@ -2477,6 +2514,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "/v1/chat/completions",
+    "method": "POST",
     "metadata": {
      "method": "POST",
      "bytes": null
@@ -2517,6 +2555,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "Deployments_Get",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": "gpt-4o-prod",
@@ -2560,6 +2599,7 @@
     "cost": 0.0,
     "status": "200",
     "path": "ChatCompletions_Create",
+    "method": null,
     "metadata": {
      "resource_id": "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/ACME-OPENAI",
      "deployment": null,
@@ -4706,14 +4746,16 @@
    "surface": "gateway",
    "connector": "gateway.logs",
    "kind": "gateway-caller",
-   "title": "LLM caller 'serviceAccount:runner@acme-prod.iam.gserviceaccount.com' (principal): 1 requests to reasoningEngines/4242",
+   "title": "Agentic caller 'serviceAccount:runner@acme-prod.iam.gserviceaccount.com' (principal): 1 requests via Vertex AI Agent Engine / Agent Builder / Agentspace to reasoningEngines/4242",
    "resource": "gcp:serviceAccount:runner@acme-prod.iam.gserviceaccount.com",
    "resource_type": "caller/principal",
    "provider": "synthetic-gateway",
    "account": "{\"project\": \"acme-prod\"}",
    "region": null,
    "owner": null,
-   "frameworks": [],
+   "frameworks": [
+    "cloud.gcp-vertex-agent-engine"
+   ],
    "model_providers": [
     "provider.google-vertex-ai"
    ],
@@ -4743,10 +4785,19 @@
      "weight": 0.35,
      "signature": null,
      "attributes": {}
+    },
+    {
+     "signal": "gateway:agent-runtime-api",
+     "description": "1 request(s) targeted hosted agent runtime invocation operations: Vertex AI Agent Engine \u00d71; request metadata does not establish successful execution or tool use",
+     "location": null,
+     "snippet": null,
+     "weight": 0.7,
+     "signature": null,
+     "attributes": {}
     }
    ],
-   "confidence": 0.701,
-   "likelihood": "likely",
+   "confidence": 0.91,
+   "likelihood": "strong",
    "risk": {
     "score": 0,
     "level": "info",
@@ -4756,12 +4807,18 @@
    "shadow": null,
    "registry_match": null,
    "tags": [
+    "agent-runtime-api",
     "no-end-user-attribution"
    ],
    "first_seen": "2025-09-01T13:05:00+00:00",
    "last_seen": "2025-09-01T13:05:00+00:00",
    "metadata": {
-    "agent_indicators": 0,
+    "agent_indicators": 1,
+    "agent_behaviour": {
+     "agent_operations": {
+      "Vertex AI Agent Engine": 1
+     }
+    },
     "caller_kind": "principal",
     "caller": "serviceAccount:runner@acme-prod.iam.gserviceaccount.com",
     "events": 1,
@@ -4839,6 +4896,12 @@
      "provider.google-vertex-ai|domain": 1
     },
     "technologies": [
+     {
+      "id": "cloud.gcp-vertex-agent-engine",
+      "name": "Vertex AI Agent Engine / Agent Builder / Agentspace",
+      "category": "cloud-service",
+      "vendor": "Google Cloud"
+     },
      {
       "id": "provider.google-vertex-ai",
       "name": "Google Vertex AI",
