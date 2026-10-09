@@ -277,7 +277,8 @@ and tests, which call and test the products they detect.
   high weight, so a DNS script or a dataset download stays a low-confidence hint, not LLM usage.
   A `re:` value must not match a dotted identifier: end it in a list of top-level domains or a fixed vendor
   domain, because the tokenizer reads every `a.b.c` word of a source file as a host
-  (`re:^mcp\.[a-z0-9-]+\.(?:com|dev|app|ai|io|...)$`, not `\.[a-z]+$`). A host on a line of a hosts file,
+  (`re:^mcp\.[a-z0-9-]+\.(?:com|dev|app|ai|io|...)$`, not `\.[a-z]+$`), and leave out two-letter codes
+  that are also common file extensions or property names (`py`, `md`, `rs`, `id`, `in`). A host on a line of a hosts file,
   ad-block list, resolver configuration or proxy rule list is routed or blocked, not used, and never matches.
   `gateway.logs` still treats Cloudflare Workers AI inference paths (`/accounts/<id>/ai/run/`,
   `/accounts/<id>/ai/v1/`) as LLM traffic on any host.

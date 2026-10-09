@@ -96,8 +96,10 @@ signatures:
         weight: 0.6
       - type: domain
         # The mcp.<vendor>.<tld> form stops at real top-level domains: a dotted identifier such as the
-        # translation key mcp.translator.translatekey (Minecraft Coder Pack) is not a host.
-        values: [server.smithery.ai, registry.smithery.ai, mcp.zapier.com, mcp.composio.dev, api.githubcopilot.com, mcp.notion.com, mcp.linear.app, mcp.atlassian.com, mcp.stripe.com, mcp.paypal.com, mcp.sentry.dev, mcp.cloudflare.com, remote.mcpservers.org, "re:^mcp\\.[a-z0-9-]+\\.(?:com|dev|app|ai|io|net|org|tech|co|cloud|xyz|run|so|sh|tools|chat|eu|me|site|online|network|studio|systems|software|services)$"]
+        # translation key mcp.translator.translatekey (Minecraft Coder Pack) is not a host. The two-letter
+        # forms are the country-code domains except those that are also common file extensions or
+        # property names (py, md, rs, pl, ps, id, in, cc, mk, ...); host is left out for the same reason.
+        values: [server.smithery.ai, registry.smithery.ai, mcp.zapier.com, mcp.composio.dev, api.githubcopilot.com, mcp.notion.com, mcp.linear.app, mcp.atlassian.com, mcp.stripe.com, mcp.paypal.com, mcp.sentry.dev, mcp.cloudflare.com, remote.mcpservers.org, "re:^mcp\\.[a-z0-9-]+\\.(?:a[defgiloqrtuwxz]|b[abdefghijmnoqrstwyz]|c[adfghikmnouvwxyz]|d[ejkmoz]|e[cegrstu]|f[ijkmor]|g[aefghilmnpqrtuwy]|h[kmnrtu]|i[elmoqrst]|j[emop]|k[eghimnprwyz]|l[abcikrstuvy]|m[aceghnpqrstuvwxyz]|n[acefgilopruz]|om|p[aefghknrtw]|qa|r[ouw]|s[abdeghiklmnoruxyz]|t[cdghjklmnortvwz]|u[agksyz]|v[aceginu]|w[fs]|y[et]|z[amw]|com|dev|app|net|org|tech|cloud|xyz|run|tools|chat|site|online|network|studio|systems|software|services|page|live|info|biz|pro|space|digital|works|zone|world|club|team|website|technology|company|agency|solutions)$"]
         weight: 0.85
       - type: user_agent
         patterns: ['(?i)\bmcp(?:-|_)?(?:client|server|remote|inspector)\b', '(?i)modelcontextprotocol', '(?i)\bmcp/\d']

@@ -24,6 +24,15 @@ def _mcp_hosts(text: str) -> set[str]:
         "mcp.acme.ai",
         "mcp.acme.io",
         "mcp.some-vendor.app",
+        # Country-code and other generic top-level domains.
+        "mcp.example.de",
+        "mcp.ionos.fr",
+        "mcp.vendor.us",
+        "mcp.vendor.to",
+        "mcp.vendor.jp",
+        "mcp.vendor.page",
+        "mcp.vendor.live",
+        "mcp.vendor.info",
     ],
 )
 def test_mcp_vendor_hosts_match(host: str):
@@ -38,6 +47,13 @@ def test_mcp_vendor_hosts_match(host: str):
         "mcp.currentversion.id",
         "mcp.options.theme",
         "mcp.server.stdio",
+        # Two-letter country codes that are also file extensions or property names, and "host".
+        "mcp.server.py",
+        "mcp.notes.md",
+        "mcp.client.rs",
+        "mcp.config.in",
+        "mcp.client.id",
+        "mcp.config.host",
     ],
 )
 def test_dotted_identifiers_are_not_hosts(identifier: str):
