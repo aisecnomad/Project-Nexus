@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 from collections import Counter
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 
 from shadowscan.connectors.code.provider_tools import python_provider_tool_literals
@@ -18,6 +19,9 @@ from shadowscan.utils.text import python_source_lines
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 _SCOPES = (*_FUNCTIONS, ast.ClassDef, ast.Lambda)
+# Builtins that reach a module's functions by name ('globals()[name](...)').
+_DYNAMIC_LOOKUPS = frozenset({"eval", "exec", "globals"})
+_Walk = tuple[tuple[tuple[int, int], ...], tuple[tuple[int, int], ...], tuple[ast.AST, ...]]
 
 
 @dataclass(frozen=True)
@@ -34,12 +38,29 @@ def python_tool_regions(
     constructors: list[tuple[ast.Call, int | None]],
     registrations: list[tuple[ast.Call | None, int, bool]],
     dispatch_calls: set[int],
+    *,
+    each: dict[int, ToolRegions] | None = None,
+    escapes: list[tuple[int, int]] | None = None,
+    duplicates: Collection[ast.Call] = (),
 ) -> ToolRegions:
     """Resolve literal registrations and uniquely named local helper calls.
 
     The caller supplies only import-bound constructors and registrations.
     Rebinding, wildcard imports, foreign scopes and unresolved tool collections
     establish no local body. AST traversal shares the source matching deadline.
+    With ``each``, every constructor's own regions are also stored under
+    ``id(call)``; literal collections still resolve against all constructors.
+    Each function body is read once however many constructors reach it.
+
+    ``escapes`` receives the regions of every local function that code other
+    than a resolved tools entry or a direct call can obtain, with whatever it
+    calls: a function passed to another call ('bind_tools([lookup])'),
+    stored, returned or placed in a computed collection, a method or lambda
+    (callable wherever its object goes), or a function a local decorator
+    receives. ``globals()``, ``eval`` or ``exec`` reach any function, and
+    make it the whole text. ``duplicates`` are constructions whose literal
+    tools lists repeat a constructor's in the same scope; their entries are
+    resolved registrations too.
     """
     if not constructors and not registrations and not dispatch_calls:
         return ToolRegions()
@@ -48,6 +69,7 @@ def python_tool_regions(
     definitions: dict[tuple[int, str], ast.FunctionDef | ast.AsyncFunctionDef] = {}
     objects: dict[tuple[int, str], ast.Call] = {}
     wildcards: set[int] = set()
+    imported: set[tuple[int, str]] = set()
     redirects: dict[int, set[str]] = {}
     globals_: dict[int, set[str]] = {}
     parents: dict[int, int | None] = {id(tree): None}
@@ -146,6 +168,7 @@ def python_tool_regions(
                 if alias.name == "*":
                     wildcards.add(scope)
                 stores[scope, alias.asname or alias.name.split(".", 1)[0]] += 1
+                imported.add((scope, alias.asname or alias.name.split(".", 1)[0]))
         elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
             stores[scope, node.name] += 1
         elif isinstance(node, ast.MatchMapping) and node.rest:
@@ -249,81 +272,33 @@ def python_tool_regions(
         if (region := callee_span(node)) is not None:
             regions.append(region)
 
-    selected: dict[int, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda] = {}
-    configured_objects: list[tuple[int, int]] = []
-
-    def select(value: ast.AST | None, scope: int) -> ast.AST | None:
-        if isinstance(value, ast.Lambda):
-            if id(value) not in selected:
-                selected[id(value)] = value
-                return value
-        elif isinstance(value, ast.Call):
-            record_callee(value.func, configured_objects)
-        elif isinstance(value, ast.Name) and (resolved := binding_scope(value.id, scope)) is not None:
-            function = definitions.get((resolved, value.id))
-            if function is not None:
-                if id(function) not in selected:
-                    selected[id(function)] = function
-                    return function
-            elif (created := objects.get((resolved, value.id))) is not None:
-                record_callee(created.func, configured_objects)
-        return None
-
     literals = python_provider_tool_literals(
         tree,
         {id(call) for call, _ in constructors},
         {id(call): position for call, position in constructors if position is not None},
     )
-    for call, position in constructors:
-        keywords = [keyword.arg for keyword in call.keywords]
-        if None in keywords or len(set(keywords)) != len(keywords):
-            continue
-        scope = scopes.get(id(call), id(tree))
-        value: ast.AST | None = next(
-            (keyword.value for keyword in call.keywords if keyword.arg == "tools"), None
-        )
-        if value is None and position is not None and len(call.args) > position:
-            if not any(isinstance(argument, ast.Starred) for argument in call.args[: position + 1]):
-                value = call.args[position]
-        if isinstance(value, ast.Name):
-            value = literals.get(id(call), {}).get(value.id)
-        values = (
-            value.elts
-            if isinstance(value, (ast.List, ast.Tuple, ast.Set))
-            else value.values
-            if isinstance(value, ast.Dict) and all(key is not None for key in value.keys)
-            else ()
-        )
-        for entry in values:
-            select(entry, scope)
-    decorator_lines = {line for _, line, decorated in registrations if decorated}
-    for node in nodes:
-        if (
-            isinstance(node, _FUNCTIONS)
-            and id(node) in live
-            and any(decorator.lineno in decorator_lines for decorator in node.decorator_list)
-        ):
-            selected[id(node)] = node
-    for registration, _, decorated in registrations:
-        if registration is not None and not decorated and registration.args:
-            select(registration.args[0], scopes.get(id(registration), id(tree)))
 
-    # Follow direct calls into unambiguous lexical function bindings. Aliases,
-    # attributes and imported implementations remain contextual observations.
-    queue: list[ast.AST] = list(selected.values())
-    for node in nodes:
-        if isinstance(node, ast.Call) and id(node) in dispatch_calls and id(node) in live:
-            record_callee(node.func, configured_objects)
-            if isinstance(node.func, ast.Name) and (chosen := select(node.func, scopes[id(node)])):
-                queue.append(chosen)
-    visited: set[int] = set()
-    bodies: list[tuple[int, int]] = list(configured_objects)
-    declarations: list[tuple[int, int]] = []
-    while queue:
-        function = queue.pop()
-        if id(function) in visited:
-            continue
-        visited.add(id(function))
+    def local_callable(value: ast.AST, scope: int) -> ast.AST | None:
+        """The lambda, or the uniquely bound local function, that ``value`` denotes."""
+        if isinstance(value, ast.Lambda):
+            return value
+        if isinstance(value, ast.Name) and (resolved := binding_scope(value.id, scope)) is not None:
+            return definitions.get((resolved, value.id))
+        return None
+
+    walks: dict[int, _Walk] = {}
+
+    def walk(function: ast.AST) -> _Walk:
+        """A function's invoked callees, its decorators and the local functions it calls.
+
+        Each body is read once per file: constructors sharing a tools
+        collection, or tools sharing helpers, reuse what was read.
+        """
+        if (known := walks.get(id(function))) is not None:
+            return known
+        bodies: list[tuple[int, int]] = []
+        declarations: list[tuple[int, int]] = []
+        callees: list[ast.AST] = []
         if isinstance(function, _FUNCTIONS):
             declarations.extend(
                 (max(0, span(decorator)[0] - 1), span(decorator)[1]) for decorator in function.decorator_list
@@ -346,9 +321,9 @@ def python_tool_regions(
                     body.extend(node.decorator_list)
                     for decorator in node.decorator_list:
                         if isinstance(decorator, (ast.Name, ast.Lambda)) and (
-                            chosen := select(decorator, scopes[id(decorator)])
+                            chosen := local_callable(decorator, scopes[id(decorator)])
                         ):
-                            queue.append(chosen)
+                            callees.append(chosen)
                 continue
             if isinstance(node, ast.ClassDef):
                 # A class body runs immediately; its methods are deferred and
@@ -368,8 +343,160 @@ def python_tool_regions(
                 # Keep only the invoked expression. A deferred lambda inside
                 # its arguments is not established as an executed callback.
                 record_callee(node.func, bodies)
-                if isinstance(node.func, (ast.Name, ast.Lambda)):
-                    if chosen := select(node.func, scopes[id(node)]):
-                        queue.append(chosen)
+                if isinstance(node.func, (ast.Name, ast.Lambda)) and (
+                    chosen := local_callable(node.func, scopes[id(node)])
+                ):
+                    callees.append(chosen)
             body.extend(ast.iter_child_nodes(node))
-    return ToolRegions(tuple(sorted(set(bodies))), tuple(sorted(set(declarations))))
+        walks[id(function)] = (tuple(bodies), tuple(declarations), tuple(callees))
+        return walks[id(function)]
+
+    def reach(
+        functions: Iterable[ast.AST], bodies: set[tuple[int, int]], declarations: set[tuple[int, int]]
+    ) -> None:
+        """Add what ``functions`` and the local functions they call reach."""
+        queue = list(functions)
+        visited: set[int] = set()
+        while queue:
+            function = queue.pop()
+            if id(function) in visited:
+                continue
+            visited.add(id(function))
+            own_bodies, own_declarations, callees = walk(function)
+            bodies.update(own_bodies)
+            declarations.update(own_declarations)
+            queue.extend(callees)
+
+    # Tools entries that a resolved registration accounts for; any other
+    # reference to a local function lets other code obtain it (``escapes``).
+    entries: set[int] = set()
+
+    def resolve(
+        requested: list[tuple[ast.Call, int | None]],
+        registered: list[tuple[ast.Call | None, int, bool]],
+        dispatched: set[int],
+    ) -> ToolRegions:
+        selected: dict[int, ast.AST] = {}
+        configured_objects: list[tuple[int, int]] = []
+
+        def select(value: ast.AST | None, scope: int) -> None:
+            if isinstance(value, ast.Call):
+                record_callee(value.func, configured_objects)
+            elif value is not None and (function := local_callable(value, scope)) is not None:
+                selected[id(function)] = function
+            elif isinstance(value, ast.Name) and (resolved := binding_scope(value.id, scope)) is not None:
+                if (created := objects.get((resolved, value.id))) is not None:
+                    record_callee(created.func, configured_objects)
+
+        for call, position in requested:
+            keywords = [keyword.arg for keyword in call.keywords]
+            if None in keywords or len(set(keywords)) != len(keywords):
+                continue
+            scope = scopes.get(id(call), id(tree))
+            value: ast.AST | None = next(
+                (keyword.value for keyword in call.keywords if keyword.arg == "tools"), None
+            )
+            if value is None and position is not None and len(call.args) > position:
+                if not any(isinstance(argument, ast.Starred) for argument in call.args[: position + 1]):
+                    value = call.args[position]
+            if isinstance(value, ast.Name):
+                value = literals.get(id(call), {}).get(value.id)
+            values = (
+                value.elts
+                if isinstance(value, (ast.List, ast.Tuple, ast.Set))
+                else value.values
+                if isinstance(value, ast.Dict) and all(key is not None for key in value.keys)
+                else ()
+            )
+            for entry in values:
+                entries.add(id(entry))
+                select(entry, scope)
+        # Whole-file scans run only for paths that need them, so resolving
+        # one constructor costs its own registrations and reachable bodies.
+        decorator_lines = {line for _, line, decorated in registered if decorated}
+        if decorator_lines:
+            for node in nodes:
+                if (
+                    isinstance(node, _FUNCTIONS)
+                    and id(node) in live
+                    and any(decorator.lineno in decorator_lines for decorator in node.decorator_list)
+                ):
+                    selected[id(node)] = node
+        for registration, _, decorated in registered:
+            if registration is not None and not decorated and registration.args:
+                select(registration.args[0], scopes.get(id(registration), id(tree)))
+
+        # Follow direct calls into unambiguous lexical function bindings. Aliases,
+        # attributes and imported implementations remain contextual observations.
+        if dispatched:
+            for node in nodes:
+                if isinstance(node, ast.Call) and id(node) in dispatched and id(node) in live:
+                    record_callee(node.func, configured_objects)
+                    if isinstance(node.func, ast.Name):
+                        select(node.func, scopes[id(node)])
+        bodies = set(configured_objects)
+        declarations: set[tuple[int, int]] = set()
+        reach(selected.values(), bodies, declarations)
+        return ToolRegions(tuple(sorted(bodies)), tuple(sorted(declarations)))
+
+    def escaped_regions() -> list[tuple[int, int]]:
+        """What local functions reach when code other than a resolved registration obtains them."""
+        stored = {name for _, name in stores}
+
+        def foreign(expression: ast.AST, scope: int) -> bool:
+            """Whether an expression's root name is imported or a builtin, not local code."""
+            while isinstance(expression, (ast.Call, ast.Attribute, ast.Subscript)):
+                expression = expression.func if isinstance(expression, ast.Call) else expression.value
+            if not isinstance(expression, ast.Name):
+                return False
+            if (resolved := binding_scope(expression.id, scope)) is not None:
+                return (resolved, expression.id) in imported
+            return not wildcards and expression.id not in stored
+
+        called = {id(node.func) for node in nodes if isinstance(node, ast.Call)}
+        called.update(
+            id(decorator)
+            for node in nodes
+            if isinstance(node, (*_FUNCTIONS, ast.ClassDef))
+            for decorator in node.decorator_list
+        )
+        roots: list[ast.AST] = []
+        for node in nodes:
+            control_checkpoint()
+            if id(node) not in live:
+                continue
+            scope = scopes[id(node)]
+            if isinstance(node, ast.Lambda):
+                if id(node) not in entries and id(node) not in called:
+                    roots.append(node)
+            elif isinstance(node, _FUNCTIONS):
+                # A method runs wherever its object goes; a local decorator
+                # receives the function itself.
+                if isinstance(owners[scope], ast.ClassDef) or not all(
+                    foreign(decorator, scopes[id(decorator)]) for decorator in node.decorator_list
+                ):
+                    roots.append(node)
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id in _DYNAMIC_LOOKUPS and foreign(node, scope):
+                    return [(0, len(text))]
+                if id(node) not in called and id(node) not in entries:
+                    if (function := local_callable(node, scope)) is not None:
+                        roots.append(function)
+        bodies: set[tuple[int, int]] = set()
+        declarations: set[tuple[int, int]] = set()
+        reach(roots, bodies, declarations)
+        return sorted(bodies | declarations)
+
+    if each is not None:
+        # Resolve every constructor alone against the tables built once
+        # above: separate identities must not repeat this whole-file pass.
+        for call, position in constructors:
+            each[id(call)] = resolve([(call, position)], [], set())
+    regions = resolve(constructors, registrations, dispatch_calls)
+    if escapes is not None:
+        for call in duplicates:
+            tools = next((keyword.value for keyword in call.keywords if keyword.arg == "tools"), None)
+            if isinstance(tools, (ast.List, ast.Tuple)):
+                entries.update(id(entry) for entry in tools.elts)
+        escapes.extend(escaped_regions())
+    return regions

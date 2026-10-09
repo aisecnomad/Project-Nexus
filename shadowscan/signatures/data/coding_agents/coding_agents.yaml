@@ -364,8 +364,10 @@ signatures:
     capabilities: [code-exec, tool-use, autonomous]
     agent_indicator: true
     signals:
+      # A bare-name glob matches at any depth, and a lowercase devin.md is as likely
+      # a page about a person (content/authors/devin.md). Instruction files are uppercase.
       - type: file
-        globs: [".devin/**", "**/.devin/**", "devin.md", "**/devin.md", "DEVIN.md", "**/DEVIN.md", ".devin.json", "**/.devin.json"]
+        globs: [".devin/**", "**/.devin/**", "DEVIN.md", ".devin.json", "**/.devin.json"]
         weight: 0.85
       - type: domain
         values: [devin.ai, app.devin.ai, api.devin.ai]

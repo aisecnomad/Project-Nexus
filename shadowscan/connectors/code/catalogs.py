@@ -18,7 +18,13 @@ A file is catalog-like when all of the following hold:
 * every non-heuristic match in it is a mention-class signal (``domain``,
   ``env`` or ``name``), so the file holds no import, dependency, code,
   file-name, image, IaC, model or credential anchor; and
-* its matches span at least ``CATALOG_MIN_SIGNATURES`` distinct signatures.
+* its matches span at least ``CATALOG_MIN_SIGNATURES`` distinct signatures, or
+  its file stem names a deny list: a whole word, or two adjacent words, spell
+  ``blocklist``, ``denylist`` or ``blacklist`` (``ai-blocklist.yaml``,
+  ``deny_list.json``). An allowlist, a whitelist, an egress policy or a
+  firewall or WAF rule set is not a deny list: it permits traffic, often to
+  exactly the hosts it names, so a bare ``block``, ``deny``, ``firewall`` or
+  ``waf`` (``firewall-rules.json``, ``default-deny.yaml``) is not enough.
 
 Why four is a judgement from the data at hand: the bundled evaluation corpora's
 multi-provider configurations are dotenv files naming three or four products
@@ -47,6 +53,7 @@ import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
+from itertools import pairwise
 from pathlib import PurePosixPath
 from typing import Any, Protocol
 
@@ -108,11 +115,12 @@ _PIPELINE_NAMES = frozenset(
     }
 )
 _PIPELINE_DIRECTORIES = frozenset({".circleci", ".buildkite", ".woodpecker", ".gitlab"})
-_POLICY_FILE = re.compile(
-    r"(?:block|deny|reject|drop|firewall|acl|egress|ingress|waf|security)[_-]?"
-    r"|(?:blocklist|denylist|blacklist|allowlist|whitelist)",
-    re.IGNORECASE,
-)
+# Whole words of a file stem that name a deny list. An allowlist, a whitelist, an
+# egress policy or a firewall or WAF rule set (a default-deny policy with allow
+# exceptions) permits the traffic it names, which is evidence of use, and a
+# substring would also match "oracle" (acl), "dropdown" or "blockchain".
+_DENY_LIST_WORDS = frozenset({"blocklist", "denylist", "blacklist"})
+_STEM_SEPARATORS = re.compile(r"[._-]+")
 # Spring application and bootstrap configuration, including profiles (application-prod.yml).
 _SERVICE_CONFIGURATION = re.compile(r"(?:application|bootstrap)(?:-[\w.-]+)?\.(?:ya?ml|properties)")
 # Keys whose entries assign variables to a container, a job or a function. Compared without
@@ -224,6 +232,14 @@ def configuration_document(rel: str, text: str, parsed: Any, env_names: Abstract
     return bool(env_names) and not env_names.isdisjoint(_configured_variables(parsed))
 
 
+def deny_list_file(rel: str) -> bool:
+    """Whether ``rel`` is named as a block or deny list (``ai-blocklist.yaml``, ``deny_list.json``)."""
+    words = _STEM_SEPARATORS.split(PurePosixPath(rel).stem.lower())
+    # "block-list" and "deny_list" spell the same nouns as two words.
+    terms = {*words, *(first + second for first, second in pairwise(words))}
+    return not _DENY_LIST_WORDS.isdisjoint(terms)
+
+
 def catalog_files(
     observations: Iterable[Observation], configuration: AbstractSet[str] = frozenset()
 ) -> frozenset[str]:
@@ -246,10 +262,10 @@ def catalog_files(
         if types <= CATALOG_MENTION_SIGNALS and _is_data_file(rel) and rel not in configuration
     }
     catalogs = {rel for rel in mention_only if len(signatures[rel]) >= CATALOG_MIN_SIGNATURES}
-    # A file whose name indicates a blocklist or policy is a catalog even with
-    # fewer signatures: its domain/env mentions are deny rules, not usage.
+    # A file named as a block or deny list is a catalog even with fewer
+    # signatures: its domain and variable mentions are deny rules, not usage.
     for rel in mention_only - catalogs:
-        if signatures[rel] and _POLICY_FILE.search(PurePosixPath(rel).stem):
+        if signatures[rel] and deny_list_file(rel):
             catalogs.add(rel)
     if catalogs and mention_only.issuperset(signal_types):
         # Nothing but mention-only data files names a technology here.

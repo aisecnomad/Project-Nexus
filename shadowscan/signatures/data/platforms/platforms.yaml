@@ -547,17 +547,15 @@ signatures:
     vendor: Databricks / MLflow
     homepage: https://mlflow.org/docs/latest/llms/deployments/
     description: MLflow AI Gateway (now MLflow Deployments) unifies LLM provider endpoints behind a single API.
+    # No dependency signal: the mlflow package is mostly experiment tracking and
+    # classic-ML lifecycle tooling, so declaring it does not establish gateway use.
     signals:
-      - type: dependency
-        ecosystem: pypi
-        names: [mlflow, mlflow-skinny]
-        prefixes: [mlflow]
-        weight: 0.3
       - type: code
         patterns: ['\bmlflow\.deployments\.', '\bmlflow\.gateway\.', '\bMlflowDeploymentClient\s*\(', '\bmlflow_gateway\b', '\bmlflow\.(?:openai|anthropic|bedrock)\b']
         weight: 0.6
+      # Not a bare gateway_config.yaml: API gateways of every kind use that name.
       - type: file
-        globs: ["mlflow-gateway-config.yaml", "**/mlflow-gateway-config.yaml", "gateway_config.yaml"]
+        globs: ["mlflow-gateway-config.yaml", "**/mlflow-gateway-config.yaml"]
         weight: 0.8
       - type: env
         names: [MLFLOW_GATEWAY_URI, MLFLOW_DEPLOYMENTS_TARGET]

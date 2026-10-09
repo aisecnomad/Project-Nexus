@@ -39,6 +39,27 @@ summarizes each release for people who install and operate ShadowScan.
   invocation and Go agent construction without claiming runtime execution.
   Shadowed C# tool-mode names cannot borrow an SDK type or alias's automatic
   invocation meaning.
+- Keep Microsoft.Extensions.AI `UseFunctionInvocation()` middleware as an
+  agent indicator with tool use, still requiring matching import or dependency
+  evidence. Clients that this middleware configures, including
+  dependency-injected ones, provider constructor chains and target-typed
+  options remain agents, as before these corrections. An explicitly
+  constructed `FunctionInvokingChatClient` is not a lexical indicator: when it
+  is registered through dependency injection or held in fields, the per-file
+  proof cannot follow it and the project is reported as framework usage,
+  where an `AIFunctionFactory.Create` tool previously made it an agent.
+- The C# tool-loop proof reads target-typed `new()` in a local declaration of
+  an SDK type and in a response call's options argument, so an explicit
+  `FunctionInvokingChatClient` with `ChatOptions options = new() { Tools = ... }`
+  remains an agent.
+- C# files that never name `Microsoft.Extensions.AI` skip the tool-loop proof,
+  so a large file calling an unrelated `GetResponseAsync` no longer exhausts
+  its token budget and marks the scan incomplete.
+- A Go function type declared on the preceding line, such as
+  `type Option func(...)` or one whose result ends in `interface{}` or
+  `struct{}`, no longer hides a parameter that shadows the imported
+  LangChainGo agents package, and its own parameters no longer shadow the
+  package in the function that follows.
 - Exclude Python comprehension results and later clauses that cannot execute
   because a literal iterable is empty or a preceding filter is false.
 - Match lifecycle observations by the complete case-insensitive device value.
@@ -54,7 +75,13 @@ summarizes each release for people who install and operate ShadowScan.
 
 - Resolve a bounded subset of local Python import-only re-exports without
   importing or executing scanned code. Unsupported or ambiguous bindings retain
-  their existing conservative classification.
+  their existing conservative classification. Shim budgets apply only to modules
+  that may be import-only, so large ordinary local modules no longer make their
+  importers incomplete; consumers that resolve through no shim keep the
+  single-file bindability proof. Queued consumers are matched lexically during
+  the walk; their import binding starts only within the walk's deadline budget
+  and margin, and any left unbound keep that lexical evidence and are reported
+  incomplete.
 - Separate the scheduled governance audit's visible-policy checks from complete
   policy assurance. Withheld bypass settings remain explicitly unknown; release
   verification still requires a complete policy readback.
@@ -86,10 +113,90 @@ summarizes each release for people who install and operate ShadowScan.
 - Add synthetic regressions and migration/reviewer guidance. Independent human
   field labels and scoped live tenant acceptance remain deployment requirements.
 
+### Source identity, guarded import and AWS command review fixes
+
+- Resolve the tool regions of every verified construction in a file in one
+  pass that reads each tool body once. A module registering many named agents
+  with a shared `tools=TOOLS` list of branching tools no longer exceeds the
+  per-file deadline in `agent_granularity: source` mode and drops to an
+  incomplete file.
+- Keep a tool's execution evidence on the project finding when anything other
+  than a named construction's literal tools list can reach it: an unresolved
+  or unpacked construction, a computed tools value (`get_tools()`,
+  `[lookup] + extra`, `[*EXTRA]`, `Box.tools`, a conditional or comprehension),
+  a positional list, another call that receives the function
+  (`bind_tools([lookup])`), a method, lambda or local decorator, a decorator or
+  method registration, a dispatch loop, or `globals()`, `eval` and `exec`.
+  Approving a named source binding no longer hides that capability from the
+  shadow project finding. Tools that only named literal lists and direct calls
+  reach still move to the named findings; a positional model string
+  (`Agent('openai:gpt-4o')`) no longer keeps every tool on the project.
+- Restore guarded optional imports after the try/except join correction: a
+  name only that try statement binds agrees with handlers that leave it
+  unbound, handlers ending in `sys.exit()`, `os._exit()`, `exit()` or `quit()`
+  do not continue, and alternative import paths of one package symbol agree.
+  Other bindings of the name in the module, handler rebinding, star imports
+  and same-named builtins stay uncertain.
+- Bind each notebook code cell's statements on their own. A cell that stops
+  Run All (`raise SystemExit`, `sys.exit()`, `exit()`, `quit()`) no longer
+  makes the constructions in later cells unreachable; Jupyter still runs them.
+- Withhold `aws configure set` credential values after unlisted or newer global
+  options (`--no-paginate`, `--cli-binary-format`), in other letter cases and
+  for `aws.cmd`, across PowerShell and cmd continuations, with comments or
+  string prefixes between source argv elements, after a bare `--`, and when
+  the executable is passed apart from its argument list (`spawn("aws", [...])`,
+  `args=[...]`, `["aws"] + [...]`, Rust `Command::new("aws").args([...])`).
+  Reading the separators of commented source argv stays linear: hostile text
+  with `aws` in every comment of a long block no longer stalls sanitization.
+
 ### Endpoint, fleet and instruction-content corrections
 
 - Endpoint profile discovery fails incomplete (exit 3) when a known location
-  cannot be inspected safely, including symbolic links and denied access.
+  cannot be inspected safely, including symbolic links and denied access. The
+  other locations are still scanned and reported in the same incomplete
+  report; before, one linked file (a stow-managed `~/.claude/settings.json`)
+  discarded the whole profile. A linked directory on the way to the known
+  locations (a stow-folded `~/.config`) is a coverage gap only when one of
+  them exists through it; `code.filesystem` `include` walks pass over such a
+  link otherwise, without following it.
+- `shadowscan endpoint` reads Windows locations from the profile's own
+  `AppData/Roaming`, never from the scanning process's `%APPDATA%`. A mounted
+  Windows profile scanned with `--home` was reported complete and empty while
+  its Claude Desktop or VS Code configuration went unread, and with `APPDATA`
+  set the operator's own configuration was reported under the target's label.
+  A scan of the user's own profile (no `--home`) whose `%APPDATA%` is
+  redirected outside it (folder redirection to a file share) is incomplete
+  (exit 3): the clients keep their configuration there, and the scan does not
+  read it.
+- `shadowscan endpoint` covers every configuration file location of
+  `endpoint.inventory` (LM Studio, Aider, OpenClaw, Goose on Windows, Cline and
+  Roo inside Cursor). Its include list no longer depends on which locations
+  exist, so a profile without AI clients gets a comparable collection scope
+  (a fleet including one stayed non-comparable and `shadowscan diff` exited 3),
+  and a client configured or removed later is a new or resolved finding rather
+  than a scope change. The default profile resolves symbolic links in `$HOME`.
+  `docs/scanning.md` describes how the command relates to `endpoint.inventory`.
+- A `code.filesystem` scan with `include` is no longer served from the
+  incremental cache, whether its root is given as `path`, `paths` or `input`:
+  fingerprinting the root read and hashed every file below it, so
+  `shadowscan endpoint --incremental` read the whole home directory.
+- In a `code.filesystem` scan with `include`, a file link whose target is not
+  selected (a `.claude/CLAUDE.md` linked to an unselected `AGENTS.md`) is a
+  coverage gap (incomplete). It counted as covered by its target, which the
+  walk never reads, so the scan was complete without the target's content.
+- `shadowscan merge` refuses a finding id that another report uses for a
+  finding with another identity (exit 1); a report that reused ids could fold
+  other machines' findings into its own. Sources are named by their path below
+  the reports' common directory, so `<host>/report.json` collections stay
+  attributable.
+- The hidden-comment check reports HTML comments of any length, and a comment
+  that is never closed where Markdown passes it through as HTML (at the start
+  of a line, below a list or quote marker, or in raw HTML), which before were
+  skipped beyond 4,000 bytes. An unclosed `<!--` in a paragraph or code span
+  is shown as text and is not reported; `<!-->` and `<!--->` are empty
+  comments. A zero-width joiner inside an emoji sequence, and the tag
+  characters of a subdivision flag (England, Scotland, Wales), no longer count
+  as invisible text.
 - Instruction content checks inspect the original confined file snapshot;
   exceeding their 512 KiB budget marks coverage incomplete.
 - Fleet merging validates source completion, counts and collection fingerprints.
@@ -156,12 +263,118 @@ author-written and not independent review.
   versus the LLM flavor, Spring AI with and without tools, a Go MCP server
   and a TypeScript MCP client).
 
+### Change-scoped scans, path context, corroboration and new ecosystems
+
+These change confidence, risk, kind and the set of findings against existing
+baselines; rebaseline before comparing (see `docs/production.md`).
+
+- `code.filesystem` option `diff_base` (`shadowscan code PATH --diff-base REF`)
+  scans the files committed between the merge base with `REF` and HEAD, plus
+  dependency manifests and `.env*` files. Findings carry the `diff-scan` tag and
+  `metadata.diff_scan`; the report is not comparable and is never cached. It
+  needs Git 2.45 or later and falls back to a full scan with a warning.
+- Path context discounts code evidence. Inside a project, documentation
+  directories (`docs/`, `guides/`, `tutorials/`, ...) and example directories
+  (`examples/`, `samples/`, `templates/`, `recipes/`, ...) scale evidence weight
+  by 0.5; generated files (`*_pb2.py`, `*_pb2_grpc.py`, `*.generated.*`) by 0.4.
+  When every non-test observation of a project is discounted, the finding is
+  tagged `docs-only`, `example-code-only` or `generated-code-only`, its
+  confidence is capped at 0.85, 0.85 or 0.7 (`metadata.confidence_cap`) and the
+  new default risk weights subtract 8, 8 or 10. `metadata.negative_contexts`
+  and `attributes.negative_context` record the context. `include_tests`
+  disables the discount, as it does for test code.
+- A project finding whose evidence spans independent signal types gains a
+  synthetic `corroboration:cross-signal` evidence item of weight 0.10 (library
+  and code) or 0.15 (three or more signal types) and
+  `metadata.cross_signal_corroboration`, raising confidence and likelihood.
+- A mention-only data file with fewer than four products is a catalog when its
+  name spells `blocklist`, `denylist` or `blacklist` as one word or two
+  (`ai-blocklist.yaml`, `deny_list.json`), so its mentions alone yield no
+  finding.
+- `import` and `code` signals accept the languages `c`, `cpp`, `elixir`, `r` and
+  `lua`; `conda` dependency signals cover the OpenAI, Anthropic, Hugging Face,
+  LangChain and LlamaIndex packages. New signatures: Agency Swarm, Rivet, Devin, Bumblebee/Instructor
+  (Elixir), LangChain (Elixir), R LLM clients, Lua LLM clients, Rust AI crates,
+  Homebrew AI tools (heuristic), MLflow AI Gateway and Cloudflare AI Gateway.
+  Several coding-agent, Dify, Flowise, Langflow and SageMaker signatures gained
+  patterns and file names.
+- An authored 130-case benchmark under `benchmarks/sab_realworld` exercises
+  these changes. It is author-written, not independent validation.
+
 ### PR review: incremental scan and evidence verification
 
 - Preserve whitespace and newlines in changed Git paths so incremental scans
   inspect the actual filenames.
 - Keep semantic rejections and lexical corroboration checks authoritative when
   a signature signal declares an agent indicator.
+- A `diff_base` (`--diff-base`) scan of `code.filesystem` is no longer a
+  comparable inventory. Its `collection_scope` is `comparable: false` with
+  the reason "diff-scoped collection is not a repository inventory", so
+  `shadowscan diff` lists earlier findings outside the diff window as unknown
+  instead of resolved. The connector warning now says that unchanged files were
+  not scanned, even when the report holds no finding.
+- `--incremental` never reuses a diff-scoped result. The cache fingerprint
+  covers the working tree, not HEAD or the base ref's merge-base, so a squashed
+  or rebased branch with an unchanged tree replayed a stale change set.
+- `--diff-base` applies only to local PATHS. Combined with `--github-*` or
+  `--gitlab-group` it previously crashed with a configuration traceback; remote
+  repositories in the same run are now scanned in full, and `--diff-base`
+  without PATHS is a usage error.
+- A changed path that is not valid UTF-8 now takes the documented full-scan
+  fallback instead of failing the connector with no findings.
+- A small data file is a catalog by name only when a whole word of its stem
+  (split at `.`, `_`, `-`), or two adjacent words, spell `blocklist`,
+  `denylist` or `blacklist`. The earlier substring rule also matched
+  allowlists, whitelists, egress and ingress policies, which permit the traffic
+  they name, and unrelated names such as `oracle_endpoints.yaml` (`acl`) or
+  `security_agent.yaml`, dropping their project findings. A bare `block`,
+  `deny`, `firewall` or `waf` no longer counts either: a firewall or WAF rule
+  set is a default-deny policy with allow exceptions, and
+  `infra/firewall-rules.json` opening egress to `api.openai.com` and
+  `api.anthropic.com` reported no finding and a complete scan. The scan note
+  now says when a file was discounted for its deny-list name.
+- Generated code is recognized by file name only (`*_pb2.py`, `*_pb2_grpc.py`,
+  `*.generated.*`). A directory named `codegen`, `generated` or `autogenerated`
+  and `*.auto.*` files (Terraform `*.auto.tfvars`) are ordinary source again, and
+  discounted generated evidence keeps its capabilities. A shell-executing agent
+  under `services/codegen/` had lost `code-exec`/`tool-use` and dropped from
+  medium to low risk.
+- Documentation and example directories discount evidence only inside the
+  file's project. A directory that is itself a project root with a manifest
+  (`services/templates/requirements.txt`) is a deployable unit and keeps full
+  weight, confidence and risk.
+- The Elixir and R signatures have no dependency signals, and the schema has
+  no `hex` or `cran` ecosystem: nothing parses `mix.exs`, `DESCRIPTION` or
+  `renv.lock`, so those signals could never match. Their import patterns name
+  LLM libraries only (Bumblebee and Instructor; openai and ellmer):
+  `import Nx`, `library(reticulate)`, `library(torch)` and `library(keras)` are
+  numerical or general ML code and no longer report LLM usage. The Rust
+  signature no longer matches the `candle-core` and `candle-nn` tensor crates
+  (`candle-transformers` remains), and the code patterns of the Elixir, R, Lua
+  and Rust signatures apply only to files of their language.
+- `platform.mlflow-ai-gateway` no longer matches a bare `mlflow` or
+  `mlflow-skinny` dependency, so mlflow experiment tracking again yields no
+  finding, or a file named `gateway_config.yaml`, which any API gateway may
+  use. `coding-agent.devin` no longer matches a lowercase `devin.md` anywhere
+  (`content/authors/devin.md` is a page about a person). A file glob cannot
+  name the repository root alone, so a root `devin.md` is not matched either:
+  this is a known recall gap, and the authored benchmark case `rw-repo-057` (a
+  root `devin.md`) is now a false negative, lowering coding-agent recall from
+  1.00 to 0.90. `DEVIN.md`, `.devin/` and `.devin.json` remain.
+- Lua, R and Homebrew patterns write a quote as `'` instead of `\x27`, which
+  the required-literal prefilter could not read.
+- The evaluation corpus has 22 authored positive and hard-negative cases for
+  the signatures added on this branch (Elixir, R, Lua and Rust LLM libraries,
+  MLflow and Cloudflare AI gateways, Agency Swarm, Rivet, Devin, Homebrew).
+  Homebrew AI tools are a supporting heuristic with no product finding, so only
+  its negative case can be labeled.
+- The `benchmarks/sab_realworld` harness compared package labels such as
+  `crewai` with signature IDs such as `framework.crewai`, so its signature
+  recall was always 0. Labels now match a signature whose ID names them, whose
+  dependency signal declares them, or a listed alias. The committed results,
+  generated before the agent-indicator revert, are regenerated: agent-tier
+  accuracy 0.60 (was 0.70), signature recall 0.90. The results remain
+  author-written, not independent validation.
 
 ### Real-world benchmark follow-up corrections
 
