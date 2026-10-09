@@ -86,6 +86,14 @@ summarizes each release for people who install and operate ShadowScan.
 - Add synthetic regressions and migration/reviewer guidance. Independent human
   field labels and scoped live tenant acceptance remain deployment requirements.
 
+### Source identity, guarded import and AWS command review fixes
+
+- Withhold `aws configure set` credential values after unlisted or newer global
+  options (`--no-paginate`, `--cli-binary-format`), in other letter cases and
+  for `aws.cmd`, across PowerShell and cmd continuations, with comments or
+  string prefixes between source argv elements, and when the executable is
+  passed apart from its argument list.
+
 ## 0.1.2 — 2026-10-08
 
 ### Release tag lookup correction

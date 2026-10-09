@@ -115,19 +115,28 @@ _USER_SECRETS_SET = re.compile(
 
 # AWS stores these four positional settings in its shared credentials file.
 # Match an exact executable and command, rather than any credential-like word
-# followed by another word. The command reader accepts shell continuations or
-# comma-separated source argv, never crosses an ordinary shell newline, and
+# followed by another word, in any letter case. The command reader accepts
+# POSIX, PowerShell (backtick) and cmd (caret) continuations, or comma-separated
+# source argv with comments, string prefixes and an executable split from its
+# list ('spawn("aws", [...])'). It never crosses an ordinary shell newline, and
 # stops after bounded arguments/characters. Exceeding a bound fails redaction
 # closed, so padding a recognized command cannot publish its later value.
-_AWS_COMMAND = re.compile(r"(?<![\w.-])aws(?:\.exe)?(?![\w.-])")
-_AWS_ARGV_EXECUTABLE = re.compile(r"(?:[^\r\n]*[/\\])?aws(?:\.exe)?\Z")
-_AWS_SHELL_GAP = re.compile(r"(?:[ \t]++|\\\r?\n)++")
-_AWS_ARGV_GAP = re.compile(r"[ \t\r\n]*+,[ \t\r\n]*+")
+_AWS_HINT = re.compile(r"aws", re.IGNORECASE)
+_AWS_COMMAND = re.compile(r"(?<![\w.-])aws(?:\.exe|\.cmd)?(?![\w.-])", re.IGNORECASE)
+_AWS_ARGV_EXECUTABLE = re.compile(r"(?:[^\r\n]*[/\\])?aws(?:\.exe|\.cmd)?\Z", re.IGNORECASE)
+_AWS_SHELL_GAP = re.compile(r"(?:[ \t]++|[\\`^]\r?\n)++")
+_AWS_SOURCE_SPACE = r"(?:[ \t\r\n]++|(?:#|//)[^\r\n]*+)*+"
+_AWS_ARGV_GAP = re.compile(_AWS_SOURCE_SPACE + "," + _AWS_SOURCE_SPACE)
+_AWS_SPLIT_ARGV = re.compile(_AWS_SOURCE_SPACE + "," + _AWS_SOURCE_SPACE + r"\[" + _AWS_SOURCE_SPACE)
+_AWS_STRING_PREFIX = re.compile(r"[rRbBuUfF]{1,2}(?=[\"'])")
 _AWS_ESCAPED_QUOTE = re.compile(r"\\++[\"']")
 _AWS_CREDENTIAL_SETTING = re.compile(
     r"(?:default\.|profile\.[^.\s]+\.)?"
-    r"(?:aws_secret_access_key|aws_session_token|aws_security_token|aws_access_key_id)\Z"
+    r"(?:aws_secret_access_key|aws_session_token|aws_security_token|aws_access_key_id)\Z",
+    re.IGNORECASE,
 )
+# Global options of AWS CLI v2. Another '--option' is read both as a flag and
+# as taking the next word, so an unlisted option cannot hide a later value.
 _AWS_VALUE_OPTIONS = frozenset(
     {
         "--profile",
@@ -137,6 +146,7 @@ _AWS_VALUE_OPTIONS = frozenset(
         "--output",
         "--query",
         "--color",
+        "--cli-binary-format",
         "--cli-connect-timeout",
         "--cli-read-timeout",
         "--cli-input-json",
@@ -146,11 +156,13 @@ _AWS_VALUE_OPTIONS = frozenset(
 _AWS_FLAG_OPTIONS = frozenset(
     {
         "--debug",
+        "--no-paginate",
         "--no-sign-request",
         "--no-verify-ssl",
         "--no-cli-pager",
         "--cli-auto-prompt",
         "--no-cli-auto-prompt",
+        "--version",
     }
 )
 _AWS_MAX_ARGUMENTS = 32
@@ -160,29 +172,37 @@ _AWS_MAX_COMMAND_CHARS = 16 * 1024
 def _aws_configure_secret_argument(
     tokens: Iterable[tuple[str, int, int]],
 ) -> tuple[str, int, int] | None:
-    """The credential token of one configure-set command, including global options."""
-    expected, option_value = 0, False
+    """The credential token of one configure-set command, including global options.
+
+    Each state is the next expected word (configure, set, setting, value) and
+    whether an option's value comes first. An unlisted option keeps both
+    readings; the token any reading takes as the credential is withheld.
+    """
+    states = {(0, False)}
     for number, token in enumerate(tokens):
         if number >= _AWS_MAX_ARGUMENTS:
             raise SanitizationLimitError("AWS command argument limit exceeded")
         value, _, _ = token
-        if option_value:
-            option_value = False
-            continue
-        flag, equals, _ = value.partition("=")
-        if flag in _AWS_VALUE_OPTIONS:
-            option_value = not equals
-            continue
-        if value in _AWS_FLAG_OPTIONS:
-            continue
-        if expected == 3:
-            return token
-        if expected < 2 and value == ("configure", "set")[expected]:
-            expected += 1
-        elif expected == 2 and _AWS_CREDENTIAL_SETTING.fullmatch(value):
-            expected = 3
-        else:
+        flag, equals, _ = value.lower().partition("=")
+        following: set[tuple[int, bool]] = set()
+        for expected, option_value in states:
+            if option_value:
+                following.add((expected, False))
+            elif flag in _AWS_VALUE_OPTIONS:
+                following.add((expected, not equals))
+            elif flag in _AWS_FLAG_OPTIONS:
+                following.add((expected, False))
+            elif flag.startswith("--") and len(flag) > 2:
+                following.update({(expected, False), (expected, not equals)})
+            elif expected == 3:
+                return token
+            elif expected < 2 and flag == ("configure", "set")[expected]:
+                following.add((expected + 1, False))
+            elif expected == 2 and _AWS_CREDENTIAL_SETTING.fullmatch(value):
+                following.add((3, False))
+        if not following:
             return None
+        states = following
     return None
 
 
@@ -249,9 +269,12 @@ def _aws_text_arguments(text: str, position: int) -> Iterator[tuple[str, int, in
         position += 1  # closing quote of a source argv executable
     elif closing := _AWS_ESCAPED_QUOTE.match(text, position):
         position = closing.end()  # the same executable in JSON-escaped source text
-    argv = _AWS_ARGV_GAP.match(text, position) is not None
+    # 'spawn("aws", ["configure", ...])' passes its arguments as a separate list.
+    split = _AWS_SPLIT_ARGV.match(text, position)
+    argv = split is not None or _AWS_ARGV_GAP.match(text, position) is not None
     separator = _AWS_ARGV_GAP if argv else _AWS_SHELL_GAP
-    while gap := separator.match(text, position):
+    gap = split or separator.match(text, position)
+    while gap is not None:
         position = gap.end()
         if position - beginning > _AWS_MAX_COMMAND_CHARS:
             raise SanitizationLimitError("AWS command character limit exceeded")
@@ -279,7 +302,10 @@ def _aws_text_arguments(text: str, position: int) -> Iterator[tuple[str, int, in
             else:
                 yield text[start:end], start, end
             position = tail
+            gap = separator.match(text, position)
             continue
+        if argv and (prefix := _AWS_STRING_PREFIX.match(text, position)):
+            position = prefix.end()  # r"...", b"..." and other source literal prefixes
         word = _CLI_VALUE.match(text, position)
         if word is None:
             return
@@ -296,11 +322,12 @@ def _aws_text_arguments(text: str, position: int) -> Iterator[tuple[str, int, in
         else:
             yield word.group(group), word.start(group), word.end(group)
         position = tail
+        gap = separator.match(text, position)
 
 
 def _redact_aws_configure(text: str) -> str:
     """Withhold positional AWS credentials in shell commands and source argv lists."""
-    if "aws" not in text:
+    if _AWS_HINT.search(text) is None:
         return text
     spans: list[tuple[int, int]] = []
     cursor = 0

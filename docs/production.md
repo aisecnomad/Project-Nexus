@@ -81,10 +81,12 @@ revision. Source identity and source-analysis changes alter the collection
 fingerprint, so incomparable observations cannot establish resolution.
 
 Supported AWS CLI positional credential settings are now sanitized in command
-text and argument arrays. Regenerate old reports, exports and cached evidence
-under the reviewed revision; changing the scanner cannot erase already retained
-copies. Continue to protect audit artifacts and follow the credential handling
-policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+text and argument arrays, including unlisted global options, other letter cases,
+PowerShell and cmd continuations, commented or prefixed source argv and an
+executable passed separately from its argument list. Regenerate old reports,
+exports and cached evidence under the reviewed revision; changing the scanner
+cannot erase already retained copies. Continue to protect audit artifacts and
+follow the credential handling policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
 The additive JSON `inventory_present` field distinguishes an explicitly supplied
 empty inventory from a scan without inventory reconciliation. CSV now retains
 the entire sanitized permission list, including permissions beyond position 30.

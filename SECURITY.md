@@ -262,9 +262,14 @@ coverage, even when a response includes an empty collection field.
   `--key users` values remain visible.
   `aws configure set` also withholds positional `aws_access_key_id`,
   `aws_secret_access_key`, `aws_session_token` and legacy `aws_security_token`
-  values in shell text and literal argv lists, including `default.` and
-  `profile.<name>.` settings, global options, quoted words (including
-  JSON-escaped quotes) and shell line continuations. Native argv exports remove
+  values in shell text and literal argv lists, in any letter case and for
+  `aws`, `aws.exe` and `aws.cmd`, including `default.` and `profile.<name>.`
+  settings, global options (an unlisted `--option` is read both as a flag and
+  as taking a value), quoted words (including JSON-escaped quotes), POSIX,
+  PowerShell backtick and cmd caret line continuations, `#` and `//` comments
+  and string prefixes such as `r"..."` or `b"..."` between source argv
+  elements, and an executable passed apart from its list
+  (`spawn("aws", [...])`). Native argv exports remove
   copies of those values from
   sibling fields too. Variable references, placeholders and metavariables
   stay visible. Adjacent quoted shell fragments, escaped bare values and source
