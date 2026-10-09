@@ -104,6 +104,8 @@ def _assert_event_shape(event: dict[str, Any]) -> None:
         "version": __version__,
         "vendor_name": "Project Nexus",
     }
+    # ``time_dt`` and the ``*_dt`` twins are attributes of the datetime profile.
+    assert event["metadata"]["profiles"] == ["datetime"]
     info = event["finding_info"]
     assert info["uid"] and info["title"] and info["types"]
     assert event["resources"] and event["resources"][0]["uid"]

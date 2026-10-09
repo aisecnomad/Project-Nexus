@@ -235,6 +235,8 @@ author-written and not independent review.
 
 - `--format ocsf`: OCSF 1.1.0 Detection Finding (class_uid 2004) report
   output for SIEM pipelines, with scan completeness marked on the document.
+  Each event declares the `datetime` profile in `metadata.profiles`, which
+  defines its `*_dt` timestamps.
 - `triage: true` (and `shadowscan code --triage`): a fast subset scan of
   manifests, MCP/coding-agent configuration, flow exports and IaC that
   skips source analysis, credential detection and content sweeps. A triage
