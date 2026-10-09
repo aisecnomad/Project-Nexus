@@ -803,12 +803,43 @@ review or live tenant acceptance.
 
 ## Candidate change history
 
-These notes record behavior changes made while the 0.1.1 candidate was being
-hardened. Read them when you have baselines, reports or inventories produced
+These notes record unreleased corrections and earlier candidate changes.
+Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
-### October 8 discovery and replay review corrections (Unreleased)
+### October 9 scan evidence corrections (unreleased)
+
+This source candidate includes corrections reviewed from the existing discovery,
+redaction/replay and lexer work. It does not change the published 0.1.2 artifact,
+create a release, or establish live tenant acceptance. Select and review a new
+full commit SHA before deploying it.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Source reports | Supported Go SDK aliases are resolved before credential redaction and source excerpting; embedded carriage returns no longer shift LF-based excerpts. | Regenerate affected reports and restrict older reports as confidential. Dynamic calls and arbitrary credential encodings still need operator review. |
+| VPC flow coverage | `SKIPDATA`, invalid or contradictory statuses mark collection incomplete; `NODATA` remains a valid no-traffic record. | Pipelines must preserve exit 3 as unknown coverage and obtain complete input before accepting absence of findings. |
+| Network attribution | Connection-specific TLS evidence is retained before totals are combined; contradictory and non-AI observations cannot borrow AI attribution. | Rebaseline traffic totals and investigate reduced attributed counts; previous totals may include unrelated connections. |
+| Gateway activity | Invocation evidence requires a supported operation and provider, with its method from the same event. | Rebaseline agent indicators and capabilities. A management request, missing method or invocation attempt alone cannot establish successful execution or tool use. |
+| Source coverage | Valid Rust multiline strings and supported JSX in JavaScript files can finish lexical analysis. | Re-scan prior incomplete repositories. Newly analyzed code can add findings; unresolved or unterminated syntax stays incomplete. |
+| Record exports | Strict JSON and encoded line/file/aggregate byte limits match replay; empty complete exports contain an empty record envelope. | Check the current manifest before replay. A rejected replacement retains the previous file but reports `exported: false` and `filename: null`; that file is not this run's accepted export. |
+
+Treat these as behavior changes when comparing old reports. Record scanner and
+signature fingerprints, exact configuration and input scope alongside new
+baselines. For oversized exports, narrow the collection scope or deliberately
+adjust the configured file/aggregate limits within their hard ceilings; the
+encoded JSONL line limit remains 4 MiB including its newline. Sanitization
+safety-limit failures remain incomplete even when other records are analyzable.
+
+The [reviewer packet](operations/reviewer-packet.md) lists paired controls for
+these changes. Before enforcement, obtain a fresh human-labeled holdout using
+the [repository-level procedure](evaluation.md#repository-level-field-acceptance)
+and exact-scope authorized [tenant canaries](canaries.md). The existing automated
+acceptance gate supports only local-code, AWS and Slack deployments; other
+connector families need their own approved validation. No fixture, mock, AI
+review or reused benchmark can be relabeled as that evidence.
+
+### October 8 discovery classification and lifecycle corrections (unreleased)
 
 Regenerate reports and comparison baselines with the reviewed candidate.
 Supported SDK credential argument recognition is applied before evidence
@@ -830,19 +861,6 @@ does not implicitly alias a FQDN, and different DNS suffixes remain distinct.
 Repeat correlation clears derived endpoint activity tags when their process
 observations disappear; native runtime observations remain intact. Confidence
 and risk are unchanged by these links.
-
-Record exports are bounded by encoded bytes, including the JSONL newline,
-and the same limits used for offline replay. A dump rejected at a line, file
-or total limit makes the scan incomplete even when collection and analysis
-otherwise succeed. Valid records omitted for export size or strict-JSON
-serialization remain analyzed; sanitizer safety-limit rejections still skip
-the record. Any rejection aborts that dump's publication, preserves a prior
-file, and marks the new export `exported: false`. Retained dump records from
-other incomplete collection paths must not be accepted as complete evidence.
-Preserve and inspect export manifests: direct JSONL replay does not inherit
-the collection's incomplete status. Repeat smaller scopes before replaying.
-Older oversized dumps may require
-careful offline splitting; never silently truncate a JSON record.
 
 Use the [repository-level acceptance procedure](evaluation.md#repository-level-field-acceptance)
 for full repositories that exceed the bounded evaluation runner's limits.

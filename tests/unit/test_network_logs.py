@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.network import logs as network_logs
 from shadowscan.connectors.network.logs import NetworkLogConnector, _host, _int, _zeek_escape
@@ -27,7 +29,7 @@ def test_zeek_dns_ssl_and_conn_logs(run_connector):
     found, stats = scan(run_connector, FIXTURES / "zeek")
     assert not stats.errors and not stats.incomplete
     assert stats.warnings == [
-        "network.logs: 1 flow(s) to addresses shared by AI and other hosts were not attributed"
+        "network.logs: 1 flow(s) with ambiguous service attribution were not attributed"
     ]
     assert set(found) == {
         ("10.1.4.21", "provider.anthropic"),
@@ -184,6 +186,79 @@ def test_vpc_flows_with_the_default_format_and_no_header(run_connector, tmp_path
     assert found[("10.0.0.4", "provider.mistral")].metadata["flows"] == 1
 
 
+@pytest.mark.parametrize("suffix", ["log", "json"])
+@pytest.mark.parametrize("status", ["SKIPDATA", "UNKNOWN", "-"])
+def test_vpc_missing_capture_or_unknown_status_fails_cli_closed(tmp_path, suffix, status):
+    path = tmp_path / f"flow.{suffix}"
+    if suffix == "log":
+        # AWS's default v2 layout uses '-' for the missing flow fields.
+        path.write_text(
+            f"2 123456789010 eni-11111111aaaaaaaaa - - - - - - - 1431280876 1431280934 - {status}\n"
+        )
+    else:
+        path.write_text(json.dumps({"srcaddr": "-", "dstaddr": "-", "log-status": status}))
+    result = CliRunner().invoke(main, ["run", "network.logs", "--input", str(path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.stdout)
+    assert report["summary"]["complete"] is False
+    assert report["findings"] == []
+    message = "SKIPDATA reports uncaptured flows" if status == "SKIPDATA" else "invalid VPC flow log-status"
+    assert message in result.output
+
+
+@pytest.mark.parametrize("suffix", ["log", "json"])
+def test_vpc_nodata_remains_a_complete_empty_cli_result(tmp_path, suffix):
+    path = tmp_path / f"flow.{suffix}"
+    if suffix == "log":
+        path.write_text("2 123456789010 eni-11111111aaaaaaaaa - - - - - - - 1431280876 1431280934 - NODATA\n")
+    else:
+        path.write_text(json.dumps({"log_status": "NODATA"}))
+    result = CliRunner().invoke(main, ["run", "network.logs", "--input", str(path), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.stdout)
+    assert report["summary"]["complete"] is True
+    assert report["findings"] == []
+
+
+@pytest.mark.parametrize("status", [None, False, 0, "", " ", [], {}, ["OK"], "untrusted-status-value"])
+@pytest.mark.parametrize("field", ["log-status", "log_status"])
+def test_vpc_explicit_invalid_status_cannot_fall_back_to_ok(run_connector, tmp_path, field, status):
+    rows = [
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]},
+        {"srcaddr": "10.0.0.1", "dstaddr": "203.0.113.5", "dstport": 443, "bytes": 100, field: status},
+    ]
+    path = tmp_path / "flow.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert stats.incomplete and any("invalid VPC flow log-status" in w for w in stats.warnings)
+    assert all("untrusted-status-value" not in w for w in stats.warnings)
+    assert found[("10.0.0.1", "provider.openai")].metadata["flows"] == 0
+
+
+@pytest.mark.parametrize(
+    "statuses", [{"log-status": "OK", "log_status": "SKIPDATA"}, {"log_status": "SKIPDATA"}]
+)
+def test_vpc_status_only_json_fails_closed_without_flow_endpoints(tmp_path, statuses):
+    path = tmp_path / "flow.json"
+    path.write_text(json.dumps(statuses))
+    result = CliRunner().invoke(main, ["run", "network.logs", "--input", str(path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.stdout)["summary"]["complete"] is False
+
+
+@pytest.mark.parametrize("statuses", [{}, {"log-status": "OK", "log_status": "ok"}])
+def test_vpc_optional_or_matching_statuses_preserve_normal_flows(run_connector, tmp_path, statuses):
+    rows = [
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]},
+        {"srcaddr": "10.0.0.1", "dstaddr": "203.0.113.5", "dstport": 443, "bytes": 100, **statuses},
+    ]
+    path = tmp_path / "flow.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and not stats.warnings
+    assert found[("10.0.0.1", "provider.openai")].metadata["bytes_out"] == 100
+
+
 def test_caps_on_clients_and_pairs(run_connector, tmp_path, monkeypatch):
     monkeypatch.setattr(network_logs, "_MAX_CLIENTS", 2)
     monkeypatch.setattr(network_logs, "_MAX_PAIRS", 1)
@@ -194,7 +269,239 @@ def test_caps_on_clients_and_pairs(run_connector, tmp_path, monkeypatch):
     found, stats = scan(run_connector, path)
     assert len(found) == 2 and stats.incomplete
     assert any("beyond the first 2" in w for w in stats.warnings)
-    assert any("beyond 1 client/server pairs" in w for w in stats.warnings)
+    assert any("beyond 1 connection groups" in w for w in stats.warnings)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("offset", range(7))
+def test_uid_attribution_is_connection_scoped_and_order_independent(run_connector, tmp_path, reverse, offset):
+    rows = json.loads((FIXTURES / "shared_ip.json").read_text())
+    rows = rows[offset:] + rows[:offset]
+    if reverse:
+        rows.reverse()
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and not stats.warnings
+    assert set(found) == {("10.0.0.1", "provider.openai"), ("10.0.0.1", "provider.anthropic")}
+    for service, sent, received, first in [
+        ("provider.openai", 100, 50, "2025-09-29T08:00:00+00:00"),
+        ("provider.anthropic", 200, 70, "2025-09-29T08:00:10+00:00"),
+    ]:
+        finding = found[("10.0.0.1", service)]
+        assert finding.metadata["flows"] == 1
+        assert finding.metadata["bytes_out"] == sent
+        assert finding.metadata["bytes_in"] == received
+        assert finding.first_seen == finding.last_seen == first
+        assert "agent-loop" not in finding.tags
+
+
+@pytest.mark.parametrize("uid", [None, "", "-", "different-connection"])
+def test_missing_or_unmatched_uid_does_not_inherit_another_connections_sni(run_connector, tmp_path, uid):
+    rows = [
+        {
+            "client": "10.0.0.1",
+            "dst_ip": "203.0.113.5",
+            "dst_port": 443,
+            "uid": "C1",
+            "sni": "api.openai.com",
+        },
+        {"client": "10.0.0.1", "dst_ip": "203.0.113.5", "dst_port": 443, "uid": uid, "bytes_out": 1000000},
+    ]
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and not stats.warnings
+    finding = found[("10.0.0.1", "provider.openai")]
+    assert finding.metadata["flows"] == finding.metadata["bytes_out"] == 0
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("conflict", ["non-ai", "other-ai", "server", "port"])
+def test_conflicting_uid_evidence_blocks_dns_fallback(run_connector, tmp_path, reverse, conflict):
+    tls = {
+        "client": "10.0.0.1",
+        "dst_ip": "203.0.113.5",
+        "dst_port": 443,
+        "uid": "C1",
+        "sni": "api.openai.com",
+    }
+    other = dict(tls)
+    other.update(
+        {
+            "non-ai": {"sni": "cdn.example.net"},
+            "other-ai": {"sni": "api.anthropic.com"},
+            "server": {"dst_ip": "203.0.113.6"},
+            "port": {"dst_port": 8443},
+        }[conflict]
+    )
+    rows = [
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]},
+        tls,
+        {"client": "10.0.0.1", "dst_ip": "203.0.113.5", "dst_port": 443, "uid": "C1", "bytes_out": 100},
+        other,
+    ]
+    if reverse:
+        rows.reverse()
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete
+    assert stats.warnings == [
+        "network.logs: 1 flow(s) with ambiguous service attribution were not attributed"
+    ]
+    assert all(f.metadata["flows"] == f.metadata["bytes_out"] == 0 for f in found.values())
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_uid_reuse_across_clients_does_not_transfer_traffic(run_connector, tmp_path, reverse):
+    rows = [
+        {
+            "client": "10.0.0.1",
+            "dst_ip": "203.0.113.5",
+            "dst_port": 443,
+            "uid": "C1",
+            "sni": "api.openai.com",
+        },
+        {"client": "10.0.0.1", "dst_ip": "203.0.113.5", "dst_port": 443, "uid": "C1", "bytes_out": 100},
+        {
+            "client": "10.0.0.2",
+            "dst_ip": "203.0.113.5",
+            "dst_port": 443,
+            "uid": "C1",
+            "sni": "api.anthropic.com",
+        },
+        {"client": "10.0.0.2", "dst_ip": "203.0.113.5", "dst_port": 443, "uid": "C1", "bytes_out": 200},
+        {"client": "10.0.0.3", "dst_ip": "203.0.113.5", "dst_port": 443, "uid": "C1", "bytes_out": 1000000},
+    ]
+    if reverse:
+        rows.reverse()
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and not stats.warnings
+    assert set(found) == {("10.0.0.1", "provider.openai"), ("10.0.0.2", "provider.anthropic")}
+    assert found[("10.0.0.1", "provider.openai")].metadata["bytes_out"] == 100
+    assert found[("10.0.0.2", "provider.anthropic")].metadata["bytes_out"] == 200
+
+
+@pytest.mark.parametrize("endpoint", [{"dst_ip": "203.0.113.6"}, {"dst_port": 8443}])
+def test_flow_endpoint_mismatch_does_not_fall_back_to_dns(run_connector, tmp_path, endpoint):
+    rows = [
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5", "203.0.113.6"]},
+        {
+            "client": "10.0.0.1",
+            "dst_ip": "203.0.113.5",
+            "dst_port": 443,
+            "uid": "C1",
+            "sni": "api.openai.com",
+        },
+        {
+            "client": "10.0.0.1",
+            "dst_ip": "203.0.113.5",
+            "dst_port": 443,
+            "uid": "C1",
+            "bytes_out": 100,
+            **endpoint,
+        },
+    ]
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and any("ambiguous service attribution" in w for w in stats.warnings)
+    assert found[("10.0.0.1", "provider.openai")].metadata["flows"] == 0
+
+
+def test_connection_group_cap_counts_distinct_uids_on_one_address(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_PAIRS", 1)
+    rows = [{"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]}]
+    rows += [
+        {"client": "10.0.0.1", "dst_ip": "203.0.113.5", "dst_port": 443, "uid": uid, "bytes_out": 100}
+        for uid in ["C1", "C2", "C1"]
+    ]
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert stats.incomplete and any(
+        "1 flow record(s) beyond 1 connection groups" in w for w in stats.warnings
+    )
+    finding = found[("10.0.0.1", "provider.openai")]
+    assert finding.metadata["flows"] == 2 and finding.metadata["bytes_out"] == 200
+
+
+def test_tls_identity_cap_does_not_allow_dns_to_override_dropped_non_ai_sni(
+    run_connector, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(network_logs, "_MAX_PAIRS", 1)
+    rows = [
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]},
+        {"client": "10.0.0.1", "uid": "C1", "sni": "api.openai.com"},
+        {"client": "10.0.0.1", "uid": "C2", "sni": "cdn.example.net"},
+        {"client": "10.0.0.1", "uid": "C2", "dst_ip": "203.0.113.5", "dst_port": 443, "bytes_out": 1000000},
+    ]
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert stats.incomplete and any(
+        "TLS record(s) beyond 1 client/UID identities" in w for w in stats.warnings
+    )
+    assert found[("10.0.0.1", "provider.openai")].metadata["bytes_out"] == 0
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_uid_with_multiple_flow_endpoints_is_ambiguous_without_tls_endpoints(
+    run_connector, tmp_path, reverse
+):
+    rows = [
+        {"client": "10.0.0.1", "uid": "C1", "sni": "api.openai.com"},
+        {"client": "10.0.0.1", "uid": "C1", "dst_ip": "203.0.113.5", "dst_port": 443, "bytes_out": 100},
+        {"client": "10.0.0.1", "uid": "C1", "dst_ip": "203.0.113.6", "dst_port": 443, "bytes_out": 1000000},
+    ]
+    if reverse:
+        rows.reverse()
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete
+    assert stats.warnings == [
+        "network.logs: 2 flow(s) with ambiguous service attribution were not attributed"
+    ]
+    assert found[("10.0.0.1", "provider.openai")].metadata["bytes_out"] == 0
+
+
+def test_uid_links_tls_without_optional_endpoints_to_one_connection(run_connector, tmp_path):
+    rows = [
+        {"client": "10.0.0.1", "uid": "C1", "sni": "api.openai.com"},
+        {"client": "10.0.0.1", "uid": "C1", "dst_ip": "203.0.113.5", "dst_port": 443, "bytes_out": 100},
+    ]
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and not stats.warnings
+    assert found[("10.0.0.1", "provider.openai")].metadata["bytes_out"] == 100
+
+
+def test_zeek_missing_uid_marker_is_not_a_connection_identifier(run_connector, tmp_path):
+    rows = [
+        {"client": "10.0.0.1", "uid": "-", "sni": "api.openai.com"},
+        {"client": "10.0.0.1", "uid": "-", "dst_ip": "203.0.113.5", "dst_port": 443, "bytes_out": 1000000},
+    ]
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and not stats.warnings
+    assert found[("10.0.0.1", "provider.openai")].metadata["bytes_out"] == 0
+
+
+def test_non_ai_tls_does_not_become_ollama_traffic_from_port(run_connector, tmp_path):
+    rows = [
+        {"client": "10.0.0.1", "uid": "C1", "sni": "cdn.example.net"},
+        {"client": "10.0.0.1", "uid": "C1", "dst_ip": "203.0.113.5", "dst_port": 11434, "bytes_out": 100},
+    ]
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps(rows))
+    found, stats = scan(run_connector, path)
+    assert not stats.incomplete and not stats.warnings and not found
 
 
 def test_configuration_and_live_mode_are_refused(run_connector):

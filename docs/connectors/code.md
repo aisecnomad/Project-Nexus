@@ -45,6 +45,23 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+Credential redaction resolves supported Go SDK import aliases against the full
+source before excerpts are cut. Excerpts use the same LF-based line positions as
+source matches, including when Go raw literals contain carriage returns.
+This is bounded lexical redaction, not arbitrary dynamic call resolution;
+reports remain confidential. See the [security policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+
+Rust ordinary strings and byte strings may span physical lines; their contents
+remain literal evidence, while code after the closing quote is still scanned.
+For `.js`, `.mjs` and `.cjs` files, an incomplete plain JavaScript lexical pass
+is retried as JSX. That interpretation is accepted only when lexical analysis
+completes: JSX text stays masked and executable expressions remain visible.
+TypeScript files keep their generic/type-assertion behavior, and `.jsx`/`.tsx`
+files retain explicit JSX analysis. A JSX retry with unclosed multiline literals,
+unbalanced tags or ambiguous source is rejected, retaining incomplete coverage.
+This lexical filter does not validate every construct against the language's
+full grammar or reinterpret an already-complete plain JavaScript pass.
+
 Python and JavaScript/TypeScript execution capabilities are attributed to supported
 registered tool bodies, direct local helpers, and recognized model-selected
 dispatch. Unused tools, unrelated helpers and turn-loop cleanup remain zero-weight

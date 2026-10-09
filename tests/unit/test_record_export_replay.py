@@ -100,8 +100,9 @@ def test_nonfinite_json_record_is_omitted_without_losing_live_analysis_or_neighb
     assert not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize("error_type", [TypeError, ValueError])
 def test_strict_json_failure_preserves_prior_export_and_masks_encoding_error(
-    tmp_path, index, monkeypatch, caplog
+    tmp_path, index, monkeypatch, caplog, error_type
 ):
     target = tmp_path / "records.jsonl"
     prior = '{"id": "prior"}\n'
@@ -111,8 +112,9 @@ def test_strict_json_failure_preserves_prior_export_and_masks_encoding_error(
 
     def failed_encoding(self, value, *args, **kwargs):
         if isinstance(value, dict) and value.get("id") == "current":
-            raise ValueError(private_detail)
-        return original(self, value, *args, **kwargs)
+            yield '{"partial": '
+            raise error_type(private_detail)
+        yield from original(self, value, *args, **kwargs)
 
     monkeypatch.setattr(json.JSONEncoder, "iterencode", failed_encoding)
     records = [{"id": "first"}, {"id": "current"}, {"id": "last"}]
@@ -121,6 +123,7 @@ def test_strict_json_failure_preserves_prior_export_and_masks_encoding_error(
     assert context.stats.incomplete and context.dump_path is None
     assert target.read_text() == prior
     assert private_detail not in repr(context.stats) + caplog.text
+    assert list(tmp_path.iterdir()) == [target]
 
 
 def test_sanitizer_unsafe_record_is_skipped_and_entire_new_export_is_discarded(tmp_path, index):
@@ -208,3 +211,22 @@ def test_engine_manifest_marks_omitted_export_records_incomplete(tmp_path, index
     assert manifest["exports"][0]["exported"] is False
     assert manifest["exports"][0]["filename"] is None
     assert list(exports.iterdir()) == [exports / "manifest.json"]
+
+
+@pytest.mark.parametrize("budget", ["line", "file", "aggregate"])
+def test_each_export_byte_limit_preserves_prior_file_and_live_analysis(tmp_path, index, monkeypatch, budget):
+    target = tmp_path / "records.jsonl"
+    prior = '{"id": "prior"}\n'
+    target.write_text(prior)
+    records = [{"id": "first"}, {"id": "oversized", "description": "x" * 100}, {"id": "last"}]
+    config = {}
+    if budget == "line":
+        monkeypatch.setattr("shadowscan.connectors.base._MAX_OFFLINE_LINE_BYTES", 64)
+    else:
+        config["max_input_file_bytes" if budget == "file" else "max_input_bytes"] = 64
+    target, findings, context = _export(tmp_path, index, records, **config)
+    assert [finding.resource for finding in findings] == ["first", "oversized", "last"]
+    assert context.stats.objects_examined == 3
+    assert context.stats.incomplete and context.dump_path is None
+    assert target.read_text() == prior
+    assert list(tmp_path.iterdir()) == [target]

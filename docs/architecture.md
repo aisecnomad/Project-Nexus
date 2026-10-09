@@ -65,6 +65,15 @@
 5. Reporters render. SARIF carries `file:line` for code findings and logical
    locations elsewhere; HTML is self-contained.
 
+Record exports are sanitized and published atomically with owner-only
+permissions. Each JSONL line must be strict JSON and fit the replay line limit;
+the whole file must fit both the configured per-file and aggregate input limits,
+including newline bytes. A rejected record marks the scan incomplete and
+prevents publication of the entire new export, preserving any prior file.
+Encoding and export-size failures retain the original records for live analysis;
+a sanitizer safety rejection skips the unsafe record before analysis. Successful
+empty collections produce an explicit empty inventory instead of a zero-byte file.
+
 Merging keeps the first observation's owner and metadata and unions evidence,
 frameworks, capabilities, tags, permissions and models. Metadata that combines
 across observations (`variable_names`, `runtime_observations`, and the

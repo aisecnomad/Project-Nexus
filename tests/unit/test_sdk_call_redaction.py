@@ -8,6 +8,7 @@ so an unprefixed key (the Azure OpenAI shape) reached report excerpts verbatim.
 
 from __future__ import annotations
 
+import json
 import random
 import string
 
@@ -155,6 +156,8 @@ def test_sdk_calls_without_a_credential_literal_are_unchanged(source):
         ('import (\n "fmt"\n ai /* audit SDK */ "github.com/sashabaranov/go-openai"\n)', "ai."),
         ('import . "github.com/sashabaranov/go-openai"', ""),
         ("import (\n . `github.com/sashabaranov/go-openai`\n)", ""),
+        ("import ai `github.com/sasha\rbaranov/go-openai`", "ai."),
+        ("import ai `github.com/sashabaranov/go-op\renai`", "ai."),
         ('import ai "\\x67ithub.com/sashabaranov/go-openai"', "ai."),
         (
             'import ai "'
@@ -186,6 +189,8 @@ def test_import_bound_go_sdk_positions_redact_aliases_and_dot_imports(imports, r
     "imports",
     [
         'import ai "example.com/retry"',
+        "import ai `github.com/unrelated/go-op\renai`",
+        "import ai `github.com/sasha\nbaranov/go-openai`",
         'import _ "github.com/sashabaranov/go-openai"',
         '// import ai "github.com/sashabaranov/go-openai"',
         '/* import ai "github.com/sashabaranov/go-openai" */',
@@ -269,19 +274,22 @@ def test_sdk_call_keys_never_reach_a_code_scan_report(tmp_path, report_format):
 
 @pytest.mark.parametrize("report_format", ["json", "sarif", "html", "markdown"])
 @pytest.mark.parametrize(
-    ("alias", "receiver"),
+    ("alias", "receiver", "package_literal", "newline"),
     [
-        ("ai", "ai."),
-        (".", ""),
-        ("ai", "ai . "),
-        ("ai", "ai /* audit context */ . "),
-        ("ai工具", "ai工具."),
-        ("ai工具", "ai工具 /* audit context */ . "),
+        ("ai", "ai.", '"github.com/sashabaranov/go-openai"', "\n"),
+        (".", "", '"github.com/sashabaranov/go-openai"', "\n"),
+        ("ai", "ai . ", '"github.com/sashabaranov/go-openai"', "\n"),
+        ("ai", "ai /* audit context */ . ", '"github.com/sashabaranov/go-openai"', "\n"),
+        ("ai工具", "ai工具.", '"github.com/sashabaranov/go-openai"', "\n"),
+        ("ai工具", "ai工具 /* audit context */ . ", '"github.com/sashabaranov/go-openai"', "\n"),
+        ("ai", "ai.", "`github.com/sasha\rbaranov/go-openai`", "\n"),
+        ("ai", "ai.", "`github.com/sashabaranov/go-op\renai`", "\n"),
+        ("ai", "ai.", '"github.com/sashabaranov/go-openai"', "\r\n"),
     ],
 )
 @pytest.mark.parametrize("scan_secrets", [True, False])
 def test_go_sdk_alias_keys_are_redacted_before_full_source_excerpting(
-    tmp_path, report_format, alias, receiver, scan_secrets
+    tmp_path, report_format, alias, receiver, package_literal, newline, scan_secrets
 ):
     repository = tmp_path / "repository"
     repository.mkdir()
@@ -289,14 +297,14 @@ def test_go_sdk_alias_keys_are_redacted_before_full_source_excerpting(
     # The SDK import is far outside the evidence excerpt. Redaction must bind
     # the full source before a call line is shortened, even without discovery.
     padding = "// ordinary source context\n" * 50
-    (repository / "main.go").write_text(
-        f'package main\n\nimport {alias} "github.com/sashabaranov/go-openai"\n\n'
+    source = (
+        f"package main\n\nimport {alias} {package_literal}\n\n"
         + padding
         + "func main() {\n"
         + f'\tconfig := {receiver}DefaultAzureConfig("{_GO_KEY}", "{AZURE}")\n'
-        + f"\t_ = {receiver}NewClientWithConfig(config)\n}}\n",
-        encoding="utf-8",
+        + f"\t_ = {receiver}NewClientWithConfig(config)\n}}\n"
     )
+    (repository / "main.go").write_bytes(source.replace("\n", newline).encode("utf-8"))
     configuration = tmp_path / "scan.yaml"
     configuration.write_text(
         "connectors:\n  - name: code.filesystem\n"
@@ -312,3 +320,13 @@ def test_go_sdk_alias_keys_are_redacted_before_full_source_excerpting(
     assert _GO_KEY not in output
     assert "DefaultAzureConfig" in output
     assert REDACTED in output
+    if report_format == "json":
+        evidence = [
+            item
+            for finding in json.loads(output)["findings"]
+            for item in finding["evidence"]
+            if item["signal"] == "domain:provider.azure-openai"
+        ]
+        assert evidence
+        assert all(item["location"] == "main.go:56" for item in evidence)
+        assert all("DefaultAzureConfig" in item["snippet"] for item in evidence)

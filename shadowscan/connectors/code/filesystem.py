@@ -1909,7 +1909,10 @@ class FilesystemConnector(BaseConnector):
             return []
         if file.safe_lines is None:
             try:
-                file.safe_lines = _redacted_source(file.text, file.structure).splitlines()
+                # Match locations count LF only. Other separators can occur
+                # inside literals (Go raw imports may contain CR) and must not
+                # shift excerpts. _excerpt strips a CR left by a CRLF ending.
+                file.safe_lines = _redacted_source(file.text, file.structure).split("\n")
             except (YAMLResourceLimitError, SanitizationLimitError) as exc:
                 self._withhold_excerpts(file.rel, exc)
                 file.structure = None

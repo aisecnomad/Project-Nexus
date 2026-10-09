@@ -626,10 +626,10 @@ def _go_sdk_credential_bindings(text: str, lexer: _CallLexer) -> dict[str, tuple
     indexes. Import aliases are retained conservatively even when a local name
     later shadows them: over-redaction is safer than publishing a credential.
     """
-    # Interpreted Go import strings can escape the package's characters. A
-    # literal path or an escape keeps the lexical pass necessary; plain text
-    # without either does not pay for parsing unrelated import declarations.
-    if "import" not in text or ("go-openai" not in text and "\\" not in text):
+    # Interpreted imports can escape package characters; raw imports discard
+    # carriage returns, including ones inside the go-openai substring. Either
+    # form still needs the lexical pass. Preserve the original source offsets.
+    if "import" not in text or ("go-openai" not in text and "\\" not in text and "\r" not in text):
         return {}
     bindings: dict[str, tuple[int, ...]] = {}
     cursor = 0
@@ -672,7 +672,9 @@ def _go_sdk_credential_bindings(text: str, lexer: _CallLexer) -> dict[str, tuple
             literal = text[position:end]
             package: str | None = None
             if literal.startswith("`") and literal.endswith("`") and len(literal) > 1:
-                package = literal[1:-1]
+                # Go raw string values discard CR (https://go.dev/ref/spec#String_literals).
+                # Normalize only the value, never the source used for evidence offsets.
+                package = literal[1:-1].replace("\r", "")
             elif len(literal) <= 4096:
                 try:
                     parsed = ast.literal_eval(literal)

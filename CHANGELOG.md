@@ -5,7 +5,31 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
-### Discovery, runtime attribution and record replay corrections
+### Scan evidence, completeness and replay corrections
+
+- Resolve supported Go SDK import aliases before publishing credential-bearing
+  source evidence, and keep excerpts aligned with LF-based source locations when
+  literals contain carriage returns. Reports remain confidential; dynamic call
+  resolution is limited.
+- Treat VPC Flow Log `SKIPDATA`, invalid and contradictory logging statuses as
+  incomplete coverage. `NODATA` remains a valid no-traffic observation.
+- Attribute network flows by connection identity before aggregation, preserving
+  non-AI TLS evidence and refusing conflicting or ambiguous associations.
+- Bind hosted-agent invocation evidence to the HTTP method, provider and
+  execution operation from the same event. Management requests no longer imply
+  runtime activity; invocation attempts do not establish success or tool use.
+  Caller names and cadence remain hints rather than independent capability or
+  agent-execution evidence.
+- Accept ordinary Rust multiline string literals and supported JSX in `.js`,
+  `.mjs` and `.cjs` while retaining incomplete results for unresolved syntax.
+- Enforce strict JSON and replay byte limits on record exports; reject a failed
+  replacement atomically and retain valid live analysis. Empty successful exports
+  use an explicit empty record envelope that can be replayed.
+- Document baseline migration, paired review controls and repository-level field
+  acceptance. These regression changes do not establish live tenant acceptance
+  or independently measured field precision.
+
+### Discovery classification and lifecycle identity corrections
 
 - Resolve supported positional SDK credential arguments before publishing
   source evidence, including supported import aliases; retain confidential
@@ -20,14 +44,11 @@ summarizes each release for people who install and operate ShadowScan.
 - Match lifecycle observations by the complete case-insensitive device value.
   Different DNS domains and short/FQDN spellings no longer implicitly alias;
   repeated correlation clears stale derived endpoint activity tags.
-- Bound record exports by encoded JSONL bytes and the matching offline line,
-  file and total input limits. Export size, strict-JSON and sanitizer rejections
-  make coverage incomplete and abort dump publication, preserving a prior file.
-  Valid records omitted for export size or encoding remain analyzed; records
-  exceeding sanitizer safety limits remain skipped.
-- Add authored positive and negative regressions and a repository-level field
-  acceptance procedure. Regression passes do not supply independent human
-  labels or live tenant acceptance.
+- Export size, strict-JSON and sanitizer rejections abort dump publication and
+  preserve a prior file. Valid records omitted for export size or encoding
+  remain analyzed; records exceeding sanitizer safety limits remain skipped.
+- Add authored positive and negative regressions. Regression passes do not
+  supply independent human labels or live tenant acceptance.
 
 ## 0.1.2 — 2026-10-08
 

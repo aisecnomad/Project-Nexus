@@ -110,14 +110,32 @@ Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be
 effective on `main`; their presence in workflow files alone is insufficient.
 
-For the October 8 corrections, review supported SDK argument sanitization,
-positive and negative .NET/Go source classification, Python comprehension
-reachability, exact device identity, and encoded-byte export/replay limits.
-Confirm that size/encoding omissions preserve valid analysis, sanitizer safety
-rejections skip the unsafe record, and any rejection aborts dump publication.
-Check that repeated lifecycle correlation removes derived endpoint
-activity without erasing native runtime observations. Treat the new authored
-cases as regressions. Use [repository-level field acceptance](../evaluation.md#repository-level-field-acceptance)
+For the October 9 scan evidence corrections, verify these paired controls:
+
+- Supported SDK imports and aliases preserve credential redaction in every
+  exported report; unrelated imports and ordinary values retain their meaning.
+- Complete VPC flow data and no-traffic observations versus explicit collection
+  loss or conflicting statuses. Known loss must produce incomplete coverage.
+- Two different connections sharing an address and port retain their own TLS
+  attribution, including non-AI observations and conflicting identities.
+- Supported invocation operations versus management/list/poll/cancel requests;
+  method and destination must come from the same event. Invocation evidence
+  alone must not create a tool-use or successful-execution claim.
+- Valid Rust multiline strings and JSX-in-JavaScript versus ambiguous or
+  unterminated source and TypeScript generic syntax.
+- Valid and empty export roundtrips versus strict JSON and byte-limit failures;
+  a rejected replacement must preserve the prior file without accepting it as
+  this run's export, while valid collected records remain analyzable.
+
+These are authored regression controls. Keep the independent human holdout,
+provider-specific live canaries and final-revision approval as separate evidence.
+
+For the October 8 classification corrections, also review positive and
+negative .NET/Go source classification, Python comprehension reachability and
+exact device identity. Check that repeated lifecycle correlation removes derived
+endpoint activity without erasing native runtime observations, and that sanitizer
+safety rejections skip the unsafe record. Treat the new authored cases as
+regressions. Use [repository-level field acceptance](../evaluation.md#repository-level-field-acceptance)
 for fresh independently selected full repositories; obtain human labels and
 authorized live tenant receipts before declaring those checks complete.
 
