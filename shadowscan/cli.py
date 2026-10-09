@@ -45,7 +45,7 @@ from shadowscan.connectors import (
 from shadowscan.endpoint import default_label, describe, endpoint_paths, endpoint_roots
 from shadowscan.engine import Engine
 from shadowscan.errors import SetupError
-from shadowscan.fleet import merge_reports
+from shadowscan.fleet import merge_reports, source_names
 from shadowscan.models import Finding, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
@@ -1351,7 +1351,7 @@ def merge_command(reports: tuple[str, ...], fmt: str, output: str | None, max_ro
 
     Findings with the same identity merge; every finding records the reports it
     came from. The result is incomplete (exit 3) when any source was."""
-    loaded = [(os.path.basename(path), _load_report(path)) for path in reports]
+    loaded = [(name, _load_report(path)) for name, path in zip(source_names(reports), reports, strict=True)]
     try:
         result = merge_reports(loaded)
     except ValueError as exc:
