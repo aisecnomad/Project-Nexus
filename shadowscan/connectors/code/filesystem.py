@@ -800,6 +800,8 @@ class _ProjectEvidence:
 
 
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
+# The ":<line>" suffix of an evidence location.
+_LOCATION_LINE = re.compile(r":\d+\Z")
 
 # Test suites routinely construct agents to exercise a library. Evidence found
 # only there describes the library's tests, not a deployed agent, so it cannot
@@ -3427,10 +3429,24 @@ class FilesystemConnector(BaseConnector):
         # small synthetic evidence item so the noisy-OR rewards diversity.
         if evidence.has_library_and_code or evidence.has_multi_signal:
             boost = 0.15 if evidence.has_multi_signal else 0.1
+            # Every code observation has a source location. The synthetic item
+            # points at one it summarizes: the code evidence that the library
+            # evidence corroborates, else the first deployed observation.
+            located = [
+                item
+                for item in f.evidence
+                if item.location
+                and item.attributes.get("category") != "heuristic"
+                and not evidence.in_tests(_LOCATION_LINE.sub("", item.location))
+            ]
+            anchor = next((item for item in located if item.signal.startswith("code:")), None)
+            if anchor is None and located:
+                anchor = located[0]
             f.add_evidence(
                 Evidence(
                     signal="corroboration:cross-signal",
                     description="Multiple independent signal types corroborate this finding",
+                    location=anchor.location if anchor is not None else None,
                     weight=boost,
                     attributes={"confidence_group": "cross-signal-corroboration", "synthetic": True},
                 )
