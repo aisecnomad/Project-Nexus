@@ -268,8 +268,9 @@ coverage, even when a response includes an empty collection field.
   as taking a value), quoted words (including JSON-escaped quotes), POSIX,
   PowerShell backtick and cmd caret line continuations, `#` and `//` comments
   and string prefixes such as `r"..."` or `b"..."` between source argv
-  elements, and an executable passed apart from its list
-  (`spawn("aws", [...])`). Native argv exports remove
+  elements, a bare `--` before the value, and an executable passed apart from
+  its list (`spawn("aws", [...])`, `spawn("aws", args=[...])`,
+  `["aws"] + [...]`, `Command::new("aws").args([...])`). Native argv exports remove
   copies of those values from
   sibling fields too. Variable references, placeholders and metavariables
   stay visible. Adjacent quoted shell fragments, escaped bare values and source

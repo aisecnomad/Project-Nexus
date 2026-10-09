@@ -106,8 +106,11 @@ summarizes each release for people who install and operate ShadowScan.
 - Withhold `aws configure set` credential values after unlisted or newer global
   options (`--no-paginate`, `--cli-binary-format`), in other letter cases and
   for `aws.cmd`, across PowerShell and cmd continuations, with comments or
-  string prefixes between source argv elements, and when the executable is
-  passed apart from its argument list.
+  string prefixes between source argv elements, after a bare `--`, and when
+  the executable is passed apart from its argument list (`spawn("aws", [...])`,
+  `args=[...]`, `["aws"] + [...]`, Rust `Command::new("aws").args([...])`).
+  Reading the separators of commented source argv stays linear: hostile text
+  with `aws` in every comment of a long block no longer stalls sanitization.
 
 ## 0.1.2 — 2026-10-08
 

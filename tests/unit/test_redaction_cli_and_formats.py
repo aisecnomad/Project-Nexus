@@ -579,6 +579,9 @@ def test_bare_bearer_keeps_scheme_and_surrounding_words():
         "SG.",
         "xapp-",
         "-----BEGIN PGP PRIVATE KEY BLOCK-----\n",
+        # Every 'aws' in a comment block reads the source argv space after it.
+        "aws #",
+        "// aws\n",
     ],
 )
 def test_hostile_repetitive_input_is_matched_in_linear_time(unit):

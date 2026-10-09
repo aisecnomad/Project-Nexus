@@ -342,6 +342,13 @@ def test_source_exceeding_aws_command_limit_is_incomplete_and_withheld(tmp_path,
         "spawn('aws', [\n  'configure',\n  'set',\n  '{setting}',\n  '{secret}',\n])",
         'execFile("/usr/local/bin/aws", ["--profile", "audit", "configure", "set", "{setting}", "{secret}"])',
         'subprocess.run("aws", ["configure", "set", "{setting}", "{secret}"])',
+        'spawn("aws", args=["configure", "set", "{setting}", "{secret}"])',
+        'subprocess.run(["aws"] + ["configure", "set", "{setting}", "{secret}"])',
+        'Command::new("aws").args(["configure", "set", "{setting}", "{secret}"])',
+        'Command::new("aws")\n    // store\n    .args(&["configure", "set", "{setting}", "{secret}"])',
+        # A bare '--' ends the options; the next word is the value.
+        "aws configure set {setting} -- {secret}",
+        '["aws", "configure", "set", "{setting}", "--", "{secret}"]',
     ],
 )
 def test_aws_command_variants_are_redacted(command, setting):
@@ -369,6 +376,7 @@ def test_aws_command_variants_are_redacted(command, setting):
         ["AWS", "configure", "set", "AWS_SECRET_ACCESS_KEY", SECRET],
         ["C:\\Program Files\\Amazon\\AWSCLIV2\\AWS.EXE", "configure", "set", "aws_access_key_id", SECRET],
         ["aws.cmd", "configure", "set", "aws_session_token", SECRET],
+        ["aws", "configure", "set", "aws_secret_access_key", "--", SECRET],
     ],
 )
 def test_native_argv_variants_and_sibling_copies_are_withheld(argv):
