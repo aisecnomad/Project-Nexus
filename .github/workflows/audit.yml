@@ -44,16 +44,22 @@ jobs:
           # supply an administrator credential or treat partial as release proof.
           for ruleset_id in 23892853 23913372; do
             snapshot="$evidence_dir/ruleset-$ruleset_id.json"
-            read_flags=()
-            if ! gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" > "$snapshot"; then
-              read_flags=(--read-failed)
-            fi
-            if ! python -m tools.governance.rulesets observe \
-              --input "$snapshot" --ruleset-id "$ruleset_id" \
-              --expected ".github/rulesets/$ruleset_id.update.json" \
-              --output "$evidence_dir/observation-$ruleset_id.json" \
-              --summary "$GITHUB_STEP_SUMMARY" "${read_flags[@]}"; then
-              failed=1
+            if gh api "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id" > "$snapshot"; then
+              if ! python -m tools.governance.rulesets observe \
+                --input "$snapshot" --ruleset-id "$ruleset_id" \
+                --expected ".github/rulesets/$ruleset_id.update.json" \
+                --output "$evidence_dir/observation-$ruleset_id.json" \
+                --summary "$GITHUB_STEP_SUMMARY"; then
+                failed=1
+              fi
+            else
+              if ! python -m tools.governance.rulesets observe \
+                --input "$snapshot" --ruleset-id "$ruleset_id" \
+                --expected ".github/rulesets/$ruleset_id.update.json" \
+                --output "$evidence_dir/observation-$ruleset_id.json" \
+                --summary "$GITHUB_STEP_SUMMARY" --read-failed; then
+                failed=1
+              fi
             fi
           done
           exit "$failed"
