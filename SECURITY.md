@@ -234,6 +234,11 @@ coverage, even when a response includes an empty collection field.
   strings, verbatim multiline C# strings with doubled quotes, and multiline
   triple-quoted literals. Recognized unterminated quoted flow-record values
   and credential-call literals are withheld through their bounded text tail.
+  Supported Go SDK imports bind credential-call receivers, including aliases
+  and dot imports, before evidence truncation. This lexical recognition shares
+  the sanitization work and binding limits; exhausting either withholds the
+  evidence and marks coverage incomplete. Local shadowing can over-redact.
+  Dynamic function reassignment is outside this bounded direct-call recognition.
   Known environment lookup
   fallback literals inherit the credential constructor's context even when
   their environment variable name is ordinary. Textual flow records support
@@ -270,8 +275,10 @@ coverage, even when a response includes an empty collection field.
   (com.theokanning.openai) and `new GoogleGenerativeAI("...")`. Where a
   variable stands at the key's position, a later literal such as an
   organization ID may be withheld instead. Any other SDK call is an ordinary
-  function, as are a key at a position no listed overload uses and a listed
-  call through an aliased import (`gogpt.DefaultConfig("...")`).
+  function, as is a key at a position no listed overload uses. The three
+  go-openai helpers also recognize literal imports of
+  `github.com/sashabaranov/go-openai`, including aliases and dot imports;
+  import references must be present in the full source passed to redaction.
   These forms can also remain: a word-like or short value under
   a name that is not itself sensitive and that lacks recognized opaque
   structure; a lowercase word
