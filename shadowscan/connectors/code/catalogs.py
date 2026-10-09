@@ -61,7 +61,8 @@ in ``policies.yaml`` looks like one ``base_url`` in ``config.yaml``). When a
 project holds a catalog and nothing else but mention-only data files, those
 files are one catalog: nothing in the project uses a technology it names. A
 configuration document or a file that code loads is not mention-only data, so
-it keeps its small neighbours out of the catalog.
+it keeps its small neighbours out of the catalog; a deny list that code loads
+is a list, so it does not.
 
 Observations from a catalog count as mentions: they establish a technology only
 when the same signature also has library evidence (an import, a dependency or a
@@ -430,11 +431,12 @@ def references_could_change(catalogs: AbstractSet[str]) -> bool:
     """Whether a data-file reference left unread could have kept one of ``catalogs`` from being a catalog.
 
     A reference only lifts the catalog discount (``_loaded_by_code``), never for
-    a file under a documentation or website directory, and only shrinks the set
-    ``catalog_files`` returns. A truncated reference list therefore changes
-    nothing in a project that discounts no other data file.
+    a file under a documentation or website directory or a file named as a deny
+    list (``deny_list_file``), and only shrinks the set ``catalog_files``
+    returns. A truncated reference list therefore changes nothing in a project
+    that discounts no other data file.
     """
-    return any(not _documentation_path(rel) for rel in catalogs)
+    return any(not _documentation_path(rel) and not deny_list_file(rel) for rel in catalogs)
 
 
 def _referenced(rel: str, referenced: Collection[str]) -> bool:

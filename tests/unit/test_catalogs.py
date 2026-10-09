@@ -484,6 +484,9 @@ def test_truncated_references_matter_only_for_a_catalog_they_could_exempt():
     assert not references_could_change(frozenset())
     assert not references_could_change(frozenset({"docs/providers.yaml", "website/_data/models.yml"}))
     assert references_could_change(frozenset({"docs/providers.yaml", "config/providers.json"}))
+    # Nor is a deny list exempted by a reference: an unread one changes nothing there either.
+    assert not references_could_change(frozenset({"blocklist.yaml", "config/deny_list.json"}))
+    assert references_could_change(frozenset({"blocklist.yaml", "providers.json"}))
 
 
 def test_a_data_file_the_projects_code_loads_is_configuration():
@@ -616,7 +619,17 @@ def test_a_deny_list_name_outweighs_location_and_loading_not_an_assignment():
         assert not configuration_document(rel, "", None, set())
     # An ordinary file there stays configuration.
     assert catalog_files(products("config/vendors.yaml", 8)) == frozenset()
-    assert catalog_files(products("net/vendors.yaml", 2), referenced={"vendors.yaml"}) == frozenset()
+    assert catalog_files(products("net/vendors.yaml", 8), referenced={"vendors.yaml"}) == frozenset()
+    # A loaded deny list is a list, so a small unloaded neighbour joins it; loaded, it does not.
+    neighbour = mention("upstreams/providers.yaml", "domain", 20)
+    loaded = {"blocklist.yaml"}
+    assert catalog_files([*products("blocklist.yaml", 2), neighbour], referenced=loaded) == {
+        "blocklist.yaml",
+        "upstreams/providers.yaml",
+    }
+    assert catalog_files(
+        [*products("blocklist.yaml", 2), neighbour], referenced={*loaded, "providers.yaml"}
+    ) == {"blocklist.yaml"}
     # A document that assigns the variables it names, or deploys a resource, stays configuration.
     rel = "config/denylist.cfg"
     assert configuration_document(rel, "OPENAI_API_KEY=sk-example\n", None, {"OPENAI_API_KEY"})

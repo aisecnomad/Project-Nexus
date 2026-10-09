@@ -608,10 +608,13 @@ signatures:
         weight: 0.7
       # Elixir calls a module's functions by their qualified name without
       # importing it, so a remote call to Bumblebee's or Instructor's own entry
-      # points names the library as an import does.
+      # points names the library as an import does. Elixir source is not lexed,
+      # so the call must have its parenthesis and no `#` before it on the line:
+      # a comment or a `Bumblebee.Text`/`chat_completion/2` mention in prose is
+      # not a call.
       - type: import
         languages: [elixir]
-        patterns: ['\bBumblebee\.(?:load_model|Text|Audio|Vision|Diffusion)\b', '\bInstructor\.chat_completion\b']
+        patterns: ['^[^#\r\n]*\bBumblebee\.(?:load_model|(?:Text|Audio|Vision|Diffusion)(?:\.\w+)+)\s*\(', '^[^#\r\n]*\bInstructor\.chat_completion\s*\(']
         weight: 0.7
 
   - id: framework.langchain-elixir

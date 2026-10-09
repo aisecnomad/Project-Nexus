@@ -765,7 +765,10 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   thread, with an absolute elapsed-time cap of four times the budget clipped to
   the connector deadline, so a scanner descheduled on a busy host no longer
   fails ordinary files with `MatchTimeoutError`; the diagnostic reports both
-  figures (`cpu 2.01s of 2.00s, wall 2.40s of 8.00s`).
+  figures (`cpu 2.01s of 2.00s, wall 2.40s of 8.00s`). The Python re-export
+  pass after the walk clips its binder's cap the same way, and a consumer it
+  queues is redacted during the walk, so neither that pass nor emit can run
+  past the deadline the walk kept for them.
 - Implemented MCP servers are first-class: a Python or JavaScript server
   construction is import-bound (`FastMCP(`, `Server(` from `mcp.server` and
   `mcp.server.lowlevel`, `new McpServer(` and `new Server(` from
@@ -840,7 +843,10 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   calls a module by its qualified name without importing it and no parser
   reads `mix.exs`, so `framework.nx-bumblebee` reads a remote call to
   Bumblebee's or Instructor's own entry points (`Bumblebee.load_model(`,
-  `Instructor.chat_completion`) as its import, not as a lexical pattern.
+  `Instructor.chat_completion(`) as its import, not as a lexical pattern.
+  Elixir source is not lexed, so only a call with its parenthesis and no `#`
+  before it on the line counts: a comment or a `@moduledoc` naming
+  `Bumblebee.Text` establishes nothing.
 - Weak mentions establish nothing. When every match of a signature in a
   project is a host, variable name, display name, data-file model id or CI
   job image below weight 0.3 after the test-path discount, the signature is
@@ -927,8 +933,9 @@ before it was changed, has a regression test, and leaves finding IDs unchanged.
   and a file named as a deny list (`blocklist`, `denylist`, `blacklist`) stays
   a list under `config/` or when code loads it, since a proxy keeps its deny
   list beside its configuration and loads it; one that assigns the variables it
-  names or deploys a Kubernetes or ECS resource is configuration. A vendor
-  policy that names a variable as a value (`key_env: OPENAI_API_KEY`),
+  names or deploys a Kubernetes or ECS resource is configuration. Since a
+  reference cannot exempt a deny list, a truncated reference list beside one
+  leaves the scan complete. A vendor policy that names a variable as a value (`key_env: OPENAI_API_KEY`),
   keys a mapping or a list by it in any style (a YAML block or flow mapping, a
   JSON object or array, a TOML inline table) or lists it as a key with no value
   still assigns nothing. The reference exemption is by name and its

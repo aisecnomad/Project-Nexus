@@ -329,6 +329,76 @@ def test_queued_consumers_keep_the_walk_deadline_margin(tmp_path, index, monkeyp
     assert any("a_app.py" in error and "re-export" in error for error in stats.errors)
 
 
+def test_a_queued_binders_wall_time_stops_short_of_the_deadline_margin(tmp_path, index, monkeypatch):
+    # The matching budget is the thread's CPU time, so a binder descheduled
+    # under contention is ended only by its wall cap. As in the walk, that cap
+    # must not run into the margin the connector keeps to emit its findings.
+    (tmp_path / "a_app.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
+    (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
+    clock = _fake_clock(monkeypatch)
+    deadline = clock[0] + 30.0
+    resolve = filesystem.FilesystemConnector._resolve_reexport_sources
+    caps = []
+    expected = []
+
+    def late_resolve(self, scan):
+        # The walk leaves the consumer just its budget and the margin.
+        clock[0] = deadline - (self.scan_timeout + scan.margin + 0.05)
+        expected.append(deadline - clock[0] - scan.margin)
+        scan_budget = self.index.scan_budget
+
+        def recording(*args, **options):
+            caps.append(options)
+            return scan_budget(*args, **options)
+
+        monkeypatch.setattr(self.index, "scan_budget", recording)
+        return resolve(self, scan)
+
+    monkeypatch.setattr(filesystem.FilesystemConnector, "_resolve_reexport_sources", late_resolve)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, deadline=deadline)
+    findings = filesystem.FilesystemConnector(ctx).run()
+    assert _uses_openai(findings)
+    assert len(caps) == 1 and caps[0]["chars"] == len((tmp_path / "a_app.py").read_bytes())
+    assert caps[0]["wall_seconds"] <= expected[0]
+
+
+def test_queued_consumers_are_redacted_in_the_walk_not_after_it(tmp_path, index, monkeypatch):
+    # The walk accounts for every file's redaction against the deadline. A
+    # queued consumer is redacted there too, so neither the re-export pass nor
+    # emit, after the last deadline check, redacts a whole file, whether the
+    # pass reaches the consumer or not.
+    for name in ("a_app.py", "b_app.py"):
+        (tmp_path / name).write_text(_OPENAI_CONSUMER.replace("helpers", "c_helpers"))
+    (tmp_path / "c_helpers.py").write_text("def helper():\n    return 1\n")
+    redact = filesystem._redacted_source
+    queued = []
+    late = []
+
+    def counting(text, structure):
+        if queued:
+            late.append(text[:40])
+        return redact(text, structure)
+
+    resolve = filesystem.FilesystemConnector._resolve_reexport_sources
+
+    def marking(self, scan):
+        queued.extend(source.file.rel for source in scan.reexport_files)
+        assert all(source.file.excerpts.safe_lines is not None for source in scan.reexport_files)
+        return resolve(self, scan)
+
+    monkeypatch.setattr(filesystem, "_redacted_source", counting)
+    monkeypatch.setattr(filesystem.FilesystemConnector, "_resolve_reexport_sources", marking)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = filesystem.FilesystemConnector(ctx).run()
+    assert sorted(queued) == ["a_app.py", "b_app.py"]
+    assert late == []
+    # Their evidence, model identifiers included, still carries its excerpts.
+    snippets = {(e.location, e.signal): e.snippet for f in findings for e in f.evidence}
+    call = 'client.chat.completions.create(model="gpt-4o", messages=[])'
+    assert snippets[("a_app.py:4", "code:provider.openai")] == call
+    assert snippets[("b_app.py:4", "model:provider.openai")] == call
+
+
 def test_queued_consumer_whose_budget_does_not_fit_is_skipped_alone(tmp_path, index, monkeypatch):
     # The walk reads the 900 KiB consumer last (smaller files first) and
     # finishes with 8 s left: that consumer's 8 s budget plus the margin no

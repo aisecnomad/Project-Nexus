@@ -110,3 +110,19 @@ def test_no_signature_declares_an_ecosystem_without_a_manifest_parser():
     # No parser reads mix.exs, DESCRIPTION or renv.lock: hex and cran dependency
     # signals could never match.
     assert not {"hex", "cran"} & ECOSYSTEMS
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "defmodule Notes do\n  # Bumblebee.load_model(repo) would load a model here\n  # Instructor.chat_completion(params)\nend\n",
+        'defmodule Notes do\n  @moduledoc "Compare Bumblebee.Text with Instructor.chat_completion/2."\nend\n',
+    ],
+    ids=["comment", "moduledoc"],
+)
+def test_an_elixir_mention_of_bumblebee_is_not_a_call(tmp_path: Path, run_connector, source):
+    # Elixir source is not lexed: only a call outside a comment names the library.
+    _write(tmp_path, {"lib/notes.ex": source})
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert "framework.nx-bumblebee" not in _signatures(findings)

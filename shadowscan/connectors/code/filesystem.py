@@ -2725,9 +2725,13 @@ class FilesystemConnector(BaseConnector):
         deadline = self.ctx.deadline
         for position, source in enumerate(scan.reexport_files):
             file = source.file
-            budget = scan_timeout_for_size(self.scan_timeout, len(file.text.encode("utf-8")))
+            size = len(file.text.encode("utf-8"))
+            budget = scan_timeout_for_size(self.scan_timeout, size)
+            wall_cap = budget * WALL_BUDGET_FACTOR
             if deadline is not None:
                 remaining = deadline - time.monotonic()
+                # As in the walk, the binder's wall cap never runs into the deadline's margin.
+                wall_cap = max(budget, min(wall_cap, remaining - scan.margin))
                 if remaining < budget + scan.margin:
                     if remaining > scan.margin + self.scan_timeout:
                         self.ctx.error(
@@ -2748,15 +2752,17 @@ class FilesystemConnector(BaseConnector):
             resolver = scan.reexports.resolver(file.proj_root, source.is_local_module)
             with (
                 self._isolated(file.rel, "Python re-export analysis"),
-                self.index.scan_budget(seconds=budget),
+                self.index.scan_budget(seconds=budget, chars=size, wall_seconds=wall_cap),
             ):
                 try:
                     self._bind_source(source, resolve_import=resolver)
                 except ReexportLimitError as exc:
                     self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
                     self._bind_source(source)
-            # Settled when its analysis ends, as the walk settles every other file.
-            self._settle_excerpts(file)
+        # The walk redacted every queued consumer (see _scan_file), so settling
+        # only cuts the excerpts its matches asked for, reached or not.
+        for source in scan.reexport_files:
+            self._settle_excerpts(source.file)
         scan.reexport_files.clear()
 
     def _retain_lexical_evidence(self, sources: list[_MatchedSource], until: float) -> None:
@@ -2771,7 +2777,6 @@ class FilesystemConnector(BaseConnector):
                 return
             with self._isolated(source.file.rel, "Python re-export analysis"):
                 self._record_source(source, [], [(0, len(source.text))])
-            self._settle_excerpts(source.file)
 
     def _scan_label(self, root: Path) -> str:
         """Return the resource prefix of the findings under ``root``."""
@@ -2980,7 +2985,13 @@ class FilesystemConnector(BaseConnector):
             self._record_special_files(scan, file)
         finally:
             if not file.reexport_pending:
-                self._settle_excerpts(file)  # a deferred consumer is settled after its analysis
+                self._settle_excerpts(file)
+            elif file.excerpts.structure is not None:
+                # A queued consumer is settled after its analysis, but redacted
+                # here, under the walk's deadline accounting like every other
+                # file: what the re-export pass, a consumer it never reaches and
+                # emit read from it afterwards is only cut from the redacted lines.
+                self._redacted_lines(file)
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
