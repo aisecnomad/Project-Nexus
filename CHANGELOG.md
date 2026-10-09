@@ -248,9 +248,12 @@ baselines; rebaseline before comparing (see `docs/production.md`).
 - `platform.mlflow-ai-gateway` no longer matches a bare `mlflow` or
   `mlflow-skinny` dependency, so mlflow experiment tracking again yields no
   finding, or a file named `gateway_config.yaml`, which any API gateway may
-  use. `coding-agent.devin` no longer matches a lowercase `devin.md` at any
-  depth (`content/authors/devin.md`); `DEVIN.md`, `.devin/` and `.devin.json`
-  remain.
+  use. `coding-agent.devin` no longer matches a lowercase `devin.md` anywhere
+  (`content/authors/devin.md` is a page about a person). A file glob cannot
+  name the repository root alone, so a root `devin.md` is not matched either:
+  this is a known recall gap, and the authored benchmark case `rw-repo-057` (a
+  root `devin.md`) is now a false negative, lowering coding-agent recall from
+  1.00 to 0.90. `DEVIN.md`, `.devin/` and `.devin.json` remain.
 - Lua, R and Homebrew patterns write a quote as `'` instead of `\x27`, which
   the required-literal prefilter could not read.
 - The evaluation corpus has 22 authored positive and hard-negative cases for
