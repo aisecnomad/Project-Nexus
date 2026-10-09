@@ -543,23 +543,23 @@ signatures:
         weight: 0.9
 
   # ------------------------------------------------------------ elixir
+  # Elixir projects declare dependencies in mix.exs, which no manifest parser
+  # reads, so these signatures have import and code signals only. Nx alone is
+  # numerical computing, not LLM use.
   - id: framework.nx-bumblebee
-    name: Nx / Bumblebee (Elixir ML)
+    name: Bumblebee / Instructor (Elixir)
     category: framework
     vendor: Dashbit / Elixir
     homepage: https://github.com/elixir-nx/bumblebee
-    description: Elixir machine-learning stack; Bumblebee wraps HuggingFace Transformers models via ONNX.
+    description: Elixir libraries that serve Hugging Face transformer models (Bumblebee) or request structured LLM output (Instructor).
     signals:
-      - type: dependency
-        ecosystem: hex
-        names: [bumblebee, nx, nx_serving, exla, torchx, ortex, instructor]
-        weight: 0.7
       - type: import
         languages: [elixir]
-        patterns: ['^[^\S\r\n]*(?:alias|import|require|use)\s+(?:Bumblebee|Nx|Instructor)\b']
+        patterns: ['^[^\S\r\n]*(?:alias|import|require|use)\s+(?:Bumblebee|Instructor)\b']
         weight: 0.7
       - type: code
-        patterns: ['\bBumblebee\.(?:load_model|Text|Audio|Vision|Diffusion)\b', '\bNx\.Serving\b', '\bInstructor\.chat_completion\b']
+        languages: [elixir]
+        patterns: ['\bBumblebee\.(?:load_model|Text|Audio|Vision|Diffusion)\b', '\bInstructor\.chat_completion\b']
         weight: 0.7
 
   - id: framework.langchain-elixir
@@ -570,35 +570,32 @@ signatures:
     description: Elixir implementation of the LangChain framework for LLM applications.
     capabilities: [tool-use]
     signals:
-      - type: dependency
-        ecosystem: hex
-        names: [langchain]
-        weight: 0.8
       - type: import
         languages: [elixir]
         patterns: ['^[^\S\r\n]*(?:alias|import|require|use)\s+LangChain\b']
         weight: 0.8
       - type: code
+        languages: [elixir]
         patterns: ['\bLangChain\.(?:Chains|ChatModels|Function|Message|PromptTemplate)\b', '\b%LangChain\.Message\b']
         weight: 0.8
 
   # ------------------------------------------------------------ r
+  # R projects declare packages in DESCRIPTION or renv.lock, which no manifest
+  # parser reads. reticulate, torch and keras are general Python-bridge and ML
+  # packages, not LLM use.
   - id: framework.r-ai
-    name: R AI / ML Libraries
+    name: R LLM Clients
     category: framework
     vendor: R Project
-    description: R packages for AI API access and ML model serving.
+    description: R packages for LLM API access (openai, ellmer).
     signals:
-      - type: dependency
-        ecosystem: cran
-        names: [openai, httr2, reticulate, ellmer, elmer, tidymodels, keras3, torch, luz]
-        weight: 0.6
       - type: import
         languages: [r]
-        patterns: ['^[^\S\r\n]*(?:library|require)\s*\(\s*(?:openai|ellmer|elmer|reticulate)\s*\)', '^[^\S\r\n]*(?:library|require)\s*\(\s*(?:keras3?|torch|luz)\s*\)']
+        patterns: ['^[^\S\r\n]*(?:library|require)\s*\(\s*(?:openai|ellmer|elmer)\s*\)']
         weight: 0.6
       - type: code
-        patterns: ['(?:httr2?::)?(?:POST|GET|request)\s*\(.*(?:api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com)', '\bchat\s*\(\s*(?:turns|model)\s*=', '\bpython_import\s*\(\s*["\x27](?:openai|anthropic|langchain|transformers)["\x27]\s*\)']
+        languages: [r]
+        patterns: ['(?:httr2?::)?(?:POST|GET|request)\s*\(.*(?:api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com)', '\bchat\s*\(\s*(?:turns|model)\s*=', '\bpython_import\s*\(\s*["''](?:openai|anthropic|langchain|transformers)["'']\s*\)']
         weight: 0.6
 
   # ------------------------------------------------------------ lua
@@ -610,13 +607,16 @@ signatures:
     signals:
       - type: import
         languages: [lua]
-        patterns: ['^[^\S\r\n]*(?:local\s+\w+\s*=\s*)?require\s*\(?["\x27](?:ollama|openai|llm)["\x27]\)?']
+        patterns: ['^[^\S\r\n]*(?:local\s+\w+\s*=\s*)?require\s*\(?["''](?:ollama|openai|llm)["'']\)?']
         weight: 0.6
       - type: code
+        languages: [lua]
         patterns: ['\bollama\s*[\.\:]\s*(?:generate|chat|embeddings|list)\s*\(', '\bopenai\s*[\.\:]\s*(?:chat|completions)\s*\(', 'api%.openai%.com', 'api%.anthropic%.com']
         weight: 0.6
 
   # ------------------------------------------------------------ rust ai crates
+  # candle-core and candle-nn are general tensor crates; candle-transformers
+  # carries the language models.
   - id: framework.rust-ai
     name: Rust AI / ML Crates
     category: framework
@@ -625,13 +625,14 @@ signatures:
     signals:
       - type: dependency
         ecosystem: cargo
-        names: [kalosm, candle-core, candle-nn, candle-transformers, llm, llm-chain, mistralrs, async-openai, genai]
-        prefixes: [kalosm-, candle-]
+        names: [kalosm, candle-transformers, llm, llm-chain, mistralrs, async-openai, genai]
+        prefixes: [kalosm-]
         weight: 0.8
       - type: import
         languages: [rust]
-        patterns: ['^[^\S\r\n]*use\s+(?:kalosm|candle_core|candle_nn|candle_transformers|llm|llm_chain|mistralrs|async_openai|genai)::', '^[^\S\r\n]*use\s+kalosm::']
+        patterns: ['^[^\S\r\n]*use\s+(?:kalosm|candle_transformers|llm|llm_chain|mistralrs|async_openai|genai)::', '^[^\S\r\n]*use\s+kalosm::']
         weight: 0.8
       - type: code
+        languages: [rust]
         patterns: ['\bKalosm::\w+Agent\b', '\bTextGeneration(?:Stream)?\s*::\s*(?:builder|new)\b', '\bllm_chain!\s*\(']
         weight: 0.7

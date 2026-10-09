@@ -194,6 +194,28 @@ author-written and not independent review.
   file's project. A directory that is itself a project root with a manifest
   (`services/templates/requirements.txt`) is a deployable unit and keeps full
   weight, confidence and risk.
+- The Elixir and R signatures have no dependency signals, and the schema has
+  no `hex` or `cran` ecosystem: nothing parses `mix.exs`, `DESCRIPTION` or
+  `renv.lock`, so those signals could never match. Their import patterns name
+  LLM libraries only (Bumblebee and Instructor; openai and ellmer):
+  `import Nx`, `library(reticulate)`, `library(torch)` and `library(keras)` are
+  numerical or general ML code and no longer report LLM usage. The Rust
+  signature no longer matches the `candle-core` and `candle-nn` tensor crates
+  (`candle-transformers` remains), and the code patterns of the Elixir, R, Lua
+  and Rust signatures apply only to files of their language.
+- `platform.mlflow-ai-gateway` no longer matches a bare `mlflow` or
+  `mlflow-skinny` dependency, so mlflow experiment tracking again yields no
+  finding, or a file named `gateway_config.yaml`, which any API gateway may
+  use. `coding-agent.devin` no longer matches a lowercase `devin.md` at any
+  depth (`content/authors/devin.md`); `DEVIN.md`, `.devin/` and `.devin.json`
+  remain.
+- Lua, R and Homebrew patterns write a quote as `'` instead of `\x27`, which
+  the required-literal prefilter could not read.
+- The evaluation corpus has 22 authored positive and hard-negative cases for
+  the signatures added on this branch (Elixir, R, Lua and Rust LLM libraries,
+  MLflow and Cloudflare AI gateways, Agency Swarm, Rivet, Devin, Homebrew).
+  Homebrew AI tools are a supporting heuristic with no product finding, so only
+  its negative case can be labeled.
 
 ## 0.1.2 — 2026-10-08
 

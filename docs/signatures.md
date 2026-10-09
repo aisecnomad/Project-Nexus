@@ -35,7 +35,7 @@ signatures:
         prefixes: [crewai]
         weight: 0.97
       - type: import
-        languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php | swift | dart
+        languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php | swift | dart | c | cpp | elixir | r | lua
         patterns: ['^[^\S\r\n]*(?:from|import)\s+crewai\b']
         weight: 0.97
       - type: code
@@ -195,7 +195,10 @@ key on, so a typo fails loading instead of silently never matching:
 * `ecosystem` must be one of `pypi`, `npm`, `nuget`, `maven`, `go`, `cargo`,
   `rubygems`, `composer`, `conda` or `any` (omitted means `any`);
 * `languages` entries must be canonical language names (`python`, `javascript`,
-  `go`, `rust`, `java`, `dotnet`, `ruby`, `php`, `swift`, `dart`);
+  `go`, `rust`, `java`, `dotnet`, `ruby`, `php`, `swift`, `dart`, `c`, `cpp`,
+  `elixir`, `r`, `lua`). There is no `hex` or `cran` ecosystem: nothing parses
+  `mix.exs`, `DESCRIPTION` or `renv.lock`, so Elixir and R signatures use
+  `import` and `code` signals only;
 * `capabilities` (signature or signal level) must be capabilities the risk
   engine scores: `code-exec`, `autonomous`, `saas-actions`, `browsing`,
   `memory`, `multi-agent`, `delegated-identity`, `tool-use`, `rag`;
