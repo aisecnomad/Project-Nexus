@@ -28,8 +28,8 @@ that are never silent:
   definitions, workflows, CI files, agent manifests, coding-agent settings and
   their permission checks (`.claude`, `.codex`, `.gemini`, goose, OpenClaw),
   the MCP client a configuration belongs to (for a file below a linked
-  directory, only when it mentions `mcp` or `servers`, as every MCP table
-  does), plugin manifest directories
+  directory, only when the scanner's MCP parser reads servers or errors from
+  it at either path, or it cannot be read), plugin manifest directories
   (`.claude-plugin`, `.codex-plugin`), pipeline and catalog classification, and
   test classification; instruction-document aliases are compared the same
   way. A directory link into the same

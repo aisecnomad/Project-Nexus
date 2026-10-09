@@ -335,3 +335,27 @@ def test_pattern_allowance_keeps_its_rate_on_larger_files(monkeypatch) -> None:
     matcher._search(rx, "agent", "test")
     assert seen[0] == pytest.approx(matcher.REGEX_TIMEOUT_SECONDS * 2.4)
     assert seen[1] == matcher.REGEX_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "expected"),
+    [
+        ("glossary.json", json.dumps({"hello": "bonjour"}), False),
+        ("servers.json", json.dumps({"mcpServers": SHELL_SERVER}), True),
+        # Escaped keys parse as an MCP table without the literal words in the text.
+        ("mcp.json", '{"\\u006dcp\\u0053ervers": {"fs": {"command": "npx", "args": ["x"]}}}', True),
+        ("mcp.json", "{not json", True),
+    ],
+    ids=["plain-data", "mcp-table", "escaped-keys", "unparsable"],
+)
+def test_mcp_table_check_uses_the_walks_parser(
+    tmp_path: Path, index, name: str, text: str, expected: bool
+) -> None:
+    from shadowscan.connectors import ConnectorContext
+
+    (tmp_path / name).write_text(text)
+    connector = filesystem.FilesystemConnector(
+        ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    )
+    alias, real = f".codex/skills/x/{name}", f".claude/skills/x/{name}"
+    assert connector._may_hold_mcp_table(alias, real, name, tmp_path / name) is expected

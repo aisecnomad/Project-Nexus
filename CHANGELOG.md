@@ -61,7 +61,7 @@ followed; each new rule decides from real paths and has a regression test.
   parent directory: coding-agent settings and their permission checks
   (`.claude`, `.codex`, `.gemini`, goose, OpenClaw), the MCP client a
   configuration belongs to (compared for a file in a linked directory only
-  when its content could hold an MCP table, so a skill's glossary shared
+  when the MCP parser reads servers or errors from it, so a skill's glossary shared
   between `.claude/skills` and `.codex/skills` is covered), plugin manifest
   directories (`.claude-plugin`,
   `.codex-plugin`), catalog and pipeline classification, workflows, CI files,

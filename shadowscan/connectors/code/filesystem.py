@@ -532,10 +532,6 @@ def _mcp_client_scope(rel: str) -> str | None:
     return _mcp_client_for(rel) if PurePosixPath(rel).suffix.lower() in _MCP_TABLE_EXTENSIONS else None
 
 
-# Text that every MCP table holds: its container key or a server's protocol name.
-_MCP_TABLE_HINT = re.compile(r"mcp|servers", re.IGNORECASE)
-
-
 def _same_path_semantics(first: str, second: str, *, ignore_test: bool = False, client: bool = True) -> bool:
     """Whether two paths of the same content are analyzed alike, apart from their file-name signals.
 
@@ -2323,13 +2319,13 @@ class FilesystemConnector(BaseConnector):
                     continue
                 if not _same_path_semantics(alias_rel, real_rel, ignore_test=ignore_test, client=False):
                     return False
-                if _mcp_client_scope(alias_rel) != _mcp_client_scope(real_rel):
+                if _mcp_client_scope(alias_rel) != _mcp_client_scope(real_rel) and self._may_hold_mcp_table(
+                    alias_rel, real_rel, name, real_path
+                ):
                     # A file shared between coding agents' directories (a skill's
                     # glossary) is attributed to another MCP client only if it
-                    # holds an MCP table: read it at its real path to know.
-                    text = read_text(real_path, self._size_limit(name, real_rel))
-                    if text is None or _MCP_TABLE_HINT.search(text):
-                        return False
+                    # holds an MCP table.
+                    return False
                 real_matches = self.index.match_file(real_rel)
                 real_keys = {(m.signature.id, id(m.signal)) for m in real_matches}
                 extra = [
@@ -2348,6 +2344,27 @@ class FilesystemConnector(BaseConnector):
                 records.append((alias_rel, extra))
         self._alias_evidence.extend((project, alias_rel, extra) for alias_rel, extra in records)
         return True
+
+    def _may_hold_mcp_table(self, alias_rel: str, real_rel: str, name: str, path: Path) -> bool:
+        """Whether the walk would read MCP servers or MCP errors from this file at either path.
+
+        The file is read at its real path, never through the link, and judged
+        as ``_detect_mcp`` judges it; an unreadable or unparsable file may.
+        """
+        text = read_text(path, self._size_limit(name, real_rel))
+        if text is None:
+            return True
+        try:
+            for rel in (alias_rel, real_rel):
+                if self._looks_like_mcp_config(rel, name, text) or (
+                    name.lower() == "server.json" and '"mcpServers"' in text
+                ):
+                    errors: list[str] = []
+                    if _parse_mcp_servers(rel, text, errors) or errors:
+                        return True
+        except Exception:  # noqa: BLE001 - any parser failure keeps the link a gap
+            return True
+        return False
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
         """Return the share of ``budget`` a file must have left before the walk may start it.
