@@ -1,3 +1,5 @@
+# Baseline deny-all egress with private/metadata exceptions.
+# Customize the allow rules for the specific connectors you enable.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -9,8 +11,7 @@ spec:
   policyTypes:
   - Egress
   egress:
-  # Deny private ranges and metadata by default; allow only specific public HTTPS endpoints
-  # Adjust the to/ports for the connectors you enable (e.g., api.github.com, graph.microsoft.com, bedrock endpoints)
+  # Deny metadata and private ranges by default (example using ipBlock except)
   - to:
     - ipBlock:
         cidr: 0.0.0.0/0
@@ -22,3 +23,5 @@ spec:
     ports:
     - protocol: TCP
       port: 443
+  # Add specific CIDRs or namespace selectors for your approved endpoints
+  # (GitHub, Microsoft Graph, AWS Bedrock, Google OAuth, etc.)

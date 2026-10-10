@@ -1,47 +1,79 @@
-# Operational Controls for Production Use
+# Operational Controls
 
-These controls implement the production security recommendations for ShadowScan beyond the core scanner design.
+These controls are required for any production, CI, or unattended use of ShadowScan. They complement the in-process limits documented in [production.md](../production.md) and [SECURITY.md](../SECURITY.md).
 
-## Mandatory External Process Supervision
+## Mandatory external process supervision
 
-Python cooperative timeouts cannot forcibly interrupt blocked threads, external SDK calls, or plugins. For any production, CI, or unattended use, enforce a hard external process or container deadline that terminates the entire process.
-
-Examples:
-- systemd: `TimeoutStartSec=900` and `KillMode=control-group`
-- Kubernetes Job: `activeDeadlineSeconds: 1200`
-- Shell: `timeout 900 shadowscan scan -c config.yaml`
-- CI: job timeout of 15-30 minutes
+Connector timeouts and the `--job-deadline-seconds` watchdog are cooperative. Python threads and many cloud SDK calls cannot be forcibly interrupted. **For any production, CI, or unattended use, enforce a hard external process or container deadline that terminates the entire scanner process.**
 
 An incomplete scan (exit code 3) must fail the pipeline. Do not treat a timed-out report as authoritative.
 
-## Network Egress Policy
+**Examples**
 
-The shared HttpClient enforces HTTPS, origin pinning, and private/metadata destination blocking at connection time. Cloud SDKs (boto3, google-auth, azure-identity, oci) and Git use separate transports.
+- **systemd**
+  ```ini
+  [Service]
+  TimeoutStartSec=900
+  TimeoutStopSec=30
+  KillMode=control-group
+  ExecStart=/usr/bin/shadowscan scan -c /etc/shadowscan/config.yaml
+  ```
 
-Deploy with an explicit egress allowlist at the network layer:
-- Deny private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), metadata (169.254.169.254), and all other egress by default.
-- Allow only the specific HTTPS endpoints required by enabled connectors.
-- Prefer an approved egress proxy for live collection.
+- **Kubernetes Job**
+  ```yaml
+  spec:
+    activeDeadlineSeconds: 1200
+    backoffLimit: 0
+  ```
 
-See `examples/k8s-network-policy.yaml` for a baseline Kubernetes NetworkPolicy.
+- **Wrapper / CI**
+  ```bash
+  timeout 900 shadowscan scan -c config.yaml
+  ```
+  or set the GitHub Actions / GitLab CI job timeout to 15–30 minutes.
 
-## Plugin Trust Model
+## Network egress policy
 
-Plugins listed in `options.plugins` or `--allow-plugin` run with the full privileges of the scanner process. Process isolation (spawn + JSON IPC, no pickle) protects against crashes and certain IPC attacks but is **not a security sandbox**. A malicious or compromised plugin can access credentials, make arbitrary network calls, and influence findings. Treat every plugin as trusted code equivalent to a built-in connector. Prefer built-in connectors only in high-assurance environments, or run the entire scanner inside a restricted container with seccomp/AppArmor and network policies.
+The shared `HttpClient` enforces HTTPS, origin pinning, and private/metadata denial at connect time. Cloud SDKs (`boto3`, `google-auth`, `azure-identity`, `oci`) and Git use their own transports and **do not** inherit these controls.
 
-## Detection Expectations
+Deploy with an explicit egress allowlist that covers both the HttpClient destinations and the SDK endpoints required by enabled connectors.
 
-ShadowScan produces evidence of signals matching its signatures within the scanned scope and the supplied inventory. It is not exhaustive proof of unauthorized agents, complete estate coverage, or runtime execution. Shadow status is only as accurate as the freshness and completeness of the provided Agent Cards. Novel frameworks, obfuscated agents, or pure API usage without recognizable signals may produce false negatives. Treat findings as starting points for investigation, not as definitive enforcement decisions.
+**Baseline recommendations**
 
-## SBOM and Provenance
+- Deny private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), link-local, and cloud metadata (`169.254.169.254`) by default.
+- Allow only the specific HTTPS endpoints needed for the connectors that are actually enabled (e.g. `api.github.com`, `graph.microsoft.com`, `bedrock.*.amazonaws.com`, `oauth2.googleapis.com`, etc.).
+- Prefer routing live collection through an approved egress proxy when possible.
+- See `examples/k8s-network-policy.yaml` for a starting Kubernetes NetworkPolicy.
 
-Generate and retain an SBOM for the wheel and the container image alongside the attested artifacts.
+## Plugin trust model
+
+An allowlisted plugin (`options.plugins` or `--allow-plugin`) runs with the **full privileges** of the scanner process (network, credentials in the environment, ability to write findings and files).
+
+Process isolation (spawn context + length-prefixed JSON over a socket, no pickle) protects against crashes and certain IPC attacks. It is **not a security sandbox**.
+
+Treat every plugin as trusted code equivalent to a built-in connector. In high-assurance environments prefer built-in connectors only, or run the entire scanner inside a restricted container with seccomp/AppArmor and the network policy above.
+
+## Detection expectations
+
+ShadowScan produces **evidence of signals** that match its signatures within the scanned scope and the supplied inventory. It is not exhaustive proof of unauthorized agents or of runtime execution.
+
+- Shadow status is only as good as the quality and freshness of the Agent Cards you provide.
+- Novel frameworks, obfuscated agents, or pure API usage without recognizable signals produce false negatives.
+- Confidence scores are heuristics, not probabilities.
+- Treat results as a starting point for investigation, not as an enforcement verdict.
+
+## SBOM and provenance
+
+After building a wheel or container image from a reviewed SHA:
 
 ```bash
-# After building the wheel
-cyclonedx-py -o sbom.json || syft packages dir:. -o cyclonedx-json=sbom.json
-# For the container image
-syft shadowscan:reviewed -o cyclonedx-json=container-sbom.json
+# Python runtime SBOM (example)
+cyclonedx-py -o sbom-python.json
+# or
+syft packages dir:. -o cyclonedx-json=sbom-python.json
+
+# Container image SBOM
+syft packages <image>:<tag> -o cyclonedx-json=sbom-image.json
 ```
 
-Retain the SBOM with the release evidence.
+Retain the SBOM together with the attested wheel/image digests produced by the release-evidence workflow.
