@@ -52,9 +52,15 @@ not inherit these controls, so enforce egress outside the process as well.
   refuses configured proxies, both from the environment and explicit ones, so
   that a proxy cannot route around its destination checks. The
   [live egress example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-network-policy.yaml)
-  is the address-level baseline underneath that allowlist: cluster DNS and HTTPS
-  to public addresses only. It works only with a CNI that enforces
-  NetworkPolicy.
+  is the address-level baseline underneath that allowlist. It denies all
+  egress to every pod labelled `app.kubernetes.io/name: shadowscan`, and
+  allows cluster DNS and HTTPS to public addresses only to pods that also
+  carry `shadowscan-mode: live`, so a live Job without that label gets no
+  egress rather than unrestricted egress. It also blocks NodeLocal DNSCache
+  and the metadata endpoints that GKE Workload Identity and EKS Pod Identity
+  use; allow only the one address and port a live scan needs. IPv6 egress
+  stays denied until you add the IPv6 rule the example describes. It works
+  only with a CNI that enforces NetworkPolicy.
 
 ## Plugin trust
 

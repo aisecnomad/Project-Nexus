@@ -57,10 +57,13 @@ status or the scan's completeness, and `--fail-on` ignores it.
 Finding text comes from scanned repositories and remote APIs and is
 untrusted. The model is told to treat it as data, and a reply is accepted
 only as a JSON object with one of the four verdicts; anything else is
-recorded as `status: unparseable`. Free text is truncated (rationale 500
-characters, suggested action 200) and sanitized before it is stored.
+recorded as `status: unparseable`, as is a reply longer than 16 KiB, which is
+refused unread (the response body is capped at 64 KiB). Free text is truncated
+(rationale 500 characters, suggested action 200) and sanitized with the rest
+of the finding when the report is written.
 
-A failed request is recorded as `status: failed` on the finding and as a
+A failed request, including an unexpected error in the HTTP client, is
+recorded as `status: failed` on the finding and as a
 warning on the `engine.llm-triage` entry of the scan statistics. An API key
 that is not a valid header value, or any other triage failure, is a warning
 on that entry too; the key is never echoed. A triage
@@ -69,7 +72,9 @@ failure is not a discovery gap, so it does not make the scan incomplete.
 A triage run is bounded. It sends no request after `budget_seconds` (default
 300) have passed since it started, and the HTTP client's retries,
 `Retry-After` waits, connection set-up and response reads end at the same
-time: a retry wait that would pass the budget fails the request instead.
+time: a retry wait that would pass the budget fails the request instead. Name
+resolution is the exception: the operating system's resolver is not bounded,
+so a slow resolver can use part of the job deadline's reserve.
 After three consecutive failed requests the run stops, so an endpoint that is
 down or rate-limited costs three failed requests, not one per selected
 finding. Selected findings that a stopped run did not reach are recorded as

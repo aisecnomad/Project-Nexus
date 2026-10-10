@@ -15,9 +15,13 @@ summarizes each release for people who install and operate ShadowScan.
   expectations; and SBOM and provenance as the release-evidence workflow
   actually produces them (a runtime SBOM and wheel attestations, no container
   image attestation).
-- Add `examples/k8s-network-policy.yaml`, a live-collection egress baseline
-  (cluster DNS and HTTPS to public addresses, private, CGNAT and link-local
-  ranges denied) that selects the same labels as `examples/k8s-job.yaml`.
+- Add `examples/k8s-network-policy.yaml`: a default deny-all egress policy
+  for every pod labelled `app.kubernetes.io/name: shadowscan`, and a
+  live-collection baseline for pods that also carry `shadowscan-mode: live`
+  (cluster DNS and HTTPS to public addresses; private, CGNAT, link-local and
+  Azure wire-server addresses denied). A live pod without the mode label is
+  denied, not unrestricted. The comments give the IPv6 exceptions for
+  dual-stack clusters and the metadata endpoints the policy blocks.
 - Pin that an LLM triage reply steered by scanned content cannot change a
   finding's risk, shadow status, kind or tags.
 - Ignore `*.pyo`, `*.egg` and `*.whl` build artifacts (from #176).
@@ -36,6 +40,9 @@ summarizes each release for people who install and operate ShadowScan.
   unassessed finding has none. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
   whose `inventory_present` is not a boolean is refused (exit 1).
+  The terminal table, Markdown and HTML reports label such a finding
+  `unassessed` and count them in the summary when the merged report has an
+  inventory, instead of leaving a blank cell that reads as registered.
 - LLM triage is bounded. `options.llm_triage.budget_seconds` (default 300,
   1 to 3600) limits one triage run, and the HTTP client's retries,
   `Retry-After` waits, connection set-up and response reads stop at the same
@@ -51,6 +58,13 @@ summarizes each release for people who install and operate ShadowScan.
   `JobDeadline.expires_at` exposes the CLI's.
   Triage stays advisory: risk, shadow status, completeness and `--fail-on` are
   unchanged.
+- A triage reply is located in linear time, and a reply longer than 16 KiB is
+  refused unread as `status: unparseable` (the response body is capped at
+  64 KiB, down from 256 KiB). A greedy pattern over a hostile reply of
+  unmatched braces took about 23 s, held the interpreter past the job
+  deadline and lost the report. An unexpected error during a request is now
+  recorded as `status: failed` like any other failure, so every selected
+  finding keeps a triage status.
 - CI's container job adds Google's Docker Hub pull-through cache
   (`https://mirror.gcr.io`) to the runner's Docker daemon and pulls the
   Dockerfile's digest-pinned base image before the build. Anonymous Docker Hub

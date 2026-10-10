@@ -1,14 +1,49 @@
-# Baseline egress policy for a live-collection ShadowScan Job
-# (docs/operations/operational-controls.md). It is not a host allowlist: a standard
-# NetworkPolicy matches addresses, not DNS names, so it cannot express "only
-# graph.microsoft.com". It limits the scanner pod to cluster DNS and HTTPS to
-# public addresses, denying private, carrier-grade NAT and link-local ranges
-# (including cloud metadata at 169.254.169.254). Enforce the per-connector host
+# Baseline egress policies for ShadowScan pods
+# (docs/operations/operational-controls.md). Apply both documents.
+#
+# The first denies all egress to every pod labelled
+# app.kubernetes.io/name: shadowscan. NetworkPolicies are additive, so a pod
+# that lacks or misspells the mode label stays denied instead of falling
+# outside every policy. The second widens egress only for pods that also carry
+# shadowscan-mode: live; label live-collection Jobs that way (the Job in
+# k8s-job.yaml is offline and needs no egress).
+#
+# The live policy is not a host allowlist: a standard NetworkPolicy matches
+# addresses, not DNS names, so it cannot express "only graph.microsoft.com". It
+# limits the scanner pod to cluster DNS and HTTPS to public addresses, denying
+# private, carrier-grade NAT and link-local ranges (including cloud metadata at
+# 169.254.169.254) and Azure's wire server. Enforce the per-connector host
 # allowlist in a layer that sees names: a transparent egress gateway or firewall
 # that filters on TLS SNI, or a CNI with FQDN policies. ShadowScan's HTTP client
-# refuses configured proxies, so an explicit HTTPS_PROXY is not an option. Offline
-# scans need no egress: use the deny-all policy in k8s-job.yaml. Add IPv6 rules if
-# the cluster is dual-stack. Enforced only by a CNI that supports NetworkPolicy.
+# refuses configured proxies, so an explicit HTTPS_PROXY is not an option.
+#
+# These policies also block NodeLocal DNSCache (169.254.20.10), the GKE
+# metadata server that Workload Identity uses and the EKS Pod Identity agent
+# (169.254.170.23). A live scan that needs one of them fails and reports the
+# scan incomplete (exit 3). Allow only the one address and port you need, and
+# remember that the cloud SDKs, unlike ShadowScan's HTTP client, do not refuse
+# metadata addresses themselves.
+#
+# IPv6 egress is denied because no rule allows it. On a dual-stack cluster, add
+# a second ipBlock to the HTTPS rule:
+#   - ipBlock:
+#       cidr: ::/0
+#       except: [fc00::/7, fe80::/10, 64:ff9b::/96, "::ffff:0:0/96"]
+# (fc00::/7 covers AWS's fd00:ec2::254 metadata address; 64:ff9b::/96 is NAT64,
+# which can reach IPv4 metadata and private addresses.)
+#
+# Enforced only by a CNI that supports NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shadowscan-default-deny-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: shadowscan
+  policyTypes: [Egress]
+  egress: []
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -40,6 +75,7 @@ spec:
             except:
               - 10.0.0.0/8
               - 100.64.0.0/10
+              - 168.63.129.16/32
               - 169.254.0.0/16
               - 172.16.0.0/12
               - 192.168.0.0/16

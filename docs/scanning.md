@@ -782,7 +782,8 @@ that reported it was given an inventory (by `--inventory` or the
 configuration's `inventory:` key). Scans made without an inventory never make
 a finding look unregistered: in a mixed fleet, a finding seen only on
 machines scanned without one stays `null` although the merged
-`inventory_present` is true. A registered finding keeps the first
+`inventory_present` is true. The terminal table, Markdown and HTML reports
+label it `unassessed` and count such findings in the summary. A registered finding keeps the first
 `registry_match` named by a source that matched it, in the order given. The
 merged `inventory_present` is true when any source had an inventory, even an
 empty one, and `inventory_size` is the largest source inventory.

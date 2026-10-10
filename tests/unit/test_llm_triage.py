@@ -169,6 +169,17 @@ def test_parse_reply(text, verdict):
     assert (reply or {}).get("verdict") == verdict
 
 
+def test_parse_reply_refuses_hostile_replies_in_linear_time():
+    # A greedy regex over unmatched braces took ~23 s on a 256 KiB reply and
+    # held the GIL past the job deadline, so the scan lost its report.
+    started = time.monotonic()
+    assert parse_reply("{" * 250_000) is None
+    assert parse_reply("{" * 16_000) is None
+    assert parse_reply('{"verdict": "uncertain"}' + " " * 20_000) is None  # longer than any verdict
+    assert time.monotonic() - started < 2
+    assert parse_reply('x } {"verdict": "uncertain"} y')["verdict"] == "uncertain"
+
+
 def test_run_records_advisory_verdicts_without_changing_scores(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     findings = [_finding("hi", 80, RiskLevel.HIGH), _finding("mid", 50, RiskLevel.MEDIUM)]
@@ -466,6 +477,20 @@ def test_three_consecutive_failed_requests_stop_the_run(monkeypatch):
         "llm triage stopped: 3 consecutive failed requests; 2 finding(s) not triaged",
         "llm triage: 5 finding(s) without a usable verdict",
     ]
+    assert TOKEN not in json.dumps(warnings)
+
+
+def test_an_unexpected_failure_is_recorded_and_the_run_continues(monkeypatch):
+    # For example a thread limit in the HTTP client: every selected finding
+    # still gets a status, and the exception text is never echoed.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    settings = TriageSettings.from_options({"enabled": True, "model": "m"})
+    findings = [_finding(str(i), 90 - i, RiskLevel.HIGH) for i in range(3)]
+    ok = _anthropic('{"verdict": "uncertain"}')
+    client = FakeClient([ok, RuntimeError(f"can't start new thread; {TOKEN}"), ok])
+    warnings = Triage(settings, client=client).run(findings)
+    assert [f.metadata["llm_triage"]["status"] for f in findings] == ["ok", "failed", "ok"]
+    assert warnings[0] == "llm triage request failed (RuntimeError); later failures counted"
     assert TOKEN not in json.dumps(warnings)
 
 
