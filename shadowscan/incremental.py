@@ -38,7 +38,12 @@ from shadowscan.connectors.code.filesystem import (
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
-from shadowscan.utils.git import metadata_git_argv_prefix, metadata_git_env, require_local_git_metadata
+from shadowscan.utils.git import (
+    metadata_git_argv_prefix,
+    metadata_git_env,
+    require_local_git_metadata,
+    run_bounded_metadata,
+)
 from shadowscan.utils.redaction import sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 
@@ -224,26 +229,36 @@ def _git_state(root: Path, budget: _HashBudget) -> str | None:
     require_local_git_metadata(root, timeout=budget.timeout(10))
     budget.check()
 
+    class _BudgetContext:
+        # run_bounded_metadata needs only a deadline and a cancellation check.
+        deadline = budget.deadline
+
+        @staticmethod
+        def check_deadline() -> None:
+            budget.check()
+
     def git(*args: str) -> bytes:
         budget.check()
         try:
-            result = subprocess.run(
+            # Bound output as well as time: refs and paths come from the
+            # scanned repository and are untrusted.
+            result = run_bounded_metadata(
                 [*metadata_git_argv_prefix(), "-C", str(root), *args],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                metadata_git_env(),
+                _BudgetContext(),  # type: ignore[arg-type]
                 timeout=budget.timeout(10),
-                env=metadata_git_env(),
+                strict_utf8=True,
             )
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, TimeoutError):
             # A connector cancellation/deadline must propagate instead of
             # degrading into an uncached scan that continues doing work.
             budget.check()
             raise
-        budget.check(size=len(result.stdout))
+        stdout = result.stdout.encode()
+        budget.check(size=len(stdout))
         if result.returncode:
             raise ValueError("cannot resolve checkout metadata")
-        return result.stdout
+        return stdout
 
     # Author enrichment depends on effective history, not merely HEAD: replacement
     # refs and shallow boundaries can change git log output without moving HEAD.

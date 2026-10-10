@@ -19,7 +19,7 @@ from shadowscan.models import Finding, Kind, ScanStats, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
 from shadowscan.utils import digest as digest_module
-from shadowscan.utils.git import git_argv_prefix, safe_git_env
+from shadowscan.utils.git import MetadataOutputLimitError, MetadataTimeoutError, git_argv_prefix, safe_git_env
 
 
 def config(tmp_path: Path, **overrides) -> ScanConfig:
@@ -734,7 +734,7 @@ def test_git_fingerprint_refuses_unconfined_metadata_before_git(tmp_path, index,
     def unexpected_git(*args, **kwargs):
         pytest.fail("unconfined metadata reached Git during fingerprinting")
 
-    monkeypatch.setattr("shadowscan.incremental.subprocess.run", unexpected_git)
+    monkeypatch.setattr("shadowscan.incremental.run_bounded_metadata", unexpected_git)
     assert cache.snapshot(cfg.connectors[0]) is None
 
 
@@ -791,7 +791,7 @@ def test_git_preflight_obeys_deadline_and_rechecks_cancellation(tmp_path, index,
         pytest.fail("cancelled fingerprint reached Git after metadata preflight")
 
     monkeypatch.setattr("shadowscan.incremental.require_local_git_metadata", preflight)
-    monkeypatch.setattr("shadowscan.incremental.subprocess.run", unexpected_git)
+    monkeypatch.setattr("shadowscan.incremental.run_bounded_metadata", unexpected_git)
     with pytest.raises(ConnectorError, match="deadline"):
         cache.snapshot(cfg.connectors[0], check_deadline=check_deadline, deadline=time.monotonic() + 5)
     assert len(timeouts) == 1 and 0 < timeouts[0] <= 5
@@ -822,12 +822,29 @@ def test_git_fingerprint_command_is_bounded_by_connector_deadline(tmp_path, inde
 
     def timeout(*args, **kwargs):
         timeouts.append(kwargs["timeout"])
-        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+        raise MetadataTimeoutError("git metadata completion deadline exceeded")
 
-    monkeypatch.setattr("shadowscan.incremental.subprocess.run", timeout)
+    monkeypatch.setattr("shadowscan.incremental.run_bounded_metadata", timeout)
     connector_deadline = time.monotonic() + 0.5
     assert cache.snapshot(cfg.connectors[0], deadline=connector_deadline) is None
     assert len(timeouts) == 1 and 0 < timeouts[0] <= 0.5
+
+
+def test_git_fingerprint_output_is_byte_bounded(tmp_path, index, monkeypatch):
+    # Repository-controlled refs must not stream unbounded output into memory.
+    cfg = config(tmp_path)
+    cfg.connectors[0].config["use_git"] = True
+    (tmp_path / "repo" / ".git").mkdir()
+    monkeypatch.setattr("shadowscan.incremental.require_local_git_metadata", lambda root, *, timeout: None)
+    calls = []
+
+    def bounded(cmd, env, ctx, **kwargs):
+        calls.append(kwargs)
+        raise MetadataOutputLimitError("git metadata output limit exceeded")
+
+    monkeypatch.setattr("shadowscan.incremental.run_bounded_metadata", bounded)
+    assert IncrementalCache(cfg, index).snapshot(cfg.connectors[0]) is None
+    assert len(calls) == 1 and calls[0]["strict_utf8"]
 
 
 def test_engine_passes_connector_deadline_to_all_fingerprint_work(tmp_path, index, monkeypatch):
