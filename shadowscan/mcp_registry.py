@@ -25,12 +25,13 @@ registry than its type's public one) is not indexed, and its entry is otherwise 
 After correlation the engine matches every MCP server that a finding lists
 (``metadata.servers``, or the ``metadata.server`` URL of an MCP tool finding) against each
 loaded registry, by what the client fetches or connects to: for a command, the package its
-launch names (registry type and normalized identifier); for a remote transport, its URL
-(scheme and host lowercased, default port, query, fragment and trailing ``/`` dropped); for
-an MCP server manifest (a ``server.json`` document), every package and remote it declares,
-which one registry name must list together. One identity is chosen and never falls back to
-another. A server that has none (a local path, a shell command line, a source-changing
-launcher option, an unknown transport with both a command and a URL, a URL with user
+launch names (registry type and normalized identifier); for a URL, the URL (scheme and host
+lowercased, default port, query, fragment and trailing ``/`` dropped); for an MCP server
+manifest (a ``server.json`` document), every package and remote it declares, which one
+registry name must list together. One identity is chosen and never falls back to another. A
+server that has none (a local path or a launcher run from one, a shell command line, a
+launcher option, environment variable, working directory, environment file or container
+mount that can change what is fetched or run, both a command and a URL, a URL with user
 information) is unidentified; a manifest's own name then gives provenance hints only. An
 identified or named server gets ``registry``: one entry per registry that lists it, sorted
 by registry id::
@@ -46,7 +47,8 @@ nothing about versions or status is claimed. The finding gets ``metadata.mcp_reg
 tags with zero-weight evidence, which never lower risk. A registry marked ``approved`` is the
 organisation's approved MCP catalog: when one is configured and every approved registry
 loaded, ``not_in_approved`` counts the enabled servers that no approved registry lists by their
-identity, or lists only as deleted, unidentified servers included (an allowlist cannot vouch
+identity, or lists only as deleted in the version they are matched to (for an ambiguous one,
+under every name that lists it), unidentified servers included (an allowlist cannot vouch
 for what it cannot identify), and scoring adds the governance factor
 ``mcp-not-in-approved-registry``. Disabled servers are matched but add no tags and no count.
 A server is ``mcp-unpublished`` only when every configured registry loaded. The pass first
@@ -463,14 +465,17 @@ def _identity(server: dict[str, Any]) -> _Identity:
     has_url = isinstance(url, str) and bool(url.strip())
     transport = server.get("transport")
     kind = re.sub(r"[^a-z]", "", transport.lower()) if isinstance(transport, str) else ""
-    if kind in _STDIO_TRANSPORTS or (kind not in _REMOTE_TRANSPORTS and not has_url):
-        # A command's URL fields are not where the client connects: the package is the identity.
-        package = server_package(server) if has_command else None
+    if has_command and has_url:
+        # Clients differ on which one they use (some ignore the transport), so whatever the
+        # transport says, neither is surely what the client runs or connects to.
+        return _Identity()
+    if has_command and kind not in _REMOTE_TRANSPORTS:
+        package = server_package(server)
         return _Identity(packages=(package,) if package is not None else ())
-    if kind in _REMOTE_TRANSPORTS or not has_command:
+    if has_url and kind not in _STDIO_TRANSPORTS:
         remote = normalize_remote(url)
         return _Identity(remotes=(remote,) if remote is not None else ())
-    # An unknown transport with both a command and a URL: which one the client uses is not known.
+    # A command declared as a remote transport, or a URL declared as a local one.
     return _Identity()
 
 
@@ -515,6 +520,32 @@ def _is_among(entry: _Entry | None, entries: list[_Entry]) -> bool:
     return entry is not None and any(candidate is entry for candidate in entries)
 
 
+def _select(
+    snapshot: RegistrySnapshot, name: str, how: str, package: PackageRef | None, remotes: frozenset[str]
+) -> tuple[_Entry, list[_Entry], list[_Entry]]:
+    """The version of ``name`` a server is matched to, the versions that list the server's
+    identity, and those that list its pinned package version.
+
+    The matched version is the registry's latest when it lists the pinned version (or, without
+    one, the identity), else the newest version that does.
+    """
+    entries = snapshot.by_name[name]
+    latest = snapshot.latest.get(name)
+    exact: list[_Entry] = []
+    if how == "package" and package is not None:
+        key = (package.registry_type, package.identifier)
+        carrying = [entry for entry in entries if _lists(entry, key)]
+        if package.version is not None:
+            exact = [entry for entry in carrying if _package_version(entry, key) == package.version]
+    elif how == "remote":
+        carrying = [entry for entry in entries if entry.remotes & remotes]
+    else:
+        carrying = entries
+    pool = exact or carrying
+    selected = latest if latest is not None and _is_among(latest, pool) else _newest(pool)
+    return selected, carrying, exact
+
+
 def _match(identity: _Identity, snapshot: RegistrySnapshot) -> tuple[dict[str, Any], bool] | None:
     """The registry entry for one server and whether the registry lists it, other than as deleted,
     by its identity; a name match lists nothing."""
@@ -547,37 +578,28 @@ def _match(identity: _Identity, snapshot: RegistrySnapshot) -> tuple[dict[str, A
         "ambiguous": len(ordered) > 1,
     }
     if block["ambiguous"]:
-        listed = any(entry.status != "deleted" for other in ordered for entry in snapshot.by_name[other])
+        # Which name the server is cannot be told: it is listed when one of them lists it, other
+        # than as deleted, in the version it would be matched to were that name the only one.
+        listed = any(
+            _select(snapshot, other, how, package, remotes)[0].status != "deleted" for other in ordered
+        )
         return block, listed and how != "name"
-    entries = snapshot.by_name[name]
+    selected, carrying, exact = _select(snapshot, name, how, package, remotes)
     latest = snapshot.latest.get(name)
     if how == "package" and package is not None:
         key = (package.registry_type, package.identifier)
-        carrying = [entry for entry in entries if _lists(entry, key)]
         latest_version = _package_version(latest, key) if latest is not None else None
         known = {version for entry in carrying if (version := _package_version(entry, key))}
-        exact = [
-            entry
-            for entry in carrying
-            if package.version is not None and _package_version(entry, key) == package.version
-        ]
         if package.version is not None and known:
             block["version_published"] = bool(exact)
-        if exact:
-            selected = latest if latest is not None and _is_among(latest, exact) else _newest(exact)
-        else:
-            selected = latest if latest is not None and _is_among(latest, carrying) else _newest(carrying)
         if package.version is not None and latest_version is not None:
             block["is_latest"] = package.version == latest_version
         block["latest_version"] = latest_version
     elif how == "remote":
-        carrying = [entry for entry in entries if entry.remotes & remotes]
-        selected = latest if latest is not None and _is_among(latest, carrying) else _newest(carrying)
         if latest is not None:
             block["is_latest"] = _is_among(latest, carrying)
             block["latest_version"] = latest.version
     else:
-        selected = latest if latest is not None else _newest(entries)
         block["latest_version"] = latest.version if latest is not None else None
     block["status"] = selected.status
     block["published_at"] = selected.published_at

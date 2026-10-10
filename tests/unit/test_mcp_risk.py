@@ -250,9 +250,11 @@ def test_every_insecure_transport_label_is_scored(url):
             ("oci", "registry.local:5000/mcp/time", "1.0"),
         ),
         ("docker", ["run", "alpine"], ("oci", "docker.io/library/alpine", None)),
-        # Windows launcher forms.
+        # Windows launcher forms, and launchers named by an absolute path.
         ("npx.cmd", ["-y", "pkg@1.0.0"], ("npm", "pkg", "1.0.0")),
         ("C:\\Program Files\\nodejs\\npx.CMD", ["-y", "pkg"], ("npm", "pkg", None)),
+        ("/usr/local/bin/npx", ["-y", "pkg@1.0.0"], ("npm", "pkg", "1.0.0")),
+        ("C:/Users/dana/.local/bin/uvx.exe", ["pkg==1.0"], ("pypi", "pkg", "1.0")),
         ("uvx.exe", ["pkg==1.0"], ("pypi", "pkg", "1.0")),
         ("cmd", ["/c", "npx", "-y", "pkg@1.0.0"], ("npm", "pkg", "1.0.0")),
         ("cmd.exe", ["/d", "/s", "/C", "npx -y pkg@1.0.0"], ("npm", "pkg", "1.0.0")),
@@ -366,6 +368,116 @@ def test_server_package_is_none_when_the_environment_can_change_the_source(name)
 
 def test_server_package_ignores_a_remote_only_server():
     assert server_package({"url": "https://mcp.example.com/mcp", "args": "not a list"}) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        # A relative path runs a file of the working directory, usually the scanned repository.
+        ("./npx", ["-y", "pkg@1.0.0"]),
+        ("tools/uvx", ["pkg==1.0"]),
+        ("node_modules/.bin/npx", ["-y", "pkg@1.0.0"]),
+        (".\\npx.cmd", ["-y", "pkg@1.0.0"]),
+        ("bin\\uvx.exe", ["pkg==1.0"]),
+        ("~/bin/npx", ["-y", "pkg@1.0.0"]),
+        # A UNC path names a file on another host.
+        ("\\\\files.example\\tools\\npx.cmd", ["-y", "pkg@1.0.0"]),
+        ("//files.example/tools/npx", ["-y", "pkg@1.0.0"]),
+        # The same inside cmd /c, and a repository script named cmd.
+        ("cmd", ["/c", ".\\npx", "-y", "pkg@1.0.0"]),
+        ("cmd", ["/c", "tools/npx.cmd -y pkg@1.0.0"]),
+        ("./cmd", ["/c", "npx", "-y", "pkg@1.0.0"]),
+        ("./npx -y pkg@1.0.0", []),
+    ],
+)
+def test_server_package_is_none_for_a_launcher_run_from_a_relative_path(command, args):
+    assert server_package({"command": command, "args": args}) is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["PATH", "Path", "PATHEXT", "NODE_OPTIONS", "NODE_PATH", "NODE_EXTRA_CA_CERTS", "BUN_CONFIG_REGISTRY",
+     "YARN_NPM_REGISTRY_SERVER", "PNPM_HOME", "COREPACK_NPM_REGISTRY", "UV_OVERRIDE", "UV_PYTHON",
+     "UV_CONSTRAINT", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONWARNINGS", "PYTHONHOME", "LD_PRELOAD",
+     "DYLD_INSERT_LIBRARIES", "CONTAINERS_REGISTRIES_CONF", "CONTAINER_CONNECTION", "REGISTRY_AUTH_FILE",
+     "PODMAN_CONNECTIONS_CONF", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "HOME", "USERPROFILE", "HOMEPATH",
+     "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "XDG_CONFIG_HOME", "TMPDIR", "TEMP", "COMSPEC", "SHELL",
+     "BASH_ENV", "ENV", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"],
+)  # fmt: skip
+def test_server_package_is_none_when_the_environment_changes_how_a_launcher_starts(name):
+    server = {"command": "npx", "args": ["-y", "pkg@1.0.0"], "env_names": ["GITHUB_TOKEN", name]}
+    assert server_package(server) is None
+
+
+def test_server_package_keeps_its_identity_beside_environment_that_changes_neither_package_nor_program():
+    names = ["GITHUB_TOKEN", "OPENAI_API_KEY", "NODE_ENV", "PYTHONUNBUFFERED", "PYTHONIOENCODING",
+             "PYTHONDONTWRITEBYTECODE", "PYTHONUTF8", "HOME_ASSISTANT_URL", "PATH_TO_DB", "LOG_LEVEL",
+             "AWS_CA_BUNDLE"]  # fmt: skip
+    server = {"command": "npx", "args": ["-y", "pkg@1.0.0"], "env_names": names}
+    assert server_package(server) == PackageRef("npm", "pkg", "1.0.0")
+
+
+def test_server_package_is_none_with_a_working_directory_or_environment_file():
+    server = {"command": "npx", "args": ["-y", "pkg@1.0.0"]}
+    assert server_package(server) == PackageRef("npm", "pkg", "1.0.0")
+    for keys in (["cwd"], ["envFile"], ["env_file", "workingDirectory"]):
+        assert server_package({**server, "launch_context": keys}) is None
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        # Files or another working directory put over what the image runs.
+        ["-v", "./evil.js:/app/index.js"],
+        ["--volume=./evil.js:/app/index.js"],
+        ["-v./evil.js:/app/index.js"],
+        ["--mount", "type=bind,src=./evil,dst=/app"],
+        ["--volumes-from", "other"],
+        ["-w", "/tmp"],
+        ["--workdir=/tmp"],
+        # Environment that changes how the image's program starts.
+        ["--env-file", "./.env"],
+        ["-e", "NODE_OPTIONS=--require /x/evil.js"],
+        ["-e", "NODE_OPTIONS"],
+        ["--env", "PYTHONPATH=/x"],
+        ["--env=LD_PRELOAD=/x/evil.so"],
+        ["-eLD_PRELOAD=/x/evil.so"],
+        ["-e=NODE_OPTIONS=--require /x/evil.js"],
+        ["-e", "PATH=/x:/usr/bin"],
+    ],
+)
+def test_server_package_is_none_when_docker_run_changes_what_the_image_runs(options):
+    image = "ghcr.io/acme/tool:1.0"
+    assert server_package({"command": "docker", "args": ["run", "-i", image]}) == PackageRef(
+        "oci", "ghcr.io/acme/tool", "1.0"
+    )
+    assert server_package({"command": "docker", "args": ["run", "-i", *options, image]}) is None
+    assert server_package({"command": "podman", "args": ["run", *options, "--rm", image]}) is None
+
+
+def test_server_package_keeps_an_image_identity_beside_plain_container_environment():
+    args = ["run", "-i", "--rm", "-e", "GITHUB_TOKEN", "--env=NODE_ENV=production", "-eLOG_LEVEL=debug"]
+    assert server_package({"command": "docker", "args": [*args, "ghcr.io/acme/tool:1.0"]}) == PackageRef(
+        "oci", "ghcr.io/acme/tool", "1.0"
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        # cmd.exe expands %VAR% (and !VAR! with delayed expansion) before it reads operators,
+        # so a variable from the server's environment can hold "& evil".
+        ("cmd", ["/c", "npx", "-y", "pkg@1.0.0", "%X%"]),
+        ("cmd.exe", ["/d", "/s", "/c", "npx -y pkg@1.0.0 %X%"]),
+        ("cmd", ["/c", "npx", "-y", "pkg@1.0.0", "!X!"]),
+        # A batch file runs through cmd.exe too.
+        ("npx.cmd", ["-y", "pkg@1.0.0", "%X%"]),
+        ("C:\\Program Files\\nodejs\\npx.cmd", ["-y", "pkg@1.0.0", "&", "evil"]),
+        ("uvx.bat", ["pkg==1.0", "|", "evil"]),
+    ],
+)
+def test_server_package_is_none_when_cmd_exe_reads_an_operator_or_variable(command, args):
+    assert server_package({"command": command, "args": args}) is None
 
 
 @pytest.mark.parametrize(
