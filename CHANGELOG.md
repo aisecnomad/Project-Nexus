@@ -179,6 +179,9 @@ summarizes each release for people who install and operate ShadowScan.
   new boolean `allow_offline_records: true`. A replayed record that would
   otherwise approve is counted in an advisory `engine.inventory` warning, and
   a record read both live and from an export in one scan counts as replayed.
+- `min_confidence` no longer removes registry record findings. Their evidence
+  has a fixed weight of 0.5, so a threshold above 0.5 dropped every record
+  from the report while the approvals they conferred stayed in force.
 - Only `approved`, `registered` and `pending` records register what they bind.
   A `draft`, `rejected`, `deprecated`, `blocked` or `unknown` record bound to a
   running agent made it `registered-and-observed`, hiding

@@ -1357,7 +1357,12 @@ class Engine:
                 )
             )
         if self.config.min_confidence > 0:
-            findings = [f for f in findings if f.confidence >= self.config.min_confidence]
+            # A registry record is a declaration with a fixed evidence weight (0.5), not an
+            # observation the threshold grades. Its approvals apply whatever the threshold, so
+            # the record that conferred them stays in the report.
+            findings = [
+                f for f in findings if f.confidence >= self.config.min_confidence or RECORD_KEY in f.metadata
+            ]
             _prune_related(findings)
             _prune_runtime_links(findings)
             _prune_lifecycle_links(findings)

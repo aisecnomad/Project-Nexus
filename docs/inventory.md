@@ -499,7 +499,9 @@ registry's scope, one whose identity is redacted or unresolved, and one in the
 scope only of registries without a complete listing get no status: absence from
 a partial listing proves nothing. The lists hold at most 50 entries. When
 `min_confidence` drops a finding, links to it are removed and statuses stay as
-computed.
+computed. Record findings themselves are never dropped by `min_confidence`:
+their confidence is the fixed 0.5 of a declaration, and a record whose
+approvals apply stays in the report that relies on it.
 
 Statuses are informational: they do not change `shadow`, approval or risk.
 

@@ -375,16 +375,32 @@ def test_plugin_supplied_reconciliation_and_approval_state_is_recomputed(monkeyp
     assert RECONCILIATION_KEY not in finding.metadata and "registry_match_reason" not in finding.metadata
 
 
-def test_confidence_filtering_prunes_links_but_keeps_statuses(monkeypatch):
+def test_confidence_filtering_keeps_records_and_prunes_links_but_keeps_statuses(monkeypatch):
+    # Regression: record findings have confidence 0.5, so a min_confidence above 0.5 removed
+    # every record from the report while the approvals they conferred stayed in force.
+    weak = _runtime(SHADOW_RUNTIME)
+    weak.evidence = [Evidence("cloud:agentcore-runtime", "runtime named in a log", weight=0.3)]
+    weak.recompute_confidence()
+    binding = _record()["bindings"][0]
+    record = _record(bindings=[binding, {**binding, "resource": SHADOW_RUNTIME}])
     result = _engine(
-        monkeypatch, lambda: [_record_finding(_record())], trusted_registries=TRUSTED, min_confidence=0.6
+        monkeypatch,
+        lambda: [_record_finding(record)],
+        observed=lambda: [_runtime(), weak],
+        trusted_registries=TRUSTED,
+        min_confidence=0.6,
     ).run()
-    runtime = _by_resource(result)[RUNTIME]
-    # The record (confidence 0.5) is below the threshold; the approval it conferred stands.
-    assert f"{REGISTRY_ARN}/record/rec-1" not in _by_resource(result)
-    assert runtime.shadow is False
-    assert runtime.metadata[RECONCILIATION_KEY]["status"] == "registered-and-observed"
-    assert runtime.metadata[RECONCILIATION_KEY]["records"] == []
+    findings = _by_resource(result)
+    runtime, kept = findings[RUNTIME], findings[f"{REGISTRY_ARN}/record/rec-1"]
+    assert kept.confidence == 0.5 and kept.registry_match == "aws-agent-registry:rec-1"
+    assert runtime.shadow is False and runtime.registry_match == kept.registry_match
+    assert runtime.metadata[RECONCILIATION_KEY]["records"] == [kept.id]
+    # The weak runtime is below the threshold: its link is pruned and the status stays.
+    assert SHADOW_RUNTIME not in findings
+    assert kept.metadata[RECONCILIATION_KEY] == {
+        "status": "registered-and-observed",
+        "observed": [runtime.id],
+    }
 
 
 def test_postprocess_keeps_its_signature_and_reports_registry_problems_through_the_outcome(monkeypatch):
