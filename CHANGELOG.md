@@ -5,6 +5,51 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Fleet shadow status, triage budget and CI corrections
+
+- `shadowscan merge` no longer reports findings from scans made without an
+  inventory as unregistered. It turned `shadow: null` ("no inventory
+  supplied") into `true`, so a merge of such reports claimed every finding as
+  shadow, and the HTML and Markdown reports said "N shadow (unregistered)".
+  Shadow status now merges in three states, whatever the order of the
+  sources: `true` when any source found the finding unregistered, `false` when
+  a source matched it to the inventory that scan was given, and `null` when no
+  source that reported it had an inventory. A registered finding keeps the
+  first non-empty `registry_match` of a source that matched it; a shadow or
+  unassessed finding has none. The merged report carries `inventory_present`
+  (true when any source had an inventory, even an empty one), and a source
+  whose `inventory_present` is not a boolean is refused (exit 1).
+- LLM triage is bounded. `options.llm_triage.budget_seconds` (default 300,
+  1 to 3600) limits one triage run, and the HTTP client's retries,
+  `Retry-After` waits, connection set-up and response reads stop at the same
+  time. A run stops after three consecutive failed requests. Selected findings
+  a run does not reach are recorded as `metadata.llm_triage.status: skipped`,
+  with a warning on `engine.llm-triage` that names the reason. Under a CLI job
+  deadline (`--job-deadline-seconds` or `options.job_deadline_seconds`),
+  triage ends 10% of the deadline before it (at least 5 s, at most 60 s) or is
+  skipped, so triage no longer uses up the time reserved for writing the
+  report.
+  Library callers pass the deadline as `Engine.run(job_deadline=...)`, a
+  finite `time.monotonic()` value checked before collection starts;
+  `JobDeadline.expires_at` exposes the CLI's.
+  Triage stays advisory: risk, shadow status, completeness and `--fail-on` are
+  unchanged.
+- CI's container job adds Google's Docker Hub pull-through cache
+  (`https://mirror.gcr.io`) to the runner's Docker daemon and pulls the
+  Dockerfile's digest-pinned base image before the build. Anonymous Docker Hub
+  pulls from shared runner addresses failed with HTTP 429, which failed the
+  job on recent pushes to `main`. The digest pin keeps the base image identical;
+  the daemon falls back to Docker Hub when the mirror fails.
+- Restore the README's package classifier
+  (`Development Status :: 3 - Alpha`), whose typo failed the documentation
+  consistency test, and its `python -m shadowscan.signatures.validate`
+  contributor command. A new test checks that every `python -m` module shown
+  in the documentation exists.
+- `make install-dev` followed by `make typecheck` no longer fails without the
+  cloud SDKs: the mypy overrides list the `google` namespace package, which
+  `import google.auth` also binds. A new test type-checks every optional SDK
+  import with installed packages hidden.
+
 ### Scan evidence, completeness and replay corrections
 
 - Resolve supported Go SDK import aliases before publishing credential-bearing

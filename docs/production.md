@@ -267,6 +267,16 @@ smoke-tests a non-root, read-only and network-isolated image; build and test the
 deployment image, generate its container/OS SBOM, and validate resource limits
 and output-directory permissions before rollout.
 
+Docker Hub rate-limits anonymous pulls by source address, and hosted CI runners
+share their egress addresses. CI's container job therefore adds Google's Docker
+Hub pull-through cache, `https://mirror.gcr.io`, to the runner's Docker daemon
+`registry-mirrors` setting, fails unless the restarted daemon reports it, and
+pulls the base image by the digest in the Dockerfile's `FROM` lines before the
+build. A digest pull is content-verified, so the mirror cannot change the base
+image, and the daemon falls back to Docker Hub when the mirror fails. A builder
+elsewhere that hits the limit can set the same daemon mirror or authenticate to
+Docker Hub; the digest pin keeps the base image identical either way.
+
 The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
 active deadline, a placeholder for a reviewed image digest, and a matching
 NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
@@ -913,6 +923,18 @@ These notes record unreleased corrections and earlier candidate changes.
 Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 10 fleet shadow status and triage budget corrections (unreleased)
+
+This source candidate corrects fleet merging and bounds LLM triage. It does not
+change the published 0.1.2 artifact or create a release. Select and review a
+new full commit SHA before deploying it.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Fleet merge | A merged finding is `shadow: true` only when a source found it unregistered, `false` when a source matched it to its inventory, and `null` when no source that reported it had an inventory. Earlier candidates reported every finding of inventory-less sources as shadow. The merged report carries `inventory_present`; a non-boolean value in a source is refused. | Re-merge fleet reports built from scans without an inventory before alerting on `shadow: true` or comparing shadow counts. Supply an inventory to the source scans when registration status is required. |
+| LLM triage | One triage run is limited by `options.llm_triage.budget_seconds` (default 300) and stops after three consecutive failed requests; findings it does not reach are recorded as `status: skipped`. Under a CLI job deadline, triage ends 10% of the deadline before it (5 to 60 s) or is skipped, so it no longer uses up the time reserved for writing the report. | Raise `budget_seconds` together with `max_findings` if later findings are now skipped. Triage remains advisory and never changes risk, shadow status, completeness or `--fail-on`. |
+| Container CI | The CI container job pulls the Dockerfile's digest-pinned base image through the `mirror.gcr.io` Docker Hub cache. | None for deployments: the image content is fixed by the digest. See [the worker image notes](#install-from-a-reviewed-revision). |
 
 ### October 9 scan evidence corrections (unreleased)
 

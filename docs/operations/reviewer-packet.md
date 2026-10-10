@@ -110,6 +110,20 @@ Record live ruleset enforcement independently of code review. The required
 `CI gate`, existing checks and final-revision non-author approval must be
 effective on `main`; their presence in workflow files alone is insufficient.
 
+For the October 10 fleet, triage and container corrections, verify these
+paired controls:
+
+- A fleet merge of sources with `shadow: null`, `true` and `false` for the same
+  finding, in every order, versus a source that claims registration without
+  naming a match. Unassessed findings must stay `null`; a match must come from
+  a source that names one.
+- A triage run stopped by `budget_seconds`, the consecutive-failure breaker or
+  the job-deadline reserve versus a healthy endpoint. Unreached findings are
+  `skipped`, never `failed` or missing, and risk and completeness are unchanged.
+- A CI runner whose Docker daemon reports the registry mirror versus one that
+  does not; the build must not start behind an unreported mirror, and the base
+  image must be pulled by the Dockerfile's digest.
+
 For the October 9 scan evidence corrections, verify these paired controls:
 
 - Supported SDK imports and aliases preserve credential redaction in every
