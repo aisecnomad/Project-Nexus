@@ -396,8 +396,9 @@ evidence report (Markdown, CSV for GRC tools, or JSON): for each NIST AI RMF,
 ISO/IEC 42001, EU AI Act and AIUC-1 control, the findings that reference it by
 risk level, the highest-risk examples, and whether the evidence is complete. A
 control no finding references reads "not observed" only when every report is
-complete, and "unknown" otherwise; an incomplete input exits 3. Evidence
-references, not compliance determinations; see
+complete and no finding could reference it through a missing inventory or an
+undeclared risk class, and "unknown" otherwise; an incomplete input exits 3.
+Evidence references, not compliance determinations; see
 [control evidence report](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/controls.md).
 
 ### Risk policy

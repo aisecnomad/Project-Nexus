@@ -228,23 +228,31 @@ summarizes each release for people who install and operate ShadowScan.
   (highest risk first), an evidence status and the scope behind it (report
   and connector completeness, whether an inventory was supplied). Several
   reports are merged as `merge` merges them; a finding counts as shadow only
-  when a report reconciled with an inventory says so.
+  when a report reconciled with an inventory says so, and a report's own
+  `inventory_present: false` is believed over its shadow values. A report
+  that `merge` produced is refused (exit 1): pass the source reports.
 - A control no finding references reads `not observed` only when every report
   is complete; otherwise it reads `unknown (scan incomplete)`, and counts of
   referenced controls are marked as lower bounds. An incomplete input still
   writes the output, with an `INCOMPLETE SCAN` banner (a first
-  `SCAN-INCOMPLETE` row in CSV), and exits 3. Controls whose rules all need
-  inventory facts read `unknown (inventory not supplied)` without one, and
-  controls no rule maps read `not mapped`. The output never says a control is
-  met and has no score.
+  `SCAN-INCOMPLETE` row in CSV), and exits 3. A control no finding references
+  reads `unknown (inventory not supplied)` when a finding whose shadow status
+  is unknown could reference it through a rule that reads shadow status or
+  declared facts (so `GOVERN-1.6`, ISO/IEC 42001 `A.4.2` and AIUC-1 `E` never
+  read `not observed` from a scan without an inventory), and
+  `unknown (risk class not declared)` when a finding without a declared EU AI
+  Act class could reference it through a declared-class rule. Controls no rule
+  maps read `not mapped`. The CSV has an `inventory` column (`supplied`,
+  `partial` or `not supplied`). The output never says a control is met and has
+  no score.
 - Every output carries the notice "Evidence references, not compliance
   determinations. Mappings are author mappings and have not been
   independently reviewed." Catalogs gain a required `review` field whose only
   accepted value is `author`; the validator rejects anything else, and the
   generated catalog reference shows it. CSV cells use the CSV reporter's
-  spreadsheet-injection protection, and output files are written with mode
-  0600 and never through a symbolic link. The JSON schema is
-  `shadowscan.control-evidence/v1`.
+  spreadsheet-injection protection, a `|` in a Markdown table code span is
+  escaped, and output files are written with mode 0600 and never through a
+  symbolic link. The JSON schema is `shadowscan.control-evidence/v1`.
 - Capability Cards with `schema_version: 2` accept an optional `governance:`
   block: `eu_ai_act_risk_class` (`prohibited`, `high`, `limited`, `minimal`,
   `gpai`, `gpai-systemic`, `unknown`), `intended_purpose`,
@@ -255,9 +263,12 @@ summarizes each release for people who install and operate ShadowScan.
 - A finding registered by such a card records `metadata.declared_governance`
   (the block plus `source`, the card's agent id). The value is rebuilt on every
   reconciliation pass, so a connector, plugin or earlier run cannot plant it;
-  `merge` drops it from findings that are shadow and refuses a report with a
-  malformed block. HTML and Markdown reports show the facts as declared and
-  not verified.
+  `merge` drops it from findings that are shadow, refuses a report with a
+  malformed block, and refuses a registered finding whose reports carry
+  different blocks instead of keeping the first report's. A report's block is
+  checked without the card's length limits, because export redaction can
+  lengthen a declared value. HTML and Markdown reports show the facts as
+  declared and not verified.
 - Mapping rules gain the `declared_risk_class_any` condition and two control
   rules: a declared `high` class references EU AI Act Articles 12, 14 and 26,
   and a declared `limited`, `gpai` or `gpai-systemic` agent, bot or AI

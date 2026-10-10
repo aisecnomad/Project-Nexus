@@ -5,7 +5,8 @@ Renders the ``shadowscan.control-evidence/v1`` document of
 notice that these are evidence references, not compliance determinations, and
 an incomplete input is marked before any control row. Untrusted text (finding
 titles, report names) uses the Markdown reporter's escaping and the CSV
-reporter's spreadsheet-injection protection.
+reporter's spreadsheet-injection protection; a code span in a Markdown table
+cell also escapes ``|``, which would otherwise end the cell.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ CSV_COLUMNS = [
     "info",
     "examples",
     "scan_complete",
+    "inventory",
     "evidence",
     "declared_findings",
     "ref",
@@ -48,6 +50,11 @@ _INCOMPLETE = (
     "INCOMPLETE SCAN: some required inputs could not be assessed. A control that no finding"
     " references is unknown, not absent, and counts are lower bounds (exit code 3)."
 )
+
+
+def _cell_code(value: object) -> str:
+    """A code span for a table cell: GFM splits cells at ``|`` before reading code spans, unless escaped."""
+    return _code(value).replace("|", "\\|")
 
 
 def _review(framework: dict[str, Any]) -> str:
@@ -78,12 +85,14 @@ def render_controls_csv(evidence: dict[str, Any]) -> str:
     writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS, extrasaction="ignore")
     writer.writeheader()
     complete = evidence["evidence_scope"]["complete"]
+    inventory = evidence["evidence_scope"]["inventory"]
     if not complete:
         row = {
             "framework": "SCAN-INCOMPLETE",
             "control_id": "SCAN-INCOMPLETE",
             "title": _INCOMPLETE,
             "scan_complete": "no",
+            "inventory": inventory,
             "evidence": UNKNOWN_INCOMPLETE,
         }
         writer.writerow({key: _safe_cell(value) for key, value in row.items()})
@@ -98,6 +107,7 @@ def render_controls_csv(evidence: dict[str, Any]) -> str:
                 **{level: control["by_risk_level"].get(level, 0) for level in _LEVELS},
                 "examples": " | ".join(_example_text(example) for example in control["examples"]),
                 "scan_complete": "yes" if complete else "no",
+                "inventory": inventory,
                 "evidence": control["evidence"],
                 "declared_findings": control["declared_findings"],
                 "ref": control["ref"],
@@ -154,8 +164,8 @@ def _framework_lines(framework: dict[str, Any]) -> list[str]:
     for control in framework["controls"]:
         counts = " | ".join(str(control["by_risk_level"].get(level, 0)) for level in _LEVELS)
         lines.append(
-            f"| {_code(control['control_id'])} | {_text(control['title'])} | {_text(control['evidence'])}"
-            f" | {control['findings']} | {counts} |"
+            f"| {_cell_code(control['control_id'])} | {_text(control['title'])}"
+            f" | {_text(control['evidence'])} | {control['findings']} | {counts} |"
         )
     lines.append("")
     referenced = [control for control in framework["controls"] if control["examples"]]
@@ -201,7 +211,7 @@ def _declared_lines(declared: list[dict[str, Any]]) -> list[str]:
         values = " | ".join(
             _text(_governance_value(item[key])) if key in item else "" for key in GOVERNANCE_FIELDS
         )
-        lines.append(f"| {_code(item['finding'])} | {_code(item['source'])} | {values} |")
+        lines.append(f"| {_cell_code(item['finding'])} | {_cell_code(item['source'])} | {values} |")
     if len(declared) > _MAX_DECLARED_ROWS:
         lines.append("")
         lines.append(f"… {len(declared) - _MAX_DECLARED_ROWS} more in the JSON format.")

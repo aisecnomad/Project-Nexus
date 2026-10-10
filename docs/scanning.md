@@ -808,7 +808,9 @@ the other identity fields) is refused (exit 1) rather than merged, as is a
 report whose `inventory_present` is not a boolean. Machines that share a host
 name and home directory, such as clones of one VM image, produce the same
 identities and merge as one machine scanned twice; give each a distinct
-`--label`, such as its asset tag.
+`--label`, such as its asset tag. A registered finding whose reports carry
+different [declared governance facts](inventory.md#declared-governance-facts)
+is refused too, so the result never depends on the order of the reports.
 
 The merged report is comparable with `shadowscan diff` only when every source
 was complete and carried a comparable collection scope; its fingerprint is

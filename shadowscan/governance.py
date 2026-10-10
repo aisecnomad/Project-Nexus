@@ -43,11 +43,11 @@ class GovernanceError(ValueError):
         super().__init__(f"{field}: {message}")
 
 
-def _text(value: Any, field: str, limit: int) -> str:
+def _text(value: Any, field: str, limit: int | None) -> str:
     if not isinstance(value, str) or not value.strip():
         raise GovernanceError(field, "expected a nonempty string")
     text = value.strip()
-    if len(text) > limit:
+    if limit is not None and len(text) > limit:
         raise GovernanceError(field, f"expected at most {limit} characters")
     return text
 
@@ -60,6 +60,11 @@ def parse_governance(value: Any) -> dict[str, Any] | None:
     ``iso42001_scope`` raise :class:`GovernanceError`. A key set to null is
     undeclared, like an omitted one.
     """
+    return _parse(value, bounded=True)
+
+
+def _parse(value: Any, *, bounded: bool) -> dict[str, Any] | None:
+    """:func:`parse_governance`; without ``bounded`` the string length limits are not checked."""
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -79,7 +84,9 @@ def parse_governance(value: Any) -> dict[str, Any] | None:
         out["eu_ai_act_risk_class"] = risk_class
     if value.get("intended_purpose") is not None:
         out["intended_purpose"] = _text(
-            value["intended_purpose"], "governance.intended_purpose", MAX_INTENDED_PURPOSE
+            value["intended_purpose"],
+            "governance.intended_purpose",
+            MAX_INTENDED_PURPOSE if bounded else None,
         )
     measures = value.get("oversight_measures")
     if measures is not None:
@@ -88,10 +95,13 @@ def parse_governance(value: Any) -> dict[str, Any] | None:
             raise GovernanceError(field, "expected a list of nonempty strings")
         if len(measures) > MAX_OVERSIGHT_MEASURES:
             raise GovernanceError(field, f"expected at most {MAX_OVERSIGHT_MEASURES} measures")
-        out["oversight_measures"] = [_text(item, field, MAX_OVERSIGHT_MEASURE) for item in measures]
+        limit = MAX_OVERSIGHT_MEASURE if bounded else None
+        out["oversight_measures"] = [_text(item, field, limit) for item in measures]
     if value.get("aiuc1_certificate") is not None:
         out["aiuc1_certificate"] = _text(
-            value["aiuc1_certificate"], "governance.aiuc1_certificate", MAX_AIUC1_CERTIFICATE
+            value["aiuc1_certificate"],
+            "governance.aiuc1_certificate",
+            MAX_AIUC1_CERTIFICATE if bounded else None,
         )
     scope = value.get("iso42001_scope")
     if scope is not None:
@@ -102,14 +112,20 @@ def parse_governance(value: Any) -> dict[str, Any] | None:
 
 
 def valid_declared_governance(value: Any) -> bool:
-    """Whether ``value`` is a well-formed ``metadata.declared_governance`` block, as read from a report."""
+    """Whether ``value`` is a well-formed ``metadata.declared_governance`` block, as read from a report.
+
+    The card's string length limits are not applied: export redaction replaces a
+    credential-like phrase with a longer marker, so a value the card was allowed to
+    declare can be longer in the report. Keys, types, the risk class and the number
+    of oversight measures are checked as for a card.
+    """
     if not isinstance(value, dict):
         return False
     source = value.get("source")
     if not isinstance(source, str) or not source.strip():
         return False
     try:
-        parsed = parse_governance({key: item for key, item in value.items() if key != "source"})
+        parsed = _parse({key: item for key, item in value.items() if key != "source"}, bounded=False)
     except GovernanceError:
         return False
     return parsed is not None

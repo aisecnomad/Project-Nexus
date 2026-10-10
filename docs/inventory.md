@@ -121,7 +121,13 @@ A finding registered by the card records the block as
 `source`. Only the card that registers the finding in the current run can
 declare its facts: a value from a connector, a plugin or an earlier run is
 replaced, a shadow finding has none, and `shadowscan merge` drops them from a
-finding that is shadow in the merged report. The HTML and Markdown reports
+finding that is shadow in the merged report. When two reports register one
+finding with different declared facts (different cards, or different versions
+of one card), `merge` and `controls` refuse them (exit 1) instead of keeping
+the first report's; make the inventories agree and rescan. Reports redact
+credential-like phrases in declared values like any other field, so a value at
+the card's length limit can be longer in a report; a report's block is checked
+without those limits. The HTML and Markdown reports
 show them as "Declared governance (card …, not verified)", and the
 [control evidence report](operations/controls.md) labels references that rest
 on them as declared.

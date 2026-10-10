@@ -170,7 +170,9 @@ well-formed block. A shadow finding, a finding without inventory status, or a
 malformed block (an unknown class, a missing `source`, an unknown key) matches
 neither rule. ShadowScan does not verify the declaration; the
 [control evidence report](../operations/controls.md) labels references that
-rest only on it as declared.
+rest only on it as declared, and reads an article these rules select as
+`unknown (risk class not declared)`, not `not observed`, while a finding it
+could apply to has no declared class.
 
 ## Validation
 

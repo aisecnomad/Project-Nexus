@@ -9,7 +9,9 @@ evidence and technologies union, the earliest ``first_seen`` and latest
 finding and widened to admit whatever any source's validated block admits, so
 evidence from a later source is never hidden behind the first source's interval.
 A merged finding that is shadow loses its registry match and its declared
-governance facts (``metadata.declared_governance``).
+governance facts (``metadata.declared_governance``); a registered finding whose
+sources carry different declared facts is refused, because keeping the first
+source's would make the result depend on the order of the reports.
 Findings from different machines keep their own resources because the endpoint
 label prefixes every resource. Registration counts only from sources that
 reconciled against an inventory (``inventory_present: true``: ``--inventory``,
@@ -31,6 +33,7 @@ is reported as not comparable rather than guessed.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from collections.abc import Sequence
 from dataclasses import fields
@@ -211,6 +214,8 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     matches_by_id: dict[str, set[str]] = {}
     identity_by_id: dict[str, str] = {}
     autonomy_by_id: dict[str, list[Any]] = {}
+    # finding id -> each distinct declared block of a source that registers it -> the first such source
+    declared_by_id: dict[str, dict[str, str]] = {}
     stats: list[ScanStats] = []
     sources: list[dict[str, Any]] = []
     fingerprints: list[str] = []
@@ -262,6 +267,10 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
                 matches_by_id.setdefault(finding.id, set()).add(finding.registry_match)
             if "autonomy" in finding.metadata:
                 autonomy_by_id.setdefault(finding.id, []).append(finding.metadata["autonomy"])
+            declared = finding.metadata.get(DECLARED_GOVERNANCE_KEY)
+            if finding.shadow is False and isinstance(declared, dict):
+                key = json.dumps(declared, sort_keys=True)
+                declared_by_id.setdefault(finding.id, {}).setdefault(key, name)
             findings.append(finding)
         source_stats = _stats(report)
         stats.extend(source_stats)
@@ -315,6 +324,13 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         if finding.shadow is not False:
             # Declared facts belong to the card that registered the finding.
             finding.metadata.pop(DECLARED_GOVERNANCE_KEY, None)
+        elif len(declared_by_id.get(finding.id, {})) > 1:
+            # Different cards, or different versions of one card, registered this finding.
+            first, second = sorted(declared_by_id[finding.id].values())[:2]
+            raise ValueError(
+                f"{first}, {second}: a registered finding carries different declared governance;"
+                " make the inventories agree and rescan before merging"
+            )
         # Unioned tags, capabilities and evidence can change the interval; the merged one also
         # admits at least what each source's block admits, as risk keeps the highest score.
         merge_autonomy(finding, autonomy_by_id.get(finding.id, []))

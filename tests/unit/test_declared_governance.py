@@ -17,11 +17,14 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.controls import control_evidence
 from shadowscan.engine import Engine
 from shadowscan.fleet import merge_reports
 from shadowscan.governance import (
     DECLARED_GOVERNANCE_KEY,
     EU_AI_ACT_RISK_CLASSES,
+    MAX_INTENDED_PURPOSE,
+    MAX_OVERSIGHT_MEASURE,
     GovernanceError,
     apply_declared_governance,
     declared_facts,
@@ -396,6 +399,82 @@ def test_fleet_merge_rejects_malformed_declared_governance(tmp_path, index, dama
     damage(report["findings"][0]["metadata"][DECLARED_GOVERNANCE_KEY])
     with pytest.raises(ValueError, match="malformed declared governance"):
         merge_reports([("broken.json", report)])
+
+
+def _declaring(tmp_path: Path, index, name: str, risk_class: str) -> dict[str, Any]:
+    governance = {**GOVERNANCE, "eu_ai_act_risk_class": risk_class}
+    metadata = {"agent_id": f"{risk_class}-card", "owner_team": "payments"}
+    return _report(tmp_path, index, [write(tmp_path, card(governance=governance, metadata=metadata), name)])
+
+
+def test_fleet_merge_refuses_conflicting_declarations_in_any_order(tmp_path, index):
+    high = _declaring(tmp_path, index, "high.yaml", "high")
+    minimal = _declaring(tmp_path, index, "minimal.yaml", "minimal")
+    for reports in ([("a.json", high), ("b.json", minimal)], [("b.json", minimal), ("a.json", high)]):
+        with pytest.raises(
+            ValueError, match="^a.json, b.json: a registered finding carries different declared"
+        ):
+            merge_reports(reports)
+        with pytest.raises(ValueError, match="different declared governance"):
+            control_evidence(reports)
+    paths = [tmp_path / "a.json", tmp_path / "b.json"]
+    for path, report in zip(paths, (high, minimal), strict=True):
+        path.write_text(json.dumps(report))
+    for order in (paths, paths[::-1]):
+        result = CliRunner().invoke(main, ["controls", *map(str, order), "-f", "csv"])
+        assert result.exit_code == 1 and "different declared governance" in result.output
+        result = CliRunner().invoke(main, ["merge", *map(str, order), "-o", str(tmp_path / "fleet.json")])
+        assert result.exit_code == 1 and "different declared governance" in result.output
+
+
+def test_fleet_merge_keeps_one_declaration_whatever_the_order(tmp_path, index):
+    declared = _declaring(tmp_path, index, "high.yaml", "high")
+    silent = _report(tmp_path, index, [write(tmp_path, card(), "plain.yaml")])
+    for reports in ([("a.json", declared), ("b.json", silent)], [("b.json", silent), ("a.json", declared)]):
+        [agent] = merge_reports(reports).findings
+        assert agent.metadata[DECLARED_GOVERNANCE_KEY]["eu_ai_act_risk_class"] == "high"
+        art26 = next(
+            control
+            for framework in control_evidence(reports)["frameworks"]
+            for control in framework["controls"]
+            if control["ref"] == "eu-ai-act-2024:Art.26"
+        )
+        assert art26["findings"] == art26["declared_findings"] == 1
+
+
+@pytest.mark.parametrize("tail", [" password=abcdefg", " token: abcdef", " secret=xyz12", " api_key=ab"])
+def test_a_declared_value_at_the_limit_survives_export_redaction(tmp_path, index, tail):
+    purpose = "a" * (MAX_INTENDED_PURPOSE - len(tail)) + tail
+    measure = "b" * (MAX_OVERSIGHT_MEASURE - len(tail)) + tail
+    governance = {
+        "eu_ai_act_risk_class": "high",
+        "intended_purpose": purpose,
+        "oversight_measures": [measure],
+    }
+    inventory = write(tmp_path, card(governance=governance))
+    assert Inventory.load([inventory]).entries[0].governance is not None
+    report = _report(tmp_path, index, [inventory])
+    [record] = report["findings"]
+    block = record["metadata"][DECLARED_GOVERNANCE_KEY]
+    # Redaction lengthens the value past the card's limit; the report still declares it.
+    assert len(block["intended_purpose"]) > MAX_INTENDED_PURPOSE
+    assert len(block["oversight_measures"][0]) > MAX_OVERSIGHT_MEASURE
+    assert valid_declared_governance(block)
+    assert {EU + "Art.12", EU + "Art.14", EU + "Art.26"} <= set(record["metadata"]["controls"])
+    [agent] = merge_reports([("a.json", report)]).findings
+    assert declared_risk_class(agent) == "high"
+    evidence = control_evidence([("a.json", report)])
+    assert [item["eu_ai_act_risk_class"] for item in evidence["declared_governance"]] == ["high"]
+    assert "Declared governance" in render(merge_reports([("a.json", report)]), "markdown")
+
+
+def test_report_blocks_keep_every_other_card_rule():
+    measures = ["review"] * 21
+    assert not valid_declared_governance({"oversight_measures": measures, "source": "card"})
+    assert not valid_declared_governance({"intended_purpose": " ", "source": "card"})
+    assert valid_declared_governance({"intended_purpose": "x" * (MAX_INTENDED_PURPOSE + 50), "source": "c"})
+    with pytest.raises(GovernanceError, match="at most 500"):
+        parse_governance({"intended_purpose": "x" * (MAX_INTENDED_PURPOSE + 1)})
 
 
 # ------------------------------------------------------------------- reports

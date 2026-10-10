@@ -52,15 +52,31 @@ as every export derives them; references stored in the report are not read.
 | --- | --- |
 | `referenced` | At least one finding references the control and every report is complete. |
 | `referenced (scan incomplete)` | Findings reference the control, but a report is incomplete: the counts are lower bounds. |
-| `not observed` | No finding references the control and every report is complete. This is not evidence that the control is in place, met or not needed: ShadowScan saw only the configured sources. |
+| `not observed` | No finding references the control, every report is complete, and no finding could reference it through a fact the reports do not hold (below). This is not evidence that the control is in place, met or not needed: ShadowScan saw only the configured sources. |
 | `unknown (scan incomplete)` | No finding references the control and a report is incomplete. The missing inputs may hold relevant findings. |
-| `unknown (inventory not supplied)` | Every rule for the control reads facts only an inventory supplies (shadow status or declared facts), and a report was scanned without an inventory. |
+| `unknown (inventory not supplied)` | No finding references the control, but one could: a rule for the control reads shadow status or declared facts, which only an inventory supplies, a finding's shadow status is unknown (see [several reports](#several-reports)), and its other facts do not rule the rule out. |
+| `unknown (risk class not declared)` | No finding references the control, but a rule for it reads the declared EU AI Act risk class, and a finding that the rule's other conditions do not rule out has no declared class: it is shadow, its card declares no class, or the card declares `unknown`. |
 | `not mapped` | No packaged rule references the control, so ShadowScan never collects evidence for it (for example the AIUC-1 Data and Privacy domain). |
 
 A report is incomplete when a connector failed, was skipped or stopped early,
 or when its summary does not match its findings. The output is still written,
 with an `INCOMPLETE SCAN` banner before any control (a first status row in
 CSV), and the command exits 3.
+
+The last two `unknown` statuses are decided per finding. Without an
+inventory, a finding could be shadow AI, so NIST AI RMF `GOVERN-1.6`, ISO/IEC
+42001 `A.4.2` and AIUC-1 `E` (the `shadow-ai-system` rule) read
+`unknown (inventory not supplied)` unless a finding references them, although
+their other rules (`registry-gap`, `missing-owner`) need no inventory. The same
+applies to the EU AI Act articles that [declared facts](#declared-facts)
+select: Articles 12, 14 and 26 for any finding, Article 50 for an agent, bot or
+AI application. With an inventory, those articles read
+`unknown (risk class not declared)` until every finding they could apply to is
+registered by a card that declares a class other than `unknown`. A report
+without any finding has nothing unknown. Exit codes are unchanged: these
+statuses describe what the reports hold, not whether the scan completed. The
+CSV `inventory` column and the scan evidence line say whether an inventory was
+supplied.
 
 ## Selecting frameworks
 
@@ -81,9 +97,16 @@ whether it was reconciled with an inventory.
 A merged finding counts as shadow when a report reconciled with an inventory
 says it is shadow, as registered when every report says it is registered, and
 as unknown otherwise. A report without an inventory knows nothing about
-registration, so it never makes a finding look shadow. Pass the source reports
-themselves rather than an already merged report, so `controls` can tell which
-of them had an inventory.
+registration, so it never makes a finding look shadow: a report's own
+`inventory_present` decides whether it had one, and its shadow values are
+ignored when it says it had none.
+
+Pass the source reports themselves. A report that `shadowscan merge` produced
+(it carries `collection_scope.fleet`) is refused (exit 1): the merge records a
+finding seen without an inventory as shadow and no longer says which source had
+an inventory. A finding that two reports register with different declared
+governance facts is refused too (exit 1), as `merge` refuses it, rather than
+keeping whichever report came first; make the inventories agree and rescan.
 
 ## Declared facts
 
@@ -101,6 +124,11 @@ marked `(declared)`, each control counts its `declared_findings`, and a
 registered finding's declared facts with the card that declared them. The
 Markdown table shows at most 200 findings; the JSON document has all of them.
 
+ShadowScan cannot tell a high-risk system from the scan, so these articles
+read `unknown (risk class not declared)`, not `not observed`, while a finding
+they could apply to has no declared class (see
+[evidence status](#evidence-status)).
+
 ## Formats
 
 ### Markdown
@@ -111,13 +139,15 @@ the scan status, incomplete connectors and the inventory statement. Then
 tables per catalog, followed by the example findings per control. Untrusted
 text (finding titles, report names) is escaped as in `--format markdown`:
 links are defanged (`hxxps://`, `www[.]`) and `@` is written `[@]`, so a report
-pasted into an issue creates no links or mentions.
+pasted into an issue creates no links or mentions. A `|` in a finding id or card
+id is escaped inside its table cell, so it cannot shift the columns.
 
 ### CSV
 
 One row per control, for GRC tools. The first twelve columns are
 `framework`, `edition`, `control_id`, `title`, `findings`, `critical`, `high`,
 `medium`, `low`, `info`, `examples` and `scan_complete` (`yes` or `no`); then
+`inventory` (`supplied`, `partial` or `not supplied`, the same on every row),
 `evidence` (the status), `declared_findings`, `ref` (the full reference, such as
 `nist-ai-rmf-1.0:GOVERN-1.6`), `verification` and `mapping_review` (`author
 mapping, not independently reviewed`). `examples` joins up to 10
@@ -213,7 +243,7 @@ The `shadowscan.control-evidence/v1` document:
 | --- | --- |
 | 0 | Every report is complete. |
 | 3 | A report is incomplete; the output is still written, with the banner. |
-| 1 | A report cannot be read or merged, a finding carries malformed declared facts, `--framework` names no control catalog, or the output cannot be written. |
+| 1 | A report cannot be read or merged, is itself a merged report, a finding carries malformed declared facts or different declared facts in two reports, `--framework` names no control catalog, or the output cannot be written. |
 
 ## Limits
 

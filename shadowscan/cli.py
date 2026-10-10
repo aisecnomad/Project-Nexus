@@ -51,7 +51,7 @@ from shadowscan.connectors import (
     get_connector_class,
     plugin_registry_errors,
 )
-from shadowscan.controls import ControlSelectionError, build_control_evidence, control_catalogs
+from shadowscan.controls import ControlSelectionError, build_control_evidence, check_sources, control_catalogs
 from shadowscan.dashboard import (
     MAX_HISTORY,
     HistoryError,
@@ -1619,15 +1619,17 @@ def controls_command(
 
     Covers the NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 catalogs.
 
-    Several reports are merged as `merge` merges them. Evidence references, not compliance
-    determinations: author mappings, not independently reviewed. The output is written with an
-    incomplete-scan banner and the command exits 3 when any report is incomplete."""
+    Several reports are merged as `merge` merges them; pass the source reports, not a merged
+    report. Evidence references, not compliance determinations: author mappings, not
+    independently reviewed. The output is written with an incomplete-scan banner and the command
+    exits 3 when any report is incomplete."""
     try:
         catalogs = control_catalogs(frameworks)
     except ControlSelectionError as exc:
         raise click.ClickException(str(exc)) from None
     loaded = [(name, _load_report(path)) for name, path in zip(source_names(reports), reports, strict=True)]
     try:
+        check_sources(loaded)
         result = merge_reports(loaded)
     except ValueError as exc:
         raise click.ClickException(sanitize_text(str(exc))) from None
