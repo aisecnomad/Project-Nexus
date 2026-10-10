@@ -620,8 +620,13 @@ def _broad_root(arg: str) -> bool:
 
 
 def _plaintext_remote(url: str) -> bool:
+    """Whether ``url`` is plaintext HTTP or WebSocket to a host that is not known to be loopback."""
+    text = url.strip()
+    scheme, separator, rest = text.partition("://")
+    if separator and scheme.lower() in {"http", "ws"} and _hidden_host(rest):
+        return True
     try:
-        parts = urlsplit(url.strip())
+        parts = urlsplit(text)
     except ValueError:
         return False
     if parts.scheme.lower() not in {"http", "ws"}:
@@ -635,9 +640,23 @@ def _plaintext_remote(url: str) -> bool:
         return True
 
 
+def _hidden_host(rest: str) -> bool:
+    """Whether the host of a URL (``rest`` follows its ``://``) cannot be told from its authority.
+
+    An HTTP client ends the host at a backslash, which :func:`urlsplit` does not
+    (``http://remote.example\\@localhost/`` reaches remote.example), and parsed configuration
+    redacts user information, which may have held such a backslash.
+    """
+    authority = re.split(r"[/?#]", rest, maxsplit=1)[0]
+    return "\\" in authority or "@" in authority
+
+
 def _host(url: str) -> str:
+    text = url.strip()
+    if _hidden_host(text.partition("://")[2]):
+        return "remote server"
     try:
-        return urlsplit(url.strip()).hostname or "remote server"
+        return urlsplit(text).hostname or "remote server"
     except ValueError:
         return "remote server"
 

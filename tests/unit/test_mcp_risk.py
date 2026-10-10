@@ -115,10 +115,21 @@ def test_shell_without_command_flag_is_not_a_wrapper():
         ("http://api.localhost/mcp", False),
         ("http:///nohost", False),
         ("http://[bad/mcp", False),
+        # An HTTP client reads the host as remote.example; parsed configuration redacts the
+        # user information that held the backslash, so neither form names a known loopback.
+        ("http://remote.example\\@localhost:3000/mcp", True),
+        ("http://[REDACTED]@localhost:3000/mcp", True),
+        ("https://remote.example\\@localhost/mcp", False),
     ],
 )
 def test_plaintext_remote(url, flagged):
     assert ("mcp-insecure-transport" in ids({"url": url})) is flagged
+
+
+def test_a_plaintext_remote_whose_host_cannot_be_told_names_no_host():
+    assert assess_server({"url": "http://remote.example\\@localhost/mcp"}) == [
+        McpRisk("mcp-insecure-transport", "remote server")
+    ]
 
 
 def test_remote_from_urls_list_and_detail_names_only_the_host():

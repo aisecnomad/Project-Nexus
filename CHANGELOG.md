@@ -264,6 +264,11 @@ summarizes each release for people who install and operate ShadowScan.
   approved catalog only when one of those names lists it, other than as
   deleted, in the version it would be matched to; an unrelated active version
   of a colliding name no longer approves a package listed only as deleted.
+- `mcp-insecure-transport` also flags an `http://` or `ws://` URL whose
+  authority holds a backslash or user information (redacted when parsed),
+  since an HTTP client can read another host from it
+  (`http://remote.example\@localhost/` reaches `remote.example`); its evidence
+  then names no host.
 - The tests use a synthetic snapshot shaped like the live registry API. No
   live registry fetch or tenant acceptance is part of the test suite.
 
@@ -525,6 +530,12 @@ summarizes each release for people who install and operate ShadowScan.
   interface to a host other than loopback) and `a2a-card-signature-invalid`
   (10), with threat references ASI07 and AML.T0118.001, and ASI07 and ASI04.
   Card files with such interfaces or malformed signatures now score higher.
+- An interface URL with user information or a backslash before its host is
+  left out of `metadata.agent_card.interfaces` and of domain matching:
+  `http://agent.example\@localhost/a2a` was projected as
+  `http://localhost/a2a` (HTTP clients reach `agent.example`) and suppressed
+  `a2a-plaintext-interface`. The tag now reads each declared URL and fires for
+  such an `http://` or `ws://` interface.
 - The cards, keys and HTTP exchanges in the tests are synthetic, modeled on
   the A2A specification; nothing was validated against a live agent.
 

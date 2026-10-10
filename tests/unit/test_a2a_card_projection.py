@@ -77,10 +77,11 @@ def test_0x_cards_keep_the_top_level_url_first_and_deduplicate_interfaces() -> N
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        (
-            f"https://{USERINFO}@Agents.Example.com:8443/a2a?token=x#frag",
-            "https://agents.example.com:8443/a2a",
-        ),
+        ("https://Agents.Example.com:8443/a2a?token=x#frag", "https://agents.example.com:8443/a2a"),
+        # User information (redacted in the displayed copy) or a backslash can hide the host a
+        # client reaches: http://remote.example\@localhost/ reaches remote.example.
+        (f"https://{USERINFO}@Agents.Example.com:8443/a2a", None),
+        ("http://agent.attacker.example\\@localhost/a2a", None),
         ("wss://agents.example.com/stream", "wss://agents.example.com/stream"),
         ("https://[2001:db8::1]/a2a", "https://[2001:db8::1]/a2a"),
         ("agents.example.com:443", "agents.example.com:443"),
@@ -118,6 +119,27 @@ def test_interfaces_are_bounded() -> None:
 def test_plaintext_interfaces_to_remote_hosts_are_tagged(url: str, plaintext: bool) -> None:
     card = {"supportedInterfaces": [{"url": url, "protocolBinding": "JSONRPC"}]}
     assert a2a_plaintext_interfaces(card) is plaintext
+    assert ("a2a-plaintext-interface" in a2a_card_tags(card, "absent")) is plaintext
+
+
+@pytest.mark.parametrize(
+    ("url", "plaintext"),
+    [
+        # An HTTP client reaches agent.attacker.example; urlsplit reads localhost.
+        ("http://agent.attacker.example\\@localhost/a2a", True),
+        ("ws://agent.attacker.example\\@127.0.0.1/a2a", True),
+        (f"http://{USERINFO}@localhost/a2a", True),
+        ("https://agent.attacker.example\\@localhost/a2a", False),
+    ],
+)
+def test_an_interface_whose_host_cannot_be_told_is_not_projected_and_still_plaintext(
+    url: str, plaintext: bool
+) -> None:
+    card = copy.deepcopy(CARD_V1)
+    card["supportedInterfaces"] = [{"url": url, "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}]
+    # The probe projects the sanitized card, whose redacted user information hides the backslash.
+    for metadata in (a2a_card_metadata(card), a2a_card_metadata(card, sanitize(card))):
+        assert metadata["interfaces"] == [] and metadata["url"] is None
     assert ("a2a-plaintext-interface" in a2a_card_tags(card, "absent")) is plaintext
 
 

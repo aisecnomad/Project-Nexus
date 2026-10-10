@@ -388,10 +388,13 @@ skills or capabilities but misses other required fields still gets its own
 the errors in `metadata.card_errors`, never an agent finding; the errors also
 keep the scan incomplete. A card's `metadata.agent_card` is the projection the
 [A2A Agent Card probe](endpoint.md#a2a-agent-card-probe) uses: A2A 1.0 `supportedInterfaces` and 0.3
-`url`/`additionalInterfaces` (scheme, host, port and path only), and a
+`url`/`additionalInterfaces` (scheme, host, port and path only; an interface
+URL with user information or a backslash before its host is left out, since
+HTTP clients can read another host from it), and a
 signature state of `absent`, `present-unverified` or `invalid` (card files are
 never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
-(an `http://` or `ws://` interface to a remote host) and
+(an `http://` or `ws://` interface to a host not known to be loopback, such an
+interface included) and
 `a2a-card-signature-invalid` (a malformed signature entry). A card that
 declares a protocol version other than 0.x or 1.x is still reported, with a
 warning that makes the scan incomplete. JSON/YAML descriptions are not
