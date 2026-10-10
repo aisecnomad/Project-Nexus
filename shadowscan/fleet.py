@@ -6,7 +6,11 @@ scanned twice) merge exactly as repeated observations do inside one scan:
 evidence and technologies union, the earliest ``first_seen`` and latest
 ``last_seen`` survive, the first report's metadata wins. Findings from
 different machines keep their own resources because the endpoint label
-prefixes every resource.
+prefixes every resource. A finding is shadow when any source that reported it
+found it unregistered, registered when one matched it to that source's
+inventory, and unassessed when none of the sources that reported it was given
+an inventory (``--inventory`` or the configuration's ``inventory:`` key), even
+if other sources were.
 
 The merged report is comparable with ``shadowscan diff`` only when every
 source is complete and carries a comparable collection scope; its fingerprint
@@ -96,6 +100,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     sources_by_id: dict[str, list[str]] = {}
     risks_by_id: dict[str, Risk] = {}
     shadow_by_id: dict[str, bool] = {}
+    registry_by_id: dict[str, str] = {}
     identity_by_id: dict[str, str] = {}
     stats: list[ScanStats] = []
     sources: list[dict[str, Any]] = []
@@ -105,6 +110,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     started: list[str] = []
     finished: list[str] = []
     inventory_size = 0
+    inventory_present = False
     for name, raw in reports:
         report = _check(raw, name)
         scope_value = report.get("collection_scope")
@@ -137,7 +143,16 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
                 previous.danger_score,
             ):
                 risks_by_id[finding.id] = finding.risk
-            shadow_by_id[finding.id] = shadow_by_id.get(finding.id, False) or finding.shadow is not False
+            # Registration has three states: unregistered in any source wins,
+            # then registered against a supplied inventory. A finding no source
+            # reconciled (shadow None: no inventory) stays unassessed rather
+            # than being reported as unregistered. Only a source that names a
+            # nonempty match records one, so a report claiming registration
+            # without a match cannot blank a later source's match.
+            if finding.shadow is False and finding.registry_match:
+                registry_by_id.setdefault(finding.id, finding.registry_match)
+            if finding.shadow is not None and shadow_by_id.get(finding.id) is not True:
+                shadow_by_id[finding.id] = finding.shadow
             findings.append(finding)
         stats.extend(_stats(report))
         if not complete:
@@ -157,6 +172,10 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         if type(size) is not int or size < 0:
             raise ValueError("report inventory size must be a nonnegative integer")
         inventory_size = max(inventory_size, size)
+        present = report.get("inventory_present", False)
+        if type(present) is not bool:
+            raise ValueError("report inventory presence must be a boolean")
+        inventory_present = inventory_present or present
         sources.append(
             {
                 "name": name,
@@ -174,9 +193,10 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         # observed assessment instead of rescoring with an unknown policy or
         # retaining whichever low-risk report appeared first.
         finding.risk = risks_by_id[finding.id]
-        finding.shadow = shadow_by_id[finding.id]
-        if finding.shadow:
-            finding.registry_match = None
+        # merge() keeps the first observation's registry match, which may come
+        # from a source that did not reconcile the finding.
+        finding.shadow = shadow_by_id.get(finding.id)
+        finding.registry_match = registry_by_id.get(finding.id) if finding.shadow is False else None
         finding.metadata["fleet_risk_aggregation"] = "maximum-source-score"
     merged.sort(key=lambda f: (-f.risk.score, f.resource, f.id))
     if comparable:
@@ -190,6 +210,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         stats=stats,
         version=__version__,
         inventory_size=inventory_size,
+        inventory_present=inventory_present,
         collection_scope=scope_out,
     )
     if started:
