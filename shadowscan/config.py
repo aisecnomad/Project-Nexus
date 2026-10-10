@@ -508,7 +508,7 @@ class ScanConfig:
                     spec.name.startswith(("cloud.", "identity.", "saas.", "lowcode."))
                     and spec.name != "identity.jwt"
                 )
-                or spec.name in self.plugins
+                or spec.name in plugin_names(self.plugins)
             )
         ]
         if any(source is not credentialed for source in code for credentialed in live):
@@ -686,11 +686,36 @@ def _boolean_option(value: Any, name: str) -> bool:
     return value
 
 
+_PLUGIN_TARGET_RX = re.compile(r"[A-Za-z_][\w.]*:[A-Za-z_][\w.]*")
+
+
 def validate_plugins(value: Any) -> list[str]:
-    """Loading a connector imports arbitrary code, so approvals must be explicit names."""
+    """Loading a connector imports arbitrary code, so approvals must be explicit names.
+
+    An entry is a connector name, or ``name=module:Class`` to also pin the
+    entry point's import target: a pinned plugin whose installed entry point
+    names another target is refused instead of imported.
+    """
     if not isinstance(value, list) or any(not isinstance(name, str) or not name.strip() for name in value):
         raise ConfigValidationError("options.plugins must be a list of nonempty connector names")
-    return list(dict.fromkeys(name.strip() for name in value))
+    entries = list(dict.fromkeys(name.strip() for name in value))
+    names: set[str] = set()
+    for entry in entries:
+        name, pinned, target = entry.partition("=")
+        name, target = name.strip(), target.strip()
+        if not name or (pinned and not _PLUGIN_TARGET_RX.fullmatch(target)):
+            raise ConfigValidationError(
+                "options.plugins entries must be a connector name or name=module:Class"
+            )
+        if name in names:
+            raise ConfigValidationError("options.plugins approves a connector name more than once")
+        names.add(name)
+    return entries
+
+
+def plugin_names(entries: list[str]) -> set[str]:
+    """The connector names a validated ``plugins`` list approves."""
+    return {entry.partition("=")[0].strip() for entry in entries}
 
 
 _TRUSTED_REGISTRY_FLAGS = ("allow_auto_approved", "allow_registered_only", "allow_offline_records")
