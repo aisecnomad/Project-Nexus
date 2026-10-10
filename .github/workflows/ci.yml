@@ -223,6 +223,110 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Route anonymous Docker Hub pulls through a pull-through mirror
+        env:
+          DOCKER_HUB_MIRROR: https://mirror.gcr.io
+        run: |
+          set -euo pipefail
+          # Hosted runners share egress addresses, so anonymous Docker Hub pulls
+          # routinely hit its rate limit (HTTP 429) and the build cannot resolve
+          # the base image. mirror.gcr.io is Google's Docker Hub pull-through
+          # cache. The daemon uses a registry mirror for Docker Hub images only
+          # and falls back to Docker Hub when the mirror fails. Keep the runner's
+          # other daemon settings; a missing file is an empty configuration.
+          daemon_json=/etc/docker/daemon.json
+          if sudo test -e "$daemon_json"; then
+            sudo cat "$daemon_json" > "$RUNNER_TEMP/daemon.json"
+          else
+            printf '{}\n' > "$RUNNER_TEMP/daemon.json"
+          fi
+          python - "$RUNNER_TEMP/daemon.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          config = json.loads(path.read_text(encoding='utf-8'))
+          if not isinstance(config, dict) or not isinstance(config.get('registry-mirrors', []), list):
+              raise SystemExit('daemon.json must be an object whose registry-mirrors is a list')
+          mirror = os.environ['DOCKER_HUB_MIRROR']
+          mirrors = config.setdefault('registry-mirrors', [])
+          # dockerd accepts a mirror with or without its trailing slash, so
+          # compare without it and never list the same mirror twice.
+          if not any(isinstance(entry, str) and entry.rstrip('/') == mirror.rstrip('/') for entry in mirrors):
+              mirrors.append(mirror)
+          path.write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
+          PY
+          sudo install -m 0644 "$RUNNER_TEMP/daemon.json" "$daemon_json"
+          sudo systemctl restart docker
+          # Block unless the restarted daemon reports the mirror, which it lists
+          # with a trailing slash.
+          mirrors="$(docker info --format '{{range .RegistryConfig.Mirrors}}{{println .}}{{end}}')"
+          if ! grep -Fqx -e "$DOCKER_HUB_MIRROR" -e "$DOCKER_HUB_MIRROR/" <<< "$mirrors"; then
+            echo "the Docker daemon does not report the registry mirror $DOCKER_HUB_MIRROR" >&2
+            exit 1
+          fi
+      - name: Pull the digest-pinned base image before the build
+        run: |
+          set -euo pipefail
+          # Read the references from the Dockerfile's FROM lines, so a reviewed
+          # Dependabot digest refresh cannot leave this step pulling another
+          # image, and pull name@digest without the tag. A digest pull is
+          # content-verified: the mirror cannot substitute other bytes. With the
+          # default docker driver, BuildKit prefers a digest already in the local
+          # image store and resolves anything else through the daemon's registry
+          # configuration, so the mirror covers the build's own lookups as well.
+          python - > "$RUNNER_TEMP/base-images.txt" <<'PY'
+          import re
+          from pathlib import Path
+          # A heredoc opener as BuildKit reads one: <<WORD, <<-WORD, <<'WORD' or <<"WORD".
+          heredoc = re.compile(r'''(?<!\S)\d*<<(-?)(["']?)([^\s"'<]+)\2(?!\S)''')
+          lines = iter(Path('Dockerfile').read_text(encoding='utf-8').splitlines())
+          references = []
+          for line in lines:
+              if not line.strip() or line.lstrip().startswith('#'):
+                  continue
+              # Only the first line of an instruction names it. Join backslash
+              # continuations, dropping the comment and blank lines Docker drops
+              # inside them, and skip each heredoc body through its terminator
+              # line (leading tabs stripped for <<-), so a script line such as
+              # `from pathlib import Path` is never read as a FROM.
+              while line.rstrip().endswith('\\'):
+                  following = next(lines, None)
+                  if following is None:
+                      break
+                  if following.strip() and not following.lstrip().startswith('#'):
+                      line = line.rstrip()[:-1] + ' ' + following
+              keyword, *arguments = line.split()
+              if keyword.upper() in ('RUN', 'COPY', 'ADD'):
+                  for chomp, _, word in heredoc.findall(line):
+                      if not any((body.lstrip('\t') if chomp else body) == word for body in lines):
+                          raise SystemExit(f'the Dockerfile heredoc {word} is not terminated')
+              if keyword.upper() != 'FROM':
+                  continue
+              image = next((argument for argument in arguments if not argument.startswith('--')), '')
+              name, _, digest = image.partition('@')
+              if not name or not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+                  raise SystemExit(f'FROM {image} is not a digest-pinned image reference')
+              repository, slash, last = name.rpartition('/')
+              reference = f"{repository}{slash}{last.partition(':')[0]}@{digest}"
+              if reference not in references:
+                  references.append(reference)
+          if not references:
+              raise SystemExit('the Dockerfile names no base image')
+          print('\n'.join(references))
+          PY
+          while IFS= read -r image; do
+            attempt=1
+            until timeout 180s docker pull "$image"; do
+              if (( attempt == 3 )); then
+                echo "could not pull $image after $attempt attempts" >&2
+                exit 1
+              fi
+              sleep $(( attempt * 10 ))
+              attempt=$(( attempt + 1 ))
+            done
+          done < "$RUNNER_TEMP/base-images.txt"
       - name: Build and validate one immutable worker image
         run: |
           set -euo pipefail

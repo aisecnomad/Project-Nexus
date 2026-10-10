@@ -6,6 +6,7 @@ import base64
 import fnmatch
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -31,7 +32,7 @@ from shadowscan.registry import Inventory
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
-from shadowscan.triage import Triage, TriageConfigError
+from shadowscan.triage import Triage, TriageConfigError, skip
 from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
 from shadowscan.utils.http import (
     reset_allow_private_origin,
@@ -58,6 +59,13 @@ _TIMEOUT_WARNING = (
     "use timed-out artifacts as accepted results. Use an external process timeout "
     "when a hard execution limit is required."
 )
+# LLM triage ends this long before a CLI job deadline, so that sanitizing,
+# rendering and writing the report still finish before the watchdog exits:
+# 10% of the configured deadline, which grows with the scan it was sized for,
+# at least 5 s for a small report and at most 60 s of lost triage time.
+_TRIAGE_RESERVE_SHARE = 0.1
+_TRIAGE_RESERVE_MIN = 5.0
+_TRIAGE_RESERVE_MAX = 60.0
 
 # The operator's stable identity key comes from IDENTITY_KEY_ENV only, never
 # from a configuration field.
@@ -117,6 +125,22 @@ def _stable_identity_key() -> bytes | None:
             "hex:<value> or base64:<value>"
         )
     return key
+
+
+def _validated_job_deadline(value: object) -> float | None:
+    """``Engine.run``'s ``job_deadline`` as a float; the error text never echoes the value."""
+    if value is None:
+        return None
+    message = "job_deadline must be None or a finite time.monotonic() value"
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(message)
+    try:
+        deadline = float(value)
+    except OverflowError:  # an int too large for a float
+        deadline = math.inf
+    if not math.isfinite(deadline):
+        raise ValueError(message)
+    return deadline
 
 
 @dataclass
@@ -1068,14 +1092,28 @@ class Engine:
             )
 
     # ------------------------------------------------------------------ run
-    def _triage(self, findings: list[Finding], started_at: str) -> ScanStats:
+    def _triage(self, findings: list[Finding], started_at: str, job_deadline: float | None) -> ScanStats:
         """Opt-in advisory LLM triage; its failures are warnings, never discovery gaps."""
         entry = ScanStats(connector="engine.llm-triage", started_at=started_at)
+        deadline = None
+        if job_deadline is not None:
+            share = (self.config.job_deadline_seconds or 0.0) * _TRIAGE_RESERVE_SHARE
+            deadline = job_deadline - min(_TRIAGE_RESERVE_MAX, max(_TRIAGE_RESERVE_MIN, share))
         try:
-            triage = Triage(
-                self.config.llm_triage, self.index, allow_private_origin=self.config.allow_private_origin
-            )
-            entry.warnings.extend(triage.run(findings))
+            if deadline is not None and deadline <= time.monotonic():
+                skipped = skip(findings, self.config.llm_triage)
+                if skipped:
+                    entry.warnings.append(
+                        f"llm triage skipped: too close to the job deadline; {skipped} finding(s) not triaged"
+                    )
+            else:
+                triage = Triage(
+                    self.config.llm_triage, self.index, allow_private_origin=self.config.allow_private_origin
+                )
+                if deadline is None:
+                    entry.warnings.extend(triage.run(findings))
+                else:
+                    entry.warnings.extend(triage.run(findings, deadline=deadline))
         except TriageConfigError as exc:
             entry.warnings.append(str(exc))
         except Exception as exc:  # noqa: BLE001 - advisory: a triage failure never costs the scan its report
@@ -1084,7 +1122,15 @@ class Engine:
         entry.finished_at = now_iso()
         return entry
 
-    def run(self, only: list[str] | None = None) -> ScanResult:
+    def run(self, only: list[str] | None = None, *, job_deadline: float | None = None) -> ScanResult:
+        """Run the scan and return its result.
+
+        ``job_deadline`` is the ``time.monotonic()`` time at which the caller
+        stops the process, if it does: LLM triage then ends early enough to
+        leave time to emit the report. It does not bound connector collection.
+        A value that is not None or a finite number is refused before collection.
+        """
+        job_deadline = _validated_job_deadline(job_deadline)
         self._prepare_run()
         result = ScanResult(
             version=__version__,
@@ -1138,7 +1184,7 @@ class Engine:
             _prune_lifecycle_links(findings)
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
         if self.config.llm_triage.enabled:
-            stats.append(self._triage(findings, result.started_at))
+            stats.append(self._triage(findings, result.started_at, job_deadline))
         if dump_directory:
             self._write_manifest(dump_directory, export_entries, result.started_at, stats)
         result.findings = findings

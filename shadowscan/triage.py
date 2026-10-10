@@ -7,6 +7,10 @@ advisory: it never changes a finding's kind, confidence, risk, shadow status
 or the scan's completeness, and a failed or malformed reply is recorded as a
 warning on the ``engine.llm-triage`` entry, not as a gap in discovery.
 
+One run is bounded: it stops at ``budget_seconds`` (or the caller's earlier
+deadline) and after three consecutive failed requests, and the findings it
+does not reach are recorded as skipped.
+
 What leaves the machine, per finding: title, surface, kind, connector,
 resource type, technology names, capabilities, tags, heuristic risk level,
 confidence, shadow status and up to twelve evidence signals with their
@@ -34,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,7 +68,13 @@ _KEYS = {
     "max_findings",
     "min_level",
     "timeout_seconds",
+    "budget_seconds",
 }
+# Consecutive failed requests after which a run stops sending: an endpoint that
+# is down or timing out would otherwise cost every selected finding a timeout.
+_BREAKER_FAILURES = 3
+# The run's clock; tests replace this reference, not the process-wide time module.
+_monotonic = time.monotonic
 _MAX_EVIDENCE = 12
 _MAX_TEXT = 300
 _SYSTEM = (
@@ -92,6 +103,7 @@ class TriageSettings:
     max_findings: int = 25
     min_level: str = "medium"
     timeout_seconds: float = 30.0
+    budget_seconds: float = 300.0
 
     @classmethod
     def from_options(cls, value: Any) -> TriageSettings:
@@ -135,6 +147,9 @@ class TriageSettings:
         timeout = value.get("timeout_seconds", 30)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 300:
             raise TriageConfigError("llm_triage.timeout_seconds must be a number from 1 to 300")
+        budget = value.get("budget_seconds", 300)
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not 1 <= budget <= 3600:
+            raise TriageConfigError("llm_triage.budget_seconds must be a number from 1 to 3600")
         return cls(
             enabled=enabled,
             provider=provider,
@@ -144,6 +159,7 @@ class TriageSettings:
             max_findings=max_findings,
             min_level=min_level,
             timeout_seconds=float(timeout),
+            budget_seconds=float(budget),
         )
 
 
@@ -224,6 +240,17 @@ def select(findings: list[Finding], settings: TriageSettings) -> list[Finding]:
     eligible = [f for f in findings if _LEVEL_RANK[f.risk.level] >= floor]
     eligible.sort(key=lambda f: (-f.risk.score, f.id))
     return eligible[: settings.max_findings]
+
+
+def _mark_skipped(findings: list[Finding]) -> int:
+    for f in findings:
+        f.metadata["llm_triage"] = {"status": "skipped", "advisory": True}
+    return len(findings)
+
+
+def skip(findings: list[Finding], settings: TriageSettings) -> int:
+    """Record the findings :func:`select` picks as not triaged; return how many."""
+    return _mark_skipped(select(findings, settings))
 
 
 def parse_reply(text: str) -> dict[str, str] | None:
@@ -317,22 +344,58 @@ class Triage:
                 return str(message["content"])
         return ""
 
-    def run(self, findings: list[Finding]) -> list[str]:
-        """Triage the selected findings in place; return warnings."""
+    def run(self, findings: list[Finding], *, deadline: float | None = None) -> list[str]:
+        """Triage the selected findings in place; return warnings.
+
+        Requests stop when ``budget_seconds`` have passed, at ``deadline`` (a
+        ``time.monotonic()`` value) when that is sooner, or after three
+        consecutive failed requests. Findings not reached are marked skipped.
+        """
+        stop_at = _monotonic() + self.settings.budget_seconds
+        reason = f"budget_seconds ({self.settings.budget_seconds:g} s) exhausted"
+        http = self.client if isinstance(self.client, HttpClient) else None
+        client_deadline = http.deadline if http is not None else None
+        for limit in (deadline, client_deadline):
+            if limit is not None and limit < stop_at:
+                stop_at, reason = limit, "deadline reached"
+        if http is not None:
+            # Retries, Retry-After waits, connection set-up and body reads stop
+            # there too, not only the next request. The client's own deadline
+            # comes back afterwards, so a later run gets a budget of its own.
+            http.deadline = stop_at
+        try:
+            return self._run(select(findings, self.settings), stop_at, reason)
+        finally:
+            if http is not None:
+                http.deadline = client_deadline
+
+    def _run(self, selected: list[Finding], stop_at: float, reason: str) -> list[str]:
         warnings: list[str] = []
         failed = 0
-        for f in select(findings, self.settings):
+        consecutive = 0
+        for position, f in enumerate(selected):
             f.metadata.pop("llm_triage", None)
+            stopped = None
+            if consecutive >= _BREAKER_FAILURES:
+                stopped = f"{_BREAKER_FAILURES} consecutive failed requests"
+            elif _monotonic() >= stop_at:
+                stopped = reason
+            if stopped is not None:
+                skipped = _mark_skipped(selected[position:])
+                warnings.append(f"llm triage stopped: {stopped}; {skipped} finding(s) not triaged")
+                break
             try:
                 data = self.client.post_json(self.path, json=self._payload(finding_summary(f, self.index)))
             except (HttpError, OSError, ValueError) as exc:
                 failed += 1
+                consecutive += 1
                 if failed == 1:
                     warnings.append(
                         f"llm triage request failed ({type(exc).__name__}); later failures counted"
                     )
                 f.metadata["llm_triage"] = {"status": "failed", "advisory": True}
                 continue
+            consecutive = 0
             reply = parse_reply(self._reply_text(data))
             if reply is None:
                 failed += 1
