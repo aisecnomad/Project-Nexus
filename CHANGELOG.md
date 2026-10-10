@@ -120,15 +120,21 @@ summarizes each release for people who install and operate ShadowScan.
   records agents, skill records agent configurations and custom records cloud
   resources. `cloud.aws` declares both registry types through the
   `emits_registry_records` and `registry_record_types` hooks.
-- A record's provenance binds the exact AgentCore runtime or gateway ARN it was
+- The `DETECTED_FROM` provenance of a record the registry created by
+  auto-detection binds the exact AgentCore runtime or gateway ARN it was
   detected from; the binding is in scope only when the `agentcore` service ran
-  without a warning in that region for the scanned account. `approval_mode`
-  is `auto` when an Agent Registry lists any auto-approval rule or an
-  AgentCore registry sets `autoApproval`, `manual` when neither does, and
-  `unknown` when the registry details were denied or carry an approval setting
-  this release does not recognize. Auto-approval is not human
-  review: the record's evidence says so, and it approves through
-  `trusted_registries` only with `allow_auto_approved`.
+  without a warning in that region for the scanned account. Provenance on a
+  record created through the API is the publisher's assertion and binds
+  nothing, and a provenance relation this release does not recognize binds
+  nothing and makes the scan incomplete.
+- `approval_mode` reflects the registry's approval configuration at scan time:
+  `auto` when an Agent Registry holds any auto-approval rule or an AgentCore
+  registry sets `autoApproval`, whatever other settings sit beside it;
+  `manual` when neither does and nothing else is set; `unknown` when the
+  registry details were denied, and for an approval configuration this
+  release does not recognize, which also makes the scan incomplete.
+  Auto-approval is not human review: the record's evidence says so, and it
+  approves through `trusted_registries` only with `allow_auto_approved`.
 - `listing_complete` is set only for a record listing that finished without
   denial, a failed or truncated page, a skipped malformed record or the new
   `max_registry_records` cap (default 1000 per region and namespace). Denials,
@@ -136,9 +142,10 @@ summarizes each release for people who install and operate ShadowScan.
   failed record details and invalid descriptors make the scan incomplete
   (exit 3), and replaying such an export is incomplete again.
 - Descriptors are parsed as bounded strict JSON during collection and kept
-  only as a sanitized summary; raw descriptor documents, authorizer settings
-  and OAuth `customParameters` are never exported or reported, and descriptor
-  URLs never become finding resources.
+  only as a sanitized summary (A2A 1.0 cards contribute their
+  `supportedInterfaces`); raw descriptor documents, authorizer settings and
+  OAuth `customParameters` are never exported or reported, and descriptor URLs
+  never become finding resources.
 - New `registry_arns` reads the approved records of other accounts'
   registries through the discovery API (`ListDiscoverableRegistryRecords`,
   `BatchGetDiscoverableRegistryRecord`). Those records carry

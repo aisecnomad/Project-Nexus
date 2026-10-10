@@ -124,14 +124,28 @@ fields `record_status`, `record_type`, `record_version`, `registry_arn`,
 | --- | --- |
 | `status` `APPROVED`, `PENDING_APPROVAL`, `DRAFT`, `REJECTED`, `DEPRECATED` | `approved`, `pending`, `draft`, `rejected`, `deprecated`; anything else (`CREATING`, `UPDATING`, the failed states) is `unknown` |
 | `recordType` or `descriptorType` `MCP` or `GATEWAY`, `AGENT`, `A2A`, `SKILL` or `AGENT_SKILLS`, `CUSTOM` | `mcp` (an MCP server finding), `agent` and `a2a` (agent), `agent-skills` (agent configuration), `custom` (cloud resource). An unrecognized type is `custom` and makes the scan incomplete. |
-| The registry's `approvalConfiguration` | `approval_mode: auto` when Agent Registry `autoApprovalRules` lists any rule (such as `APPROVE_ALL`) or AgentCore `autoApproval` is true; `manual` when the rules are empty or `autoApproval` is false; `unknown` when the registry details were denied, carry no approval configuration, or carry a setting this release does not recognize |
-| Provenance `sourceId` (the AgentCore runtime or gateway the registry detected the record from) | One binding to that exact ARN, as the runtime or gateway finding carries it. Its coverage is `in-scope` only when the `agentcore` service ran in that region for the scanned account in the same scan without a warning; otherwise `out-of-scope`. Records without provenance have no binding. |
+| The registry's `approvalConfiguration` at scan time | `approval_mode: auto` when Agent Registry `autoApprovalRules` holds any rule (such as `APPROVE_ALL`) or AgentCore `autoApproval` is true, whatever else the configuration holds (a true value of an unexpected type counts too); `manual` when the rules are empty or absent, or `autoApproval` is false or absent, and the configuration holds no other setting; `unknown` when the registry details were denied or carry no approval configuration, and when the configuration has a shape or a setting this release does not recognize, which also makes the scan incomplete |
+| Provenance `sourceId` with relation `DETECTED_FROM`, on a record the registry created by auto-detection (`createdByAutoDetection: true`) | One binding to that exact ARN, as the runtime or gateway finding carries it. Its coverage is `in-scope` only when the `agentcore` service ran in that region for the scanned account in the same scan without a warning; otherwise `out-of-scope`. Records without such provenance have no binding. Provenance on a record created through the API is kept in `metadata.provenance` but binds nothing. A relation other than `DETECTED_FROM`, or none, binds nothing and makes the scan incomplete. |
 
 Auto-approval is not human review. A record approved by an auto-approval rule
 says so in its evidence (`approved automatically by a registry rule, not
 reviewed by a person`) and approves nothing through
 [`trusted_registries`](../inventory.md#trusting-a-registry) unless the trusted
 entry sets `allow_auto_approved: true`.
+
+`approval_mode` describes the registry's approval configuration when the scan
+reads it, not how each record was approved: the APIs do not say. A record
+approved while an auto-approval rule was on reports `manual` after the rule is
+removed. Trust a registry without `allow_auto_approved` only when it has never
+auto-approved records, or set `allow_auto_approved` deliberately.
+
+Provenance is not only written by the registry. `CreateRegistryRecord` and
+`UpdateRegistryRecord` accept it from the caller, so the connector binds only
+the records the registry created by auto-detection; a record created through
+the API names its source as the publisher's assertion and approves no runtime
+or gateway. An update can still change the provenance of an auto-detected
+record, so trusting a registry means trusting everyone who can create, update
+or approve its records.
 
 A record's `listing_complete` is true only when its registry's record listing
 finished in this scan without a denial, a failed or truncated page, a skipped
@@ -147,15 +161,18 @@ diagnostic the canary runner reads.
 Descriptors are untrusted inline documents of up to 100 KiB. They are parsed as
 strict JSON during collection and reduced to a bounded, sanitized summary
 (`metadata.descriptor`): MCP server name, version, remote URLs, package
-identifiers and tool names; A2A card name, URL, version, skills, capability and
+identifiers and tool names; A2A card name, URL, protocol version, interfaces
+(URL, protocol binding and version of each of up to 10 `supportedInterfaces`
+of a 1.0 card or `additionalInterfaces` of a 0.3 card; a 1.0 card's URL and
+protocol version are its first interface's), version, skills, capability and
 security scheme names; schema versions; and each descriptor source URL with its
 credential provider ARN, grant type, scopes or IAM role. The raw `data` and
 `inlineContent` documents, authorizer settings and OAuth `customParameters` are
 never exported or reported, and no descriptor URL becomes a finding resource.
 A document that is oversized, not strict JSON or of the wrong shape makes the
-scan incomplete. An A2A card without security schemes is tagged
-`no-auth-declared`; MCP remotes go through the same transport checks as
-configured MCP servers (`mcp-insecure-transport`).
+scan incomplete. An A2A card without security schemes or security
+requirements is tagged `no-auth-declared`; MCP remotes go through the same
+transport checks as configured MCP servers (`mcp-insecure-transport`).
 
 `registry_arns` lists exact Agent Registry ARNs
 (`arn:aws:agent-registry:<region>:<account>:registry/<id>`) of registries,
@@ -173,10 +190,11 @@ error codes. The connector never calls `SearchDiscoverableRegistryRecords`,
 `InvokeRegistryMcp` or any write operation.
 
 Registry exports replay with the same identities; a replayed record that was
-listed incompletely, lacks its details or had an invalid descriptor makes the
-replay incomplete again. The registry responses in the tests and in
-`aws_registry_records.jsonl` are synthetic, modeled on the installed SDK
-models; they were not validated against a live account.
+listed incompletely, lacks its details, had an invalid descriptor, or carries
+an approval configuration or provenance relation this release does not
+recognize makes the replay incomplete again. The registry responses in the
+tests and in `aws_registry_records.jsonl` are synthetic, modeled on the
+installed SDK models; they were not validated against a live account.
 
 ## `cloud.gcp`
 Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)

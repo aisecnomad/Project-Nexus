@@ -846,8 +846,10 @@ Opt-in registry records (`services` including `registry`): AWS Agent Registry
 and AgentCore registry records of every status, from the control-plane APIs,
 each as a finding with `metadata.registry_record` (registry types
 `aws-agent-registry` and `aws-agentcore-registry`). Statuses map onto the
-contract, a record's provenance binds the exact AgentCore runtime or gateway
-ARN, `approval_mode` comes from the registry's auto-approval settings, and
+contract, the `DETECTED_FROM` provenance of a record the registry created by
+auto-detection binds the exact AgentCore runtime or gateway ARN (provenance
+written through the API binds nothing), `approval_mode` comes from the
+registry's auto-approval settings at scan time, and
 `listing_complete` is set only for a listing that finished without denial,
 truncation or the `max_registry_records` cap (default 1000 per region and
 namespace). Descriptors are summarized during collection; raw documents and

@@ -344,7 +344,8 @@ connectors:
     services: [agentcore, registry]
 options:
   trusted_registries:
-    # Agent Registry whose records a person approves (no auto-approval rule).
+    # Agent Registry without an auto-approval rule, now or before: a person
+    # approves its records.
     - registry: aws-agent-registry
       id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
     # AgentCore registry with autoApproval: its records were not reviewed by a
@@ -354,13 +355,26 @@ options:
       allow_auto_approved: true
 ```
 
-An approved Agent Registry record detected from an AgentCore runtime or gateway
-binds that exact ARN, so the runtime's finding is registered when its account
-and region match. AgentCore registry records, and records read from another
-account's registry through `registry_arns`, carry no provenance: trusting them
-registers only the record findings themselves. Records read through
-`registry_arns` have `approval_mode: unknown`, so trusting such a registry
-accepts every approved record in it, however it was approved.
+An approved Agent Registry record that the registry created by auto-detection
+(`createdByAutoDetection: true`) from an AgentCore runtime or gateway binds that
+exact ARN, so the runtime's finding is registered when its account and region
+match. Provenance is also writable: `CreateRegistryRecord` and
+`UpdateRegistryRecord` accept it from the caller. A record created through the
+API therefore binds nothing, whatever source it names, and an update can change
+the provenance of an auto-detected record, so trusting a registry means trusting
+everyone who can create, update or approve its records. AgentCore registry
+records, and records read from another account's registry through
+`registry_arns`, carry no provenance: trusting them registers only the record
+findings themselves. Records read through `registry_arns` have
+`approval_mode: unknown`, so trusting such a registry accepts every approved
+record in it, however it was approved.
+
+`approval_mode` reflects the registry's approval configuration when the scan
+reads it, not how each record was approved. A record approved while an
+auto-approval rule was on reports `manual` once the rule is removed, so trust a
+registry without `allow_auto_approved` only when it has never auto-approved
+records. A configuration the connector does not recognize gives
+`approval_mode: unknown` and makes the scan incomplete.
 
 ## Registry reconciliation statuses
 

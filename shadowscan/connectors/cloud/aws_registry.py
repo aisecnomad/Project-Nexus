@@ -34,6 +34,9 @@ _AGENTCORE_SOURCE = re.compile(
     r"(?P<type>runtime|gateway)/[A-Za-z0-9_-]+"
 )
 _SOURCE_TYPES = {"runtime": "AWS::BedrockAgentCore::Runtime", "gateway": "AWS::BedrockAgentCore::Gateway"}
+# The only provenance relation the SDK models define: the registry detected the record from the source.
+# The models keep provenance a list so that other relations can follow; those bind nothing.
+DETECTED_FROM = "DETECTED_FROM"
 
 # Vendor record statuses; CREATING, UPDATING and the failed states are not a review outcome.
 STATUSES = {
@@ -67,15 +70,21 @@ COVERAGE = ("in-scope", "out-of-scope", "unknown")
 MAX_DESCRIPTOR_CHARS = 102_400
 MAX_PROVENANCE = 8
 _MAX_ITEMS = 50
+_MAX_INTERFACES = 10
 _MAX_TEXT = 300
 
 
 @dataclass(frozen=True, slots=True)
 class RegistryApi:
-    """One registry namespace: its SDK client, record kinds and vendor field names."""
+    """One registry namespace: its SDK client, record kinds and vendor field names.
+
+    ``label`` names the namespace's records ("<label> record") and ``product`` its registries
+    ("<product> registry").
+    """
 
     service: str
     label: str
+    product: str
     registry_type: str
     registry_kind: str
     record_kind: str
@@ -99,6 +108,7 @@ class RegistryApi:
 AGENT_REGISTRY = RegistryApi(
     service="agent-registry-control",
     label="Agent Registry",
+    product="Agent Registry",
     registry_type="aws-agent-registry",
     registry_kind="agent-registry",
     record_kind="agent-registry-record",
@@ -108,6 +118,7 @@ AGENT_REGISTRY = RegistryApi(
 AGENTCORE_REGISTRY = RegistryApi(
     service="bedrock-agentcore-control",
     label="AgentCore registry",
+    product="AgentCore",
     registry_type="aws-agentcore-registry",
     registry_kind="agentcore-registry",
     record_kind="agentcore-registry-record",
@@ -136,22 +147,31 @@ def sequence(value: Any) -> list[Any]:
 def approval_mode(api: RegistryApi, configuration: Any) -> str:
     """``auto``, ``manual`` or ``unknown`` from a registry's ``approvalConfiguration``.
 
-    Any agent-registry auto-approval rule counts as automatic: ``APPROVE_ALL`` approves every
-    record, and a rule this release does not know may approve some of them without a person.
-    A configuration that is absent (registry details denied or not returned), malformed or
-    carrying a setting this release does not know is ``unknown``.
+    An automatic setting wins whatever else the configuration holds: a true AgentCore
+    ``autoApproval``, or any agent-registry ``autoApprovalRules`` value (``APPROVE_ALL``
+    approves every record, and a rule this release does not know may approve some of them
+    without a person). A true value of an unexpected type counts as automatic too. ``manual``
+    needs a configuration this release reads in full: the setting absent, false or empty and
+    nothing beside it. Anything else is ``unknown``: no configuration (registry details denied
+    or not returned), or one of another shape or with a setting this release does not know
+    (:func:`approval_unrecognized`).
     """
     if not isinstance(configuration, dict):
         return "unknown"
     field = "autoApproval" if api is AGENTCORE_REGISTRY else "autoApprovalRules"
     value = configuration.get(field)
-    if configuration.keys() - {field}:
-        return "unknown"
-    if value is None or value == []:
+    if value:
+        return "auto"
+    # Falsy from here on: only the documented "off" values of the documented type read as manual.
+    off = value is False if api is AGENTCORE_REGISTRY else isinstance(value, list)
+    if (value is None or off) and configuration.keys() <= {field}:
         return "manual"  # no automatic approval is configured
-    if api is AGENTCORE_REGISTRY:
-        return ("auto" if value else "manual") if isinstance(value, bool) else "unknown"
-    return "auto" if isinstance(value, list) else "unknown"
+    return "unknown"
+
+
+def approval_unrecognized(api: RegistryApi, configuration: Any) -> bool:
+    """Whether a returned approval configuration is one this release cannot read (mode ``unknown``)."""
+    return configuration is not None and approval_mode(api, configuration) == "unknown"
 
 
 def provenance(items: Any, coverage: Callable[[str], str]) -> list[dict[str, Any]]:
@@ -197,10 +217,16 @@ def binding(entry: Any) -> dict[str, Any] | None:
     """The registry-record binding for one exported provenance entry, or None.
 
     The resource is the source ARN exactly as the runtime or gateway finding carries it, so
-    reconciliation matches it without normalization. Only an AgentCore runtime or gateway ARN
-    whose ``sourceType`` agrees (or is absent) binds; any other source binds nothing.
+    reconciliation matches it without normalization. Only a ``DETECTED_FROM`` entry naming an
+    AgentCore runtime or gateway ARN whose ``sourceType`` agrees (or is absent) binds; any other
+    relation or source binds nothing. Whether the record's provenance may bind at all is the
+    caller's decision (:func:`provenance_binds`).
     """
-    if not isinstance(entry, dict) or not isinstance(entry.get("sourceId"), str):
+    if (
+        not isinstance(entry, dict)
+        or entry.get("relation") != DETECTED_FROM
+        or not isinstance(entry.get("sourceId"), str)
+    ):
         return None
     match = _AGENTCORE_SOURCE.fullmatch(entry["sourceId"])
     declared = entry.get("sourceType")
@@ -214,6 +240,20 @@ def binding(entry: Any) -> dict[str, Any] | None:
         "region": match["region"],
         "coverage": coverage if coverage in COVERAGE else "unknown",
     }
+
+
+def provenance_binds(record: dict[str, Any]) -> bool:
+    """Whether a record's provenance can bind: only lineage the registry recorded by auto-detection.
+
+    ``CreateRegistryRecord`` and ``UpdateRegistryRecord`` accept provenance from the caller, so
+    on a record created through the API it is the publisher's assertion and binds nothing.
+    """
+    return record.get("createdByAutoDetection") is True
+
+
+def unrecognized_relation(entry: Any) -> bool:
+    """Whether a provenance entry carries a relation other than ``DETECTED_FROM``, or none."""
+    return not isinstance(entry, dict) or entry.get("relation") != DETECTED_FROM
 
 
 # ----------------------------------------------------------------- descriptors
@@ -276,19 +316,47 @@ def mcp_summary(server: Any, tools: Any) -> dict[str, Any]:
     return {key: value for key, value in summary.items() if value not in (None, [])}
 
 
+def _interfaces(card: dict[str, Any]) -> list[dict[str, Any]]:
+    """An A2A card's interfaces: ``supportedInterfaces`` (1.0) or ``additionalInterfaces`` (0.3)."""
+    listed = card.get("supportedInterfaces")
+    if listed is None:
+        listed = card.get("additionalInterfaces")
+    interfaces = []
+    for item in sequence(listed)[:_MAX_INTERFACES]:
+        interface = mapping(item)
+        shown = {
+            "url": text(interface.get("url")),
+            "protocol_binding": text(interface.get("protocolBinding") or interface.get("transport"), 64),
+            "protocol_version": text(interface.get("protocolVersion"), 64),
+        }
+        if shown["url"] is not None:
+            interfaces.append({key: value for key, value in shown.items() if value is not None})
+    return interfaces
+
+
 def a2a_summary(card: dict[str, Any]) -> dict[str, Any]:
-    """The A2A card fields the filesystem scanner records for a card file, bounded and sanitized."""
+    """The A2A card fields the filesystem scanner records for a card file, bounded and sanitized.
+
+    A 1.0 card names its endpoints and protocol versions only in ``supportedInterfaces``; the
+    top-level ``url`` and ``protocolVersion`` of a 0.3 card win, and otherwise the first
+    (preferred) interface supplies them.
+    """
     schemes = card.get("securitySchemes")
     skills = [mapping(skill) for skill in sequence(card.get("skills"))]
+    interfaces = _interfaces(card)
+    preferred = interfaces[0] if interfaces else {}
     return {
         "name": text(card.get("name")),
-        "url": text(card.get("url")),
+        "url": text(card.get("url")) or preferred.get("url"),
         "version": text(card.get("version")),
-        "protocol_version": text(card.get("protocolVersion")),
+        "protocol_version": text(card.get("protocolVersion"), 64) or preferred.get("protocol_version"),
+        "interfaces": interfaces,
         "skills": _strings([skill.get("name") or skill.get("id") for skill in skills]),
         "capabilities": _keys(card.get("capabilities")),
         "security_schemes": _keys(schemes),
-        "auth_declared": bool(schemes or card.get("authentication") or card.get("security")),
+        "auth_declared": bool(
+            schemes or card.get("authentication") or card.get("security") or card.get("securityRequirements")
+        ),
     }
 
 

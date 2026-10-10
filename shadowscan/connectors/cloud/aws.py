@@ -53,13 +53,16 @@ from shadowscan.connectors.cloud.aws_registry import (
     STATUSES,
     RegistryApi,
     approval_mode,
+    approval_unrecognized,
     binding,
     descriptor_summary,
     mapping,
     provenance,
+    provenance_binds,
     sequence,
     source_coverage,
     text,
+    unrecognized_relation,
 )
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
@@ -758,7 +761,7 @@ class AwsConnector(BaseConnector):
                 continue
             for summary in self._list_items(client, "list_registries", "registries"):
                 registry = guarded_record(
-                    self, f"{api.label} registry", partial(self._registry, api, client, summary, region)
+                    self, api.product, partial(self._registry, api, client, summary, region), noun="registry"
                 )
                 if registry is None:
                     continue
@@ -774,7 +777,7 @@ class AwsConnector(BaseConnector):
             raise ValueError("invalid registry id")
         detail = self._safe(client.get_registry, registryId=registry_id)
         if detail is not None and not isinstance(detail, dict):
-            self.ctx.warn(f"cloud.aws: invalid {api.label} registry details; approval mode unknown")
+            self.ctx.warn(f"cloud.aws: invalid {api.product} registry details; approval mode unknown")
             detail = None
         merged = {**summary, **_without_metadata(detail or {})}
         arn = merged.get("registryArn")
@@ -837,9 +840,7 @@ class AwsConnector(BaseConnector):
         records = []
         for summary in summaries:
             record = guarded_record(
-                self,
-                f"{api.label} record",
-                partial(self._registry_entry, api, client, registry, summary, region),
+                self, api.label, partial(self._registry_entry, api, client, registry, summary, region)
             )
             if record is None:
                 complete = False  # a skipped record is missing from the listing
@@ -976,7 +977,7 @@ class AwsConnector(BaseConnector):
         for summary in summaries:
             record = guarded_record(
                 self,
-                "Agent Registry discoverable record",
+                "Agent Registry discoverable",
                 partial(self._discoverable_record, arn, summary, details, region),
             )
             if record is None:
@@ -1819,9 +1820,11 @@ class AwsConnector(BaseConnector):
 
         The resource is the record ARN and the resource type is fixed per namespace, so the
         finding keeps its identity when the record's status or type changes. Bindings come only
-        from provenance (the runtime or gateway the registry detected the record from). A record
-        read through the discovery API is approved-only by construction: its listing is never
-        complete for reconciliation.
+        from the ``DETECTED_FROM`` provenance of a record the registry created by auto-detection
+        (the runtime or gateway it detected the record from); provenance on a record created
+        through the API is the publisher's assertion and binds nothing. A record read through the
+        discovery API is approved-only by construction: its listing is never complete for
+        reconciliation.
         """
         registry_arn, arn, record_id = rec.get("registryArn"), rec.get("recordArn"), rec.get("recordId")
         if (
@@ -1847,7 +1850,15 @@ class AwsConnector(BaseConnector):
         status = STATUSES.get(vendor_status, "unknown")
         registry = mapping(rec.get("_registry"))
         # The discovery API cannot read another account's approval configuration.
-        mode = "unknown" if discoverable else approval_mode(api, registry.get("approvalConfiguration"))
+        configuration = None if discoverable else registry.get("approvalConfiguration")
+        mode = approval_mode(api, configuration)
+        if approval_unrecognized(api, configuration):
+            # An unknown mode still approves in a trusted registry, so the scan cannot be complete.
+            self._registry_gap(
+                "cloud.aws: registry approval configuration not recognized; approval mode unknown"
+            )
+        if any(unrecognized_relation(entry) for entry in entries):
+            self._registry_gap("cloud.aws: registry record provenance relation not recognized; not bound")
         summary = mapping(rec.get("_descriptor_summary"))
         if rec.get("_detail") == "unknown":
             self._registry_gap("cloud.aws: registry record details unavailable; descriptor coverage unknown")
@@ -1887,7 +1898,11 @@ class AwsConnector(BaseConnector):
                 location=arn,
             )
         )
-        bindings = [item for entry in entries if (item := binding(entry)) is not None]
+        bindings = (
+            [item for entry in entries if (item := binding(entry)) is not None]
+            if provenance_binds(rec)
+            else []
+        )
         # Weightless locations let correlation link the record to the role it signs requests with.
         roles = [
             role
