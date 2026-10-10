@@ -17,7 +17,7 @@ Each finding becomes one entry. Its `bom-ref` is the finding id, or a stable
 | ShadowScan | CycloneDX |
 |---|---|
 | A model artifact or model store (`local-model` findings, `endpoint.models`, the models `endpoint.ollama` lists) | `components[]` of type `machine-learning-model` |
-| An MCP configuration or inventory (`mcp-server` findings, `endpoint.mcp`) and the other `endpoint.ollama` findings | `services[]` |
+| An MCP configuration or inventory (`mcp-server` findings, `endpoint.mcp`, including the A2A Agent Cards it fetches) and the other `endpoint.ollama` findings | `services[]` |
 | Every other finding (agents, agent configurations, AI apps, callers, network contacts, running processes) | `components[]` of type `application` |
 | Agent frameworks, coding agents, protocols and platforms a finding uses | `components[]` of type `framework`, shared across findings (`shadowscan:framework:<signature>`) |
 | Model providers | `services[]`, shared (`shadowscan:provider:<signature>`); no `trustZone`, because a provider id names local runtimes as well as hosted APIs |

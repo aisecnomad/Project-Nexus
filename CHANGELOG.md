@@ -149,6 +149,47 @@ summarizes each release for people who install and operate ShadowScan.
 - The rules and fixtures are synthetic and author-written; they do not
   establish live tenant acceptance or measured precision.
 
+### A2A Agent Card probe and card signatures
+
+- `endpoint.mcp` gains an opt-in live probe. `agent_card_urls` lists HTTPS card
+  URLs or agent origins (an origin is fetched at
+  `/.well-known/agent-card.json`, then `/.well-known/agent.json` only after a
+  404); `max_agent_cards` (default 100) refuses a longer list instead of
+  truncating it. Entries are checked when the connector is built. Fetches use
+  the shared HTTPS client: same-origin redirects only, private and loopback
+  addresses refused unless `options.allow_private_origin`, a 1 MiB body cap,
+  strict JSON, and `ca_bundle` for a private CA. URLs declared inside a card
+  are never fetched. Without `agent_card_urls` the connector behaves as
+  before.
+- Each fetched card is one `a2a-agent-card` finding (`provider` `a2a`,
+  identity discriminator `a2a-card`, resource the card URL without query or
+  fragment, framework `protocol.a2a`). Every fetch, HTTP, size, JSON or card
+  validation failure is a connector error and the scan is incomplete; a
+  card-shaped but incomplete card is an `incomplete-agent-card`
+  framework-usage finding. Card records replay from `--dump-records` exports
+  and are validated again; an unknown `record_type` is dropped with a warning
+  that makes the scan incomplete. MCP tool-list records are unaffected.
+- `code.filesystem` and the probe share one `metadata.agent_card` projection.
+  A2A 1.0 `supportedInterfaces` now supply `url` and `protocol_version`, which
+  were empty for 1.x cards; `interfaces` lists up to 20 interfaces as scheme,
+  host, port and path; projected strings are bounded.
+- `metadata.agent_card.signature` records `absent`, `present-unverified`,
+  `verified` or `invalid`. Verification runs only against the operator's
+  `agent_card_jwks_url` (fetched once per run; a failure is an error and
+  leaves signatures unverified), as an RFC 7515 JWS over the RFC 8785
+  canonical card without `signatures`, exactly as served. Key locations a
+  card or signature header names (`jku`, `jwk`, `x5u`, `x5c`) are never used;
+  only RS256, PS256, ES256 and EdDSA are accepted; critical header extensions
+  and unencoded payloads are refused. A card holding an integer beyond 2^53 or
+  served with protobuf defaults its signer omitted reports `invalid`.
+  `verified` never approves or registers a finding.
+- New risk tags `a2a-plaintext-interface` (10; an `http://` or `ws://`
+  interface to a host other than loopback) and `a2a-card-signature-invalid`
+  (10), with threat references ASI07 and AML.T0118.001, and ASI07 and ASI04.
+  Card files with such interfaces or malformed signatures now score higher.
+- The cards, keys and HTTP exchanges in the tests are synthetic, modeled on
+  the A2A specification; nothing was validated against a live agent.
+
 ### Scan evidence, completeness and replay corrections
 
 - Resolve supported Go SDK import aliases before publishing credential-bearing

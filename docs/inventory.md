@@ -12,6 +12,16 @@ approved records of any vendor registry you explicitly
 
 ### Agent Capability Cards (one YAML per agent)
 
+A Capability Card is not an A2A Agent Card. You write a Capability Card
+(`agent-card.yaml`) to sanction what ShadowScan finds. An agent publishes an
+[A2A Agent Card](https://github.com/a2aproject/A2A/blob/main/docs/specification.md)
+(`/.well-known/agent-card.json`) to advertise its interfaces and skills to
+other agents; ShadowScan discovers those cards in code
+([`code.filesystem`](connectors/code.md)) or fetches the ones you list
+([`endpoint.mcp`](connectors/endpoint.md#a2a-agent-card-probe)) and reports
+each as a finding. A discovered A2A card, signed or not, never registers or
+approves a finding; bind it with a Capability Card like any other agent.
+
 The bundled example is [`agent-card.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/agent-card.yaml). ShadowScan reads
 `schema_version`, `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
 `metadata.classification`, `autonomy_profile.level`, and a `discovery:` block required for automatic registration:

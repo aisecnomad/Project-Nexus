@@ -91,6 +91,8 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "ci-credentials": (5, "provider credentials available to CI pipelines"),
     "no-authentication": (15, "no end-user authentication configured"),
     "no-auth-declared": (10, "agent card declares no security scheme"),
+    "a2a-plaintext-interface": (10, "A2A Agent Card declares a plaintext HTTP interface to a remote host"),
+    "a2a-card-signature-invalid": (10, "A2A Agent Card signature is malformed or fails verification"),
     "iam-auth-only": (0, "IAM-only authorisation"),
     "public-ingress": (10, "publicly reachable ingress"),
     "exposed-llm-server": (15, "LLM inference service is reachable beyond loopback or cluster scope"),

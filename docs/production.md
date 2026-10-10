@@ -964,6 +964,22 @@ author-written.
 | Fleet merge | `merge` classifies each merged finding again and widens the interval to admit what every source's block admits (highest floor and ceiling, `bypassed` over `unknown` over `gated`); it refuses a source with a malformed block. | Rescan sources that the merge refuses. Findings from older reports are classified from the merged finding alone. |
 | Inventory stubs | Stubs are `schema_version: 2` cards declaring the observed floor. | Review the generated level and set the approved one before moving a stub into the inventory. |
 
+### October 10 A2A Agent Card probe (unreleased)
+
+This candidate adds an opt-in live probe to `endpoint.mcp` and a shared A2A
+Agent Card projection. It does not change the published 0.1.2 artifact, create
+a release, or establish live tenant acceptance: the cards, keys and HTTP
+exchanges in the tests are synthetic, modeled on the A2A specification, and
+were not checked against a live agent.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Egress | `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (HTTPS only, same-origin redirects, 1 MiB, at most `max_agent_cards`, default 100) and, when set, the JWKS at `agent_card_jwks_url`. Private and loopback agents need `options.allow_private_origin`; `ca_bundle` trusts a private CA. Without `agent_card_urls` the connector is unchanged. | Allow egress only to the listed agent hosts and the JWKS host. Keep `allow_private_origin` off unless a configuration targets internal agents on purpose. |
+| Findings | One `a2a-agent-card` finding per fetched card (`provider` `a2a`, identity `a2a-card`, resource the card URL without query). Every fetch, HTTP, JSON, size or card-validation failure is an error and the scan is incomplete (exit 3). | Treat exit 3 as unknown coverage of that agent. |
+| Card projection | `code.filesystem` and the probe share `metadata.agent_card`: A2A 1.0 `supportedInterfaces` now supply `url` and `protocol_version` (earlier 1.x cards had `url: null`), interfaces are listed, and `signature` records `absent`, `present-unverified`, `verified` or `invalid`. Projected strings are bounded (200 characters; the description 300). | Consumers that read `agent_card` must tolerate the new `interfaces`, `signature` and `signature_detail` keys. |
+| Risk | New tags `a2a-plaintext-interface` (10) and `a2a-card-signature-invalid` (10), with threat references (ASI07; AML.T0118.001; ASI04). Existing card files with an `http://` interface or a malformed `signatures` entry score higher. | Rebaseline risk-level gates that cover A2A card findings. |
+| Signatures | Verified only against `agent_card_jwks_url`, over the RFC 8785 canonical card without `signatures`, exactly as served. Keys or key URLs named by a card are never used. A card served with protobuf defaults its signer omitted, or holding an integer beyond 2^53, reports `invalid`. | Publish cards in the form you sign. Do not read `verified` as approval: an A2A card never registers or approves a finding. |
+
 ### October 9 scan evidence corrections (unreleased)
 
 This source candidate includes corrections reviewed from the existing discovery,
@@ -1236,10 +1252,12 @@ state files.
 ### Offline endpoint and runtime inventory limits
 
 The `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and
-`endpoint.ebpf` connectors and `gateway.otel` currently analyze offline exports
-only. They do not make live API calls, probe endpoint URLs, discover host
-configuration files, or read model directories (`endpoint.inventory` reads its
-fixed list of local locations). Kubernetes and OpenShift inventories are also
+`endpoint.ebpf` connectors and `gateway.otel` analyze offline exports. They do
+not make live API calls, probe endpoint URLs, discover host configuration
+files, or read model directories (`endpoint.inventory` reads its fixed list of
+local locations). The one exception is opt-in: `endpoint.mcp` fetches the A2A
+Agent Cards listed in `agent_card_urls` (see
+[A2A Agent Card probe egress](#a2a-agent-card-probe-egress)). Kubernetes and OpenShift inventories are also
 offline-only; do not provide kubeconfig material, Secret values, service-account
 tokens, environment values, or image pull credentials in an export.
 
@@ -1248,6 +1266,30 @@ safetensors files. MCP tool fingerprints are not compared with a saved baseline,
 so rug-pull detection is not implemented. Findings from these offline inventories
 carry no device name, so lifecycle links do not apply to them. Treat their output as bounded inventory evidence, not
 live execution or deployment attestation.
+
+#### A2A Agent Card probe egress
+
+`endpoint.mcp` with `agent_card_urls` makes HTTPS GET requests from the scan
+worker to each listed agent origin (the card path, and the legacy
+`/.well-known/agent.json` after a 404), and to `agent_card_jwks_url` when it is
+set and a fetched card is signed. It sends no credentials beyond any query a
+listed URL itself carries, follows redirects only on the same origin, uses no
+proxy, reads at most 1 MiB per card and never fetches a URL declared inside a
+card. Allow egress to exactly those hosts.
+
+- Agents on private or loopback addresses are refused unless
+  `options.allow_private_origin: true`, which applies to every connector in the
+  scan. Prefer a separate configuration for internal agents.
+- `ca_bundle` on `endpoint.mcp` trusts a private CA for the card and JWKS
+  endpoints; verification stays on, and a relative path resolves beside the
+  configuration file.
+- `verified` means a signature checks out against the keys you configured at
+  scan time. It is not an approval, does not register the agent, and does not
+  check key expiry or revocation beyond what that key set contains. Serve the
+  JWKS from an endpoint only your key owners can change.
+- A probe failure is an error and exit 3; never read a failed agent as absent.
+  Collection-scope fingerprints mark these live scans non-comparable, so `diff`
+  never resolves an earlier card finding from a probe.
 
 ### October 3 source capability attribution migration
 

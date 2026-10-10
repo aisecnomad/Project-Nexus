@@ -236,7 +236,13 @@ agent findings. An A2A card that names its agent and declares an endpoint,
 skills or capabilities but misses other required fields still gets its own
 `protocol.a2a` framework-usage finding, tagged `incomplete-agent-card` with
 the errors in `metadata.card_errors`, never an agent finding; the errors also
-keep the scan incomplete. JSON/YAML descriptions are not
+keep the scan incomplete. A card's `metadata.agent_card` is the projection the
+[A2A Agent Card probe](endpoint.md#a2a-agent-card-probe) uses: A2A 1.0 `supportedInterfaces` and 0.3
+`url`/`additionalInterfaces` (scheme, host, port and path only), and a
+signature state of `absent`, `present-unverified` or `invalid` (card files are
+never verified). Cards are tagged `no-auth-declared`, `a2a-plaintext-interface`
+(an `http://` or `ws://` interface to a remote host) and
+`a2a-card-signature-invalid` (a malformed signature entry). JSON/YAML descriptions are not
 executed or treated as source; low-code
 matching projects operational fields only. These predicates are not complete
 versioned vendor schema validators.
