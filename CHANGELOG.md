@@ -509,7 +509,11 @@ summarizes each release for people who install and operate ShadowScan.
   is not a plain resource name (an `https:` URL, an API version segment, a
   trailing slash) makes that registry's listing incomplete and the scan
   incomplete (exit 3, one warning). It was previously ignored, so the engine
-  it registered could be reported `observed-not-registered`.
+  it registered could be reported `observed-not-registered`. So does a nested
+  name under a reasoning engine or Dialogflow agent (`agents/<id>/flows/<id>`).
+  A plain nested name of a collection the scan does not observe (a publisher
+  model, `publishers/google/models/<id>`) names no engine and is read like a
+  Vertex AI endpoint; it previously made every such scan exit 3.
 - A publisher record must be named as a publisher of the project and location
   it was listed in (`_project` and `_location` are now required), and one named
   with another project's number is dropped like a foreign record, so it can no

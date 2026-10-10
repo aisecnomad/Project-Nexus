@@ -347,9 +347,12 @@ in a form and with a project number the scan can read. Only then can an
 observed reasoning engine, Dialogflow CX agent or chat engine in that project
 that no record binds be reported `observed-not-registered`. A runtime reference
 on a Vertex AI or Dialogflow host that is not a plain resource name (an
-`https:` URL, an API version segment or a trailing slash, for example) also
-makes the scan incomplete (exit 3): it may register an engine that would
-otherwise look unregistered. Records bind only reasoning engines and Dialogflow CX
+`https:` URL, an API version segment or a trailing slash, for example), or that
+names a sub-resource of a reasoning engine or Dialogflow agent, also makes the
+scan incomplete (exit 3): it may register an engine that would otherwise look
+unregistered. A plain resource name of a collection the scan does not observe
+(a Vertex AI endpoint, or a nested name such as a publisher model) names no
+engine and is read. Records bind only reasoning engines and Dialogflow CX
 agents, so a chat engine is never `registered-and-observed` through a record:
 check the Dialogflow CX agent behind it before treating it as unregistered.
 Engines that are not chat engines, Gemini Enterprise apps included, are cloud
