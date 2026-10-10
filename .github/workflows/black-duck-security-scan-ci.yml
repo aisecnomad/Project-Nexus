@@ -1,0 +1,39 @@
+name: CI Black Duck security scan
+
+# Optional third-party SAST/SCA. The job runs only when a Black Duck SCA
+# server is configured (repository variable BLACKDUCKSCA_URL and secret
+# BLACKDUCKSCA_TOKEN); without one the action has nothing to scan against
+# and fails. Pull requests from forks receive no secrets, so the job is
+# limited to same-repository events. Pull-request comments or SARIF upload
+# would need write scopes that tests/test_repository_policy.py must allow
+# for this workflow explicitly.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "25 6 * * 3"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      vars.BLACKDUCKSCA_URL != '' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Black Duck SCA scan
+        uses: blackduck-inc/black-duck-security-scan@805cbd09e806b01907bbea0f990723c2bb85abe9
+        with:
+          blackducksca_url: ${{ vars.BLACKDUCKSCA_URL }}
+          blackducksca_token: ${{ secrets.BLACKDUCKSCA_TOKEN }}
