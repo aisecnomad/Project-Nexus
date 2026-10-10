@@ -1278,6 +1278,9 @@ def test_replayed_coverage_gaps_stay_incomplete(tmp_path, index, marker, warning
 
 def _engine_run(index: Any, *, fixture: Path = FIXTURE, **options: Any) -> ScanResult:
     spec = ConnectorSpec("cloud.aws", {"input": str(fixture)})
+    # The fixture is an offline replay, whose records approve only for an entry that opts in.
+    trusted = options.pop("trusted_registries", [])
+    options["trusted_registries"] = [{**entry, "allow_offline_records": True} for entry in trusted]
     return Engine(ScanConfig(connectors=[spec], **options), index).run()
 
 

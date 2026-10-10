@@ -126,8 +126,7 @@ summarizes each release for people who install and operate ShadowScan.
 - Only a built-in connector that declares the new `emits_registry_records`
   engine hook may emit records. The engine drops `registry_record` from other
   connectors' findings, including cached ones and those of a plugin that
-  declares the hook, and notes the drop in their stats. Records replayed from
-  an offline export count like live records.
+  declares the hook, and notes the drop in their stats.
 - The engine writes `metadata.registry_reconciliation`:
   `registered-and-observed` and `registered-not-observed` or `not-comparable`
   on records, and `registered-and-observed` or `observed-not-registered` on
@@ -161,6 +160,15 @@ summarizes each release for people who install and operate ShadowScan.
   cannot be trusted.
 - A connector that emits records also declares the registry types it reads
   (`registry_record_types` engine hook); records of other types are removed.
+- Records replayed from an offline export no longer approve. They counted for
+  `trusted_registries` exactly like live records, so a forged export line (an
+  approved, auto-detected record with `DETECTED_FROM` provenance naming any
+  runtime) sanctioned that runtime. The engine now records which findings came
+  from a job with `input`, so a connector cannot present them as live; such
+  records still reconcile, and approve only for a trusted entry that sets the
+  new boolean `allow_offline_records: true`. A replayed record that would
+  otherwise approve is counted in an advisory `engine.inventory` warning, and
+  a record read both live and from an export in one scan counts as replayed.
 - Only `approved`, `registered` and `pending` records register what they bind.
   A `draft`, `rejected`, `deprecated`, `blocked` or `unknown` record bound to a
   running agent made it `registered-and-observed`, hiding

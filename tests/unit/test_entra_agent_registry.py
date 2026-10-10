@@ -499,7 +499,13 @@ def test_conflicting_deprecated_records_are_unresolved(tmp_path, run_connector):
 
 # ------------------------------------------------------------------ engine: trust and reconciliation
 def _scan(index, source, *, trusted=True, allow_auto_approved=False, **config):
-    entry = {"registry": "microsoft-agent-365", "id": TENANT, "allow_auto_approved": allow_auto_approved}
+    entry = {
+        "registry": "microsoft-agent-365",
+        "id": TENANT,
+        "allow_auto_approved": allow_auto_approved,
+        # The source is an offline export, whose records approve only for an entry that opts in.
+        "allow_offline_records": True,
+    }
     options = {"trusted_registries": [entry]} if trusted else {}
     cfg = ScanConfig.from_dict(
         {

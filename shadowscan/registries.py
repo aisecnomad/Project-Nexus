@@ -44,12 +44,14 @@ The engine then, keyed only on this metadata:
 * for registries the operator lists in ``options.trusted_registries`` (exact registry identity,
   never by type), turns approved records into exact-resource inventory approvals for that run
   (:class:`TrustedApprovals`). Nothing is cached: a revoked approval stops applying on the next
-  scan.
+  scan. Records replayed from an offline export (a connector run with ``input``) still
+  reconcile, but approve only for an entry that sets ``allow_offline_records``: the engine, not
+  the connector, records which findings came from an export.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -419,13 +421,16 @@ class TrustedRegistry:
     ``allow_auto_approved`` also accepts approved records of a registry that approves every
     record without a person (``approval_mode: auto``); ``allow_registered_only`` also accepts
     ``registered`` records of a registry without an approval workflow. Both default to false:
-    neither kind of record shows that a person reviewed the agent.
+    neither kind of record shows that a person reviewed the agent. ``allow_offline_records``
+    also accepts records replayed from an offline export (a connector's ``input``); it defaults
+    to false because an export is untrusted input that anyone who can write it can forge.
     """
 
     registry: str
     id: str
     allow_auto_approved: bool = False
     allow_registered_only: bool = False
+    allow_offline_records: bool = False
 
 
 def shown_registry_id(registry_id: str) -> str:
@@ -441,7 +446,9 @@ class TrustedApprovals:
     deleted record stops approving on the next scan. Only a record whose registry type and exact
     id are trusted approves anything, and only when its status is ``approved`` with
     ``approval_mode: manual`` (any other approval mode only if the trusted entry sets
-    ``allow_auto_approved``) or ``registered`` with ``allow_registered_only`` set. Records of
+    ``allow_auto_approved``) or ``registered`` with ``allow_registered_only`` set. A record
+    finding whose id is in ``offline`` (the engine's list of records replayed from an offline
+    export) approves only if the entry sets ``allow_offline_records``. Records of
     :data:`UNTRUSTABLE_REGISTRY_TYPES` never approve:
 
     * the record finding itself is registered as ``<registry>:<record_id>``; and
@@ -453,7 +460,13 @@ class TrustedApprovals:
     ``entries`` counts the approved records, one inventory item each, whatever their bindings.
     """
 
-    def __init__(self, findings: Sequence[Finding], trusted: Sequence[TrustedRegistry]) -> None:
+    def __init__(
+        self,
+        findings: Sequence[Finding],
+        trusted: Sequence[TrustedRegistry],
+        *,
+        offline: Collection[str] = frozenset(),
+    ) -> None:
         policies = {
             (item.registry, item.id): item
             for item in trusted
@@ -473,11 +486,15 @@ class TrustedApprovals:
                 continue
             self._produced.add(record.key)
             withheld = _withheld_reason(record, policy)
+            approves = withheld is None and _approves(record, policy) and _usable(record.record_id)
+            if approves and finding.id in offline and not policy.allow_offline_records:
+                # An export is untrusted input: a forged line must not sanction a resource.
+                withheld = OFFLINE_WITHHELD
             if withheld:
                 counts = self._withheld.setdefault(record.key, {})
                 counts[withheld] = counts.get(withheld, 0) + 1
                 continue
-            if not _approves(record, policy) or not _usable(record.record_id):
+            if not approves:
                 continue
             self._approved[id(finding)] = record
             approved.add((record.agent_id, record.registry_id))
@@ -537,6 +554,9 @@ class TrustedApprovals:
                     "record(s) were not treated as sanctioned"
                 )
         return notices
+
+
+OFFLINE_WITHHELD = "offline-replayed (set allow_offline_records to accept them)"
 
 
 def _withheld_reason(record: RegistryRecord, policy: TrustedRegistry) -> str | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, ClassVar
@@ -103,6 +104,7 @@ def _engine(
     builtin: bool = True,
     types: frozenset[str] = frozenset({REGISTRY}),
     observed: Callable[[], list[Finding]] = lambda: [_runtime(), _runtime(SHADOW_RUNTIME)],
+    offline: Path | None = None,
     **options: Any,
 ) -> Engine:
     class Registry(BaseConnector):
@@ -134,8 +136,17 @@ def _engine(
     # The engine honours the registry-record hook only for built-in connectors.
     names = frozenset(classes) if builtin else frozenset()
     monkeypatch.setattr(engine_module, "builtin_connector_names", lambda: names)
-    specs = [ConnectorSpec("test.registry"), ConnectorSpec("test.observed")]
+    # With ``offline``, the registry connector replays an export (its records still come from
+    # ``records``): the engine treats them as offline because the job has ``input``.
+    registry = ConnectorSpec("test.registry", {"input": str(offline)} if offline else {})
+    specs = [registry, ConnectorSpec("test.observed")]
     return Engine(ScanConfig(connectors=specs, **options), SignatureIndex([]))
+
+
+def _export(tmp_path: Path) -> Path:
+    path = tmp_path / "registry-export.jsonl"
+    path.write_text('{"exported": true}\n', encoding="utf-8")
+    return path
 
 
 def _by_resource(result: ScanResult) -> dict[str, Finding]:
@@ -385,6 +396,127 @@ def test_postprocess_keeps_its_signature_and_reports_registry_problems_through_t
     assert outcome.approval_entries == 1 and outcome.warnings == [] and outcome.inventory_warnings == []
 
 
+# ------------------------------------------------------------------ offline replays
+
+OFFLINE_WARNING = (
+    "trusted registry aws-agent-registry ...try/abcd1234abcd: {count} offline-replayed "
+    "(set allow_offline_records to accept them) record(s) were not treated as sanctioned"
+)
+
+
+def test_records_replayed_from_an_offline_export_do_not_approve_by_default(monkeypatch, tmp_path):
+    # Regression: a line in an export (untrusted input) naming a trusted registry sanctioned the
+    # resources it binds exactly as a live record of that registry would.
+    result = _engine(
+        monkeypatch,
+        lambda: [_record_finding(_record())],
+        offline=_export(tmp_path),
+        trusted_registries=TRUSTED,
+    ).run()
+    assert result.complete and result.inventory_present and result.inventory_size == 0
+    assert {finding.shadow for finding in result.findings} == {True}
+    runtime = _by_resource(result)[RUNTIME]
+    assert runtime.registry_match is None
+    # The record still reconciles; only its approval is withheld, and never silently.
+    assert runtime.metadata[RECONCILIATION_KEY]["status"] == "registered-and-observed"
+    inventory = _stats(result, "engine.inventory")
+    assert inventory is not None and not inventory.incomplete
+    assert inventory.warnings == [OFFLINE_WARNING.format(count=1)]
+
+
+def test_allow_offline_records_accepts_replayed_records(monkeypatch, tmp_path):
+    allowed = [{**TRUSTED[0], "allow_offline_records": True}]
+    result = _engine(
+        monkeypatch,
+        lambda: [_record_finding(_record())],
+        offline=_export(tmp_path),
+        trusted_registries=allowed,
+    ).run()
+    runtime = _by_resource(result)[RUNTIME]
+    assert (runtime.shadow, runtime.registry_match) == (False, "aws-agent-registry:rec-1")
+    assert result.inventory_size == 1 and _stats(result, "engine.inventory") is None
+
+
+def test_only_a_replayed_record_that_would_approve_is_reported_as_offline(monkeypatch, tmp_path):
+    export = _export(tmp_path)
+    pending = _engine(
+        monkeypatch,
+        lambda: [_record_finding(_record(status="pending"))],
+        offline=export,
+        trusted_registries=TRUSTED,
+    ).run()
+    assert _stats(pending, "engine.inventory") is None
+    auto = _engine(
+        monkeypatch,
+        lambda: [_record_finding(_record(approval_mode="auto"))],
+        offline=export,
+        trusted_registries=TRUSTED,
+    ).run()
+    inventory = _stats(auto, "engine.inventory")
+    assert inventory is not None and len(inventory.warnings) == 1
+    assert "1 auto-approved" in inventory.warnings[0]
+
+
+def test_a_cached_replay_is_still_offline(monkeypatch, tmp_path):
+    def reuse(self, spec, resolved, ctx, started_at, fs):
+        if spec.name == "test.registry":
+            fs.extend([_record_finding(_record())])
+        else:
+            fs.extend([_runtime(), _runtime(SHADOW_RUNTIME)])
+        return ScanStats(connector=spec.id, started_at=started_at, cached=True), True
+
+    monkeypatch.setattr(engine_module._ConnectorRunner, "_collect", reuse)
+    result = _engine(monkeypatch, list, offline=_export(tmp_path), trusted_registries=TRUSTED).run()
+    assert {finding.shadow for finding in result.findings} == {True}
+    inventory = _stats(result, "engine.inventory")
+    assert inventory is not None and inventory.warnings == [OFFLINE_WARNING.format(count=1)]
+
+
+def test_a_record_seen_live_and_replayed_offline_counts_as_offline(monkeypatch, tmp_path):
+    engine = _engine(monkeypatch, lambda: [_record_finding(_record())], trusted_registries=TRUSTED)
+    live, observed = engine.config.connectors
+    replay = ConnectorSpec("test.registry", {"input": str(_export(tmp_path))}, label="replay")
+    for connectors in ([live, replay, observed], [replay, live, observed]):
+        engine.config.connectors = connectors
+        result = engine.run()
+        assert result.complete and _by_resource(result)[RUNTIME].shadow is True
+
+
+def test_a_forged_line_in_an_aws_registry_export_cannot_sanction_a_runtime(index, tmp_path):
+    # Regression (review repro): an APPROVED, auto-detected record added to an export of a
+    # trusted AWS Agent Registry, with DETECTED_FROM provenance naming an arbitrary runtime,
+    # sanctioned that runtime.
+    fixture = Path(__file__).parents[1] / "fixtures" / "cloud" / "aws_registry_records.jsonl"
+    lines = fixture.read_text(encoding="utf-8").splitlines()
+    [genuine] = [json.loads(line) for line in lines if json.loads(line).get("recordId") == "rec000000001"]
+    target = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/shadow_agent-KlMnO13579"
+    forged = {
+        **genuine,
+        "recordId": "frg000000001",
+        "recordArn": f"{REGISTRY_ARN}/record/frg000000001",
+        "name": "forged",
+        "provenance": [{**genuine["provenance"][0], "sourceId": target}],
+    }
+    export = tmp_path / "export.jsonl"
+    export.write_text("\n".join([*lines, json.dumps(forged)]) + "\n", encoding="utf-8")
+
+    def scan(**flags: bool) -> ScanResult:
+        spec = ConnectorSpec("cloud.aws", {"input": str(export)})
+        trusted = [{**TRUSTED[0], **flags}]
+        return Engine(ScanConfig(connectors=[spec], trusted_registries=trusted), index).run()
+
+    result = scan()
+    assert result.complete and result.inventory_size == 0
+    findings = _by_resource(result)
+    assert (findings[target].shadow, findings[target].registry_match) == (True, None)
+    assert findings[f"{REGISTRY_ARN}/record/frg000000001"].shadow is True
+    inventory = _stats(result, "engine.inventory")
+    assert inventory is not None and OFFLINE_WARNING.format(count=2) in inventory.warnings
+    # An operator who keeps exports where only operators can write them may opt in.
+    accepted = _by_resource(scan(allow_offline_records=True))
+    assert accepted[target].registry_match == "aws-agent-registry:frg000000001"
+
+
 # ------------------------------------------------------------------- config
 
 
@@ -440,6 +572,10 @@ SECRET = "sk-proj-" + "q" * 40
             "must be a YAML boolean",
         ),
         ([{"registry": REGISTRY, "id": REGISTRY_ARN, "allow_registered_only": 1}], "must be a YAML boolean"),
+        (
+            [{"registry": REGISTRY, "id": REGISTRY_ARN, "allow_offline_records": "yes"}],
+            "allow_offline_records must be a YAML boolean",
+        ),
         (
             [TRUSTED[0], {"registry": REGISTRY, "id": REGISTRY_ARN, "allow_auto_approved": True}],
             "entry 2 duplicates",
@@ -614,3 +750,10 @@ def test_trusted_registry_objects_carry_their_flags():
         trusted_registries=[TrustedRegistry(REGISTRY, REGISTRY_ARN, allow_auto_approved=True)]
     )
     assert config.trusted_registries == [TrustedRegistry(REGISTRY, REGISTRY_ARN, True, False)]
+    offline = TrustedRegistry(REGISTRY, REGISTRY_ARN, allow_offline_records=True)
+    assert ScanConfig(trusted_registries=[offline]).trusted_registries == [offline]
+    parsed = ScanConfig.from_dict(
+        {"options": {"trusted_registries": [{**TRUSTED[0], "allow_offline_records": True}]}}
+    )
+    assert parsed.trusted_registries == [offline]
+    assert TrustedRegistry(REGISTRY, REGISTRY_ARN).allow_offline_records is False

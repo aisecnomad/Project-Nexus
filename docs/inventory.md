@@ -275,10 +275,12 @@ options:
       id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
       allow_auto_approved: false      # default
       allow_registered_only: false    # default
+      allow_offline_records: false    # default
 ```
 
 In a trusted registry, a record approves when its status is `approved` and its
-`approval_mode` is `manual`: the registry shows that a person approved it. Two
+`approval_mode` is `manual`: the registry shows that a person approved it, and
+the scan read it from the registry rather than from an offline export. Three
 optional per-registry switches widen that:
 
 - `allow_auto_approved: true` also accepts approved records whose approval no
@@ -288,6 +290,8 @@ optional per-registry switches widen that:
   human review.
 - `allow_registered_only: true` also accepts `registered` records of a registry
   without an approval workflow.
+- `allow_offline_records: true` also accepts records replayed from an offline
+  export (see [offline replays](#offline-replays)).
 
 Records these rules decline are counted in an advisory `engine.inventory`
 warning (`trusted registry <type> <id>: N auto-approved ... record(s) were not
@@ -336,12 +340,24 @@ Nothing is cached. Every scan rebuilds the approvals from that scan's records,
 so a record that is revoked, rejected or deleted, or a registry removed from
 `trusted_registries`, stops approving on the next scan.
 
-Records replayed from an offline export (a connector's `input`) are treated
-like live records: the engine cannot tell an export of a trusted registry from
-a forged one, and an approved record in it approves the resources it binds.
-Offline exports are untrusted input, so before trusting a registry whose
-records you replay, keep its exports where only operators can write them, or
-scan that registry live.
+#### Offline replays
+
+Records replayed from an offline export (a connector configured with `input`)
+do not approve by default. The engine cannot tell an export of a trusted
+registry from a forged one: a line added to an export, such as an approved,
+auto-detected record whose provenance names any runtime, would otherwise
+sanction that runtime. The engine, not the connector, records which findings a
+job with `input` produced, so a connector cannot present an exported record as
+live. A record that would otherwise approve is counted in the advisory warning
+`trusted registry <type> <id>: N offline-replayed (set allow_offline_records to
+accept them) record(s) were not treated as sanctioned`. Replayed records still
+reconcile: `registry_reconciliation` statuses are computed as for live
+records. A record that the same scan reads both live and from an export counts
+as replayed.
+
+Set `allow_offline_records: true` on the trusted entry only when its exports
+are kept where only operators can write them; otherwise scan that registry
+live.
 
 ### Example: Google Agent Registry and Gemini Enterprise
 

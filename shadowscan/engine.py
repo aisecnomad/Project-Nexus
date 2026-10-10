@@ -240,6 +240,20 @@ def _withhold_registry_records(
         )
 
 
+def _offline_record_ids(spec: ConnectorSpec, findings: list[Finding]) -> set[str]:
+    """Ids of the registry record findings a job replayed from an offline export.
+
+    The engine decides this from the job's configuration (``input`` set, as
+    ``BaseConnector.offline`` decides it), never from anything the connector
+    returns, so a connector cannot present an exported record as live. Kept
+    by finding id, a record observed both live and offline in one scan counts
+    as offline after merging.
+    """
+    if not spec.config.get("input"):
+        return set()
+    return {finding.id for finding in findings if RECORD_KEY in finding.metadata}
+
+
 @dataclass
 class _RegistryOutcome:
     """What one post-process pass learned about vendor registries, for ``run`` to report."""
@@ -1153,12 +1167,17 @@ class Engine:
         return supervisor.completed, supervisor.timed_out
 
     # --------------------------------------------------------- postprocessing
-    def _reconcile_and_score(self, findings: list[Finding], outcome: _RegistryOutcome | None = None) -> None:
+    def _reconcile_and_score(
+        self,
+        findings: list[Finding],
+        outcome: _RegistryOutcome | None = None,
+        offline: frozenset[str] = frozenset(),
+    ) -> None:
         risk_policy = RiskPolicy.from_options(self.config.risk_weights, self.config.risk_basis)
         trusted = self.config.trusted_registries
         # Approvals of trusted registries are rebuilt from this run's records every time and
         # matched beside the loaded inventory, which is never changed.
-        approvals = TrustedApprovals(findings, trusted) if trusted else None
+        approvals = TrustedApprovals(findings, trusted, offline=offline) if trusted else None
         inventory = self.inventory if self.inventory is not None or approvals is None else Inventory()
         for f in findings:
             entry: InventoryEntry | None = None
@@ -1176,11 +1195,17 @@ class Engine:
             outcome.inventory_warnings += approvals.warnings()
 
     def _postprocess(
-        self, findings: list[Finding], *, registries: _RegistryOutcome | None = None
+        self,
+        findings: list[Finding],
+        *,
+        registries: _RegistryOutcome | None = None,
+        offline: frozenset[str] = frozenset(),
     ) -> tuple[list[Finding], list[str]]:
         """Merge, correlate, match MCP registries, reconcile and score; report what had to be omitted.
 
         ``registries`` receives the MCP registry, registry reconciliation and trusted-approval results.
+        ``offline`` holds the ids of registry record findings replayed from an offline export
+        (:func:`_offline_record_ids`).
         """
         # Individually bounded findings can exceed the output budget when
         # merged. Reject only that aggregate before correlation touches it.
@@ -1200,7 +1225,7 @@ class Engine:
             *enrich_mcp_findings(findings, self._mcp_registries),
         ]
         outcome.warnings += reconcile_registries(findings)
-        self._reconcile_and_score(findings, outcome)
+        self._reconcile_and_score(findings, outcome, offline)
         findings, omitted_after_scoring = _retain_sanitizable(findings)
         omitted += omitted_after_scoring
         if omitted:
@@ -1304,13 +1329,17 @@ class Engine:
         # Merge uses first-observed owner and metadata as precedence.
         # Preserve configured order regardless of request completion.
         findings: list[Finding] = []
-        for number, _ in jobs:
+        offline: set[str] = set()
+        for number, spec in jobs:
             _, fs, st = completed[number]
             findings.extend(fs)
             stats.append(st)
+            offline |= _offline_record_ids(spec, fs)
         export_entries = exports.entries(jobs, timed_out) if dump_directory else []
         registries = _RegistryOutcome()
-        findings, postprocess_errors = self._postprocess(findings, registries=registries)
+        findings, postprocess_errors = self._postprocess(
+            findings, registries=registries, offline=frozenset(offline)
+        )
         result.inventory_size += registries.approval_entries
         stats += self._registry_stats(registries, stats, result.started_at)
         if postprocess_errors:
