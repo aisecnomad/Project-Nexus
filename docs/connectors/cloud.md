@@ -343,16 +343,19 @@ voids the claims of the listings that failed, as the live scan did. Engine,
 assistant and location names from responses become request paths only after
 validation (an engine in another project, location or collection is skipped with
 a warning). A record that analysis cannot read, including a malformed coverage
-record or an unsupported `_kind`, makes every binding's coverage `unknown`,
-every listing incomplete and every presence `unknown` for that scan. So does
-anything else that makes an offline replay incomplete, such as a record the
-loader drops before analysis (an invalid JSON line, a provider error record, a
-file skipped by a limit), and any registry record whose name carries the number
-of a project other than the one it was listed in: that record is dropped with a
-warning, so it cannot claim the other project's registry identity.
+record, an unsupported `_kind` or a publisher that is not named as a publisher
+of the project and location it was listed in, makes every binding's coverage
+`unknown`, every listing incomplete and every presence `unknown` for that scan.
+So does anything else that makes an offline replay incomplete, such as a record
+the loader drops before analysis (an invalid JSON line, a provider error record,
+a file skipped by a limit), and any registry record or publisher whose name
+carries the number of a project other than the one it was listed in: it is
+dropped with a warning, so it cannot claim the other project's registry identity
+or name a skill's publisher.
 
 **What is kept.** Items are reduced when collected, so a record dump replays what
-live analysis saw. An agent card becomes a summary (name, URL, version, protocol
+live analysis saw; analysis bounds the text fields of a replayed record to the
+same lengths. An agent card becomes a summary (name, URL, version, protocol
 version, skill ids, capability flags, security scheme names and types, and counts
 of security requirements and signatures); interface URLs lose userinfo, query and
 fragment; icons, starter prompts, assistant instructions and authorization values

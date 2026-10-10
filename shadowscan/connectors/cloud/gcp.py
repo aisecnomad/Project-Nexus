@@ -66,6 +66,7 @@ from shadowscan.connectors.cloud.gcp_registry import (
     VERTEX_CATALOG,
     RecordEntry,
     RegistryCatalogs,
+    bound_strings,
     clean_card,
     clean_texts,
     clean_tools,
@@ -1165,6 +1166,7 @@ class GcpConnector(BaseConnector):
 
     def _registry_finding(self, kind: str, rec: dict[str, Any]) -> tuple[Finding, RecordEntry]:
         """A registry record finding (its ``registry_record`` is written by ``RegistryCatalogs``)."""
+        rec = bound_strings(rec)
         entry = record_entry(kind, rec)
         finding_kind, label = _RECORD_FINDINGS[kind]
         display = rec.get("displayName") or entry.name.rsplit("/", 1)[-1]

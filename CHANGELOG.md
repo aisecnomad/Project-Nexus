@@ -307,6 +307,12 @@ summarizes each release for people who install and operate ShadowScan.
   trailing slash) makes that registry's listing incomplete and the scan
   incomplete (exit 3, one warning). It was previously ignored, so the engine
   it registered could be reported `observed-not-registered`.
+- A publisher record must be named as a publisher of the project and location
+  it was listed in (`_project` and `_location` are now required), and one named
+  with another project's number is dropped like a foreign record, so it can no
+  longer replace another project's skill publisher or tier. Analysis bounds
+  the text fields of replayed registry records to the lengths collection
+  uses.
 - The fixtures and transports in the tests are synthetic, written from
   Google's API discovery documents; nothing was validated against a live
   project.

@@ -149,7 +149,12 @@ def test_unknown_cloud_records_are_never_cached(tmp_path, index, cls, valid, ide
         ),
         (
             GcpConnector,
-            {"_kind": "agent-registry-publisher", "name": "projects/test/locations/global/publishers/p"},
+            {
+                "_kind": "agent-registry-publisher",
+                "_project": "test",
+                "_location": "global",
+                "name": "projects/test/locations/global/publishers/p",
+            },
         ),
         (OciConnector, {"_kind": "tenancy", "tenancy": "ocid1.tenancy.example"}),
         (OciConnector, {"_kind": "genai-agent-endpoint", "agent_id": "known"}),

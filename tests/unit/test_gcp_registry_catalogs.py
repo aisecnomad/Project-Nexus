@@ -1093,6 +1093,38 @@ def test_agent_registry_records_never_bind_or_claim_another_projects_engines(
     assert status(findings[RE_OK]) == "registered-and-observed"
 
 
+@pytest.mark.parametrize(
+    "changes,warning",
+    [
+        # Listed in another scanned project, named with acme-ml's number.
+        ({}, "name a project other than the one they were listed in"),
+        # Named with another project's id, or outside the location or collection it was listed in.
+        ({"name": f"projects/{P}/locations/global/publishers/acme"}, "invalid"),
+        ({"_project": P, "_location": "us-central1"}, "invalid"),
+        ({"_project": P, "name": f"projects/{N}/locations/global/skills/acme"}, "invalid"),
+    ],
+    ids=["another-projects-number", "another-projects-id", "location", "collection"],
+)
+def test_publishers_speak_only_for_the_project_they_were_listed_in(index, tmp_path, changes, warning):
+    spoof = _foreign_record(
+        "agent-registry-publisher",
+        **{
+            "_project": "sandbox-dev",
+            "displayName": "Security Team (verified)",
+            "publisherTier": "FIRST_PARTY",
+            **changes,
+        },
+    )
+    result = scan(index, write_records(tmp_path, [*fixture_records(), spoof]))
+    assert not result.complete
+    warnings = next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+    assert any(warning in text for text in warnings)
+    skill = by_resource(result.findings)[f"projects/{N}/locations/global/skills/acme-contract-review"]
+    # The skill keeps the publisher its own project listed.
+    assert skill.metadata[RECORD_KEY]["publisher"] == "Acme platform team"
+    assert skill.metadata["publisher_tier"] == "PRIVATE"
+
+
 def test_project_numbers_tell_whose_name_a_segment_is():
     numbers = gcp_registry.ProjectNumbers()
     assert numbers.names(P, "555") is None
@@ -1514,3 +1546,41 @@ def test_unrecognized_vertex_or_dialogflow_runtime_references_are_never_complete
     # The engine such a reference may register is never reported missing from the registry.
     shadow = findings[RE_SHADOW].metadata.get(RECONCILIATION_KEY)
     assert (shadow is not None and shadow["status"] == "observed-not-registered") is recognized
+
+
+def test_replayed_registry_strings_are_bounded_like_collected_ones(index):
+    name, display, agent_id = f"projects/{N}/locations/global/agents/long", "d" * 5000, "a" * 5000
+    framework, reference = "langgraph" + "f" * 5000, "//container.googleapis.com/" + "r" * 5000
+    item = {
+        "name": name,
+        "displayName": display,
+        "agentId": agent_id,
+        "attributes": {
+            "agentregistry.googleapis.com/system/Framework": {"framework": framework},
+            "agentregistry.googleapis.com/system/RuntimeReference": {"uri": reference},
+        },
+    }
+    scope = {"_kind": "agent-registry-agent", "_project": P, "_location": "global", "_api_version": "v1"}
+    collected = {**gcp_registry.normalize_ar_item("agents", item), **scope}
+    # An export written by hand (or by an older build) holds the same item unbounded.
+    replayed = {
+        "name": name,
+        "displayName": display,
+        "agentId": agent_id,
+        "framework": framework,
+        "runtime_reference": reference,
+        **scope,
+    }
+
+    def analyzed(record: dict[str, Any]) -> Finding:
+        scanner = GcpConnector(context(index))
+        (finding,) = scanner.analyze([record])
+        assert not scanner.ctx.stats.incomplete
+        return finding
+
+    live, replay = analyzed(collected), analyzed(replayed)
+    assert replay.title == live.title == "Agent Registry agent: " + "d" * 199 + "…"
+    for key, limit in (("agent_id", 256), ("framework", 512), ("runtime_reference", 512)):
+        assert replay.metadata[key] == live.metadata[key]
+        assert len(replay.metadata[key]) == limit
+    assert replay.metadata[RECORD_KEY] == live.metadata[RECORD_KEY]
