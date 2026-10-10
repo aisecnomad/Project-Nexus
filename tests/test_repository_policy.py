@@ -2154,7 +2154,9 @@ def test_label_sync_only_mutates_labels_from_main() -> None:
 # Consumer examples are copied verbatim into other repositories and clusters, so
 # the weekly drift templates follow the same rules as this repository's workflows.
 DRIFT_WORKFLOW = ROOT / "examples" / "github-action-drift.yml"
-KUBERNETES_EXAMPLES = sorted((ROOT / "examples").glob("k8s-*.yaml"))
+NETWORK_POLICY_EXAMPLE = ROOT / "examples" / "k8s-network-policy.yaml"
+# Every other Kubernetes example runs a workload; the egress policies have their own test.
+KUBERNETES_EXAMPLES = sorted(set((ROOT / "examples").glob("k8s-*.yaml")) - {NETWORK_POLICY_EXAMPLE})
 _DRIFT_CLASSES_GATED = "--fail-on-drift inventory,capability,autonomy,governance"
 
 
@@ -2385,6 +2387,23 @@ def test_kubernetes_examples_run_non_root_read_only_and_digest_pinned(path: Path
             assert security["readOnlyRootFilesystem"] is True
             assert security["capabilities"] == {"drop": ["ALL"]}
             assert "limits" in container["resources"]
+
+
+def test_kubernetes_network_policy_example_denies_egress_unless_live() -> None:
+    deny, live = yaml.safe_load_all(NETWORK_POLICY_EXAMPLE.read_text(encoding="utf-8"))
+    scanner = {"app.kubernetes.io/name": "shadowscan"}
+    # NetworkPolicies are additive: a pod without the live label matches only the deny-all policy.
+    assert deny["kind"] == live["kind"] == "NetworkPolicy"
+    assert deny["spec"] == {"podSelector": {"matchLabels": scanner}, "policyTypes": ["Egress"], "egress": []}
+    assert live["spec"]["podSelector"] == {"matchLabels": {**scanner, "shadowscan-mode": "live"}}
+    assert live["spec"]["policyTypes"] == ["Egress"]
+    blocks = [peer["ipBlock"] for rule in live["spec"]["egress"] for peer in rule["to"] if "ipBlock" in peer]
+    (https,) = [rule for rule in live["spec"]["egress"] if any("ipBlock" in peer for peer in rule["to"])]
+    assert https["ports"] == [{"protocol": "TCP", "port": 443}]
+    # Private, carrier-grade NAT and link-local (cloud metadata) ranges and Azure's wire server.
+    private = {"10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"}
+    (block,) = blocks
+    assert block["cidr"] == "0.0.0.0/0" and private | {"168.63.129.16/32"} <= set(block["except"])
 
 
 def test_kubernetes_drift_cronjob_never_overlaps_and_mounts_inputs_read_only() -> None:
