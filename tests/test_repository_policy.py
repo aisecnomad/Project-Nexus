@@ -41,6 +41,8 @@ ACTION_PIN = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}")
 # Privileges belong only to the job that needs them, never to every workflow.
 WRITE_SCOPES = {
     ("codeql.yml", "analyze"): {"security-events"},
+    # Uploads Black Duck SAST/SCA results; it gets no token, so it cannot comment on pull requests.
+    ("black-duck-security-scan-ci.yml", "build"): {"security-events"},
     ("scorecard.yml", "analysis"): {"security-events", "id-token"},
     ("release.yml", "attest"): {"attestations", "id-token"},
     ("release.yml", "publish"): {"id-token"},

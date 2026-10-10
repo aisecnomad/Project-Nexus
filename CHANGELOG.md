@@ -7,6 +7,12 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Integration review corrections (#178)
 
+- The Black Duck security scan workflow added on `main` pins
+  `actions/checkout` by commit SHA with `persist-credentials: false`, declares
+  read-only top-level permissions, keeps only `security-events: write` for the
+  scan job (the action gets no token to comment with), sets a timeout, and is
+  skipped until a Black Duck, Coverity, Polaris or SRM service is configured as
+  a repository variable, instead of failing every run.
 - Agent settings readers no longer crash on a list or object where a string is
   expected (Claude Code `permissions.defaultMode`, Codex `approval_policy` at
   the top level or in a profile, OpenClaw `gateway.customBindHost`). The
