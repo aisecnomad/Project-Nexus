@@ -694,14 +694,26 @@ summarizes each release for people who install and operate ShadowScan.
   request, such as an agent a user shared, is `registered` instead of
   `approved`. A trusted tenant entry accepts it, with the app registration and
   agent identity it binds, only with `allow_registered_only`;
-  `allow_auto_approved` no longer approves it without a reviewer.
+  `allow_auto_approved` no longer approves it without a reviewer. Only a
+  Microsoft or partner package (`type` `microsoft` or `external`) with no
+  request is `approved`; a package with no request whose `type` is missing or
+  any other member (such as `unknownFutureValue`, which Graph returns for a
+  member added later) is `unknown`, so `allow_auto_approved` does not sanction
+  it or the agent identity it names.
 - A binding's coverage is `unknown` instead of `in-scope` when any record of the
   export was rejected as malformed, so a present but malformed app registration
-  or agent identity is not reported `registered-not-observed`.
+  or agent identity is not reported `registered-not-observed`. In a replay, a
+  record the offline loader dropped (an invalid or truncated JSON line, a
+  duplicate key, a provider error record) counts as rejected too: binding
+  coverage is `unknown` and `listing_complete` is `false`.
 - The coverage marker records the tenant the credential is bound to
   (`tenantId`). A replay whose `tenant_id` differs from it is incomplete and its
-  records get an empty registry id, so they cannot be trusted; an older export
-  without the field replays as before.
+  records get an empty registry id and no bindings, so they cannot be trusted
+  and cannot mark the configured tenant's objects `registered-and-observed`. A
+  pre-issued token's decoded `tid` is recorded also when `tenant_id` is not set
+  or names another tenant, and a run whose tenant is unknown writes
+  `tenantId: null`, which a replay with `tenant_id` treats as unattributed and
+  incomplete; only an older export without the field replays as before.
 - The fixtures and Graph payloads in the tests are synthetic, modeled on
   Microsoft's Graph reference pages; nothing was validated against a live
   tenant.
