@@ -379,6 +379,59 @@ def test_absence_covers_workflows_bots_and_mcp_servers(kind):
     assert status(unregistered) == "observed-not-registered"
 
 
+@pytest.mark.parametrize("record_status", ["draft", "rejected", "deprecated", "blocked", "unknown"])
+def test_a_record_that_is_not_a_registration_never_registers_what_it_binds(record_status):
+    # Regression: a REJECTED, DEPRECATED or DRAFT record bound to a running runtime made it
+    # registered-and-observed, which hid observed-not-registered and the registry-gap rule.
+    agent, rec = observed(), record_finding(record(status=record_status))
+    assert reconcile_registries([agent, rec]) == []
+    assert rec.metadata[RECONCILIATION_KEY] == {
+        "status": "not-comparable",
+        "observed": [],
+        "reason": "record-status",
+    }
+    # The record still shows the registry's complete listing covers the account.
+    assert agent.metadata[RECONCILIATION_KEY] == {
+        "status": "observed-not-registered",
+        "registries": [{"registry": REGISTRY, "registry_id": REGISTRY_ARN}],
+    }
+
+
+@pytest.mark.parametrize("record_status", ["approved", "registered", "pending"])
+def test_approved_registered_and_pending_records_register_what_they_bind(record_status):
+    agent, rec = observed(), record_finding(record(status=record_status))
+    reconcile_registries([agent, rec])
+    assert status(agent) == status(rec) == "registered-and-observed"
+
+
+def test_a_rejected_record_beside_an_approved_one_keeps_only_the_approved_registration():
+    agent = observed()
+    rejected = record_finding(record(record_id="rec-2", status="rejected"), "rec-2")
+    approved = record_finding()
+    reconcile_registries([agent, rejected, approved])
+    assert agent.metadata[RECONCILIATION_KEY]["records"] == [approved.id]
+
+
+def test_absence_is_claimed_only_for_resource_types_the_registry_can_bind():
+    # Regression: an AWS registry binds AgentCore runtimes and gateways only, yet a Bedrock agent
+    # in an account with one bound runtime was reported observed-not-registered.
+    bedrock = observed(
+        resource=f"arn:aws:bedrock:{REGION}:{ACCOUNT}:agent/AGENTX", resource_type="bedrock-agent"
+    )
+    gateway = observed(
+        resource=f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:gateway/tools",
+        resource_type="agentcore-gateway",
+        kind=Kind.MCP_SERVER,
+    )
+    for registry in ("aws-agent-registry", "aws-agentcore-registry"):
+        reconcile_registries([bedrock, gateway, observed(), record_finding(record(registry=registry))])
+        assert RECONCILIATION_KEY not in bedrock.metadata
+        assert status(gateway) == "observed-not-registered"
+    # A registry type without declared bindable types keeps the provider and account scope.
+    reconcile_registries([bedrock, observed(), record_finding(record(registry="mcp-registry"))])
+    assert status(bedrock) == "observed-not-registered"
+
+
 def test_an_unidentified_registry_never_defines_a_scope():
     unregistered = observed(resource=f"{RUNTIME}-shadow")
     anonymous = record_finding(record(registry_id=""))

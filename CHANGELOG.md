@@ -161,6 +161,14 @@ summarizes each release for people who install and operate ShadowScan.
   cannot be trusted.
 - A connector that emits records also declares the registry types it reads
   (`registry_record_types` engine hook); records of other types are removed.
+- Only `approved`, `registered` and `pending` records register what they bind.
+  A `draft`, `rejected`, `deprecated`, `blocked` or `unknown` record bound to a
+  running agent made it `registered-and-observed`, hiding
+  `observed-not-registered` and the `registry-gap` control rule; such a record
+  is now `not-comparable` (`reason: record-status`) and its bound agent counts
+  as unregistered. AWS registries report absence only for the resource types
+  their records can bind (AgentCore runtimes and gateways), so a Bedrock agent
+  in an account with a bound runtime is no longer `observed-not-registered`.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 

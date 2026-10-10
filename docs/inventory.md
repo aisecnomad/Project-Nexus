@@ -464,12 +464,19 @@ observed findings (findings without a `registry_record`) and writes
 when the resources are equal and the binding's provider, account and region,
 where set, are equal too. Names never match.
 
+Only a record whose status is `approved`, `registered` or `pending` registers
+what it binds. A `draft`, `rejected`, `deprecated`, `blocked` or `unknown`
+record is not a registration: it is `not-comparable` with
+`reason: record-status`, and the findings it binds count as unregistered. Its
+bindings still define its registry's scope, so a running agent whose only
+record was rejected is `observed-not-registered` when the listing is complete.
+
 | Status | Set on | When |
 |---|---|---|
-| `registered-and-observed` | record and observed finding | A usable binding matches the observed finding. The record lists the matched finding ids in `observed`; the observed finding lists the record finding ids in `records` and the registries (`registry`, `registry_id`) in `registries`. |
-| `registered-not-observed` | record | Every usable binding has coverage `in-scope` and none matched: the scan collected where the agent should be and did not find it. |
-| `not-comparable` | record | No usable binding (`reason: no-usable-binding`), or no match and at least one binding outside the collected scope (`reason: binding-not-in-scope`). |
-| `observed-not-registered` | observed finding | An agent, workflow, bot or MCP server with an exact resource, provider and account, in the scope of an identified registry (the providers and accounts of its bindings) whose records all report `listing_complete: true`, that no registry matched. It is shadow with respect to the `registries` listed. |
+| `registered-and-observed` | record and observed finding | A usable binding of an `approved`, `registered` or `pending` record matches the observed finding. The record lists the matched finding ids in `observed`; the observed finding lists the record finding ids in `records` and the registries (`registry`, `registry_id`) in `registries`. |
+| `registered-not-observed` | record | An `approved`, `registered` or `pending` record whose usable bindings all have coverage `in-scope` and none matched: the scan collected where the agent should be and did not find it. |
+| `not-comparable` | record | The record's status registers nothing (`reason: record-status`), it has no usable binding (`reason: no-usable-binding`), or no binding matched and at least one is outside the collected scope (`reason: binding-not-in-scope`). |
+| `observed-not-registered` | observed finding | An agent, workflow, bot or MCP server with an exact resource, provider and account, in the scope of an identified registry (the providers and accounts of its bindings) whose records all report `listing_complete: true`, that no registry matched. The registry must be able to bind its resource type: AWS registries bind only AgentCore runtimes (`agentcore-runtime`) and gateways (`agentcore-gateway`), so a Bedrock agent is never absent from them; other registry types claim every such kind. It is shadow with respect to the `registries` listed. |
 
 A match in any registry wins over absence from another. A finding outside every
 registry's scope, one whose identity is redacted or unresolved, and one in the

@@ -80,10 +80,22 @@ RECORD_STATUSES = (
     "blocked",
     "unknown",
 )
+# Statuses under which a record registers what it binds: the registry lists the agent as
+# approved, registered or awaiting approval. A draft, rejected, deprecated, blocked or unknown
+# record is not a registration, so it never makes an observed finding registered.
+REGISTERING_STATUSES = frozenset({"approved", "registered", "pending"})
 APPROVAL_MODES = ("auto", "manual", "none", "unknown")
 LISTING_SCOPES = ("registry", "caller")
 # Records of a deprecated source never approve, so the source cannot be trusted.
 UNTRUSTABLE_REGISTRY_TYPES = frozenset({"entra-agent-registry"})
+# The resource types of the observed findings a registry type's records can bind. A registry
+# can list only these, so only these are reported absent from it (``observed-not-registered``):
+# an AWS registry binds AgentCore runtimes and gateways, never a Bedrock agent in the same
+# account. A registry type without an entry may bind any reconciled kind.
+BINDABLE_RESOURCE_TYPES: dict[str, frozenset[str]] = {
+    "aws-agent-registry": frozenset({"agentcore-runtime", "agentcore-gateway"}),
+    "aws-agentcore-registry": frozenset({"agentcore-runtime", "agentcore-gateway"}),
+}
 DESCRIPTOR_TYPES = ("agent", "mcp", "a2a", "custom", "agent-skills", "package")
 COVERAGE_VALUES = ("in-scope", "out-of-scope", "unknown")
 RECONCILIATION_STATUSES = (
@@ -290,17 +302,26 @@ def _references(references: set[tuple[str, str]]) -> list[dict[str, str]]:
     return [{"registry": registry, "registry_id": rid} for registry, rid in sorted(references)[:MAX_LINKS]]
 
 
+def _bindable(registry: str, finding: Finding) -> bool:
+    """Whether records of the registry type could bind ``finding``, so its absence means something."""
+    types = BINDABLE_RESOURCE_TYPES.get(registry)
+    return types is None or finding.resource_type in types
+
+
 def reconcile_registries(findings: Sequence[Finding]) -> list[str]:
     """Write ``metadata["registry_reconciliation"]`` from registry records; return warnings.
 
-    Observed findings are those without a registry record. A record whose usable binding
-    matches an observed finding exactly is ``registered-and-observed``, and so is that
-    finding. A record is ``registered-not-observed`` only when every usable binding was
-    in scope of the emitting connector's collection and none matched; otherwise it is
-    ``not-comparable``. An unmatched observed agent, workflow, bot or MCP server in a
-    registry's provider and account scope is ``observed-not-registered`` only when every
-    record of that registry says its listing was complete; a match in any registry wins.
-    The pass removes earlier values first, so it can run again on the same findings.
+    Observed findings are those without a registry record. A record whose status is in
+    :data:`REGISTERING_STATUSES` and whose usable binding matches an observed finding exactly
+    is ``registered-and-observed``, and so is that finding. Such a record is
+    ``registered-not-observed`` only when every usable binding was in scope of the emitting
+    connector's collection and none matched; otherwise it is ``not-comparable``. A record of any
+    other status registers nothing: it is ``not-comparable`` (``reason: record-status``) and
+    the findings it binds count as unregistered. An unmatched observed agent, workflow, bot or
+    MCP server in a registry's provider and account scope, of a resource type the registry can
+    bind (:data:`BINDABLE_RESOURCE_TYPES`), is ``observed-not-registered`` only when every
+    record of that registry says its listing was complete; a match in any registry wins. The
+    pass removes earlier values first, so it can run again on the same findings.
     """
     for finding in findings:
         finding.metadata.pop(RECONCILIATION_KEY, None)
@@ -316,6 +337,19 @@ def reconcile_registries(findings: Sequence[Finding]) -> list[str]:
     complete: dict[tuple[str, str], bool] = {}
     for record_finding, record in records:
         usable = [binding for binding in record.bindings if binding.usable]
+        if record.identified:
+            # Every record of a registry, whatever its status, shows what its listing covers.
+            complete[record.key] = complete.get(record.key, True) and record.listing_complete
+            pairs = scopes.setdefault(record.key, set())
+            pairs.update((b.provider, b.account) for b in usable if b.provider and b.account)
+        if record.status not in REGISTERING_STATUSES:
+            # A draft, rejected, deprecated, blocked or unknown record registers nothing.
+            record_finding.metadata[RECONCILIATION_KEY] = {
+                "status": "not-comparable",
+                "observed": [],
+                "reason": "record-status",
+            }
+            continue
         hits: dict[int, Finding] = {}
         unmatched_in_scope = 0
         for binding in usable:
@@ -335,10 +369,6 @@ def reconcile_registries(findings: Sequence[Finding]) -> list[str]:
             reason = "binding-not-in-scope" if usable else "no-usable-binding"
             block = {"status": "not-comparable", "observed": [], "reason": reason}
         record_finding.metadata[RECONCILIATION_KEY] = block
-        if record.identified:
-            complete[record.key] = complete.get(record.key, True) and record.listing_complete
-            pairs = scopes.setdefault(record.key, set())
-            pairs.update((b.provider, b.account) for b in usable if b.provider and b.account)
     for finding in observed:
         key = id(finding)
         if key in matched_records:
@@ -357,7 +387,9 @@ def reconcile_registries(findings: Sequence[Finding]) -> list[str]:
             continue
         scope = (finding.provider, finding.account)
         absent_from = {
-            registry for registry, pairs in scopes.items() if complete[registry] and scope in pairs
+            registry
+            for registry, pairs in scopes.items()
+            if complete[registry] and scope in pairs and _bindable(registry[0], finding)
         }
         if absent_from:
             finding.metadata[RECONCILIATION_KEY] = {

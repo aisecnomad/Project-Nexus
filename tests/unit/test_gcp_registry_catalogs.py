@@ -743,12 +743,15 @@ def test_fixture_gemini_enterprise_agents(index):
         for record in records.values()
     )
     assert status(agents["negotiator"]) == "registered-and-observed"
-    assert status(findings[f"projects/{P}/locations/global/agents/abc"]) == "registered-and-observed"
+    # Only the draft helpdesk record binds this Dialogflow agent, and a draft registers nothing:
+    # the complete Agent Registry listing of its project does not hold it.
+    assert status(agents["helpdesk"]) == "not-comparable"
+    assert status(findings[f"projects/{P}/locations/global/agents/abc"]) == "observed-not-registered"
     forecaster = agents["forecaster"]
     assert forecaster.metadata[RECONCILIATION_KEY] == {
         "status": "not-comparable",
         "observed": [],
-        "reason": "binding-not-in-scope",
+        "reason": "record-status",
     }
     assert records["forecaster"]["bindings"][0]["coverage"] == "out-of-scope"
     # The associated registry was listed completely and does not hold these agents.
@@ -903,8 +906,9 @@ def test_records_the_offline_loader_drops_taint_every_completeness_claim(index, 
     assert record["listing_complete"] is False
     assert [binding["coverage"] for binding in record["bindings"]] == ["unknown"]
     statuses = {status(finding) for finding in findings.values() if RECONCILIATION_KEY in finding.metadata}
-    # Exact matches still reconcile; no claim rests on completeness.
-    assert statuses == {"not-comparable", "registered-and-observed"}
+    # No claim rests on completeness. (The only exact match left binds a draft, which registers
+    # nothing.)
+    assert statuses == {"not-comparable"}
     assert all(
         finding.metadata["catalog_presence"]["agent_registry"] != "absent"
         for finding in findings.values()
