@@ -27,6 +27,10 @@ definitions referenced by running tasks and service deployments, plus latest
 registered definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
 actions (via `get_account_authorization_details`), CloudTrail LLM callers.
+An AgentCore gateway finding's resource is the gateway ARN, read through
+`GetGateway` (`ListGateways` returns no ARN or URL); only the ARN and URL are
+kept from it, never its authorizer settings. A failed `GetGateway`, or details
+without an ARN, makes the scan incomplete and leaves the gateway named by its id.
 Bedrock agents whose action-group functions set `requireConfirmation: ENABLED`
 record `metadata.approval_gate` (`every-action` when every enabled action group
 other than the user-input group defines functions and each one requires
@@ -125,7 +129,7 @@ fields `record_status`, `record_type`, `record_version`, `registry_arn`,
 | `status` `APPROVED`, `PENDING_APPROVAL`, `DRAFT`, `REJECTED`, `DEPRECATED` | `approved`, `pending`, `draft`, `rejected`, `deprecated`; anything else (`CREATING`, `UPDATING`, the failed states) is `unknown` |
 | `recordType` or `descriptorType` `MCP` or `GATEWAY`, `AGENT`, `A2A`, `SKILL` or `AGENT_SKILLS`, `CUSTOM` | `mcp` (an MCP server finding), `agent` and `a2a` (agent), `agent-skills` (agent configuration), `custom` (cloud resource). An unrecognized type is `custom` and makes the scan incomplete. |
 | The registry's `approvalConfiguration` at scan time | `approval_mode: auto` when Agent Registry `autoApprovalRules` holds any rule (such as `APPROVE_ALL`) or AgentCore `autoApproval` is true, whatever else the configuration holds (a true value of an unexpected type counts too); `manual` when the rules are empty or absent, or `autoApproval` is false or absent, and the configuration holds no other setting; `unknown` when the registry details were denied or carry no approval configuration, and when the configuration has a shape or a setting this release does not recognize, which also makes the scan incomplete |
-| Provenance `sourceId` with relation `DETECTED_FROM`, on a record the registry created by auto-detection (`createdByAutoDetection: true`) that is not a draft | One binding to that exact ARN, as the runtime or gateway finding carries it. Its coverage is `in-scope` only when the `agentcore` service ran in that region for the scanned account in the same scan without a warning or error (an export that rejects a runtime or gateway record is an error), and every runtime and gateway finding of that region could be reported; otherwise `out-of-scope`. Records without such provenance have no binding. An auto-detected record in `DRAFT` binds nothing: the registry wrote it from what it detected and nobody submitted it, so it registers nothing; it is still reported, with its provenance. Provenance on a record created through the API is kept in `metadata.provenance` but binds nothing. A relation other than `DETECTED_FROM`, or none, binds nothing and makes the scan incomplete. |
+| Provenance `sourceId` with relation `DETECTED_FROM`, on a record the registry created by auto-detection (`createdByAutoDetection: true`), whatever its status | One binding to that exact ARN, as the runtime or gateway finding carries it. Its coverage is `in-scope` only when the `agentcore` service ran in that region for the scanned account in the same scan without a warning or error (an export that rejects a runtime or gateway record is an error), and every runtime and gateway finding of that region could be reported under its ARN; otherwise `out-of-scope`. It is `unknown` when any runtime, gateway or registry record never reached the report (see below). Records without such provenance have no binding. An auto-detected record in `DRAFT` binds too, but registers nothing: nobody submitted it, so reconciliation reports it `not-comparable` (`record-status`) and no trusted registry approves through it. Its binding still says which account the registry's listing covers, so with a complete listing the runtime or gateway behind it reads `observed-not-registered`. Provenance on a record created through the API is kept in `metadata.provenance` but binds nothing. A relation other than `DETECTED_FROM`, or none, binds nothing and makes the scan incomplete. |
 
 Auto-approval is not human review. An approved record of a registry that
 auto-approves records when the scan reads it says so in its evidence (`the
@@ -152,7 +156,14 @@ or approve its records.
 
 A record's `listing_complete` is true only when its registry's record listing
 finished in this scan without a denial, a failed or truncated page, a skipped
-malformed record or the `max_registry_records` cap (default 1000 records per
+malformed record or the `max_registry_records` cap, and every record of the
+scan reached the report. A runtime, gateway or registry record that analysis
+rejects, that an export rejects or a replay drops (an unreadable line, a byte
+budget that cuts the input), or whose finding is omitted for failing
+sanitization may be the one a claim depends on: every record's
+`listing_complete` is then false and every in-scope binding `unknown`, so
+nothing reads `observed-not-registered` or `registered-not-observed`, and the
+scan is incomplete (default 1000 records per
 region and registry namespace). Reaching the cap, a denied or throttled call,
 an unsupported region, an SDK without the service and a malformed response all
 mark the scan incomplete (exit 3); records already read are kept. A record
@@ -209,7 +220,12 @@ skipped, or a registry's record listing was incomplete, including through the
 there `complete` says only that the discovery listing finished, never that an
 approved-only listing is complete. A registry record without these markers, as
 in exports written before they existed, replays as incomplete: regenerate such
-exports. The registry responses in the tests and in `aws_registry_records.jsonl`
+exports. A gateway in an export written before `GetGateway` was read has no
+ARN, so the bindings of its region replay `out-of-scope`. Analysis bounds the
+text of a replayed record to the lengths collection keeps (names, display
+names, status reasons and registry names to 300 characters, record versions to
+64) and rebuilds its descriptor summary with the collection limits and fields,
+so an edited or hand-written export reports no more than a live scan would. The registry responses in the tests and in `aws_registry_records.jsonl`
 are synthetic, modeled on the installed SDK models; they were not validated
 against a live account.
 

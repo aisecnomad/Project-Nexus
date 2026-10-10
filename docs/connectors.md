@@ -928,7 +928,8 @@ each as a finding with `metadata.registry_record` (registry types
 `aws-agent-registry` and `aws-agentcore-registry`). Statuses map onto the
 contract, the `DETECTED_FROM` provenance of a record the registry created by
 auto-detection binds the exact AgentCore runtime or gateway ARN (provenance
-written through the API, and an auto-detected draft, bind nothing),
+written through the API binds nothing; an auto-detected draft binds but
+registers nothing),
 `approval_mode` comes from the registry's auto-approval settings at scan time,
 and `listing_complete` is set only for a listing that finished without denial,
 truncation or the `max_registry_records` cap (default 1000 per region and

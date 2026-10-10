@@ -57,6 +57,7 @@ from shadowscan.connectors.cloud.aws_registry import (
     approval_mode,
     approval_unrecognized,
     binding,
+    bounded_summary,
     descriptor_summary,
     mapping,
     provenance,
@@ -228,6 +229,21 @@ _WORKLOAD_TRUST_SERVICES = (
 _ENVELOPE_ARN_TYPES = frozenset({"bedrock-logging", "qbusiness-application", "lex-bot", "ssm-parameter"})
 # Findings a registry record's provenance can bind (see aws_registry.binding).
 _BOUND_TYPES = frozenset({"agentcore-runtime", "agentcore-gateway"})
+# The provenance fields collection exports (aws_registry.provenance), and their longest
+# reported value: an AWS ARN is at most 2048 characters.
+_PROVENANCE_FIELDS = frozenset(
+    {"relation", "sourceId", "sourceType", "serverProtocol", "gatewayProtocol", "workloadIdentityArn"}
+)
+_MAX_PROVENANCE_TEXT = 2048
+# Exported kinds a registry claim (a listing's completeness or a binding's scope) depends on.
+_REGISTRY_INPUT_KINDS = _BOUND_TYPES | {
+    AGENT_REGISTRY.registry_kind,
+    AGENT_REGISTRY.record_kind,
+    AGENTCORE_REGISTRY.registry_kind,
+    AGENTCORE_REGISTRY.record_kind,
+    DISCOVERABLE_RECORD_KIND,
+    COVERAGE_KIND,
+}
 _DENIED_CODES = frozenset({"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"})
 # Error codes botocore's standard retry mode treats as throttling, raised once its attempts ran out.
 _THROTTLING_CODES = frozenset(
@@ -364,6 +380,26 @@ def _optional_str(value: Any) -> str | None:
     return str(value) if value else None
 
 
+def _bounded(value: Any, limit: int = 300) -> str | None:
+    """Provider text, possibly replayed, cut to ``limit`` characters with credentials redacted.
+
+    Anything but text is absent: an export is untrusted, and collection exports these fields
+    only as provider strings.
+    """
+    return text(value, limit)
+
+
+def _reportable(finding: Finding) -> bool:
+    """Whether ``run`` can sanitize the finding, or will omit it (with an error)."""
+    try:
+        # A copy: a failed pass leaves fields half redacted, and run() must still see the
+        # original finding to omit and report it.
+        copy.deepcopy(finding).sanitize()
+    except SanitizationLimitError:
+        return False
+    return True
+
+
 def _without_metadata(response: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in response.items() if k != "ResponseMetadata"}
 
@@ -456,6 +492,9 @@ class AwsConnector(BaseConnector):
         self._registry_counts: dict[tuple[str, str], int] = {}
         # Registry coverage gaps already reported by this analysis run.
         self._registry_gaps: set[str] = set()
+        # Records of _REGISTRY_INPUT_KINDS that collection produced, and whether analysis lost one.
+        self._registry_inputs = 0
+        self._registry_tainted = False
         account = ctx.get("account_id")
         # YAML numeric account IDs are common; never pad an already-truncated
         # identifier or accept booleans/floats as a cloud account identity.
@@ -712,6 +751,12 @@ class AwsConnector(BaseConnector):
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
+        self._registry_inputs = 0
+        for rec in self._service_records():
+            self._registry_inputs += rec.get("_kind") in _REGISTRY_INPUT_KINDS
+            yield rec
+
+    def _service_records(self) -> Iterator[dict[str, Any]]:
         # Explicit region lists do not create a client. Authenticate before
         # emitting account metadata rather than relying on region discovery.
         self._session_()
@@ -882,6 +927,19 @@ class AwsConnector(BaseConnector):
 
     def _agentcore_gateway(self, ac: Any, gw: dict[str, Any], region: str) -> dict[str, Any]:
         gateway_id = gw.get("gatewayId")
+        # ListGateways returns no ARN or URL, and registry provenance names the gateway by its
+        # ARN: without one the finding could never match a binding in scope. Only these two
+        # fields are kept from GetGateway; its authorizer settings name token issuers and clients.
+        detail = self._safe(ac.get_gateway, gatewayIdentifier=gateway_id)
+        if detail is not None and not isinstance(detail, dict):
+            self.ctx.warn("cloud.aws: invalid AgentCore gateway details; gateway identity unresolved")
+            detail = None
+        for key in ("gatewayArn", "gatewayUrl"):
+            if isinstance(detail, dict) and detail.get(key) is not None:
+                gw[key] = detail[key]
+        if detail is not None and not isinstance(gw.get("gatewayArn"), str):
+            # A gateway without an ARN cannot match a registry binding: the region is not clean.
+            self.ctx.warn("cloud.aws: AgentCore gateway ARN unavailable; gateway identity unresolved")
         targets = self._list_items(ac, "list_gateway_targets", "items", gatewayIdentifier=gateway_id)
         gw["_targets"] = []
         for target in targets:
@@ -1468,11 +1526,16 @@ class AwsConnector(BaseConnector):
         failure: Exception | None = None
         callers: dict[str, dict[str, Any]] = {}
         dispatch = RecordDispatch(self, "account", "cloudtrail-event")
+        self._registry_tainted = False
+        received = 0
         try:
-            for rec in records:
+            for rec in self._watched(records):
                 kind = dispatch.kind(rec)
                 if kind is None:
+                    # An unreadable record may be the runtime or record a registry claim overlooks.
+                    self._registry_tainted = True
                     continue
+                received += kind in _REGISTRY_INPUT_KINDS
                 try:
                     if kind == "account":
                         account = rec.get("account")
@@ -1494,9 +1557,14 @@ class AwsConnector(BaseConnector):
                         if f:
                             pending.append(f)
                 except RECORD_ERRORS:
+                    if kind in _REGISTRY_INPUT_KINDS:
+                        self._registry_tainted = True
                     dispatch.invalid()
         except Exception as exc:  # noqa: BLE001 - preserve observations before a collection failure
             failure = exc
+        if not self.offline and received < self._registry_inputs:
+            # The export rejected a record collection produced, so analysis never saw it.
+            self._registry_tainted = True
         expected_account = self.account  # configured offline, or verified by live STS
         if expected_account is not None:
             accounts.add(expected_account)
@@ -1516,11 +1584,54 @@ class AwsConnector(BaseConnector):
             self.ctx.check_deadline()
             self._resolve_finding_account(f, expected_account)
         self._unbind_unreported_regions(pending)
+        self._void_registry_claims(pending)
         for f in pending:
             self.ctx.check_deadline()
             yield f
         if failure is not None:
             raise failure
+
+    def _watched(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        """``records``, noting a replay whose loader dropped input (it reports every drop)."""
+        iterator = iter(records)
+        while True:
+            before = self.ctx.diagnostics_recorded()
+            try:
+                rec = next(iterator)
+            except StopIteration:
+                self._note_offline_drop(before)
+                return
+            self._note_offline_drop(before)
+            yield rec
+
+    def _note_offline_drop(self, before: int) -> None:
+        if self.offline and self.ctx.diagnostics_recorded() != before:
+            self._registry_tainted = True
+
+    def _void_registry_claims(self, findings: list[Finding]) -> None:
+        """Withdraw registry completeness and scope claims when a record never reached the report.
+
+        A record that analysis rejected, that an export or replay dropped, or whose finding
+        ``run`` omits may be the runtime, gateway or registry record a claim depends on: every
+        ``listing_complete`` becomes false and every in-scope binding ``unknown``, so
+        reconciliation reports neither ``observed-not-registered`` nor ``registered-not-observed``.
+        The scan is already incomplete through the diagnostic of each such drop.
+        """
+        records = [mapping(f.metadata.get(RECORD_KEY)) for f in findings if RECORD_KEY in f.metadata]
+        if not records:
+            return
+        if not self._registry_tainted:
+            for finding in findings:
+                if RECORD_KEY in finding.metadata and not _reportable(finding):
+                    self._registry_tainted = True
+                    break
+        if not self._registry_tainted:
+            return
+        for record in records:
+            record["listing_complete"] = False
+            for item in sequence(record.get("bindings")):
+                if mapping(item).get("coverage") == "in-scope":
+                    item["coverage"] = "unknown"
 
     def _unbind_unreported_regions(self, findings: list[Finding]) -> None:
         """Take registry bindings out of scope in a region whose runtime or gateway cannot be reported.
@@ -1538,13 +1649,13 @@ class AwsConnector(BaseConnector):
             return
         unreported: set[tuple[str | None, str | None]] = set()
         for finding in findings:
-            if finding.resource_type in _BOUND_TYPES:
-                try:
-                    # A copy: a failed pass leaves fields half redacted, and run() must still see
-                    # the original finding to omit and report it.
-                    copy.deepcopy(finding).sanitize()
-                except SanitizationLimitError:
-                    unreported.add((finding.account, finding.region))
+            # A runtime or gateway without its ARN (a gateway in an export written before
+            # GetGateway was read) can match no binding either.
+            if finding.resource_type in _BOUND_TYPES and (
+                source_coverage(finding.resource, finding.account, {str(finding.region)}) != "in-scope"
+                or not _reportable(finding)
+            ):
+                unreported.add((finding.account, finding.region))
         for item in bindings:
             if (item.get("account"), item.get("region")) in unreported:
                 item["coverage"] = "out-of-scope"
@@ -2093,6 +2204,8 @@ class AwsConnector(BaseConnector):
             raise ValueError("invalid registry record type or status")
         if any(value is not None and not isinstance(value, str) for value in names):
             raise ValueError("invalid registry record name")
+        # An export is untrusted: replayed text is bounded to the lengths collection keeps.
+        names = (text(names[0]), text(names[1]))
         entries = [] if discoverable else rec.get("provenance") or []
         if not isinstance(entries, list) or len(entries) > MAX_PROVENANCE:
             raise ValueError("invalid registry record provenance")
@@ -2102,6 +2215,8 @@ class AwsConnector(BaseConnector):
             descriptor_type = "custom"
         status = STATUSES.get(vendor_status, "unknown")
         registry = mapping(rec.get("_registry"))
+        registry_name = _bounded(registry.get("name"))
+        version = _bounded(rec.get("recordVersion"), 64)
         # The discovery API cannot read another account's approval configuration.
         configuration = None if discoverable else registry.get("approvalConfiguration")
         mode = approval_mode(api, configuration)
@@ -2112,7 +2227,7 @@ class AwsConnector(BaseConnector):
             )
         if any(unrecognized_relation(entry) for entry in entries):
             self._registry_gap("cloud.aws: registry record provenance relation not recognized; not bound")
-        summary = mapping(rec.get("_descriptor_summary"))
+        summary = bounded_summary(rec.get("_descriptor_summary"))
         if rec.get("_detail") == "unknown":
             self._registry_gap("cloud.aws: registry record details unavailable; descriptor coverage unknown")
         if rec.get("_descriptor_parse") == "invalid":
@@ -2151,8 +2266,8 @@ class AwsConnector(BaseConnector):
         f.add_evidence(
             registry_evidence(
                 api.registry_type,
-                f"{api.label} record '{name}' ({vendor_status}, {vendor_type} {rec.get('recordVersion')}) "
-                f"in registry {registry.get('name') or registry_arn}{review}{scope}",
+                f"{api.label} record '{name}' ({_bounded(vendor_status, 64)}, {_bounded(vendor_type, 64)} "
+                f"{version}) in registry {registry_name or registry_arn}{review}{scope}",
                 location=arn,
             )
         )
@@ -2202,17 +2317,21 @@ class AwsConnector(BaseConnector):
             {
                 RECORD_KEY: record,
                 "registry_arn": registry_arn,
-                "registry_name": registry.get("name"),
-                "record_status": vendor_status,
-                "record_type": vendor_type,
-                "record_version": rec.get("recordVersion"),
-                "status_reason": rec.get("statusReason"),
+                "registry_name": registry_name,
+                "record_status": _bounded(vendor_status, 64),
+                "record_type": _bounded(vendor_type, 64),
+                "record_version": version,
+                "status_reason": _bounded(rec.get("statusReason")),
                 "created_by_auto_detection": rec.get("createdByAutoDetection"),
-                "created_by": rec.get("createdBy"),
+                "created_by": _bounded(rec.get("createdBy")),
                 "name": names[0],
                 "display_name": names[1],
                 "provenance": [
-                    {k: v for k, v in entry.items() if not str(k).startswith("_")}
+                    {
+                        k: _bounded(v, _MAX_PROVENANCE_TEXT)
+                        for k, v in entry.items()
+                        if k in _PROVENANCE_FIELDS and isinstance(v, str)
+                    }
                     for entry in entries
                     if isinstance(entry, dict)
                 ],

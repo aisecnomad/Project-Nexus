@@ -545,7 +545,12 @@ summarizes each release for people who install and operate ShadowScan.
   without a warning or error in that region for the scanned account (an
   export that rejects a runtime or gateway record counts) and every runtime and
   gateway finding of that region could be reported. An auto-detected record
-  still in `DRAFT` binds nothing: nobody submitted it, so it registers nothing.
+  binds whatever its status: a `DRAFT` nobody submitted registers nothing
+  (core reconciliation reports it `not-comparable`, `record-status`), but its
+  binding keeps the registry's account in scope, so the runtime or gateway
+  behind a registry of drafts only reads `observed-not-registered` when the
+  listing is complete. Stripping the draft's binding had left such a registry
+  without scope and its runtimes without any reconciliation.
   Provenance on a record created through the API is the publisher's assertion
   and binds nothing, and a provenance relation this release does not recognize
   binds nothing and makes the scan incomplete.
@@ -586,6 +591,27 @@ summarizes each release for people who install and operate ShadowScan.
   `registry_coverage: approved-only`, never set `listing_complete`, have no
   bindings and `approval_mode: unknown`, and keep their registry's account
   without being marked unresolved. Batch errors report only their codes.
+- AgentCore gateway findings are named by the gateway ARN, read through
+  `GetGateway` (already covered by `bedrock-agentcore:Get*`): `ListGateways`
+  returns no ARN, so live gateway findings were named by their id and a
+  registry binding to the gateway ARN could never match, reading the record
+  `registered-not-observed` and the gateway `observed-not-registered` in a
+  complete scan. Only the ARN and URL are kept from `GetGateway`. A failed
+  call, or details without an ARN, makes the scan incomplete; a gateway
+  replayed from an older export without its ARN takes its region's bindings
+  out of scope. Live gateway finding ids change: re-baseline them.
+- A runtime, gateway or registry record that analysis rejects, that an export
+  rejects or a replay drops, or whose finding `run` omits for failing
+  sanitization now withdraws the registry claims it could undercut: every
+  record's `listing_complete` becomes false and every in-scope binding
+  `unknown`. Surviving records had kept `listing_complete` and replay had kept
+  the exported in-scope coverage, so an incomplete scan still reported
+  `observed-not-registered` or `registered-not-observed` as facts.
+- Analysis bounds the text of a replayed registry record to the collection
+  limits (names, display names, status reasons and registry names to 300
+  characters, record versions to 64, provenance to the exported fields) and
+  rebuilds its descriptor summary with the collection limits and fields; an
+  edited export had carried unbounded text into titles and metadata.
 - The registry responses and `tests/fixtures/cloud/aws_registry_records.jsonl`
   are synthetic, modeled on the installed SDK models; nothing was validated
   against a live account. The README demo export is unchanged.

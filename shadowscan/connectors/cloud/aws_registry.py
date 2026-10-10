@@ -250,10 +250,12 @@ def provenance_binds(record: dict[str, Any]) -> bool:
 
     ``CreateRegistryRecord`` and ``UpdateRegistryRecord`` accept provenance from the caller, so
     on a record created through the API it is the publisher's assertion and binds nothing. An
-    auto-detected record still in ``DRAFT`` binds nothing either: the registry wrote it from
-    what it detected and nobody has submitted it, so it registers nothing.
+    auto-detected record binds whatever its status: a ``DRAFT`` nobody submitted registers
+    nothing (reconciliation treats it as not comparable and no trusted registry approves it),
+    but its binding still says which account the registry's listing covers, so the runtime or
+    gateway behind it reads as observed but not registered.
     """
-    return record.get("createdByAutoDetection") is True and record.get("status") != "DRAFT"
+    return record.get("createdByAutoDetection") is True
 
 
 def unrecognized_relation(entry: Any) -> bool:
@@ -503,3 +505,106 @@ def descriptor_summary(
     if sources:
         summary["sources"] = sources
     return summary, "invalid" if invalid else "ok"
+
+
+def _short(values: Any) -> list[str]:
+    """Names of a card's members, bounded like :func:`_keys`."""
+    return [shown for item in sequence(values)[:_MAX_ITEMS] if (shown := text(item, 64))]
+
+
+def _bounded_interfaces(values: Any) -> list[dict[str, Any]]:
+    interfaces = []
+    for item in sequence(values)[:_MAX_INTERFACES]:
+        interface = mapping(item)
+        shown = {
+            "url": text(interface.get("url")),
+            "protocol_binding": text(interface.get("protocol_binding"), 64),
+            "protocol_version": text(interface.get("protocol_version"), 64),
+        }
+        if shown["url"] is not None:
+            interfaces.append({key: value for key, value in shown.items() if value is not None})
+    return interfaces
+
+
+def _bounded_credentials(values: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in sequence(values)[:4]:
+        provider = mapping(item)
+        if provider.get("type") == "OAUTH":
+            out.append(
+                {
+                    "type": "OAUTH",
+                    "providerArn": text(provider.get("providerArn")),
+                    "grantType": text(provider.get("grantType")),
+                    "scopes": _strings(provider.get("scopes"), limit=20),
+                }
+            )
+        elif provider.get("type") == "IAM":
+            out.append(
+                {
+                    "type": "IAM",
+                    "roleArn": text(provider.get("roleArn")),
+                    "service": text(provider.get("service")),
+                    "region": text(provider.get("region")),
+                }
+            )
+    return out
+
+
+def bounded_summary(value: Any) -> dict[str, Any]:
+    """A descriptor summary as analysis may report it, whether collected now or replayed.
+
+    An export is untrusted input: its summary is rebuilt with the limits and fields of
+    :func:`descriptor_summary`, so a replayed summary reports no more than collection would.
+    A summary collection produced comes back unchanged.
+    """
+    summary = mapping(value)
+    out: dict[str, Any] = {}
+    if "types" in summary:
+        out["types"] = _short(summary["types"])
+    mcp = mapping(summary.get("mcp"))
+    shown_mcp = {
+        "name": text(mcp.get("name")),
+        "version": text(mcp.get("version")),
+        "remotes": _strings(mcp.get("remotes")),
+        "packages": _strings(mcp.get("packages")),
+        "tools": _strings(mcp.get("tools"), limit=100),
+    }
+    shown_mcp = {key: item for key, item in shown_mcp.items() if item not in (None, [])}
+    if shown_mcp:
+        out["mcp"] = shown_mcp
+    if isinstance(summary.get("a2a"), dict):
+        card = summary["a2a"]
+        auth = card.get("auth_declared")
+        shown_card = {
+            "name": text(card.get("name")),
+            "url": text(card.get("url")),
+            "version": text(card.get("version")),
+            "protocol_version": text(card.get("protocol_version"), 64),
+            "interfaces": _bounded_interfaces(card.get("interfaces")),
+            "skills": _strings(card.get("skills")),
+            "capabilities": _short(card.get("capabilities")),
+            "security_schemes": _short(card.get("security_schemes")),
+            "auth_declared": auth if isinstance(auth, bool) else None,
+        }
+        # An export written before a field existed keeps it absent.
+        out["a2a"] = {key: item for key, item in shown_card.items() if key in card}
+    versions = {
+        name: shown
+        for name, item in list(mapping(summary.get("schema_versions")).items())[:_MAX_INTERFACES]
+        if (shown := text(item, 64)) is not None and text(name, 64) == name
+    }
+    if versions:
+        out["schema_versions"] = versions
+    sources = [
+        {
+            "descriptor": text(source.get("descriptor"), 64),
+            "url": text(source.get("url")),
+            "credential_providers": _bounded_credentials(source.get("credential_providers")),
+        }
+        for item in sequence(summary.get("sources"))[:_MAX_INTERFACES]
+        if isinstance(source := item, dict)
+    ]
+    if sources:
+        out["sources"] = sources
+    return out
