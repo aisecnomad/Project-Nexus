@@ -92,6 +92,7 @@ include:
 | `shadow` | Not in the sanctioned inventory (only when an inventory is supplied) | 25 |
 | `registered` | Matched to exactly one inventory entry | −10 |
 | `no-owner` | No identifiable owner | 10 |
+| `mcp-not-in-approved-registry` | An enabled MCP server that no approved MCP registry lists by what its client fetches or connects to, lists only as deleted, or that has no such identity (only when `options.mcp_registries` has an approved registry and every approved registry loaded) | 15 |
 | `tag:plaintext-credential` | Plaintext credential exposed | 25 |
 | `tag:public-network` | Public network access enabled | 5 |
 | `tag:public-ingress` | Publicly reachable ingress | 10 |
@@ -122,6 +123,7 @@ include:
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
 | `tag:test-code-only` / `tag:generated-code-only` | Code evidence is only in test or fixture code, or only in generated files | −10 |
 | `tag:docs-only` / `tag:example-code-only` | Code evidence is only in documentation or example directories inside the project | −8 |
+| `tag:mcp-registry-published` / `tag:mcp-unpublished` / `tag:mcp-registry-deprecated` / `tag:mcp-registry-deleted` / `tag:mcp-registry-version-unpublished` / `tag:mcp-registry-outdated` / `tag:mcp-registry-unidentified` | MCP registry review hints from `options.mcp_registries` ([MCP registry provenance](../connectors/code.md#mcp-registry-provenance)) | 0 |
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
 10 for `agent-config`, `workflow`, `bot-app`, `oauth-grant`,
@@ -150,6 +152,14 @@ The factors are broader: `mcp-plain-http` scores any server URL whose scheme
 tag marks only plaintext URLs to another host, and both factors also count servers marked disabled, which the
 tags skip.
 Posture and MCP-risk evidence has weight 0: it changes risk, not confidence.
+The MCP registry tags weigh 0, so configuring `options.mcp_registries` changes
+no score by itself, and a server's publication never lowers its risk. Only an
+approved registry (`approved: true`) scores, through the
+`mcp-not-in-approved-registry` governance factor: once per finding, whatever
+the number of servers it counts, and like the other governance factors it is
+excluded from `danger_score` and reported with weight 0 under
+`risk_basis: danger`. When an approved registry fails to load, the factor is
+not applied and the scan is incomplete.
 `options.risk_weights` overrides weights; see the README's risk policy. Its
 keys are checked, so a typo cannot silently change nothing: unknown groups,
 `kinds`, `governance` and `autonomy` keys are rejected (`autonomy` keys are `L0`
@@ -185,7 +195,8 @@ a `confidence-scaling` factor, which is never positive, and a clamp at 0 or 100
 as a `bounds` factor, so the listed factors always add up to `score`.
 
 `risk.danger_score` applies the same scale and bounds to the factors other than
-the governance factors (`shadow`, `registered`, `no-owner`). With
+the governance factors (`shadow`, `registered`, `no-owner`,
+`mcp-not-in-approved-registry`). With
 `options.risk_basis: danger` the governance factors are reported with weight 0,
 so `score`, `level` and `--fail-on` follow the danger score.
 

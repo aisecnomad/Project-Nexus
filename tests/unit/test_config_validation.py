@@ -16,10 +16,12 @@ from shadowscan.config import (
     MinConfidenceError,
     ScanConfig,
     accepted_connector_keys,
+    validate_mcp_registries,
 )
 from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector
 from shadowscan.errors import SetupError
+from shadowscan.mcp_registry import McpRegistrySource
 
 
 @pytest.mark.parametrize("value", [1.01, -0.01, math.nan, math.inf, -math.inf, True, None, "invalid"])
@@ -492,3 +494,69 @@ def test_relative_jwt_ca_bundle_resolves_beside_the_configuration_not_the_workin
 
     assert spec.config["ca_bundle"] == str(directory / "internal-ca.pem")
     assert spec.config["input"] == str(directory / "tokens.txt")
+
+
+_PIN = "a" * 64
+
+
+def test_mcp_registries_resolve_snapshots_beside_the_configuration(tmp_path, monkeypatch):
+    directory = tmp_path / "deployment"
+    directory.mkdir()
+    config = directory / "scan.yaml"
+    config.write_text(
+        "options:\n"
+        "  mcp_registries:\n"
+        f"    - {{id: official, snapshot: official.json, sha256: {_PIN}}}\n"
+        f"    - {{id: corp.catalog, snapshot: /srv/catalog.json, sha256: {'b' * 64}, approved: true}}\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    cfg = ScanConfig.from_yaml(config)
+    assert cfg.mcp_registries == [
+        McpRegistrySource("official", str(directory / "official.json"), _PIN, False),
+        McpRegistrySource("corp.catalog", "/srv/catalog.json", "b" * 64, True),
+    ]
+    # Programmatic sources are revalidated as they are, without resolution.
+    cfg.validate_security_options()
+    assert cfg.mcp_registries[0].snapshot == str(directory / "official.json")
+
+
+@pytest.mark.parametrize(
+    "value,message",
+    [
+        ({"id": "x", "snapshot": "s.json", "sha256": _PIN}, "must be a list"),
+        (["official"], "entry 1 must be a mapping"),
+        ([{"id": "x", "snapshot": "s.json"}], "requires id, snapshot and sha256"),
+        ([{"id": "x", "snapshot": "s.json", "sha256": _PIN, "url": "https://x"}], "unsupported field"),
+        ([{"id": "Official", "snapshot": "s.json", "sha256": _PIN}], "entry 1.id must be"),
+        ([{"id": "-x", "snapshot": "s.json", "sha256": _PIN}], "entry 1.id must be"),
+        ([{"id": "x" * 65, "snapshot": "s.json", "sha256": _PIN}], "entry 1.id must be"),
+        ([{"id": 7, "snapshot": "s.json", "sha256": _PIN}], "entry 1.id must be"),
+        ([{"id": "x", "snapshot": " ", "sha256": _PIN}], "entry 1.snapshot must be"),
+        ([{"id": "x", "snapshot": "s.json", "sha256": "A" * 64}], "64 lowercase hexadecimal"),
+        ([{"id": "x", "snapshot": "s.json", "sha256": "a" * 63}], "64 lowercase hexadecimal"),
+        (
+            [{"id": "x", "snapshot": "s.json", "sha256": _PIN, "approved": "true"}],
+            "approved must be a YAML boolean",
+        ),
+        (
+            [
+                {"id": "x", "snapshot": "a.json", "sha256": _PIN},
+                {"id": "x", "snapshot": "b.json", "sha256": _PIN},
+            ],
+            "entry 2 repeats the id",
+        ),
+        ([{"id": f"r{n}", "snapshot": "s.json", "sha256": _PIN} for n in range(17)], "at most 16 entries"),
+    ],
+)
+def test_mcp_registries_are_validated_without_echoing_values(value, message):
+    with pytest.raises(ConfigValidationError, match=message) as failure:
+        ScanConfig.from_dict({"options": {"mcp_registries": value}})
+    assert "s.json" not in str(failure.value) and _PIN not in str(failure.value)
+
+
+def test_mutated_mcp_registries_are_revalidated():
+    cfg = ScanConfig(mcp_registries=[McpRegistrySource("official", "/srv/official.json", _PIN)])
+    cfg.mcp_registries.append(McpRegistrySource("official", "/srv/other.json", _PIN))
+    with pytest.raises(ConfigValidationError, match="repeats the id"):
+        cfg.validate_security_options()
+    assert validate_mcp_registries([]) == []

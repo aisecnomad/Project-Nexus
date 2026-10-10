@@ -684,6 +684,95 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
+### MCP registry provenance
+
+With [`options.mcp_registries`](../getting-started/configuration.md#mcp-registry-snapshots),
+the engine matches every MCP server of an `mcp-server` finding against each
+pinned MCP Registry snapshot after correlation and before scoring. It applies
+to this connector's MCP configurations, to `endpoint.inventory` client
+configurations and, by server URL, to `endpoint.mcp` tool findings; it reads no
+file and contacts no registry. Each server is matched by what its client fetches
+or connects to, and by nothing else:
+
+1. a server started by a command (transport `stdio`, or no transport and no
+   URL): the package its launch fetches (`npx`, `bunx`, `pnpm dlx`, `yarn dlx`,
+   `bun x`, `uvx`, `uv tool run`, `pipx run`, `docker run`, `podman run`, also
+   as `npx.cmd` or `uvx.exe` and inside `cmd /c`), compared by registry type
+   and identifier: npm names lowercased, PyPI names normalized as PEP 503 does,
+   OCI images without tag or digest and with Docker Hub spelled `docker.io`.
+   The exact version or image tag the launch pins is the configured version; a
+   range or a moving tag such as `latest` pins none. A URL field on such a
+   server is not where its client connects and is not compared;
+2. a server reached over a remote transport (`http`, `sse`, `streamable-http`,
+   or no transport and no command): its URL, compared with the scheme and host
+   lowercased and the default port, query, fragment and trailing `/` removed. A
+   command field on such a server is not compared;
+3. an MCP server manifest (a `server.json` document with a top-level `name`
+   and `packages` or `remotes`, not a server table): every package and remote
+   URL it declares, which one registry name must list together.
+
+The first identity that applies is the only one used: an unlisted package
+never falls back to the server's URL or name. A server has no identity when
+its launch names no registry package or could fetch or run something else:
+`node ./server.js`, a shell command line, a local path, a Git, URL or file
+source, an npm alias (`name@npm:other`), more than one `-p`/`--package` or a
+command that is not the package's own, another registry, index, configuration
+file, cache or extra package (`--registry`, `--userconfig`, `--index-url`,
+`--with`, `--pip-args`, `--entrypoint`, an option the parser does not know, or
+an environment variable such as `npm_config_registry`, `UV_INDEX_URL`,
+`PIP_INDEX_URL` or `DOCKER_HOST`). So does a URL that is templated, carries
+user information (redacted when the configuration is parsed, and able to name
+another host to the client: `https://evil.example\@host/` reaches
+`evil.example`) or does not parse, an unknown transport with both a command and
+a URL, and a manifest package or remote that cannot be compared. Client-side
+files such as `.npmrc` are not read. A manifest without an identity is still
+looked up by its own `name`, which gives provenance hints (`match: name`) and
+never counts as listed in an approved registry; a client configuration chooses
+its server names freely, so its names are never looked up.
+
+An identified or named server gets `registry`: one entry per registry that
+lists it, sorted by registry id, with `registry`, `name`, `namespace`, `match`
+(`package`, `remote` or `name`), `configured_version`, `version_published`,
+`latest_version`, `is_latest`, `status` (`active`, `deprecated` or `deleted`),
+`published_at` and `ambiguous`. An empty list means no loaded registry lists
+it. A package or URL that several registry names list is `ambiguous`: the first
+name is shown and no version or status is claimed. An `endpoint.mcp` tool
+finding keeps its server's entries in `metadata.mcp_registry.matches`.
+
+The finding carries `metadata.mcp_registry` (`registries`: id, `sha256`,
+`fetched_at` and `approved` of each loaded registry; `approved_checked`;
+`not_in_approved`; `unidentified`, the enabled servers without an identity) and
+these review tags, each with zero-weight evidence `mcp-registry:<tag>`. They
+never lower risk and weigh 0 by default:
+
+| Tag | Meaning |
+|---|---|
+| `mcp-registry-published` | an enabled server is listed in a configured registry |
+| `mcp-unpublished` | an enabled, identified server is listed in none (only when every configured registry loaded) |
+| `mcp-registry-deprecated` / `mcp-registry-deleted` | the registry marks the matched version, or the latest one, deprecated or deleted |
+| `mcp-registry-version-unpublished` | the pinned version is not among the versions the registry lists for that package |
+| `mcp-registry-outdated` | the pinned version, or the endpoint, is not the registry's latest version |
+| `mcp-registry-unidentified` | an enabled server has no identity to match, so no registry can vouch for it |
+
+An `options.mcp_registries` entry with `approved: true` is the organisation's
+approved MCP catalog. When at least one is configured and every approved registry loaded
+(`approved_checked: true`), `not_in_approved` counts the enabled servers that no
+approved registry lists by their identity, or lists only as deleted, and every
+enabled server without an identity: an allowlist cannot vouch for what it
+cannot identify. Scoring then adds the governance factor
+`mcp-not-in-approved-registry` (15; see [risk](../concepts/risk.md)). A server
+whose pinned version the catalog does not list still counts as listed and is
+tagged `mcp-registry-version-unpublished`. A catalog package listed with a
+`registryBaseUrl` other than its type's public registry (npm
+`https://registry.npmjs.org`, PyPI `https://pypi.org`, an OCI image's own host)
+matches no launch, since a launch cannot show that it fetches from there; list
+it without `registryBaseUrl` to approve the name wherever clients resolve it.
+Disabled servers get `registry` entries but no tags and no count. Publication
+in a registry says who published a server, not that it is safe; the matching
+is exact and makes no name-similarity guesses. A URL's query is not compared,
+so servers that share a host and path (one endpoint selecting tools by query)
+match together, usually as `ambiguous`.
+
 ### Limiting a walk with `include`
 
 `include` lists paths relative to each root; the walk enters only the

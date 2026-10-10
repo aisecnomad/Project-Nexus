@@ -131,6 +131,63 @@ def test_registry_manifest_is_its_own_server_entry() -> None:
     manifest = {"name": "io.example/tool", "packages": [{"registryType": "pypi", "identifier": "tool"}]}
     servers, errors = _parse(manifest, "server.json")
     assert errors == [] and [server["name"] for server in servers] == ["io.example/tool"]
+    # Only a manifest's record carries the packages it declares, for MCP registry matching.
+    assert servers[0]["packages"] == [
+        {"registry_type": "pypi", "identifier": "tool", "version": None, "registry_base_url": None}
+    ]
+    assert list(servers[0])[-1] == "packages"
+
+
+def test_only_a_manifest_document_carries_packages() -> None:
+    entry = {"name": "io.example/tool", "packages": [{"registryType": "npm", "identifier": "tool"}]}
+    for document in ({"servers": [entry]}, {"mcpServers": {"io.example/tool": entry}}):
+        servers, errors = _parse(document, "server.json")
+        assert errors == [] and len(servers) == 1 and "packages" not in servers[0]
+    remote_only = {
+        "name": "io.example/tool",
+        "remotes": [{"type": "sse", "url": "https://mcp.example.invalid/sse"}],
+    }
+    servers, errors = _parse(remote_only, "server.json")
+    assert errors == [] and servers[0]["packages"] == []
+
+
+def test_manifest_packages_that_cannot_be_read_match_nothing() -> None:
+    unreadable = {"registry_type": None, "identifier": None, "version": None, "registry_base_url": None}
+    packages = [
+        {
+            "registryType": "npm",
+            "identifier": "ok",
+            "version": "1.0.0",
+            "registryBaseUrl": "https://registry.npmjs.org",
+        },
+        {"registryType": "npm"},
+        "npm:x",
+        {"registryType": "npm", "identifier": "x", "version": 1},
+    ]
+    servers, errors = _parse({"name": "io.example/tool", "packages": packages}, "server.json")
+    assert servers[0]["packages"] == [
+        {
+            "registry_type": "npm",
+            "identifier": "ok",
+            "version": "1.0.0",
+            "registry_base_url": "https://registry.npmjs.org",
+        },
+        unreadable,
+        unreadable,
+        unreadable,
+    ]
+    assert set(errors) == {"MCP server manifest package needs a string registryType and identifier"}
+    many = [{"registryType": "npm", "identifier": f"p{n}"} for n in range(17)]
+    servers, errors = _parse({"name": "io.example/tool", "packages": many}, "server.json")
+    assert len(servers[0]["packages"]) == 17 and servers[0]["packages"][-1] == unreadable
+    assert errors == ["MCP server manifest lists more than 16 packages"]
+    servers, errors = _parse(
+        {"name": "io.example/tool", "packages": {"npm": "x"}, "remotes": [{"url": "https://x.example"}]},
+        "server.json",
+    )
+    assert servers[0]["packages"] == [unreadable] and errors == [
+        "MCP server manifest packages must be an array"
+    ]
 
 
 def test_document_shape_errors_stop_parsing() -> None:

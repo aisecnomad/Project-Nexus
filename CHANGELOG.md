@@ -101,6 +101,82 @@ summarizes each release for people who install and operate ShadowScan.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 
+### MCP registry provenance and approved MCP catalogs
+
+- Add `options.mcp_registries` (empty by default): up to 16 MCP Registry
+  snapshots, each opted in by its own `id` and pinned by the SHA-256 of the
+  file; `approved: true` marks the organisation's approved MCP catalog. Every
+  scan reads each snapshot again without following symbolic links, checks the
+  pin and validates every entry's structure, name, version and status. A
+  missing, changed, oversized, malformed or incomplete snapshot is not used and
+  makes the scan incomplete (`engine.mcp-registry`, exit 3). A package or
+  remote URL no configured server could match (templated, with user
+  information, unparseable, however long, or on another package registry) is
+  not indexed and does not reject the snapshot, so one publisher cannot block
+  every snapshot. A scan never contacts a registry.
+- Add `shadowscan mcp-registry snapshot`. It lists every server version of a
+  registry that serves the MCP Registry API v0.1 (default the official
+  registry, deleted versions included) over the shared HTTPS client, keeps the
+  fields matching reads (packages keep `registryBaseUrl`), validates the result
+  as a scan would and writes it
+  with mode 0600, printing the SHA-256 to pin. A failed or refused request, an
+  invalid page, a repeated cursor or a page, entry or size limit exits 3 and
+  writes nothing. The client never uses a proxy.
+- After correlation, and before registry reconciliation and scoring, the engine
+  matches the MCP servers of `mcp-server` findings (code and endpoint client
+  configurations, and `endpoint.mcp` tool findings by server URL) by what the
+  client fetches or connects to, with one identity and no fallback: a command
+  by its launched package (npm, PyPI or OCI identity), a remote transport by
+  its URL, a `server.json` manifest document by every package and remote it
+  declares. A launch with a source-changing option or environment variable
+  (`--registry`, index flags, `--with`, `--pip-args`, more than one or a
+  foreign `-p` command, `--entrypoint`, an unknown option, `npm_config_*`,
+  `UV_*INDEX*`, `PIP_*`, `DOCKER_HOST`), an npm alias or Git, URL or file
+  source, a shell command line, a URL with user information or an unknown
+  transport with both a command and a URL has no identity. A manifest's own
+  name gives provenance hints only. Servers get `registry` entries; findings
+  get `metadata.mcp_registry` (with an `unidentified` count) and the review
+  tags `mcp-registry-published`, `mcp-unpublished`, `mcp-registry-deprecated`,
+  `mcp-registry-deleted`, `mcp-registry-version-unpublished`,
+  `mcp-registry-outdated` and `mcp-registry-unidentified`, with zero-weight
+  evidence. The tags weigh 0, so a configured registry changes no score by
+  itself, and publication never lowers risk. Disabled servers add no tags.
+  There is no name-similarity matching.
+- Add the governance factor `mcp-not-in-approved-registry` (15). It applies
+  only when an approved registry is configured and every approved registry
+  loaded, to MCP findings with an enabled server that no approved registry
+  lists by its identity, that one lists only as deleted, or that has no
+  identity: an allowlist cannot vouch for what it cannot identify. A catalog
+  package with a `registryBaseUrl` other than its type's public registry
+  approves no launch. Like the other governance
+  factors it is excluded from `danger_score` and weighs 0 under
+  `risk_basis: danger`; `risk_weights.governance` accepts it, and its error
+  message now lists every governance key.
+- `shadowscan.connectors.mcp_risk` gains `server_package` and
+  `registry_package`, the package identity of a launch and of a registry
+  listing, on a launcher parser shared with the existing risk checks. The
+  shared parser also changes those checks: `npx.cmd`, `uvx.exe` and other
+  Windows launcher names are assessed like the plain launchers, `npx
+  --loglevel <level>` and the `docker run` value options it did not know (such
+  as `--gpus`) no longer have their value read as the package or image, and
+  `name@<url>` with an `@` in the URL is no longer read as pinned.
+- A `server.json` manifest's parsed server record gains `packages` (registry
+  type, identifier, version and registry base URL of each declared package);
+  client configuration records are unchanged. A manifest package without a
+  string type and identifier, or more than 16 packages, is a parse error that
+  makes the scan incomplete.
+- The collection scope fingerprint covers the configured registries' ids, pins
+  and approval flags, and only when the option is set: fingerprints of scans
+  without it are unchanged.
+- CycloneDX MCP services carry `shadowscan:mcp:registry-name`,
+  `registry-version`, `registry-status` and `registry-source`.
+- Map `mcp-unpublished` and `mcp-registry-deleted` to OWASP LLM04:2026,
+  ASI04 and ATLAS AML.T0010.005, and to NIST AI RMF GOVERN 6.1 and ISO/IEC
+  42001 A.10.3, as author-written evidence references. The governance factor
+  is not mapped, because mapping rules cannot read risk factors.
+- The tests use a synthetic snapshot shaped like the live registry API. No
+  live registry fetch or tenant acceptance is part of the test suite.
+
 ### Autonomy tiers and Capability Card schema version 2
 
 - Classify agents, agent configurations, MCP servers, workflows, bots, gateway

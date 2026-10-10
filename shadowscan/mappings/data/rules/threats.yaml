@@ -180,6 +180,16 @@ rules:
       A filesystem tool scoped to the whole disk or a home directory lets a
       steered agent read and send files outside its task.
 
+  - id: mcp-unvetted-source
+    when: {tags_any: [mcp-unpublished, mcp-registry-deleted]}
+    refs:
+      - owasp-llm-2026:LLM04
+      - owasp-asi-2026:ASI04
+      - mitre-atlas-2026.09:AML.T0010.005
+    rationale: >-
+      An MCP server that no configured MCP registry lists, or that its registry
+      marks deleted, has no registry provenance to review.
+
   - id: hidden-instructions
     when: {tags_any: [hidden-instructions, invisible-text]}
     refs:

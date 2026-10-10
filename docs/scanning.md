@@ -805,6 +805,10 @@ selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public
 digest does not hide guessable paths or labels; keep these settings nonsecret.
+With `options.mcp_registries` set, the digest also covers each registry's id,
+pinned SHA-256 and approval flag (not the snapshot's path): a different pinned
+snapshot changes tags and scores, so baselines taken with it are not comparable.
+Scans without the option keep the digest they had.
 Credential-bearing configurations omit the digest. Gateway exports attest
 comparable scope only when `SHADOWSCAN_IDENTITY_KEY` is set: an HMAC under that
 key stands in for their configuration, which can hold guessable labels and

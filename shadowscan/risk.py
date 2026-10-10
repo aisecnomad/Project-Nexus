@@ -153,6 +153,15 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "remote-code-fetch": (15, "instruction file downloads and executes code in one step"),
     "invisible-text": (10, "instruction file contains invisible or bidirectional control characters"),
     "autonomy-understated": (10, "declared autonomy level is below the observed floor"),
+    # Review hints from options.mcp_registries. Publication never lowers risk; the
+    # mcp-not-in-approved-registry governance factor scores an approved catalog's gaps.
+    "mcp-registry-published": (0, "MCP server is listed in a configured MCP registry"),
+    "mcp-unpublished": (0, "MCP server is listed in no configured MCP registry"),
+    "mcp-registry-deprecated": (0, "MCP server is marked deprecated in an MCP registry"),
+    "mcp-registry-deleted": (0, "MCP server is marked deleted in an MCP registry"),
+    "mcp-registry-version-unpublished": (0, "MCP server pins a version its registry entry does not list"),
+    "mcp-registry-outdated": (0, "MCP server uses a version or endpoint other than the registry's latest"),
+    "mcp-registry-unidentified": (0, "MCP server's package or endpoint could not be identified"),
 }
 
 PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
@@ -170,7 +179,13 @@ PROVIDER_WEIGHTS: dict[str, tuple[int, str]] = {
 }
 
 
-GOVERNANCE_WEIGHTS: dict[str, int] = {"shadow": 25, "registered": -10, "no-owner": 10}
+GOVERNANCE_WEIGHTS: dict[str, int] = {
+    "shadow": 25,
+    "registered": -10,
+    "no-owner": 10,
+    # Only when an approved MCP registry is configured and loaded (options.mcp_registries).
+    "mcp-not-in-approved-registry": 15,
+}
 GOVERNANCE_FACTORS = frozenset(GOVERNANCE_WEIGHTS)
 # Weight of a finding's observed autonomy floor. Zero by default: the ``autonomous`` capability
 # and the approval-bypass tags already score the evidence behind a high floor.
@@ -266,7 +281,9 @@ class RiskPolicy:
         governance = dict(GOVERNANCE_WEIGHTS)
         for key, value in group("governance").items():
             if key not in GOVERNANCE_WEIGHTS:
-                raise ValueError(f"risk_weights.governance.{key} must be one of shadow, registered, no-owner")
+                raise ValueError(
+                    f"risk_weights.governance.{key} must be one of {', '.join(GOVERNANCE_WEIGHTS)}"
+                )
             governance[key] = value
         autonomy = dict(AUTONOMY_WEIGHTS)
         for key, value in group("autonomy", AUTONOMY_WEIGHTS).items():
@@ -435,7 +452,7 @@ def assess(
 
 
 def _governance_factors(finding: Finding, inventory_present: bool, policy: RiskPolicy) -> list[RiskFactor]:
-    """Inventory approval and ownership factors."""
+    """Inventory approval, ownership and approved-MCP-catalog factors."""
     factors: list[RiskFactor] = []
     # Governance factors describe approval and ownership, not capability. Under
     # the "danger" basis they weigh nothing, so they are omitted like any other
@@ -454,6 +471,26 @@ def _governance_factors(finding: Finding, inventory_present: bool, policy: RiskP
         w = policy.governance["no-owner"] * governance_scale
         if w:
             factors.append(RiskFactor("no-owner", "no identifiable owner", w))
+    # Written by the engine's MCP registry pass, which first removes any earlier value.
+    registry = finding.metadata.get("mcp_registry") if isinstance(finding.metadata, dict) else None
+    if (
+        finding.kind == Kind.MCP_SERVER
+        and isinstance(registry, dict)
+        and registry.get("approved_checked") is True
+    ):
+        missing = _as_int(registry.get("not_in_approved"))
+        # Unidentified servers are among the missing: an approved catalog cannot vouch for them.
+        unidentified = min(_as_int(registry.get("unidentified")), missing)
+        w = policy.governance["mcp-not-in-approved-registry"] * governance_scale
+        if missing > 0 and w:
+            note = f" ({unidentified} could not be identified)" if unidentified > 0 else ""
+            factors.append(
+                RiskFactor(
+                    "mcp-not-in-approved-registry",
+                    f"{missing} enabled MCP server(s) not listed in an approved MCP registry{note}",
+                    w,
+                )
+            )
     return factors
 
 

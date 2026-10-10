@@ -32,6 +32,16 @@ exact id, whose approved records count as sanctioned inventory::
         - registry: aws-agent-registry
           id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
 
+``options.mcp_registries`` pins MCP Registry snapshots (``shadowscan mcp-registry snapshot``),
+each by an id and the SHA-256 of the file; ``approved: true`` marks the organisation's approved
+MCP catalog::
+
+    options:
+      mcp_registries:
+        - id: official
+          snapshot: ./mcp-registry.json
+          sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
 ``${VAR}`` requires a nonempty environment value. ``${VAR:-default}`` uses its
 explicit fallback when the variable is missing or empty.
 
@@ -63,6 +73,7 @@ from typing import Any
 import yaml
 
 from shadowscan.errors import SetupError, yaml_error_position
+from shadowscan.mcp_registry import MAX_MCP_REGISTRIES, McpRegistrySource
 from shadowscan.registries import (
     MAX_IDENTIFIER_LENGTH,
     MAX_TRUSTED_REGISTRIES,
@@ -114,6 +125,7 @@ _OPTION_FIELDS = {
     "job_deadline_seconds",
     "llm_triage",
     "trusted_registries",
+    "mcp_registries",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
@@ -398,6 +410,8 @@ class ScanConfig:
     llm_triage: TriageSettings = field(default_factory=TriageSettings)
     # Vendor registry instances whose approved records count as sanctioned inventory.
     trusted_registries: list[TrustedRegistry] = field(default_factory=list)
+    # Pinned MCP Registry snapshots; an approved one is the organisation's MCP catalog.
+    mcp_registries: list[McpRegistrySource] = field(default_factory=list)
     source: str | None = None
     # Constructor-only compatibility: never retain stale alias state that could
     # overwrite a later CLI or library update to the canonical setting.
@@ -451,6 +465,8 @@ class ScanConfig:
             raise ConfigValidationError(f"options.{exc}") from None
         # Trusting a registry changes which findings are sanctioned: revalidate every run.
         self.trusted_registries = validate_trusted_registries(self.trusted_registries)
+        # An approved MCP catalog changes scores: revalidate every run as well.
+        self.mcp_registries = validate_mcp_registries(self.mcp_registries)
 
     def validate_connector_specs(self) -> None:
         """Validate programmatically constructed built-in connector specs.
@@ -597,6 +613,7 @@ class ScanConfig:
             risk_weights=opts.get("risk_weights", {}),
             llm_triage=_triage_settings(opts.get("llm_triage")),
             trusted_registries=validate_trusted_registries(opts.get("trusted_registries", [])),
+            mcp_registries=validate_mcp_registries(opts.get("mcp_registries", []), base),
             source=source,
         )
 
@@ -745,6 +762,60 @@ def validate_trusted_registries(value: Any) -> list[TrustedRegistry]:
             raise ConfigValidationError(f"{where} duplicates an earlier entry")
         trusted.append(entry)
     return trusted
+
+
+_MCP_REGISTRY_FIELDS = {"id", "snapshot", "sha256", "approved"}
+_MCP_REGISTRY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def validate_mcp_registries(value: Any, base: Path | None = None) -> list[McpRegistrySource]:
+    """Validate ``options.mcp_registries``: pinned MCP Registry snapshots, each opted in by id.
+
+    Each entry is a mapping (or a :class:`McpRegistrySource`) with ``id`` (lowercase letters,
+    digits, ``.``, ``_`` and ``-``, at most 64 characters, unique), ``snapshot`` (a file path,
+    resolved beside the configuration file when ``base`` is given), ``sha256`` (the snapshot
+    file's lowercase hexadecimal SHA-256) and the optional YAML boolean ``approved``. At most
+    16 entries. Messages never include the values.
+    """
+    location = "options.mcp_registries"
+    if not isinstance(value, list):
+        raise ConfigValidationError(f"{location} must be a list of mappings with id, snapshot and sha256")
+    if len(value) > MAX_MCP_REGISTRIES:
+        raise ConfigValidationError(f"{location} accepts at most {MAX_MCP_REGISTRIES} entries")
+    sources: list[McpRegistrySource] = []
+    for number, item in enumerate(value, 1):
+        where = f"{location} entry {number}"
+        if isinstance(item, McpRegistrySource):
+            item = {
+                "id": item.id,
+                "snapshot": item.snapshot,
+                "sha256": item.sha256,
+                "approved": item.approved,
+            }
+        if not isinstance(item, Mapping):
+            raise ConfigValidationError(f"{where} must be a mapping with id, snapshot and sha256")
+        _check_fields(dict(item), _MCP_REGISTRY_FIELDS, where)
+        if not {"id", "snapshot", "sha256"} <= set(item):
+            raise ConfigValidationError(f"{where} requires id, snapshot and sha256")
+        identity, snapshot, digest = item["id"], item["snapshot"], item["sha256"]
+        approved = item.get("approved", False)
+        if not isinstance(identity, str) or not _MCP_REGISTRY_ID.match(identity):
+            raise ConfigValidationError(
+                f"{where}.id must be 1 to 64 lowercase letters, digits, '.', '_' or '-', starting with a"
+                " letter or digit"
+            )
+        if not isinstance(snapshot, str) or not snapshot.strip():
+            raise ConfigValidationError(f"{where}.snapshot must be a nonempty path")
+        if not isinstance(digest, str) or not _SHA256.match(digest):
+            raise ConfigValidationError(f"{where}.sha256 must be 64 lowercase hexadecimal characters")
+        if type(approved) is not bool:
+            raise ConfigValidationError(f"{where}.approved must be a YAML boolean")
+        if any(earlier.id == identity for earlier in sources):
+            raise ConfigValidationError(f"{where} repeats the id of an earlier entry")
+        path = _resolve(base, snapshot) if base is not None else snapshot
+        sources.append(McpRegistrySource(identity, path, digest, approved))
+    return sources
 
 
 def _check_fields(value: dict[Any, Any], allowed: set[str], location: str) -> None:

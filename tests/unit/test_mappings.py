@@ -81,6 +81,7 @@ EXPECTED_REFS: dict[str, list[str]] = {
     "exposed-inference-server": [f"{LLM}LLM06", f"{ATLAS}AML.T0040"],
     "unauthenticated-endpoint": [f"{ASI}ASI03"],
     "mcp-unpinned-package": [f"{LLM}LLM04", f"{ASI}ASI04", f"{ATLAS}AML.T0010.005", f"{ATLAS}AML.T0109"],
+    "mcp-unvetted-source": [f"{LLM}LLM04", f"{ASI}ASI04", f"{ATLAS}AML.T0010.005"],
     "mcp-broad-filesystem": [f"{LLM}LLM03", f"{ASI}ASI02", f"{ATLAS}AML.T0086"],
     "hidden-instructions": [f"{LLM}LLM01", f"{ASI}ASI01", f"{ATLAS}AML.T0051.001", f"{ATLAS}AML.T0068"],
     "memory-capability": [f"{ASI}ASI06", f"{ATLAS}AML.T0080.000"],
@@ -123,6 +124,7 @@ EXPECTED_REFS: dict[str, list[str]] = {
     "logging-gap": [f"{EU}Art.12", f"{ISO}A.6.2.8", f"{NIST}MEASURE-3.1"],
     "security-exposure": [f"{NIST}MEASURE-2.7", f"{EU}Art.15", f"{AIUC}B"],
     "third-party-components": [f"{NIST}GOVERN-6.1", f"{NIST}MANAGE-3.1", f"{NIST}MAP-4.1", f"{ISO}A.10.3"],
+    "mcp-unvetted-component": [f"{NIST}GOVERN-6.1", f"{ISO}A.10.3"],
     "user-facing-ai": [f"{EU}Art.50"],
     "agentic-monitoring": [f"{NIST}MANAGE-4.1", f"{ISO}A.6.2.6"],
 }
@@ -154,6 +156,7 @@ RULE_CASES: dict[str, dict[str, Any]] = {
     "exposed-inference-server": {"kind": Kind.INFRA, "tags": ["exposed-llm-server"]},
     "unauthenticated-endpoint": {"kind": Kind.MCP_SERVER, "tags": ["unauthenticated-mcp"]},
     "mcp-unpinned-package": {"kind": Kind.MCP_SERVER, "tags": ["mcp-unpinned-package"]},
+    "mcp-unvetted-source": {"kind": Kind.MCP_SERVER, "tags": ["mcp-unpublished"]},
     "mcp-broad-filesystem": {"kind": Kind.MCP_SERVER, "tags": ["mcp-broad-filesystem"]},
     "hidden-instructions": {"kind": Kind.AGENT_CONFIG, "tags": ["hidden-instructions"]},
     "memory-capability": {"capabilities": ["memory"]},
@@ -184,6 +187,7 @@ RULE_CASES: dict[str, dict[str, Any]] = {
     "logging-gap": {"kind": Kind.CLOUD_RESOURCE, "tags": ["no-invocation-logging"]},
     "security-exposure": {"kind": Kind.IAM_GRANT, "tags": ["policy.privileged-scopes"]},
     "third-party-components": {"kind": Kind.MCP_SERVER, "tags": ["mcp-unpinned-package"]},
+    "mcp-unvetted-component": {"kind": Kind.MCP_SERVER, "tags": ["mcp-registry-deleted"]},
     "user-facing-ai": {"kind": Kind.AI_APP},
     "agentic-monitoring": {"metadata": _autonomy(3)},
 }

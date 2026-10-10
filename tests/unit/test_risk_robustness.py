@@ -308,6 +308,19 @@ def test_unusual_confidences_scale_without_error_and_keep_the_factors_exact(conf
     assert sum(factor.weight for factor in risk.factors) == risk.score
 
 
+def test_governance_keys_are_the_documented_factors():
+    # mcp-not-in-approved-registry joined the governance factors with options.mcp_registries.
+    assert set(GOVERNANCE_WEIGHTS) == {"shadow", "registered", "no-owner", "mcp-not-in-approved-registry"}
+    with pytest.raises(ValueError) as failure:
+        RiskPolicy.from_options({"governance": {"unregistered": 5}})
+    assert str(failure.value) == (
+        "risk_weights.governance.unregistered must be one of shadow, registered, no-owner, "
+        "mcp-not-in-approved-registry"
+    )
+    policy = RiskPolicy.from_options({"governance": {"mcp-not-in-approved-registry": 20}})
+    assert policy.governance["mcp-not-in-approved-registry"] == 20
+
+
 def test_danger_basis_omits_zero_weight_governance_factors():
     # Under "danger", governance factors are scaled to zero and never move
     # the score; they should not appear at all, matching how tag factors
@@ -849,7 +862,7 @@ def test_builtin_tag_keys_do_not_warn(caplog, monkeypatch):
 
 # The default weights are policy: a change moves every score, so it has to be deliberate. When this
 # fails, update docs/concepts/risk.md, the changelog and the migration notes, then this digest.
-_DEFAULT_WEIGHTS_DIGEST = "e6cbc134d3173d87646d3cb2ba4cad0a63f3e73cb3790da591a2991424b2432e"
+_DEFAULT_WEIGHTS_DIGEST = "d02dea962770516b6922695a5993004aa233e9cc33f99925e863609b6b93a2d3"
 
 
 def test_default_risk_weights_change_only_deliberately():
