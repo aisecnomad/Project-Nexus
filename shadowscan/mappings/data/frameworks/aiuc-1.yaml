@@ -5,7 +5,7 @@ name: AIUC-1
 kind: control
 source_url: https://standard.aiuc-1.com/
 licence: Unverified; identifiers and own-words labels only
-retrieved: "2026-10-10"
+checked: "2026-10-10"
 verification: secondary
 notes: >-
   Versioned quarterly. References are at domain level (A to F). Requirement-level

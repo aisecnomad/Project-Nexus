@@ -5,7 +5,7 @@ name: OWASP Top 10 for LLM Applications
 kind: threat
 source_url: https://github.com/GenAI-Security-Project/GenAI-LLM-Top10
 licence: CC-BY-SA-4.0
-retrieved: "2026-10-10"
+checked: "2026-10-10"
 verification: primary
 notes: >-
   2026 edition, published 2026-08-04. Entry numbers changed from the 2025

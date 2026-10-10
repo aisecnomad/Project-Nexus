@@ -48,3 +48,18 @@ def test_check_reports_a_stale_page(monkeypatch, tmp_path, capsys):
     assert page.read_text(encoding="utf-8") == render()
     assert mapping_reference.main(["--check"]) == 0
     assert mapping_reference.main(["--write"]) == 2
+
+
+def test_provenance_does_not_claim_an_unreachable_source_was_read():
+    page = render()
+    assert "| Retrieved |" not in page and "| Checked |" in page
+    for catalog in load_mappings().catalogs:
+        if catalog.verification == "primary":
+            assert f"Checked against: <{catalog.source_url}>" in page
+        else:
+            assert f"Publication: <{catalog.source_url}> (not consulted directly;" in page
+    # The Agentic list's own page was unreachable; its names were checked
+    # against the OWASP LLM 2026 Appendix A, so that is the source it links.
+    (asi,) = [catalog for catalog in load_mappings().catalogs if catalog.framework == "owasp-asi"]
+    assert "genai.owasp.org" not in asi.source_url
+    assert asi.source_url.endswith("/2026/final/Appendix_A_Related_Framework_Mappings.md")

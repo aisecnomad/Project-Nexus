@@ -3,14 +3,16 @@ edition: "2026"
 prefix: owasp-asi-2026
 name: OWASP Top 10 for Agentic Applications
 kind: threat
-source_url: https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/
+source_url: https://github.com/GenAI-Security-Project/GenAI-LLM-Top10/blob/main/2026/final/Appendix_A_Related_Framework_Mappings.md
 licence: CC-BY-SA-4.0
-retrieved: "2026-10-10"
+checked: "2026-10-10"
 verification: primary
 notes: >-
-  Announced 2025-12-09. Entry names were checked against Appendix A of the
-  OWASP Top 10 for LLM Applications 2026 in the GenAI-Security-Project
-  GitHub repository, which crosswalks each LLM entry to this list.
+  Announced 2025-12-09. The list's own page on genai.owasp.org could not be
+  retrieved. Entry names were checked against Appendix A of the OWASP Top 10
+  for LLM Applications 2026 in the GenAI Security Project repository (the
+  source URL), an OWASP publication that crosswalks each LLM entry to this
+  list.
 entries:
   ASI01: {title: Agent Goal Hijack}
   ASI02: {title: Tool Misuse & Exploitation}

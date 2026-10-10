@@ -1210,7 +1210,10 @@ def _invocations(words: list[str], tool: str) -> Iterator[list[str]]:
 
 
 def test_documented_command_arguments_stop_at_the_next_command() -> None:
-    line = "shadowscan --help && python -m shadowscan.signatures.validate"
+    line = (
+        "shadowscan --help && python -m shadowscan.signatures.validate"
+        " && python -m shadowscan.mappings.validate"
+    )
     assert list(_invocations(line.split(), "shadowscan")) == [[]]
     line = "python -m pip wheel . && shadowscan code . | tee out"
     assert list(_invocations(line.split(), "pip")) == [["wheel", "."]]

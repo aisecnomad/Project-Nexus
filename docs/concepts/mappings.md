@@ -65,12 +65,22 @@ entry and rule; it is generated from the packaged data.
 ## Catalogs and verification
 
 Each catalog in `shadowscan/mappings/data/frameworks/` records the framework,
-edition, prefix, source URL, licence, retrieval date and a verification level:
+edition, prefix, `source_url`, licence, a `checked` date and a verification
+level:
 
-- `primary`: entries were checked against the framework's own publication
-  (the OWASP lists and the ATLAS data release).
-- `secondary`: only secondary sources were reachable when the catalog was
-  written (MAESTRO, NIST AI RMF, ISO/IEC 42001, the EU AI Act and AIUC-1).
+- `primary`: entries were checked against the publication `source_url` names:
+  the OWASP LLM list and its Appendix A in the GenAI Security Project
+  repository, and the ATLAS data release. The OWASP Agentic list's own page
+  could not be retrieved, so its names were checked against that Appendix A,
+  an OWASP publication that crosswalks the two lists.
+- `secondary`: the framework's publication could not be retrieved when the
+  catalog was written, so entries follow secondary sources (MAESTRO, NIST AI
+  RMF, ISO/IEC 42001, the EU AI Act and AIUC-1). `source_url` names the
+  publication to consult, not one that was read.
+
+`checked` is the date the catalog was compiled and its entries last checked
+against those sources. It does not say that `source_url` was retrieved on that
+date; each catalog's notes say which sources could not be reached.
 
 Catalogs list only the entries the rules use, plus complete short lists such as
 the OWASP Top 10s, the MAESTRO layers and the AIUC-1 domains.
@@ -127,6 +137,14 @@ floor that is not an integer from 0 to 5, a status that is not a string),
 matches no rule that reads them. Such a finding simply gets fewer references;
 the absence of a reference is never evidence that a control is met.
 
+A reference needs positive evidence for what it names. Most `secret` findings
+are credentials kept in a managed store (AWS Secrets Manager, SSM
+SecureString, Google Secret Manager, OCI Vault) or as encrypted CI secrets, so
+the kind alone maps only to Identity and Privilege Abuse (`ASI03`) and MAESTRO
+layer 6. Sensitive Information Disclosure (`LLM02`) and Unsecured Credentials
+(`AML.T0055`) need an exposure tag such as `hardcoded-credential` or
+`unmasked-ci-variable`.
+
 ## Validation
 
 `python -m shadowscan.mappings.validate` loads the packaged data and prints
@@ -136,7 +154,7 @@ to signature validation. The validator rejects:
 
 - unknown keys, missing keys and values of the wrong type;
 - a prefix that is not `<framework>-<edition>`, a non-HTTPS source URL, a
-  retrieval date that is not `YYYY-MM-DD`, or an unknown kind or verification
+  `checked` date that is not `YYYY-MM-DD`, or an unknown kind or verification
   level;
 - a rule with an empty `when`, a duplicate rule id, or an autonomy level
   outside 0 to 5;
@@ -155,8 +173,8 @@ of publishing findings without their references.
 ## Changing a mapping
 
 1. Edit the catalog or rules YAML. Add catalog entries only for identifiers
-   checked against the framework's publication, and record the verification
-   level honestly.
+   checked against the framework's publication, record the verification
+   level honestly, and set `checked` to the date of that check.
 2. Run `python -m shadowscan.mappings.validate`.
 3. Regenerate the reference page with `make mapping-reference`
    (`python -m tools.mapping_reference`).

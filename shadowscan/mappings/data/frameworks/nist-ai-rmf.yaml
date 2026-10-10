@@ -5,7 +5,7 @@ name: NIST AI Risk Management Framework (AI 100-1)
 kind: control
 source_url: https://airc.nist.gov/airmf-resources/airmf/5-sec-core/
 licence: Public domain (US government work)
-retrieved: "2026-10-10"
+checked: "2026-10-10"
 verification: secondary
 notes: >-
   Subcategory identifiers from the AI RMF Core. Titles are short summaries in

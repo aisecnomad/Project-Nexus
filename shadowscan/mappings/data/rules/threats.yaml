@@ -39,15 +39,17 @@ rules:
       A credential stored in source, configuration or an unmasked variable can
       be read and reused by anyone who can read that location.
 
+  # The kind alone does not say a credential is exposed: most secret findings
+  # are credentials kept in a managed store or as encrypted CI secrets. The
+  # disclosure and unsecured-credential entries need an exposure tag
+  # (credential-exposure above).
   - id: credential-finding
     when: {kinds_any: [secret]}
     refs:
-      - owasp-llm-2026:LLM02
       - owasp-asi-2026:ASI03
-      - mitre-atlas-2026.09:AML.T0055
     rationale: >-
-      A finding that is itself an exposed AI provider credential is relevant to
-      the same disclosure and identity-abuse entries as a credential tag.
+      An AI provider credential, wherever it is stored, is an identity that an
+      agent or anyone who obtains it can act as.
 
   - id: agent-config-credentials
     when:

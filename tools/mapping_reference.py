@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from shadowscan.mappings import MappingIndex, load_mappings
-from shadowscan.mappings.schema import RULE_FILES, Condition, Rule
+from shadowscan.mappings.schema import RULE_FILES, Catalog, Condition, Rule
 
 REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "concepts" / "mappings-reference.md"
 KIND_TITLES = {"threat": "Threat rules", "layer": "Layer rules", "control": "Control rules"}
@@ -57,6 +57,13 @@ def _condition(when: Condition) -> str:
     return "; and ".join(clauses)
 
 
+def _source(catalog: Catalog) -> str:
+    """Where the entries come from, without implying an unreachable source was read."""
+    if catalog.verification == "primary":
+        return f"Checked against: <{catalog.source_url}>"
+    return f"Publication: <{catalog.source_url}> (not consulted directly; entries follow secondary sources)"
+
+
 def _rule_row(rule: Rule) -> str:
     refs = ", ".join(_code(ref) for ref in rule.refs)
     return f"| {_code(rule.id)} | {_condition(rule.when)} | {refs} | {_text(rule.rationale)} |"
@@ -77,18 +84,23 @@ def render(index: MappingIndex | None = None) -> str:
         "",
         "## Catalogs",
         "",
-        "| Prefix | Framework | Kind | Verification | Licence | Retrieved |",
+        "`Checked` is the date a catalog was compiled and its entries last checked.",
+        "A `primary` catalog was checked against the source it links. A `secondary`",
+        "catalog links the framework's own publication, which could not be consulted;",
+        "its entries follow secondary sources.",
+        "",
+        "| Prefix | Framework | Kind | Verification | Licence | Checked |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
     catalogs = sorted(index.catalogs, key=lambda catalog: catalog.prefix)
     lines += [
         f"| {_code(c.prefix)} | {_text(c.name)} | {c.kind} | {c.verification} | {_text(c.licence)}"
-        f" | {c.retrieved} |"
+        f" | {c.checked} |"
         for c in catalogs
     ]
     for catalog in catalogs:
         lines += ["", f"### {_code(catalog.prefix)}", ""]
-        lines += [f"{_text(catalog.name)}, edition {catalog.edition}.", "", f"Source: <{catalog.source_url}>"]
+        lines += [f"{_text(catalog.name)}, edition {catalog.edition}.", "", _source(catalog)]
         if catalog.notes:
             lines += ["", _text(catalog.notes)]
         lines += ["", "| Reference | Title |", "| --- | --- |"]

@@ -54,7 +54,7 @@ _CATALOG_REQUIRED = (
     "kind",
     "source_url",
     "licence",
-    "retrieved",
+    "checked",
     "verification",
     "entries",
 )
@@ -105,7 +105,9 @@ class Catalog:
     kind: str
     source_url: str
     licence: str
-    retrieved: str
+    # When the catalog was compiled and its entries last checked against the
+    # sources ``verification`` names; not a claim that ``source_url`` was retrieved.
+    checked: str
     verification: str
     notes: str
     entries: tuple[MappingEntry, ...]
@@ -248,14 +250,14 @@ def parse_catalog(data: Any, source: str, problems: list[str]) -> Catalog | None
         problems.append(f"{source}: verification must be one of {', '.join(VERIFICATION_LEVELS)}")
     if fields["source_url"] and not fields["source_url"].startswith("https://"):
         problems.append(f"{source}: source_url must be an https:// URL")
-    retrieved = fields["retrieved"]
-    if retrieved:
+    checked = fields["checked"]
+    if checked:
         try:
-            valid_date = bool(_DATE.match(retrieved)) and bool(date.fromisoformat(retrieved))
+            valid_date = bool(_DATE.match(checked)) and bool(date.fromisoformat(checked))
         except ValueError:
             valid_date = False
         if not valid_date:
-            problems.append(f"{source}: retrieved must be a YYYY-MM-DD date string")
+            problems.append(f"{source}: checked must be a YYYY-MM-DD date string")
     raw_entries = data["entries"]
     entries: list[MappingEntry] = []
     if not isinstance(raw_entries, dict) or not raw_entries:
@@ -294,7 +296,7 @@ def parse_catalog(data: Any, source: str, problems: list[str]) -> Catalog | None
         kind=fields["kind"],
         source_url=fields["source_url"],
         licence=fields["licence"],
-        retrieved=retrieved,
+        checked=checked,
         verification=fields["verification"],
         notes=notes,
         entries=tuple(entries),

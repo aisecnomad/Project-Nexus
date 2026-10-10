@@ -5,7 +5,7 @@ name: CSA MAESTRO agentic threat modelling layers
 kind: layer
 source_url: https://cloudsecurityalliance.org/blog/2025/02/06/agentic-ai-threat-modeling-framework-maestro
 licence: CSA publication; layer numbers and short labels only
-retrieved: "2026-10-10"
+checked: "2026-10-10"
 verification: secondary
 notes: >-
   Seven-layer reference architecture published by the Cloud Security Alliance

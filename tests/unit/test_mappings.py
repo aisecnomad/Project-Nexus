@@ -68,7 +68,7 @@ EXPECTED_REFS: dict[str, list[str]] = {
     "tool-poisoning": [f"{LLM}LLM01", f"{ASI}ASI01", f"{ATLAS}AML.T0110.000", f"{ATLAS}AML.T0051.001"],
     "unsafe-serialization": [f"{LLM}LLM04", f"{ASI}ASI04", f"{ATLAS}AML.T0011.000", f"{ATLAS}AML.T0010.003"],
     "credential-exposure": [f"{LLM}LLM02", f"{ASI}ASI03", f"{ATLAS}AML.T0055"],
-    "credential-finding": [f"{LLM}LLM02", f"{ASI}ASI03", f"{ATLAS}AML.T0055"],
+    "credential-finding": [f"{ASI}ASI03"],
     "agent-config-credentials": [f"{ATLAS}AML.T0083"],
     "privileged-workload": [f"{LLM}LLM03", f"{ASI}ASI03"],
     "privileged-pod-escape": [f"{ATLAS}AML.T0105"],
@@ -315,6 +315,46 @@ def test_credentials_map_to_disclosure_not_supply_chain(make_finding):
     threats = threat_references(make_finding(tags=["hardcoded-credential"]))
     assert {f"{LLM}LLM02", f"{ASI}ASI03"} <= set(threats)
     assert f"{ASI}ASI04" not in threats and f"{LLM}LLM04" not in threats
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [["managed-secret"], ["ci-credentials"], ["unrestricted-api-key"], []],
+    ids=["managed-secret", "encrypted-ci-secret", "api-key", "untagged"],
+)
+def test_a_stored_credential_is_not_reported_as_exposed(make_finding, tags):
+    # Secrets Manager, Secret Manager, OCI Vault and encrypted CI secrets are
+    # secret findings too; only an exposure tag supports disclosure references.
+    threats, controls = finding_references(make_finding(kind=Kind.SECRET, tags=tags))
+    assert f"{LLM}LLM02" not in threats and f"{ATLAS}AML.T0055" not in threats
+    assert {f"{ASI}ASI03", f"{MAESTRO}L6"} <= set(threats)
+    assert f"{NIST}MEASURE-2.7" not in controls
+
+
+@pytest.mark.parametrize(
+    ("connector", "fixture"),
+    [
+        ("cloud.aws", "aws_records.jsonl"),
+        ("cloud.gcp", "gcp_records.jsonl"),
+        ("cloud.oci", "oci_records.jsonl"),
+    ],
+)
+def test_managed_secret_store_findings_are_not_unsecured_credentials(
+    run_connector, fixtures, connector, fixture
+):
+    findings, _ctx = run_connector(connector, input=str(fixtures / "cloud" / fixture))
+    managed = [finding for finding in findings if "managed-secret" in finding.tags]
+    assert managed, f"{fixture} no longer yields a managed-secret finding"
+    for finding in managed:
+        threats = finding.to_dict()["metadata"]["threats"]
+        assert f"{LLM}LLM02" not in threats and f"{ATLAS}AML.T0055" not in threats, finding.resource
+        assert f"{ASI}ASI03" in threats
+
+
+@pytest.mark.parametrize("tag", ["hardcoded-credential", "unmasked-ci-variable"])
+def test_an_exposed_secret_finding_keeps_its_disclosure_references(make_finding, tag):
+    threats = threat_references(make_finding(kind=Kind.SECRET, tags=[tag, "ci-credentials"]))
+    assert {f"{LLM}LLM02", f"{ASI}ASI03", f"{ATLAS}AML.T0055", f"{MAESTRO}L6"} <= set(threats)
 
 
 @pytest.mark.parametrize("tag", CREDENTIAL_TAGS)
@@ -786,8 +826,13 @@ def test_copied_packaged_data_loads(tmp_path):
         ),
         (
             "frameworks/owasp-llm.yaml",
-            lambda d: d.update(retrieved="2026-02-30"),
-            "retrieved must be a YYYY-MM-DD date string",
+            lambda d: d.update(checked="2026-02-30"),
+            "checked must be a YYYY-MM-DD date string",
+        ),
+        (
+            "frameworks/owasp-llm.yaml",
+            lambda d: d.update(retrieved=d.pop("checked")),
+            "frameworks/owasp-llm.yaml has unknown keys: retrieved",
         ),
         ("frameworks/owasp-llm.yaml", lambda d: d.update(kind="risk"), "kind must be one of"),
         (

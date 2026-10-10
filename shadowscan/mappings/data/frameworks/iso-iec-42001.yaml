@@ -5,7 +5,7 @@ name: ISO/IEC 42001:2023 Annex A
 kind: control
 source_url: https://www.iso.org/standard/81230.html
 licence: Copyrighted; identifiers and own-words labels only
-retrieved: "2026-10-10"
+checked: "2026-10-10"
 verification: secondary
 notes: >-
   Identifiers only; the standard's text is copyrighted. Labels are the

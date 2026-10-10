@@ -5,7 +5,7 @@ name: MITRE ATLAS
 kind: threat
 source_url: https://github.com/mitre-atlas/atlas-data
 licence: Apache-2.0
-retrieved: "2026-10-10"
+checked: "2026-10-10"
 verification: primary
 notes: >-
   Release 2026.09 (dist/v6/ATLAS-2026.09.yaml, format 6.0.0). Only the

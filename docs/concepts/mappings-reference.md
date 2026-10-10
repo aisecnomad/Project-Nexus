@@ -9,7 +9,12 @@ and the rules are author mappings, not independently reviewed. See
 
 ## Catalogs
 
-| Prefix | Framework | Kind | Verification | Licence | Retrieved |
+`Checked` is the date a catalog was compiled and its entries last checked.
+A `primary` catalog was checked against the source it links. A `secondary`
+catalog links the framework's own publication, which could not be consulted;
+its entries follow secondary sources.
+
+| Prefix | Framework | Kind | Verification | Licence | Checked |
 | --- | --- | --- | --- | --- | --- |
 | `aiuc-1-2026q2` | AIUC-1 | control | secondary | Unverified; identifiers and own-words labels only | 2026-10-10 |
 | `eu-ai-act-2024` | EU AI Act, Regulation (EU) 2024/1689 | control | secondary | EU legal act; reuse permitted | 2026-10-10 |
@@ -24,7 +29,7 @@ and the rules are author mappings, not independently reviewed. See
 
 AIUC-1, edition 2026q2.
 
-Source: <https://standard.aiuc-1.com/>
+Publication: <https://standard.aiuc-1.com/> (not consulted directly; entries follow secondary sources)
 
 Versioned quarterly. References are at domain level (A to F). Requirement-level identifiers other than D003 are not used because they could not be verified against the official text.
 
@@ -42,7 +47,7 @@ Versioned quarterly. References are at domain level (A to F). Requirement-level 
 
 EU AI Act, Regulation (EU) 2024/1689, edition 2024.
 
-Source: <https://eur-lex.europa.eu/eli/reg/2024/1689/oj>
+Publication: <https://eur-lex.europa.eu/eli/reg/2024/1689/oj> (not consulted directly; entries follow secondary sources)
 
 Amended by Regulation (EU) 2026/1744 (reported by secondary sources; the Official Journal could not be retrieved). Which obligations apply depends on the system's risk class and the operator's role, which ShadowScan cannot determine; a reference is evidence relevant to an article, not a finding that the article applies or is met.
 
@@ -58,7 +63,7 @@ Amended by Regulation (EU) 2026/1744 (reported by secondary sources; the Officia
 
 ISO/IEC 42001:2023 Annex A, edition 2023.
 
-Source: <https://www.iso.org/standard/81230.html>
+Publication: <https://www.iso.org/standard/81230.html> (not consulted directly; entries follow secondary sources)
 
 Identifiers only; the standard's text is copyrighted. Labels are the project's own words and do not reproduce control titles or text. The standard was not consulted directly; identifiers follow secondary sources.
 
@@ -75,7 +80,7 @@ Identifiers only; the standard's text is copyrighted. Labels are the project's o
 
 CSA MAESTRO agentic threat modelling layers, edition 2025.
 
-Source: <https://cloudsecurityalliance.org/blog/2025/02/06/agentic-ai-threat-modeling-framework-maestro>
+Publication: <https://cloudsecurityalliance.org/blog/2025/02/06/agentic-ai-threat-modeling-framework-maestro> (not consulted directly; entries follow secondary sources)
 
 Seven-layer reference architecture published by the Cloud Security Alliance in February 2025. The publication itself could not be retrieved; layer labels follow secondary sources, which differ slightly on layers 4 to 6. Layer 6 is cross-cutting. A layer says where in the stack a finding sits; it is not a threat identifier.
 
@@ -93,7 +98,7 @@ Seven-layer reference architecture published by the Cloud Security Alliance in F
 
 MITRE ATLAS, edition 2026.09.
 
-Source: <https://github.com/mitre-atlas/atlas-data>
+Checked against: <https://github.com/mitre-atlas/atlas-data>
 
 Release 2026.09 (dist/v6/ATLAS-2026.09.yaml, format 6.0.0). Only the techniques the rules reference are listed. A sub-technique title gives its parent technique's name first. A reference says a finding supplies a precondition for the technique, never that it was used.
 
@@ -122,7 +127,7 @@ Release 2026.09 (dist/v6/ATLAS-2026.09.yaml, format 6.0.0). Only the techniques 
 
 NIST AI Risk Management Framework (AI 100-1), edition 1.0.
 
-Source: <https://airc.nist.gov/airmf-resources/airmf/5-sec-core/>
+Publication: <https://airc.nist.gov/airmf-resources/airmf/5-sec-core/> (not consulted directly; entries follow secondary sources)
 
 Subcategory identifiers from the AI RMF Core. Titles are short summaries in the project's own words, not the subcategory text. The NIST site could not be retrieved when this catalog was written, so the identifiers are marked as checked against secondary sources only.
 
@@ -144,9 +149,9 @@ Subcategory identifiers from the AI RMF Core. Titles are short summaries in the 
 
 OWASP Top 10 for Agentic Applications, edition 2026.
 
-Source: <https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/>
+Checked against: <https://github.com/GenAI-Security-Project/GenAI-LLM-Top10/blob/main/2026/final/Appendix_A_Related_Framework_Mappings.md>
 
-Announced 2025-12-09. Entry names were checked against Appendix A of the OWASP Top 10 for LLM Applications 2026 in the GenAI-Security-Project GitHub repository, which crosswalks each LLM entry to this list.
+Announced 2025-12-09. The list's own page on genai.owasp.org could not be retrieved. Entry names were checked against Appendix A of the OWASP Top 10 for LLM Applications 2026 in the GenAI Security Project repository (the source URL), an OWASP publication that crosswalks each LLM entry to this list.
 
 | Reference | Title |
 | --- | --- |
@@ -165,7 +170,7 @@ Announced 2025-12-09. Entry names were checked against Appendix A of the OWASP T
 
 OWASP Top 10 for LLM Applications, edition 2026.
 
-Source: <https://github.com/GenAI-Security-Project/GenAI-LLM-Top10>
+Checked against: <https://github.com/GenAI-Security-Project/GenAI-LLM-Top10>
 
 2026 edition, published 2026-08-04. Entry numbers changed from the 2025 edition (for example LLM03 is Excessive Agency, not Supply Chain), so a reference is meaningful only with its edition prefix.
 
@@ -196,7 +201,7 @@ From `shadowscan/mappings/data/rules/threats.yaml`.
 | `tool-poisoning` | tag `tool-poisoning` | `owasp-llm-2026:LLM01`, `owasp-asi-2026:ASI01`, `mitre-atlas-2026.09:AML.T0110.000`, `mitre-atlas-2026.09:AML.T0051.001` | A tool description carrying injected instructions is read by the model as trusted context and can redirect the agent's goal. |
 | `unsafe-serialization` | tag `unsafe-serialization` | `owasp-llm-2026:LLM04`, `owasp-asi-2026:ASI04`, `mitre-atlas-2026.09:AML.T0011.000`, `mitre-atlas-2026.09:AML.T0010.003` | A model artifact in a format that can execute code on load is a supply chain risk for anyone who loads it. |
 | `credential-exposure` | tag `hardcoded-credential` or `inline-secrets` or `plaintext-credential` or `secret-in-env` or `unmasked-ci-variable` | `owasp-llm-2026:LLM02`, `owasp-asi-2026:ASI03`, `mitre-atlas-2026.09:AML.T0055` | A credential stored in source, configuration or an unmasked variable can be read and reused by anyone who can read that location. |
-| `credential-finding` | kind `secret` | `owasp-llm-2026:LLM02`, `owasp-asi-2026:ASI03`, `mitre-atlas-2026.09:AML.T0055` | A finding that is itself an exposed AI provider credential is relevant to the same disclosure and identity-abuse entries as a credential tag. |
+| `credential-finding` | kind `secret` | `owasp-asi-2026:ASI03` | An AI provider credential, wherever it is stored, is an identity that an agent or anyone who obtains it can act as. |
 | `agent-config-credentials` | tag `hardcoded-credential` or `inline-secrets` or `plaintext-credential` or `secret-in-env` or `unmasked-ci-variable`; and kind `agent-config` or `mcp-server` | `mitre-atlas-2026.09:AML.T0083` | Credentials kept in an agent or MCP configuration file are the target of credential collection from agent configuration. |
 | `privileged-workload` | tag `cluster-admin` or `policy.privileged-scopes` or `privileged-pod` or `wildcard-permissions` | `owasp-llm-2026:LLM03`, `owasp-asi-2026:ASI03` | Administrative or wildcard privileges give an agent, or whoever controls it, more authority than its task needs. |
 | `privileged-pod-escape` | tag `privileged-pod` | `mitre-atlas-2026.09:AML.T0105` | A privileged pod can reach the node it runs on, a precondition for escaping the AI workload to the host. |

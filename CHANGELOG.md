@@ -23,6 +23,12 @@ summarizes each release for people who install and operate ShadowScan.
   map to Sensitive Information Disclosure and Identity and Privilege Abuse
   instead of supply-chain entries. `code-exec` and `saas-actions` are matched
   as capabilities; as tags they never matched a finding.
+- Map a `secret` finding to Sensitive Information Disclosure (LLM02) and
+  Unsecured Credentials (AML.T0055) only when an exposure tag such as
+  `hardcoded-credential` or `unmasked-ci-variable` supports it. Credentials in
+  AWS Secrets Manager, SSM SecureString, Google Secret Manager, OCI Vault,
+  GitHub Actions secrets and masked GitLab variables are referenced only as an
+  identity (ASI03, MAESTRO layer 6).
 - Add MITRE ATLAS 2026.09 techniques for agent tool poisoning, unsafe
   artifacts, credentials in agent configuration, escape to host and exposed AI
   services; CSA MAESTRO layer attribution; and control references for NIST AI
@@ -37,7 +43,13 @@ summarizes each release for people who install and operate ShadowScan.
   `shadowscan:threats` and `shadowscan:controls`.
 - Add `python -m shadowscan.mappings.validate` (`make mappings`, part of
   `make check` and CI) and the generated catalog reference page
-  (`make mapping-reference`).
+  (`make mapping-reference`). Each catalog records a `checked` date (when its
+  entries were compiled and last checked, not a retrieval date) and the source
+  its verification level names; the OWASP Agentic list links the OWASP LLM
+  2026 Appendix A its names were checked against.
+- The container build context includes the mapping catalogs, without which
+  image scans could not write reports, and `.yml` signature packs. A
+  repository test checks that the context carries every file the wheel ships.
 
 ### Scan evidence, completeness and replay corrections
 
