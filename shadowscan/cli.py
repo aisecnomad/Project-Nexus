@@ -38,6 +38,7 @@ from shadowscan.config import (
     ConnectorSpec,
     MinConfidenceError,
     ScanConfig,
+    argv_credential_keys,
     parse_set_options,
     validate_connector_config,
     validate_connector_timeout,
@@ -671,6 +672,9 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
         validate_connector_config(connector, conf)
     except ConfigValidationError as exc:
         raise click.BadParameter(str(exc), param_hint="--set") from None
+    exposed = argv_credential_keys({k: v for k, v in conf.items() if k != "input"})
+    if exposed:
+        _warn_argv_secret(f"--set {', '.join(exposed)}", "a ${ENV_VAR} reference in a scan configuration")
     _run_scan(opts.config([ConnectorSpec(name=connector, config=conf)]), opts)
 
 
@@ -823,6 +827,17 @@ def gateway(
     _run_scan(opts.config(specs), opts)
 
 
+def _warn_argv_secret(what: str, instead: str) -> None:
+    # Never echo the value: the warning names only where the secret was given.
+    err_console.print(
+        Text(
+            f"warning: {what} on the command line can be read from process listings and "
+            f"shell history; pass credentials with {instead} instead",
+            style="yellow",
+        )
+    )
+
+
 # ----------------------------------------------------------------------- jwt
 @main.command()
 @click.argument("tokens", nargs=-1)
@@ -853,6 +868,7 @@ def jwt(
     """Classify JWTs as human / service / delegated-agent identities and assess their privileges."""
     conf: dict[str, Any] = {}
     if tokens:
+        _warn_argv_secret("JWT arguments", "--file or stdin")
         conf["tokens"] = [t.strip().removeprefix("Bearer ").strip() for t in tokens]
     if token_file:
         conf["input"] = token_file

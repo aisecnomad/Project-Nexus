@@ -342,6 +342,18 @@ def expand_env(value: Any) -> Any:
     return value
 
 
+def argv_credential_keys(config: dict[str, Any]) -> list[str]:
+    """Keys of a command-line connector configuration whose values look like credentials.
+
+    Command-line arguments are visible in process listings and shell history,
+    so the caller warns and points to environment references or files.
+    """
+    shown = _redacted_config(config)
+    if not isinstance(shown, dict):
+        return sorted(config)
+    return sorted(key for key in config if shown.get(key) != config[key] and key != "input")
+
+
 @dataclass(slots=True)
 class ConnectorSpec:
     name: str

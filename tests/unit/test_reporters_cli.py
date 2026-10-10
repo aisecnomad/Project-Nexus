@@ -155,7 +155,7 @@ def test_cli_run_gateway_jwt_and_utilities(tmp_path: Path, fixtures):
     res = runner.invoke(main, ["jwt", token, "--format", "json"])
     assert (
         res.exit_code == 0
-        and json.loads(res.output)["findings"][0]["metadata"]["identity_type"] == "delegated-agent"
+        and json.loads(res.stdout)["findings"][0]["metadata"]["identity_type"] == "delegated-agent"
     )
     res = runner.invoke(main, ["connectors"])
     assert res.exit_code == 0 and "cloud.oci" in res.output and "identity.entra" in res.output
