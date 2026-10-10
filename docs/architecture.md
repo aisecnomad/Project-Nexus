@@ -1,20 +1,23 @@
 # Architecture
 
 ```
-                 ┌────────────────────────── signatures/data/*.yaml ──────────────────────────┐
+                 ┌───────────────────────── signatures/data/*.yaml ──────────────────────────┐
                  │ frameworks · providers · protocols · coding agents · platforms · cloud     │
                  │ services · observability · identity apps · policies · heuristics            │
-                 └───────────────────────────────┬─────────────────────────────────────────────┘
+                 └───────────────────────────────┬───────────────────────────────────────────────────┘
                                                  │ SignatureIndex (dependency, import, code, file,
                                                  │ env, domain, user_agent, image, iac, name,
                                                  │ scope, model, secret, client_id matchers)
-   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
-   │  code.*   │  │identity.* │  │gateway.*  │  │lowcode.*  │  │  saas.*   │  │  cloud.*  │   connectors
-   │ fs/gh/gl  │  │okta/entra │  │  logs     │  │pp/sf/snow │  │slack/teams│  │aws/gcp/az │   collect() live → records
-   └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘   load_offline() → records
-         └──────────────┴──────────────┴──────┬───────┴──────────────┴──────────────┘         analyze(records) → Findings
+   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+   │  code.*   │  │identity.* │  │gateway.*  │  │lowcode.*  │  │  saas.*   │  │  cloud.*  │  │endpoint.* │  │network.*  │  │runtime.*  │   connectors
+   │ fs/gh/gl  │  │okta/entra │  │logs/otel  │  │pp/sf/snow │  │slack/teams│  │aws/gcp/az │  │inv/host/  │  │  logs     │  │processes  │   collect() live → records
+   │           │  │gws/auth0  │  │           │  │n8n/make   │  │gh-apps/…  │  │oci/k8s/os │  │mcp/ollama │  │           │  │           │   load_offline() → records
+   │           │  │jwt        │  │           │  │zap/work   │  │atlassian/ │  │           │  │models/    │  │           │  │           │   analyze(records) → Findings
+   │           │  │           │  │           │  │           │  │notion/zoom│  │           │  │ebpf       │  │           │  │           │
+   └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘
+         └──────────────└──────────────└──────┬───────└──────────────└──────────────└──────────────└──────────────└──────────────┘
                                               ▼
-                                   ┌────────────────────┐
+                                   ┌───────────────────┐
                                    │       Engine       │  merge duplicates → correlate across surfaces →
                                    │                    │  reconcile with Inventory (shadow?) → Risk → sort
                                    └─────────┬──────────┘
@@ -31,7 +34,7 @@
 | `shadowscan/connectors/base.py` | `BaseConnector` (`collect`, `analyze`, `load_offline`, `run`, record dumping, [engine hooks](#engine-hooks)), `ConnectorContext` |
 | `shadowscan/connectors/offline.py` | offline export reading: file discovery without following links, confined readers with byte limits, JSON / JSONL / YAML / CSV parsing, envelope and pagination checks |
 | `shadowscan/connectors/common.py` | turning matches into evidence / frameworks / capabilities, permission classification, blob scanning, merging the metadata of duplicate findings |
-| `shadowscan/connectors/<surface>/` | one module per data source |
+| `shadowscan/connectors/<surface>/` | one module per data source (code, identity, gateway, lowcode, saas, cloud, endpoint, network, runtime) |
 | `shadowscan/connectors/code/remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
 | `shadowscan/connectors/code/source_semantics.py` | bounded Python import binding, reachability and tool attribution, including literal comprehension exclusions |
 | `shadowscan/connectors/code/polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py` | bounded lexical import and scope checks for supported Go agent constructors and .NET automatic tool invocation; no cross-file type resolution |
