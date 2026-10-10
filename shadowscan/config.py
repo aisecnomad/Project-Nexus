@@ -67,6 +67,7 @@ from shadowscan.registries import (
     MAX_IDENTIFIER_LENGTH,
     MAX_TRUSTED_REGISTRIES,
     REGISTRY_TYPES,
+    UNTRUSTABLE_REGISTRY_TYPES,
     TrustedRegistry,
 )
 from shadowscan.risk import RiskPolicy
@@ -673,18 +674,20 @@ def validate_plugins(value: Any) -> list[str]:
     return list(dict.fromkeys(name.strip() for name in value))
 
 
-_TRUSTED_REGISTRY_FIELDS = {"registry", "id"}
+_TRUSTED_REGISTRY_FIELDS = {"registry", "id", "allow_auto_approved", "allow_registered_only"}
+_TRUSTED_REGISTRY_FLAGS = ("allow_auto_approved", "allow_registered_only")
 _WILDCARDS = frozenset("*?[")
 
 
 def validate_trusted_registries(value: Any) -> list[TrustedRegistry]:
     """Validate ``options.trusted_registries``: exact registry instances, never a whole type.
 
-    Each entry is a mapping (or a :class:`TrustedRegistry`) with exactly ``registry``, a known
-    registry type, and ``id``, the registry's exact identity: no wildcard characters, no
-    surrounding whitespace or control characters, and nothing redaction would change, since a
-    redacted id can never equal a record's. Duplicates and more than 64 entries are rejected.
-    Messages never include the values.
+    Each entry is a mapping (or a :class:`TrustedRegistry`) with ``registry``, a known registry
+    type that can be trusted, and ``id``, the registry's exact identity: no wildcard characters,
+    no surrounding whitespace or control characters, and nothing redaction would change, since a
+    redacted id can never equal a record's. The optional ``allow_auto_approved`` and
+    ``allow_registered_only`` must be YAML booleans. Duplicate registries and more than 64 entries
+    are rejected. Messages never include the values.
     """
     location = "options.trusted_registries"
     if not isinstance(value, list):
@@ -695,15 +698,29 @@ def validate_trusted_registries(value: Any) -> list[TrustedRegistry]:
     for number, item in enumerate(value, 1):
         where = f"{location} entry {number}"
         if isinstance(item, TrustedRegistry):
-            item = {"registry": item.registry, "id": item.id}
+            item = {
+                "registry": item.registry,
+                "id": item.id,
+                "allow_auto_approved": item.allow_auto_approved,
+                "allow_registered_only": item.allow_registered_only,
+            }
         if not isinstance(item, Mapping):
             raise ConfigValidationError(f"{where} must be a mapping with registry and id")
         _check_fields(dict(item), _TRUSTED_REGISTRY_FIELDS, where)
-        if set(item) != _TRUSTED_REGISTRY_FIELDS:
+        if not {"registry", "id"} <= set(item):
             raise ConfigValidationError(f"{where} requires both registry and id")
         registry, identity = item["registry"], item["id"]
+        trustable = [name for name in REGISTRY_TYPES if name not in UNTRUSTABLE_REGISTRY_TYPES]
+        if isinstance(registry, str) and registry in UNTRUSTABLE_REGISTRY_TYPES:
+            raise ConfigValidationError(
+                f"{where}.registry {registry} is a deprecated source whose records never approve"
+            )
         if not isinstance(registry, str) or registry not in REGISTRY_TYPES:
-            raise ConfigValidationError(f"{where}.registry must be one of " + ", ".join(REGISTRY_TYPES))
+            raise ConfigValidationError(f"{where}.registry must be one of " + ", ".join(trustable))
+        flags = {name: item.get(name, False) for name in _TRUSTED_REGISTRY_FLAGS}
+        for name, flag in flags.items():
+            if type(flag) is not bool:
+                raise ConfigValidationError(f"{where}.{name} must be a YAML boolean")
         if (
             not isinstance(identity, str)
             or not identity
@@ -723,8 +740,8 @@ def validate_trusted_registries(value: Any) -> list[TrustedRegistry]:
             raise ConfigValidationError(
                 f"{where}.id would be redacted in reports, so it could never match a registry record"
             )
-        entry = TrustedRegistry(registry, identity)
-        if entry in trusted:
+        entry = TrustedRegistry(registry, identity, **flags)
+        if any((earlier.registry, earlier.id) == (registry, identity) for earlier in trusted):
             raise ConfigValidationError(f"{where} duplicates an earlier entry")
         trusted.append(entry)
     return trusted

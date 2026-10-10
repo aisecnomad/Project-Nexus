@@ -273,6 +273,10 @@ class BaseConnector(ABC):
     # repository by an unrelated parser, or emitted by third-party code, must
     # not count.
     emits_registry_records: ClassVar[bool] = False
+    # The registry types (shadowscan.registries.REGISTRY_TYPES) such a connector
+    # reads. A record of any other type is dropped like an undeclared one, so a
+    # registry connector cannot speak for another vendor's registry.
+    registry_record_types: ClassVar[frozenset[str]] = frozenset()
 
     @classmethod
     def inherits_instance_credentials_approval(cls) -> bool:

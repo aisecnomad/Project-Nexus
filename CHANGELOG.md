@@ -87,6 +87,17 @@ summarizes each release for people who install and operate ShadowScan.
   records gets an advisory `engine.inventory` warning.
 - `Inventory.match` accepts extra entries for a single call; extra entries with
   the same agent id and source count once.
+- The record contract adds status `registered` (listed in a registry without
+  an approval workflow), `approval_mode` (`auto`, `manual`, `none`,
+  `unknown`) and `listing_scope` (`registry` or `caller`; a caller-scoped
+  listing is never complete). A trusted registry's approved records with
+  `approval_mode: auto` approve only when its entry sets
+  `allow_auto_approved: true`, and `registered` records only with
+  `allow_registered_only: true`; declined records are counted in an advisory
+  `engine.inventory` warning. The deprecated `entra-agent-registry` source
+  cannot be trusted.
+- A connector that emits records also declares the registry types it reads
+  (`registry_record_types` engine hook); records of other types are removed.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 

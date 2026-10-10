@@ -15,17 +15,24 @@ Agent Registry, ...) emits one finding per registry record. The finding carries
                    "coverage": "in-scope"}],       # in-scope, out-of-scope or unknown
      "publisher": "platform-team",                 # optional
      "updated_at": "2026-09-01T00:00:00Z",         # optional
-     "listing_complete": true}                     # optional, default false
+     "listing_complete": true,                     # optional, default false
+     "approval_mode": "manual",                    # optional: auto, manual, none or unknown (default)
+     "listing_scope": "registry"}                  # optional: registry (default) or caller
 
 The emitting connector normalizes vendor statuses into :data:`RECORD_STATUSES` (an unknown one
 becomes ``unknown``) and sets a binding's ``coverage`` to ``in-scope`` only when it collected that
 resource type for the binding's account and region in the same run. ``listing_complete`` is true
-only when the full record listing of that registry finished without truncation or denial.
+only when the full record listing of that registry finished without truncation or denial; a
+``caller``-scoped listing (one that shows only what the caller can see) is never complete.
+``approval_mode`` says how the registry approves records: ``auto`` when it approves every record
+without a person, ``manual`` when a person does, ``none`` when it has no approval workflow (its
+records are ``registered``, never ``approved``).
 Evidence for a record finding comes from :func:`registry_evidence`: a declaration, not proof that
 the agent runs.
 
 Only a built-in connector class that declares ``emits_registry_records`` (a ``BaseConnector``
-engine hook) may carry the key. The engine drops it from every other connector's findings,
+engine hook) may carry the key, and only for the registry types it lists in
+``registry_record_types``. The engine drops it from every other connector's findings,
 including a plugin's that declares the hook: an approved record of a trusted registry approves
 findings, so a record copied from an untrusted export or repository, or emitted by third-party
 code, must never reach reconciliation.
@@ -63,7 +70,20 @@ REGISTRY_TYPES = (
     "mcp-registry",
     "a2a-card",
 )
-RECORD_STATUSES = ("approved", "pending", "draft", "rejected", "deprecated", "blocked", "unknown")
+RECORD_STATUSES = (
+    "approved",
+    "registered",
+    "pending",
+    "draft",
+    "rejected",
+    "deprecated",
+    "blocked",
+    "unknown",
+)
+APPROVAL_MODES = ("auto", "manual", "none", "unknown")
+LISTING_SCOPES = ("registry", "caller")
+# Records of a deprecated source never approve, so the source cannot be trusted.
+UNTRUSTABLE_REGISTRY_TYPES = frozenset({"entra-agent-registry"})
 DESCRIPTOR_TYPES = ("agent", "mcp", "a2a", "custom", "agent-skills", "package")
 COVERAGE_VALUES = ("in-scope", "out-of-scope", "unknown")
 RECONCILIATION_STATUSES = (
@@ -85,7 +105,14 @@ EVIDENCE_WEIGHT = 0.5
 TRUSTED_SOURCE_PREFIX = "trusted-registry:"
 
 _REQUIRED_FIELDS = frozenset({"schema", "registry", "registry_id", "record_id", "status", "descriptor_type"})
-_RECORD_FIELDS = _REQUIRED_FIELDS | {"bindings", "publisher", "updated_at", "listing_complete"}
+_RECORD_FIELDS = _REQUIRED_FIELDS | {
+    "bindings",
+    "publisher",
+    "updated_at",
+    "listing_complete",
+    "approval_mode",
+    "listing_scope",
+}
 _BINDING_FIELDS = frozenset({"resource", "provider", "account", "region", "coverage"})
 _SHOWN_ID_SUFFIX = 16
 
@@ -139,6 +166,8 @@ class RegistryRecord:
     publisher: str | None = None
     updated_at: str | None = None
     listing_complete: bool = False
+    approval_mode: str = "unknown"
+    listing_scope: str = "registry"
 
     @property
     def key(self) -> tuple[str, str]:
@@ -194,11 +223,15 @@ def parse_registry_record(value: Any) -> RegistryRecord | None:
     publisher = value.get("publisher")
     updated_at = value.get("updated_at")
     listing_complete = value.get("listing_complete", False)
+    approval_mode = value.get("approval_mode", "unknown")
+    listing_scope = value.get("listing_scope", "registry")
     if (
         any(binding is None for binding in bindings)
         or (publisher is not None and not _bounded(publisher))
         or (updated_at is not None and not _bounded(updated_at))
         or type(listing_complete) is not bool
+        or approval_mode not in APPROVAL_MODES
+        or listing_scope not in LISTING_SCOPES
     ):
         return None
     return RegistryRecord(
@@ -210,7 +243,10 @@ def parse_registry_record(value: Any) -> RegistryRecord | None:
         bindings=tuple(binding for binding in bindings if binding is not None),
         publisher=(publisher.strip() or None) if isinstance(publisher, str) else None,
         updated_at=updated_at,
-        listing_complete=listing_complete,
+        # What a caller-scoped listing omits may exist, so it never proves a complete listing.
+        listing_complete=listing_complete and listing_scope == "registry",
+        approval_mode=approval_mode,
+        listing_scope=listing_scope,
     )
 
 
@@ -346,10 +382,18 @@ def prune_reconciliation_links(findings: Sequence[Finding]) -> None:
 
 @dataclass(frozen=True, slots=True)
 class TrustedRegistry:
-    """One registry instance whose approved records the operator accepts as sanctioned inventory."""
+    """One registry instance whose approved records the operator accepts as sanctioned inventory.
+
+    ``allow_auto_approved`` also accepts approved records of a registry that approves every
+    record without a person (``approval_mode: auto``); ``allow_registered_only`` also accepts
+    ``registered`` records of a registry without an approval workflow. Both default to false:
+    neither kind of record shows that a person reviewed the agent.
+    """
 
     registry: str
     id: str
+    allow_auto_approved: bool = False
+    allow_registered_only: bool = False
 
 
 def shown_registry_id(registry_id: str) -> str:
@@ -362,8 +406,11 @@ class TrustedApprovals:
     """The approvals the approved records of trusted registries confer in one scan.
 
     Built from the findings of the current run every time; nothing is cached, so a revoked or
-    deleted record stops approving on the next scan. Only a record with status ``approved``
-    whose registry type and exact id are trusted approves anything:
+    deleted record stops approving on the next scan. Only a record whose registry type and exact
+    id are trusted approves anything, and only when its status is ``approved`` (with
+    ``approval_mode: auto`` only if the trusted entry sets ``allow_auto_approved``) or
+    ``registered`` with ``allow_registered_only`` set. Records of
+    :data:`UNTRUSTABLE_REGISTRY_TYPES` never approve:
 
     * the record finding itself is registered as ``<registry>:<record_id>``; and
     * each usable binding becomes an inventory entry for exactly that resource (glob
@@ -375,19 +422,30 @@ class TrustedApprovals:
     """
 
     def __init__(self, findings: Sequence[Finding], trusted: Sequence[TrustedRegistry]) -> None:
-        keys = {(item.registry, item.id) for item in trusted}
+        policies = {
+            (item.registry, item.id): item
+            for item in trusted
+            if item.registry not in UNTRUSTABLE_REGISTRY_TYPES
+        }
         self._trusted = list(trusted)
         self._approved: dict[int, RegistryRecord] = {}
         self._by_resource: dict[str, list[InventoryEntry]] = {}
         self._produced: set[tuple[str, str]] = set()
+        self._withheld: dict[tuple[str, str], dict[str, int]] = {}
         approved: set[tuple[str, str]] = set()
         seen: set[tuple[str, str, str, str | None, str | None, str | None]] = set()
         for finding in findings:
             record = registry_record(finding)
-            if record is None or record.key not in keys:
+            policy = policies.get(record.key) if record is not None else None
+            if record is None or policy is None:
                 continue
             self._produced.add(record.key)
-            if record.status != "approved" or not _usable(record.record_id):
+            withheld = _withheld_reason(record, policy)
+            if withheld:
+                counts = self._withheld.setdefault(record.key, {})
+                counts[withheld] = counts.get(withheld, 0) + 1
+                continue
+            if not _approves(record, policy) or not _usable(record.record_id):
                 continue
             self._approved[id(finding)] = record
             approved.add((record.agent_id, record.registry_id))
@@ -433,10 +491,32 @@ class TrustedApprovals:
         return self._by_resource.get(finding.resource, [])
 
     def warnings(self) -> list[str]:
-        """Advisory notices for trusted registries that produced no records in this scan."""
-        return [
+        """Advisory notices: trusted registries without records, and records withheld by policy."""
+        notices = [
             f"trusted registry {item.registry} {shown_registry_id(item.id)} produced no records; "
             "its approvals were not applied"
             for item in self._trusted
             if (item.registry, item.id) not in self._produced
         ]
+        for (registry, registry_id), counts in sorted(self._withheld.items()):
+            for reason, count in sorted(counts.items()):
+                notices.append(
+                    f"trusted registry {registry} {shown_registry_id(registry_id)}: {count} {reason} "
+                    "record(s) were not treated as sanctioned"
+                )
+        return notices
+
+
+def _withheld_reason(record: RegistryRecord, policy: TrustedRegistry) -> str | None:
+    """Why the trust policy declines a record that would otherwise approve, for the warning."""
+    if record.status == "approved" and record.approval_mode == "auto" and not policy.allow_auto_approved:
+        return "auto-approved (set allow_auto_approved to accept them)"
+    if record.status == "registered" and not policy.allow_registered_only:
+        return "registered-only (set allow_registered_only to accept them)"
+    return None
+
+
+def _approves(record: RegistryRecord, policy: TrustedRegistry) -> bool:
+    if record.status == "approved":
+        return record.approval_mode != "auto" or policy.allow_auto_approved
+    return record.status == "registered" and policy.allow_registered_only

@@ -99,6 +99,7 @@ def _engine(
     *,
     emits: bool = True,
     builtin: bool = True,
+    types: frozenset[str] = frozenset({REGISTRY}),
     observed: Callable[[], list[Finding]] = lambda: [_runtime(), _runtime(SHADOW_RUNTIME)],
     **options: Any,
 ) -> Engine:
@@ -106,6 +107,7 @@ def _engine(
         name: ClassVar[str] = "test.registry"
         surface: ClassVar[Surface] = Surface.CLOUD
         emits_registry_records: ClassVar[bool] = emits
+        registry_record_types: ClassVar[frozenset[str]] = types
 
         def collect(self) -> Iterator[dict[str, Any]]:
             yield {}
@@ -180,6 +182,7 @@ def test_without_trusted_registries_a_vendor_approval_sanctions_nothing(monkeypa
     assert _by_resource(result)[RUNTIME].metadata[RECONCILIATION_KEY]["status"] == "registered-and-observed"
 
 
+# ``registered`` is covered with its own warning by test_registered_only_records_need_allow_registered_only.
 @pytest.mark.parametrize("status", ["pending", "draft", "rejected", "deprecated", "blocked", "unknown"])
 def test_records_that_are_not_approved_leave_trusted_findings_shadow(monkeypatch, status):
     result = _engine(
@@ -426,6 +429,19 @@ SECRET = "sk-proj-" + "q" * 40
         ),
         ([{"registry": REGISTRY, "id": REGISTRY_ARN, SECRET: 1}], "entry 1 contains an unsupported field"),
         ([{"registry": "aws", "id": REGISTRY_ARN}], "entry 1.registry must be one of"),
+        (
+            [{"registry": "entra-agent-registry", "id": "tenant"}],
+            "entry 1.registry entra-agent-registry is a deprecated source",
+        ),
+        (
+            [{"registry": REGISTRY, "id": REGISTRY_ARN, "allow_auto_approved": "true"}],
+            "must be a YAML boolean",
+        ),
+        ([{"registry": REGISTRY, "id": REGISTRY_ARN, "allow_registered_only": 1}], "must be a YAML boolean"),
+        (
+            [TRUSTED[0], {"registry": REGISTRY, "id": REGISTRY_ARN, "allow_auto_approved": True}],
+            "entry 2 duplicates",
+        ),
         ([{"registry": None, "id": REGISTRY_ARN}], "entry 1.registry must be one of"),
         ([{"registry": REGISTRY, "id": ""}], "entry 1.id must be a nonempty single-line string"),
         ([{"registry": REGISTRY, "id": 123456789012}], "entry 1.id must be a nonempty single-line string"),
@@ -496,3 +512,91 @@ def test_the_documented_configuration_example_is_valid():
     example = section.split("```yaml\n", 1)[1].split("```", 1)[0]
     config = ScanConfig.from_dict(yaml.safe_load(example))
     assert config.trusted_registries == [TrustedRegistry(REGISTRY, REGISTRY_ARN)]
+
+
+# ------------------------------------------------------------------ contract extension
+
+
+def test_an_auto_approved_record_needs_allow_auto_approved(monkeypatch):
+    records = lambda: [_record_finding(_record(approval_mode="auto"))]  # noqa: E731
+    result = _engine(monkeypatch, records, trusted_registries=TRUSTED).run()
+    assert result.complete and result.inventory_size == 0
+    assert {finding.shadow for finding in result.findings} == {True}
+    inventory = _stats(result, "engine.inventory")
+    assert inventory is not None and not inventory.incomplete
+    assert any(
+        "1 auto-approved" in warning and "allow_auto_approved" in warning for warning in inventory.warnings
+    )
+    allowed = [{**TRUSTED[0], "allow_auto_approved": True}]
+    result = _engine(monkeypatch, records, trusted_registries=allowed).run()
+    assert _by_resource(result)[RUNTIME].registry_match == "aws-agent-registry:rec-1"
+
+
+@pytest.mark.parametrize("mode", ["manual", "unknown", "none"])
+def test_approved_records_that_are_not_auto_approved_sanction_their_binding(monkeypatch, mode):
+    result = _engine(
+        monkeypatch, lambda: [_record_finding(_record(approval_mode=mode))], trusted_registries=TRUSTED
+    ).run()
+    assert _by_resource(result)[RUNTIME].shadow is False
+
+
+def test_registered_only_records_need_allow_registered_only(monkeypatch):
+    records = lambda: [_record_finding(_record(status="registered", approval_mode="none"))]  # noqa: E731
+    result = _engine(monkeypatch, records, trusted_registries=TRUSTED).run()
+    assert _by_resource(result)[RUNTIME].shadow is True
+    inventory = _stats(result, "engine.inventory")
+    assert inventory is not None and any("registered-only" in warning for warning in inventory.warnings)
+    allowed = [{**TRUSTED[0], "allow_registered_only": True}]
+    result = _engine(monkeypatch, records, trusted_registries=allowed).run()
+    assert _by_resource(result)[RUNTIME].registry_match == "aws-agent-registry:rec-1"
+
+
+def test_allow_registered_only_never_accepts_other_statuses(monkeypatch):
+    allowed = [{**TRUSTED[0], "allow_registered_only": True, "allow_auto_approved": True}]
+    result = _engine(
+        monkeypatch, lambda: [_record_finding(_record(status="pending"))], trusted_registries=allowed
+    ).run()
+    assert {finding.shadow for finding in result.findings} == {True}
+
+
+def test_a_caller_scoped_listing_is_never_complete(monkeypatch):
+    records = lambda: [_record_finding(_record(listing_scope="caller"))]  # noqa: E731
+    result = _engine(monkeypatch, records).run()
+    # The matched runtime is still reconciled; the unmatched one is not called unregistered.
+    assert _by_resource(result)[RUNTIME].metadata[RECONCILIATION_KEY]["status"] == "registered-and-observed"
+    assert RECONCILIATION_KEY not in _by_resource(result)[SHADOW_RUNTIME].metadata
+
+
+@pytest.mark.parametrize(
+    "field,value", [("approval_mode", "maybe"), ("listing_scope", "tenant"), ("approval_mode", 1)]
+)
+def test_unknown_approval_modes_and_listing_scopes_are_malformed(monkeypatch, field, value):
+    result = _engine(monkeypatch, lambda: [_record_finding(_record(**{field: value}))]).run()
+    assert not result.complete
+    assert _stats(result, "engine.registries") is not None
+
+
+def test_a_connector_keeps_only_records_of_the_registry_types_it_declares(monkeypatch):
+    result = _engine(
+        monkeypatch,
+        lambda: [_record_finding(_record())],
+        types=frozenset({"aws-agentcore-registry"}),
+        trusted_registries=TRUSTED,
+    ).run()
+    assert {finding.shadow for finding in result.findings} == {True}
+    registry_stats = _stats(result, "test.registry")
+    assert registry_stats is not None
+    assert any("does not declare that registry type" in warning for warning in registry_stats.warnings)
+    assert all(RECORD_KEY not in finding.metadata for finding in result.findings)
+
+
+def test_a_malformed_record_type_from_a_declaring_connector_is_reported_as_malformed(monkeypatch):
+    result = _engine(monkeypatch, lambda: [_record_finding(_record(registry="aws-registry"))]).run()
+    assert not result.complete and _stats(result, "engine.registries") is not None
+
+
+def test_trusted_registry_objects_carry_their_flags():
+    config = ScanConfig(
+        trusted_registries=[TrustedRegistry(REGISTRY, REGISTRY_ARN, allow_auto_approved=True)]
+    )
+    assert config.trusted_registries == [TrustedRegistry(REGISTRY, REGISTRY_ARN, True, False)]

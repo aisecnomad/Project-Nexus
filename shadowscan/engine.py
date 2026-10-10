@@ -30,6 +30,7 @@ from shadowscan.merge import merge
 from shadowscan.models import Finding, ScanResult, ScanStats, now_iso
 from shadowscan.registries import (
     RECORD_KEY,
+    REGISTRY_TYPES,
     TrustedApprovals,
     prune_reconciliation_links,
     reconcile_registries,
@@ -179,16 +180,27 @@ def _withhold_registry_records(
 
     A trusted registry's approved record approves findings of any connector. Another connector
     that copies record-shaped metadata from an export or a repository, or a plugin that declares
-    the hook, must not create an approval, so the key is dropped and the drop is reported.
+    the hook, must not create an approval, so the key is dropped and the drop is reported. A
+    declaring connector keeps only records of the registry types it lists, so it cannot speak
+    for another vendor's registry.
     """
     declared = getattr(hooks, "emits_registry_records", False) is True
-    if declared and builtin:
-        return
-    dropped = 0
+    declared_types = getattr(hooks, "registry_record_types", None)
+    types: frozenset[Any] = declared_types if isinstance(declared_types, frozenset) else frozenset()
+    dropped = undeclared_type = 0
     for finding in findings:
-        if RECORD_KEY in finding.metadata:
-            del finding.metadata[RECORD_KEY]
+        if RECORD_KEY not in finding.metadata:
+            continue
+        record = finding.metadata[RECORD_KEY]
+        registry = record.get("registry") if isinstance(record, dict) else None
+        if declared and builtin:
+            # A malformed record stays for reconciliation, which reports it as malformed.
+            if registry in types or registry not in REGISTRY_TYPES:
+                continue
+            undeclared_type += 1
+        else:
             dropped += 1
+        del finding.metadata[RECORD_KEY]
     if dropped:
         reason = (
             "only built-in connectors may emit registry records"
@@ -196,6 +208,11 @@ def _withhold_registry_records(
             else "the connector does not declare registry records"
         )
         st.warnings.append(f"registry record metadata ignored on {dropped} finding(s): {reason}")
+    if undeclared_type:
+        st.warnings.append(
+            f"registry record metadata ignored on {undeclared_type} finding(s): "
+            "the connector does not declare that registry type"
+        )
 
 
 @dataclass

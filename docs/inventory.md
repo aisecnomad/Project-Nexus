@@ -204,7 +204,9 @@ Each record finding carries `metadata.registry_record`:
   ],
   "publisher": "platform-team",
   "updated_at": "2026-09-01T00:00:00Z",
-  "listing_complete": true
+  "listing_complete": true,
+  "approval_mode": "manual",
+  "listing_scope": "registry"
 }
 ```
 
@@ -214,12 +216,14 @@ Each record finding carries `metadata.registry_record`:
 | `registry` | Registry type: `aws-agent-registry`, `aws-agentcore-registry`, `microsoft-agent-365`, `entra-agent-registry`, `google-agent-registry`, `gemini-enterprise`, `mcp-registry` or `a2a-card`. |
 | `registry_id` | Exact identity of this registry instance, such as its ARN. Empty when the connector could not establish it; such a record can never be trusted. |
 | `record_id` | The record's nonempty id in that registry. |
-| `status` | `approved`, `pending`, `draft`, `rejected`, `deprecated`, `blocked` or `unknown`. Connectors map vendor statuses onto this set and anything unrecognized onto `unknown`. |
+| `status` | `approved`, `registered`, `pending`, `draft`, `rejected`, `deprecated`, `blocked` or `unknown`. Connectors map vendor statuses onto this set and anything unrecognized onto `unknown`. `registered` means the registry lists the record but has no approval workflow (a Google Agent Registry entry, for example). |
 | `descriptor_type` | `agent`, `mcp`, `a2a`, `custom`, `agent-skills` or `package`. |
 | `bindings` | Up to 64 deployed objects the record describes, each by the exact `resource` of its finding, with optional `provider`, `account`, `region` and `coverage`. |
 | `publisher` | Optional: who published the record. |
 | `updated_at` | Optional timestamp. |
 | `listing_complete` | Optional, default false. True only when the connector listed every record of this registry without truncation or denial. |
+| `approval_mode` | Optional, default `unknown`. `auto` when the registry approves every record without a person, `manual` when a person approves records, `none` when the registry has no approval workflow. |
+| `listing_scope` | Optional, default `registry`. `caller` when the listing shows only what the scanning identity can see; such a listing is never treated as complete, whatever `listing_complete` says. |
 
 A binding's `coverage` is `in-scope` only when the emitting connector collected
 that resource type for the binding's account and region in the same run;
@@ -235,7 +239,11 @@ and is incomplete (exit 3).
 
 Only a built-in connector written to read vendor registries may emit records:
 its class declares the `emits_registry_records`
-[engine hook](architecture.md#engine-hooks). The engine removes
+[engine hook](architecture.md#engine-hooks) and lists the registry types it
+reads in `registry_record_types`. A record of a type the connector does not
+list is removed with the note
+`the connector does not declare that registry type`, so a connector for one
+vendor cannot speak for another vendor's registry. The engine removes
 `registry_record` from every other connector's findings and notes
 `registry record metadata ignored on N finding(s)` in that connector's stats,
 so metadata copied from an export or a repository cannot claim an approval. A
@@ -255,9 +263,24 @@ options:
   trusted_registries:
     - registry: aws-agent-registry
       id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
+      allow_auto_approved: false      # default
+      allow_registered_only: false    # default
 ```
 
-In a trusted registry, each record with status `approved`:
+In a trusted registry, a record approves when its status is `approved` and its
+`approval_mode` is not `auto`. Two optional per-registry switches widen that:
+
+- `allow_auto_approved: true` also accepts approved records of a registry that
+  approves every record without a person. Auto-approval is not human review.
+- `allow_registered_only: true` also accepts `registered` records of a registry
+  without an approval workflow.
+
+Records these rules decline are counted in an advisory `engine.inventory`
+warning (`trusted registry <type> <id>: N auto-approved ... record(s) were not
+treated as sanctioned`). Records of the deprecated `entra-agent-registry` source
+never approve, and the configuration refuses to trust that type.
+
+Each record that approves:
 
 - registers its own record finding as `<registry>:<record_id>` (for example
   `registry_match: aws-agent-registry:rec-123`); and
