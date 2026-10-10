@@ -1,0 +1,64 @@
+# MAESTRO layer attribution: where in the agentic stack a finding sits. A layer
+# is not a threat identifier. Author mappings, not independently reviewed.
+#
+# Every key under `when` must hold; a list matches when any of its values does.
+rules:
+  - id: maestro-l1-local-model
+    when: {kinds_any: [local-model]}
+    refs: [maestro-2025:L1]
+    rationale: Model weights stored for a local runtime are part of the foundation model layer.
+
+  - id: maestro-l1-model-artifact
+    when: {tags_any: [unsafe-serialization]}
+    refs: [maestro-2025:L1]
+    rationale: An unsafe model serialization format is a property of the model artifact itself.
+
+  - id: maestro-l2-data
+    when: {capabilities_any: [rag, data-access]}
+    refs: [maestro-2025:L2]
+    rationale: Retrieval and broad data access place the finding in the data operations layer.
+
+  - id: maestro-l3-agent-framework
+    when: {kinds_any: [agent, framework-usage, agent-config, mcp-server, workflow]}
+    refs: [maestro-2025:L3]
+    rationale: Agents, agent frameworks, agent and MCP configuration and AI workflows form the agent framework layer.
+
+  - id: maestro-l4-infrastructure
+    when: {kinds_any: [infra, runtime-process]}
+    refs: [maestro-2025:L4]
+    rationale: Infrastructure definitions and running processes sit in the deployment and infrastructure layer.
+
+  - id: maestro-l4-infrastructure-posture
+    when: {tags_any: [privileged-pod, cluster-admin, no-egress-policy, exposed-llm-server]}
+    refs: [maestro-2025:L4]
+    rationale: Workload privilege, egress and exposure settings are deployment and infrastructure posture.
+
+  - id: maestro-l5-gateway-caller
+    when: {kinds_any: [gateway-caller]}
+    refs: [maestro-2025:L5]
+    rationale: A caller seen in gateway logs is an observation from the observability layer.
+
+  - id: maestro-l5-logging
+    when: {tags_any: [no-invocation-logging, no-diagnostic-logging, tracing-disabled]}
+    refs: [maestro-2025:L5]
+    rationale: Disabled invocation logging or tracing is a gap in the evaluation and observability layer.
+
+  - id: maestro-l6-identity-and-credentials
+    when: {kinds_any: [secret, token, iam-grant, oauth-grant, service-identity]}
+    refs: [maestro-2025:L6]
+    rationale: Credentials, tokens, grants and service identities belong to the cross-cutting security layer.
+
+  - id: maestro-l7-multi-agent
+    when: {capabilities_any: [multi-agent]}
+    refs: [maestro-2025:L7]
+    rationale: Agents that communicate with other agents take part in the agent ecosystem layer.
+
+  - id: maestro-l7-bot-app
+    when: {kinds_any: [bot-app]}
+    refs: [maestro-2025:L7]
+    rationale: A bot or app installed into a SaaS workspace operates in the agent ecosystem layer.
+
+  - id: maestro-l7-agent-card
+    when: {tags_any: [no-auth-declared]}
+    refs: [maestro-2025:L7]
+    rationale: An A2A Agent Card advertises the agent to the agent ecosystem.

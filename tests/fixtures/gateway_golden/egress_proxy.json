@@ -2582,7 +2582,10 @@
      ]
     },
     "identity_scope": "run",
-    "technologies": []
+    "technologies": [],
+    "threats": [
+     "maestro-2025:L5"
+    ]
    },
    "identity_discriminator": "caller",
    "identity_schema": "shadowscan.finding-identity/v2"
@@ -2784,6 +2787,13 @@
       "category": "provider",
       "vendor": "OpenAI"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5",
+     "maestro-2025:L7",
+     "mitre-atlas-2026.09:AML.T0118",
+     "owasp-asi-2026:ASI07",
+     "owasp-asi-2026:ASI08"
     ]
    },
    "identity_discriminator": "caller",

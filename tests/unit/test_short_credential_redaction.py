@@ -11,7 +11,8 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.filesystem import _redacted_source, _structured_context
 from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.engine import Engine
-from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.mappings import describe
+from shadowscan.models import DERIVED_METADATA_KEYS, Evidence, Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.http import HttpClient
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize
@@ -49,7 +50,12 @@ def test_one_character_secret_cannot_corrupt_trusted_diagnostic_or_finding_schem
         metadata={"api_key": "a"},
         evidence=[Evidence("status", "an agent")],
     )
-    assert finding.metadata and "a" not in json.dumps(finding.to_dict()["metadata"])
+    exported = finding.to_dict()["metadata"]
+    # Threat and control references are packaged catalog identifiers selected
+    # by rule, never text copied from the finding, so they are checked apart.
+    derived = {key: exported.pop(key) for key in DERIVED_METADATA_KEYS & set(exported)}
+    assert finding.metadata and exported and "a" not in json.dumps(exported)
+    assert all(describe(ref) is not None for refs in derived.values() for ref in refs)
     assert finding.evidence and finding.evidence[0].signal == REDACTED
     assert "metadata" in finding.to_dict() and "evidence" in finding.to_dict()
     second = Finding(

@@ -40,6 +40,7 @@
 | `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |
 | `shadowscan/registry.py` | inventory formats and reconciliation, capability-card stub generation |
 | `shadowscan/risk.py` | additive, explainable risk model |
+| `shadowscan/mappings/` | edition-qualified threat and control catalogs and rules (`data/`), validator; derives `metadata.threats` and `metadata.controls` at export |
 | `shadowscan/engine.py` | parallel connector execution, merge, correlation, reconciliation, scoring; no connector names |
 | `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing, connector key validation |
 | `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |

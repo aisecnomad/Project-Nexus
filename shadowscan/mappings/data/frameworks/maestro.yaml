@@ -1,0 +1,23 @@
+framework: maestro
+edition: "2025"
+prefix: maestro-2025
+name: CSA MAESTRO agentic threat modelling layers
+kind: layer
+source_url: https://cloudsecurityalliance.org/blog/2025/02/06/agentic-ai-threat-modeling-framework-maestro
+licence: CSA publication; layer numbers and short labels only
+checked: "2026-10-10"
+verification: secondary
+notes: >-
+  Seven-layer reference architecture published by the Cloud Security Alliance
+  in February 2025. The publication itself could not be retrieved; layer
+  labels follow secondary sources, which differ slightly on layers 4 to 6.
+  Layer 6 is cross-cutting. A layer says where in the stack a finding sits;
+  it is not a threat identifier.
+entries:
+  L1: {title: Foundation Models}
+  L2: {title: Data Operations}
+  L3: {title: Agent Frameworks}
+  L4: {title: Deployment and Infrastructure}
+  L5: {title: Evaluation and Observability}
+  L6: {title: Security and Compliance}
+  L7: {title: Agent Ecosystem}

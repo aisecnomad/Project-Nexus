@@ -63,6 +63,8 @@ jobs:
         run: pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
+      - name: Validate threat and control mapping catalogs
+        run: python -m shadowscan.mappings.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
       - run: mypy shadowscan tools
@@ -128,6 +130,8 @@ jobs:
           git ls-files -z | xargs -0 python tools/check_secrets.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
+      - name: Validate threat and control mapping catalogs
+        run: python -m shadowscan.mappings.validate
       - run: ruff check shadowscan tests tools
       - run: ruff format --check shadowscan tests tools
       - run: mypy shadowscan tools
@@ -187,6 +191,7 @@ jobs:
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -c 'from importlib.metadata import distribution; import shadowscan; package = distribution("NexusShadowScan"); assert package.version == shadowscan.__version__; assert any(ep.name == "shadowscan" and ep.value == "shadowscan.cli:main" for ep in package.entry_points)'
           "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.signatures.validate
+          "$RUNNER_TEMP/shadowscan-wheel/bin/python" -m shadowscan.mappings.validate
           "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
       - name: Self-scan (demo, offline)
         run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif
@@ -239,7 +244,7 @@ jobs:
           # The build backend and pip stay in the build stage.
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --entrypoint python "$image_id" \
-            -c 'import importlib.util, os, pyexpat, subprocess; assert os.geteuid() == 65532; expat = tuple(int(part) for part in pyexpat.EXPAT_VERSION.removeprefix("expat_").split(".")); assert expat >= (2, 8, 5), pyexpat.EXPAT_VERSION; build_tools = [name for name in ("pip", "setuptools", "wheel") if importlib.util.find_spec(name)]; assert not build_tools, build_tools; subprocess.run(["python", "-m", "shadowscan.signatures.validate"], check=True)'
+            -c 'import importlib.util, os, pyexpat, subprocess; assert os.geteuid() == 65532; expat = tuple(int(part) for part in pyexpat.EXPAT_VERSION.removeprefix("expat_").split(".")); assert expat >= (2, 8, 5), pyexpat.EXPAT_VERSION; build_tools = [name for name in ("pip", "setuptools", "wheel") if importlib.util.find_spec(name)]; assert not build_tools, build_tools; subprocess.run(["python", "-m", "shadowscan.signatures.validate"], check=True); subprocess.run(["python", "-m", "shadowscan.mappings.validate"], check=True)'
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --memory 1g --pids-limit 128 \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m \

@@ -5,6 +5,52 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Threat and control references
+
+- Replace `metadata.compliance` with `metadata.threats` and
+  `metadata.controls`. References are now edition-qualified
+  (`<framework>-<edition>:<entry>`, for example `owasp-llm-2026:LLM03`,
+  `mitre-atlas-2026.09:AML.T0053`, `nist-ai-rmf-1.0:GOVERN-1.6`) and come from
+  validated catalogs and rules under `shadowscan/mappings/data/`. They are
+  evidence references and author mappings, not compliance determinations, and
+  have not been independently reviewed. Consumers reading `metadata.compliance`
+  must switch; the key is no longer written, and a value in an older report is
+  dropped when it is read for `diff` or `merge`.
+- Correct the earlier references: `exposed-llm-server` and
+  `unauthenticated-mcp` no longer map to LLM07 (System Prompt Leakage in the
+  2025 list, Misinformation in 2026); privilege tags, `code-exec` and
+  `saas-actions` no longer map to ASI08 (Cascading Failures); credential tags
+  map to Sensitive Information Disclosure and Identity and Privilege Abuse
+  instead of supply-chain entries. `code-exec` and `saas-actions` are matched
+  as capabilities; as tags they never matched a finding.
+- Map a `secret` finding to Sensitive Information Disclosure (LLM02) and
+  Unsecured Credentials (AML.T0055) only when an exposure tag such as
+  `hardcoded-credential` or `unmasked-ci-variable` supports it. Credentials in
+  AWS Secrets Manager, SSM SecureString, Google Secret Manager, OCI Vault,
+  GitHub Actions secrets and masked GitLab variables are referenced only as an
+  identity (ASI03, MAESTRO layer 6).
+- Add MITRE ATLAS 2026.09 techniques for agent tool poisoning, unsafe
+  artifacts, credentials in agent configuration, escape to host and exposed AI
+  services; CSA MAESTRO layer attribution; and control references for NIST AI
+  RMF 1.0, ISO/IEC 42001:2023 (identifiers and own-words labels only), the EU
+  AI Act and AIUC-1 domains. Rules can also read autonomy and registry
+  reconciliation metadata; malformed or missing values match nothing.
+- Threats and controls are derived at export and never read back, so they
+  cannot change finding identity, risk, `diff` change detection, merging or
+  the incremental cache. HTML and Markdown reports show each reference with
+  its title, SARIF results and rules carry them as properties and rule tags
+  (at most 20 tags per rule), and CycloneDX entries carry
+  `shadowscan:threats` and `shadowscan:controls`.
+- Add `python -m shadowscan.mappings.validate` (`make mappings`, part of
+  `make check` and CI) and the generated catalog reference page
+  (`make mapping-reference`). Each catalog records a `checked` date (when its
+  entries were compiled and last checked, not a retrieval date) and the source
+  its verification level names; the OWASP Agentic list links the OWASP LLM
+  2026 Appendix A its names were checked against.
+- The container build context includes the mapping catalogs, without which
+  image scans could not write reports, and `.yml` signature packs. A
+  repository test checks that the context carries every file the wheel ships.
+
 ### Scan evidence, completeness and replay corrections
 
 - Resolve supported Go SDK import aliases before publishing credential-bearing

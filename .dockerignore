@@ -17,3 +17,5 @@
 !shadowscan/**/*.py
 !shadowscan/py.typed
 !shadowscan/signatures/data/**/*.yaml
+!shadowscan/signatures/data/**/*.yml
+!shadowscan/mappings/data/**/*.yaml

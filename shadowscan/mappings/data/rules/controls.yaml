@@ -1,0 +1,131 @@
+# Control references: NIST AI RMF 1.0, ISO/IEC 42001:2023 Annex A, the EU AI Act
+# and AIUC-1. A rule says the finding is evidence relevant to each control; it is
+# never a compliance determination, pass or fail. Author mappings, not
+# independently reviewed.
+#
+# Every key under `when` must hold; a list matches when any of its values does.
+rules:
+  - id: shadow-ai-system
+    when: {shadow: true}
+    refs:
+      - nist-ai-rmf-1.0:GOVERN-1.6
+      - iso-iec-42001-2023:A.4.2
+      - aiuc-1-2026q2:E
+    rationale: >-
+      An AI system missing from the supplied inventory is evidence about the
+      completeness of AI system inventory and resource documentation.
+
+  - id: registry-gap
+    when: {registry_status_any: [observed-not-registered]}
+    refs:
+      - nist-ai-rmf-1.0:GOVERN-1.6
+      - iso-iec-42001-2023:A.4.2
+    rationale: >-
+      An agent observed in the environment but absent from its registry is a
+      gap in the AI system inventory.
+
+  - id: stale-registration
+    when: {registry_status_any: [registered-not-observed]}
+    refs:
+      - nist-ai-rmf-1.0:GOVERN-1.7
+    rationale: >-
+      A registered agent that was not observed may be retired without being
+      removed, which is relevant to decommissioning processes.
+
+  - id: missing-owner
+    when:
+      owner_missing: true
+      kinds_any: [agent, workflow, bot-app, agent-config, mcp-server, framework-usage, cloud-resource, ai-app]
+    refs:
+      - nist-ai-rmf-1.0:GOVERN-2.1
+      - iso-iec-42001-2023:A.3.2
+      - aiuc-1-2026q2:E
+    rationale: >-
+      An AI system without a recorded owner has no documented accountability.
+
+  - id: oversight-bypassed
+    when: {oversight_any: [bypassed]}
+    refs:
+      - nist-ai-rmf-1.0:GOVERN-3.2
+      - nist-ai-rmf-1.0:MAP-3.5
+      - eu-ai-act-2024:Art.14
+      - iso-iec-42001-2023:A.9.2
+      - aiuc-1-2026q2:D003
+    rationale: >-
+      Evidence that the agent's human approval step is bypassed is relevant to
+      human oversight and to restricting unsafe tool calls.
+
+  - id: high-autonomy-oversight
+    when: {autonomy_floor_at_least: 4}
+    refs:
+      - nist-ai-rmf-1.0:GOVERN-3.2
+      - nist-ai-rmf-1.0:MAP-3.5
+      - eu-ai-act-2024:Art.14
+      - iso-iec-42001-2023:A.9.2
+      - aiuc-1-2026q2:D003
+    rationale: >-
+      An agent operating at high or full autonomy depends on defined oversight
+      measures rather than per-step review.
+
+  - id: logging-gap
+    when: {tags_any: [no-invocation-logging, no-diagnostic-logging, tracing-disabled]}
+    refs:
+      - eu-ai-act-2024:Art.12
+      - iso-iec-42001-2023:A.6.2.8
+      - nist-ai-rmf-1.0:MEASURE-3.1
+    rationale: >-
+      Disabled invocation logging or tracing removes the records that event
+      logging and risk tracking rely on.
+
+  - id: security-exposure
+    when:
+      tags_any:
+        - hardcoded-credential
+        - plaintext-credential
+        - inline-secrets
+        - secret-in-env
+        - unmasked-ci-variable
+        - exposed-llm-server
+        - public-ingress
+        - public-principal
+        - posture-exposed-gateway
+        - posture-unauthenticated-gateway
+        - unauthenticated-mcp
+        - no-authentication
+        - wildcard-permissions
+        - policy.privileged-scopes
+    refs:
+      - nist-ai-rmf-1.0:MEASURE-2.7
+      - eu-ai-act-2024:Art.15
+      - aiuc-1-2026q2:B
+    rationale: >-
+      Exposed credentials, unauthenticated or public endpoints and excessive
+      privileges are evidence about the system's security and resilience.
+
+  - id: third-party-components
+    when: {tags_any: [mcp-unpinned-package, unsafe-serialization]}
+    refs:
+      - nist-ai-rmf-1.0:GOVERN-6.1
+      - nist-ai-rmf-1.0:MANAGE-3.1
+      - nist-ai-rmf-1.0:MAP-4.1
+      - iso-iec-42001-2023:A.10.3
+    rationale: >-
+      Unpinned MCP packages and unsafe model artifacts are third-party
+      components whose risks the organization has to manage.
+
+  - id: user-facing-ai
+    when: {kinds_any: [bot-app, ai-app]}
+    refs:
+      - eu-ai-act-2024:Art.50
+    rationale: >-
+      A bot or AI application that people interact with is relevant to
+      transparency obligations towards those people.
+
+  - id: agentic-monitoring
+    when: {autonomy_floor_at_least: 3}
+    refs:
+      - nist-ai-rmf-1.0:MANAGE-4.1
+      - iso-iec-42001-2023:A.6.2.6
+    rationale: >-
+      An agent that runs multi-step workflows on its own needs operational
+      monitoring after deployment.

@@ -26,6 +26,10 @@ from shadowscan.utils.redaction import (
 
 FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v2"
 LEGACY_FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v1"
+# Metadata keys computed from the rest of a finding at export (shadowscan.mappings).
+# They are never read back, so they cannot feed identity, risk, diff state,
+# merging or the incremental cache. ``compliance`` is the removed earlier name.
+DERIVED_METADATA_KEYS = frozenset({"threats", "controls", "compliance"})
 
 # Digest of the state a completed sanitize() pass left behind, together with
 # the redaction policy that verified it. Never serialized or compared.
@@ -494,11 +498,18 @@ class Finding:
         d = asdict(self)
         # Verified-clean markers are process-local state, never report content.
         d.pop("_clean_digest", None)
-        from shadowscan.compliance import compliance_references
+        from shadowscan.mappings import finding_references
 
-        references = compliance_references(self.tags)
-        if references:
-            d["metadata"]["compliance"] = references
+        # Derived from this finding's own state on every export: a value carried
+        # in from an older report, a cache entry or a plugin is never republished.
+        metadata = d["metadata"]
+        for key in DERIVED_METADATA_KEYS:
+            metadata.pop(key, None)
+        threats, controls = finding_references(self)
+        if threats:
+            metadata["threats"] = threats
+        if controls:
+            metadata["controls"] = controls
         for item in d["evidence"]:
             item.pop("_clean_digest", None)
         d["surface"] = self.surface.value
@@ -518,6 +529,8 @@ class Finding:
                 raise ValueError(f"finding {name} is required")
         d = {name: d[name] for name in _FINDING_FIELDS if name in d}
         _validate_shapes(d)
+        if "metadata" in d:
+            d["metadata"] = {k: v for k, v in d["metadata"].items() if k not in DERIVED_METADATA_KEYS}
         # Reading an old report preserves its identity rather than silently
         # relabeling old ids as v2. Upgrades require a freshly collected baseline.
         d.setdefault("identity_schema", LEGACY_FINDING_IDENTITY_SCHEMA)

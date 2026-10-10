@@ -194,6 +194,7 @@ python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/nexusshadowscan-0.1.2-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
+python -m shadowscan.mappings.validate
 shadowscan --help
 ```
 
@@ -259,9 +260,9 @@ docker build --tag shadowscan:reviewed .
 ```
 
 Retain the reviewed base and built image digests. The build context is an
-allowlist (`.dockerignore`) of package sources, signature data, packaging
-inputs and the runtime/build locks. Distribution packages from `apk` and image
-metadata remain mutable, so the Dockerfile does not promise byte-for-byte
+allowlist (`.dockerignore`) of package sources, signature and mapping data,
+packaging inputs and the runtime/build locks. Distribution packages from `apk`
+and image metadata remain mutable, so the Dockerfile does not promise byte-for-byte
 reproducible images. There is no claim of a hermetic package snapshot. CI
 smoke-tests a non-root, read-only and network-isolated image; build and test the
 deployment image, generate its container/OS SBOM, and validate resource limits
@@ -913,6 +914,22 @@ These notes record unreleased corrections and earlier candidate changes.
 Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 10 threat and control references (unreleased)
+
+This source candidate changes the report schema. It does not change the
+published 0.1.2 artifact, create a release, or establish independent review of
+the mappings. Select and review a new full commit SHA before deploying it.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Report schema | `metadata.compliance` is removed. Findings carry `metadata.threats` (OWASP LLM and Agentic 2026, MITRE ATLAS 2026.09, MAESTRO layers) and `metadata.controls` (NIST AI RMF 1.0, ISO/IEC 42001:2023, EU AI Act, AIUC-1), as edition-qualified references such as `owasp-llm-2026:LLM03`. Several earlier references named the wrong entry. Disclosure and unsecured-credential references need an exposure tag; a credential in a managed secret store or an encrypted CI secret is referenced only as an identity. SARIF rule tags and properties, HTML, Markdown and CycloneDX output change accordingly. | Switch SIEM, ticketing and dashboard consumers from `metadata.compliance` to the new keys and their prefixes. Do not translate old identifiers one to one; several were wrong. The references are evidence references and author mappings, not compliance determinations or reviewed control assessments. |
+
+Finding identity, risk scores and `diff` change detection are unchanged: the
+references are derived at export and never read back, so a baseline from an
+earlier candidate compares without reporting the rename as drift. Validate the
+packaged catalogs with `python -m shadowscan.mappings.validate` after
+installing a candidate; see [threat and control mappings](concepts/mappings.md).
 
 ### October 9 scan evidence corrections (unreleased)
 
