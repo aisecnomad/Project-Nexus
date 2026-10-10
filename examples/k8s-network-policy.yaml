@@ -1,0 +1,48 @@
+# Baseline egress policy for a live-collection ShadowScan Job
+# (docs/operations/operational-controls.md). It is not a host allowlist: a standard
+# NetworkPolicy matches addresses, not DNS names, so it cannot express "only
+# graph.microsoft.com". It limits the scanner pod to cluster DNS and HTTPS to
+# public addresses, denying private, carrier-grade NAT and link-local ranges
+# (including cloud metadata at 169.254.169.254). Enforce the per-connector host
+# allowlist in a layer that sees names: a transparent egress gateway or firewall
+# that filters on TLS SNI, or a CNI with FQDN policies. ShadowScan's HTTP client
+# refuses configured proxies, so an explicit HTTPS_PROXY is not an option. Offline
+# scans need no egress: use the deny-all policy in k8s-job.yaml. Add IPv6 rules if
+# the cluster is dual-stack. Enforced only by a CNI that supports NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shadowscan-live-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: shadowscan
+      shadowscan-mode: live
+  policyTypes: [Egress]
+  egress:
+    # Cluster DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # HTTPS to public addresses only.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443

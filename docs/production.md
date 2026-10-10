@@ -298,8 +298,10 @@ The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus
 active deadline, a placeholder for a reviewed image digest, and a matching
 NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
 reviewed `/input` volume before running it. For live API collection, use a
-separate Job and enforce a network path through an approved egress proxy; a
-standard Kubernetes NetworkPolicy cannot filter destinations by DNS name.
+separate Job and enforce a network path through an approved transparent egress
+gateway or firewall that filters by name; a standard Kubernetes NetworkPolicy
+cannot filter destinations by DNS name, and ShadowScan's HTTP client refuses
+configured proxies. See [operational controls](operations/operational-controls.md).
 
 Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Cloning requires

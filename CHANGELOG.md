@@ -5,6 +5,23 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Operational controls guide
+
+- Add `docs/operations/operational-controls.md` (from #175): external process
+  supervision with correct systemd (`Type=oneshot` with `TimeoutStartSec=`),
+  Kubernetes and CI deadlines; network egress, including that ShadowScan's HTTP
+  client refuses configured proxies, so live host allowlists belong in a
+  transparent, name-aware egress layer; the plugin trust model; detection
+  expectations; and SBOM and provenance as the release-evidence workflow
+  actually produces them (a runtime SBOM and wheel attestations, no container
+  image attestation).
+- Add `examples/k8s-network-policy.yaml`, a live-collection egress baseline
+  (cluster DNS and HTTPS to public addresses, private, CGNAT and link-local
+  ranges denied) that selects the same labels as `examples/k8s-job.yaml`.
+- Pin that an LLM triage reply steered by scanned content cannot change a
+  finding's risk, shadow status, kind or tags.
+- Ignore `*.pyo`, `*.egg` and `*.whl` build artifacts (from #176).
+
 ### Fleet shadow status, triage budget and CI corrections
 
 - `shadowscan merge` no longer reports findings from scans made without an
