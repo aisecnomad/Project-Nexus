@@ -47,9 +47,8 @@ fail-closed trust model.
 
 Scoped, sequenced and with acceptance criteria in
 [docs/proposals/agent-governance.md](docs/proposals/agent-governance.md).
-The recommended order is threat references and autonomy tiers first, then
-drift and the AWS and MCP registries, then the remaining registries and
-control mapping, then the fleet dashboard.
+All six items below are implemented, unreleased, and wait on independent
+review and live validation before a release.
 
 - Threat mapping: implemented, unreleased. OWASP LLM and Agentic, MITRE
   ATLAS and MAESTRO references come from edition-pinned, validated catalogs;
