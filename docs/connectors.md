@@ -1004,8 +1004,8 @@ and publishers; `agent_registry_locations` to limit the locations, which leaves
 the listing incomplete for reconciliation), and `gemini_enterprise: true` reads
 the agents of Gemini Enterprise apps (Discovery Engine `v1alpha`, a
 caller-scoped listing that is never complete). Records bind only to the exact
-reasoning engines and Dialogflow CX agents they reference, and carry
-`metadata.catalog_presence`. See
+reasoning engines and Dialogflow CX agents they reference in their own project,
+and carry `metadata.catalog_presence`. See
 [Agent Registry and Gemini Enterprise catalogs](connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs).
 
 ### `cloud.azure`

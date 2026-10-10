@@ -296,7 +296,8 @@ and approve nothing unless the trusted registry entry sets
 they are never a complete listing: an observed agent is never reported
 `observed-not-registered` against Gemini Enterprise.
 
-**Bindings.** A record binds only to an exact resource:
+**Bindings.** A record binds only to an exact resource in the project it was
+listed in:
 
 - a reasoning engine named by an Agent Registry `RuntimeReference`
   (`//aiplatform.googleapis.com/projects/.../reasoningEngines/<id>`) or by a
@@ -305,24 +306,34 @@ they are never a complete listing: an observed agent is never reported
   (`//dialogflow.googleapis.com/...`) or by a Gemini Enterprise Dialogflow agent.
 
 When the scan observed that resource (comparing the project number and the
-project id), the binding carries the observed finding's exact resource, project
-and location. Its coverage is `in-scope` only when this scan's Vertex AI (or
-Dialogflow CX) listing for that project and location completed, `unknown` when
-that listing was incomplete or the project number is unknown, and `out-of-scope`
-otherwise (a location outside `locations`, a project not scanned or without the
-API). Other runtime references (a GKE deployment, for example) bind nothing. A
-runtime identity that equals a reasoning engine's `effective_identity`, or an
-interface URL that equals a Cloud Run service URI, is recorded in
-`metadata.registry_join_hints`: a hint, never a binding or an approval.
+project id), the binding carries the observed finding's exact resource and
+location; its project is always the record's own. Its coverage is `in-scope`
+only when this scan's Vertex AI (or Dialogflow CX) listing for that project and
+location completed, `unknown` when that listing was incomplete or the project
+number is unknown, and `out-of-scope` otherwise (a location outside `locations`,
+or a project without the API). A reference to a reasoning engine or Dialogflow
+CX agent of another project (by its id, or by a project number that is not the
+record's own) binds and approves nothing, even in a trusted registry; it is
+recorded in `metadata.registry_join_hints` as a `cross-project-reference`. When
+the scan knows neither project's number, an observed resource belongs to the
+project whose listing returned it. Other runtime references (a GKE deployment or
+a Vertex AI endpoint, for example) bind nothing. A runtime identity that equals
+a reasoning engine's `effective_identity`, or an interface URL that equals a
+Cloud Run service URI, is also recorded in `metadata.registry_join_hints`: a
+hint, never a binding or an approval.
 
 **Complete listings.** An Agent Registry record is `listing_complete` only when
 the project's registry locations were enumerated (not set with
 `agent_registry_locations`), that enumeration and every location's agents, MCP
 servers and endpoints (and skills with `v1alpha`) listings completed, and every
-runtime reference of the project's records names a project the scan can
-resolve. Only then can an observed reasoning engine, Dialogflow CX agent or
-chat engine in that project that no record binds be reported
-`observed-not-registered`. Records bind only reasoning engines and Dialogflow CX
+runtime reference of the project's records names a resource of that project,
+in a form and with a project number the scan can read. Only then can an
+observed reasoning engine, Dialogflow CX agent or chat engine in that project
+that no record binds be reported `observed-not-registered`. A runtime reference
+on a Vertex AI or Dialogflow host that is not a plain resource name (an
+`https:` URL, an API version segment or a trailing slash, for example) also
+makes the scan incomplete (exit 3): it may register an engine that would
+otherwise look unregistered. Records bind only reasoning engines and Dialogflow CX
 agents, so a chat engine is never `registered-and-observed` through a record:
 check the Dialogflow CX agent behind it before treating it as unregistered.
 Engines that are not chat engines, Gemini Enterprise apps included, are cloud
@@ -343,20 +354,25 @@ is never reported.
 never a finding) that says whether it completed. A denied or failed request, an
 invalid page, unreachable locations, an invalid or repeated page token or the
 page cap makes that listing incomplete and the scan incomplete (exit 3); the
-items already read are kept. Engine, assistant and location names from responses
-become request paths only after validation (an engine in another project,
-location or collection is skipped with a warning). A record that analysis cannot
-read, including a malformed coverage record or an unsupported `_kind`, makes
-every binding's coverage `unknown`, every listing incomplete and every presence
-`unknown` for that scan. So does anything that makes an offline replay
-incomplete, such as a record the loader drops before analysis (an invalid JSON
-line, a provider error record, a file skipped by a limit), and any registry
-record whose name carries the number of a project other than the one it was
-listed in: that record is dropped with a warning, so it cannot claim the other
-project's registry identity.
+items already read are kept. A record dump keeps those coverage records, so
+replaying the dump of an incomplete scan is incomplete again (one warning) and
+voids the claims of the listings that failed, as the live scan did. Engine,
+assistant and location names from responses become request paths only after
+validation (an engine in another project, location or collection is skipped with
+a warning). A record that analysis cannot read, including a malformed coverage
+record, an unsupported `_kind` or a publisher that is not named as a publisher
+of the project and location it was listed in, makes every binding's coverage
+`unknown`, every listing incomplete and every presence `unknown` for that scan.
+So does anything else that makes an offline replay incomplete, such as a record
+the loader drops before analysis (an invalid JSON line, a provider error record,
+a file skipped by a limit), and any registry record or publisher whose name
+carries the number of a project other than the one it was listed in: it is
+dropped with a warning, so it cannot claim the other project's registry identity
+or name a skill's publisher.
 
 **What is kept.** Items are reduced when collected, so a record dump replays what
-live analysis saw. An agent card becomes a summary (name, URL, version, protocol
+live analysis saw; analysis bounds the text fields of a replayed record to the
+same lengths. An agent card becomes a summary (name, URL, version, protocol
 version, skill ids, capability flags, security scheme names and types, and counts
 of security requirements and signatures); interface URLs lose userinfo, query and
 fragment; icons, starter prompts, assistant instructions and authorization values

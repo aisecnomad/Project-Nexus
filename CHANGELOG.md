@@ -370,6 +370,32 @@ summarizes each release for people who install and operate ShadowScan.
   `subscription_tier`, reasoning engines `effective_identity`, when present.
   Agent Registry counts as an AI API, so a project whose only AI API is Agent
   Registry now has an enabled-APIs finding.
+- Replaying the record dump of a scan whose Agent Registry, Gemini
+  Enterprise, Vertex AI or Dialogflow CX listing failed is incomplete again
+  (exit 3, one warning) when a `registry-coverage` record says a listing did
+  not complete; it voids only the claims of those listings, as the live scan
+  did. Such a replay previously reported a complete scan.
+- A record binds only resources of the project it was listed in. A Gemini
+  Enterprise agent's reasoning engine or Dialogflow agent, or an Agent
+  Registry `RuntimeReference`, in another project binds and approves nothing,
+  even in a trusted registry, and is recorded as a `cross-project-reference`
+  join hint; an Agent Registry that holds such a reference is not a complete
+  listing of its own project. Bindings always carry the record's own project.
+  Previously a trusted app could approve another project's engine, and a
+  complete registry made another project's unbound engines
+  `observed-not-registered` even when that project's own registry listing
+  failed.
+- An Agent Registry `RuntimeReference` on a Vertex AI or Dialogflow host that
+  is not a plain resource name (an `https:` URL, an API version segment, a
+  trailing slash) makes that registry's listing incomplete and the scan
+  incomplete (exit 3, one warning). It was previously ignored, so the engine
+  it registered could be reported `observed-not-registered`.
+- A publisher record must be named as a publisher of the project and location
+  it was listed in (`_project` and `_location` are now required), and one named
+  with another project's number is dropped like a foreign record, so it can no
+  longer replace another project's skill publisher or tier. Analysis bounds
+  the text fields of replayed registry records to the lengths collection
+  uses.
 - The fixtures and transports in the tests are synthetic, written from
   Google's API discovery documents; nothing was validated against a live
   project.
