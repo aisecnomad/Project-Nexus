@@ -31,11 +31,21 @@ summarizes each release for people who install and operate ShadowScan.
   Shadow status now merges in three states, whatever the order of the
   sources: `true` when any source found the finding unregistered, `false` when
   a source matched it to the inventory that scan was given, and `null` when no
-  source that reported it had an inventory. A registered finding keeps the
-  first non-empty `registry_match` of a source that matched it; a shadow or
-  unassessed finding has none. The merged report carries `inventory_present`
+  source that reported it had an inventory. A shadow or unassessed finding has
+  no `registry_match`. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
   whose `inventory_present` is not a boolean is refused (exit 1).
+- Registration claims need an inventory. A scan without an inventory or
+  trusted registries passed through the `shadow` and `registry_match` a
+  connector or plugin set, and `merge` then counted such a finding as
+  registered. The engine now clears that match state (`shadow` and
+  `registry_match` become `null`), and `merge` reads registration only from
+  sources whose `inventory_present` is true and treats `shadow: false` without
+  a `registry_match` as unassessed. Sources that matched a finding to
+  different agents make it ambiguous, as two matching inventory entries are in
+  one scan (`shadow: true`, `registry_match_reason:
+  ambiguous-resource-approval`, the candidates in `registry_suggestions`),
+  instead of the first source's match winning.
 - LLM triage is bounded. `options.llm_triage.budget_seconds` (default 300,
   1 to 3600) limits one triage run, and the HTTP client's retries,
   `Retry-After` waits, connection set-up and response reads stop at the same

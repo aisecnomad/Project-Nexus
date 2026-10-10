@@ -131,9 +131,11 @@ def test_fleet_preserves_highest_source_risk_in_either_order(tmp_path: Path):
         low = json.loads(path.read_text())
         high = json.loads(path.read_text())
         low["findings"][0]["risk"].update(score=10, level="low")
-        low["findings"][0]["shadow"] = False
+        low["findings"][0].update(shadow=False, registry_match="fs-mcp")
         high["findings"][0]["risk"].update(score=90, level="critical")
         high["findings"][0]["shadow"] = True
+        # Registration counts only from sources that reconciled against an inventory.
+        low["inventory_present"] = high["inventory_present"] = True
         inputs = [("low", low), ("high", high)]
         result = merge_reports(list(reversed(inputs)) if reverse else inputs)
         assert result.findings[0].risk.score == 90
@@ -226,12 +228,18 @@ def test_merge_takes_registration_only_from_sources_that_reconciled(tmp_path: Pa
         by_kind = {f.kind: f for f in result.findings}
         assert len(by_kind) == len(result.findings) == 2
         assessed = [name for name, _ in inputs if name in matches]
-        # Registered by the first source whose inventory matched it.
-        assert by_kind[Kind.MCP_SERVER].shadow is False
-        assert by_kind[Kind.MCP_SERVER].registry_match == matches[assessed[0]]
+        mcp = by_kind[Kind.MCP_SERVER]
+        if len(assessed) == 1:
+            # Registered by the one source whose inventory matched it.
+            assert (mcp.shadow, mcp.registry_match) == (False, matches[assessed[0]])
+        else:
+            # Two inventories matched it to different agents: ambiguous, as in one scan.
+            assert (mcp.shadow, mcp.registry_match) == (True, None)
+            assert mcp.metadata["registry_match_reason"] == "ambiguous-resource-approval"
+            assert mcp.metadata["registry_suggestions"] == ["files", "fs-mcp"]
         # Unregistered where an inventory was supplied, whatever the other source's position.
         assert by_kind[Kind.AGENT].shadow is True and by_kind[Kind.AGENT].registry_match is None
-        assert result.summary()["shadow"] == 1
+        assert result.summary()["shadow"] == len(assessed)
         assert result.inventory_present is True and result.inventory_size == 1
 
 
@@ -262,6 +270,60 @@ def test_merge_ignores_a_registration_that_names_no_match(tmp_path: Path, forged
     for inputs in ([("forged", forged), ("genuine", genuine)], [("genuine", genuine), ("forged", forged)]):
         [finding] = merge_reports(inputs).findings
         assert finding.shadow is False and finding.registry_match == "fs-mcp"
+
+
+def test_merge_ignores_registration_claimed_by_a_source_without_an_inventory(tmp_path: Path):
+    # Regression: a plugin finding with shadow false in a scan without an inventory was merged
+    # as registered, beside any other source that did have an inventory.
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    claimed = json.loads(path.read_text())
+    assert claimed["inventory_present"] is False
+    claimed["findings"][0].update(shadow=False, registry_match="approved-by-plugin")
+    empty = _scan(tmp_path / "laptop", tmp_path / "empty.json", "--inventory", str(_inventory(tmp_path, "e")))
+    reconciled = json.loads(empty.read_text())
+    [finding] = merge_reports([("claimed", claimed)]).findings
+    assert finding.shadow is None and finding.registry_match is None
+    # Beside a source that reconciled it, only that source's assessment counts.
+    for inputs in (
+        [("claimed", claimed), ("empty", reconciled)],
+        [("empty", reconciled), ("claimed", claimed)],
+    ):
+        result = merge_reports(inputs)
+        [finding] = result.findings
+        assert (finding.shadow, finding.registry_match) == (True, None)
+        assert result.inventory_present is True and result.summary()["shadow"] == 1
+
+
+def test_merge_treats_shadow_false_without_a_match_as_unassessed(tmp_path: Path):
+    _report(tmp_path, "laptop", {".mcp.json": MCP})
+    path = _scan(
+        tmp_path / "laptop", tmp_path / "it.json", "--inventory", str(_inventory(tmp_path, "it", "fs-mcp"))
+    )
+    bare = json.loads(path.read_text())
+    bare["findings"][0]["registry_match"] = None
+    [finding] = merge_reports([("bare", bare)]).findings
+    assert finding.shadow is None and finding.registry_match is None
+
+
+def test_merge_of_conflicting_registrations_is_ambiguous_in_either_order(tmp_path: Path):
+    _report(tmp_path, "laptop", {".mcp.json": MCP})
+    sources = [
+        (
+            name,
+            json.loads(
+                _scan(tmp_path / "laptop", tmp_path / f"{name}.json", "--inventory", str(inv)).read_text()
+            ),
+        )
+        for name, inv in (
+            ("low", _inventory(tmp_path, "low", "mcp-low")),
+            ("high", _inventory(tmp_path, "high", "mcp-high")),
+        )
+    ]
+    for inputs in (sources, sources[::-1]):
+        [finding] = merge_reports(inputs).findings
+        assert (finding.shadow, finding.registry_match) == (True, None)
+        assert finding.metadata["registry_match_reason"] == "ambiguous-resource-approval"
+        assert finding.metadata["registry_suggestions"] == ["mcp-high", "mcp-low"]
 
 
 def test_merge_reports_a_supplied_inventory_even_when_empty(tmp_path: Path):

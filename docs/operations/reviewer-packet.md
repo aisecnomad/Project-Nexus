@@ -116,8 +116,10 @@ paired controls:
 
 - A fleet merge of sources with `shadow: null`, `true` and `false` for the same
   finding, in every order, versus a source that claims registration without
-  naming a match. Unassessed findings must stay `null`; a match must come from
-  a source that names one.
+  naming a match or without an inventory, and versus sources that match it to
+  different agents. Unassessed findings must stay `null`; a match must come
+  from a source with an inventory that names one, and conflicting matches must
+  be ambiguous rather than order-dependent.
 - A triage run stopped by `budget_seconds`, the consecutive-failure breaker or
   the job-deadline reserve versus a healthy endpoint. Unreached findings are
   `skipped`, never `failed` or missing, and risk and completeness are unchanged.

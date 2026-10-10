@@ -37,7 +37,7 @@ from shadowscan.registries import (
     prune_reconciliation_links,
     reconcile_registries,
 )
-from shadowscan.registry import Inventory, InventoryEntry
+from shadowscan.registry import Inventory, InventoryEntry, clear_match_state
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
@@ -1181,7 +1181,11 @@ class Engine:
         inventory = self.inventory if self.inventory is not None or approvals is None else Inventory()
         for f in findings:
             entry: InventoryEntry | None = None
-            if inventory is not None and not (approvals is not None and approvals.approve_record(f)):
+            if inventory is None:
+                # Nothing was assessed: a match a connector or plugin set is not a registration.
+                clear_match_state(f)
+                f.shadow = f.registry_match = None
+            elif not (approvals is not None and approvals.approve_record(f)):
                 entry = inventory.match(f, approvals.candidates(f) if approvals is not None else ())
                 f.registry_match = entry.agent_id if entry else None
                 f.shadow = entry is None
