@@ -911,6 +911,11 @@ class GcpConnector(BaseConnector):
                 f"cloud.gcp: {catalogs.foreign} registry record(s) name a project other than the "
                 "one they were listed in; registry claims not comparable"
             )
+        # Warned after the replay check above: these gaps already void the claims of the listings
+        # they concern, so a replay keeps the claims live analysis made about the others.
+        if self.offline and catalogs.failed_listings:
+            # Live collection warned when the listing failed; the export only records that it did.
+            self.ctx.warn("cloud.gcp: registry catalog listing incomplete in export; records may be missing")
         yield from findings
 
     @staticmethod

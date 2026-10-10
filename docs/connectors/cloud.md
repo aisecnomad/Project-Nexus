@@ -326,17 +326,19 @@ is never reported.
 never a finding) that says whether it completed. A denied or failed request, an
 invalid page, unreachable locations, an invalid or repeated page token or the
 page cap makes that listing incomplete and the scan incomplete (exit 3); the
-items already read are kept. Engine, assistant and location names from responses
-become request paths only after validation (an engine in another project,
-location or collection is skipped with a warning). A record that analysis cannot
-read, including a malformed coverage record or an unsupported `_kind`, makes
-every binding's coverage `unknown`, every listing incomplete and every presence
-`unknown` for that scan. So does anything that makes an offline replay
-incomplete, such as a record the loader drops before analysis (an invalid JSON
-line, a provider error record, a file skipped by a limit), and any registry
-record whose name carries the number of a project other than the one it was
-listed in: that record is dropped with a warning, so it cannot claim the other
-project's registry identity.
+items already read are kept. A record dump keeps those coverage records, so
+replaying the dump of an incomplete scan is incomplete again (one warning) and
+voids the claims of the listings that failed, as the live scan did. Engine,
+assistant and location names from responses become request paths only after
+validation (an engine in another project, location or collection is skipped with
+a warning). A record that analysis cannot read, including a malformed coverage
+record or an unsupported `_kind`, makes every binding's coverage `unknown`,
+every listing incomplete and every presence `unknown` for that scan. So does
+anything else that makes an offline replay incomplete, such as a record the
+loader drops before analysis (an invalid JSON line, a provider error record, a
+file skipped by a limit), and any registry record whose name carries the number
+of a project other than the one it was listed in: that record is dropped with a
+warning, so it cannot claim the other project's registry identity.
 
 **What is kept.** Items are reduced when collected, so a record dump replays what
 live analysis saw. An agent card becomes a summary (name, URL, version, protocol

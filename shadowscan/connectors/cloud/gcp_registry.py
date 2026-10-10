@@ -754,6 +754,8 @@ class RegistryCatalogs:
     complete and nothing is reported absent. So does a record whose registry name carries the
     number of a project other than the one it was listed in (counted in :attr:`foreign` and
     dropped): it would claim that other project's registry identity.
+
+    :attr:`failed_listings` counts coverage records of listings that did not complete.
     """
 
     def __init__(self) -> None:
@@ -768,6 +770,7 @@ class RegistryCatalogs:
         self._unresolved_projects: set[str] = set()
         self.tainted = False
         self.foreign = 0
+        self.failed_listings = 0
 
     # ------------------------------------------------------------ intake
     def taint(self) -> None:
@@ -779,6 +782,8 @@ class RegistryCatalogs:
             item = parse_coverage(rec)
             key = (item.catalog, item.project, item.location, item.collection)
             self._coverage.setdefault(key, []).append(item)
+            # A listing that failed (not one that is only caller-scoped).
+            self.failed_listings += rec["complete"] is False
         elif kind == PROJECT_NUMBER_KIND:
             project, number = rec.get("_project"), rec.get("project_number")
             if not valid_project(project) or not isinstance(number, str) or not is_number(number):

@@ -287,6 +287,11 @@ summarizes each release for people who install and operate ShadowScan.
   `subscription_tier`, reasoning engines `effective_identity`, when present.
   Agent Registry counts as an AI API, so a project whose only AI API is Agent
   Registry now has an enabled-APIs finding.
+- Replaying the record dump of a scan whose Agent Registry, Gemini
+  Enterprise, Vertex AI or Dialogflow CX listing failed is incomplete again
+  (exit 3, one warning) when a `registry-coverage` record says a listing did
+  not complete; it voids only the claims of those listings, as the live scan
+  did. Such a replay previously reported a complete scan.
 - The fixtures and transports in the tests are synthetic, written from
   Google's API discovery documents; nothing was validated against a live
   project.

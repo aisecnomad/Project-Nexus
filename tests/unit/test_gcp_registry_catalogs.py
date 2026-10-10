@@ -1246,6 +1246,65 @@ def test_dump_then_replay_reproduces_findings_and_statuses(index, tmp_path, monk
         assert secret not in text
 
 
+def _denied_second_page(params: dict[str, Any]) -> dict[str, Any]:
+    if not params.get("pageToken"):
+        return {"agents": [{"name": f"projects/{N}/locations/global/agents/first"}], "nextPageToken": "t1"}
+    raise HttpError(403, "https://agentregistry.googleapis.com", "denied")
+
+
+REPLAYED_GAP = "cloud.gcp: registry catalog listing incomplete in export; records may be missing"
+
+
+@pytest.mark.parametrize(
+    "failures",
+    [
+        {f"{AR_BASE}/locations/global/agents": _denied_second_page},
+        {f"{VERTEX}/reasoningEngines": HttpError(403, "https://aiplatform.googleapis.com", "denied")},
+        {
+            f"{AR_BASE}/locations/global/agents": _denied_second_page,
+            f"{VERTEX}/reasoningEngines": HttpError(403, "https://aiplatform.googleapis.com", "denied"),
+        },
+    ],
+    ids=["agent-registry-page", "vertex-ai", "both"],
+)
+def test_replayed_dump_of_an_incomplete_scan_stays_incomplete(index, tmp_path, monkeypatch, failures):
+    fake = FakeGoogle({**estate_routes("unused"), **failures})
+    monkeypatch.setattr(GcpConnector, "_auth", lambda self: setattr(self, "http", fake))
+    config = {"projects": [P], "locations": ["us-central1"], "agent_registry": True}
+    dumped = tmp_path / "dump"
+    live = Engine(
+        ScanConfig(connectors=[ConnectorSpec("cloud.gcp", config)], dump_records=str(dumped)), index
+    ).run()
+    (dump,) = dumped.glob("*.jsonl")
+    assert any(
+        record["_kind"] == "registry-coverage" and record["complete"] is False
+        for record in map(json.loads, dump.read_text().splitlines())
+    )
+    replay = scan(index, dump)
+    # The export records that a listing failed: replaying it is as incomplete as the live scan.
+    assert not live.complete and not replay.complete
+
+    def warnings(result: ScanResult) -> list[str]:
+        return next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+
+    # Once per replay, however many listings failed; live collection already warned for each.
+    assert warnings(replay).count(REPLAYED_GAP) == 1
+    assert REPLAYED_GAP not in warnings(live)
+
+    def outcome(result: ScanResult) -> dict[str, Any]:
+        return {
+            finding.id: (finding.metadata.get(RECORD_KEY), finding.metadata.get(RECONCILIATION_KEY))
+            for finding in result.findings
+        }
+
+    # The warning voids no claim that live analysis made about the listings that completed.
+    assert outcome(live) == outcome(replay)
+    assert all(
+        RECONCILIATION_KEY not in finding.metadata or status(finding) != "observed-not-registered"
+        for finding in replay.findings
+    )
+
+
 def test_the_documented_gcp_registry_example_is_valid(index):
     text = (Path(__file__).parents[2] / "docs" / "inventory.md").read_text(encoding="utf-8")
     section = text.split("### Example: Google Agent Registry and Gemini Enterprise", 1)[1]
