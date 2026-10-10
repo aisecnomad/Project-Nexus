@@ -470,6 +470,14 @@ summarizes each release for people who install and operate ShadowScan.
   admit what every source's block admits (highest floor and ceiling,
   `bypassed` over `unknown` over `gated`); it rejects a source whose block is
   malformed.
+- `merge` applies the combination rules across sources. Bounds widened one by
+  one skipped them, so approval bypassed in one source and a schedule trigger
+  in another merged to L4; the merged finding is now classified with the
+  widest oversight and initiation any source recorded and reaches L5
+  (`self-initiated`), with the matching basis entries. A registered merged
+  finding keeps the lowest level any source declares for its agent instead of
+  the first source's, so `autonomy-understated` no longer depends on the order
+  of the reports.
 - An L2 ceiling rests on recorded approval settings: it is configuration
   evidence, not proof of how a run behaves.
 - The rules and fixtures are synthetic and author-written; they do not

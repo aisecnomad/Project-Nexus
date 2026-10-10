@@ -83,6 +83,13 @@ BOUNDS = ("floor", "ceiling", "oversight", "initiation")
 # an unknown gate admits more than a recorded one, and a trigger more than a person starting it.
 _OVERSIGHT_RANK = {"gated": 0, "unknown": 1, "bypassed": 2}
 _INITIATION_RANK = {"human": 0, "unknown": 1, "event": 2, "schedule": 3}
+# The basis rule behind each initiation value.
+_INITIATION_RULES = {
+    "schedule": "schedule-trigger",
+    "event": "event-trigger",
+    "human": "interactive-client",
+    "unknown": "no-initiation-evidence",
+}
 
 # Every rule id that can appear in ``basis``, in report order, with the bound it explains.
 RULES: dict[str, str] = {
@@ -229,14 +236,12 @@ def _bypass_evidence(finding: Finding, triggered: bool) -> bool:
     return _autonomous_is_bypass(finding, triggered)
 
 
-def _initiation(finding: Finding, trigger: str | None) -> tuple[str, str]:
-    if trigger == "schedule":
-        return "schedule", "schedule-trigger"
-    if trigger == "event":
-        return "event", "event-trigger"
+def _initiation(finding: Finding, trigger: str | None) -> str:
+    if trigger is not None:
+        return trigger
     if finding.surface == Surface.ENDPOINT and finding.resource_type in _INTERACTIVE_RESOURCE_TYPES:
-        return "human", "interactive-client"
-    return "unknown", "no-initiation-evidence"
+        return "human"
+    return "unknown"
 
 
 def classify(finding: Finding) -> dict[str, Any] | None:
@@ -245,16 +250,31 @@ def classify(finding: Finding) -> dict[str, Any] | None:
     Total over loaded reports and plugin output: a metadata value of an unexpected shape is
     ignored rather than trusted or allowed to raise.
     """
+    return _classify(finding)
+
+
+def _classify(
+    finding: Finding, *, bypassed: bool = False, initiation: str | None = None
+) -> dict[str, Any] | None:
+    """:func:`classify`, with oversight and initiation evidence another report recorded added.
+
+    ``bypassed`` adds approval-bypass evidence and ``initiation`` raises the initiation to at
+    least that value, so the combination rules (a model loop without per-action approval,
+    unapproved side effects, a self-initiated run) apply as they would to one observation.
+    """
     if not applicable(finding):
         return None
     capabilities = set(_strings(finding.capabilities))
     tags = set(_strings(finding.tags))
     trigger = _trigger_initiation(finding)
-    bypassed = _bypass_evidence(finding, trigger is not None)
+    bypassed = bypassed or _bypass_evidence(finding, trigger is not None)
     scope = _approval_scope(finding)
     # Positive gating cannot rule a level out while other evidence says approval is bypassed.
     every_action = scope == "every-action" and not bypassed
-    initiation, initiation_rule = _initiation(finding, trigger)
+    observed = _initiation(finding, trigger)
+    if initiation is None or _INITIATION_RANK[observed] >= _INITIATION_RANK[initiation]:
+        initiation = observed
+    initiation_rule = _INITIATION_RULES[initiation]
 
     basis: list[dict[str, Any]] = [{"bound": "floor", "rule": "ai-system", "value": 0}]
     floor = 0
@@ -362,20 +382,29 @@ def merge_autonomy(finding: Finding, sources: Sequence[Any]) -> None:
     """Record the autonomy interval of a finding merged from several reports.
 
     ``sources`` are the finding's ``metadata.autonomy`` blocks in its source reports; malformed
-    ones are ignored. The interval is classified from the merged finding and then widened so it
-    admits at least what any source's block admits: the highest floor and ceiling, oversight
-    ``bypassed`` over ``unknown`` over ``gated`` and initiation ``schedule`` over ``event`` over
-    ``unknown`` over ``human``. A widened bound keeps the basis of the block that set it. The
-    first declared level is kept while the merged finding is registered, and is compared with
-    the merged interval as :func:`apply_autonomy` compares it.
+    ones are ignored. The interval is classified from the merged finding together with the
+    widest oversight and initiation any block records, so the combination rules apply across
+    reports (approval bypassed in one and a schedule trigger in another reach L5). It is then
+    widened so it admits at least what any source's block admits: the highest floor and
+    ceiling, oversight ``bypassed`` over ``unknown`` over ``gated`` and initiation ``schedule``
+    over ``event`` over ``unknown`` over ``human``. A widened bound keeps the basis of the block
+    that set it. While the merged finding is registered, the lowest level any block declares
+    for the agent it is registered to is kept, whatever the order of the reports, and compared
+    with the merged interval as :func:`apply_autonomy` compares it.
     """
     finding.metadata.pop("autonomy", None)
     if UNDERSTATED_TAG in finding.tags:
         finding.tags = [tag for tag in finding.tags if tag != UNDERSTATED_TAG]
-    autonomy = classify(finding)
+    blocks = [block for block in sources if valid_autonomy(block)]
+    autonomy = _classify(
+        finding,
+        bypassed=any(block["oversight"] == "bypassed" for block in blocks),
+        initiation=max(
+            (block["initiation"] for block in blocks), key=_INITIATION_RANK.__getitem__, default=None
+        ),
+    )
     if autonomy is None:
         return
-    blocks = [block for block in sources if valid_autonomy(block)]
     basis = {bound: [item for item in autonomy["basis"] if item["bound"] == bound] for bound in BOUNDS}
     for bound in BOUNDS:
         # max() keeps the first of equal blocks, so the classified interval wins ties.
@@ -383,19 +412,24 @@ def merge_autonomy(finding: Finding, sources: Sequence[Any]) -> None:
         if _rank(bound, widest[bound]) > _rank(bound, autonomy[bound]):
             autonomy[bound] = widest[bound]
             basis[bound] = [item for item in widest["basis"] if item["bound"] == bound]
+    # Every interval here has floor <= ceiling, so the highest floor never exceeds the highest
+    # ceiling.
     autonomy["floor_label"] = level_title(autonomy["floor"])
     autonomy["ceiling_label"] = level_title(autonomy["ceiling"])
     notes = [item for bound in BOUNDS for item in basis[bound] if item["rule"] != "declared-above-ceiling"]
-    declared = next((block for block in blocks if "declared" in block), None)
-    if declared is not None and finding.shadow is False:
-        autonomy["declared"] = declared["declared"]
-        autonomy["declared_source"] = declared["declared_source"]
-        if declared["declared"] < autonomy["floor"]:
+    declared = [
+        block
+        for block in blocks
+        if "declared" in block and block["declared_source"] == finding.registry_match
+    ]
+    if declared and finding.shadow is False:
+        lowest = min(declared, key=lambda block: block["declared"])
+        autonomy["declared"] = lowest["declared"]
+        autonomy["declared_source"] = lowest["declared_source"]
+        if lowest["declared"] < autonomy["floor"]:
             finding.add_tag(UNDERSTATED_TAG)
-        elif declared["declared"] > autonomy["ceiling"]:
-            notes.append(
-                {"bound": "ceiling", "rule": "declared-above-ceiling", "value": declared["declared"]}
-            )
+        elif lowest["declared"] > autonomy["ceiling"]:
+            notes.append({"bound": "ceiling", "rule": "declared-above-ceiling", "value": lowest["declared"]})
     autonomy["basis"] = _ordered(notes)
     finding.update_metadata(autonomy=autonomy)
 
