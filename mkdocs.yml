@@ -125,6 +125,7 @@ nav:
       - Contributing: contributing.md
       - Testing: testing.md
       - Governance: governance.md
+      - "Proposals: agent governance": proposals/agent-governance.md
       - Maintainer onboarding: maintainer-onboarding.md
       - ADRs:
           - adrs/index.md
