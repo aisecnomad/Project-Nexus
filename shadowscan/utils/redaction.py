@@ -113,6 +113,11 @@ _CREDENTIAL_DESCRIPTORS = frozenset(
 # Descriptors that are opaque secret material inside a container named for
 # credentials ('credentials.id'), but name an identity elsewhere ('api_key.id').
 _CREDENTIAL_GROUP_IDS = frozenset({"id", "objectid"})
+# An 'auth' block ('{"auth": {"type": "bearer", "value": "..."}}') holds its
+# credential under a generic field name; 'auth' alone is too broad a key to
+# withhold whole, so only these generic credential fields inside it are.
+_AUTH_CONTAINER_KEYS = frozenset({"auth", "authentication", "authn"})
+_AUTH_VALUE_KEYS = frozenset({"value", "key", "credential"})
 
 
 # Leaves that keep their type: JSON's scalars and the standard library's, whose text is
@@ -653,6 +658,15 @@ class _Sanitizer:
                 name.lower() == "value" and _record_has_secret_value(item, extended=self.extended)
             ):
                 result = _redact_value(child)
+            elif name.lower() in _AUTH_CONTAINER_KEYS and isinstance(child, Mapping):
+                result = {
+                    self.text(str(k)): (
+                        _redact_value(v)
+                        if str(k).lower() in _AUTH_VALUE_KEYS and not isinstance(v, _CONTAINERS)
+                        else self.clean(v, depth + 2)
+                    )
+                    for k, v in child.items()
+                }
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
                 result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, list):

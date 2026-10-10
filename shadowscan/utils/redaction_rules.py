@@ -57,6 +57,11 @@ _SENSITIVE_SUFFIXES = (
     "passphrase",
     "secretkeybase",
     "creds",
+    # A credential's value field named for it ('secret_value', 'TOKEN_VALUE').
+    "secretvalue",
+    "tokenvalue",
+    "passwordvalue",
+    "apikeyvalue",
 )
 _SENSITIVE_NAMES = {
     "token",
