@@ -27,6 +27,10 @@ Automatic approval requires an explicit, case-sensitive resource pattern and
 all configured ``surfaces``, ``providers``, ``accounts``, ``regions`` and
 ``discriminators`` constraints. Names and aliases are review suggestions only;
 they never confer sanctioned status.
+
+Approved records of the vendor registries an operator trusts (``options.trusted_registries``,
+see :mod:`shadowscan.registries`) add exact-resource entries for one run; the loaded inventory
+itself is never changed.
 """
 
 from __future__ import annotations
@@ -118,6 +122,20 @@ def _has_usable_discriminator(finding: Finding) -> bool:
 # A gateway resource such as ``principal:svc-ops`` is a field the log producer
 # (often the caller itself) wrote. A match on it is flagged, not trusted.
 UNVERIFIED_IDENTITY_TAG = "registry-identity-unverified"
+
+
+def clear_match_state(finding: Finding) -> None:
+    """Remove what an earlier reconciliation pass (or a connector or plugin) wrote about approval."""
+    finding.metadata.pop("registry_suggestions", None)
+    finding.metadata.pop("registry_match_reason", None)
+    finding.metadata.pop("registry_match_assurance", None)
+    if UNVERIFIED_IDENTITY_TAG in finding.tags:
+        finding.tags.remove(UNVERIFIED_IDENTITY_TAG)
+
+
+def literal_resource_pattern(resource: str) -> str:
+    """A resource pattern that matches exactly ``resource``: glob metacharacters are escaped."""
+    return resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
 
 
 def _unauthenticated_caller_assurance(finding: Finding) -> str | None:
@@ -427,7 +445,7 @@ class Inventory:
         )
 
     # --------------------------------------------------------------- match
-    def match(self, finding: Finding) -> InventoryEntry | None:
+    def match(self, finding: Finding, extra: Sequence[InventoryEntry] = ()) -> InventoryEntry | None:
         """Return one unambiguous, explicitly scoped resource approval.
 
         Case folding resource IDs can approve a different object (for example,
@@ -436,12 +454,12 @@ class Inventory:
         caller name whose identity is only operator-asserted or unverified is
         kept but flagged with ``metadata['registry_match_assurance']`` and the
         ``registry-identity-unverified`` tag.
+
+        ``extra`` entries (approvals of trusted vendor registries for this run) are matched
+        together with the loaded entries, so an approval in both places is ambiguous. They
+        carry no names and produce no suggestions.
         """
-        finding.metadata.pop("registry_suggestions", None)
-        finding.metadata.pop("registry_match_reason", None)
-        finding.metadata.pop("registry_match_assurance", None)
-        if UNVERIFIED_IDENTITY_TAG in finding.tags:
-            finding.tags.remove(UNVERIFIED_IDENTITY_TAG)
+        clear_match_state(finding)
         # Finding construction redacts credentials before reconciliation. A
         # lossy resource ID is not an identity: distinct repositories, URLs or
         # cloud objects can all become the same ".../[REDACTED]" string. Even
@@ -463,7 +481,7 @@ class Inventory:
             return None
         matches = [
             entry
-            for entry in self.entries
+            for entry in (*self.entries, *extra)
             if self._scope_matches(entry, finding)
             and any(fnmatch.fnmatchcase(finding.resource or "", pattern) for pattern in entry.resources)
         ]
@@ -731,7 +749,7 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
                 and finding.metadata.get("identity_unresolved") is not True
                 and _has_usable_discriminator(finding)
             )
-            else [finding.resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})],
+            else [literal_resource_pattern(finding.resource)],
             "names": sorted({name.strip() for name in _metadata_names(finding) if name.strip()}),
             "frameworks": finding.frameworks,
             "surfaces": [finding.surface.value],

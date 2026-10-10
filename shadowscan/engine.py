@@ -28,6 +28,12 @@ from shadowscan.errors import SetupError
 from shadowscan.incremental import IncrementalCache
 from shadowscan.merge import merge
 from shadowscan.models import Finding, ScanResult, ScanStats, now_iso
+from shadowscan.registries import (
+    RECORD_KEY,
+    TrustedApprovals,
+    prune_reconciliation_links,
+    reconcile_registries,
+)
 from shadowscan.registry import Inventory, InventoryEntry
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
@@ -164,6 +170,39 @@ def _retain_sanitizable(candidates: list[Finding]) -> tuple[list[Finding], int]:
             continue
         retained.append(finding)
     return retained, omitted
+
+
+def _withhold_registry_records(hooks: type[BaseConnector], findings: list[Finding], st: ScanStats) -> None:
+    """Keep registry records only from connectors that declare they read vendor registries.
+
+    A trusted registry's approved record approves findings. Any other connector that copies
+    record-shaped metadata from an export or a repository must not create an approval, so the
+    key is dropped and the drop is reported.
+    """
+    if getattr(hooks, "emits_registry_records", False) is True:
+        return
+    dropped = 0
+    for finding in findings:
+        if RECORD_KEY in finding.metadata:
+            del finding.metadata[RECORD_KEY]
+            dropped += 1
+    if dropped:
+        st.warnings.append(
+            f"registry record metadata ignored on {dropped} finding(s): "
+            "the connector does not declare registry records"
+        )
+
+
+@dataclass
+class _RegistryOutcome:
+    """What one post-process pass learned about vendor registries, for ``run`` to report."""
+
+    # Malformed records: an incomplete engine.registries entry.
+    warnings: list[str] = field(default_factory=list)
+    # Trusted registries without records: advisory engine.inventory warnings.
+    inventory_warnings: list[str] = field(default_factory=list)
+    # Inventory entries synthesized from approved records of trusted registries.
+    approval_entries: int = 0
 
 
 class _ExportLedger:
@@ -407,6 +446,7 @@ class _ConnectorRunner:
         try:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
+                _withhold_registry_records(hooks, fs, st)
                 return spec, fs, st
         except KeyboardInterrupt:
             raise
@@ -426,6 +466,7 @@ class _ConnectorRunner:
             reset_request_deadline(limits_token)
             reset_allow_private_origin(origin_token)
         st.findings = len(fs)
+        _withhold_registry_records(hooks, fs, st)
         _sanitize_diagnostics(st)
         if self._dump_directory and not state.cancelled.is_set():
             exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped
@@ -973,6 +1014,36 @@ class Engine:
             )
         ]
 
+    @staticmethod
+    def _registry_stats(
+        outcome: _RegistryOutcome, stats: list[ScanStats], started_at: str
+    ) -> list[ScanStats]:
+        """Report malformed registry records (incomplete) and unused trusted registries (advisory).
+
+        Advisory notices join the run's ``engine.inventory`` entry, which is created when absent.
+        """
+        added: list[ScanStats] = []
+        if outcome.inventory_warnings:
+            entry = next((st for st in stats if st.connector == "engine.inventory"), None)
+            if entry is None:
+                entry = ScanStats(connector="engine.inventory", started_at=started_at, finished_at=now_iso())
+                added.append(entry)
+            entry.warnings += outcome.inventory_warnings
+            log.warning("inventory approval warning recorded in scan stats (engine.inventory)")
+            _sanitize_diagnostics(entry)
+        if outcome.warnings:
+            log.warning("registry records were malformed; scan marked incomplete (engine.registries)")
+            registries = ScanStats(
+                connector="engine.registries",
+                started_at=started_at,
+                finished_at=now_iso(),
+                incomplete=True,
+                warnings=list(outcome.warnings),
+            )
+            _sanitize_diagnostics(registries)
+            added.append(registries)
+        return added
+
     # ------------------------------------------------------------- collection
     def _collect(
         self,
@@ -1014,22 +1085,35 @@ class Engine:
         return supervisor.completed, supervisor.timed_out
 
     # --------------------------------------------------------- postprocessing
-    def _reconcile_and_score(self, findings: list[Finding]) -> None:
+    def _reconcile_and_score(self, findings: list[Finding], outcome: _RegistryOutcome | None = None) -> None:
         risk_policy = RiskPolicy.from_options(self.config.risk_weights, self.config.risk_basis)
+        trusted = self.config.trusted_registries
+        # Approvals of trusted registries are rebuilt from this run's records every time and
+        # matched beside the loaded inventory, which is never changed.
+        approvals = TrustedApprovals(findings, trusted) if trusted else None
+        inventory = self.inventory if self.inventory is not None or approvals is None else Inventory()
         for f in findings:
             entry: InventoryEntry | None = None
-            if self.inventory is not None:
-                entry = self.inventory.match(f)
+            if inventory is not None and not (approvals is not None and approvals.approve_record(f)):
+                entry = inventory.match(f, approvals.candidates(f) if approvals is not None else ())
                 f.registry_match = entry.agent_id if entry else None
                 f.shadow = entry is None
                 if entry and not f.owner:
                     f.owner = entry.owner
             # Before scoring: a declared level below the observed floor adds a weighted tag.
             apply_autonomy(f, entry)
-            f.risk = assess(f, self.index, inventory_present=self.inventory is not None, policy=risk_policy)
+            f.risk = assess(f, self.index, inventory_present=inventory is not None, policy=risk_policy)
+        if outcome is not None and approvals is not None:
+            outcome.approval_entries = approvals.entries
+            outcome.inventory_warnings += approvals.warnings()
 
-    def _postprocess(self, findings: list[Finding]) -> tuple[list[Finding], list[str]]:
-        """Merge, correlate, reconcile and score; report what had to be omitted."""
+    def _postprocess(
+        self, findings: list[Finding], *, registries: _RegistryOutcome | None = None
+    ) -> tuple[list[Finding], list[str]]:
+        """Merge, correlate, reconcile and score; report what had to be omitted.
+
+        ``registries`` receives the registry reconciliation and trusted-approval results.
+        """
         # Individually bounded findings can exceed the output budget when
         # merged. Reject only that aggregate before correlation touches it.
         findings, omitted = _retain_sanitizable(merge(findings))
@@ -1040,7 +1124,9 @@ class Engine:
         except SanitizationLimitError:
             errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
         correlate_lifecycle(findings)
-        self._reconcile_and_score(findings)
+        outcome = registries if registries is not None else _RegistryOutcome()
+        outcome.warnings += reconcile_registries(findings)
+        self._reconcile_and_score(findings, outcome)
         findings, omitted_after_scoring = _retain_sanitizable(findings)
         omitted += omitted_after_scoring
         if omitted:
@@ -1095,7 +1181,8 @@ class Engine:
         result = ScanResult(
             version=__version__,
             inventory_size=len(self.inventory) if self.inventory else 0,
-            inventory_present=self.inventory is not None,
+            # Trusted registries are an inventory source even without inventory files.
+            inventory_present=self.inventory is not None or bool(self.config.trusted_registries),
         )
         invalid = self._invalid_selectors(only)
         if invalid:
@@ -1126,7 +1213,10 @@ class Engine:
             findings.extend(fs)
             stats.append(st)
         export_entries = exports.entries(jobs, timed_out) if dump_directory else []
-        findings, postprocess_errors = self._postprocess(findings)
+        registries = _RegistryOutcome()
+        findings, postprocess_errors = self._postprocess(findings, registries=registries)
+        result.inventory_size += registries.approval_entries
+        stats += self._registry_stats(registries, stats, result.started_at)
         if postprocess_errors:
             stats.append(
                 ScanStats(
@@ -1142,6 +1232,7 @@ class Engine:
             _prune_related(findings)
             _prune_runtime_links(findings)
             _prune_lifecycle_links(findings)
+            prune_reconciliation_links(findings)
         findings.sort(key=lambda f: (-f.risk.score, -f.confidence, f.surface.value, f.title))
         if self.config.llm_triage.enabled:
             stats.append(self._triage(findings, result.started_at))

@@ -113,6 +113,13 @@ None of these read a vendor registry.
    pending, rejected and deprecated records never approve anything. A revoked
    approval makes the finding shadow on the next scan.
 
+**Implemented core.** The record contract, the reconciliation statuses and the
+optional inventory source exist now, with the option named
+`options.trusted_registries` and trust given per registry instance (type and
+exact id), never per type. See
+[vendor registries as inventory sources](../inventory.md#vendor-registries-as-inventory-sources).
+The registry connectors below (REG-1 to REG-5) are still proposals.
+
 Recommendation: vendor registries become services inside the existing
 connectors (`cloud.aws`, `identity.entra` or a Graph sibling, `cloud.gcp`). They
 reuse the credential handling, account scope, pagination limits and offline

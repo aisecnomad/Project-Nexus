@@ -914,6 +914,22 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 10 vendor registry records and trusted registries (unreleased)
+
+This candidate adds the vendor
+[registry record contract, reconciliation statuses and trusted registries](inventory.md#vendor-registries-as-inventory-sources).
+No built-in connector reads a vendor registry yet, so existing scans emit no
+records. It does not change the published 0.1.2 artifact, create a release, or
+establish live tenant acceptance; the tests use synthetic records.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Inventory source | `options.trusted_registries` (empty by default) lets approved records of the listed registry instances approve findings by exact resource. Shadow status changes only when it is configured. | Before trusting a registry, confirm who can approve records in it: its approval becomes organisational sanction for every resource it binds. Keep the setting in reviewed configuration outside scanned checkouts. |
+| Report fields | `metadata.registry_reconciliation` on records and on the observed findings they match or that a complete listing omits. With trusted registries alone, `inventory_present` is true and findings get `shadow: true` or `false`; `inventory_size` counts entries made from trusted records. | Consumers that read metadata must tolerate the new key. Rebaseline reports when you first set `trusted_registries`: `shadow` and `registry_match` change. |
+| Completeness | Malformed `registry_record` metadata makes the scan incomplete (`engine.registries`, exit 3). A trusted registry without records in the scan is an advisory `engine.inventory` warning. | Treat exit 3 as unknown coverage. Resolve the advisory warning before relying on that registry's approvals. |
+| Connectors and plugins | Records count only from connectors that declare the `emits_registry_records` hook; `registry_record` from any other connector is dropped with a stats warning. | Third-party connectors that emit records must declare the hook. |
+| Approval rules | A card and a trusted record approving the same finding are ambiguous and leave it shadow. A revoked, rejected or deleted record stops approving on the next scan. | Approve each object in one place: remove card bindings that duplicate trusted registry bindings. |
+
 ### October 10 autonomy tiers and card schema version 2 (unreleased)
 
 This candidate adds the [autonomy tiers](concepts/autonomy.md). It does not

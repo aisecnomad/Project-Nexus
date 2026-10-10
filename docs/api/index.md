@@ -17,6 +17,7 @@ These pages are built from source docstrings using
 | [Merge](merge.md) | Finding deduplication and merge logic |
 | [Correlation](correlation.md) | Cross-surface finding correlation |
 | [Inventory registry](registry.md) | Sanctioned agent inventory and reconciliation |
+| [Vendor registries](registries.md) | Registry record contract, reconciliation statuses and trusted-registry approvals |
 
 ## Connector Framework
 

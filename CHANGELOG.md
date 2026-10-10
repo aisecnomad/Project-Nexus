@@ -5,6 +5,41 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Vendor registry records and trusted registries
+
+- Define the vendor registry record contract in `shadowscan/registries.py`:
+  `metadata.registry_record` (`shadowscan.registry-record/v1`) with a registry
+  type from a closed set, the exact registry and record ids, a closed status
+  vocabulary, up to 64 exact-resource bindings with collection coverage, and
+  `listing_complete`. A malformed record is ignored and makes the scan
+  incomplete (`engine.registries`, exit 3). Record evidence
+  (`registry:<type>`, confidence group `registry-record`) has weight 0.5. No
+  built-in connector emits records yet.
+- Only a connector that declares the new `emits_registry_records` engine hook
+  may emit records. The engine drops `registry_record` from other connectors'
+  findings, including cached ones, and notes the drop in their stats.
+- The engine writes `metadata.registry_reconciliation`:
+  `registered-and-observed` and `registered-not-observed` or `not-comparable`
+  on records, and `registered-and-observed` or `observed-not-registered` on
+  observed agents, workflows, bots and MCP servers. Matching is by exact
+  binding identity, never by name. `registered-not-observed` requires in-scope
+  collection coverage, and `observed-not-registered` requires a complete
+  listing of that registry. Statuses do not change shadow status or risk.
+- New `options.trusted_registries` lists registry instances by type and exact
+  id; wildcards, duplicates, unknown keys and types, and ids that redaction
+  would change are rejected, and the list is revalidated before every run. Only
+  for those registries does an approved record register its own finding and
+  approve its exact bound resources (glob characters escaped) under the usual
+  inventory rules. Other statuses and untrusted registries never approve, and a
+  card and a trusted record approving the same finding are ambiguous. Approvals
+  are rebuilt every scan, so revocation applies on the next run.
+  `inventory_present` is true when the option is set, `inventory_size` counts
+  the entries made from trusted records, and a trusted registry without records
+  gets an advisory `engine.inventory` warning.
+- `Inventory.match` accepts extra entries for a single call.
+- The records in the tests are synthetic; nothing was validated against a live
+  registry.
+
 ### Autonomy tiers and Capability Card schema version 2
 
 - Classify agents, agent configurations, MCP servers, workflows, bots, gateway

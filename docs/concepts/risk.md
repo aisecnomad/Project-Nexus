@@ -170,7 +170,10 @@ so `score`, `level` and `--fail-on` follow the danger score.
 
 A finding is `shadow: true` unless **exactly one** inventory entry matches
 via an explicit resource pattern and its configured scope restrictions.
-Name-only matches suggest entries for review but do not approve.
+Name-only matches suggest entries for review but do not approve. Approved
+records of the vendor registries listed in `options.trusted_registries` add
+exact-resource entries for the scan; see
+[vendor registries as inventory sources](../inventory.md#vendor-registries-as-inventory-sources).
 
 An approved entry lends its `owner` to the finding.
 

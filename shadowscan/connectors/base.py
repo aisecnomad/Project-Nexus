@@ -265,6 +265,13 @@ class BaseConnector(ABC):
     # the operator supplies a stable SHADOWSCAN_IDENTITY_KEY.
     uses_run_identity_key: ClassVar[bool] = False
 
+    # A connector that reads vendor agent registries sets this so its findings
+    # may carry ``metadata["registry_record"]`` (shadowscan.registries). The
+    # engine drops that key from every other connector's findings: an approved
+    # record of a trusted registry approves findings, so a record copied from
+    # an export or repository by an unrelated parser must not count.
+    emits_registry_records: ClassVar[bool] = False
+
     @classmethod
     def inherits_instance_credentials_approval(cls) -> bool:
         """Whether the engine sets ``allow_instance_credentials`` from the scan options.

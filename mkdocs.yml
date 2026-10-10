@@ -146,6 +146,7 @@ nav:
           - Merge: api/merge.md
           - Correlation: api/correlation.md
           - Inventory registry: api/registry.md
+          - Vendor registries: api/registries.md
       - Connectors:
           - Base: api/base.md
       - Utilities:
