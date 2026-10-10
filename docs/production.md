@@ -948,6 +948,23 @@ establish live tenant acceptance; the tests use synthetic records.
 | Approval rules | A card and a trusted record approving the same finding are ambiguous and leave it shadow; bindings of one record that cover the same finding are one approval. A revoked, rejected or deleted record stops approving on the next scan. | Approve each object in one place: remove card bindings that duplicate trusted registry bindings. |
 | Approval policy | Auto-approved records (`approval_mode: auto`) and registered-only records approve only with `allow_auto_approved` or `allow_registered_only` on the trusted entry; caller-scoped listings are never complete; `entra-agent-registry` cannot be trusted; a connector keeps only records of the registry types it declares. | Leave both switches off unless a person reviews records in that registry by other means: auto-approval and registration are not human review. |
 
+### October 10 AWS registry records in cloud.aws (unreleased)
+
+This candidate lets `cloud.aws` read
+[AWS Agent Registry and AgentCore registry records](connectors/cloud.md#aws-agent-registry-and-agentcore-registry-records)
+as vendor registry records. It does not change the published 0.1.2 artifact,
+create a release, or establish live tenant acceptance: the registry responses
+and fixtures are synthetic, modeled on the installed SDK models, and were not
+validated against a live account.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Rollout | New `services` value `registry`, off by default: `services` now defaults to every service except `registry`. Configurations that omit `services`, or list services without `registry`, make the same API calls and report the same findings as before. | Nothing changes until you add `registry`. Add it in a reviewed configuration change, and only after granting the permissions below. |
+| Credential policy | With `registry`, the scan identity needs `agent-registry:ListRegistries`, `agent-registry:GetRegistry`, `agent-registry:ListRegistryRecords` and `agent-registry:GetRegistryRecord` (AgentCore registries use the existing `bedrock-agentcore:List*/Get*`); `registry_arns` adds `agent-registry:ListDiscoverableRegistryRecords` and `agent-registry:GetDiscoverableRegistryRecord` on the listed registries. A missing permission is a denial that makes the scan incomplete (exit 3). | Grant only these read actions; do not grant `agent-registry:InvokeRegistryMcp` or `Search*`. Expect exit 3 until every scanned region and registry is readable. |
+| Finding identity | One finding per registry record: resource = record ARN, resource type `agent-registry-record` or `agentcore-registry-record`, stable across status changes. Records from `registry_arns` keep the registry's account instead of being marked `identity_unresolved`. | Re-baseline when you enable `registry`: the record findings are new, and reconciliation can add `registry_reconciliation` to existing agent, workflow and MCP server findings of the scanned account (`registered-and-observed` for bound runtimes and gateways, `observed-not-registered` for the rest when a registry's listing is complete). |
+| Approval semantics | Records carry `approval_mode` from the registry's auto-approval settings (`unknown` when the registry details were denied, and always for `registry_arns` records). An auto-approved record approves through `trusted_registries` only with `allow_auto_approved: true`; an `unknown` one approves in a trusted registry. | Auto-approval is not human review. Leave `allow_auto_approved` off unless a person reviews that registry's records by other means, and trust a registry whose approval mode is unknown only when you know who approves its records. |
+| Limits and exports | New `max_registry_records` (default 1000 per region and namespace); reaching it is incomplete. Exports keep only a sanitized descriptor summary, never raw descriptor documents or OAuth `customParameters`. | Raise the cap for large registries rather than accepting a partial listing. Regenerate exports to replay registry records. |
+
 ### October 10 autonomy tiers and card schema version 2 (unreleased)
 
 This candidate adds the [autonomy tiers](concepts/autonomy.md). It does not

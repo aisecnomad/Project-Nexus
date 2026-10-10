@@ -101,6 +101,54 @@ summarizes each release for people who install and operate ShadowScan.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 
+### AWS Agent Registry and AgentCore registry records in cloud.aws
+
+- New opt-in `cloud.aws` service `registry` reads AWS Agent Registry
+  (`agent-registry-control`) and AgentCore registry
+  (`bedrock-agentcore-control`) registries and records of every status
+  through `ListRegistries`, `GetRegistry`, `ListRegistryRecords` and
+  `GetRegistryRecord`, in every scanned region. `services` now defaults to
+  every service except `registry`, so existing configurations make no new API
+  call, need no new permission and report no new finding after upgrading.
+- Each record is a finding with `metadata.registry_record` (registry types
+  `aws-agent-registry` and `aws-agentcore-registry`, registry id = registry
+  ARN). The resource is the record ARN and the resource type
+  (`agent-registry-record` or `agentcore-registry-record`) is fixed per
+  namespace, so identity does not change with the record's status or type.
+  Statuses map onto the contract (`CREATING`, `UPDATING` and failed states
+  become `unknown`); MCP and gateway records are MCP servers, agent and A2A
+  records agents, skill records agent configurations and custom records cloud
+  resources. `cloud.aws` declares both registry types through the
+  `emits_registry_records` and `registry_record_types` hooks.
+- A record's provenance binds the exact AgentCore runtime or gateway ARN it was
+  detected from; the binding is in scope only when the `agentcore` service ran
+  without a warning in that region for the scanned account. `approval_mode`
+  is `auto` when an Agent Registry lists any auto-approval rule or an
+  AgentCore registry sets `autoApproval`, `manual` when neither does, and
+  `unknown` when the registry details were denied or carry an approval setting
+  this release does not recognize. Auto-approval is not human
+  review: the record's evidence says so, and it approves through
+  `trusted_registries` only with `allow_auto_approved`.
+- `listing_complete` is set only for a record listing that finished without
+  denial, a failed or truncated page, a skipped malformed record or the new
+  `max_registry_records` cap (default 1000 per region and namespace). Denials,
+  throttling, unsupported regions, missing SDK services, malformed responses,
+  failed record details and invalid descriptors make the scan incomplete
+  (exit 3), and replaying such an export is incomplete again.
+- Descriptors are parsed as bounded strict JSON during collection and kept
+  only as a sanitized summary; raw descriptor documents, authorizer settings
+  and OAuth `customParameters` are never exported or reported, and descriptor
+  URLs never become finding resources.
+- New `registry_arns` reads the approved records of other accounts'
+  registries through the discovery API (`ListDiscoverableRegistryRecords`,
+  `BatchGetDiscoverableRegistryRecord`). Those records carry
+  `registry_coverage: approved-only`, never set `listing_complete`, have no
+  bindings and `approval_mode: unknown`, and keep their registry's account
+  without being marked unresolved. Batch errors report only their codes.
+- The registry responses and `tests/fixtures/cloud/aws_registry_records.jsonl`
+  are synthetic, modeled on the installed SDK models; nothing was validated
+  against a live account. The README demo export is unchanged.
+
 ### Autonomy tiers and Capability Card schema version 2
 
 - Classify agents, agent configurations, MCP servers, workflows, bots, gateway

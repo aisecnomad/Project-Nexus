@@ -31,8 +31,11 @@ Bedrock agents whose action-group functions set `requireConfirmation: ENABLED`
 record `metadata.approval_gate` (`every-action` when every enabled action group
 other than the user-input group defines functions and each one requires
 confirmation, else `some-actions`); see [autonomy tiers](../concepts/autonomy.md).
-Options: `profile`, `role_arn`, `regions` (`all`), `services`, `cloudtrail_days`,
-`max_ecs_api_calls` (default 2000 per region). Without `regions`, only six
+Opt-in: AWS Agent Registry and AgentCore registry records
+([below](#aws-agent-registry-and-agentcore-registry-records)).
+Options: `profile`, `role_arn`, `regions` (`all`), `services` (default: every
+service except `registry`), `cloudtrail_days`, `max_ecs_api_calls` (default 2000
+per region), `max_registry_records`, `registry_arns`. Without `regions`, only six
 default regions are scanned (`us-east-1`, `us-west-2`, `eu-west-1`,
 `eu-central-1`, `ap-southeast-1`, `ap-northeast-1`). The report then carries a
 notice that names them and says other regions were not scanned; the notice does
@@ -91,6 +94,89 @@ AWS clients ignore configured endpoint URL overrides and use bundled SDK models;
 external model paths (`AWS_DATA_PATH`, user SDK model directories) cannot replace
 service endpoint rules, including after role assumption. This does not replace
 worker egress controls or establish the trustworthiness of installed SDK packages.
+
+### AWS Agent Registry and AgentCore registry records
+
+Registry collection is opt-in: add `registry` to `services`. The default is
+every service except `registry`, so a configuration without it makes no
+registry API call, needs no new permission and reports no registry finding.
+With it, the connector reads, in every scanned region and after the other
+services, both registry namespaces through their control-plane APIs
+(`ListRegistries`, `GetRegistry`, `ListRegistryRecords`, `GetRegistryRecord`):
+
+- AWS Agent Registry (`agent-registry-control`, registry type
+  `aws-agent-registry`); and
+- AgentCore registries (`bedrock-agentcore-control`, registry type
+  `aws-agentcore-registry`).
+
+The control plane lists records of every status, so pending, draft, rejected
+and deprecated records are reported too. Each record becomes one finding whose
+resource is the record ARN and whose resource type (`agent-registry-record` or
+`agentcore-registry-record`) does not change with the record's status or type,
+so its identity stays stable while the record moves through review. The
+finding carries `metadata.registry_record` (the
+[record contract](../inventory.md#record-contract)), evidence of weight 0.5
+(a record is a declaration, not proof that the agent runs), and the vendor
+fields `record_status`, `record_type`, `record_version`, `registry_arn`,
+`created_by_auto_detection`, `provenance` and `registry_auto_approval`.
+
+| Vendor value | Contract value |
+| --- | --- |
+| `status` `APPROVED`, `PENDING_APPROVAL`, `DRAFT`, `REJECTED`, `DEPRECATED` | `approved`, `pending`, `draft`, `rejected`, `deprecated`; anything else (`CREATING`, `UPDATING`, the failed states) is `unknown` |
+| `recordType` or `descriptorType` `MCP` or `GATEWAY`, `AGENT`, `A2A`, `SKILL` or `AGENT_SKILLS`, `CUSTOM` | `mcp` (an MCP server finding), `agent` and `a2a` (agent), `agent-skills` (agent configuration), `custom` (cloud resource). An unrecognized type is `custom` and makes the scan incomplete. |
+| The registry's `approvalConfiguration` | `approval_mode: auto` when Agent Registry `autoApprovalRules` lists any rule (such as `APPROVE_ALL`) or AgentCore `autoApproval` is true; `manual` when the rules are empty or `autoApproval` is false; `unknown` when the registry details were denied, carry no approval configuration, or carry a setting this release does not recognize |
+| Provenance `sourceId` (the AgentCore runtime or gateway the registry detected the record from) | One binding to that exact ARN, as the runtime or gateway finding carries it. Its coverage is `in-scope` only when the `agentcore` service ran in that region for the scanned account in the same scan without a warning; otherwise `out-of-scope`. Records without provenance have no binding. |
+
+Auto-approval is not human review. A record approved by an auto-approval rule
+says so in its evidence (`approved automatically by a registry rule, not
+reviewed by a person`) and approves nothing through
+[`trusted_registries`](../inventory.md#trusting-a-registry) unless the trusted
+entry sets `allow_auto_approved: true`.
+
+A record's `listing_complete` is true only when its registry's record listing
+finished in this scan without a denial, a failed or truncated page, a skipped
+malformed record or the `max_registry_records` cap (default 1000 records per
+region and registry namespace). Reaching the cap, a denied or throttled call,
+an unsupported region, an SDK without the service and a malformed response all
+mark the scan incomplete (exit 3); records already read are kept. A record
+whose details (`GetRegistryRecord`) failed is still reported from its listing
+summary, with its descriptors unknown and the scan incomplete. Denied listings
+use the `cloud.aws: <operation> collection failed (access denied (<code>))`
+diagnostic the canary runner reads.
+
+Descriptors are untrusted inline documents of up to 100 KiB. They are parsed as
+strict JSON during collection and reduced to a bounded, sanitized summary
+(`metadata.descriptor`): MCP server name, version, remote URLs, package
+identifiers and tool names; A2A card name, URL, version, skills, capability and
+security scheme names; schema versions; and each descriptor source URL with its
+credential provider ARN, grant type, scopes or IAM role. The raw `data` and
+`inlineContent` documents, authorizer settings and OAuth `customParameters` are
+never exported or reported, and no descriptor URL becomes a finding resource.
+A document that is oversized, not strict JSON or of the wrong shape makes the
+scan incomplete. An A2A card without security schemes is tagged
+`no-auth-declared`; MCP remotes go through the same transport checks as
+configured MCP servers (`mcp-insecure-transport`).
+
+`registry_arns` lists exact Agent Registry ARNs
+(`arn:aws:agent-registry:<region>:<account>:registry/<id>`) of registries,
+usually in other accounts, to read through the discovery API
+(`ListDiscoverableRegistryRecords`, `BatchGetDiscoverableRegistryRecord`). It
+needs `registry` in `services`. The discovery API returns approved records
+only, so these records carry `registry_coverage: approved-only`, never set
+`listing_complete`, have no bindings, and have `approval_mode: unknown`
+because another account's approval configuration cannot be read. Their
+account is the registry's account, which is not an unresolved identity. A
+registry the control plane already listed in the same scan is not read again.
+A registry that uses a JWT authorizer rejects AWS credentials on the discovery
+API, which marks the scan incomplete. Per-record batch errors report only their
+error codes. The connector never calls `SearchDiscoverableRegistryRecords`,
+`InvokeRegistryMcp` or any write operation.
+
+Registry exports replay with the same identities; a replayed record that was
+listed incompletely, lacks its details or had an invalid descriptor makes the
+replay incomplete again. The registry responses in the tests and in
+`aws_registry_records.jsonl` are synthetic, modeled on the installed SDK
+models; they were not validated against a live account.
 
 ## `cloud.gcp`
 Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
@@ -183,7 +269,7 @@ run rather than writing records by hand.
 
 | Connector | Accepted `_kind` values |
 | --- | --- |
-| `cloud.aws` | `account`, `bedrock-agent`, `bedrock-knowledge-base`, `bedrock-flow`, `bedrock-logging`, `bedrock-guardrail`, `bedrock-custom-model`, `agentcore-runtime`, `agentcore-gateway`, `agentcore-memory`, `agentcore-browser`, `agentcore-code-interpreter`, `agentcore-workload-identity`, `lambda`, `ecs-task-definition`, `sagemaker-endpoint`, `state-machine`, `qbusiness-application`, `lex-bot`, `secret-name`, `ssm-parameter`, `iam-principal`, `cloudtrail-event` |
+| `cloud.aws` | `account`, `bedrock-agent`, `bedrock-knowledge-base`, `bedrock-flow`, `bedrock-logging`, `bedrock-guardrail`, `bedrock-custom-model`, `agentcore-runtime`, `agentcore-gateway`, `agentcore-memory`, `agentcore-browser`, `agentcore-code-interpreter`, `agentcore-workload-identity`, `agent-registry`, `agent-registry-record`, `agent-registry-discoverable-record`, `agentcore-registry`, `agentcore-registry-record`, `lambda`, `ecs-task-definition`, `sagemaker-endpoint`, `state-machine`, `qbusiness-application`, `lex-bot`, `secret-name`, `ssm-parameter`, `iam-principal`, `cloudtrail-event` |
 | `cloud.gcp` | `project`, `reasoning-engine`, `vertex-endpoint`, `dialogflow-agent`, `discovery-engine`, `cloud-run-service`, `cloud-function`, `iam-policy`, `service-account`, `api-key`, `secret-name`, `audit-event` |
 | `cloud.azure` | `resource`, `deployment`, `diagnostics`, `foundry-agent`, `logicapp-definition`, `appsettings`, `role-assignment` |
 | `cloud.oci` | `tenancy`, `genai-agent`, `genai-agent-endpoint`, `genai-knowledge-base`, `genai-endpoint`, `genai-cluster`, `genai-custom-model`, `oda-instance`, `model-deployment`, `function`, `container-instance`, `secret-name`, `policy`, `dynamic-group` |
@@ -192,15 +278,15 @@ All four connectors apply the same record contract. A record with a missing,
 unsupported or non-string `_kind`, or with fields that do not fit its kind, is
 reported as a warning and makes the scan incomplete; the remaining records are
 still analyzed. Envelope records (`account`, `tenancy`) and related records
-(Azure deployments and diagnostic settings, OCI agent endpoints) are resolved
-before findings are emitted. CloudTrail events become one gateway-caller
+(Azure deployments and diagnostic settings, OCI agent endpoints, AWS registry
+containers) are resolved before findings are emitted. CloudTrail events become one gateway-caller
 finding per principal, and Cloud Audit Log events one per principal and
 project, with event counts and the first and last event time.
 
 Synthetic sample exports for all four connectors are kept in
 `tests/fixtures/cloud/` (`<provider>_records.jsonl`, plus
 `gcp_extended_records.jsonl` and `oci_extended_records.jsonl` for the remaining
-GCP and OCI kinds).
+GCP and OCI kinds, and `aws_registry_records.jsonl` for AWS registry records).
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

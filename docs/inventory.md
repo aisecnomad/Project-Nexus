@@ -280,6 +280,11 @@ warning (`trusted registry <type> <id>: N auto-approved ... record(s) were not
 treated as sanctioned`). Records of the deprecated `entra-agent-registry` source
 never approve, and the configuration refuses to trust that type.
 
+A record whose `approval_mode` is `unknown` (the connector could not read how
+the registry approves records) and whose status is `approved` does approve in a
+trusted registry: listing the registry vouches for its approvals. Trust such a
+registry only when you know who approves records in it.
+
 Each record that approves:
 
 - registers its own record finding as `<registry>:<record_id>` (for example
@@ -323,6 +328,39 @@ a forged one, and an approved record in it approves the resources it binds.
 Offline exports are untrusted input, so before trusting a registry whose
 records you replay, keep its exports where only operators can write them, or
 scan that registry live.
+
+### Trusting AWS registries
+
+`cloud.aws` with `registry` in `services` emits records of both AWS registry
+namespaces (see the
+[cloud guide](connectors/cloud.md#aws-agent-registry-and-agentcore-registry-records)).
+The registry id is the registry ARN exactly:
+
+```yaml
+connectors:
+  - name: cloud.aws
+    account_id: "123456789012"
+    regions: [us-east-1]
+    services: [agentcore, registry]
+options:
+  trusted_registries:
+    # Agent Registry whose records a person approves (no auto-approval rule).
+    - registry: aws-agent-registry
+      id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
+    # AgentCore registry with autoApproval: its records were not reviewed by a
+    # person, so they approve only because this entry says so.
+    - registry: aws-agentcore-registry
+      id: arn:aws:bedrock-agentcore:us-east-1:123456789012:registry/efgh5678efgh
+      allow_auto_approved: true
+```
+
+An approved Agent Registry record detected from an AgentCore runtime or gateway
+binds that exact ARN, so the runtime's finding is registered when its account
+and region match. AgentCore registry records, and records read from another
+account's registry through `registry_arns`, carry no provenance: trusting them
+registers only the record findings themselves. Records read through
+`registry_arns` have `approval_mode: unknown`, so trusting such a registry
+accepts every approved record in it, however it was approved.
 
 ## Registry reconciliation statuses
 
