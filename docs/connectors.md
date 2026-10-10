@@ -590,6 +590,8 @@ comparisons; a `tenant_id` GUID that differs stops the scan. The call needs
 `Organization.Read.All` or `Directory.Read.All` (application) or `User.Read`
 (delegated) and matters only for comparable drift: when it is denied the scan
 still completes, with an advisory warning, but its scope is not attested.
+Delegated scans are never attested, because their listings return only what
+the signed-in user may see.
 
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
@@ -892,7 +894,7 @@ value; see [Production](production.md).
 Live `cloud.aws`, `cloud.gcp` and `cloud.azure` scans attest their
 [collection scope](scanning.md#live-collection-scope), so two complete live
 scans can be compared: the account STS reports, the configured GCP projects
-their enabled-services listings confirm (or the discovery mode), and the Azure
+their enabled-services listings confirm (or the discovered project set), and the Azure
 subscriptions ARM reports, with the resolved regions, locations or
 subscriptions and each listing's outcome. See the
 [cloud guide](connectors/cloud.md#live-scope-attestation).

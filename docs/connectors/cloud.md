@@ -424,10 +424,12 @@ findings between two complete live scans (the rules are in
   `max_registry_records` cap and page limit is recorded with its listing. No
   permission is added.
 - `cloud.gcp` attests the configured `projects` once each project's
-  enabled-services listing succeeded. Without `projects`, it attests only the
-  discovery mode and the outcome of `projects.list`: per-project calls are then
-  details, so a newly visible project does not change the scope, and a project
-  the credentials can no longer see cannot be told apart from a deleted one.
+  enabled-services listing succeeded. Without `projects`, the principal is the
+  set of projects a complete `projects.list` returned (a listing stopped by
+  `max_projects` attests nothing), and per-project calls are details. A project
+  the credentials can no longer see, or a newly visible one, therefore changes
+  the scope (exit 3) rather than resolving findings; re-baseline after a
+  reviewed change, or set `projects`.
   Request paths become templates (`/v1/projects/{project}/services`) and the
   project and location form the partition. No permission is added.
 - `cloud.azure` attests configured `subscriptions` after reading each with

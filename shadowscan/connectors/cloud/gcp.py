@@ -572,19 +572,22 @@ class GcpConnector(BaseConnector):
         if not projects:
             listed = self._pages(_PROJECTS, "projects", filter="lifecycleState:ACTIVE")
             projects = self._project_ids(self._completion(listed, discovery))
+        scanned: list[str] = []
         for i, project in enumerate(projects):
             if i >= self.max_projects:
                 self.ctx.warn("cloud.gcp: max_projects reached")
                 break
+            scanned.append(project)
             yield from self._collect_project(project)
-        self._attest_scope(discovery)
+        self._attest_scope(discovery, scanned)
 
-    def _attest_scope(self, discovery: list[bool]) -> None:
-        """The live scope principal: configured projects the API answered for, or the discovery mode.
+    def _attest_scope(self, discovery: list[bool], scanned: list[str]) -> None:
+        """The live scope principal: configured projects the API answered for, or the discovered set.
 
-        Discovered projects are never the principal: a new project would change the scope. In
-        that mode only the listing's outcome is attested, so a project the credentials can no
-        longer see cannot be told apart from a deleted one.
+        In discovery mode the principal is every project a complete ``projects.list`` returned,
+        as for Azure's listed subscriptions. A project the credentials can no longer see then
+        changes the scope (exit 3) rather than resolving its findings, and a new project needs a
+        reviewed re-baseline. A listing that failed, or stopped at ``max_projects``, attests none.
         """
         self.ctx.attest_partition("locations", self.locations)
         if self.projects:
@@ -592,8 +595,10 @@ class GcpConnector(BaseConnector):
             if set(self.projects) <= self._verified_projects:
                 principal = ",".join(sorted(set(self.projects)))
                 self.ctx.attest_principal("gcp", "projects", principal, "serviceusage.services.list")
-        elif discovery == [True]:
-            self.ctx.attest_principal("gcp", "visible-projects", "all", "cloudresourcemanager.projects.list")
+        elif discovery == [True] and scanned:
+            visible = ",".join(sorted(set(scanned)))
+            verified_by = "cloudresourcemanager.projects.list"
+            self.ctx.attest_principal("gcp", "visible-projects", visible, verified_by)
 
     @staticmethod
     def _completion(

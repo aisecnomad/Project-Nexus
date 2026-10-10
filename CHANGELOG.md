@@ -446,10 +446,11 @@ summarizes each release for people who install and operate ShadowScan.
   resolve findings between two complete live scans instead of always exiting
   3. Each connector records, during collection, the principal its provider
   reported (the STS account, never the caller ARN; the tenant
-  `GET /organization` returns; configured GCP projects confirmed by their
-  enabled-services listings, or only the discovery mode and the outcome of
-  `projects.list`; Azure subscriptions read with `GET /subscriptions/{id}` or
-  listed by `GET /subscriptions`), its non-secret options as resolved, the
+  `GET /organization` returns, for app-only scans; configured GCP projects
+  confirmed by their enabled-services listings, or the project set a complete
+  `projects.list` returned; Azure subscriptions read with
+  `GET /subscriptions/{id}` or listed by `GET /subscriptions`), its non-secret
+  options as resolved, the
   regions, projects, locations or subscriptions it covered, and the outcome
   (`ok`, `denied`, `throttled`, `truncated`, `unavailable` or `failed`) of
   every listing whose request does not depend on earlier responses. Detail
@@ -467,7 +468,10 @@ summarizes each release for people who install and operate ShadowScan.
 - `identity.entra` reads `GET /organization` after authenticating
   (`Organization.Read.All` or `Directory.Read.All`, or `User.Read` delegated).
   A denied or ambiguous answer is an advisory warning that leaves the scope
-  unattested; a tenant other than a GUID `tenant_id` stops the scan.
+  unattested; a tenant other than a GUID `tenant_id` stops the scan. A
+  delegated scan is never attested: its listings return only what the
+  signed-in user may see, so another user in the tenant could see less
+  without any error.
   `cloud.azure` reads `GET /subscriptions/{id}` for configured subscriptions
   (covered by `Reader`) with the same rules.
 - New engine hooks `attests_live_scope` and `scope_options` and the

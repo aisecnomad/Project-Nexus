@@ -1130,10 +1130,11 @@ enumerated successfully, and with which options. It does not prove that the
 account or tenant has no agents outside the enumerated APIs, services, regions,
 locations or projects, that the credentials could read every object (a listing
 returns only what they may see), or that another identity would see the same.
-Without `projects`,
-`cloud.gcp` attests only its discovery mode: a project the credentials lose
-access to is indistinguishable from a deleted one and its findings resolve, so
-set `projects` for drift gates. Comparing replays of record exports remains
+Delegated `identity.entra` scans are never attested, for that reason.
+Without `projects`, `cloud.gcp` attests the discovered project set, as
+`cloud.azure` does for listed subscriptions: a project the credentials lose
+access to, or a new one, changes the scope (exit 3) instead of resolving
+findings. Set `projects` or `subscriptions` for a stable drift gate. Comparing replays of record exports remains
 possible; stage every replay at the same absolute `input` path and label, and
 replay only exports whose `manifest.json` shows a complete run, because an
 export is published even when its live run was incomplete

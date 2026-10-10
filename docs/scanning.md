@@ -800,8 +800,8 @@ its provider reported rather than what the configuration asked for:
 | Connector | Principal (reported by the provider) | Partitions | Enumerations |
 |---|---|---|---|
 | `cloud.aws` | the account STS `GetCallerIdentity` returns, never the caller ARN; `role_arn` is a requested option | the resolved `regions` (`all` resolves through `DescribeRegions`) | each selected service's listings per region, `GetAccountAuthorizationDetails`, CloudTrail `LookupEvents`, registry listings per region and per `registry_arns` registry |
-| `identity.entra` | the tenant `GET /organization` returns; a `tenant_id` GUID that differs stops the scan | none: the tenant | the service principal, consent grant and application listings, and the opted-in agent identity and Agent 365 package listings |
-| `cloud.gcp` | the configured `projects`, each verified by its enabled-services listing; without `projects`, only the discovery mode and the outcome of `projects.list` | configured `projects` and the resolved `locations` | for configured projects, every per-project and per-location listing; in discovery mode only `projects.list` |
+| `identity.entra` | the tenant `GET /organization` returns, for app-only scans only (delegated listings are scoped to the signed-in user and are never attested); a `tenant_id` GUID that differs stops the scan | none: the tenant | the service principal, consent grant and application listings, and the opted-in agent identity and Agent 365 package listings |
+| `cloud.gcp` | the configured `projects`, each verified by its enabled-services listing; without `projects`, the set of projects a complete `projects.list` returned | configured `projects` and the resolved `locations` | for configured projects, every per-project and per-location listing; in discovery mode only `projects.list` |
 | `cloud.azure` | the configured `subscriptions`, each read with `GET /subscriptions/{id}`; without `subscriptions`, those `GET /subscriptions` lists | subscriptions | `GET /subscriptions` when listing, the Resource Graph query and each subscription's role assignments |
 
 The fingerprint covers, for each live entry, the principal, the requested
@@ -858,9 +858,14 @@ successfully, under which options. It does not show that the account or
 tenant has no agents outside the enumerated APIs, services, regions, locations
 or projects, or that a listing returned every object rather than those the
 credentials may read: Resource Graph and delegated Graph listings return only
-what the caller can see, without failing. In GCP discovery mode a project the credentials can no longer see
-cannot be told apart from a deleted one, so its findings resolve; set
-`projects` when a drift gate must not treat lost visibility as resolution.
+what the caller can see, without failing. For that reason a delegated
+`identity.entra` scan is never attested: another signed-in user in the same
+tenant could see less without any error. In GCP discovery mode, and when
+`cloud.azure` lists its subscriptions, the principal is the discovered project
+or subscription set, so a project or subscription the credentials can no
+longer see changes the scope (exit 3) instead of resolving its findings, and a
+new one needs a reviewed re-baseline. Set `projects` or `subscriptions` to keep
+the scope stable.
 
 ### Record export replay
 

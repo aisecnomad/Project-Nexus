@@ -216,7 +216,10 @@ warning and its scope is not attested (`live principal could not be verified`).
 The fingerprint covers `tenant_id`, `auth_mode`, `include_first_party`,
 `max_app_role_lookups`, `include_agent_identities`, `include_agent_registry`,
 `agent_registry_api` and `max_package_lookups`, never `client_id`, credentials
-or the delegated token, so app-only and delegated scans never compare. The
+or the delegated token. Only app-only scans are attested: delegated listings
+return what the signed-in user may see, so another user in the same tenant
+could see less without any error. A delegated scan still verifies the tenant,
+then completes with an advisory warning and an unattested scope. The
 service principal, consent grant, application, agent identity and package
 listings are the enumerations; each principal's `appRoleAssignments` and each
 package's details are details, recorded per template and never fingerprinted,

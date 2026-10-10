@@ -714,20 +714,59 @@ def test_entra_domain_tenant_id_attests_the_reported_tenant(index, monkeypatch):
     assert live["principal"]["id"] == TENANT and report["collection_scope"]["comparable"] is True
 
 
-def test_delegated_and_app_only_entra_scans_never_compare_equal(index, monkeypatch):
-    _graph(monkeypatch, organization=_organization())
-    app_only = _entra_run(index)
+def _delegated_run(index, monkeypatch, scopes: str = "User.Read Application.Read.All") -> dict[str, Any]:
     token = pyjwt.encode(
-        {"tid": TENANT, "scp": "User.Read Application.Read.All", "exp": int(time.time()) + 3600},
+        {"tid": TENANT, "scp": scopes, "exp": int(time.time()) + 3600},
         _TEST_HMAC_KEY,
         algorithm="HS256",
     )
     monkeypatch.setenv("GRAPH_DELEGATED_TOKEN", token)
     spec = ConnectorSpec("identity.entra", {"tenant_id": TENANT, "auth_mode": "delegated"})
-    delegated = Engine(ScanConfig(connectors=[spec]), index=index).run().to_dict()
-    assert delegated["collection_scope"]["comparable"] is True, delegated["collection_scope"]
-    assert delegated["collection_scope"]["fingerprint"] != app_only["collection_scope"]["fingerprint"]
-    assert token not in json.dumps(delegated)
+    report = Engine(ScanConfig(connectors=[spec]), index=index).run().to_dict()
+    assert token not in json.dumps(report)
+    return report
+
+
+def test_delegated_entra_scans_are_never_attested(index, monkeypatch):
+    """A delegated listing shows what the signed-in user may see: the tenant alone attests nothing."""
+    _graph(monkeypatch, organization=_organization())
+    app_only = _entra_run(index)
+    assert app_only["collection_scope"]["comparable"] is True
+    delegated = _delegated_run(index, monkeypatch)
+    scope = delegated["collection_scope"]
+    assert delegated["summary"]["complete"] is True
+    assert scope["comparable"] is False and scope["reason"] == "live principal could not be verified"
+    (live,) = scope["live"]
+    assert live["principal"] is None and live["requested"]["auth_mode"] == "delegated"
+    (stats,) = [s for s in delegated["stats"] if s["connector"] == "identity.entra"]
+    assert any("scoped to the signed-in user" in warning for warning in stats["warnings"])
+
+
+def test_delegated_scan_by_a_user_who_sees_less_never_resolves_findings(index, monkeypatch):
+    fixture = Path(__file__).parents[1] / "fixtures" / "identity" / "entra_graph.json"
+    names = {"procurement-agent-svc", "aks-agent-runner"}
+    principals = [
+        {key: value for key, value in record.items() if key != "_kind"}
+        for record in json.loads(fixture.read_text(encoding="utf-8"))
+        if record.get("_kind") == "servicePrincipal" and record.get("displayName") in names
+    ]
+    assert len(principals) == 2
+    _graph(monkeypatch, organization=_organization(), pages={"/servicePrincipals": principals})
+    administrator = _delegated_run(index, monkeypatch)
+    _graph(monkeypatch, organization=_organization(), pages={"/servicePrincipals": principals[:1]})
+    restricted = _delegated_run(index, monkeypatch)
+    assert len(restricted["findings"]) < len(administrator["findings"])
+    comparison = compare_reports(administrator, restricted)
+    assert comparison["comparable"] is False and comparison["resolved"] == []
+    assert comparison["unknown"]
+
+
+def test_delegated_scan_of_another_tenant_still_stops(index, monkeypatch):
+    calls = _graph(monkeypatch, organization=_organization(OTHER_TENANT))
+    report = _delegated_run(index, monkeypatch)
+    (stats,) = [s for s in report["stats"] if s["connector"] == "identity.entra"]
+    assert stats["skipped"] and "does not match tenant_id" in stats["skip_reason"]
+    assert not any(call.startswith("LIST") for call in calls)
 
 
 def test_entra_app_role_lookup_cap_is_a_truncated_detail(index, monkeypatch):
@@ -783,6 +822,19 @@ class _GoogleApis:
         return {"version": 3, "bindings": []}
 
 
+class _VertexApis(_GoogleApis):
+    """Vertex AI enabled in every project, with one Agent Engine each, so each project has a finding."""
+
+    def get_json(self, url: str, params: Any = None, **kwargs: Any) -> Any:
+        if url.endswith("/services"):
+            return {"services": [{"config": {"name": "aiplatform.googleapis.com"}}]}
+        if url.endswith("/reasoningEngines"):
+            project = url.split("/projects/")[1].split("/")[0]
+            name = f"projects/{project}/locations/us-central1/reasoningEngines/1"
+            return {"reasoningEngines": [{"name": name, "displayName": f"agent-{project}"}]}
+        return super().get_json(url, params, **kwargs)
+
+
 def _gcp_run(index, monkeypatch, apis: _GoogleApis, **config: Any) -> dict[str, Any]:
     monkeypatch.setattr(GcpConnector, "_auth", lambda self: setattr(self, "http", apis))
     spec = ConnectorSpec("cloud.gcp", {"access_token": GCP_TOKEN, **config})
@@ -809,14 +861,47 @@ def test_gcp_configured_projects_are_the_principal_and_details_do_not_change_sco
     assert GCP_TOKEN not in json.dumps(current)
 
 
-def test_gcp_discovery_mode_attests_the_mode_not_the_discovered_projects(index, monkeypatch):
-    baseline = _gcp_run(index, monkeypatch, _GoogleApis(projects=["proj-a"]))
-    current = _gcp_run(index, monkeypatch, _GoogleApis(projects=["proj-a", "proj-b"]))
-    (live,) = current["collection_scope"]["live"]
-    assert live["principal"]["kind"] == "visible-projects" and "projects" not in live["partitions"]
+def test_gcp_discovery_mode_attests_the_discovered_project_set(index, monkeypatch):
+    baseline = _gcp_run(index, monkeypatch, _GoogleApis(projects=["proj-b", "proj-a"]))
+    (live,) = baseline["collection_scope"]["live"]
+    assert live["principal"]["kind"] == "visible-projects" and live["principal"]["id"] == "proj-a,proj-b"
+    assert "projects" not in live["partitions"]
     assert [op["operation"] for op in live["operations"]] == ["/v1/projects"]
     assert all(detail["operation"] != "/v1/projects" for detail in live["details"])
-    assert current["collection_scope"]["fingerprint"] == baseline["collection_scope"]["fingerprint"]
+    assert baseline["collection_scope"]["comparable"] is True
+    again = _gcp_run(index, monkeypatch, _GoogleApis(projects=["proj-a", "proj-b"]))
+    assert again["collection_scope"]["fingerprint"] == baseline["collection_scope"]["fingerprint"]
+
+
+@pytest.mark.parametrize(
+    ("visible", "lost"),
+    [
+        (["proj-a"], {"proj-b"}),
+        (["other-org"], {"proj-a", "proj-b"}),
+        (["proj-a", "proj-b", "proj-c"], set()),
+    ],
+)
+def test_gcp_discovered_project_set_change_is_not_comparable(index, monkeypatch, visible, lost):
+    """Credentials that lose (or gain) a project must not resolve findings: the scope differs."""
+    baseline = _gcp_run(index, monkeypatch, _VertexApis(projects=["proj-a", "proj-b"]))
+    current = _gcp_run(index, monkeypatch, _VertexApis(projects=visible))
+    assert baseline["summary"]["complete"] is True and current["collection_scope"]["comparable"] is True
+    assert current["collection_scope"]["fingerprint"] != baseline["collection_scope"]["fingerprint"]
+    comparison = compare_reports(baseline, current)
+    # Findings of a project the credentials no longer see stay unknown, never resolved.
+    assert comparison["comparable"] is False and comparison["resolved"] == []
+    assert {finding["resource"].split("/")[1] for finding in comparison["unknown"]} == lost
+
+
+def test_gcp_discovery_stopped_by_max_projects_is_not_attested(index, monkeypatch):
+    report = _gcp_run(index, monkeypatch, _GoogleApis(projects=["proj-a", "proj-b"]), max_projects=1)
+    (live,) = report["collection_scope"]["live"]
+    assert live["principal"] is None and report["collection_scope"]["comparable"] is False
+
+
+def test_gcp_discovery_with_no_visible_project_is_not_attested(index, monkeypatch):
+    report = _gcp_run(index, monkeypatch, _GoogleApis(projects=[]))
+    assert report["collection_scope"]["comparable"] is False
 
 
 def test_gcp_denied_project_is_neither_verified_nor_attested(index, monkeypatch):

@@ -419,6 +419,15 @@ class EntraConnector(BaseConnector):
         # A domain name in tenant_id cannot be compared; the reported tenant is attested.
         if _TENANT_ID.fullmatch(configured) and configured != tenant:
             raise ConnectorError("identity.entra: the authenticated tenant does not match tenant_id")
+        if self.auth_mode == "delegated":
+            # Delegated listings return what the signed-in user may see. Another user in the
+            # same tenant would see less without any error, so the tenant alone attests nothing.
+            self.ctx.warn(
+                "identity.entra: delegated listings are scoped to the signed-in user; live collection "
+                "scope not attested",
+                incomplete=False,
+            )
+            return
         self.ctx.attest_principal("entra", "tenant", tenant, "graph:GET /organization")
 
     def _delegated_token(self) -> str:
