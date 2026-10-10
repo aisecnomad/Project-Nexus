@@ -245,6 +245,12 @@ def _mcp_server_entries(data: dict[str, Any], errors: list[str]) -> dict[Any, An
     return servers
 
 
+# Server fields that set the working directory a command starts in or load its environment from
+# a file (`cwd`, `envFile`, `env_file`, `workingDirectory`): either can change what a launcher
+# fetches or runs, which the record cannot show.
+_LAUNCH_CONTEXT_KEY = re.compile(r"(?i)cwd|work(?:ing)?[_-]?dir(?:ectory)?|env[_-]?files?")
+
+
 def _mcp_server_record(
     name: Any, cfg: Any, errors: list[str], *, manifest: bool = False
 ) -> dict[str, Any] | None:
@@ -252,6 +258,8 @@ def _mcp_server_record(
 
     Only a registry manifest's record has ``packages``: each package it declares (registry
     type, identifier, version and registry base URL), which MCP registry matching compares.
+    Only a server that sets a working directory or an environment file has ``launch_context``:
+    the names of those fields, whose values are not kept.
     """
     if not isinstance(cfg, dict):
         errors.append("MCP server entry must be an object")
@@ -326,6 +334,9 @@ def _mcp_server_record(
     safe["secrets_inline"] = bool(inline_locations)
     if inline_locations:
         safe["secret_locations"] = inline_locations
+    launch_context = sorted(str(key) for key in cfg if _LAUNCH_CONTEXT_KEY.fullmatch(str(key)))
+    if launch_context:
+        safe["launch_context"] = launch_context[:8]
     safe["disabled"] = _mcp_disabled(cfg, errors)
     if manifest:
         safe["packages"] = _manifest_packages(cfg.get("packages"), errors)

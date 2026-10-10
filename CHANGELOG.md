@@ -251,6 +251,38 @@ summarizes each release for people who install and operate ShadowScan.
   ASI04 and ATLAS AML.T0010.005, and to NIST AI RMF GOVERN 6.1 and ISO/IEC
   42001 A.10.3, as author-written evidence references. The governance factor
   is not mapped, because mapping rules cannot read risk factors.
+- A launch is no longer identified when something outside its package
+  arguments can change what runs: a launcher named by a relative path
+  (`./npx`, `tools/uvx`, `.\npx.cmd`) or a UNC path; a `cwd`,
+  `workingDirectory`, `envFile` or `env_file` field (kept in the server record
+  as `launch_context`, field names only); an environment variable in a
+  launcher, package manager, interpreter or container namespace (`NODE_*`
+  other than `NODE_ENV`, `BUN_*`, `YARN_*`, `PNPM_*`, `COREPACK_*`, every
+  `UV_*`, `PYTHON*` other than output settings, `DOCKER_*`, `CONTAINERS_*`,
+  `PODMAN_*`, `REGISTRY_*`), or one that moves the program search path, home,
+  configuration or temporary directory, loader or TLS trust (`PATH`, `HOME`,
+  `USERPROFILE`, `APPDATA`, `XDG_*`, `TMPDIR`, `LD_*`, `DYLD_*`, `COMSPEC`,
+  `SHELL`, `SSL_*`, `REQUESTS_CA_BUNDLE`); a `docker run` or `podman run` mount,
+  `--volumes-from`, working directory, `--env-file`, or `-e` of such a
+  variable (`-e NODE_OPTIONS=...`); and a `cmd /c` command line or batch-file
+  (`npx.cmd`) arguments holding `%VAR%` or `!VAR!`, which cmd.exe expands
+  before it reads operators. Such servers are `mcp-registry-unidentified` and
+  count toward `not_in_approved`. Containerized servers that mount a data
+  directory are unidentified too: a mount can replace the code the image runs.
+  A repository `.npmrc`, `bunfig.toml`, `.yarnrc.yml`, `uv.toml` or `pip.conf`
+  in the directory a client starts a server in is still not read.
+- A server with both a command and a URL now has no identity, whatever its
+  transport says: a client that ignores `type` would run the command beside an
+  approved URL, or connect to the URL beside an approved command.
+- A package or URL several names of one registry list counts as listed in an
+  approved catalog only when one of those names lists it, other than as
+  deleted, in the version it would be matched to; an unrelated active version
+  of a colliding name no longer approves a package listed only as deleted.
+- `mcp-insecure-transport` also flags an `http://` or `ws://` URL whose
+  authority holds a backslash or user information (redacted when parsed),
+  since an HTTP client can read another host from it
+  (`http://remote.example\@localhost/` reaches `remote.example`); its evidence
+  then names no host.
 - The tests use a synthetic snapshot shaped like the live registry API. No
   live registry fetch or tenant acceptance is part of the test suite.
 
@@ -527,6 +559,18 @@ summarizes each release for people who install and operate ShadowScan.
   interface to a host other than loopback) and `a2a-card-signature-invalid`
   (10), with threat references ASI07 and AML.T0118.001, and ASI07 and ASI04.
   Card files with such interfaces or malformed signatures now score higher.
+- A verified card is projected and tagged as the form its signature covers,
+  not as served. Empty values added after signing
+  (`"securitySchemes": {"oauth2": {}}`, `"authentication": {"schemes": []}`)
+  left the card `verified` but removed `no-auth-declared` and showed a security
+  scheme; they now change nothing. `signed_forms` returns each form with its
+  payload, and `verify_card` returns the form a signature verified.
+- An interface URL with user information or a backslash before its host is
+  left out of `metadata.agent_card.interfaces` and of domain matching:
+  `http://agent.example\@localhost/a2a` was projected as
+  `http://localhost/a2a` (HTTP clients reach `agent.example`) and suppressed
+  `a2a-plaintext-interface`. The tag now reads each declared URL and fires for
+  such an `http://` or `ws://` interface.
 - The cards, keys and HTTP exchanges in the tests are synthetic, modeled on
   the A2A specification; nothing was validated against a live agent.
 

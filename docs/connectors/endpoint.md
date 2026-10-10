@@ -251,9 +251,11 @@ agent and declares an endpoint, skills or capabilities but misses required
 fields is reported as an `incomplete-agent-card` framework-usage finding with
 `metadata.card_errors`, and the scan is incomplete. `metadata.agent_card`
 holds the name, description, version, protocol version, skills, capabilities,
-security scheme names, up to 20 interfaces (scheme, host, port and path only)
-and the signature state. Both A2A 1.0 (`supportedInterfaces`) and 0.3 (`url`,
-`preferredTransport`, `additionalInterfaces`) cards are read. A card that
+security scheme names, up to 20 interfaces (scheme, host, port and path only;
+an interface URL with user information or a backslash before its host, which
+HTTP clients can read as another host, is left out) and the signature state.
+Both A2A 1.0 (`supportedInterfaces`) and 0.3 (`url`, `preferredTransport`,
+`additionalInterfaces`) cards are read. A card that
 declares any other `protocolVersion` (not 0.x or 1.x), at the top level or on
 an interface, is still reported, with a warning that makes the scan
 incomplete: its fields were read as 0.3 and 1.0 fields and tags can be missed.
@@ -262,7 +264,8 @@ Tags (see [risk](../concepts/risk.md)):
 
 - `no-auth-declared` (10): the card declares no security scheme.
 - `a2a-plaintext-interface` (10): an interface uses `http://` or `ws://` to a
-  host other than loopback.
+  host not known to be loopback, including one left out of the projection
+  because its host cannot be told.
 - `a2a-card-signature-invalid` (10): a signature is malformed or fails
   verification.
 
@@ -290,9 +293,12 @@ signature is checked against three payloads, and one match is enough:
    section 8.4.1 example).
 
 The three differ only by nulls and empty values, so a card served with or
-without them verifies, and any other change does not. A signer that also drops `false` or
-`0` defaults matches none of them, and such a card served with those values
-reports `invalid`.
+without them verifies, and any other change does not. A verified card is then
+projected and tagged as the form its signature covers, not as served: an empty
+value added after signing, such as `"securitySchemes": {"oauth2": {}}`, shows
+no security scheme and leaves `no-auth-declared` in place. A signer that also
+drops `false` or `0` defaults matches none of them, and such a card served with
+those values reports `invalid`.
 
 The protected header selects the algorithm (RS256, PS256, ES256 or EdDSA) and
 the key ID; exactly one key of the operator's set must match. Keys or key

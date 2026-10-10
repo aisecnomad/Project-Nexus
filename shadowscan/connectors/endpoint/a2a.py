@@ -12,9 +12,11 @@ private, loopback and metadata addresses refused unless the scan sets
 Signatures are verified only against the operator's ``agent_card_jwks_url``
 key set. The payload is the RFC 8785 canonical card without ``signatures``.
 Signers disagree on which empty values they drop first, so each signature is
-checked against three forms of the card (see ``signed_payloads``). The forms
+checked against three forms of the card (see ``signed_forms``). The forms
 differ only by nulls and empty strings, arrays and objects, so a ``verified``
-card differs from what was signed by nothing else.
+card differs from what was signed by nothing else; it is then read as the form
+its signature covers, so an empty value added to the served card (an empty
+``securitySchemes`` entry) decides nothing.
 """
 
 from __future__ import annotations
@@ -133,19 +135,27 @@ _CARD_FIELDS: _Fields = (
 )
 
 
-def signed_payloads(card: dict[str, Any]) -> list[bytes]:
-    """The canonical bytes a card signature may cover, without repeats; raises CanonicalizationError.
+def signed_forms(card: dict[str, Any]) -> list[tuple[dict[str, Any], bytes]]:
+    """The forms of a card a signature may cover, each with its canonical bytes, without repeats.
 
     In order: the card as served; with every null, empty string, array and
     object removed recursively (the A2A Python SDK's signer); and with empty
     members removed except those the A2A 1.0 schema marks REQUIRED or
     ``optional``, list items kept (the specification's section 8.4.1
     example). A signer that also drops ``false`` or ``0`` defaults matches
-    none of them.
+    none of them. Raises CanonicalizationError.
     """
     unsigned = {key: value for key, value in card.items() if key != "signatures"}
-    forms = (unsigned, _without_empty(unsigned, 0), _without_empty_optional(unsigned, _CARD_FIELDS, 0))
-    return list(dict.fromkeys(canonicalize(form) for form in forms))
+    forms: dict[bytes, dict[str, Any]] = {}
+    for form in (unsigned, _without_empty(unsigned, 0), _without_empty_optional(unsigned, _CARD_FIELDS, 0)):
+        # A card with nothing but empty values has no SDK form: its payload is null.
+        forms.setdefault(canonicalize(form), form if isinstance(form, dict) else {})
+    return [(form, payload) for payload, form in forms.items()]
+
+
+def signed_payloads(card: dict[str, Any]) -> list[bytes]:
+    """The canonical bytes a card signature may cover (see :func:`signed_forms`)."""
+    return [payload for _, payload in signed_forms(card)]
 
 
 def _empty(value: Any) -> bool:
@@ -181,16 +191,19 @@ def _without_empty_optional(value: Any, fields: _Fields, depth: int) -> Any:
     return {key: item for key, item in members.items() if key in keep or not _empty(item)}
 
 
-def verify_card(card: dict[str, Any], payloads: list[bytes], keys: dict[str, Any]) -> tuple[str, str | None]:
-    """``("verified", None)`` when one signature verifies one payload with an operator-trusted key.
+def verify_card(
+    card: dict[str, Any], forms: list[tuple[dict[str, Any], bytes]], keys: dict[str, Any]
+) -> tuple[str, str | None, dict[str, Any] | None]:
+    """``("verified", None, form)`` when one signature verifies one form with an operator-trusted key.
 
-    Otherwise ``invalid``. ``card`` must already have a well-formed
-    ``signatures`` array (``a2a_signature_state`` returned
-    ``present-unverified``); ``payloads`` come from ``signed_payloads``.
+    ``form`` is the card as that signature covers it, without ``signatures``: what a
+    verified card is read as. Otherwise ``("invalid", reason, None)``. ``card`` must already
+    have a well-formed ``signatures`` array (``a2a_signature_state`` returned
+    ``present-unverified``); ``forms`` come from :func:`signed_forms`.
     """
     reasons: list[str] = []
     for entry in card["signatures"]:
-        for payload in payloads:
+        for form, payload in forms:
             try:
                 verify_detached_jws(entry["protected"], payload, entry["signature"], keys)
             except Exception as exc:  # noqa: BLE001 - every failure leaves this signature unverified
@@ -198,8 +211,8 @@ def verify_card(card: dict[str, Any], payloads: list[bytes], keys: dict[str, Any
                 if not isinstance(exc, InvalidSignatureError):
                     break  # header, key and algorithm failures do not depend on the payload
             else:
-                return "verified", None
-    return "invalid", "; ".join(dict.fromkeys(reasons))
+                return "verified", None, form
+    return "invalid", "; ".join(dict.fromkeys(reasons)), None
 
 
 def export_card(card: dict[str, Any]) -> dict[str, Any]:

@@ -26,10 +26,14 @@ registry can still be compromised.
 fetched from (registry type, normalized identifier and exact version), which
 MCP registry snapshots are matched against; :func:`registry_package`
 normalizes a registry's own package listing the same way. A launch names a
-package only when nothing in it can change what is fetched or run: another
-registry, index, configuration file, cache or container host (as an option or
-an environment variable), an extra package, a command line or entrypoint, an
-option the parser does not know, or a Git, URL, path or alias source.
+package only when nothing in it can change what is fetched or run: a launcher
+run from a relative path, another registry, index, configuration file, cache
+or container host (as an option or an environment variable), an environment
+variable that changes how a launcher or interpreter starts or where it finds
+programs and files, a working directory or environment file, a container
+mount, working directory or execution-affecting variable, an extra package, a
+command line or entrypoint, an option the parser does not know, or a Git, URL,
+path or alias source.
 """
 
 from __future__ import annotations
@@ -113,16 +117,34 @@ _DOCKER_FLAGS = frozenset({
     "--no-hosts", "--rmi", "--tls-verify",
 })  # fmt: skip
 _DOCKER_FLAG_CLUSTER = re.compile(r"-[itdPq]{2,}\Z")
-# Environment variables that point a launcher at another registry, index, configuration, cache
-# or container host.
-_SOURCE_ENV = re.compile(
-    r"(?i)npm_config_\w+|uv_\w*index\w*|uv_(?:find_links|config_file|cache_dir|tool_dir)|pipx?_\w+"
-    r"|docker_host|docker_config|container_host|containers_conf|registries_conf"
+# docker / podman run options that replace the image's entrypoint or put other files, another
+# working directory or another environment into the container, so the image may not run what
+# it was published with.
+_DOCKER_CONTEXT_FLAGS = frozenset(
+    {"-v", "--volume", "--mount", "--volumes-from", "-w", "--workdir", "--env-file", "--entrypoint"}
 )
+_DOCKER_ENV_FLAGS = frozenset({"-e", "--env"})
+# Environment variables that can change what a launch fetches or runs, matched by namespace:
+# launcher, package manager, interpreter and container settings (another registry, index,
+# configuration, cache, container host or startup option), the program search path, loader
+# preloads, the home, configuration and temporary directories launchers read files from, the
+# shell a launcher runs commands with, and TLS trust.
+_SOURCE_ENV = re.compile(
+    r"(?i)(?:npm|node|bun|yarn|pnpm|corepack|uv|pipx?|docker|containers?|podman|registr(?:y|ies))_\w*"
+    r"|python\w*|ld_\w+|dyld_\w+|xdg_\w+|path|pathext|home|homedrive|homepath|userprofile"
+    r"|(?:local)?appdata|programdata|tmp|temp|tmpdir|comspec|shell|bash_env|env"
+    r"|ssl_\w+|(?:requests|curl)_ca_bundle"
+)
+# Variables in those namespaces that change neither the package nor what it runs.
+_HARMLESS_ENV = re.compile(r"(?i)node_env|python(?:unbuffered|ioencoding|dontwritebytecode|utf8)")
 # cmd.exe switches that change nothing about the command it runs, and the characters that make
-# its command line more than one plain command.
+# its command line more than one plain command: operators, quoting, and %VAR% and !VAR!
+# expansion, which happens before operators are read, so a variable can hold an operator.
 _CMD_SWITCHES = frozenset({"/d", "/s", "/q"})
-_CMD_METACHARACTERS = re.compile(r'[&|<>^()"]')
+_CMD_METACHARACTERS = re.compile(r'[&|<>^()"%!]')
+# A Windows absolute path (C:\ or C:/); a relative path resolves against the server's working
+# directory, which is usually the scanned repository.
+_WINDOWS_ABSOLUTE = re.compile(r"[A-Za-z]:[\\/]")
 _BROAD_ROOTS = {"/", "~", "~/", "$HOME", "${HOME}", "%USERPROFILE%", "/home", "/Users", "/root"}
 _DRIVE_ROOT = re.compile(r"^[A-Za-z]:[\\/]?$")
 _HOME_DIR = re.compile(r"^(?:/home/[^/]+|/Users/[^/]+|[A-Za-z]:[\\/]Users[\\/][^\\/]+)[\\/]?$")
@@ -224,13 +246,23 @@ def server_package(server: dict[str, Any]) -> PackageRef | None:
     """The registry package a parsed server record launches, or None when it launches none.
 
     Only the launchers :func:`assess_server` recognizes count, also as ``npx.cmd`` or
-    ``uvx.exe`` and inside ``cmd /c``. A shell command line, a local path, a URL or Git
-    source, an npm alias, a GitHub shorthand, and a launch with an option or environment
-    variable that can change what is fetched or run name no package.
+    ``uvx.exe`` and inside ``cmd /c``, and only by a bare program name or an absolute path:
+    ``./npx`` or ``tools/uvx`` runs a file of the server's working directory, usually the
+    scanned repository. A shell command line, a local path, a URL or Git source, an npm alias,
+    a GitHub shorthand, a working directory or environment file (``launch_context``), and a
+    launch with an option or environment variable that can change what is fetched or run name
+    no package.
     """
     argv = _argv(server)
-    argv = _cmd_wrapped(argv) if argv is not None else None
-    if argv is None or _shell_command(argv) or _env_changes_source(server.get("env_names")):
+    if argv is None or not _found_program(argv[0]) or server.get("launch_context"):
+        return None
+    argv = _cmd_wrapped(argv)
+    if (
+        argv is None
+        or not _found_program(argv[0])
+        or _shell_command(argv)
+        or _env_changes_source(server.get("env_names"))
+    ):
         return None
     registry, spec, _, plain = _launch(argv)
     if registry is None or not spec or not plain:
@@ -292,7 +324,15 @@ def _argv(server: dict[str, Any]) -> list[str] | None:
 
 
 def _cmd_wrapped(argv: list[str]) -> list[str] | None:
-    """The command ``cmd /c`` runs, or ``argv`` itself; None when cmd runs more than one plain command."""
+    """The command ``cmd /c`` runs, or ``argv`` itself; None when cmd runs more than one plain command.
+
+    Windows runs a batch file (``npx.cmd``) through cmd.exe as well, which reads the same
+    operators and variable references in its arguments.
+    """
+    if argv[0].strip().lower().endswith((".cmd", ".bat")) and any(
+        _CMD_METACHARACTERS.search(arg) for arg in argv[1:]
+    ):
+        return None
     if _basename(argv[0]) != "cmd":
         return argv
     i = 1
@@ -314,8 +354,23 @@ def _shell_command(argv: list[str]) -> bool:
 
 def _env_changes_source(names: Any) -> bool:
     return isinstance(names, list) and any(
-        isinstance(name, str) and _SOURCE_ENV.fullmatch(name) for name in names
+        isinstance(name, str) and _SOURCE_ENV.fullmatch(name) and not _HARMLESS_ENV.fullmatch(name)
+        for name in names
     )
+
+
+def _found_program(command: str) -> bool:
+    """Whether ``command`` is a bare program name, found on the PATH, or an absolute path.
+
+    A relative path such as ``./npx`` or ``tools\\uvx.cmd`` resolves against the working
+    directory; a UNC path names a file on another host.
+    """
+    name = command.strip()
+    if "/" not in name and "\\" not in name:
+        return bool(name)
+    if name.startswith(("//", "\\\\")):
+        return False
+    return name.startswith("/") or bool(_WINDOWS_ABSOLUTE.match(name))
 
 
 def _npm_split(spec: str) -> tuple[str, str]:
@@ -488,32 +543,39 @@ def _docker_image(args: list[str]) -> tuple[str | None, list[str], bool]:
     """The image ``docker run`` starts, the arguments after it, and whether the launch is plain.
 
     An option this parser does not know may take a value, which would then be read as the
-    image, so it leaves the launch not plain; ``--entrypoint`` replaces what the image runs.
+    image, so it leaves the launch not plain; so do ``--entrypoint``, which replaces what the
+    image runs, a mount, a working directory, an environment file, and an environment variable
+    that can change what runs (``-e NODE_OPTIONS=...``).
     """
     plain = True
     i = 0
     while i < len(args):
         arg = args[i]
         if arg in _DOCKER_VALUE_FLAGS:
-            plain = plain and arg != "--entrypoint"
+            plain = plain and _docker_plain_value(arg, args[i + 1] if i + 1 < len(args) else "")
             i += 2
             continue
         if not arg.startswith("-"):
             return arg, args[i + 1 :], plain
-        flag = arg.partition("=")[0]
-        known = (
-            arg in _DOCKER_FLAGS
-            or bool(_DOCKER_FLAG_CLUSTER.match(arg))
-            or (
-                "=" in arg
-                and flag.startswith("--")
-                and (flag in _DOCKER_VALUE_FLAGS or flag in _DOCKER_FLAGS)
-            )
-            or (not arg.startswith("--") and len(arg) > 2 and arg[:2] in _DOCKER_VALUE_FLAGS)
-        )
-        plain = plain and known and flag != "--entrypoint"
+        flag, equals, value = arg.partition("=")
+        if equals and flag.startswith("--"):
+            known = flag in _DOCKER_VALUE_FLAGS or flag in _DOCKER_FLAGS
+        elif not arg.startswith("--") and len(arg) > 2 and arg[:2] in _DOCKER_VALUE_FLAGS:
+            # An attached short option value, -eNAME=x or -e=NAME=x.
+            flag, value = arg[:2], arg[2:].removeprefix("=")
+            known = True
+        else:
+            known = arg in _DOCKER_FLAGS or bool(_DOCKER_FLAG_CLUSTER.match(arg))
+        plain = plain and known and _docker_plain_value(flag, value)
         i += 1
     return None, [], plain
+
+
+def _docker_plain_value(flag: str, value: str) -> bool:
+    """Whether a ``docker run`` option with this value leaves what the image runs as published."""
+    if flag in _DOCKER_CONTEXT_FLAGS:
+        return False
+    return flag not in _DOCKER_ENV_FLAGS or not _env_changes_source([value.partition("=")[0]])
 
 
 def _npm_pinned(spec: str) -> bool:
@@ -558,8 +620,13 @@ def _broad_root(arg: str) -> bool:
 
 
 def _plaintext_remote(url: str) -> bool:
+    """Whether ``url`` is plaintext HTTP or WebSocket to a host that is not known to be loopback."""
+    text = url.strip()
+    scheme, separator, rest = text.partition("://")
+    if separator and scheme.lower() in {"http", "ws"} and _hidden_host(rest):
+        return True
     try:
-        parts = urlsplit(url.strip())
+        parts = urlsplit(text)
     except ValueError:
         return False
     if parts.scheme.lower() not in {"http", "ws"}:
@@ -573,9 +640,23 @@ def _plaintext_remote(url: str) -> bool:
         return True
 
 
+def _hidden_host(rest: str) -> bool:
+    """Whether the host of a URL (``rest`` follows its ``://``) cannot be told from its authority.
+
+    An HTTP client ends the host at a backslash, which :func:`urlsplit` does not
+    (``http://remote.example\\@localhost/`` reaches remote.example), and parsed configuration
+    redacts user information, which may have held such a backslash.
+    """
+    authority = re.split(r"[/?#]", rest, maxsplit=1)[0]
+    return "\\" in authority or "@" in authority
+
+
 def _host(url: str) -> str:
+    text = url.strip()
+    if _hidden_host(text.partition("://")[2]):
+        return "remote server"
     try:
-        return urlsplit(url.strip()).hostname or "remote server"
+        return urlsplit(text).hostname or "remote server"
     except ValueError:
         return "remote server"
 
