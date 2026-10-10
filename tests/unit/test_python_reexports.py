@@ -11,12 +11,12 @@ from shadowscan.engine import Engine
 from shadowscan.models import Kind
 
 
-def _scan(tmp_path, run_connector, files):
+def _scan(tmp_path, run_connector, files, **config):
     for name, text in files.items():
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-    return run_connector("code.filesystem", path=str(tmp_path), git_metadata=False)
+    return run_connector("code.filesystem", path=str(tmp_path), git_metadata=False, **config)
 
 
 def _agents(findings):
@@ -203,7 +203,16 @@ def test_large_ordinary_local_module_leaves_its_consumers_complete(tmp_path, run
     # shim, so importing it neither limits resolution nor changes evidence.
     helpers = "def helper():\n    return 1\n" + "".join(f"VALUE_{n} = {n}\n" for n in range(8000))
     assert len(helpers.encode("utf-8")) > python_reexports.MAX_SHIM_BYTES
-    findings, ctx = _scan(tmp_path, run_connector, {"helpers.py": helpers, "app.py": _OPENAI_CONSUMER})
+    # code.filesystem passes its own scan_timeout to the matcher, so the generous
+    # test budget from conftest does not reach it. Matching this 140 KB module
+    # takes close to the shipped two CPU seconds under coverage on Python 3.11,
+    # and this test is about shim resolution, not budgets.
+    findings, ctx = _scan(
+        tmp_path,
+        run_connector,
+        {"helpers.py": helpers, "app.py": _OPENAI_CONSUMER},
+        scan_timeout=30.0,  # conftest.TEST_SCAN_BUDGET_SECONDS
+    )
     assert _uses_openai(findings)
     assert not ctx.stats.incomplete, ctx.stats.errors
 
