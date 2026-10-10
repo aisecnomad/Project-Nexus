@@ -29,7 +29,12 @@ coverage, even when a response includes an empty collection field.
 
 * Source and manifest inputs are decoded from UTF-8, from UTF-16 or UTF-32
   with a byte-order mark, and for Python from the declared PEP 263 codec. An
-  analyzed file with binary or undecodable content, or whose declared codec
+  analyzed file with binary or undecodable content (dense NUL bytes, mostly invalid
+  UTF-8; in other text, invalid bytes are replaced and noted while no 8 KiB window
+  has more than four replaced characters and more than 10% of the window, and a
+  few stray NUL bytes in large valid UTF-8 text are noted; names are matched
+  without them, and a source file whose lexing differs with and without them
+  is incomplete), or whose declared codec
   does not read ASCII as ASCII (UTF-16 or UTF-32 without a byte-order mark,
   UTF-7, EBCDIC), leaves coverage incomplete;
   ordinary binary assets are not text evidence. IAM wildcard and

@@ -185,6 +185,15 @@ agent rule. Results are in [`results-post-change/`](results-post-change/README.m
 They are a regression check by the same author on the same corpus, not
 independent evidence, and the other tools were not rerun.
 
+## Real-world companion corpus
+
+The repo surface also has a real-world companion: 34 public GitHub/GitLab
+repositories pinned by commit, labeled by inspection, and run through the
+same adapters plus Agentic Radar, SafeDep vet and a grep baseline. See
+[benchmarks/realworld/README.md](../../benchmarks/realworld/README.md) and
+[results-realworld/](results-realworld/). Its labels are author-assigned, so
+it inherits this benchmark's conflict-of-interest caveat in full.
+
 ## Limits
 
 - **Synthetic, author-written corpus.** Real repositories, laptops and logs

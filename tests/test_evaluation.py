@@ -140,6 +140,48 @@ def test_realistic_corpus_has_multi_file_cases_and_documented_gaps():
     assert {"readme-key-rotation-tutorial"} <= {c.id for c in cases if c.known_gap}
 
 
+def test_benchmark_followup_corpus_is_authored_with_explicit_labels_and_no_waivers():
+    meta, cases, _ = load_corpus(DEFAULT_CORPUS.with_name("benchmark_followup_corpus.json"))
+    assert meta["type"] == "synthetic" and "no copied third party code" in meta["provenance"].lower()
+    assert "known_gap_policy" not in meta and not any(case.known_gap for case in cases)
+    assert not any(case.source for case in cases)
+    assert len(cases) == 24
+    assert sum(case.present for case in cases) == 16 and sum(not case.present for case in cases) == 8
+    assert all(1 <= len(case.files) <= 3 for case in cases)
+    # Every case labels what must or must not be reported, beyond the binary target.
+    for case in cases:
+        assert case.assertions, case.id
+        if case.present:
+            assert case.assertions["expected_findings"], case.id
+        else:
+            assert (
+                "exact_findings" in case.assertions
+                or "forbidden_signatures" in case.assertions
+                or "forbidden_findings" in case.assertions
+            ), case.id
+    servers = [
+        case for case in cases if case.id in {"fastmcp-server", "mcp-server-typescript", "go-mcp-server"}
+    ]
+    assert len(servers) == 3
+    for case in servers:
+        (selector,) = case.assertions["expected_findings"]
+        assert (
+            selector["capabilities"] == ["mcp-server", "tool-use"]
+            and case.assertions["max_agent_findings"] == 0
+        )
+    leaderboard = next(case for case in cases if case.id == "website-data-leaderboard")
+    assert leaderboard.assertions == {"exact_findings": []}
+
+
+def test_benchmark_followup_corpus_passes_every_case():
+    report = evaluate(DEFAULT_CORPUS.with_name("benchmark_followup_corpus.json"))
+    assert report["passed"]
+    assert report["metrics"]["all"] | {"tp": 16, "fp": 0, "fn": 0, "tn": 8} == report["metrics"]["all"]
+    gaps = report["known_gaps"]
+    assert gaps["failing"] == [] and gaps["passing"] == [] and gaps["regressions"] == []
+    assert all(row["correct"] for row in report["cases"])
+
+
 def test_counts_have_explicit_undefined_denominators():
     rows = [
         {"family": "one", "present": True, "predicted": True},

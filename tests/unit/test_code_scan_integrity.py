@@ -10,7 +10,9 @@ import stat
 import time
 
 import pytest
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.models import Kind
 from shadowscan.utils.text import host_of, read_text
@@ -206,18 +208,117 @@ def test_transport_stream_like_source_comment_cannot_hide_agent_construction(
 @pytest.mark.parametrize(
     "content",
     [
+        # One NUL is a large share of a file this small: it cannot be called stray.
         b"import OpenAI from 'openai'; // \x00\n",
-        # Sync bytes at the first three packet starts only: not a transport stream.
-        b"G" + b"/" * 187 + b"G" + b"/" * 187 + b"G\x00\nimport OpenAI from 'openai';\n" + b"/" * 600,
-        # A sync byte at every packet start, but the packets are text.
-        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 187) * 11,
+        # Mostly NUL, as a transport stream's padding is.
+        b"G\x00" + b"\x00" * 600 + b"\nimport OpenAI from 'openai';\n",
+        # Not valid UTF-8: the packets are binary.
+        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 186 + b"\xff") * 11,
     ],
-    ids=["nul-comment", "three-sync-bytes", "sync-every-packet-but-text"],
+    ids=["nul-comment", "mostly-nul", "binary-packets"],
 )
 def test_nul_bearing_typescript_stays_a_coverage_gap(tmp_path, run_connector, content):
     (tmp_path / "agent.ts").write_bytes(content)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete and _gaps(ctx.stats.errors)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # Sync bytes at the first three packet starts only: not a transport stream.
+        b"G" + b"/" * 187 + b"G" + b"/" * 187 + b"G\x00\nimport OpenAI from 'openai';\n" + b"/" * 600,
+        # A sync byte at every packet start, but the packets are text.
+        b"G\x00import OpenAI from 'openai';\n".ljust(188, b"/") + (b"G" + b"/" * 187) * 11,
+    ],
+    ids=["three-sync-bytes", "sync-every-packet-but-text"],
+)
+def test_text_typescript_with_a_stray_nul_is_analyzed_not_skipped(tmp_path, run_connector, content):
+    # One NUL in over a kilobyte of valid UTF-8 text: reading it finds what a skip would have hidden.
+    (tmp_path / "agent.ts").write_bytes(content)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not _gaps(ctx.stats.errors)
+    assert any("provider.openai" in finding.model_providers for finding in findings)
+
+
+def test_stray_nul_bytes_cannot_split_a_host_or_env_name_that_bash_runs(tmp_path, run_connector):
+    # Bash drops NUL bytes from a script, so this runs `curl https://api.openai.com/...` with
+    # $OPENAI_API_KEY. Matched with the NUL bytes in place, neither name was seen and the scan was
+    # complete and empty.
+    script = (
+        b"#!/bin/bash\n# "
+        + b"padding text for a script of ordinary size " * 14
+        + b'\nexport OPENAI_\x00API_KEY="$1"\n'
+        + b"echo curl -s https://api.open\x00ai.com/v1/chat/completions"
+        + b' -H "Authorization: Bearer $OPENAI_\x00API_KEY"\n'
+    )
+    (tmp_path / "run.sh").write_bytes(script)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete or any("provider.openai" in finding.model_providers for finding in findings)
+
+
+_SOURCE_PADDING = b"// " + b"padding text for a module of an ordinary size " * 14 + b"\n"
+
+
+# Node and PHP keep NUL bytes (`node --check` and `php -l` accept each file, and with a stub client each
+# runs its call), but without them two characters join into a comment opener or a closing tag. Lexed only
+# with the NUL bytes removed, the client code was masked and the scan was complete and empty.
+@pytest.mark.parametrize(
+    ("name", "content", "provider"),
+    [
+        # The regular expression `/<NUL>*/` becomes a comment that runs to `/* end */`.
+        (
+            "app.js",
+            _SOURCE_PADDING
+            + b"const zeros = /\x00*/g;\n"
+            + b'const OpenAI = require("openai");\n'
+            + b'new OpenAI().chat.completions.create({ model: "gpt-4o", messages: [] });\n'
+            + b"/* end */\n",
+            "provider.openai",
+        ),
+        # `/<NUL>/` becomes a line comment that hides the rest of its line.
+        (
+            "app.js",
+            _SOURCE_PADDING + b'const r = /\x00/; const OpenAI = require("openai"); new OpenAI();\n',
+            "provider.openai",
+        ),
+        # In a PHP comment `?<NUL>>` becomes a closing tag, which makes the code after it template text.
+        # PHP has no import binder, so the key variable read before the comment corroborates the call.
+        (
+            "app.php",
+            b"<?php\n"
+            + b'$key = getenv("AI21_API_KEY");\n'
+            + _SOURCE_PADDING
+            + b"// note ?\x00>\n"
+            + b"$client = new AI21Client($key);\n",
+            "provider.ai21",
+        ),
+    ],
+    ids=["js-regex-star", "js-regex-slash", "php-closing-tag"],
+)
+def test_a_removed_nul_byte_cannot_make_a_comment_that_hides_code(tmp_path, name, content, provider):
+    (tmp_path / name).write_bytes(content)
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+    report = json.loads(result.stdout)
+    assert result.exit_code == 3, result.output
+    assert report["summary"]["complete"] is False
+    assert any(provider in finding["model_providers"] for finding in report["findings"])
+    # The client call itself is read, not only the evidence before it.
+    call_line = next(n for n, line in enumerate(content.split(b"\n"), 1) if b"new " in line)
+    assert any(
+        evidence["location"] == f"{name}:{call_line}"
+        for finding in report["findings"]
+        for evidence in finding["evidence"]
+    )
+
+
+def test_a_nul_byte_inside_a_string_leaves_a_source_complete(tmp_path, run_connector):
+    # Both readings mask the same string, so the lexing is complete.
+    source = _SOURCE_PADDING + b'const key = "a\x00b";\nconst OpenAI = require("openai");\nnew OpenAI();\n'
+    (tmp_path / "app.js").write_bytes(source)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)
 
 
 @pytest.mark.parametrize("rel", [".cursor/rules/notes.bin", ".roo/rules/notes.utf16"])
@@ -457,3 +558,28 @@ def test_host_of_returns_none_without_a_host(url):
 
 
 # ------------------------------------------------------------- inventory links
+
+
+def test_committed_template_syntax_keeps_coverage_incomplete(tmp_path, run_connector):
+    """Input-defect diagnostics preserve findings without claiming full coverage."""
+    (tmp_path / "agent.py").write_text("from crewai import Agent\nAgent(role='r', goal='g')\n")
+    template = tmp_path / "{{cookiecutter.package_name}}"
+    template.mkdir()
+    (template / "pyproject.toml").write_text('[project\nname = "{{cookiecutter.package_name}}"\n')
+    (tmp_path / "broken.mcp.json").write_text('{"mcpServers": "not-an-object"}')
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors, ctx.stats.errors
+    assert ctx.stats.incomplete
+    defects = [w for w in ctx.stats.warnings if "input defect" in w]
+    assert any("invalid TOML" in w for w in defects)
+    assert any("MCP servers must be an object or array" in w for w in defects)
+    assert any("framework.crewai" in f.frameworks for f in findings)
+
+
+def test_strict_coverage_keeps_template_syntax_failing_closed(tmp_path, run_connector):
+    template = tmp_path / "{{cookiecutter.package_name}}"
+    template.mkdir()
+    (template / "pyproject.toml").write_text("[project\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=True)
+    assert ctx.stats.incomplete
+    assert any("input defect" in e and "invalid TOML" in e for e in ctx.stats.errors)

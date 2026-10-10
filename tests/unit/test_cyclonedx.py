@@ -196,6 +196,98 @@ def test_empty_duplicate_and_reserved_ids_get_unique_refs():
     assert render_cyclonedx(_result(list(reversed(findings)))) == render_cyclonedx(_result(findings))
 
 
+def test_implemented_mcp_server_is_a_service_the_application_depends_on():
+    f = _finding(
+        "ss-impl",
+        Kind.FRAMEWORK_USAGE,
+        title="MCP server in repository root: Model Context Protocol (MCP)",
+        frameworks=["protocol.mcp"],
+        capabilities=["tool-use", "mcp-server"],
+        owner="team-tools",
+        metadata={
+            "mcp_tools": ["lookup", "read_file"],
+            "mcp_server": {
+                "constructions": [
+                    {
+                        "file": "server.py",
+                        "line": 5,
+                        "construct": "mcp.server.fastmcp:FastMCP(",
+                        "bound": True,
+                    },
+                    {"file": "server.py", "line": 9, "construct": "mcp.server:Server(", "bound": True},
+                    {
+                        "file": "low/app.py",
+                        "line": 2,
+                        "construct": "mcp.server.lowlevel:Server(",
+                        "bound": True,
+                    },
+                ],
+                "languages": ["python"],
+                "transports": ["stdio"],
+            },
+        },
+    )
+    doc = json.loads(render_cyclonedx(_result([f])))
+    _resolves(doc)
+    # The project stays an application with its framework dependency.
+    app = next(c for c in doc["components"] if c["bom-ref"] == "ss-impl")
+    assert app["type"] == "application" and app["authors"] == [{"name": "team-tools"}]
+    [service] = [s for s in doc["services"] if s.get("group") == "mcp-server"]
+    assert service["bom-ref"].startswith("shadowscan:mcp-server:")
+    assert service["name"] == "MCP server in repository root: Model Context Protocol (MCP)"
+    assert "endpoints" not in service
+    props = {p["name"]: p["value"] for p in service["properties"]}
+    assert props == {
+        "shadowscan:mcp:implementation": "source",
+        "shadowscan:mcp:languages": "python",
+        "shadowscan:mcp:transport": "stdio",
+        "shadowscan:mcp:tools": "lookup, read_file",
+        "shadowscan:mcp:files": "server.py, low/app.py",
+    }
+    deps = {d["ref"]: d["dependsOn"] for d in doc["dependencies"]}
+    assert set(deps["ss-impl"]) == {"shadowscan:framework:protocol.mcp", service["bom-ref"]}
+    # Nothing was capped: no second, incomplete composition.
+    assert [c["aggregate"] for c in doc["compositions"]] == ["unknown"]
+    assert render_cyclonedx(_result([f])) == render_cyclonedx(_result([f]))
+
+
+def test_implemented_server_lists_are_bounded_and_several_transports_name_none():
+    f = _finding(
+        "ss-many-tools",
+        Kind.FRAMEWORK_USAGE,
+        capabilities=["mcp-server"],
+        metadata={
+            "mcp_tools": [f"tool_{i:02d}" for i in range(25)],
+            "mcp_server": {
+                "constructions": [{"file": f"srv/{i}.ts", "line": 1} for i in range(12)],
+                "languages": ["javascript", "python"],
+                "transports": ["http", "stdio"],
+            },
+        },
+    )
+    doc = json.loads(render_cyclonedx(_result([f])))
+    _resolves(doc)
+    [service] = [s for s in doc["services"] if s.get("group") == "mcp-server"]
+    props = {p["name"]: p["value"] for p in service["properties"]}
+    assert (
+        "shadowscan:mcp:transport" not in props and props["shadowscan:mcp:languages"] == "javascript, python"
+    )
+    assert (
+        props["shadowscan:mcp:tools-omitted"] == "5" and len(props["shadowscan:mcp:tools"].split(", ")) == 20
+    )
+    assert (
+        props["shadowscan:mcp:files-omitted"] == "2" and len(props["shadowscan:mcp:files"].split(", ")) == 10
+    )
+    assert {"aggregate": "incomplete", "dependencies": ["ss-many-tools"]} in doc["compositions"]
+    # Two implementations never share a service, and a client configuration never gets one.
+    other = _finding("ss-other", Kind.FRAMEWORK_USAGE, capabilities=["mcp-server"])
+    config = _finding("ss-cfg", Kind.MCP_SERVER, capabilities=["mcp-server"], metadata={"servers": []})
+    doc = json.loads(render_cyclonedx(_result([f, other, config])))
+    _resolves(doc)
+    assert len([s for s in doc["services"] if s.get("group") == "mcp-server"]) == 2
+    assert {d["ref"]: d["dependsOn"] for d in doc["dependencies"]}["ss-cfg"] == []
+
+
 def test_same_named_servers_in_two_configurations_stay_apart():
     first = _finding(
         "ss-a", Kind.MCP_SERVER, metadata={"servers": [{"name": "github", "location": "a/.mcp.json"}]}

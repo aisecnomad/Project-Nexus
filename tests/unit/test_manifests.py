@@ -235,6 +235,7 @@ def _index(pattern="token"):
 def test_manifest_regex_respects_outer_input_deadline(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(matcher_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(matcher_module.time, "thread_time", lambda: clock[0])
     with pytest.raises(MatchTimeoutError, match="input execution budget"), _index().scan_budget(seconds=0.1):
         clock[0] = 0.2
         parse_manifest("Dockerfile", "FROM python:3.12\n")
@@ -279,6 +280,41 @@ def test_msbuild_props_and_targets_are_nuget_manifests(rel):
     )
     assert deps == {("nuget", "Microsoft.SemanticKernel"), ("nuget", "ModelContextProtocol")}
     assert not result.errors
+
+
+def test_central_package_management_props_declare_nuget_dependencies(fixtures):
+    # Directory.Packages.props keeps the versions (PackageVersion), a shared
+    # Directory.Build.props pins packages every project gets
+    # (GlobalPackageReference) or overrides (PackageReference Update=...); a
+    # project file referencing them carries no version of its own.
+    root = fixtures / "code" / "dotnet_central"
+    deps, result = _deps("Directory.Packages.props", (root / "Directory.Packages.props").read_text())
+    assert not result.errors
+    assert deps == {
+        ("nuget", "Microsoft.Extensions.AI"),
+        ("nuget", "OllamaSharp"),
+        ("nuget", "Newtonsoft.Json"),
+    }
+    deps, result = _deps("Directory.Build.props", (root / "Directory.Build.props").read_text())
+    assert not result.errors
+    assert deps == {
+        ("nuget", "Microsoft.SourceLink.GitHub"),
+        ("nuget", "ModelContextProtocol"),
+        ("nuget", "Microsoft.Extensions.AI.Ollama"),
+    }
+    versions = {d.name: d.spec for d in result.deps}
+    assert versions["Microsoft.Extensions.AI.Ollama"] == "9.3.0-preview.1.25161.3"
+
+
+def test_central_package_management_establishes_the_project_technologies(fixtures, run_connector):
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(fixtures / "code" / "dotnet_central"), use_git=False
+    )
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    project = next(f for f in findings if f.resource_type == "project")
+    assert {"framework.microsoft-extensions-ai", "protocol.mcp"} <= set(project.frameworks)
+    assert "provider.ollama" in project.model_providers
+    assert "nuget:OllamaSharp" in project.metadata["dependencies_matched"]
 
 
 @pytest.mark.parametrize("name", ["Directory.Build.targets", "common.props"])
@@ -533,3 +569,24 @@ def test_manifest_line_index_and_dockerfile_dedupe():
     assert result is not None and not result.errors
     env = [a for a in result.artifacts if a.kind == "env"]
     assert len(env) == 4000 and env[-1].line == 4000
+
+
+def test_shared_document_equals_a_fresh_parse_and_is_refused_for_jsonc(tmp_path, run_connector):
+    from shadowscan.utils.jsonc import load_json_lenient_marked
+
+    text = json.dumps({"dependencies": {"openai": "^4.0.0"}, "scripts": {"mcp": "npx -y @scope/server"}})
+    document, strict = load_json_lenient_marked(text)
+    assert strict
+    for name in ("package.json", "composer.json"):
+        assert parse_manifest(name, text, document) == parse_manifest(name, text)
+    # Comments are tolerated by the shared parse but not by the manifest
+    # parser: the connector never hands such a document over.
+    commented = "// generated\n" + text
+    assert load_json_lenient_marked(commented) == (document, False)
+    assert parse_manifest("package.json", commented).errors == ["invalid JSON"]
+    (tmp_path / "package.json").write_text(commented)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    # An input defect: reported per file and the scan stays incomplete (exit 3).
+    assert not ctx.stats.errors
+    assert ctx.stats.warnings == ["code.filesystem: package.json: input defect: invalid JSON"]
+    assert ctx.stats.incomplete

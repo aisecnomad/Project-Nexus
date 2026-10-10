@@ -21,7 +21,12 @@ from shadowscan.signatures.schema import (
     check_glob,
     matches_empty_string,
 )
-from shadowscan.signatures.validate import cross_signature_duplicates, main, validate_signature_set
+from shadowscan.signatures.validate import (
+    cross_signature_duplicates,
+    main,
+    secret_pattern_throughput,
+    validate_signature_set,
+)
 
 
 def _signature():
@@ -253,6 +258,21 @@ def test_capability_vocabulary_matches_the_risk_engine():
     # risk.py scores capabilities by exact string; a signature capability the
     # engine does not know would silently never contribute to a score.
     assert set(CAPABILITY_WEIGHTS) == CAPABILITIES
+    # Exposing tools over MCP is scored like calling them.
+    assert "mcp-server" in CAPABILITIES
+    assert CAPABILITY_WEIGHTS["mcp-server"][0] == CAPABILITY_WEIGHTS["tool-use"][0]
+
+
+def test_mcp_server_capability_is_accepted_on_signals_and_signatures():
+    sig = _signature()
+    sig["signals"] = [{"type": "code", "patterns": [r"\bFastMCP\s*\("], "capabilities": ["mcp-server"]}]
+    assert signature_from_dict(sig).signals[0].capabilities == ["mcp-server"]
+    sig = _signature()
+    sig["capabilities"] = ["mcp-server"]
+    assert signature_from_dict(sig).capabilities == ["mcp-server"]
+    sig["capabilities"] = ["mcp_server"]
+    with pytest.raises(ValueError, match="unknown capability"):
+        signature_from_dict(sig)
 
 
 def test_language_vocabulary_matches_the_matcher_aliases():
@@ -458,3 +478,77 @@ def test_cli_reports_competing_regexes_in_custom_packs(tmp_path, capsys):
     (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [first, second]}))
     assert main(["--no-builtin", str(tmp_path)]) == 0
     assert capsys.readouterr().out.strip() == "Validated 2 signatures and 2 signals."
+
+
+def test_throughput_gate_rejects_a_slow_secret_pattern(tmp_path, capsys):
+    """A secret pattern slower than the matcher's linear allowance must fail validation."""
+    slow = _signature()
+    slow["id"] = "framework.slowsecret"
+    # Nested quantifiers over the corpus's hyphenated runs: super-linear work
+    # that cannot fit the per-million-chars allowance.
+    slow["signals"] = [{"type": "secret", "patterns": [r"(?i)(?:[a-z0-9_.-]+?[-.]){3,}API[_-]?KEY\b\S*"]}]
+    (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [slow]}))
+    assert main(["--no-builtin", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "rewrite the pattern rather than raising budgets" in err
+
+
+def test_throughput_gate_passes_a_literal_anchored_secret_pattern(tmp_path, capsys):
+    fast = _signature()
+    fast["id"] = "framework.fastsecret"
+    fast["signals"] = [{"type": "secret", "patterns": [r"\bghp_[A-Za-z0-9]{36}\b"]}]
+    (tmp_path / "pack.yaml").write_text(yaml.safe_dump({"signatures": [fast]}))
+    assert main(["--no-builtin", str(tmp_path)]) == 0
+
+
+def test_throughput_gate_ignores_wall_time_the_matching_thread_does_not_run():
+    """An oversubscribed runner delays the matching thread; that wait is not the pattern's cost."""
+    fast = _signature()
+    fast["id"] = "framework.fastsecret"
+    fast["signals"] = [{"type": "secret", "patterns": [r"\bghp_[A-Za-z0-9]{36}\b"]}]
+    signature = signature_from_dict(fast)
+    compiled = signature.signals[0].bounded_compiled[0]
+
+    class Descheduled:
+        def finditer(self, *args, **kwargs):
+            # Longer than the whole 1 MiB allowance, spent off the CPU.
+            time.sleep(0.3)
+            return compiled.finditer(*args, **kwargs)
+
+    signature.signals[0].bounded_compiled = [Descheduled()]
+    assert secret_pattern_throughput([signature]) == []
+
+
+@pytest.mark.parametrize(
+    "attempts, passes",
+    [
+        # Descheduled past the wall-clock guard after 0.01 s of CPU time,
+        # then two complete 0.05 s attempts: the stopped attempt is retried.
+        ([(0.01, True), (0.05, False), (0.05, False)], True),
+        # Stopped every time before using the allowance: nothing was measured.
+        ([(0.01, True)] * 3, False),
+        # Stopped after more CPU time than the whole allowance.
+        ([(0.5, True)] * 3, False),
+    ],
+)
+def test_throughput_gate_judges_a_stopped_attempt_by_its_cpu_time(monkeypatch, attempts, passes):
+    fast = _signature()
+    fast["id"] = "framework.fastsecret"
+    fast["signals"] = [{"type": "secret", "patterns": [r"\bghp_[A-Za-z0-9]{36}\b"]}]
+    signature = signature_from_dict(fast)
+    cpu = [0.0]
+    pending = list(attempts)
+
+    class Timed:
+        def finditer(self, *args, **kwargs):
+            spent, stopped = pending.pop(0)
+            cpu[0] += spent
+            if stopped:
+                raise TimeoutError("regular expression time-out")
+            return iter(())
+
+    signature.signals[0].bounded_compiled = [Timed()]
+    monkeypatch.setattr(time, "thread_time", lambda: cpu[0])
+    problems = secret_pattern_throughput([signature])
+    assert not pending
+    assert (problems == []) is passes

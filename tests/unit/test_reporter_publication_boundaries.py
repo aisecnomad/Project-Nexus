@@ -17,6 +17,7 @@ from shadowscan.reporters.csv_ import render_csv
 from shadowscan.reporters.html import render_html
 from shadowscan.reporters.json_ import render_json
 from shadowscan.reporters.markdown import render_markdown
+from shadowscan.reporters.ocsf import render_ocsf
 from shadowscan.reporters.sarif import _physical_locations, render_sarif
 from shadowscan.reporters.table import print_table
 
@@ -65,6 +66,7 @@ def test_every_stats_publisher_redacts_direct_caller_diagnostics() -> None:
     outputs = [
         render_json(result),
         render_sarif(result),
+        render_ocsf(result),
         render_html(result),
         render_markdown(result),
         render_csv(result),
@@ -74,7 +76,7 @@ def test_every_stats_publisher_redacts_direct_caller_diagnostics() -> None:
     outputs.append(terminal.getvalue())
 
     assert all(STATS_SECRET not in output for output in outputs)
-    assert all("REDACTED" in output for output in outputs[:4])
+    assert all("REDACTED" in output for output in outputs[:5])
     assert "REDACTED" in outputs[-1]
     # Publication sanitizes a copy so evidence retained for in-process handling
     # is not unexpectedly rewritten by selecting a report format.
@@ -178,6 +180,8 @@ def test_sarif_and_cli_refuse_nonfinite_plugin_values_before_publication(
     finding.confidence = float("nan")
     with pytest.raises(ValueError, match="Out of range float values"):
         render_sarif(result)
+    with pytest.raises(ValueError, match="Out of range float values"):
+        render_ocsf(result)
 
     finding.confidence = 0.5
     finding.metadata["plugin_score"] = float("inf")

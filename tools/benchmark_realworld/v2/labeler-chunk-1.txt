@@ -1,0 +1,11 @@
+/home/user/a2aproject/a2a-samples
+/home/user/google/adk-samples
+/home/user/openbmb/chatdev
+/home/user/gptme/gptme
+/home/user/openinterpreter/open-interpreter
+/home/user/block/goose
+/home/user/roovetgit/roo-code
+/home/user/sst/opencode
+/home/user/google-gemini/gemini-cli
+/home/user/bytedance/ui-tars-desktop
+/home/user/datawhalechina/llm-universe

@@ -38,6 +38,7 @@ def test_yaml_manifest_collection_has_its_own_bounded_pattern_budget(monkeypatch
 def test_manifest_override_keeps_the_active_input_deadline(monkeypatch):
     now = time.monotonic()
     monkeypatch.setattr("shadowscan.signatures.matcher.time.monotonic", lambda: now)
+    monkeypatch.setattr("shadowscan.signatures.matcher.time.thread_time", lambda: now)
     timeouts = []
 
     def run(timeout):
@@ -51,7 +52,7 @@ def test_manifest_override_keeps_the_active_input_deadline(monkeypatch):
         SignatureIndex([]).scan_budget(seconds=0.02),
     ):
         _run_regex(run, "YAML manifest", max_seconds=1.0)
-    assert len(timeouts) == 1 and 0 < timeouts[0] <= 0.02
+    assert len(timeouts) == 1 and 0 < timeouts[0] <= 0.02 + 1e-9  # the budget, within float rounding
 
 
 def test_yaml_chunk_matching_retries_scheduler_contention(monkeypatch):

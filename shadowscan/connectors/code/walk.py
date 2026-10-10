@@ -126,6 +126,9 @@ class _WalkCounters:
     examined: int = 0  # files and links counted toward max_files
     non_regular: int = 0  # entries named like analyzable content that are not regular files
     stop_at: float | None = None  # monotonic time after which link checks stop (deadline minus margin)
+    # Monotonic time after which listing stops, so the files already listed
+    # can still be scanned before the deadline (see enumeration_deadline).
+    enumerate_until: float | None = None
     # Directory (POSIX, relative to the root) -> project root of the files in
     # it, so a directory holding many links lists its ancestors once.
     project_roots: dict[str, str] = field(default_factory=dict)

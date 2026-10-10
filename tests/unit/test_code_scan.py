@@ -89,8 +89,12 @@ def test_sample_repo_scan(run_connector, fixtures):
     a2a = next(f for f in cards if "protocol.a2a" in f.frameworks)
     assert a2a.metadata["agent_card"]["skills"] == ["Request quote", "Issue purchase order"]
     assert "no-auth-declared" in a2a.tags
-    wf = kinds[Kind.WORKFLOW]
+    # The exported flow holds a verified agent node, so it classifies as an
+    # agent workflow (kind agent, resource_type workflow-export).
+    wf = [f for f in kinds[Kind.AGENT] if f.resource_type == "workflow-export"]
     assert len(wf) == 1 and "platform.n8n" in wf[0].frameworks
+    assert wf[0].metadata["agent_flow"] is True
+    assert Kind.WORKFLOW not in kinds
 
 
 def test_scan_ignores_noise_dirs_and_binary(tmp_path: Path, run_connector):
@@ -681,3 +685,29 @@ def test_local_code_named_like_an_sdk_still_is_not_the_sdk(tmp_path, run_connect
     findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not any("provider.openai" in f.model_providers for f in findings)
     assert not any("framework.langchain" in f.frameworks for f in findings)
+
+
+def test_triage_keeps_config_evidence_and_fails_closed(tmp_path, run_connector):
+    """Triage finds manifests, MCP configs and IaC, skips source and secrets, and never
+    reads as a complete scan (fail closed: the report must say what was skipped)."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\ndependencies = ["crewai"]\n')
+    (tmp_path / ".mcp.json").write_text('{"mcpServers": {"fs": {"command": "mcp-fs"}}}')
+    (tmp_path / "main.tf").write_text('resource "awscc_bedrock_agent" "a" { agent_name = "a" }\n')
+    (tmp_path / "agent.py").write_text(
+        'from langchain.agents import create_react_agent\nKEY = "sk-proj-3OoFmQTsHfOvesPLUXvRXpfToFF2XPOcdJ2kMQJ2g0"\n'
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, triage=True)
+    assert ctx.stats.incomplete
+    assert any("triage scan" in w for w in ctx.stats.warnings)
+    kinds = {f.kind.value for f in findings}
+    assert "mcp-server" in kinds or any("protocol.mcp" in f.frameworks for f in findings)
+    assert any("framework.crewai" in f.frameworks for f in findings)
+    assert "secret" not in kinds
+    assert not any("framework.langchain" in f.frameworks for f in findings)
+
+
+def test_full_scan_same_tree_finds_what_triage_skips(tmp_path, run_connector):
+    (tmp_path / "agent.py").write_text("from langchain.agents import create_react_agent\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert any("framework.langchain" in f.frameworks for f in findings)
+    assert not ctx.stats.incomplete

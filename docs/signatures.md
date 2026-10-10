@@ -35,7 +35,7 @@ signatures:
         prefixes: [crewai]
         weight: 0.97
       - type: import
-        languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php | swift | dart
+        languages: [python]           # python | javascript | go | rust | java | dotnet | ruby | php | swift | dart | c | cpp | elixir | r | lua
         patterns: ['^[^\S\r\n]*(?:from|import)\s+crewai\b']
         weight: 0.97
       - type: code
@@ -136,10 +136,31 @@ project from `framework-usage` to `agent`. Plain provider SDK usage never does.
 
 `ambiguous: true` on a `code` signal marks patterns that are common identifiers
 outside the product, such as aiohttp's `ClientSession(` or a UI component named
-`AgentCard(`. The code connector counts such a match only when the same
-signature also has an import, a dependency or a non-ambiguous code match in the
-same project. Put ambiguous patterns in their own signal; every signature with
-one must also declare an import, dependency or specific code signal.
+`AgentCard(`, the low-level MCP `Server(` class that every HTTP framework also
+names, or the `chat.completions.create(` request shape that every
+OpenAI-compatible SDK and server exposes (`provider.openai` claims it only with
+the openai package or import; `provider.openai-compatible` claims it, at low
+weight, only next to a `base_url` / `baseURL` override of its own, so a plain
+OpenAI SDK project never gains the second provider). The code connector counts
+such a match only when the same signature also has an import, a dependency or
+a non-ambiguous code match in the same project. Put ambiguous patterns in their
+own signal; every signature with one must also declare an import, dependency or
+specific code signal.
+
+`languages` on a `code` signal gates its patterns to one language family. Use
+it whenever an idiom is lexically bound to a language and its name is not
+unique to the product: Java annotations and generic interface names (`@Tool(`,
+`ToolCallback`, `ChatClient.builder(`), .NET attributes and extension methods
+(`[McpServerTool`, `.AddMcpServer(`, `[KernelFunction`), Go constructors
+(`server.NewMCPServer(`), Rust trait implementations (`impl ServerHandler for`).
+Without the gate a Rust `pub trait ToolCallback` would count as Spring AI. A
+qualified name that only the product spells (`AiServices.builder(`) needs no
+gate and stays lexical everywhere. The matcher applies the gate only when the caller
+knows the language of the text (a source file; Kotlin and Scala classify as
+`java`, TypeScript as `javascript`, C#/F# as `dotnet`); configuration
+projections and `shadowscan signatures test` pass no language and run every
+pattern, so do not gate patterns meant for config files (CI `uses:` lines, JSON
+tool types, YAML node names).
 
 ## Adding or overriding
 
@@ -195,10 +216,19 @@ key on, so a typo fails loading instead of silently never matching:
 * `ecosystem` must be one of `pypi`, `npm`, `nuget`, `maven`, `go`, `cargo`,
   `rubygems`, `composer`, `conda` or `any` (omitted means `any`);
 * `languages` entries must be canonical language names (`python`, `javascript`,
-  `go`, `rust`, `java`, `dotnet`, `ruby`, `php`, `swift`, `dart`);
+  `go`, `rust`, `java`, `dotnet`, `ruby`, `php`, `swift`, `dart`, `c`, `cpp`,
+  `elixir`, `r`, `lua`). There is no `hex` or `cran` ecosystem: nothing parses
+  `mix.exs`, `DESCRIPTION` or `renv.lock`, so Elixir and R signatures use
+  `import` and `code` signals only;
 * `capabilities` (signature or signal level) must be capabilities the risk
-  engine scores: `code-exec`, `autonomous`, `saas-actions`, `browsing`,
-  `memory`, `multi-agent`, `delegated-identity`, `tool-use`, `rag`;
+  engine scores: `code-exec`, `autonomous`, `saas-actions`, `data-access`,
+  `browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`,
+  `mcp-server`, `rag`. `tool-use` means the project calls tools itself;
+  `mcp-server` means it exposes tools to other agents over MCP (set by the
+  server idioms of `protocol.mcp`, such as `FastMCP(`, `new McpServer(`,
+  `server.NewMCPServer(`, `.AddMcpServer(` or `McpServer.sync(`; the client
+  idioms `stdio_client(`, `MCPClient(` or `MultiServerMCPClient(` carry no
+  capability). Both score the same risk points;
 * the id namespace must match the category (table above);
 * `weight` must be a finite number greater than 0 and at most 1; a zero-weight
   signal contributes nothing and is rejected;
@@ -252,7 +282,13 @@ and tests, which call and test the products they detect.
   the timeout-capable `regex` engine in compatibility mode. Use `(?i)` for
   case-insensitivity. Write line-leading whitespace as `[^\S\r\n]*`, not `\s*`,
   so blank lines cannot trigger repeated scans of the rest of a file.
-* Each signature regex execution is limited to 100 ms. Fixed linear hostname
+* Each signature regex execution is limited to 100 ms, scaled linearly with
+  the declared input size for filesystem scans (0.25 s per million
+  characters, never beyond the file's wall budget), so allowed work stays
+  proportional to input length and super-linear patterns still fail on
+  large inputs. `python -m shadowscan.signatures.validate` rejects secret
+  patterns slower than that allowance on a pathological keyword-dense
+  corpus. Fixed linear hostname
   and environment tokenizers use the shared input deadline instead. Filesystem scans share a configurable
   execution budget across the file's matching operations (2 seconds by default).
   Exceeding either limit raises an error and makes the scan incomplete; timeout
@@ -269,14 +305,50 @@ and tests, which call and test the products they detect.
   general `api.cloudflare.com`, the `huggingface.co` site) is corroboration only (weight 0.15 or less) in
   its own signal; the AI-specific hosts (`gateway.ai.cloudflare.com`, `router.huggingface.co`) carry the
   high weight, so a DNS script or a dataset download stays a low-confidence hint, not LLM usage.
+  A `re:` value must not match a dotted identifier: end it in a list of top-level domains or a fixed vendor
+  domain, because the tokenizer reads every `a.b.c` word of a source file as a host
+  (`re:^mcp\.[a-z0-9-]+\.(?:com|dev|app|ai|io|...)$`, not `\.[a-z]+$`), and leave out two-letter codes
+  that are also common file extensions or property names (`py`, `md`, `rs`, `id`, `in`) and words that
+  name properties or methods (`info`, `page`, `live`). For `protocol.mcp` the matcher also refuses a
+  candidate followed by a call, an index, an underscore or an assignment (`mcp.logger.info("x")`), and in a
+  source file one that does not come right after a quote, a URL's `//` or a user name's `@` and has no
+  `/mcp` or `/sse` path after it (`y = mcp.result.no`). A host on a line of a hosts file,
+  ad-block list, resolver configuration or proxy rule list is routed or blocked, not used, and never matches.
   `gateway.logs` still treats Cloudflare Workers AI inference paths (`/accounts/<id>/ai/run/`,
   `/accounts/<id>/ai/v1/`) as LLM traffic on any host.
 * Dependency names that are also unrelated packages (the PyPI name `swarm`, which is not OpenAI Swarm) are
   not claimed; identify the product by its import, a vendor-qualified name or an idiom. A generic name that
   is the product's real package (npm `weave`) gets a low weight.
-* `model` patterns are anchored and bounded: require the delimiter or digit that real ids carry
+* `model` patterns are anchored (`^...`) and bounded: require the delimiter or digit that real ids carry
   (`tts-1`, `o1` followed by a non-alphanumeric, a Bedrock `vendor.model-name`), so `amazon.com`, `o1ne` or
-  `tts-config` do not match.
+  `tts-config` do not match. Where a family prefix is a common word, close the id with the id's own alphabet
+  (`(?:[a-z0-9-]|\.\d)*$`: letters, digits, dashes and dots only between digits, plus an optional `:tag` for
+  Ollama's `gpt-oss:20b` or OpenRouter's `gpt-5.4:free`), so `gpt-4-turbo-docs.md` and `command-line` are not
+  models while `gpt-4.1-mini`, `gpt-35-turbo` and `command-r-plus` are. The sole deliberate exception is
+  `anthropic\.claude-`, unanchored in `provider.anthropic` so that a Bedrock Claude id
+  (`us.anthropic.claude-3-5-sonnet-20241022-v2:0`) attributes both the platform and the model vendor.
+  LiteLLM-style routes (`bedrock/`, `vertex_ai/`, `azure/`, `anthropic/`, `openai/`, `gemini/`, `mistral/`,
+  `cohere/`, `xai/`, `deepseek/`, `openrouter/`, `together_ai/`, `groq/`, `ollama/`, `huggingface/`,
+  `perplexity/`, `cerebras/`, `voyage/`) attribute the routed provider. A route must carry a model id after the
+  slash: either the provider's own family (`bedrock/anthropic.`, `xai/grok-`, `mistral/mistral-`) or a
+  lowercase-led id body, so `bedrock/edition`, `xai/README` and a bare `mistral/` path prefix never match.
+  The aggregator bodies are open on purpose (`ollama/mistral`, `groq/llama-3.3-70b-versatile` and
+  `vertex_ai/gemini-2.5-pro` have no shape in common beyond the lowercase lead), so a lowercase path such
+  as `ollama/ollama` or `groq/readme` would match if it reached a `model` field; `model` patterns run only
+  over model-id fields and `model=` literals, never over image names, which `image` signals match.
+  Routes of providers with their own id families share that family's signal; the aggregator routes
+  (`openrouter/`, `groq/`, `together_ai/`, `ollama/`, `huggingface/<org>/<model>`, `perplexity/`,
+  `cerebras/`) are their own signal at weight 0.6.
+* Hosted infrastructure is not the agent that drives it. `platform.browserbase` (the `@browserbasehq/sdk` and
+  `browserbase` packages, `BROWSERBASE_*` variables and `*.browserbase.com` hosts) carries `browsing` with
+  `agent_indicator: false`; `framework.stagehand` (`@browserbasehq/stagehand`, `stagehand`, `new Stagehand(`)
+  is the browser agent. A project with only the hosted-browser SDK is `framework-usage`, not an `agent`.
+* JVM agent frameworks match Kotlin sources through the `java` language: `framework.koog` (JetBrains Koog)
+  claims the `ai.koog` Maven group and `import ai.koog.` lines in `.kt` and `.kts` files. Provider
+  integration modules of LangChain4j (`dev.langchain4j:langchain4j-<vendor>`, `dev.langchain4j.model.<pkg>.`
+  imports) and Spring AI (`org.springframework.ai:spring-ai-starter-model-<vendor>`,
+  `org.springframework.ai.<vendor>.` imports) attribute both the framework and the model provider, as the
+  Python `langchain-<vendor>` packages do; the MCP modules of both attribute `protocol.mcp`.
 * `policy.*` scope lists match the bare scope name for every provider. Names that are routine for ordinary
   apps (`offline_access`, `refresh_token`, `web`, `api`, `full`, `admin`, `workflow`) are not listed as
   privileged; list the qualified permission instead (`admin:org`, `admin.users:write`, `okta.users.manage`).

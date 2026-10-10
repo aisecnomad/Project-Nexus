@@ -66,8 +66,16 @@ signatures:
     category: cloud-service
     vendor: Amazon Web Services
     signals:
+      - type: dependency
+        ecosystem: pypi
+        names: [sagemaker, sagemaker-core]
+        weight: 0.7
+      - type: import
+        languages: [python]
+        patterns: ['^[^\S\r\n]*(?:from|import)\s+sagemaker\b']
+        weight: 0.7
       - type: code
-        patterns: ['\.client\(\s*["'']qbusiness["'']', '\.client\(\s*["'']qapps["'']', '\.client\(\s*["'']lexv2-(?:runtime|models)["'']', '\.client\(\s*["'']sagemaker-runtime["'']', '\binvoke_endpoint(?:_with_response_stream)?\s*\(', '\bchat_sync\s*\(', '\brecognize_text\s*\(', '\bQBusinessClient\b', '\bLexRuntimeV2Client\b', '\bSageMakerRuntimeClient\b']
+        patterns: ['\.client\(\s*["'']qbusiness["'']', '\.client\(\s*["'']qapps["'']', '\.client\(\s*["'']lexv2-(?:runtime|models)["'']', '\.client\(\s*["'']sagemaker-runtime["'']', '\binvoke_endpoint(?:_with_response_stream)?\s*\(', '\bchat_sync\s*\(', '\brecognize_text\s*\(', '\bQBusinessClient\b', '\bLexRuntimeV2Client\b', '\bSageMakerRuntimeClient\b', '\bHuggingFaceModel\s*\(', '\bModel\s*\(\s*role\s*=.*(?:image_uri|model_data)', '\bmodel\.deploy\s*\(', '\bsagemaker\.get_execution_role\s*\(']
         weight: 0.8
       - type: iac
         values: [aws_qbusiness_application, aws_qbusiness_index, aws_qbusiness_retriever, aws_qbusiness_web_experience, aws_lexv2models_bot, aws_lexv2models_bot_version, aws_lexv2models_intent, aws_lex_bot, aws_sagemaker_endpoint, aws_sagemaker_endpoint_configuration, aws_sagemaker_model, aws_kendra_index, aws_connect_instance, "AWS::QBusiness::Application", "AWS::Lex::Bot", "AWS::SageMaker::Endpoint", "AWS::SageMaker::Model", "AWS::Kendra::Index", "AWS::Bedrock::DataAutomationProject"]
