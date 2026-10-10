@@ -30,7 +30,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 # What `make typecheck` and CI pass to mypy.
-TYPECHECKED = ("shadowscan", "tools")
+TYPECHECKED = ("shadowscan", "tools", "benchmarks")
 
 
 def _untyped_module_patterns() -> list[re.Pattern[str]]:

@@ -423,10 +423,10 @@ def test_file_count_limit_marks_scan_incomplete(tmp_path, run_connector):
 def test_regex_timeout_isolates_file_and_preserves_neighbor(tmp_path, index, monkeypatch):
     original = index.match_imports
 
-    def fail_one(text, language):
+    def fail_one(text, language, **options):
         if "HOSTILE_INPUT" in text:
             raise TimeoutError("test matching budget")
-        return original(text, language)
+        return original(text, language, **options)
 
     monkeypatch.setattr(index, "match_imports", fail_one)
     (tmp_path / "a.py").write_text("HOSTILE_INPUT")
@@ -1197,8 +1197,17 @@ def test_symbolic_links_count_toward_max_files(tmp_path, index):
     assert any("max_files (20) reached" in issue for issue in ctx.stats.errors)
 
 
-def test_symbolic_link_checks_stop_at_the_connector_deadline(tmp_path, index, monkeypatch):
-    _link_tree(tmp_path, 200)
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_symbolic_link_checks_stop_at_the_listing_deadline(tmp_path, index, monkeypatch, kind):
+    if kind == "file":
+        _link_tree(tmp_path, 300)
+    else:
+        (tmp_path / "real.py").write_text("from crewai import Agent\n")
+        (tmp_path / "pkg").mkdir()
+        links = tmp_path / "links"
+        links.mkdir()
+        for number in range(300):
+            os.symlink("../pkg", links / f"alias{number}")
     original = FilesystemConnector._link_target_is_scanned
 
     def slow(self, rel, target, root, walk=None):
@@ -1207,14 +1216,19 @@ def test_symbolic_link_checks_stop_at_the_connector_deadline(tmp_path, index, mo
 
     monkeypatch.setattr(FilesystemConnector, "_link_target_is_scanned", slow)
     ctx = ConnectorContext(
-        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=time.monotonic() + 1.5
+        config={"path": str(tmp_path), "use_git": False, "scan_timeout": 0.5},
+        index=index,
+        deadline=time.monotonic() + 3.0,
     )
     started = time.monotonic()
-    FilesystemConnector(ctx).run()
-    # 200 links at 10 ms each would overrun a 1.5 s deadline; the walk stops
-    # cooperatively and records the gap instead.
-    assert time.monotonic() - started < 1.5
-    assert any("deadline reached while checking symbolic links" in issue for issue in ctx.stats.errors)
+    findings = FilesystemConnector(ctx).run()
+    # 300 links at 10 ms each would overrun the 3 s deadline. Link checks are
+    # listing work: they stop at half of the 2.25 s in which a file can still
+    # start (3 s minus a 0.25 s margin and the 0.5 s matching budget), and
+    # the regular file listed before them is still scanned.
+    assert time.monotonic() - started < 3.0
+    assert any("connector deadline: listing stopped after" in issue for issue in ctx.stats.errors)
+    assert any("framework.crewai" in finding.frameworks for finding in findings)
 
 
 def test_links_in_one_directory_list_their_ancestors_once(tmp_path, index, monkeypatch):

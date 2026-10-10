@@ -1,0 +1,7 @@
+<Project>
+  <ItemGroup>
+    <GlobalPackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
+    <GlobalPackageReference Include="ModelContextProtocol" Version="0.2.0-preview.3" />
+    <PackageReference Update="Microsoft.Extensions.AI.Ollama" Version="9.3.0-preview.1.25161.3" />
+  </ItemGroup>
+</Project>

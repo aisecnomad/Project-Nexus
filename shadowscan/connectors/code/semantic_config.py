@@ -11,7 +11,7 @@ import json
 import re
 import tomllib
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import PurePosixPath
@@ -502,6 +502,7 @@ def structured_code_matches(
     text: str,
     errors: list[str] | None = None,
     limit_errors: list[str] | None = None,
+    documents: Sequence[Any] | None = None,
 ) -> list[Match]:
     """Match recognized operational config shapes, preserving signature policy.
 
@@ -513,6 +514,11 @@ def structured_code_matches(
     nesting or expansion limit goes to ``limit_errors`` (``errors`` when that
     is not given): its content is unknown rather than malformed, so callers
     must keep the scan incomplete.
+
+    ``documents`` are the parsed YAML, JSON or TOML documents of ``text`` when
+    the caller already holds them (one, for a single-document file); the text
+    is parsed here otherwise. A caller whose parse failed passes nothing, so
+    the failure is reported here as it always was.
     """
     issues = errors if errors is not None else []
     limits = limit_errors if limit_errors is not None else issues
@@ -523,7 +529,9 @@ def structured_code_matches(
         # incomplete. Lexical signatures still run over the text elsewhere.
         return []
     try:
-        if extension in {".yaml", ".yml"}:
+        if documents is not None and extension in _DOCUMENT_EXTENSIONS:
+            pass
+        elif extension in {".yaml", ".yml"}:
             documents = strict_bounded_safe_load_all(text, require_string_keys=False)
         elif extension in {".json", ".jsonc"}:
             # VS Code settings, dev containers and tsconfig files are JSONC.
@@ -582,6 +590,10 @@ def structured_code_matches(
             seen.add((signature, projection))
             matches.extend(_matches(index, signature, projection))
     return matches
+
+
+# The structured formats a caller may hand over already parsed.
+_DOCUMENT_EXTENSIONS = frozenset({".yaml", ".yml", ".json", ".jsonc", ".toml"})
 
 
 def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Match]:

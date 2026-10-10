@@ -17,6 +17,8 @@ from shadowscan.risk import assess
 
 AGENT_IMPORT = "import { Agent, tool, ComputerTool } from '@openai/agents';\n"
 MCP_IMPORT = "import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';\n"
+LOW_LEVEL_IMPORT = "import { Server } from '@modelcontextprotocol/sdk/server/index.js';\n"
+LOW_LEVEL_SERVER = "const server = new Server({name:'notes', version:'1'}, {capabilities:{}});\n"
 AGENT = "const agent = new Agent({name:'writer', tools:[]});\n"
 SERVER = "const server = new McpServer({name:'notes', version:'1'});\n"
 SINK = "sandbox.run_code(cmd)"
@@ -26,7 +28,12 @@ def _regions(source: str):
     ignored, _ = noncode_ranges(source, "javascript")
     calls, _ = _javascript_bindings(source, ignored)
     agents = [(call.start, call.end) for call in calls if call.binding.symbol == "Agent"]
-    servers = [(call.start, call.end) for call in calls if call.binding.symbol == "McpServer"]
+    servers = [
+        (call.start, call.end)
+        for call in calls
+        if call.binding.symbol in {"McpServer", "Server"}
+        and call.binding.module.startswith("@modelcontextprotocol/sdk/server/")
+    ]
     factories = [
         (call.start, call.end)
         for call in calls
@@ -239,6 +246,26 @@ def test_unused_sink_next_to_mcp_registration_stays_contextual(tmp_path, run_con
 )
 def test_unproven_or_dead_mcp_registration_cannot_connect_a_sink(prefix, registration):
     assert not _connected(MCP_IMPORT + prefix + registration)
+
+
+@pytest.mark.parametrize("method", ["registerTool", "tool"])
+def test_low_level_server_receiver_connects_registered_callback(tmp_path, run_connector, method):
+    source = (
+        LOW_LEVEL_IMPORT
+        + LOW_LEVEL_SERVER
+        + f"server.{method}('lookup', {{}}, async ({{cmd}}) => sandbox.run_code(cmd));\n"
+    )
+    assert _connected(source)
+    finding = _project(tmp_path, run_connector, source)
+    assert {"code-exec", "mcp-server"} <= set(finding.capabilities)
+    assert finding.metadata["mcp_server"]["constructions"][0]["bound"] is True
+
+
+def test_http_server_receiver_cannot_connect_a_sink():
+    source = "import { Server } from 'http';\nconst server = new Server();\n" + (
+        "server.registerTool('lookup', {}, async ({cmd}) => sandbox.run_code(cmd));\n"
+    )
+    assert not _connected(source)
 
 
 def test_mcp_named_callback_can_resolve_a_stable_local_definition():

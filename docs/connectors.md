@@ -236,9 +236,11 @@ low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
 Supported Go SDK import aliases are resolved before source evidence is
-excerpted; reports remain confidential. Ordinary Rust multiline strings and
-supported JSX in `.js`, `.mjs` and `.cjs` can be analyzed without false lexical
-incompleteness. Ambiguous or unterminated source still marks the scan incomplete.
+excerpted; reports remain confidential. Ordinary Rust multiline strings, C raw
+strings, `\x`/`\u{...}` character escapes and supported JSX in `.js`, `.mjs` and
+`.cjs` can be analyzed without false lexical incompleteness; a `<<` shift never
+opens a JSX element. Ambiguous or unterminated source still marks the scan
+incomplete.
 
 Opt-in `agent_granularity: source` gives supported uniquely named Python
 constructions separate inventory resources and constructor-specific evidence.
@@ -310,8 +312,14 @@ from the tool names the server registers outside tests (`metadata.mcp_tools`);
 comments and string examples do not establish registrations, and enum-based
 names count only the referenced members. Exceeding the per-file or project name
 limit makes coverage incomplete. Static registration evidence does not prove
-the server executed those tools. A server without recognized tools keeps the
-capabilities its code implies.
+the server executed those tools. A project that implements a server (an
+import-bound `FastMCP(`, `Server(`, `new McpServer(` or `new Server(` from the
+SDK, or a Go, Java, .NET or Rust server idiom corroborated by the SDK's import or
+dependency) carries the `mcp-server` capability, is titled `MCP server in ...`
+and describes the server under `metadata.mcp_server` (constructions, languages,
+transports); a server's vendor-neutral idioms imply no capability beyond the
+execution sinks its code shows, with or without recognized tool names (see
+[Code connectors](connectors/code.md)).
 
 Gemini CLI's `httpUrl` (Streamable HTTP) is read as an MCP endpoint, like
 `url`, `serverUrl` and `endpoint`; an entry with more than one of them is
@@ -326,7 +334,7 @@ makes the scan incomplete.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
-`strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
+`strict_coverage`, `include_tests`, `triage`, `use_git`, `label`. When using labeled `paths`,
 supply unique `root_ids` aligned with those paths for IDs that survive moving
 checkouts. `account`, `owner` and `provider` set the corresponding finding
 fields. A configured `owner` is recorded on every finding and takes precedence
@@ -422,7 +430,7 @@ Options: `org` (env `GITHUB_ORG`), `user` or `repos`; `token` (env
 `GITHUB_TOKEN`, falling back to `github_token` / env `GH_TOKEN`); `api_url`,
 `mode`, `include_archived`, `include_forks`, `max_repos`, `clone_depth`,
 `topics`. The filesystem scanner options `exclude`, `max_file_size`,
-`max_files`, `max_entries`, `scan_timeout`, `scan_secrets` and `use_git` are forwarded to
+`max_files`, `max_entries`, `scan_timeout`, `scan_secrets`, `triage` and `use_git` are forwarded to
 every repository scan. `repos` and `topics` must be lists of non-empty strings,
 and `max_repos` and `clone_depth` whole numbers; anything else (including a bare
 string such as `--set topics=llm`, which would be read as single characters)
@@ -1039,3 +1047,8 @@ The Azure app-settings permission exposes security-sensitive configuration;
 only grant it for the app resources being audited. Do not grant Website
 Contributor solely for this read operation. See Microsoft's
 [permission definitions](https://learn.microsoft.com/en-us/azure/role-based-access-control/permissions/web-and-mobile).
+
+The `code.filesystem` connector also accepts `diff_base` for a scoped scan of
+committed changes. Its report is never comparable for `shadowscan diff` and is
+never reused by `--incremental`. See the [code guide](connectors/code.md) for
+scope and fallback behavior.

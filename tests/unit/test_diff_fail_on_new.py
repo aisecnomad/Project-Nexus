@@ -101,3 +101,23 @@ def test_fail_on_new_is_documented_in_help():
     result = CliRunner().invoke(main, ["diff", "--help"])
     assert result.exit_code == 0
     assert "--fail-on-new" in result.output and "exit 2" in " ".join(result.output.split())
+
+
+def test_shadow_only_filters_display_but_not_exit_codes(tmp_path):
+    """--shadow-only is a view: counts, reasons and gating cover every finding."""
+    registered = _finding("registered-bot")
+    registered["shadow"] = False
+    shadow = _finding("shadow-agent")
+    shadow["shadow"] = True
+    result = _diff(tmp_path, _report(), _report(registered, shadow), "--shadow-only")
+    assert result.exit_code == 0, result.output
+    assert "shadow-agent" in result.output
+    assert "registered-bot" not in result.output
+    assert "2 new" in result.output  # counts stay unfiltered
+    gated = _diff(tmp_path, _report(), _report(registered, shadow), "--shadow-only", "--fail-on-new")
+    assert gated.exit_code == 2  # the non-shadow new finding still gates
+    as_json = _diff(tmp_path, _report(), _report(registered, shadow), "--shadow-only", "--json")
+    assert as_json.exit_code == 0
+    doc = json.loads(as_json.output)
+    assert len(doc["new"]) == 2  # the full comparison is always present
+    assert doc["shadow_only_view"]["new"] == [shadow["id"]]

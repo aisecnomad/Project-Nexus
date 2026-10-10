@@ -15,7 +15,7 @@ from unittest.mock import Mock
 import pytest
 import responses
 
-from shadowscan.connectors.base import ConnectorContext, ConnectorError
+from shadowscan.connectors.base import ConnectorContext, ConnectorError, _raise_connector_error
 from shadowscan.connectors.code import remote
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
@@ -164,6 +164,37 @@ def test_offline_clone_escaping_its_input_is_skipped(tmp_path, index, monkeypatc
     assert list(connector.load_offline(str(tmp_path))) == []
     assert connector.ctx.stats.incomplete
     assert f"{cls.name}: offline clone path escaped its input directory" in connector.ctx.stats.warnings
+
+
+def _sdk_failure():
+    raise RuntimeError("SDK echoed Authorization: Bearer opaque-sdk-token")
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+@pytest.mark.parametrize(
+    ("fail", "expected"),
+    [
+        (_sdk_failure, "RuntimeError"),
+        (
+            lambda: _raise_connector_error("Refusing unsafe repository tree path"),
+            "ConnectorError: Refusing unsafe repository tree path",
+        ),
+    ],
+)
+def test_repository_failure_keeps_only_shadowscan_raised_text(
+    tmp_path, index, monkeypatch, cls, fail, expected
+):
+    def failing(self, repo, local):
+        fail()
+        yield  # pragma: no cover - makes this a generator like _scan_local
+
+    monkeypatch.setattr(cls, "_scan_local", failing)
+    (tmp_path / "acme__app").mkdir()
+    connector = _connector(index, cls)
+    (repo,) = connector.load_offline(str(tmp_path))
+    assert list(connector._analyze_repository(repo, lambda *_: None, lambda _: [])) == []
+    assert connector.ctx.stats.incomplete
+    assert connector.ctx.stats.errors == [f"{cls.name}: acme__app: {expected}"]
 
 
 # ---------------------------------------------------------------- analyze

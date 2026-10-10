@@ -693,14 +693,14 @@
    "evidence": [
     {
      "signal": "model:provider.anthropic",
-     "description": "model id matched Anthropic: claude-",
+     "description": "model id matched Anthropic: claude-sonnet",
      "location": null,
      "snippet": null,
      "weight": 0.4,
      "signature": "provider.anthropic",
      "attributes": {
       "category": "provider",
-      "value": "claude-"
+      "value": "claude-sonnet"
      }
     },
     {

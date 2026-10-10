@@ -59,6 +59,27 @@ def _raise_connector_error(message: str) -> NoReturn:
     raise ConnectorError(message)
 
 
+def failure_summary(exc: BaseException) -> str:
+    """Describe an unexpected failure as ``Type: message`` or just ``Type``.
+
+    The message is kept only when the innermost raise site is ShadowScan code,
+    whose messages are fixed or already sanitized (the HTTP layer, for example,
+    re-raises transport failures with only a validated origin). An exception
+    raised inside a third-party SDK or plugin can echo request data or opaque
+    credentials that redaction does not recognize, so only its type is reported.
+    """
+    name = type(exc).__name__
+    tb = exc.__traceback__
+    module = ""
+    while tb is not None:
+        module = str(tb.tb_frame.f_globals.get("__name__", ""))
+        tb = tb.tb_next
+    message = str(exc)
+    if message and (module == "shadowscan" or module.startswith("shadowscan.")):
+        return f"{name}: {message}"
+    return name
+
+
 def _integer_option(value: Any, name: str, minimum: int, requirement: str) -> int:
     """An integer connector option: booleans, fractions, non-finite and non-numeric values are errors."""
     if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
@@ -555,7 +576,7 @@ class BaseConnector(ABC):
             stats.skip_reason = self.ctx.sanitize_message(str(exc))
             self.ctx.error(str(exc))
         except Exception as exc:  # noqa: BLE001 - connectors must never abort the whole scan
-            self.ctx.error(f"{self.name}: {type(exc).__name__}: {exc}")
+            self.ctx.error(f"{self.name}: {failure_summary(exc)}")
             self.log.debug("connector failure (%s)", type(exc).__name__)
         stats.finished_at = now_iso()
         stats.findings = len(findings)

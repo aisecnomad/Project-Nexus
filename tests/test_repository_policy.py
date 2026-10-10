@@ -747,8 +747,8 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         pytest.param(
             ".github/workflows/ci.yml",
             _replace(
-                "      - run: ruff check shadowscan tests tools\n",
-                "      - run: ruff check shadowscan tests tools\n        continue-on-error: true\n",
+                "      - run: ruff check shadowscan tests tools benchmarks\n",
+                "      - run: ruff check shadowscan tests tools benchmarks\n        continue-on-error: true\n",
             ),
             "sets continue-on-error",
             id="step-continue-on-error",

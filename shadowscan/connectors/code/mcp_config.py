@@ -152,9 +152,16 @@ def _embedded_workflow_mcp(workflow: Any, errors: list[str]) -> dict[str, Any]:
     return {"mcpServers": servers} if servers else {}
 
 
-def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> list[dict[str, Any]]:
+def _parse_mcp_servers(
+    rel: str, text: str, errors: list[str] | None = None, document: Any = None
+) -> list[dict[str, Any]]:
+    """Return the servers an MCP configuration declares; ``document`` is its parse if already held.
+
+    Only a JSON or TOML document is taken over: YAML configurations are
+    loaded here with string keys required, which the shared parse does not.
+    """
     errors = errors if errors is not None else []
-    data = _load_mcp_document(rel, text, errors)
+    data = _load_mcp_document(rel, text, errors, document)
     if data is None:
         return []
     servers = _mcp_server_entries(data, errors)
@@ -173,10 +180,12 @@ def _parse_mcp_servers(rel: str, text: str, errors: list[str] | None = None) -> 
     return [dict(zip(keys, values, strict=True)) for keys, values in zip(names, cleaned, strict=True)]
 
 
-def _load_mcp_document(rel: str, text: str, errors: list[str]) -> dict[str, Any] | None:
+def _load_mcp_document(rel: str, text: str, errors: list[str], document: Any = None) -> dict[str, Any] | None:
     data: Any  # untrusted repository content; every shape is checked below
     try:
-        if rel.endswith(".toml"):
+        if document is not None and not rel.endswith((".yaml", ".yml")):
+            data = document
+        elif rel.endswith(".toml"):
             data = tomllib.loads(text)
         elif _WORKFLOW_PATH.search(rel):
             # GitHub's `on:` key is a YAML 1.1 boolean, so a workflow needs the

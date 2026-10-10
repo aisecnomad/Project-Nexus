@@ -180,10 +180,16 @@ def test_unregistered_tool_construction_keeps_only_contextual_capability(tmp_pat
 
 
 def test_uncorroborated_lexical_framework_capabilities_remain_potential(tmp_path, run_connector):
+    # The project is established by an unrelated SDK; the lexical Spring AI
+    # idiom without its dependency is evidence only, so neither the framework
+    # nor its tool-use capability is claimed.
+    (tmp_path / "requirements.txt").write_text("openai>=1.0\n")
     finding = _scan(
         tmp_path, run_connector, "class App { void init() { ChatClient.create(model); } }", ".java"
     )
     assert finding.kind == Kind.FRAMEWORK_USAGE
+    assert "framework.spring-ai" not in finding.frameworks
+    assert finding.metadata["potential_frameworks"] == ["framework.spring-ai"]
     assert "tool-use" not in finding.capabilities
 
 

@@ -6,8 +6,8 @@ quadratic or exponential pattern defeats ``--connector-timeout-seconds`` and
 Terraform file kept a scan busy for 137 s against a 120 s deadline). The patterns that
 were found this way are linear now; this sweep keeps it so.
 
-For every compiled ``re`` pattern reachable from a ``shadowscan`` module or class
-namespace, the sweep builds hostile inputs from the pattern's own words and punctuation
+For every compiled ``re`` or ``regex`` pattern reachable from a ``shadowscan`` module
+or class namespace, the sweep builds hostile inputs from the pattern's own words and punctuation
 (a seed, a long run of one separator, a tail that makes the match fail), times the
 method the code uses at two sizes and fails when the time grows like a power of the
 input. Each pattern runs in a forked child that is killed when it stalls, because an
@@ -70,12 +70,12 @@ REDACTION_MODULES = ("shadowscan.utils.redaction",)
 
 
 def _patterns() -> list[tuple[str, Any]]:
-    """Every distinct compiled stdlib pattern in a shadowscan module, class or small container."""
+    """Every distinct compiled pattern (stdlib or ``regex``) in a shadowscan module, class or small container."""
     found: list[tuple[str, Any]] = []
     seen: set[tuple[str, int]] = set()
 
     def walk(path: str, value: Any, depth: int) -> None:
-        if isinstance(value, re.Pattern):
+        if isinstance(value, (re.Pattern, regex.Pattern)):
             key = (value.pattern if isinstance(value.pattern, str) else repr(value.pattern), value.flags)
             if key not in seen:
                 seen.add(key)

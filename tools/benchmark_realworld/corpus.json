@@ -1,0 +1,789 @@
+{
+  "version": 1,
+  "repos": [
+    {
+      "id": "rw-01-claude-quickstarts",
+      "repo": "anthropics/claude-quickstarts",
+      "url": "https://github.com/anthropics/claude-quickstarts",
+      "dir": "anthropics/claude-quickstarts",
+      "sha": "9ec32b91df50b0d4906cae64b13c6298055ff40d",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "browser-toolset/python/run.py: tool-use loop",
+        "managed-agents/*/CLAUDE.md"
+      ]
+    },
+    {
+      "id": "rw-02-open-deep-research",
+      "repo": "langchain-ai/open_deep_research",
+      "url": "https://github.com/langchain-ai/open_deep_research",
+      "dir": "langchain-ai/open_deep_research",
+      "sha": "1b7d2e80db9faa586165c60e09096dbbfd483a64",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "src/open_deep_research/deep_researcher.py: LangGraph agent",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "rw-03-gpt-researcher",
+      "repo": "assafelovic/gpt-researcher",
+      "url": "https://github.com/assafelovic/gpt-researcher",
+      "dir": "assafelovic/gpt-researcher",
+      "sha": "0957c301ed06c2a5857b834358c7227c739041d4",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "gpt_researcher/utils/tools.py",
+        "gpt_researcher/retrievers/mcp/retriever.py",
+        ".mcp.json"
+      ]
+    },
+    {
+      "id": "rw-04-swe-agent",
+      "repo": "princeton-nlp/SWE-agent",
+      "url": "https://github.com/princeton-nlp/SWE-agent",
+      "dir": "princeton-nlp/swe-agent",
+      "sha": "3ea751c087f32b16e039a2233dd6eefecef325d5",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "sweagent/agent/models.py: tool calls",
+        "config/*.yaml agent configs"
+      ]
+    },
+    {
+      "id": "rw-05-quickstart-resources",
+      "repo": "modelcontextprotocol/quickstart-resources",
+      "url": "https://github.com/modelcontextprotocol/quickstart-resources",
+      "dir": "modelcontextprotocol/quickstart-resources",
+      "sha": "2912bb30785c7702a2f9abfab783e9140aa7246b",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "mcp-client-typescript/index.ts: MCP client",
+        "mcp-client-rust/src/main.rs"
+      ]
+    },
+    {
+      "id": "rw-06-github-mcp-server",
+      "repo": "github/github-mcp-server",
+      "url": "https://github.com/github/github-mcp-server",
+      "dir": "github/github-mcp-server",
+      "sha": "eb47a99ddb866ca2b8a162920e6bda9521f33ebb",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "agent-plugin/mcp.json",
+        ".github/copilot-instructions.md",
+        "MCP server implementation"
+      ]
+    },
+    {
+      "id": "rw-07-crewai-examples",
+      "repo": "crewAIInc/crewai-examples",
+      "url": "https://github.com/crewAIInc/crewai-examples",
+      "dir": "crewaiinc/crewai-examples",
+      "sha": "da94a91e691e1cf5b3151416bb15b5b62729bea8",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "flows/write_a_book_with_flows/**/crews/*.py: crews and agents"
+      ]
+    },
+    {
+      "id": "rw-08-web-ui",
+      "repo": "browser-use/web-ui",
+      "url": "https://github.com/browser-use/web-ui",
+      "dir": "browser-use/web-ui",
+      "sha": "61962296c38a0d064e0ba02c827192b7a81d1819",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "src/agent/browser_use/browser_use_agent.py",
+        "src/agent/deep_research/deep_research_agent.py"
+      ]
+    },
+    {
+      "id": "rw-09-aider",
+      "repo": "Aider-AI/aider",
+      "url": "https://github.com/Aider-AI/aider",
+      "dir": "aider-ai/aider",
+      "sha": "5dc9490bb35f9729ef2c95d00a19ccd30c26339c",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "llm"
+      },
+      "label": "ambiguous",
+      "confidence": "medium",
+      "evidence": [
+        "aider/coders/wholefile_func_coder.py: model output is a function call that the code applies as an edit",
+        "aider/coders/base_coder.py:100-101 and 933-940: reflection loop, max_reflections = 3"
+      ],
+      "adjudication": "Model output selects edit functions that the code applies inside a bounded reflection loop, which reads as clause (a). Labeler B read function calls as output formatting only, and the cited evidence does not settle which reading the protocol intends, so the label is ambiguous.",
+      "candidates": [
+        "llm",
+        "agent"
+      ]
+    },
+    {
+      "id": "rw-10-anything-llm",
+      "repo": "Mintplex-Labs/anything-llm",
+      "url": "https://github.com/Mintplex-Labs/anything-llm",
+      "dir": "mintplex-labs/anything-llm",
+      "sha": "3c7e73b8104e25327b9db3c4a8eeaf3ac4af237f",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "server/utils/agents/aibitat/: agent framework"
+      ]
+    },
+    {
+      "id": "rw-11-chatbot-ui",
+      "repo": "mckaywrigley/chatbot-ui",
+      "url": "https://github.com/mckaywrigley/chatbot-ui",
+      "dir": "mckaywrigley/chatbot-ui",
+      "sha": "81328b61d2a4ab597a7a057be70e785cf756d9f8",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "ambiguous"
+      },
+      "label": "ambiguous",
+      "confidence": "medium",
+      "evidence": [
+        "app/api/chat/tools/route.ts:81 and 153: executes each model-selected tool via fetch",
+        "app/api/chat/tools/route.ts:207: one follow-up completion, with no loop back to the model"
+      ],
+      "adjudication": "One round of model-selected tool execution and no loop. Clause (a) asks for a loop, and tool execution is present, so the evidence is weak either way.",
+      "candidates": [
+        "llm",
+        "agent"
+      ]
+    },
+    {
+      "id": "rw-12-shell-gpt",
+      "repo": "TheR1D/shell_gpt",
+      "url": "https://github.com/TheR1D/shell_gpt",
+      "dir": "ther1d/shell_gpt",
+      "sha": "a082bd5327ce0c4ef5a0284d9060e833be9444a6",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "sgpt/handlers/handler.py: handle_function_call executes model-selected function"
+      ]
+    },
+    {
+      "id": "rw-13-llm-app",
+      "repo": "pathwaycom/llm-app",
+      "url": "https://github.com/pathwaycom/llm-app",
+      "dir": "pathwaycom/llm-app",
+      "sha": "beb17f1ea0894b2430727388b78be4b26e37c16f",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "cookbooks/self-rag-agents/*.ipynb: LangGraph agents (samples)"
+      ]
+    },
+    {
+      "id": "rw-14-flask",
+      "repo": "pallets/flask",
+      "url": "https://github.com/pallets/flask",
+      "dir": "pallets/flask",
+      "sha": "d086db856be187255b8ec61ef409357393020f32",
+      "license": "BSD",
+      "stratum": "ordinary",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "no provider SDK or agent pattern in tree"
+      ]
+    },
+    {
+      "id": "rw-15-requests",
+      "repo": "psf/requests",
+      "url": "https://github.com/psf/requests",
+      "dir": "psf/requests",
+      "sha": "611c6162cbc4ac2020a2f91c7cfa4f3abf9bbb60",
+      "license": "Apache-2.0",
+      "stratum": "ordinary",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "no provider SDK or agent pattern in tree"
+      ]
+    },
+    {
+      "id": "rw-16-node-exporter",
+      "repo": "prometheus/node_exporter",
+      "url": "https://github.com/prometheus/node_exporter",
+      "dir": "prometheus/node_exporter",
+      "sha": "1271bc244266457fd225dcef9b8a33641b582c64",
+      "license": "Apache-2.0",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "llm",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "medium",
+      "evidence": [
+        "AGENTS.md: coding-agent instructions (no AI API use)"
+      ]
+    },
+    {
+      "id": "rw-17-ublock-ai-blocklist",
+      "repo": "laylavish/uBlockOrigin-HUGE-AI-Blocklist",
+      "url": "https://github.com/laylavish/uBlockOrigin-HUGE-AI-Blocklist",
+      "dir": "laylavish/ublockorigin-huge-ai-blocklist",
+      "sha": "9bb188e2701138e03f73bacebd6b19b181ca0012",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "AI-domain blocklist",
+        "no AI use in code"
+      ]
+    },
+    {
+      "id": "rw-18-uap-core",
+      "repo": "ua-parser/uap-core",
+      "url": "https://github.com/ua-parser/uap-core",
+      "dir": "ua-parser/uap-core",
+      "sha": "73e7340c3ed8055051607b296bf46ead7aa5f19e",
+      "license": "Apache-2.0",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "user-agent regex database",
+        "no AI use"
+      ]
+    },
+    {
+      "id": "rw-19-mcpconfig",
+      "repo": "MinecraftForge/MCPConfig",
+      "url": "https://github.com/MinecraftForge/MCPConfig",
+      "dir": "minecraftforge/mcpconfig",
+      "sha": "751a4f362ef15ec19d3616416e18853fee68968e",
+      "license": "unrecognized",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "Minecraft Coder Pack mappings: MCP name collision"
+      ]
+    },
+    {
+      "id": "rw-20-awesome-chatgpt-prompts",
+      "repo": "f/awesome-chatgpt-prompts",
+      "url": "https://github.com/f/awesome-chatgpt-prompts",
+      "dir": "f/awesome-chatgpt-prompts",
+      "sha": "7d3f248962d1dca209d59e033524bcb86c2b26b8",
+      "license": "unrecognized",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "src/app/api/prompt-builder/chat/route.ts: tool calls executed",
+        "plugins/claude/prompts.chat/.mcp.json"
+      ]
+    },
+    {
+      "id": "rw-21-nanogpt",
+      "repo": "karpathy/nanoGPT",
+      "url": "https://github.com/karpathy/nanoGPT",
+      "dir": "karpathy/nanogpt",
+      "sha": "3adf61e154c3fe3fca428ad6bc3818b27a3b8291",
+      "license": "MIT",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "medium",
+      "evidence": [
+        "model training and sampling code",
+        "no provider API call"
+      ]
+    },
+    {
+      "id": "rw-22-awesome-mcp-servers",
+      "repo": "punkpeye/awesome-mcp-servers",
+      "url": "https://github.com/punkpeye/awesome-mcp-servers",
+      "dir": "punkpeye/awesome-mcp-servers",
+      "sha": "0a5f1ae6eff3885ef53cfe0d0a910c354b423b38",
+      "license": "MIT",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "curated list (docs only)"
+      ]
+    },
+    {
+      "id": "rw-23-nextchat",
+      "repo": "ChatGPTNextWeb/NextChat",
+      "url": "https://github.com/ChatGPTNextWeb/NextChat",
+      "dir": "chatgptnextweb/nextchat",
+      "sha": "defdcdb55d850cd12c4c657eb83729fd66e215c0",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "app/mcp/client.ts: MCP client"
+      ]
+    },
+    {
+      "id": "rw-24-openai-cs-agents-demo",
+      "repo": "openai/openai-cs-agents-demo",
+      "url": "https://github.com/openai/openai-cs-agents-demo",
+      "dir": "openai/openai-cs-agents-demo",
+      "sha": "bd7bfca0f5abf50529370814c3e7c88542011925",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "ui/components/agents-list.tsx",
+        "multi-agent triage with tool calls (README)"
+      ]
+    },
+    {
+      "id": "rw-25-mcp-servers",
+      "repo": "modelcontextprotocol/servers",
+      "url": "https://github.com/modelcontextprotocol/servers",
+      "dir": "modelcontextprotocol/servers",
+      "sha": "5abed86c5317b833dd59907492d56c65981642aa",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        ".mcp.json",
+        "src/everything/ MCP server"
+      ]
+    },
+    {
+      "id": "rw-26-autogpt",
+      "repo": "Significant-Gravitas/AutoGPT",
+      "url": "https://github.com/Significant-Gravitas/AutoGPT",
+      "dir": "significant-gravitas/autogpt",
+      "sha": "ca259ccc21e1ff50357084d5f90cd8bfc6b544e8",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "classic/forge agent code",
+        "CLAUDE.md files"
+      ]
+    },
+    {
+      "id": "rw-27-openhands",
+      "repo": "All-Hands-AI/OpenHands",
+      "url": "https://github.com/All-Hands-AI/OpenHands",
+      "dir": "all-hands-ai/openhands",
+      "sha": "6eebcbecc3ede47ae16395e5a6eb59c93963979c",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "AGENTS.md",
+        "src/types/agent-server/ event types"
+      ]
+    },
+    {
+      "id": "rw-28-chatgpt-web",
+      "repo": "Chanzhaoyu/chatgpt-web",
+      "url": "https://github.com/Chanzhaoyu/chatgpt-web",
+      "dir": "chanzhaoyu/chatgpt-web",
+      "sha": "7474b2c14971d2d9584c4b129396f9332ed87b7b",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "llm",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "high",
+      "evidence": [
+        "service/src/chatgpt/index.ts: provider API calls",
+        "no tool loop"
+      ]
+    },
+    {
+      "id": "rw-29-open-insure",
+      "repo": "daxaxelrod/open_insure",
+      "url": "https://github.com/daxaxelrod/open_insure",
+      "dir": "daxaxelrod/open_insure",
+      "sha": "b94c3a29578aaec7201d4870d6a41c9f2d8b054f",
+      "license": "none-found",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "insurance policy management",
+        "no AI use"
+      ]
+    },
+    {
+      "id": "rw-30-real-estate",
+      "repo": "skynette/real-estate",
+      "url": "https://github.com/skynette/real-estate",
+      "dir": "skynette/real-estate",
+      "sha": "018ed33629307d03b11161a0ec6e7ff0be8ecdf3",
+      "license": "none-found",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "Django real-estate app",
+        "agent is a human role"
+      ]
+    },
+    {
+      "id": "rw-31-gemini-api",
+      "repo": "eliasbenaddou/gemini_api",
+      "url": "https://github.com/eliasbenaddou/gemini_api",
+      "dir": "eliasbenaddou/gemini_api",
+      "sha": "05d348a5fc18b6329b3e3f0ddb4c61a95eb23e53",
+      "license": "MIT",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "none"
+      },
+      "label": "none",
+      "confidence": "high",
+      "evidence": [
+        "Gemini crypto-exchange client",
+        "no AI use"
+      ]
+    },
+    {
+      "id": "rw-32-fastapi",
+      "repo": "tiangolo/fastapi",
+      "url": "https://github.com/tiangolo/fastapi",
+      "dir": "tiangolo/fastapi",
+      "sha": "f5c6e9b4f9cadc1bf0f9a1fd672e621206b63007",
+      "license": "MIT",
+      "stratum": "ordinary",
+      "labels": {
+        "A": "none",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "high",
+      "evidence": [
+        "scripts/translate.py:14: imports pydantic_ai Agent",
+        "scripts/translate.py:143 and 157: Agent('openai-chat:...') and run_sync() call an LLM provider"
+      ],
+      "adjudication": "A maintainer script in the repository calls an LLM provider. Protocol v1.1 clarifies that 'shipped' covers repository code outside documentation and tests. The stratum stays ordinary because it is a design-time choice; the label is evidence-based."
+    },
+    {
+      "id": "rw-33-open-webui",
+      "repo": "open-webui/open-webui",
+      "url": "https://github.com/open-webui/open-webui",
+      "dir": "open-webui/open-webui",
+      "sha": "8bd8b4fac5e059578ac0c74b3c18d11139f88b7d",
+      "license": "BSD",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "backend/open_webui/utils/middleware.py: tool function execution"
+      ]
+    },
+    {
+      "id": "rw-34-ai-chatbot",
+      "repo": "vercel/ai-chatbot",
+      "url": "https://github.com/vercel/ai-chatbot",
+      "dir": "vercel/ai-chatbot",
+      "sha": "c2f8235e1f3ea903ad8b7f61447c4f74164b5c58",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "lib/ai/tools/request-suggestions.ts",
+        "app/(chat)/api/chat/route.ts: streamText with tools"
+      ]
+    },
+    {
+      "id": "rw-35-private-gpt",
+      "repo": "zylon-ai/private-gpt",
+      "url": "https://github.com/zylon-ai/private-gpt",
+      "dir": "zylon-ai/private-gpt",
+      "sha": "3cefd532cb6cccf65065af5e873c44bdca71e4d4",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "llm",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "private_gpt/server/mcp/_runtime.py:10: imports mcp ClientSession (MCP client implementation, clause b)",
+        "private_gpt/server/mcp/mcp_service.py:49: builds mcp__<server>__<tool> names for MCP tools"
+      ],
+      "adjudication": "Shipped MCP client implementation (clause b). The orchestrator's first pass missed it."
+    },
+    {
+      "id": "rw-36-azure-search-openai-demo",
+      "repo": "Azure-Samples/azure-search-openai-demo",
+      "url": "https://github.com/Azure-Samples/azure-search-openai-demo",
+      "dir": "azure-samples/azure-search-openai-demo",
+      "sha": "da209dc86bb66bedd0fa2a0d2ac55a6f4fcfc0c7",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "ambiguous",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        ".github/agents/triager.agent.md: agent definition with a tools list (clause c)",
+        ".github/agents/fixer.agent.md: second agent definition (clause c)",
+        "app/backend/prepdocslib/servicesetup.py:12: OpenAI SDK (llm evidence in addition)"
+      ],
+      "adjudication": "Agent definitions for an AI platform are in the repository (clause c). The orchestrator's first pass had marked it ambiguous from the RAG code alone."
+    },
+    {
+      "id": "rw-37-openai-quickstart-python",
+      "repo": "openai/openai-quickstart-python",
+      "url": "https://github.com/openai/openai-quickstart-python",
+      "dir": "openai/openai-quickstart-python",
+      "sha": "ec8890d101bdc17d66512d94a76b5e7131d188a1",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "examples/assistant-functions/functions.py: function calls executed"
+      ]
+    },
+    {
+      "id": "rw-38-langchain-tutorials",
+      "repo": "gkamradt/langchain-tutorials",
+      "url": "https://github.com/gkamradt/langchain-tutorials",
+      "dir": "gkamradt/langchain-tutorials",
+      "sha": "697c4de4f6c655ea3aa16ea0de324da157398557",
+      "license": "none-found",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "agent",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "medium",
+      "evidence": [
+        "agents/Agents.ipynb: LangChain agent tools (samples)"
+      ]
+    },
+    {
+      "id": "rw-39-streamlit-llm-examples",
+      "repo": "streamlit/llm-examples",
+      "url": "https://github.com/streamlit/llm-examples",
+      "dir": "streamlit/llm-examples",
+      "sha": "7cf260745675e41f92e7436d3777aafdab9dad9f",
+      "license": "Apache-2.0",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "llm",
+        "B": "agent"
+      },
+      "label": "agent",
+      "confidence": "high",
+      "evidence": [
+        "pages/2_Chat_with_search.py:3 and 40-46: initialize_agent with AgentType.ZERO_SHOT_REACT_DESCRIPTION",
+        "pages/2_Chat_with_search.py:6 and 40: DuckDuckGoSearchRun tool that the agent calls"
+      ],
+      "adjudication": "A ReAct agent loop with a search tool, in a shipped sample page (clause a). The orchestrator's first pass had marked it llm from two other pages only."
+    },
+    {
+      "id": "rw-40-pdfgpt",
+      "repo": "bhaskatripathi/pdfgpt",
+      "url": "https://github.com/bhaskatripathi/pdfgpt",
+      "dir": "bhaskatripathi/pdfgpt",
+      "sha": "04d7a41a23b9aa8f2907992a73f3c7056bdec6fa",
+      "license": "MIT",
+      "stratum": "ai-app",
+      "labels": {
+        "A": "llm",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "medium",
+      "evidence": [
+        "api.py / app.py: provider calls",
+        "no tool loop found"
+      ]
+    },
+    {
+      "id": "rw-41-llms-from-scratch",
+      "repo": "rasbt/llms-from-scratch",
+      "url": "https://github.com/rasbt/llms-from-scratch",
+      "dir": "rasbt/llms-from-scratch",
+      "sha": "cdbd33e6d57a71e20ea31434841095fac50cecd8",
+      "license": "Apache-2.0",
+      "stratum": "hard-negative",
+      "labels": {
+        "A": "none",
+        "B": "llm"
+      },
+      "label": "llm",
+      "confidence": "high",
+      "evidence": [
+        "pkg/llms_from_scratch/ch07.py:212: query_model posts to the Ollama /api/chat endpoint",
+        "ch07/03_model-evaluation/llm-instruction-eval-openai.ipynb:164: chat.completions.create call"
+      ],
+      "adjudication": "LLM API calls in shipped package code and sample notebooks. The stratum stays hard-negative because it is a design-time choice; the label is evidence-based."
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+ "seed": 20261008,
+ "since": "2025-01-01",
+ "until": "2026-09-30",
+ "sampled_on": "2026-10-08",
+ "quotas": {
+  "pypi-ai": [
+   26,
+   3
+  ],
+  "pypi-other": [
+   26,
+   3
+  ],
+  "npm-ai": [
+   26,
+   3
+  ],
+  "npm-other": [
+   26,
+   3
+  ],
+  "go-ai": [
+   12,
+   1
+  ],
+  "go-random": [
+   24,
+   2
+  ],
+  "gitlab-ai": [
+   20,
+   2
+  ],
+  "gitlab-random": [
+   30,
+   3
+  ],
+  "list-mcp": [
+   20,
+   2
+  ],
+  "list-claude-code": [
+   20,
+   2
+  ],
+  "list-agents": [
+   20,
+   2
+  ],
+  "list-ordinary": [
+   30,
+   3
+  ],
+  "hard-negative": [
+   24,
+   2
+  ],
+  "classical-ml": [
+   14,
+   2
+  ],
+  "prose-only": [
+   8,
+   1
+  ]
+ },
+ "pool_sizes": {
+  "pypi-ai": 410,
+  "pypi-other": 2233,
+  "npm-ai": 3533,
+  "npm-other": 3480,
+  "go-ai": 578,
+  "go-random": 19818,
+  "gitlab-ai": 2117,
+  "gitlab-random": 600,
+  "list-mcp": 4213,
+  "list-claude-code": 206,
+  "list-agents": 317,
+  "list-ordinary": 6364,
+  "hard-negative": 32,
+  "classical-ml": 25,
+  "prose-only": 12
+ },
+ "accepted": {
+  "classical-ml|calibration": 2,
+  "classical-ml|scored": 14,
+  "gitlab-ai|calibration": 2,
+  "gitlab-ai|scored": 20,
+  "gitlab-random|calibration": 3,
+  "gitlab-random|scored": 30,
+  "go-ai|calibration": 1,
+  "go-ai|scored": 12,
+  "go-random|calibration": 2,
+  "go-random|scored": 24,
+  "hard-negative|calibration": 2,
+  "hard-negative|scored": 24,
+  "list-agents|calibration": 2,
+  "list-agents|scored": 20,
+  "list-claude-code|calibration": 2,
+  "list-claude-code|scored": 20,
+  "list-mcp|calibration": 2,
+  "list-mcp|scored": 20,
+  "list-ordinary|calibration": 3,
+  "list-ordinary|scored": 30,
+  "npm-ai|calibration": 3,
+  "npm-ai|scored": 26,
+  "npm-other|calibration": 3,
+  "npm-other|scored": 26,
+  "prose-only|calibration": 1,
+  "prose-only|scored": 8,
+  "pypi-ai|calibration": 3,
+  "pypi-ai|scored": 26,
+  "pypi-other|calibration": 3,
+  "pypi-other|scored": 26
+ },
+ "reject_reasons": {
+  "surplus": 25,
+  "no-source-files": 25,
+  "unreachable": 23,
+  "too-large": 15,
+  "too-small": 12,
+  "owner-cap": 6,
+  "failed-frame-check": 1
+ },
+ "max_per_owner": 2
+}

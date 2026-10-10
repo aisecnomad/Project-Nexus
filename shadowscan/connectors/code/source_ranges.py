@@ -11,7 +11,8 @@ from __future__ import annotations
 import io
 import re
 import tokenize
-from bisect import bisect_right
+import xml.etree.ElementTree as ET
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
@@ -47,7 +48,30 @@ _CONTROL_HEADS = frozenset({"catch", "for", "if", "switch", "while", "with"})
 # Keywords in a module, generator or async function but ordinary names in a script:
 # without a parse, a `/` after one of them cannot be classified.
 _AMBIGUOUS_REGEX_WORDS = frozenset({"await", "yield"})
+# The regular-expression prefix words that no script can use as a name. Where JSX is only tried
+# (``noncode_ranges``), an element is read after punctuation or one of these. After any other word
+# (`yield`, `await`, or `of` after an operand) a "<" may be a comparison in a script, as it is after a
+# keyword the walk cut out of a longer name at a zero-width joiner, a combining mark or an escape
+# (`a\u200ctypeof <a> 1`).
+_ELEMENT_PREFIX_WORDS = _REGEX_PREFIX_WORDS - {"await", "of", "yield"}
 _MAX_REGEX_LENGTH = 8192
+# Extensions whose source is TypeScript (a postfix "!" asserts non-null), and plain JavaScript extensions
+# in which React code keeps JSX anyway.
+_TYPESCRIPT_DIALECTS = frozenset({".ts", ".tsx", ".mts", ".cts"})
+_JSX_RETRY_DIALECTS = frozenset({".js", ".mjs", ".cjs"})
+# Text a JSX reading can change: a closing or self-closing tag. A plain .js file without one is never
+# read twice.
+_JSX_TAG_HINT = re.compile(r"</[A-Za-z]|/>")
+# Qt Linguist translations (<TS>) and Tiled tilesets (<tileset>) are XML documents named .ts or .tsx. Such
+# a document must open with an XML declaration or a document type declaration, which no TypeScript or
+# TSX source can start with (`<TS>expr` is a type assertion, `<TS></TS>;` a JSX statement), and a file
+# that also has module syntax is not treated as one (see ``_xml_data_document``).
+_XML_DOCUMENT = re.compile(
+    r"\ufeff?\s*(?:<\?xml[^>]*\?>\s*(?:<!DOCTYPE\s+(?:TS|tileset)[^>]*>\s*)?|<!DOCTYPE\s+(?:TS|tileset)[^>]*>\s*)"
+    r"<(?:TS|tileset)[\s>]"
+)
+_XML_DATA_ROOTS = ("TS", "tileset")
+_MODULE_SYNTAX = re.compile(r"^[ \t]*(?:import|export)\b|\brequire\s*\(", re.MULTILINE)
 # Real regular expression literals can be long: generated Unicode tables such as emoji-regex's run to
 # tens of kilobytes on one line. The scan is linear, never leaves its line and is not repeated once it
 # fails (the rest of the line is skipped), so this bound only decides when a literal that has not
@@ -271,10 +295,6 @@ def _jsx_open_tag(text: str, start: int, budget: _LookaheadBudget) -> tuple[str,
     return name, pos
 
 
-# These JavaScript extensions may contain JSX without an explicit JSX suffix.
-_JSX_IN_JS_FILES = frozenset({".js", ".mjs", ".cjs"})
-
-
 def noncode_ranges(
     text: str,
     language: str | None,
@@ -282,21 +302,94 @@ def noncode_ranges(
     *,
     jsx: bool = False,
 ) -> tuple[list[tuple[int, int]], bool]:
-    """Return sorted ignored half-open spans and whether lexing was incomplete."""
+    """Return sorted ignored half-open spans and whether lexing was incomplete.
+
+    ``jsx`` is ignored for .js, .mjs and .cjs files, which never declare JSX: it is tried there only as
+    described below.
+    """
     if language == "python":
         return _python_ranges(text)
     if language == "javascript":
-        ranges, ambiguous = _javascript_ranges(text, jsx=jsx)
-        if ambiguous and not jsx and dialect in _JSX_IN_JS_FILES:
-            # Only accept the JSX interpretation when it closes completely.
-            # TypeScript retains its normal treatment of generic/type syntax.
-            jsx_ranges, jsx_ambiguous = _javascript_ranges(text, jsx=True)
-            if not jsx_ambiguous:
-                return jsx_ranges, False
-        return ranges, ambiguous
+        typescript = dialect in _TYPESCRIPT_DIALECTS
+        if typescript and _xml_data_document(text):
+            return [(0, len(text))], False  # a Qt Linguist translation: data that happens to be named .ts
+        if dialect in _JSX_RETRY_DIALECTS:
+            jsx = False
+        spans, incomplete = _javascript_ranges(text, jsx=jsx, typescript=typescript)
+        if dialect in _JSX_RETRY_DIALECTS and (incomplete or _JSX_TAG_HINT.search(text)):
+            # React projects keep JSX in .js files. Read as plain JavaScript, a JSX closing tag is a
+            # division followed by an unterminated regular expression, and element text such as
+            # `src/*.js` opens a comment that can run to a later `*/` and hide code while the walk
+            # still completes. Read as JSX, valid script code can look like an element: `yield <a> 1`
+            # compares (``_ELEMENT_PREFIX_WORDS`` makes that reading ambiguous), and the second "<" of
+            # a left shift never opens one. When only one reading completes it is used; when both do,
+            # only what both mask stays masked, so code either reading shows stays visible.
+            try:
+                retried, retried_incomplete = _javascript_ranges(
+                    text, jsx=True, typescript=typescript, implicit_jsx=True
+                )
+            except MatchTimeoutError:
+                if incomplete:
+                    raise
+                # The plain reading completed, but the file holds tag-shaped text whose JSX reading
+                # could not be checked: it might hide code, so coverage is incomplete.
+                return spans, True
+            if incomplete:
+                return (retried, False) if not retried_incomplete else (spans, True)
+            if not retried_incomplete:
+                return _common_spans(spans, retried), False
+        return spans, incomplete
     if language in {"go", "rust", "java", "dotnet", "ruby", "php", "swift", "dart"}:
         return _other_source_ranges(text, language, dialect)
     return [], False
+
+
+def nul_reading_ranges(
+    text: str,
+    spans: list[tuple[int, int]],
+    language: str | None,
+    dialect: str | None = None,
+    *,
+    jsx: bool = False,
+) -> tuple[list[tuple[int, int]], bool]:
+    """Lex ``text``, a source with NUL bytes, and combine it with ``spans``, its ignored spans without them.
+
+    Bash drops NUL bytes, but Node and PHP keep them, and removing one can join two characters into a
+    token: the regular expression `/<NUL>*/` becomes a comment opener that masks the code after it, and
+    `?<NUL>>` in a PHP comment a closing tag. Either reading may be the one that runs, so only what both
+    mask is returned, in offsets of the text without the NUL bytes, and the lexing is incomplete unless
+    both readings are complete and mask the same text.
+    """
+    kept, incomplete = noncode_ranges(text, language, dialect, jsx=jsx)
+    nuls = [match.start() for match in re.finditer("\x00", text)]
+    # An offset less the NUL bytes before it is the same place in the text without them.
+    moved = _merged_spans(
+        [(start - bisect_left(nuls, start), end - bisect_left(nuls, end)) for start, end in kept]
+    )
+    moved = [span for span in moved if span[0] < span[1]]
+    spans = [span for span in _merged_spans(spans) if span[0] < span[1]]
+    return _common_spans(moved, spans), incomplete or moved != spans
+
+
+def _xml_data_document(text: str) -> bool:
+    """Whether a .ts or .tsx file is a Qt Linguist translation or a Tiled tileset, not TypeScript.
+
+    It must open as ``_XML_DOCUMENT`` describes, have no module syntax, end with the closing tag of its
+    root, and be well-formed XML with that root. As in semantic_config.py, a document that declares
+    entities or attribute defaults is not parsed (ElementTree expands them in memory).
+    """
+    if not _XML_DOCUMENT.match(text) or _MODULE_SYNTAX.search(text):
+        return False
+    if not text.rstrip().endswith(tuple(f"</{root}>" for root in _XML_DATA_ROOTS)):
+        return False
+    upper = text.upper()
+    if "<!ENTITY" in upper or "<!ATTLIST" in upper:
+        return False
+    try:
+        root = ET.fromstring(text.removeprefix("\ufeff"))
+    except (ET.ParseError, RecursionError, ValueError):
+        return False
+    return root.tag in _XML_DATA_ROOTS
 
 
 def _python_ranges(text: str) -> tuple[list[tuple[int, int]], bool]:
@@ -524,8 +617,23 @@ def _legacy_fstring_ranges(token: str, base: int, depth: int = 0) -> tuple[list[
     return sorted(spans), False
 
 
-def _javascript_ranges(text: str, *, jsx: bool = False) -> tuple[list[tuple[int, int]], bool]:
-    return _JavaScriptLexer(text, jsx).run()
+def _follows_operand_on_same_line(text: str, pos: int) -> bool:
+    """Whether the token before ``text[pos]`` on its line ends with a name, ")" or "]".
+
+    A TypeScript non-null assertion follows such an operand. After "}" the walk cannot tell a block
+    from an object literal, so `} !/'/.test(s)` stays what it was: a regular expression is possible,
+    and the ambiguity checks that already guard a slash after "}" decide.
+    """
+    before = pos - 1
+    while before >= 0 and text[before] in " \t":
+        before -= 1
+    return before >= 0 and (text[before].isalnum() or text[before] in "_$)]")
+
+
+def _javascript_ranges(
+    text: str, *, jsx: bool = False, typescript: bool = False, implicit_jsx: bool = False
+) -> tuple[list[tuple[int, int]], bool]:
+    return _JavaScriptLexer(text, jsx, typescript, implicit_jsx).run()
 
 
 class _JavaScriptLexer:
@@ -542,6 +650,7 @@ class _JavaScriptLexer:
         "can_start_regex",
         "control_parens",
         "control_pending",
+        "implicit_jsx",
         "incomplete",
         "jsx",
         "modes",
@@ -550,12 +659,16 @@ class _JavaScriptLexer:
         "size",
         "spans",
         "text",
+        "typescript",
     )
 
-    def __init__(self, text: str, jsx: bool) -> None:
+    def __init__(self, text: str, jsx: bool, typescript: bool = False, implicit_jsx: bool = False) -> None:
         self.text = text
         self.size = len(text)
         self.jsx = jsx
+        self.typescript = typescript
+        # JSX tried in a file that does not declare it (``noncode_ranges``), which may be a script.
+        self.implicit_jsx = implicit_jsx
         self.budget = _LookaheadBudget(self.size)
         self.spans: list[tuple[int, int]] = []
         # Template text is inert; ${...} expressions are scanned as executable code.
@@ -689,6 +802,10 @@ class _JavaScriptLexer:
         # ``}``, none of which ends in ``/``. Comments do not count, so
         # ``<div /* note */>`` is not self-closing.
         slash = False
+        # Whether the last significant character was ``=``: an ``<`` there is a
+        # brace-less JSX attribute value (``title=<span>…</span>``), which is
+        # legal JSX; anywhere else ``<`` inside a tag keeps the generic walk.
+        equals = False
         while i < size:
             # Comments may separate attributes; their text is never an
             # attribute string or expression.
@@ -711,11 +828,22 @@ class _JavaScriptLexer:
                     return self._unterminated(start)
                 i = end + 1
                 slash = False
+                equals = False
                 continue
             if text[i] == "{":
                 spans.append((start, i + 1))
                 self._enter_expression("jsx_expression")
                 return i + 1
+            if text[i] == "<" and equals:
+                # Brace-less JSX element as an attribute value. Only a span that
+                # _jsx_open_tag accepts starts a child element; a stray ``<``
+                # falls through to the generic walk and still fails closed.
+                opened = _jsx_open_tag(text, i, self.budget)
+                if opened is not None:
+                    spans.append((start, i))
+                    modes.append(("jsx_tag", i))
+                    self.pending_jsx_tags.append(opened[0])
+                    return opened[1]
             if text[i] == ">":
                 spans.append((start, i + 1))
                 name = self.pending_jsx_tags.pop()
@@ -723,14 +851,15 @@ class _JavaScriptLexer:
                 i += 1
                 modes.pop()
                 if self_closing:
-                    if modes[-1][0] == "jsx_text":
-                        modes[-1] = ("jsx_text", i)
+                    if modes[-1][0] in {"jsx_tag", "jsx_text"}:
+                        modes[-1] = (modes[-1][0], i)
                 else:
                     self.open_jsx_tags.append(name)
                     modes.append(("jsx_text", i))
                 return i
             if not text[i].isspace():
                 slash = text[i] == "/"
+                equals = text[i] == "="
             i += 1
             if i == size:
                 return self._unterminated(start)
@@ -772,6 +901,7 @@ class _JavaScriptLexer:
             self.control_parens,
         )
         member_at = -1  # offset of the name after the latest single `.` or `?.`
+        word_at = word_end = -1  # the latest word that is not a property name
         while i < size:
             if text.startswith("//", i):
                 end = _js_line_end(text, i + 2)
@@ -817,8 +947,18 @@ class _JavaScriptLexer:
                 jsx
                 and text[i] == "<"
                 and can_start_regex[-1]
+                # `<<` is one shift token, so `mask<<shift>limit` opens no element.
+                and (i == 0 or text[i - 1] != "<")
                 and (opened := _jsx_open_tag(text, i, self.budget)) is not None
             ):
+                if self.implicit_jsx and word_at >= 0 and _skip_trivia(text, word_end) == i:
+                    before = text[word_at - 1] if word_at else " "
+                    if (
+                        text[word_at:word_end] not in _ELEMENT_PREFIX_WORDS
+                        or before in "\\}\u200c\u200d"
+                        or ("a" + before).isidentifier()
+                    ):
+                        self.incomplete = True
                 self.pending_jsx_tags.append(opened[0])
                 modes.append(("jsx_tag", i))
                 can_start_regex[-1] = False
@@ -836,6 +976,7 @@ class _JavaScriptLexer:
                     can_start_regex[-1] = False
                     control_pending[-1] = False
                 else:
+                    word_at, word_end = start, i
                     # `of` is a keyword only after an operand (`for (x of /re/)`);
                     # where an operand is expected it is an ordinary name.
                     can_start_regex[-1] = word in _REGEX_PREFIX_WORDS and (
@@ -876,6 +1017,17 @@ class _JavaScriptLexer:
                 # they are prefix operators.
                 control_pending[-1] = False
                 i += 2
+            elif (
+                text[i] == "!"
+                and self.typescript
+                and not can_start_regex[-1]
+                and not text.startswith("!=", i)
+                and _follows_operand_on_same_line(text, i)
+            ):
+                # A TypeScript non-null assertion (`idle! / step`) ends an operand, so the slash
+                # after it divides. It must follow its operand on the same line, and not a "}".
+                control_pending[-1] = False
+                i += 1
             elif text[i] in ";:=!?%~^&|*<>+-":
                 can_start_regex[-1] = True
                 control_pending[-1] = False
@@ -928,7 +1080,15 @@ _COMMENT_END_UNICODE = re.compile("[\n\r\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPAR
 _JAVA_UNICODE_ESCAPE = re.compile(r"(?<!\\)(\\++)u++([0-9A-Fa-f]{4})")
 # A PHP line comment also ends at a closing tag: `// note ?> html <?php code();` leaves PHP mode.
 _COMMENT_END_PHP = re.compile(r"[\n\r]|\?>")
-_RUST_RAW = re.compile(r'(?:br|rb|r)(#{0,255})"')
+# Rust raw strings: r"", byte br"" and C cr"" (Rust 1.77), with up to 255 "#".
+_RUST_RAW = re.compile(r'(?:br|rb|cr|r)(#{0,255})"')
+# A Rust character escape longer than two characters: \x7F, or \u{201C} with any "_" separators
+# (\u{1_F600}). The class excludes quotes, so scans from different quotes never overlap.
+_RUST_LONG_CHAR_ESCAPE = re.compile(r"\\x[0-9A-Fa-f]{2}|\\u\{[0-9A-Fa-f_]*+\}")
+# An F# character literal: one character, a simple escape, or a unicode/trigraph escape.
+_FSHARP_CHAR = re.compile(
+    r"'(?:[^\\'\r\n]|\\(?:u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|x[0-9A-Fa-f]{2}|\d{3}|[^\r\n]))'"
+)
 # A Swift raw string opens with 1-255 "#" and a quote. Possessive, so that a long run of "#" costs one
 # bounded pass at each position in C instead of 255 steps of Python (13 s for a megabyte of "#").
 _SWIFT_RAW_OPEN = re.compile(r'#{1,255}+(?=")')
@@ -1008,7 +1168,57 @@ def _other_source_ranges(text: str, language: str, dialect: str | None) -> tuple
         translation = _java_unicode_translation(text)
         if translation is not None:
             return _translated_java_ranges(text, *translation)
+    if language == "php" and "#[" in text:
+        return _php_ranges(text, dialect)
     return _SourceLexer(text, language, dialect).run()
+
+
+def _php_ranges(text: str, dialect: str | None) -> tuple[list[tuple[int, int]], bool]:
+    """Lex PHP with "#[" read as a PHP 8 attribute and as the line comment it is before PHP 8.
+
+    The scanner cannot tell which version runs a file, and the readings can mask different code: in
+    `#[TODO] don't call this`, the apostrophe opens a string in the PHP 8 reading that a later one closes,
+    and a file can even be valid in both versions with code that only PHP 7 runs inside a PHP 8
+    attribute's string. Only what both readings mask stays masked. When the PHP 7 reading leaves a string
+    or a here-document open at the end of the file and the PHP 8 reading does not, PHP 7 cannot run the
+    file and the PHP 8 reading is used alone (a multi-line attribute string). The reverse is not trusted:
+    a PHP 8 construct this lexer misreads can leave the PHP 8 reading open, so the walk stays incomplete.
+    """
+    attributes = _SourceLexer(text, "php", dialect)
+    spans, incomplete = attributes.run()
+    comments = _SourceLexer(text, "php", dialect, php_attributes=False)
+    comment_spans, comment_incomplete = comments.run()
+    if comment_spans == spans:
+        return spans, incomplete or comment_incomplete
+    if comments.unterminated_literal and not attributes.unterminated_literal:
+        return spans, incomplete
+    return _common_spans(spans, comment_spans), incomplete or comment_incomplete
+
+
+def _merged_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _common_spans(first: list[tuple[int, int]], second: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Return the sorted spans of the text that both ``first`` and ``second`` mask."""
+    first, second = _merged_spans(first), _merged_spans(second)
+    common: list[tuple[int, int]] = []
+    i = j = 0
+    while i < len(first) and j < len(second):
+        start, end = max(first[i][0], second[j][0]), min(first[i][1], second[j][1])
+        if start < end:
+            common.append((start, end))
+        if first[i][1] < second[j][1]:
+            i += 1
+        else:
+            j += 1
+    return common
 
 
 def _java_unicode_translation(text: str) -> tuple[str, list[int], list[int]] | None:
@@ -1109,8 +1319,14 @@ def _open_literal(
 ) -> tuple[_Literal, int]:
     """Return the literal opened by ``prefix`` at ``i`` and the quote at ``q``, and the index after it."""
     quote = text[q]
+    # C# raw string literals open with three quotes and no "@": `@"""x"" y"` is a verbatim string whose
+    # text starts with an escaped quote.
+    verbatim_dotnet = language == "dotnet" and "@" in prefix
     triple = (
-        quote == '"' and language in {"java", "dotnet", "swift", "dart", "ruby"} and text.startswith('"""', q)
+        quote == '"'
+        and language in {"java", "dotnet", "swift", "dart", "ruby"}
+        and text.startswith('"""', q)
+        and not verbatim_dotnet
     )
     if quote == "'" and language in {"dart", "ruby"} and text.startswith("'''", q):
         triple = True
@@ -1132,10 +1348,24 @@ def _open_literal(
         and not (prefix == "r" or "@" in prefix or prefix.startswith("#") or triple and language == "dotnet"),
         verbatim="@" in prefix,
         interpolation=interpolation,
-        # Ordinary Rust strings and byte strings may span physical lines.
-        multiline=triple or quote == "`" or "@" in prefix or (language == "rust" and quote == '"'),
+        multiline=triple or quote == "`" or "@" in prefix or _spans_lines(quote, language, dialect),
     )
     return literal, q + len(opener)
+
+
+def _spans_lines(quote: str, language: str, dialect: str | None) -> bool:
+    """Whether an ordinary (single-quote or double-quote) literal of ``language`` may contain a line break.
+
+    Rust and PHP strings and F# strings run on across lines. Java, C#, Swift, Dart, Kotlin and Go
+    interpreted strings do not, so a line break there still ends the walk as ambiguous. Ruby strings
+    can span lines too, but the walk cannot yet tell its quote characters from those of a regular
+    expression literal, `$'` or `?'`, so a Ruby literal that runs past a line break stays ambiguous.
+    """
+    if language == "rust":
+        return quote == '"'
+    if language == "php":
+        return quote in {'"', "'"}
+    return language == "dotnet" and dialect == ".fs" and quote == '"'
 
 
 class _SourceLexer:
@@ -1156,6 +1386,7 @@ class _SourceLexer:
         "line_checked_through",
         "line_start",
         "modes",
+        "php_attributes",
         "php_code",
         "size",
         "spans",
@@ -1163,7 +1394,7 @@ class _SourceLexer:
         "text",
     )
 
-    def __init__(self, text: str, language: str, dialect: str | None) -> None:
+    def __init__(self, text: str, language: str, dialect: str | None, *, php_attributes: bool = True) -> None:
         self.text = text
         self.size = len(text)
         self.language = language
@@ -1180,6 +1411,8 @@ class _SourceLexer:
         # A PHP source file can be an HTML-only template. Enter code mode only at
         # an opening tag, including the short echo form (<?=).
         self.php_code = language != "php"
+        # Whether "#[" opens a PHP 8 attribute rather than a line comment (see ``_php_ranges``).
+        self.php_attributes = php_attributes
 
     def run(self) -> tuple[list[tuple[int, int]], bool]:
         modes = self.modes
@@ -1200,6 +1433,11 @@ class _SourceLexer:
                 if isinstance(mode, _Literal):
                     self.spans.append((mode.start, self.size))
         return sorted(self.spans), self.incomplete
+
+    @property
+    def unterminated_literal(self) -> bool:
+        """Whether the finished walk left a literal or a here-document open at the end of the input."""
+        return bool(self.heredocs) or any(isinstance(mode, _Literal) for mode in self.modes)
 
     def _mask(self, start: int, end: int, closed: bool) -> int:
         """Mask an inert construct; one that never closes stops the walk."""
@@ -1276,9 +1514,18 @@ class _SourceLexer:
         end = text.find("\n", i)
         end = size if end < 0 else end
         line = text[i:end]
-        if (language == "ruby" and line.strip() == marker) or (
-            language == "php" and re.fullmatch(r"\s*" + re.escape(marker) + r"[;,)]?\s*", line)
-        ):
+        # Since PHP 7.3 the closing marker may be indented, and code may follow it on its line (`EOT)];`):
+        # it closes wherever it is not followed by a character that continues a name.
+        closing = (
+            re.compile(r"[ \t]*" + re.escape(marker) + r"(?![0-9A-Za-z_\x80-\U0010ffff])").match(text, i, end)
+            if language == "php"
+            else None
+        )
+        if closing is not None:
+            heredocs.pop(0)
+            self.spans.append((i, closing.end()))
+            return closing.end()
+        if language == "ruby" and line.strip() == marker:
             heredocs.pop(0)
         elif (language == "ruby" and "#{" in line) or (language == "php" and ("${" in line or "{$" in line)):
             # Interpolation inside a here-document needs language parsing.
@@ -1296,11 +1543,22 @@ class _SourceLexer:
         quote = text[q]
         if quote == "`" and language != "go":
             return i + 1, False
+        if quote == "'" and language == "dotnet" and self.dialect == ".fs":
+            # F# writes a type variable as 'T and may prime an identifier (type', x'): neither is a
+            # character literal, which holds one character or an escape and closes on the same line.
+            if q > 0 and (text[q - 1].isalnum() or text[q - 1] in "_'"):
+                return i + 1, False
+            if _FSHARP_CHAR.match(text, q) is None:
+                return i + 1, False
         if quote == "'" and language == "rust":
             # A lifetime ('a or 'static) is code. Rust character literals
-            # contain exactly one character or an escaped character.
+            # contain exactly one character or one escape: \n, \x7F or \u{201C}.
             char = q + 1
-            char += 2 if char < size and text[char] == "\\" else 1
+            escape = _RUST_LONG_CHAR_ESCAPE.match(text, char)
+            if escape:
+                char = escape.end()
+            else:
+                char += 2 if char < size and text[char] == "\\" else 1
             if char >= size or text[char] != "'":
                 return i + 1, False
         if quote == '"' and language == "go":
@@ -1399,7 +1657,10 @@ class _SourceLexer:
                 continue
 
             if (language != "ruby" and text.startswith("//", i)) or (
-                language in {"ruby", "php"} and text[i] == "#"
+                language in {"ruby", "php"}
+                and text[i] == "#"
+                # PHP 8 opens an attribute with "#[": code, and its strings can span lines.
+                and not (language == "php" and self.php_attributes and text.startswith("#[", i))
             ):
                 end = self._line_comment_end(i)
                 spans.append((i, end))

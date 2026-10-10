@@ -11,12 +11,12 @@ from shadowscan.engine import Engine
 from shadowscan.models import Kind
 
 
-def _scan(tmp_path, run_connector, files):
+def _scan(tmp_path, run_connector, files, **config):
     for name, text in files.items():
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-    return run_connector("code.filesystem", path=str(tmp_path), git_metadata=False)
+    return run_connector("code.filesystem", path=str(tmp_path), git_metadata=False, **config)
 
 
 def _agents(findings):
@@ -203,7 +203,16 @@ def test_large_ordinary_local_module_leaves_its_consumers_complete(tmp_path, run
     # shim, so importing it neither limits resolution nor changes evidence.
     helpers = "def helper():\n    return 1\n" + "".join(f"VALUE_{n} = {n}\n" for n in range(8000))
     assert len(helpers.encode("utf-8")) > python_reexports.MAX_SHIM_BYTES
-    findings, ctx = _scan(tmp_path, run_connector, {"helpers.py": helpers, "app.py": _OPENAI_CONSUMER})
+    # code.filesystem passes its own scan_timeout to the matcher, so the generous
+    # test budget from conftest does not reach it. Matching this 140 KB module
+    # takes close to the shipped two CPU seconds under coverage on Python 3.11,
+    # and this test is about shim resolution, not budgets.
+    findings, ctx = _scan(
+        tmp_path,
+        run_connector,
+        {"helpers.py": helpers, "app.py": _OPENAI_CONSUMER},
+        scan_timeout=30.0,  # conftest.TEST_SCAN_BUDGET_SECONDS
+    )
     assert _uses_openai(findings)
     assert not ctx.stats.incomplete, ctx.stats.errors
 
@@ -280,6 +289,11 @@ def test_resolved_import_keeps_the_binder_and_its_ast_budget(tmp_path, run_conne
     assert any("app.py: import-bound analysis skipped" in error for error in ctx.stats.errors)
 
 
+# The walk reads smaller source files first. Filler projects larger than the
+# consumers keep the consumers ahead of them, as these deadline scenarios need.
+_FILLER_AGENT = "from langchain import agents\n" + "# filler\n" * 40
+
+
 def _fake_clock(monkeypatch) -> list[float]:
     """Freeze ``time.monotonic`` and advance it by one second for every file the scanner reads."""
     clock = [1000.0]
@@ -301,7 +315,7 @@ def test_queued_consumers_keep_the_walk_deadline_margin(tmp_path, index, monkeyp
     (tmp_path / "a_app.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
     (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
     for number in range(3):
-        (tmp_path / f"z_agent_{number}.py").write_text("from langchain import agents\n")
+        (tmp_path / f"z_agent_{number}.py").write_text(_FILLER_AGENT)
     clock = _fake_clock(monkeypatch)
     bind = filesystem.bound_source_matches
 
@@ -324,8 +338,79 @@ def test_queued_consumers_keep_the_walk_deadline_margin(tmp_path, index, monkeyp
     assert any("a_app.py" in error and "re-export" in error for error in stats.errors)
 
 
+def test_a_queued_binders_wall_time_stops_short_of_the_deadline_margin(tmp_path, index, monkeypatch):
+    # The matching budget is the thread's CPU time, so a binder descheduled
+    # under contention is ended only by its wall cap. As in the walk, that cap
+    # must not run into the margin the connector keeps to emit its findings.
+    (tmp_path / "a_app.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
+    (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
+    clock = _fake_clock(monkeypatch)
+    deadline = clock[0] + 30.0
+    resolve = filesystem.FilesystemConnector._resolve_reexport_sources
+    caps = []
+    expected = []
+
+    def late_resolve(self, scan):
+        # The walk leaves the consumer just its budget and the margin.
+        clock[0] = deadline - (self.scan_timeout + scan.margin + 0.05)
+        expected.append(deadline - clock[0] - scan.margin)
+        scan_budget = self.index.scan_budget
+
+        def recording(*args, **options):
+            caps.append(options)
+            return scan_budget(*args, **options)
+
+        monkeypatch.setattr(self.index, "scan_budget", recording)
+        return resolve(self, scan)
+
+    monkeypatch.setattr(filesystem.FilesystemConnector, "_resolve_reexport_sources", late_resolve)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, deadline=deadline)
+    findings = filesystem.FilesystemConnector(ctx).run()
+    assert _uses_openai(findings)
+    assert len(caps) == 1 and caps[0]["chars"] == len((tmp_path / "a_app.py").read_bytes())
+    assert caps[0]["wall_seconds"] <= expected[0]
+
+
+def test_queued_consumers_are_redacted_in_the_walk_not_after_it(tmp_path, index, monkeypatch):
+    # The walk accounts for every file's redaction against the deadline. A
+    # queued consumer is redacted there too, so neither the re-export pass nor
+    # emit, after the last deadline check, redacts a whole file, whether the
+    # pass reaches the consumer or not.
+    for name in ("a_app.py", "b_app.py"):
+        (tmp_path / name).write_text(_OPENAI_CONSUMER.replace("helpers", "c_helpers"))
+    (tmp_path / "c_helpers.py").write_text("def helper():\n    return 1\n")
+    redact = filesystem._redacted_source
+    queued = []
+    late = []
+
+    def counting(text, structure):
+        if queued:
+            late.append(text[:40])
+        return redact(text, structure)
+
+    resolve = filesystem.FilesystemConnector._resolve_reexport_sources
+
+    def marking(self, scan):
+        queued.extend(source.file.rel for source in scan.reexport_files)
+        assert all(source.file.excerpts.safe_lines is not None for source in scan.reexport_files)
+        return resolve(self, scan)
+
+    monkeypatch.setattr(filesystem, "_redacted_source", counting)
+    monkeypatch.setattr(filesystem.FilesystemConnector, "_resolve_reexport_sources", marking)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = filesystem.FilesystemConnector(ctx).run()
+    assert sorted(queued) == ["a_app.py", "b_app.py"]
+    assert late == []
+    # Their evidence, model identifiers included, still carries its excerpts.
+    snippets = {(e.location, e.signal): e.snippet for f in findings for e in f.evidence}
+    call = 'client.chat.completions.create(model="gpt-4o", messages=[])'
+    assert snippets[("a_app.py:4", "code:provider.openai")] == call
+    assert snippets[("b_app.py:4", "model:provider.openai")] == call
+
+
 def test_queued_consumer_whose_budget_does_not_fit_is_skipped_alone(tmp_path, index, monkeypatch):
-    # The walk finishes with 5 s left: a 900 KiB consumer's 8 s budget no
+    # The walk reads the 900 KiB consumer last (smaller files first) and
+    # finishes with 8 s left: that consumer's 8 s budget plus the margin no
     # longer fits, but an ordinary queued consumer's still does. The skipped
     # consumer keeps the imports the walk matched.
     large = "from b_helpers import helper\nimport anthropic\n" + "x = 1\n" * (900 * 1024 // 6)
@@ -333,10 +418,10 @@ def test_queued_consumer_whose_budget_does_not_fit_is_skipped_alone(tmp_path, in
     (tmp_path / "a_small.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
     (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
     for number in range(4):
-        (tmp_path / f"z_agent_{number}.py").write_text("from langchain import agents\n")
+        (tmp_path / f"z_agent_{number}.py").write_text(_FILLER_AGENT)
     clock = _fake_clock(monkeypatch)
     ctx = ConnectorContext(
-        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 12.0
+        config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 15.0
     )
     findings = filesystem.FilesystemConnector(ctx).run()
     assert ctx.stats.objects_examined == 7 and ctx.stats.incomplete
@@ -355,7 +440,7 @@ def test_queued_consumer_left_unbound_keeps_its_lexical_evidence(tmp_path, index
     (tmp_path / "a_app.py").write_text(_OPENAI_CONSUMER.replace("helpers", "b_helpers"))
     (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
     for number in range(3):
-        (tmp_path / f"z_agent_{number}.py").write_text("from langchain import agents\n")
+        (tmp_path / f"z_agent_{number}.py").write_text(_FILLER_AGENT)
     clock = _fake_clock(monkeypatch)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 5.5
@@ -374,7 +459,7 @@ def test_retained_lexical_evidence_stops_at_half_the_margin(tmp_path, index, mon
         (tmp_path / name).write_text(_OPENAI_CONSUMER.replace("helpers", "c_helpers"))
     (tmp_path / "c_helpers.py").write_text("def helper():\n    return 1\n")
     for number in range(2):
-        (tmp_path / f"z_agent_{number}.py").write_text("from langchain import agents\n")
+        (tmp_path / f"z_agent_{number}.py").write_text(_FILLER_AGENT)
     clock = _fake_clock(monkeypatch)
     record = filesystem.FilesystemConnector._record_source
     recorded = []

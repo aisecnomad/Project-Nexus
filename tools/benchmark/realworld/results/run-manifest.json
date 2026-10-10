@@ -1,0 +1,164 @@
+{
+ "runs": [
+  {
+   "manifest": "manifest.jsonl",
+   "manifest_sha256": "d505cbfd15a10f557152c5aed15500978d2f780719d6b65cb264d165965c0fc1",
+   "repositories": 326,
+   "tools": [
+    "shadowscan",
+    "cisco-aibom",
+    "trusera-ai-bom",
+    "agent-bom",
+    "agentdiscover",
+    "agt-discovery",
+    "safedep-vet",
+    "cdxgen-aibom",
+    "agentic-radar",
+    "grep-any",
+    "grep-code",
+    "shadowscan-bigfiles",
+    "shadowscan-conf03"
+   ],
+   "tool_info": {
+    "shadowscan": {
+     "display": "Project Nexus ShadowScan",
+     "source": "aisecnomad/Project-Nexus",
+     "scope": "code.filesystem on the checkout (signature packs for frameworks, providers, MCP and coding agents)"
+    },
+    "cisco-aibom": {
+     "display": "Cisco AI BOM",
+     "source": "cisco-ai-defense/aibom",
+     "scope": "analyze <checkout>; LLM classifier unreachable (deterministic candidates only)"
+    },
+    "trusera-ai-bom": {
+     "display": "Trusera ai-bom",
+     "source": "Trusera/ai-bom",
+     "scope": "scan <checkout> -f json (default depth)"
+    },
+    "agent-bom": {
+     "display": "agent-bom",
+     "source": "msaad00/agent-bom",
+     "scope": "scan <checkout> --ai-inventory --no-scan --offline (inventory only)"
+    },
+    "agentdiscover": {
+     "display": "AgentDiscover Scanner",
+     "source": "Defend-AI-Tech-Inc/agent-discover-scanner",
+     "scope": "scan --format sarif + audit --skip-layers 2,3,4,5"
+    },
+    "agt-discovery": {
+     "display": "Microsoft AGT agent-discovery",
+     "source": "microsoft/agent-governance-toolkit",
+     "scope": "scan -s config (file-name based); process and github scanners not applicable offline"
+    },
+    "safedep-vet": {
+     "display": "SafeDep vet",
+     "source": "safedep/vet",
+     "scope": "ai discover --scope project + code scan (xBOM signatures tagged ai/llm/agent/mcp/crewai)"
+    },
+    "cdxgen-aibom": {
+     "display": "cdxgen AI-BOM (OWASP)",
+     "source": "cdxgen/cdxgen",
+     "scope": "aibom --no-install-deps (models, inference services, prompts, MCP configuration)"
+    },
+    "agentic-radar": {
+     "display": "Agentic Radar (SPLX)",
+     "source": "splx-ai/agentic-radar",
+     "scope": "scan <framework> for langgraph, crewai, n8n, openai-agents, autogen (static analysis)"
+    },
+    "grep-any": {
+     "display": "keyword grep (all text files)",
+     "source": "baseline",
+     "scope": "case-insensitive vendor and framework names in any text file"
+    },
+    "grep-code": {
+     "display": "keyword grep (code and config only)",
+     "source": "baseline",
+     "scope": "same pattern, prose and lock files excluded"
+    },
+    "shadowscan-bigfiles": {
+     "display": "ShadowScan, max_file_size 25 MB",
+     "source": "aisecnomad/Project-Nexus",
+     "scope": "as shadowscan, with max_file_size 25 MB and connector deadline 540 s"
+    },
+    "shadowscan-conf03": {
+     "display": "ShadowScan, min-confidence 0.3",
+     "source": "aisecnomad/Project-Nexus",
+     "scope": "as shadowscan, with --min-confidence 0.3"
+    }
+   },
+   "outcomes": {
+    "agent-bom:error": 14,
+    "agent-bom:ok": 312,
+    "agentdiscover:ok": 326,
+    "agentic-radar:error": 158,
+    "agentic-radar:ok": 168,
+    "agt-discovery:ok": 326,
+    "cdxgen-aibom:ok": 326,
+    "cisco-aibom:error": 9,
+    "cisco-aibom:ok": 317,
+    "grep-any:ok": 326,
+    "grep-code:ok": 326,
+    "safedep-vet:error": 10,
+    "safedep-vet:ok": 316,
+    "shadowscan-bigfiles:error": 23,
+    "shadowscan-bigfiles:ok": 303,
+    "shadowscan-conf03:error": 28,
+    "shadowscan-conf03:ok": 298,
+    "shadowscan:error": 27,
+    "shadowscan:ok": 299,
+    "trusera-ai-bom:ok": 326
+   },
+   "wall_seconds": 10724.9,
+   "python": "3.13.16",
+   "platform": "Linux-6.18.44-fc-v80-x86_64-with-glibc2.39",
+   "timeout_s": 600,
+   "workers": 8,
+   "frozen_files_sha256": {
+    "PROTOCOL.md": "4096c4ac500a088e5be2bda9f30e97a22be4d3a7c4e805ea07be32839509903b",
+    "adapters.py": "beb3ee815a81c28ba80e99077e5343726fceacdde45074cf17b8be8bad44da17",
+    "baseline_grep.py": "3bc137ec55ac792b45b6010e0d8f348bb49d05c4d4c41388cd2b8b01aae250bc",
+    "contamination.py": "4df4dd8a75a9cbdac7195ec8350de6ecc6072c37a8cc175af3d57b02052c0e3b",
+    "exclusions.json": "04797f4161f04598864c275f45162788a9be98a61ac93e9da654418330c12886",
+    "fetch.py": "8a03bd2cf1fc61556f568dbe85ef3ba0f68353cca71d94dfb59a9e2c8772626a",
+    "fetch_corpus.py": "3c50e88930d2dd4517de3c428a24b9d285378c7377c172de142f137c2882516b",
+    "frames.py": "720b63b9ab3200c2600bafdd3fb909eaff3276f3cd1b337b63ec8c0b54dd3aba",
+    "freeze.py": "6903311a9203dffc04b70c223d48210a14da50c71ff1199cae9fa2b6d2077d8a",
+    "install_tools.sh": "6a27109e2df06a53b889341601f8741be54a9aab40d21035527d95a880726152",
+    "oracle.py": "4fa21608d6a74908db479d323a3b87c153bd340e154d8f057934c227fb27931f",
+    "purposive.json": "8f5cfb24cc440bdc6198698e7538df3b7e992943ab79795d28d73707edae3954",
+    "registry/ai_registry.json": "eb92188325446e01643f41159e5d12f95ed1963c304f7247a0721d15a61cbb07",
+    "registry/vocab-overlap.json": "131f3e3bc6229d033eff273381d4e35cc385745d7e65844c2855164808044f14",
+    "run.py": "cc0d97460bc55e05f0ed88b1fa145533aa7440c5fec86cbb0791c1015b19ec85",
+    "sample.py": "c093bcde33bdeb4f8d414e0c83507ab2e5e033fa589acd08ebe12ce24af92553",
+    "sandbox.py": "d384e24cc75085549261eac7f1d44c464dc9c2388cfee5d74488a08adf0b8975",
+    "score.py": "7b6bf64afaa70db5c6ffb6fd22e15e25ff82322d613b7662b7ed605c84ef68c2",
+    "vocab_overlap.py": "9046194daf191be3f5f5c32895aa9cb583bac42384142fcd759e47aa27474545",
+    "manifest.jsonl": "d505cbfd15a10f557152c5aed15500978d2f780719d6b65cb264d165965c0fc1",
+    "calibration.jsonl": "590e3eaceafd1f473467ead704d4a7048531738bb855603b58910b6e40bc23d5",
+    "labels.jsonl": "487c717787b41182313a6280906f645d4f819f297fd97f4b3c0ecd7a5754d2a2",
+    "labels-calibration.jsonl": "ef45630f2745777ee1aa9ce33374d59161a3ae31a8dc979600ebe85b6afe830f",
+    "rejects.jsonl": "65db105642d0548f2e926f6be9c19411a343459d5e73dee80901e84e47da5bb6",
+    "sampling-summary.json": "d2dc8044d6b08f5871c183190621ad3c2fbf99cd815f6b808ceeff2e94e077f7"
+   },
+   "freeze_record_sha256": "e0ffa1bfc5c6bfc5b60fde51e9b70c42c9f97b988fe3378424a393f36803b2d4",
+   "versions": {
+    "Defend-AI-Tech-Inc_agent-discover-scanner": "a3756cda779a6a46088a3290c77027b0ea5d83c9",
+    "Trusera_ai-bom": "012d53d389ca789f1d5b4a10135d42a6d0fa39f7",
+    "cisco-ai-defense_aibom": "8d7bec099d5ddcd24dbda13a9777f3cf11e2c325",
+    "microsoft_agent-governance-toolkit": "431d20b2fe23e019d5cbd2b41774d43eddb74fa0",
+    "msaad00_agent-bom": "26ed7c15841f9abf7dec70c66c49441ccd317d55",
+    "safedep_vet": "948d9bafaf8062f1b83aa5046a6c8b4c64d8856d",
+    "splx-ai_agentic-radar": "65a7e4bd01e2034c7cb52e9620eeed287688cc53",
+    "cdxgen": "12.8.5",
+    "safedep_vet_version": [
+     "posthog 2026/10/08 19:15:00 WARN: sending request - Post \"https://us.i.posthog.com/batch/\": dial tcp: lookup us.i.posthog.com on [::1]:53: dial udp [::1]:53: socket: address family not supported by protocol"
+    ],
+    "shadowscan_commit": "451dd805b3023bebb56b2917cccf05ed0f83691d",
+    "shadowscan_source_dirty": false,
+    "shadowscan_source_tree_sha256": "f73e8637b1940f2e34d4c88c12118fb188149c649351a68ac291b564304cd602",
+    "shadowscan_installed_tree_sha256": "f73e8637b1940f2e34d4c88c12118fb188149c649351a68ac291b564304cd602"
+   },
+   "finished": "2026-10-08T19:15:00Z"
+  }
+ ]
+}
