@@ -177,6 +177,57 @@ summarizes each release for people who install and operate ShadowScan.
 - The tests use a synthetic snapshot shaped like the live registry API. No
   live registry fetch or tenant acceptance is part of the test suite.
 
+### Google Agent Registry and Gemini Enterprise catalogs in cloud.gcp
+
+- New opt-in `cloud.gcp` options `agent_registry` and `gemini_enterprise`
+  (both default false). `agent_registry` reads Google Agent Registry agents,
+  MCP servers and endpoints in projects with `agentregistry.googleapis.com`
+  enabled (`agent_registry_version` `v1`, or experimental `v1alpha`, which also
+  reads skills and publishers; `agent_registry_locations` limits the
+  locations). `gemini_enterprise` reads the agents of Gemini Enterprise apps
+  through the Discovery Engine `v1alpha` assistants API. With both off and
+  `discovery_collections` unset, no new API calls are made; the engine
+  metadata and enabled-APIs changes below still apply. `cloud.gcp` now
+  declares the `emits_registry_records` hook for `google-agent-registry` and
+  `gemini-enterprise`.
+- Each listed item becomes a registry record finding (`agent-registry-agent`,
+  `agent-registry-mcp-server`, `agent-registry-endpoint`,
+  `agent-registry-skill`, `gemini-enterprise-agent`). Agent Registry records
+  are `registered` with `approval_mode: none`; Gemini Enterprise records map
+  `ENABLED` to `approved` (`approval_mode: manual`), `PRIVATE` with a
+  rejection reason to `rejected`, and other states to `draft`, `blocked` or
+  `unknown`, and are caller-scoped, so never a complete listing. Registry ids
+  are `projects/<project-id>/locations/<location>` and the Gemini Enterprise
+  engine name, with project numbers replaced by ids from the same scan.
+- Records bind only to the exact reasoning engine or Dialogflow CX agent they
+  reference, rendered as the observed finding's resource; binding coverage is
+  `in-scope` only after a complete Vertex AI or Dialogflow CX listing of that
+  project and location. Runtime identity and endpoint URL matches are hints
+  (`metadata.registry_join_hints`), not bindings. An Agent Registry listing is
+  complete only when its locations were enumerated and every location's
+  listings completed. `metadata.catalog_presence` compares the two catalogs on
+  agents; absence from Gemini Enterprise is never reported.
+- New export record kinds `registry-coverage` and `project-number` record
+  listing completeness and project numbers. Any record that analysis cannot
+  read, anything that makes an offline replay incomplete (such as an invalid
+  JSON line or a provider error record that the loader drops), and any
+  registry record whose name carries the number of a project other than the
+  one it was listed in (dropped with a warning) void every completeness claim
+  of that scan: no binding is in scope, no listing is complete and nothing is
+  reported absent. Listed items are reduced when collected: agent cards become
+  summaries, interface URLs lose userinfo, query and fragment, and icons,
+  prompts, assistant instructions and authorization values are dropped.
+  `cloud.gcp` `_pages` now reports whether a listing completed.
+- New option `discovery_collections` (default `default_collection`). Discovery
+  Engine engines keep their kinds (chat engines are `agent`, others
+  `cloud-resource`) and record `app_type`, `associated_agent_registry` and
+  `subscription_tier`, reasoning engines `effective_identity`, when present.
+  Agent Registry counts as an AI API, so a project whose only AI API is Agent
+  Registry now has an enabled-APIs finding.
+- The fixtures and transports in the tests are synthetic, written from
+  Google's API discovery documents; nothing was validated against a live
+  project.
+
 ### Autonomy tiers and Capability Card schema version 2
 
 - Classify agents, agent configurations, MCP servers, workflows, bots, gateway

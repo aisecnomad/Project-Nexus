@@ -140,7 +140,7 @@ SHARED_CONNECTOR_KEYS = frozenset(
 _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "cloud.aws": frozenset({"allow_instance_credentials"}),
     "cloud.azure": frozenset({"allow_instance_credentials", "include_app_settings"}),
-    "cloud.gcp": frozenset({"allow_instance_credentials"}),
+    "cloud.gcp": frozenset({"agent_registry", "allow_instance_credentials", "gemini_enterprise"}),
     "cloud.oci": frozenset({"allow_instance_credentials"}),
     "code.filesystem": frozenset(
         {"default_excludes", "include_tests", "scan_secrets", "strict_coverage", "use_git"}

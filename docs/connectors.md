@@ -927,6 +927,19 @@ queries at 50 pages regardless.
 `asia-southeast1`, `asia-northeast1`). `credentials_file` names an explicit
 Google credentials file (env `GOOGLE_APPLICATION_CREDENTIALS`); otherwise the
 local gcloud Application Default Credentials are used.
+`discovery_collections` lists the Discovery Engine collections whose engines are
+read (default `default_collection`); engines record their `app_type`
+(`APP_TYPE_INTRANET` for a Gemini Enterprise app).
+Two opt-in catalogs emit [registry records](inventory.md#vendor-registries-as-inventory-sources):
+`agent_registry: true` reads Google Agent Registry agents, MCP servers and
+endpoints (`agent_registry_version` `v1`, or experimental `v1alpha` with skills
+and publishers; `agent_registry_locations` to limit the locations, which leaves
+the listing incomplete for reconciliation), and `gemini_enterprise: true` reads
+the agents of Gemini Enterprise apps (Discovery Engine `v1alpha`, a
+caller-scoped listing that is never complete). Records bind only to the exact
+reasoning engines and Dialogflow CX agents they reference, and carry
+`metadata.catalog_presence`. See
+[Agent Registry and Gemini Enterprise catalogs](connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs).
 
 ### `cloud.azure`
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
@@ -1051,7 +1064,7 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition` |
-| GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs) |
+| GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs; with the opt-in catalogs, read access to Agent Registry and to Discovery Engine assistants and agents, for example Google's viewer roles for those APIs: verify the role names in your organization) |
 | Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
 | OCI | policy `Allow group audit to read all-resources in tenancy` |
 | Endpoint | read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written |

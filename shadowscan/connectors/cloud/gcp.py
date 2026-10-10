@@ -10,6 +10,9 @@ Per project:
 * service accounts (agent-like names, user-managed keys)
 * API keys restricted to the Gemini API (``secret``), Secret Manager secret names
 * optional: Cloud Audit Logs callers of ``aiplatform.googleapis.com`` (``gateway-caller``)
+* opt-in: Google Agent Registry agents, MCP servers and endpoints (``agent_registry``) and Gemini
+  Enterprise app agents (``gemini_enterprise``) as registry records (``shadowscan.registries``),
+  bound to the reasoning engines and Dialogflow agents this scan observed (see ``gcp_registry``)
 
 Offline export: JSONL of dumped records (``_kind`` per record).
 """
@@ -17,8 +20,9 @@ Offline export: JSONL of dumped records (``_kind`` per record).
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
@@ -47,8 +51,43 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials, require_local_adc
-from shadowscan.connectors.common import apply_matches, failure_summary, max_pages_limit, model_matches
+from shadowscan.connectors.cloud.gcp_registry import (
+    AR_ALPHA_COLLECTIONS,
+    AR_COLLECTIONS,
+    AR_REGISTRY,
+    AR_VERSIONS,
+    COVERAGE_KIND,
+    DIALOGFLOW_CATALOG,
+    EXTRA_KINDS,
+    GE_AGENT_KIND,
+    GE_REGISTRY,
+    PROJECT_NUMBER_KIND,
+    RECORD_KINDS,
+    VERTEX_CATALOG,
+    RecordEntry,
+    RegistryCatalogs,
+    clean_card,
+    clean_texts,
+    clean_tools,
+    engine_scope,
+    is_assistant_of,
+    is_ge_app,
+    is_number,
+    normalize_ar_item,
+    normalize_ge_agent,
+    record_entry,
+    urls,
+    valid_location,
+)
+from shadowscan.connectors.common import (
+    apply_matches,
+    config_boolean,
+    failure_summary,
+    max_pages_limit,
+    model_matches,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.registries import EVIDENCE_GROUP, registry_evidence
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
 
@@ -71,6 +110,7 @@ AI_SERVICES = {
     "speech.googleapis.com": "Speech",
     "documentai.googleapis.com": "Document AI",
     "contactcenteraiplatform.googleapis.com": "CCAI",
+    "agentregistry.googleapis.com": "Agent Registry",
 }
 # Cloud Audit Logs entries for generative calls (services and method-name fragments).
 _AUDIT_SERVICES = ("aiplatform.googleapis.com", "dialogflow.googleapis.com", "discoveryengine.googleapis.com")
@@ -113,6 +153,20 @@ _LLM_SECRET_KEYWORDS = (
 )
 _RUN_LOCATION = re.compile(r"[a-z][a-z0-9-]*[0-9]")
 _SERVICE_ACCOUNT_NAME = re.compile(r"projects/[A-Za-z0-9._:-]+/serviceAccounts/[^/?#\s]+")
+_DISCOVERY_LOCATIONS = ("global", "us", "eu")
+# Registry record kinds: finding kind and title of each.
+_RECORD_FINDINGS = {
+    "agent-registry-agent": (Kind.AGENT, "Agent Registry agent"),
+    "agent-registry-mcp-server": (Kind.MCP_SERVER, "Agent Registry MCP server"),
+    "agent-registry-endpoint": (Kind.CLOUD_RESOURCE, "Agent Registry endpoint"),
+    "agent-registry-skill": (Kind.AGENT_CONFIG, "Agent Registry skill"),
+    GE_AGENT_KIND: (Kind.AGENT, "Gemini Enterprise agent"),
+}
+
+
+def _count(value: Any) -> int:
+    """A nonnegative integer count from a record, 0 for anything else."""
+    return value if type(value) is int and value >= 0 else 0
 
 
 def _uses(services: Iterable[str | None], service: str) -> bool:
@@ -147,8 +201,11 @@ class GcpConnector(BaseConnector):
     requires: ClassVar[list[str]] = []
     description: ClassVar[str] = (
         "Vertex AI Agent Engine, Dialogflow CX, Agentspace/Discovery Engine, Cloud Run/Functions, "
-        "IAM bindings, service accounts, Gemini API keys, secret names, audit-log callers."
+        "IAM bindings, service accounts, Gemini API keys, secret names, audit-log callers; opt-in "
+        "Agent Registry and Gemini Enterprise agent catalogs."
     )
+    emits_registry_records: ClassVar[bool] = True
+    registry_record_types: ClassVar[frozenset[str]] = frozenset({AR_REGISTRY, GE_REGISTRY})
     config_keys: ClassVar[dict[str, str]] = {
         "projects": "list of project ids (default: all projects visible to the credentials)",
         "locations": f"Vertex/Dialogflow locations (default {DEFAULT_LOCATIONS})",
@@ -172,6 +229,24 @@ class GcpConnector(BaseConnector):
             "maximum pages per paginated call, capped at 1000 (default 1000; resource lists stop at 500 "
             "pages and audit-log queries at 50 pages regardless)"
         ),
+        "agent_registry": (
+            "read Google Agent Registry agents, MCP servers and endpoints as registry records where "
+            "agentregistry.googleapis.com is enabled (default false)"
+        ),
+        "agent_registry_version": (
+            "Agent Registry API version: v1 (default) or v1alpha (experimental; adds skills and publishers)"
+        ),
+        "agent_registry_locations": (
+            "Agent Registry locations to list (default: every location the API reports; when set, "
+            "listings are never complete for reconciliation)"
+        ),
+        "gemini_enterprise": (
+            "read the agents of Gemini Enterprise apps (Discovery Engine v1alpha, caller-scoped) as "
+            "registry records (default false)"
+        ),
+        "discovery_collections": (
+            'Discovery Engine collections whose engines are listed (default ["default_collection"])'
+        ),
         "input": "offline: JSONL dump of records",
     }
     offline_formats: ClassVar[str] = "JSONL dump of records"
@@ -184,13 +259,33 @@ class GcpConnector(BaseConnector):
             self.locations = locations or DEFAULT_LOCATIONS
             self._default_locations = not locations
             self.projects = string_list(ctx.get("projects"), "projects", pattern=r"[A-Za-z0-9._:-]+") or []
+            # Agent Registry locations and Discovery Engine collections become request paths.
+            self.agent_registry_locations = string_list(
+                ctx.get("agent_registry_locations"), "agent_registry_locations", pattern=r"[a-z][a-z0-9-]*"
+            )
+            self.discovery_collections = string_list(
+                ctx.get("discovery_collections"), "discovery_collections", pattern=r"[a-z0-9][a-z0-9_-]*"
+            ) or ["default_collection"]
         except ValueError as exc:
             raise ConnectorError(f"cloud.gcp: {exc}") from None
         self.audit_days = _non_negative_limit(ctx.get("audit_days", 0), "audit_days")
         self.max_projects = _positive_limit(ctx.get("max_projects", 200), "max_projects")
         self.max_pages = max_pages_limit(ctx.get("max_pages", 1000))
+        self.agent_registry = config_boolean(ctx.get("agent_registry", False), "agent_registry")
+        self.gemini_enterprise = config_boolean(ctx.get("gemini_enterprise", False), "gemini_enterprise")
+        version = ctx.get("agent_registry_version", "v1")
+        if not isinstance(version, str) or version not in AR_VERSIONS:
+            raise ConnectorError("cloud.gcp: agent_registry_version must be v1 or v1alpha")
+        self.agent_registry_version = version
         self.http: HttpClient | None = None
         self._locations_noted = False
+        # Project number -> id for registry reconciliation, from discovery or a project lookup.
+        self._project_numbers: dict[str, str] = {}
+
+    @property
+    def _catalogs(self) -> bool:
+        """Whether a registry catalog is read: only then are coverage and project-number records emitted."""
+        return self.agent_registry or self.gemini_enterprise
 
     def _auth(self) -> None:
         token = self.ctx.get("access_token", env="GOOGLE_OAUTH_ACCESS_TOKEN")
@@ -288,8 +383,9 @@ class GcpConnector(BaseConnector):
 
         An absent or empty token stops pagination silently (normal
         termination); ``warn`` is only logged for an invalid or
-        already-seen token. Shared by ``_pages`` and ``_collect_audit``; the
-        token contract itself lives in ``common.next_page_token``.
+        already-seen token. Used by ``_collect_audit`` (``_pages`` also needs
+        to tell the two apart); the token contract itself lives in
+        ``common.next_page_token``.
         """
         try:
             return next_page_token(data.get("nextPageToken"), seen)
@@ -297,19 +393,25 @@ class GcpConnector(BaseConnector):
             self.ctx.warn(warn)
             return None
 
-    def _pages(self, url: str, items_key: str, **params: Any) -> Iterator[dict[str, Any]]:
+    def _pages(self, url: str, items_key: str, **params: Any) -> Generator[dict[str, Any], None, bool]:
+        """Yield the items of a paginated list; return True only when the listing ended cleanly.
+
+        Every failure (denied or failed request, invalid page, unreachable locations, invalid
+        or repeated token, page cap) is warned here as incomplete and returns False.
+        """
         token: str | None = None
         seen: set[str] = set()
+        complete = True
         for _ in range(min(MAX_LIST_PAGES, self.max_pages)):
             p = dict(params)
             if token:
                 p["pageToken"] = token
             data = self._get(url, **p)
             if data is None:
-                return  # _get has already recorded the collection failure
+                return False  # _get has already recorded the collection failure
             if not isinstance(data, dict) or "error" in data:
                 self.ctx.warn(f"cloud.gcp: invalid response for {url}")
-                return
+                return False
             # Aggregated list APIs may succeed while omitting unavailable regions.
             # Keep reachable observations, but never turn partial success into a
             # complete inventory (Cloud Functions v2 and Cloud Run v2 contract).
@@ -318,21 +420,84 @@ class GcpConnector(BaseConnector):
                 not isinstance(loc, str) or not loc for loc in unreachable
             ):
                 self.ctx.warn(f"cloud.gcp: invalid unreachable locations for {url}")
+                complete = False
             elif unreachable:
                 self.ctx.warn(
                     f"cloud.gcp: {len(unreachable)} unreachable location(s) for {url}; coverage unknown"
                 )
+                complete = False
             items = data.get(items_key, [])
             if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
                 self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}")
-                return
+                return False
             yield from items
-            token = self._next_page_token(
-                data, seen, warn=f"cloud.gcp: invalid or repeated pagination token for {url}"
-            )
+            try:
+                token = next_page_token(data.get("nextPageToken"), seen)
+            except InvalidPageTokenError:
+                self.ctx.warn(f"cloud.gcp: invalid or repeated pagination token for {url}")
+                return False
             if token is None:
-                return
+                return complete
         self.ctx.warn(f"cloud.gcp: pagination limit reached for {url}")
+        return False
+
+    @staticmethod
+    def _listing(
+        pages: Iterator[dict[str, Any]],
+        *,
+        normalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        sink: list[dict[str, Any]] | None = None,
+        **collected: Any,
+    ) -> Generator[dict[str, Any], None, bool]:
+        """Re-yield listed items with the collector's keys written last; return whether the list completed.
+
+        ``normalize`` reduces each item first; ``sink`` also receives every yielded record. A
+        replacement ``_pages`` that is a plain iterator never reports completion.
+        """
+        while True:
+            try:
+                item = next(pages)
+            except StopIteration as stop:
+                return stop.value is True
+            record = {**(normalize(item) if normalize else item), **collected}
+            if sink is not None:
+                sink.append(record)
+            yield record
+
+    @staticmethod
+    def _drain(pages: Iterator[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+        """Every item of a listing, and whether it completed."""
+        items: list[dict[str, Any]] = []
+        while True:
+            try:
+                items.append(next(pages))
+            except StopIteration as stop:
+                return items, stop.value is True
+
+    @staticmethod
+    def _coverage(
+        project: str,
+        location: str | None,
+        catalog: str,
+        collection: str,
+        api_version: str,
+        complete: bool,
+        *,
+        scope: str = "project",
+        **extra: Any,
+    ) -> dict[str, Any]:
+        """A ``registry-coverage`` record: whether one listing completed, for reconciliation."""
+        return {
+            "_kind": COVERAGE_KIND,
+            "_project": project,
+            "_location": location,
+            "catalog": catalog,
+            "collection": collection,
+            "api_version": api_version,
+            "complete": complete,
+            "listing_scope": scope,
+            **extra,
+        }
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -362,6 +527,10 @@ class GcpConnector(BaseConnector):
             ):
                 self.ctx.warn("cloud.gcp: invalid discovered project identifier; coverage unknown")
                 continue
+            number = project.get("projectNumber")
+            if isinstance(number, str) and is_number(number):
+                # Registry and Vertex resource names may carry the number instead of the id.
+                self._project_numbers[project_id] = number
             yield project_id
 
     def _collect_project(self, project: str) -> Iterator[dict[str, Any]]:
@@ -386,6 +555,8 @@ class GcpConnector(BaseConnector):
                 )
         ai_enabled = [s for s in enabled if s in AI_SERVICES]
         yield {"_kind": "project", "project": project, "ai_services": ai_enabled}
+        if self._catalogs:
+            yield from self._project_number(project)
         if _uses(enabled, "aiplatform.googleapis.com") or _uses(enabled, "dialogflow.googleapis.com"):
             self._note_default_locations()
         if _uses(enabled, "aiplatform.googleapis.com"):
@@ -394,16 +565,15 @@ class GcpConnector(BaseConnector):
             for loc in dict.fromkeys(["global", *self.locations]):
                 host = _api_host("dialogflow", loc)
                 url = f"https://{host}/v3/projects/{project}/locations/{loc}/agents"
-                for agent in self._pages(url, "agents"):
-                    yield {**agent, "_kind": "dialogflow-agent", "_project": project, "_location": loc}
-        if _uses(enabled, "discoveryengine.googleapis.com"):
-            for loc in ["global", "us", "eu"]:
-                url = (
-                    f"https://{_api_host('discoveryengine', loc)}/v1/projects/{project}/locations/{loc}"
-                    "/collections/default_collection/engines"
+                listed = yield from self._listing(
+                    self._pages(url, "agents"), _kind="dialogflow-agent", _project=project, _location=loc
                 )
-                for eng in self._pages(url, "engines"):
-                    yield {**eng, "_kind": "discovery-engine", "_project": project, "_location": loc}
+                if self._catalogs:
+                    yield self._coverage(project, loc, DIALOGFLOW_CATALOG, "agents", "v3", listed)
+        if _uses(enabled, "discoveryengine.googleapis.com"):
+            yield from self._collect_discovery_engines(project)
+        if self.agent_registry and _uses(enabled, "agentregistry.googleapis.com"):
+            yield from self._collect_agent_registry(project)
         if _uses(enabled, "run.googleapis.com"):
             yield from self._collect_cloud_run(project)
         if _uses(enabled, "cloudfunctions.googleapis.com"):
@@ -445,10 +615,139 @@ class GcpConnector(BaseConnector):
     def _collect_vertex(self, project: str) -> Iterator[dict[str, Any]]:
         for loc in self.locations:
             base = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{project}/locations/{loc}"
-            for re_ in self._pages(f"{base}/reasoningEngines", "reasoningEngines"):
-                yield {**re_, "_kind": "reasoning-engine", "_project": project, "_location": loc}
+            listed = yield from self._listing(
+                self._pages(f"{base}/reasoningEngines", "reasoningEngines"),
+                _kind="reasoning-engine",
+                _project=project,
+                _location=loc,
+            )
+            if self._catalogs:
+                yield self._coverage(project, loc, VERTEX_CATALOG, "reasoningEngines", "v1", listed)
             for ep in self._pages(f"{base}/endpoints", "endpoints"):
                 yield {**ep, "_kind": "vertex-endpoint", "_project": project, "_location": loc}
+
+    def _project_number(self, project: str) -> Iterator[dict[str, Any]]:
+        """The project's number, so registry names that carry it can be compared with ids."""
+        number = self._project_numbers.get(project)
+        if number is None:
+            data = self._get(f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}")
+            if data is None:
+                return  # _get has already recorded the failure
+            found = data.get("projectNumber") if isinstance(data, dict) else None
+            if (
+                not isinstance(data, dict)
+                or data.get("projectId") != project
+                or not isinstance(found, str)
+                or not is_number(found)
+            ):
+                self.ctx.warn(f"cloud.gcp: invalid project response for {project}; project number unknown")
+                return
+            number = self._project_numbers[project] = found
+        yield {"_kind": PROJECT_NUMBER_KIND, "_project": project, "project_number": number}
+
+    def _collect_discovery_engines(self, project: str) -> Iterator[dict[str, Any]]:
+        for loc in _DISCOVERY_LOCATIONS:
+            host = _api_host("discoveryengine", loc)
+            for collection in self.discovery_collections:
+                url = f"https://{host}/v1/projects/{project}/locations/{loc}/collections/{collection}/engines"
+                engines: list[dict[str, Any]] = []
+                listed = yield from self._listing(
+                    self._pages(url, "engines"),
+                    sink=engines,
+                    _kind="discovery-engine",
+                    _project=project,
+                    _location=loc,
+                )
+                if not self.gemini_enterprise:
+                    continue
+                yield self._coverage(project, loc, GE_REGISTRY, "engines", "v1", listed, parent=collection)
+                for engine in engines:
+                    # Search and recommendation engines have no assistants; asking would fail.
+                    if is_ge_app(engine):
+                        yield from self._collect_gemini_enterprise(project, loc, collection, engine)
+
+    def _collect_gemini_enterprise(
+        self, project: str, loc: str, collection: str, engine: dict[str, Any]
+    ) -> Iterator[dict[str, Any]]:
+        """The agents of one Gemini Enterprise app (v1alpha; the listing shows the caller's agents)."""
+        name = engine.get("name")
+        scope = engine_scope(name)
+        if (
+            scope is None
+            or scope[1:] != (loc, collection)
+            or scope[0]
+            not in {
+                project,
+                self._project_numbers.get(project),
+            }
+        ):
+            self.ctx.warn(
+                f"cloud.gcp: invalid Discovery Engine engine name in {project}; "
+                "Gemini Enterprise coverage unknown"
+            )
+            return
+        engine_name = str(name)
+        host = _api_host("discoveryengine", loc)
+        associated = engine.get("associatedAgentRegistry")
+        assistants, complete = self._drain(
+            self._pages(f"https://{host}/v1alpha/{engine_name}/assistants", "assistants", pageSize=1000)
+        )
+        for assistant in assistants:
+            assistant_name = assistant.get("name")
+            if not is_assistant_of(assistant_name, engine_name):
+                self.ctx.warn(
+                    f"cloud.gcp: invalid Gemini Enterprise assistant name in {project}; coverage unknown"
+                )
+                complete = False
+                continue
+            listed = yield from self._listing(
+                self._pages(f"https://{host}/v1alpha/{assistant_name}/agents", "agents", pageSize=1000),
+                normalize=normalize_ge_agent,
+                _kind=GE_AGENT_KIND,
+                _project=project,
+                _location=loc,
+                _engine=engine_name,
+                _assistant=assistant_name,
+                _agent_registry=associated if isinstance(associated, str) and associated else None,
+            )
+            yield self._coverage(
+                project, loc, GE_REGISTRY, "agents", "v1alpha", listed, scope="caller", parent=assistant_name
+            )
+        yield self._coverage(project, loc, GE_REGISTRY, "assistants", "v1alpha", complete, parent=engine_name)
+
+    def _collect_agent_registry(self, project: str) -> Iterator[dict[str, Any]]:
+        """Agent Registry agents, MCP servers and endpoints (plus skills and publishers in v1alpha)."""
+        version = self.agent_registry_version
+        base = f"https://agentregistry.googleapis.com/{version}/projects/{project}"
+        locations = self.agent_registry_locations
+        if locations is None:
+            found, complete = self._drain(self._pages(f"{base}/locations", "locations"))
+            locations = []
+            for item in found:
+                location = item.get("locationId")
+                if not valid_location(location):
+                    self.ctx.warn(
+                        f"cloud.gcp: invalid Agent Registry location for {project}; coverage unknown"
+                    )
+                    complete = False
+                elif location not in locations:
+                    locations.append(location)
+            # Only an enumerated location list can show that no registry location was missed.
+            yield self._coverage(
+                project, None, AR_REGISTRY, "locations", version, complete, locations=locations
+            )
+        collections = {**AR_COLLECTIONS, **(AR_ALPHA_COLLECTIONS if version == "v1alpha" else {})}
+        for loc in locations:
+            for collection, kind in collections.items():
+                listed = yield from self._listing(
+                    self._pages(f"{base}/locations/{loc}/{collection}", collection, pageSize=100),
+                    normalize=partial(normalize_ar_item, collection),
+                    _kind=kind,
+                    _project=project,
+                    _location=loc,
+                    _api_version=version,
+                )
+                yield self._coverage(project, loc, AR_REGISTRY, collection, version, listed)
 
     def _collect_cloud_run(self, project: str) -> Iterator[dict[str, Any]]:
         # Cloud Run v2 services.list rejects the '-' wildcard. Enumerate
@@ -562,10 +861,15 @@ class GcpConnector(BaseConnector):
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         callers: dict[tuple[str | None, str], dict[str, Any]] = {}
-        dispatch = RecordDispatch(self, "audit-event")
+        # Registry records are completed after every record is read: their bindings, coverage
+        # and listing completeness depend on observed resources and coverage records anywhere
+        # in the stream.
+        catalogs = RegistryCatalogs()
+        dispatch = RecordDispatch(self, "audit-event", *EXTRA_KINDS)
         for rec in records:
             kind = dispatch.kind(rec)
             if kind is None:
+                catalogs.taint()
                 continue
             try:
                 if kind == "audit-event":
@@ -574,18 +878,39 @@ class GcpConnector(BaseConnector):
                             raise ValueError("event field")
                     self._acc_caller(callers, rec)
                     continue
+                if kind in EXTRA_KINDS:
+                    catalogs.add(kind, rec)
+                    continue
+                if kind in RECORD_KINDS:
+                    catalogs.defer(*self._registry_finding(kind, rec))
+                    continue
                 result = dispatch.handlers[kind](rec)
                 if isinstance(result, Finding):
+                    catalogs.observe(kind, rec, result)
                     yield result
                 elif result:
                     yield from result
             except RECORD_ERRORS:
+                # An unread record may be the agent or listing a completeness claim overlooks.
+                catalogs.taint()
                 dispatch.invalid()
         for (_, principal), agg in callers.items():
             try:
                 yield self._caller_finding(principal, agg)
             except RECORD_ERRORS:
                 self.ctx.warn("cloud.gcp: invalid aggregated caller fields")
+        if self.offline and self.ctx.stats is not None and self.ctx.stats.incomplete:
+            # The offline loader drops what it cannot read (an invalid JSON line, a provider
+            # error record, a skipped file) before analysis sees it; live collection writes
+            # such gaps into its coverage records instead.
+            catalogs.taint()
+        findings = catalogs.finish()
+        if catalogs.foreign:
+            self.ctx.warn(
+                f"cloud.gcp: {catalogs.foreign} registry record(s) name a project other than the "
+                "one they were listed in; registry claims not comparable"
+            )
+        yield from findings
 
     @staticmethod
     def _acc_caller(callers: dict[tuple[str | None, str], dict[str, Any]], rec: dict[str, Any]) -> None:
@@ -686,6 +1011,10 @@ class GcpConnector(BaseConnector):
                 "description": truncate(rec.get("description"), 300),
             }
         )
+        identity = spec.get("effectiveIdentity")
+        if isinstance(identity, str) and identity:
+            # The identity the engine runs as; Agent Registry names it as a runtime principal.
+            f.metadata["effective_identity"] = identity
         return done(f, self.index, Kind.AGENT)
 
     def _h_vertex_endpoint(self, rec: dict[str, Any]) -> Finding | None:
@@ -762,6 +1091,8 @@ class GcpConnector(BaseConnector):
     def _h_discovery_engine(self, rec: dict[str, Any]) -> Finding:
         name = rec.get("name", "")
         solution = rec.get("solutionType")
+        # A Gemini Enterprise app (appType APP_TYPE_INTRANET) keeps the kind of its solution type:
+        # its agents are the Gemini Enterprise records, which never bind the engine itself.
         f = cloud_finding(
             self.name,
             "gcp",
@@ -790,7 +1121,167 @@ class GcpConnector(BaseConnector):
             )
         )
         f.metadata.update({"solution_type": solution, "data_stores": rec.get("dataStoreIds")})
+        extra = {
+            "app_type": rec.get("appType"),
+            "associated_agent_registry": rec.get("associatedAgentRegistry"),
+            "subscription_tier": get_path(rec, "searchEngineConfig.requiredSubscriptionTier"),
+        }
+        f.metadata.update({key: value for key, value in extra.items() if isinstance(value, str) and value})
         return done(f, self.index, f.kind)
+
+    # ------------------------------------------------------------ registry records
+    def _h_agent_registry_agent(self, rec: dict[str, Any]) -> Finding:
+        return self._standalone_record("agent-registry-agent", rec)
+
+    def _h_agent_registry_mcp_server(self, rec: dict[str, Any]) -> Finding:
+        return self._standalone_record("agent-registry-mcp-server", rec)
+
+    def _h_agent_registry_endpoint(self, rec: dict[str, Any]) -> Finding:
+        return self._standalone_record("agent-registry-endpoint", rec)
+
+    def _h_agent_registry_skill(self, rec: dict[str, Any]) -> Finding:
+        return self._standalone_record("agent-registry-skill", rec)
+
+    def _h_gemini_enterprise_agent(self, rec: dict[str, Any]) -> Finding:
+        return self._standalone_record(GE_AGENT_KIND, rec)
+
+    def _standalone_record(self, kind: str, rec: dict[str, Any]) -> Finding:
+        """A record finding completed from its own record alone (``analyze`` completes it from the scan)."""
+        catalogs = RegistryCatalogs()
+        catalogs.defer(*self._registry_finding(kind, rec))
+        (finding,) = catalogs.finish()
+        return finding
+
+    def _registry_finding(self, kind: str, rec: dict[str, Any]) -> tuple[Finding, RecordEntry]:
+        """A registry record finding (its ``registry_record`` is written by ``RegistryCatalogs``)."""
+        entry = record_entry(kind, rec)
+        finding_kind, label = _RECORD_FINDINGS[kind]
+        display = rec.get("displayName") or entry.name.rsplit("/", 1)[-1]
+        f = cloud_finding(
+            self.name,
+            "gcp",
+            kind=finding_kind,
+            title=f"{label}: {display}",
+            resource=entry.name,
+            resource_type=kind,
+            account=entry.project,
+            region=entry.location,
+            first_seen=rec.get("createTime"),
+            last_seen=rec.get("updateTime"),
+        )
+        card = clean_card(rec.get("agent_card"))
+        metadata: dict[str, Any] = {
+            "evidence_class": EVIDENCE_GROUP,
+            "description": truncate(rec.get("description"), 300),
+        }
+        if entry.registry == GE_REGISTRY:
+            detail = self._gemini_enterprise_metadata(f, rec, metadata)
+        else:
+            detail = self._agent_registry_metadata(f, kind, rec, metadata)
+        if card is not None:
+            metadata["agent_card"] = card
+            if not card["security_schemes"]:
+                f.add_tag("no-auth-declared")
+        description = f"{label} '{display}': {detail}"
+        f.add_evidence(registry_evidence(entry.registry, description, location=entry.name))
+        f.metadata.update(metadata)
+        return done(f, self.index, finding_kind), entry
+
+    def _agent_registry_metadata(
+        self, f: Finding, kind: str, rec: dict[str, Any], metadata: dict[str, Any]
+    ) -> str:
+        framework = rec.get("framework")
+        for key, sig in _AGENT_FRAMEWORK_HINTS:
+            if framework and key in framework.lower():
+                f.add_framework(sig)
+        reference = rec.get("runtime_reference")
+        if isinstance(reference, str) and "aiplatform.googleapis.com/" in reference:
+            f.add_framework("cloud.gcp-vertex-agent-engine")
+        metadata.update(
+            api_version=rec.get("_api_version"),
+            runtime_reference=reference,
+            runtime_identity=rec.get("runtime_identity"),
+        )
+        if kind == "agent-registry-agent":
+            protocols = [
+                {
+                    "type": truncate(protocol.get("type"), 64),
+                    "protocol_version": truncate(protocol.get("protocol_version"), 32),
+                    "urls": urls(*(protocol.get("urls") or [])),
+                }
+                for protocol in rec.get("protocols") or []
+            ][:10]
+            metadata.update(
+                agent_id=rec.get("agentId"),
+                framework=framework,
+                version=rec.get("version"),
+                hosting_location=rec.get("hosting_location"),
+                skills=clean_texts(rec.get("skills")),
+                protocols=protocols,
+            )
+            types = sorted({str(protocol["type"]) for protocol in protocols if protocol["type"]})
+            return f"protocols {', '.join(types) or 'unknown'}, framework {framework or 'unknown'}"
+        if kind == "agent-registry-skill":
+            metadata.update(
+                skill_type=rec.get("type"),
+                state=rec.get("state"),
+                target_state=rec.get("targetState"),
+                publisher=rec.get("publisher"),
+                license=rec.get("license"),
+            )
+            return f"state {rec.get('state') or 'unknown'}"
+        metadata["urls"] = urls(*(rec.get("urls") or []))
+        if kind == "agent-registry-endpoint":
+            metadata["endpoint_id"] = rec.get("endpointId")
+            return f"{len(metadata['urls'])} interface(s)"
+        tools = clean_tools(rec.get("tools"))
+        metadata.update(mcp_server_id=rec.get("mcpServerId"), tools=tools)
+        if tools:
+            f.add_capability("tool-use")
+        destructive = sum(tool["destructive"] is True for tool in tools)
+        return f"{len(tools)} tool(s), {destructive} marked destructive"
+
+    def _gemini_enterprise_metadata(self, f: Finding, rec: dict[str, Any], metadata: dict[str, Any]) -> str:
+        definition = rec.get("definition")
+        if definition in {"adk", "dialogflow"}:
+            f.add_framework("cloud.gcp-vertex-agent-engine")
+        if definition == "adk":
+            f.add_framework("framework.google-adk")
+        auth = rec.get("auth_config") or {}
+        agent_auth = auth.get("agent_auth_required") is True
+        tool_grants = _count(auth.get("tool_auth_grants"))
+        if agent_auth or tool_grants:
+            # The app passes the user's OAuth tokens to the agent and its tools.
+            f.add_capability("delegated-identity")
+        status = rec.get("agent_card_status")
+        if status in {"invalid", "too-large"}:
+            self.ctx.warn(
+                f"cloud.gcp: Gemini Enterprise agent card not readable ({status}); card coverage unknown"
+            )
+        observability = rec.get("observability") or {}
+        metadata.update(
+            state=rec.get("state"),
+            reasons=[str(reason)[:32] for reason in rec.get("reasons") or []][:4],
+            sharing_scope=rec.get("sharing_scope"),
+            definition=definition,
+            reasoning_engine=rec.get("reasoning_engine"),
+            dialogflow_agent=rec.get("dialogflow_agent"),
+            agent_card_status=status if isinstance(status, str) else None,
+            marketplace=rec.get("marketplace") is True,
+            auth_config={"agent_auth_required": agent_auth, "tool_auth_grants": tool_grants},
+            observability={
+                key: observability.get(key) if isinstance(observability.get(key), bool) else None
+                for key in ("enabled", "sensitive_logging")
+            },
+            engine=rec.get("_engine"),
+            assistant=rec.get("_assistant"),
+            associated_agent_registry=rec.get("_agent_registry"),
+            language_code=rec.get("languageCode"),
+        )
+        return (
+            f"state {rec.get('state') or 'unknown'}, {definition or 'unknown'} definition, "
+            f"sharing {rec.get('sharing_scope') or 'unknown'}"
+        )
 
     def _h_cloud_run_service(self, rec: dict[str, Any]) -> Finding | None:
         name = rec.get("name", "")

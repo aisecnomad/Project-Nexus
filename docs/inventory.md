@@ -324,6 +324,33 @@ Offline exports are untrusted input, so before trusting a registry whose
 records you replay, keep its exports where only operators can write them, or
 scan that registry live.
 
+### Example: Google Agent Registry and Gemini Enterprise
+
+The `cloud.gcp` connector reads both catalogs when you opt in
+([details](connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs)):
+
+```yaml
+connectors:
+  - name: cloud.gcp
+    projects: [acme-ml]
+    locations: [us-central1]
+    agent_registry: true          # Agent Registry agents, MCP servers, endpoints
+    gemini_enterprise: true       # agents of Gemini Enterprise apps (caller-scoped)
+options:
+  trusted_registries:
+    # An administrator enables Gemini Enterprise agents: ENABLED records are approved.
+    - registry: gemini-enterprise
+      id: projects/acme-ml/locations/global/collections/default_collection/engines/acme-assist
+```
+
+An `ENABLED` agent of that app approves exactly the reasoning engine or
+Dialogflow CX agent it is bound to; a `PRIVATE`, draft, disabled or suspended
+agent approves nothing. Agent Registry has no approval workflow, so its
+`registered` records approve only with `allow_registered_only: true` on an entry
+such as `{registry: google-agent-registry, id: projects/acme-ml/locations/global}`;
+listing an agent there is not a review. Trust one of the two for a given agent:
+two trusted records approving the same engine are ambiguous and leave it shadow.
+
 ## Registry reconciliation statuses
 
 Whether or not a registry is trusted, the engine compares its records with the

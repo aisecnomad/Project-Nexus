@@ -574,7 +574,7 @@ Also accepted: `label`.
 
 ### `cloud.gcp`
 
-Vertex AI Agent Engine, Dialogflow CX, Agentspace/Discovery Engine, Cloud Run/Functions, IAM bindings, service accounts, Gemini API keys, secret names, audit-log callers.
+Vertex AI Agent Engine, Dialogflow CX, Agentspace/Discovery Engine, Cloud Run/Functions, IAM bindings, service accounts, Gemini API keys, secret names, audit-log callers; opt-in Agent Registry and Gemini Enterprise agent catalogs.
 
 Offline input: JSONL dump of records.
 
@@ -588,6 +588,11 @@ Offline input: JSONL dump of records.
 | `audit_days` | look back N days in Cloud Audit Logs for Vertex callers, a non-negative integer (default 0 = off) |
 | `max_projects` | cap on projects scanned, a positive integer (default 200) |
 | `max_pages` | maximum pages per paginated call, capped at 1000 (default 1000; resource lists stop at 500 pages and audit-log queries at 50 pages regardless) |
+| `agent_registry` | read Google Agent Registry agents, MCP servers and endpoints as registry records where agentregistry.googleapis.com is enabled (default false) |
+| `agent_registry_version` | Agent Registry API version: v1 (default) or v1alpha (experimental; adds skills and publishers) |
+| `agent_registry_locations` | Agent Registry locations to list (default: every location the API reports; when set, listings are never complete for reconciliation) |
+| `gemini_enterprise` | read the agents of Gemini Enterprise apps (Discovery Engine v1alpha, caller-scoped) as registry records (default false) |
+| `discovery_collections` | Discovery Engine collections whose engines are listed (default \["default\_collection"\]) |
 | `input` | offline: JSONL dump of records |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
