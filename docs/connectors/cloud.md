@@ -117,10 +117,11 @@ limits discovery without loading all projects first; `max_pages` (default and
 maximum 1000) bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.
 Discovery Engine lists the engines of each collection in `discovery_collections`
-(default `default_collection`). An engine whose `appType` is `APP_TYPE_INTRANET`
-(a Gemini Enterprise or Agentspace app) is reported as an agent, like chat
-engines; its metadata records `app_type`, `associated_agent_registry` and
-`subscription_tier` when Google returns them. Reasoning engines record
+(default `default_collection`). Chat engines are reported as agents and other
+engines as cloud resources, whatever their `appType`; an engine's metadata
+records `app_type` (`APP_TYPE_INTRANET` for a Gemini Enterprise or Agentspace
+app), `associated_agent_registry` and `subscription_tier` when Google returns
+them. Reasoning engines record
 `effective_identity` (the identity the engine runs as) when the API returns it.
 Agent Registry counts as an AI API in the enabled-APIs finding.
 
@@ -198,10 +199,13 @@ the project's registry locations were enumerated (not set with
 `agent_registry_locations`), that enumeration and every location's agents, MCP
 servers and endpoints (and skills with `v1alpha`) listings completed, and every
 runtime reference of the project's records names a project the scan can
-resolve. Only then can an observed agent, Dialogflow CX agent, chat engine or
-Gemini Enterprise app in that project be reported `observed-not-registered`.
-Agent Registry does not list Gemini Enterprise apps themselves, so expect that
-status on them.
+resolve. Only then can an observed reasoning engine, Dialogflow CX agent or
+chat engine in that project that no record binds be reported
+`observed-not-registered`. Records bind only reasoning engines and Dialogflow CX
+agents, so a chat engine is never `registered-and-observed` through a record:
+check the Dialogflow CX agent behind it before treating it as unregistered.
+Engines that are not chat engines, Gemini Enterprise apps included, are cloud
+resources and are never reconciled.
 
 **Catalog presence.** Agent Registry agents and Gemini Enterprise agents carry
 `metadata.catalog_presence`: `agent_registry` is `present`, `absent` or
@@ -223,7 +227,12 @@ become request paths only after validation (an engine in another project,
 location or collection is skipped with a warning). A record that analysis cannot
 read, including a malformed coverage record or an unsupported `_kind`, makes
 every binding's coverage `unknown`, every listing incomplete and every presence
-`unknown` for that scan.
+`unknown` for that scan. So does anything that makes an offline replay
+incomplete, such as a record the loader drops before analysis (an invalid JSON
+line, a provider error record, a file skipped by a limit), and any registry
+record whose name carries the number of a project other than the one it was
+listed in: that record is dropped with a warning, so it cannot claim the other
+project's registry identity.
 
 **What is kept.** Items are reduced when collected, so a record dump replays what
 live analysis saw. An agent card becomes a summary (name, URL, version, protocol

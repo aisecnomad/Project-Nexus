@@ -899,7 +899,18 @@ class GcpConnector(BaseConnector):
                 yield self._caller_finding(principal, agg)
             except RECORD_ERRORS:
                 self.ctx.warn("cloud.gcp: invalid aggregated caller fields")
-        yield from catalogs.finish()
+        if self.offline and self.ctx.stats is not None and self.ctx.stats.incomplete:
+            # The offline loader drops what it cannot read (an invalid JSON line, a provider
+            # error record, a skipped file) before analysis sees it; live collection writes
+            # such gaps into its coverage records instead.
+            catalogs.taint()
+        findings = catalogs.finish()
+        if catalogs.foreign:
+            self.ctx.warn(
+                f"cloud.gcp: {catalogs.foreign} registry record(s) name a project other than the "
+                "one they were listed in; registry claims not comparable"
+            )
+        yield from findings
 
     @staticmethod
     def _acc_caller(callers: dict[tuple[str | None, str], dict[str, Any]], rec: dict[str, Any]) -> None:
@@ -1080,12 +1091,12 @@ class GcpConnector(BaseConnector):
     def _h_discovery_engine(self, rec: dict[str, Any]) -> Finding:
         name = rec.get("name", "")
         solution = rec.get("solutionType")
-        # A Gemini Enterprise (Agentspace) app is an agent platform whatever its solution type.
-        agentic = solution in _CHAT_SOLUTIONS or rec.get("appType") == "APP_TYPE_INTRANET"
+        # A Gemini Enterprise app (appType APP_TYPE_INTRANET) keeps the kind of its solution type:
+        # its agents are the Gemini Enterprise records, which never bind the engine itself.
         f = cloud_finding(
             self.name,
             "gcp",
-            kind=Kind.AGENT if agentic else Kind.CLOUD_RESOURCE,
+            kind=Kind.AGENT if solution in _CHAT_SOLUTIONS else Kind.CLOUD_RESOURCE,
             title=f"Vertex AI Search / Agentspace engine: {rec.get('displayName')}",
             resource=name,
             resource_type="discovery-engine",

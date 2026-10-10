@@ -911,8 +911,8 @@ queries at 50 pages regardless.
 Google credentials file (env `GOOGLE_APPLICATION_CREDENTIALS`); otherwise the
 local gcloud Application Default Credentials are used.
 `discovery_collections` lists the Discovery Engine collections whose engines are
-read (default `default_collection`); a Gemini Enterprise app engine
-(`appType: APP_TYPE_INTRANET`) is reported as an agent.
+read (default `default_collection`); engines record their `app_type`
+(`APP_TYPE_INTRANET` for a Gemini Enterprise app).
 Two opt-in catalogs emit [registry records](inventory.md#vendor-registries-as-inventory-sources):
 `agent_registry: true` reads Google Agent Registry agents, MCP servers and
 endpoints (`agent_registry_version` `v1`, or experimental `v1alpha` with skills

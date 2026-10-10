@@ -520,6 +520,15 @@ class ProjectNumbers:
         """The project id a resource name's project segment stands for; None when it is unknown."""
         return self._ids.get(segment) if is_number(segment) else segment
 
+    def names(self, project: str, segment: str) -> bool | None:
+        """Whether a name's project segment stands for ``project``; None when this scan cannot tell."""
+        owner = self.project_id(segment)
+        if owner is not None:
+            return owner == project
+        number = self._numbers.get(project)
+        # An unknown number is another project's when this project's own number is known.
+        return False if number is not None and self._ids.get(number) == project else None
+
 
 @dataclass(frozen=True, slots=True)
 class Coverage:
@@ -742,7 +751,9 @@ class RegistryCatalogs:
     from everything the pass read, so the result does not depend on record order. A record the
     pass could not read taints the catalogs: it may be the agent, binding or incomplete listing
     that a completeness claim would overlook, so no binding is then in scope, no listing is
-    complete and nothing is reported absent.
+    complete and nothing is reported absent. So does a record whose registry name carries the
+    number of a project other than the one it was listed in (counted in :attr:`foreign` and
+    dropped): it would claim that other project's registry identity.
     """
 
     def __init__(self) -> None:
@@ -756,6 +767,7 @@ class RegistryCatalogs:
         # Projects with an Agent Registry record whose runtime reference this scan cannot resolve.
         self._unresolved_projects: set[str] = set()
         self.tainted = False
+        self.foreign = 0
 
     # ------------------------------------------------------------ intake
     def taint(self) -> None:
@@ -838,6 +850,15 @@ class RegistryCatalogs:
     # ------------------------------------------------------------ results
     def finish(self) -> list[Finding]:
         """Complete every deferred record finding; return them in the order they were read."""
+        kept = [
+            (finding, entry)
+            for finding, entry in self._deferred
+            if self.numbers.names(entry.project, entry.registry_project) is not False
+        ]
+        self.foreign = len(self._deferred) - len(kept)
+        if self.foreign:
+            self.taint()
+        self._deferred = kept
         self._unresolved_projects = {
             entry.project
             for _, entry in self._deferred

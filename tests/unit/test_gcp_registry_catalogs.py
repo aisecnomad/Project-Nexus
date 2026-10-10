@@ -761,8 +761,26 @@ def test_fixture_gemini_enterprise_agents(index):
     assert agents["negotiator"].metadata["catalog_presence"]["agent_registry"] == "present"
     assert "framework.google-adk" in agents["negotiator"].frameworks
     engine = findings[ENGINE]
-    assert engine.kind == Kind.AGENT and engine.metadata["app_type"] == "APP_TYPE_INTRANET"
+    assert engine.metadata["app_type"] == "APP_TYPE_INTRANET"
     assert engine.metadata["associated_agent_registry"] == f"projects/{N}/locations/global"
+
+
+def test_gemini_enterprise_app_engines_are_never_observed_not_registered(index, tmp_path):
+    """No record binds an engine, so a search-type app engine stays outside reconciliation."""
+    result = scan(index, REGISTRY_FIXTURE)
+    findings = by_resource(result.findings)
+    # The registry listing of the engine's project is complete: unbound agents there are absent.
+    assert status(findings[RE_SHADOW]) == "observed-not-registered"
+    engine = findings[ENGINE]
+    assert engine.kind == Kind.CLOUD_RESOURCE
+    # So the control rule for observed-not-registered agents never applies to it.
+    assert RECONCILIATION_KEY not in engine.metadata
+    records = fixture_records()
+    for record in records:
+        if record["_kind"] == "discovery-engine":
+            record.pop("solutionType")
+    engine = by_resource(scan(index, write_records(tmp_path, records)).findings)[ENGINE]
+    assert engine.kind == Kind.CLOUD_RESOURCE and RECONCILIATION_KEY not in engine.metadata
 
 
 def test_gemini_enterprise_alone_never_claims_absence(index, tmp_path):
@@ -856,6 +874,112 @@ def test_unreadable_records_taint_every_completeness_claim(index, tmp_path, bad)
     assert status(retired) == "not-comparable"
     travel = next(f for r, f in findings.items() if r.endswith("/agents/travel"))
     assert travel.metadata["catalog_presence"]["agent_registry"] == "unknown"
+
+
+def _replace_line(lines: list[str], resource: str, line: str) -> list[str]:
+    return [line if json.loads(item).get("name") == resource else item for item in lines]
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        # An export line the loader cannot parse, and a provider error record it drops.
+        lambda line: line[:40],
+        lambda line: json.dumps({**json.loads(line), "error": {"code": 403, "status": "PERMISSION_DENIED"}}),
+    ],
+    ids=["invalid-json", "error-record"],
+)
+def test_records_the_offline_loader_drops_taint_every_completeness_claim(index, tmp_path, replacement):
+    lines = REGISTRY_FIXTURE.read_text().splitlines()
+    original = next(line for line in lines if json.loads(line).get("name") == RE_OK)
+    path = tmp_path / "export.jsonl"
+    path.write_text("\n".join(_replace_line(lines, RE_OK, replacement(original))) + "\n")
+    result = scan(index, path)
+    assert not result.complete
+    findings = by_resource(result.findings)
+    assert RE_OK not in findings
+    negotiator = findings[f"projects/{N}/locations/global/agents/negotiator"]
+    record = negotiator.metadata[RECORD_KEY]
+    assert record["listing_complete"] is False
+    assert [binding["coverage"] for binding in record["bindings"]] == ["unknown"]
+    statuses = {status(finding) for finding in findings.values() if RECONCILIATION_KEY in finding.metadata}
+    # Exact matches still reconcile; no claim rests on completeness.
+    assert statuses == {"not-comparable", "registered-and-observed"}
+    assert all(
+        finding.metadata["catalog_presence"]["agent_registry"] != "absent"
+        for finding in findings.values()
+        if "catalog_presence" in finding.metadata
+    )
+
+
+VICTIM_RE = "projects/999/locations/us-central1/reasoningEngines/7"
+VICTIM_ENGINE = "projects/999/locations/global/collections/default_collection/engines/acme-assist"
+
+
+def _foreign_record(kind: str, **changes: Any) -> dict[str, Any]:
+    return {**next(record for record in fixture_records() if record["_kind"] == kind), **changes}
+
+
+@pytest.mark.parametrize(
+    "foreign",
+    [
+        # Listed in acme-ml, named with another scanned project's number.
+        _foreign_record(
+            "agent-registry-agent",
+            name="projects/999/locations/global/agents/x",
+            runtime_reference=f"//aiplatform.googleapis.com/{VICTIM_RE}",
+        ),
+        # Listed in acme-ml, whose number this scan knows, named with an unknown number.
+        _foreign_record("agent-registry-agent", name="projects/555/locations/global/agents/y"),
+        _foreign_record(
+            "gemini-enterprise-agent",
+            name=f"{VICTIM_ENGINE}/assistants/default_assistant/agents/x",
+            _engine=VICTIM_ENGINE,
+            _assistant=f"{VICTIM_ENGINE}/assistants/default_assistant",
+            reasoning_engine=VICTIM_RE,
+        ),
+    ],
+    ids=["agent-registry", "agent-registry-unknown-number", "gemini-enterprise"],
+)
+def test_registry_names_of_another_project_are_rejected(index, tmp_path, foreign):
+    victim = [
+        {"_kind": "project-number", "_project": "victim", "project_number": "999"},
+        {"_kind": "reasoning-engine", "_project": "victim", "_location": "us-central1", "name": VICTIM_RE},
+    ]
+    trusted = [
+        {
+            "registry": "google-agent-registry",
+            "id": "projects/victim/locations/global",
+            "allow_registered_only": True,
+        },
+        {"registry": "gemini-enterprise", "id": VICTIM_ENGINE.replace("999", "victim", 1)},
+    ]
+    path = write_records(tmp_path, [*fixture_records(), *victim, foreign])
+    result = scan(index, path, trusted_registries=trusted)
+    assert not result.complete
+    warnings = next(stats.warnings for stats in result.stats if stats.connector == "cloud.gcp")
+    assert any("name a project other than the one they were listed in" in warning for warning in warnings)
+    findings = by_resource(result.findings)
+    # The record is dropped: it neither claims the other project's registry nor approves its engine.
+    assert foreign["name"] not in findings
+    assert findings[VICTIM_RE].shadow is True
+    assert all(
+        "victim" not in finding.metadata[RECORD_KEY]["registry_id"]
+        for finding in findings.values()
+        if RECORD_KEY in finding.metadata
+    )
+    # Like any unreadable record, it makes every registry claim of the scan not comparable.
+    assert RECONCILIATION_KEY not in findings[RE_SHADOW].metadata
+    assert status(findings[f"projects/{N}/locations/global/agents/retired-bot"]) == "not-comparable"
+
+
+def test_project_numbers_tell_whose_name_a_segment_is():
+    numbers = gcp_registry.ProjectNumbers()
+    assert numbers.names(P, "555") is None
+    assert numbers.add(P, N) and numbers.add("victim", "999")
+    assert numbers.names(P, N) is True and numbers.names(P, P) is True
+    assert numbers.names(P, "999") is False and numbers.names(P, "555") is False
+    assert numbers.names("unlisted", "555") is None
 
 
 def test_associated_registry_scope_decides_absence(index, tmp_path):

@@ -109,9 +109,10 @@ summarizes each release for people who install and operate ShadowScan.
   enabled (`agent_registry_version` `v1`, or experimental `v1alpha`, which also
   reads skills and publishers; `agent_registry_locations` limits the
   locations). `gemini_enterprise` reads the agents of Gemini Enterprise apps
-  through the Discovery Engine `v1alpha` assistants API. With both off, calls
-  and findings are unchanged. `cloud.gcp` now declares the
-  `emits_registry_records` hook for `google-agent-registry` and
+  through the Discovery Engine `v1alpha` assistants API. With both off and
+  `discovery_collections` unset, no new API calls are made; the engine
+  metadata and enabled-APIs changes below still apply. `cloud.gcp` now
+  declares the `emits_registry_records` hook for `google-agent-registry` and
   `gemini-enterprise`.
 - Each listed item becomes a registry record finding (`agent-registry-agent`,
   `agent-registry-mcp-server`, `agent-registry-endpoint`,
@@ -131,18 +132,22 @@ summarizes each release for people who install and operate ShadowScan.
   listings completed. `metadata.catalog_presence` compares the two catalogs on
   agents; absence from Gemini Enterprise is never reported.
 - New export record kinds `registry-coverage` and `project-number` record
-  listing completeness and project numbers; any record that analysis cannot
-  read makes every registry claim of that scan not comparable. Listed items are
-  reduced when collected: agent cards become summaries, interface URLs lose
-  userinfo, query and fragment, and icons, prompts, assistant instructions and
-  authorization values are dropped. `cloud.gcp` `_pages` now reports whether a
-  listing completed.
+  listing completeness and project numbers. Any record that analysis cannot
+  read, anything that makes an offline replay incomplete (such as an invalid
+  JSON line or a provider error record that the loader drops), and any
+  registry record whose name carries the number of a project other than the
+  one it was listed in (dropped with a warning) void every completeness claim
+  of that scan: no binding is in scope, no listing is complete and nothing is
+  reported absent. Listed items are reduced when collected: agent cards become
+  summaries, interface URLs lose userinfo, query and fragment, and icons,
+  prompts, assistant instructions and authorization values are dropped.
+  `cloud.gcp` `_pages` now reports whether a listing completed.
 - New option `discovery_collections` (default `default_collection`). Discovery
-  Engine engines with `appType: APP_TYPE_INTRANET` (Gemini Enterprise apps)
-  are now `agent` findings instead of `cloud-resource`; finding identity is
-  unchanged. Engines record `app_type`, `associated_agent_registry` and
+  Engine engines keep their kinds (chat engines are `agent`, others
+  `cloud-resource`) and record `app_type`, `associated_agent_registry` and
   `subscription_tier`, reasoning engines `effective_identity`, when present.
-  Agent Registry counts as an AI API in the enabled-APIs finding.
+  Agent Registry counts as an AI API, so a project whose only AI API is Agent
+  Registry now has an enabled-APIs finding.
 - The fixtures and transports in the tests are synthetic, written from
   Google's API discovery documents; nothing was validated against a live
   project.
