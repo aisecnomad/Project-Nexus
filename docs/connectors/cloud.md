@@ -407,6 +407,44 @@ SDK objects become records through `oci.util.to_dict`, or through the model's
 declared fields when the SDK cannot be imported; an object that cannot be
 converted is skipped with a warning and makes the scan incomplete.
 
+## Live scope attestation
+
+Live `cloud.aws`, `cloud.gcp` and `cloud.azure` scans record what they
+collected and attest it in `collection_scope`, so `shadowscan diff` can resolve
+findings between two complete live scans (the rules are in
+[live collection scope](../scanning.md#live-collection-scope)):
+
+- `cloud.aws` attests the account STS `GetCallerIdentity` returns, never the
+  caller ARN, which varies between SSO sessions. `role_arn`, `regions`,
+  `services` and the limits are requested options; the resolved region list is
+  the partition. The enumerations are each selected service's listings per
+  region (and `GetAccountAuthorizationDetails` once), the `registry` listings
+  per region and the discovery listing of each `registry_arns` registry. Every
+  denial, throttling error, `max_lambda`, `max_ecs_api_calls` or
+  `max_registry_records` cap and page limit is recorded with its listing. No
+  permission is added.
+- `cloud.gcp` attests the configured `projects` once each project's
+  enabled-services listing succeeded. Without `projects`, the principal is the
+  set of projects a complete `projects.list` returned (a listing stopped by
+  `max_projects` attests nothing), and per-project calls are details. A project
+  the credentials can no longer see, or a newly visible one, therefore changes
+  the scope (exit 3) rather than resolving findings; re-baseline after a
+  reviewed change, or set `projects`.
+  Request paths become templates (`/v1/projects/{project}/services`) and the
+  project and location form the partition. No permission is added.
+- `cloud.azure` attests configured `subscriptions` after reading each with
+  `GET /subscriptions/{id}` (covered by `Reader`); a denied or failed read
+  leaves the scope unattested without making the scan incomplete, and ARM
+  reporting another subscription stops the scan. Without `subscriptions`, the
+  subscriptions `GET /subscriptions` returned are the principal. The Resource
+  Graph query and each subscription's role assignments are the enumerations;
+  calls under a resource (deployments, diagnostic settings, projects, Foundry
+  agents, app settings) are details.
+
+Changing what a scan covers, such as enabling an API in a configured GCP
+project, adding a service or a region, or a region becoming enabled under
+`regions: all`, changes the fingerprint: collect a new baseline.
+
 ## Scaling
 
 Cloud collection issues its detail calls one at a time: Lambda tags per

@@ -44,7 +44,13 @@ from urllib.parse import quote
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import config_boolean, failure_summary, finalize, scope_matches
+from shadowscan.connectors.common import (
+    config_boolean,
+    failure_outcome,
+    failure_summary,
+    finalize,
+    scope_matches,
+)
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.registries import (
@@ -78,6 +84,11 @@ FIRST_PARTY_OWNER = "f8cdef31-a31e-4b4a-93e4-5f571e91255a"  # Microsoft services
 MAX_CONFLICTING_SNAPSHOTS = 16
 MAX_CONFLICTING_EVIDENCE = 64
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+_TENANT_ID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
+# Live scope attestation: the Graph call that reports the token's tenant, and the per-object
+# detail listing, recorded by template and never fingerprinted.
+ORGANIZATION = "/organization"
+_ROLE_ASSIGNMENTS = "/v1.0/servicePrincipals/{id}/appRoleAssignments"
 _TOKEN_CHARACTERS = re.compile(r"[A-Za-z0-9._~+/=-]+")
 # Package element types and governance classes that make a package an agent; enum spellings
 # vary between the Graph reference and its examples, so they are compared case-insensitively.
@@ -241,6 +252,20 @@ class EntraConnector(BaseConnector):
     # Agent 365 packages are registry records; deprecated Entra agent registry records are offline only.
     emits_registry_records: ClassVar[bool] = True
     registry_record_types: ClassVar[frozenset[str]] = frozenset({AGENT_365, DEPRECATED_REGISTRY})
+    # auth_mode separates delegated (caller-scoped) from app-only scans; no credential is listed.
+    attests_live_scope: ClassVar[bool] = True
+    scope_options: ClassVar[frozenset[str]] = frozenset(
+        {
+            "tenant_id",
+            "auth_mode",
+            "include_first_party",
+            "max_app_role_lookups",
+            "include_agent_identities",
+            "include_agent_registry",
+            "agent_registry_api",
+            "max_package_lookups",
+        }
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "tenant_id": "env AZURE_TENANT_ID",
         "client_id": "env AZURE_CLIENT_ID",
@@ -331,6 +356,7 @@ class EntraConnector(BaseConnector):
             self.http = HttpClient(
                 GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"}
             )
+            self._verify_tenant()
             return
         token = self.ctx.get("access_token", env="GRAPH_ACCESS_TOKEN")
         if token and self.include_agent_registry and self._binding_account():
@@ -358,6 +384,51 @@ class EntraConnector(BaseConnector):
         self.http = HttpClient(
             GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"}
         )
+        self._verify_tenant()
+
+    def _verify_tenant(self) -> None:
+        """Attest the tenant the Graph reports for the token in use (``GET /organization``).
+
+        Needed only for comparable drift: app-only tokens need Organization.Read.All or
+        Directory.Read.All, delegated tokens User.Read. A denied, failed or ambiguous answer
+        leaves the principal unverified, so the live scope is not attested, but does not make
+        the scan incomplete. A tenant other than a configured tenant ID stops the scan.
+        """
+        assert self.http
+        try:
+            data = self.http.get_json(ORGANIZATION, params={"$select": "id"})
+        except (HttpError, RequestException, RuntimeError, ValueError, OSError) as exc:
+            self.ctx.warn(
+                f"identity.entra: tenant not verified ({failure_summary(exc)}); live collection scope not "
+                "attested (needs Organization.Read.All or Directory.Read.All, or User.Read when delegated)",
+                incomplete=False,
+            )
+            return
+        values = data.get("value") if isinstance(data, dict) else None
+        single = values[0] if isinstance(values, list) and len(values) == 1 else None
+        tenant = single.get("id") if isinstance(single, dict) else None
+        if not isinstance(tenant, str) or not _TENANT_ID.fullmatch(tenant):
+            self.ctx.warn(
+                "identity.entra: the organization response does not name one tenant; live collection "
+                "scope not attested",
+                incomplete=False,
+            )
+            return
+        tenant = tenant.lower()
+        configured = self.tenant.strip().lower() if isinstance(self.tenant, str) else ""
+        # A domain name in tenant_id cannot be compared; the reported tenant is attested.
+        if _TENANT_ID.fullmatch(configured) and configured != tenant:
+            raise ConnectorError("identity.entra: the authenticated tenant does not match tenant_id")
+        if self.auth_mode == "delegated":
+            # Delegated listings return what the signed-in user may see. Another user in the
+            # same tenant would see less without any error, so the tenant alone attests nothing.
+            self.ctx.warn(
+                "identity.entra: delegated listings are scoped to the signed-in user; live collection "
+                "scope not attested",
+                incomplete=False,
+            )
+            return
+        self.ctx.attest_principal("entra", "tenant", tenant, "graph:GET /organization")
 
     def _delegated_token(self) -> str:
         """The signed-in user's Graph token from ``delegated_token_env``, checked before any request.
@@ -399,11 +470,14 @@ class EntraConnector(BaseConnector):
             )
         return claims
 
-    def _pages(self, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
+    def _pages(self, path: str, *, template: str | None = None, **kwargs: Any) -> Iterator[dict[str, Any]]:
+        """Every item of one Graph listing; ``template`` marks a per-object (detail) listing."""
         assert self.http
+        outcome = "ok"
         try:
             yield from self.http.paginate_odata(path, **kwargs)
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            outcome = failure_outcome(exc)
             self._failed.add(path)
             status = failure_summary(exc)
             if path.endswith("/appRoleAssignments"):
@@ -413,6 +487,9 @@ class EntraConnector(BaseConnector):
                 )
             else:
                 self.ctx.warn(f"identity.entra: collection incomplete for {path} ({status})")
+        finally:
+            operation = template or _graph_operation(path)
+            self.ctx.attest_operation("graph", operation, None, outcome, enumeration=template is None)
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -480,6 +557,7 @@ class EntraConnector(BaseConnector):
             if principal_id in self._role_lookups:
                 continue
             if len(self._role_lookups) >= self.max_lookups:
+                self.ctx.attest_operation("graph", _ROLE_ASSIGNMENTS, None, "truncated", enumeration=False)
                 if not self._role_lookups_capped:
                     self._role_lookups_capped = True
                     self.ctx.warn(
@@ -488,7 +566,11 @@ class EntraConnector(BaseConnector):
                 return
             self._role_lookups.add(principal_id)
             principal = quote(principal_id, safe="")
-            for a in self._pages(f"/servicePrincipals/{principal}/appRoleAssignments", params={"$top": 999}):
+            for a in self._pages(
+                f"/servicePrincipals/{principal}/appRoleAssignments",
+                template=_ROLE_ASSIGNMENTS,
+                params={"$top": 999},
+            ):
                 a["_kind"] = "appRoleAssignment"
                 yield a
 
@@ -512,6 +594,9 @@ class EntraConnector(BaseConnector):
                 yield {**record, "_kind": "copilotPackage"}
                 continue
             if lookups >= self.max_package_lookups:
+                self.ctx.attest_operation(
+                    "graph", _graph_operation(listing) + "/{id}", None, "truncated", enumeration=False
+                )
                 if not capped:
                     capped = True
                     self.ctx.warn("identity.entra: max_package_lookups reached; package details partial")
@@ -529,20 +614,24 @@ class EntraConnector(BaseConnector):
 
     def _package_detail(self, listing: str, package_id: str) -> dict[str, Any] | None:
         assert self.http
+        operation = _graph_operation(listing) + "/{id}"
         try:
             detail = self.http.get_json(f"{listing}/{quote(package_id, safe='')}")
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            self.ctx.attest_operation("graph", operation, None, failure_outcome(exc), enumeration=False)
             self.ctx.warn(
                 f"identity.entra: package details unreadable ({failure_summary(exc)}); "
                 "registry coverage incomplete"
             )
             return None
         if not isinstance(detail, dict) or detail.get("id") != package_id:
+            self.ctx.attest_operation("graph", operation, None, "failed", enumeration=False)
             self.ctx.warn(
                 "identity.entra: package details do not describe the listed package; registry coverage "
                 "incomplete"
             )
             return None
+        self.ctx.attest_operation("graph", operation, None, "ok", enumeration=False)
         return detail
 
     # -------------------------------------------------------------- analyze
@@ -1655,6 +1744,14 @@ def _permission_evidence(
             )
         )
         f.add_tag("app-only-permissions")
+
+
+def _graph_operation(path: str) -> str:
+    """A Graph listing as a live scope operation: its version and path, without the host."""
+    for base, version in ((GRAPH_BETA, "/beta"), (GRAPH, "/v1.0")):
+        if path.startswith(base + "/"):
+            return version + path[len(base) :]
+    return "/v1.0" + path
 
 
 def _unverified_claims(token: str) -> dict[str, Any] | None:

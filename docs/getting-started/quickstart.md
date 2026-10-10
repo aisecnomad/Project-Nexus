@@ -88,8 +88,11 @@ shadowscan diff last-week.json today.json                 # informational: exit 
 shadowscan diff last-week.json today.json --fail-on-new   # exit 2 on new findings or a higher risk level
 ```
 
-`diff` can complete only for local repository scans and offline exports; a
-live API connector or a third-party connector always gives 3, and `gateway.logs`
+`diff` can complete for local repository scans, offline exports and complete
+live `cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra` scans whose
+provider confirmed the scanned account, tenant, projects or subscriptions (see
+[live collection scope](../scanning.md#live-collection-scope)). Any other live
+API connector or a third-party connector always gives 3, and `gateway.logs`
 does unless both scans were keyed with the same identity key (see
 [scan state](../scanning.md)).
 

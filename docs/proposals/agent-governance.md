@@ -328,6 +328,12 @@ These go into `collection_scope`. A denied, throttled or truncated operation
 makes the scan incomplete. Two scans compare only when their scope digests
 match. Third-party plugins stay non-comparable.
 
+Status: DRIFT-1 is implemented, unreleased, for `cloud.aws`, `cloud.azure`,
+`cloud.gcp` and `identity.entra`; other live connectors stay non-comparable.
+DRIFT-0's replay path and its pitfalls are documented with it in
+[live collection scope](../scanning.md#live-collection-scope). It was tested
+with mocked transports only, not against a live account or tenant.
+
 **DRIFT-2 Drift classes (M).** Label each changed field with a class so
 operators gate on what they care about:
 

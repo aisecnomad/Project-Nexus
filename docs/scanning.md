@@ -790,6 +790,97 @@ says why it is not comparable. Completion follows the sources: one incomplete
 source makes the merged report incomplete (exit 3). Reports with another
 finding identity schema are refused; rescan them first.
 
+## Live collection scope
+
+`cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra` attest the scope of
+a live collection, so that two live scans can be compared
+([comparing reports](#comparing-reports)). Each records, during collection, what
+its provider reported rather than what the configuration asked for:
+
+| Connector | Principal (reported by the provider) | Partitions | Enumerations |
+|---|---|---|---|
+| `cloud.aws` | the account STS `GetCallerIdentity` returns, never the caller ARN; `role_arn` is a requested option | the resolved `regions` (`all` resolves through `DescribeRegions`) | each selected service's listings per region, `GetAccountAuthorizationDetails`, CloudTrail `LookupEvents`, registry listings per region and per `registry_arns` registry |
+| `identity.entra` | the tenant `GET /organization` returns, for app-only scans only (delegated listings are scoped to the signed-in user and are never attested); a `tenant_id` GUID that differs stops the scan | none: the tenant | the service principal, consent grant and application listings, and the opted-in agent identity and Agent 365 package listings |
+| `cloud.gcp` | the configured `projects`, each verified by its enabled-services listing; without `projects`, the set of projects a complete `projects.list` returned | configured `projects` and the resolved `locations` | for configured projects, every per-project and per-location listing; in discovery mode only `projects.list` |
+| `cloud.azure` | the configured `subscriptions`, each read with `GET /subscriptions/{id}`; without `subscriptions`, those `GET /subscriptions` lists | subscriptions | `GET /subscriptions` when listing, the Resource Graph query and each subscription's role assignments |
+
+The fingerprint covers, for each live entry, the principal, the requested
+options, the partitions and every enumeration with its outcome, together with
+the signatures, scanner and version that cover every scope. Requested options
+are the non-secret keys each connector lists, as resolved (environment
+fallbacks and defaults included; lists of names compare as sets): `account_id`,
+`role_arn`, `regions`, `services`, `cloudtrail_days`, `max_lambda`,
+`max_ecs_api_calls`, `max_registry_records` and `registry_arns` for AWS;
+`tenant_id`, `auth_mode`, `include_first_party`, `max_app_role_lookups`,
+`include_agent_identities`, `include_agent_registry`, `agent_registry_api` and
+`max_package_lookups` for Entra; `projects`, `locations`, `audit_days`,
+`max_projects`, `max_pages`, `agent_registry`, `agent_registry_version`,
+`agent_registry_locations`, `gemini_enterprise` and `discovery_collections` for
+GCP; `subscriptions` and `include_app_settings` for Azure. Credentials, profile
+names and credential files never enter it. Calls made once per discovered
+resource (an agent's aliases, a principal's app role assignments, a package's
+details, a service account's keys) are details: they are recorded per
+operation template and outcome and never fingerprinted, and neither are page
+or item counts, resource identifiers or timestamps. More pages, more resources
+and a new agent therefore keep the scope; the new agent is a new finding.
+
+A live entry attests nothing, and a comparison with it is incomplete (exit 3),
+when:
+
+- any listing was denied, throttled, truncated, unavailable or failed, or the
+  connector was otherwise incomplete or timed out: `live collection was not
+  verified or was incomplete`;
+- the provider did not confirm the principal, for example an Entra application
+  without `Organization.Read.All` or `Directory.Read.All`, or a configured
+  Azure subscription that could not be read: `live principal could not be
+  verified`. The scan itself completes, with an advisory warning;
+- an option holds a value the sanitizer would change, which would be a
+  credential: `configuration contains private comparison values`.
+
+Other live connectors (`code.github` and `code.gitlab` without `input`, the
+`saas.*` and `lowcode.*` connectors, and the other `identity.*` and `cloud.*`
+connectors) still report `live collection scope is not attested`, and plugins
+`third-party connector scope is not attested`. Changing the scope makes the
+next comparison incomplete, including enabling an API in a configured GCP
+project or a region under `regions: all`; collect a new baseline then.
+
+`collection_scope.live` lists each live entry's record: the principal and the
+call that verified it, the requested options, partitions, enumerations and
+details with their outcomes, and `complete`. It is outside the fingerprint,
+explains a `scope differs` or incomplete comparison, and is sanitized like the
+rest of the report; its account, tenant, project and subscription identifiers
+are ones findings already carry. A fleet merge of complete, attested live
+reports is comparable like any other merge; the merged report does not copy
+the sources' `live` records.
+
+Attestation shows which principal, partitions and operations a scan enumerated
+successfully, under which options. It does not show that the account or
+tenant has no agents outside the enumerated APIs, services, regions, locations
+or projects, or that a listing returned every object rather than those the
+credentials may read: Resource Graph and delegated Graph listings return only
+what the caller can see, without failing. For that reason a delegated
+`identity.entra` scan is never attested: another signed-in user in the same
+tenant could see less without any error. In GCP discovery mode, and when
+`cloud.azure` lists its subscriptions, the principal is the discovered project
+or subscription set, so a project or subscription the credentials can no
+longer see changes the scope (exit 3) instead of resolving its findings, and a
+new one needs a reviewed re-baseline. Set `projects` or `subscriptions` to keep
+the scope stable.
+
+### Record export replay
+
+Comparing replays of record exports is the alternative for any built-in
+connector: collect live with `--dump-records` (or `options.dump_records`),
+replay each export with `input`, and diff the replays. Two pitfalls apply. The
+scope digest of an offline entry includes the absolute resolved `input` path,
+so stage every replay at the same path under the same label, or the comparison
+reports `scope differs`. And an export is published even when the live run
+behind it was incomplete (a denied listing is a warning, not an export
+failure), while the replay of that export can complete: check the export's
+`manifest.json` (`complete` for the run and `exported` for the entry) and
+replay only complete runs. A replay attests the export's contents, not the
+tenant's completeness.
+
 ## Comparing reports
 
 `shadowscan diff baseline.json current.json` reports new findings and substantive
@@ -815,13 +906,15 @@ key stands in for their configuration, which can hold guessable labels and
 bindings. Without the key their private caller/scope identities change between
 scans.
 
-Incomplete scans, changed scope, older reports without provenance, live provider
-collections and third-party connectors cannot establish equivalent coverage.
-Their missing findings are reported as `unknown`, and diff exits 3. New and
-changed findings remain visible. Currently only local repositories and offline
-exports from built-in connectors can attest comparable scope, `gateway.logs`
-only when both scans were keyed with the same identity key; live account and
-permission coverage require additional provider-specific provenance. The digest
+Incomplete scans, changed scope, older reports without provenance, live
+collections that could not attest their scope and third-party connectors cannot
+establish equivalent coverage. Their missing findings are reported as
+`unknown`, and diff exits 3. New and changed findings remain visible. Local
+repositories, offline exports from built-in connectors and live collections by
+`cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra` can attest
+comparable scope ([live collection scope](#live-collection-scope)),
+`gateway.logs` only when both scans were keyed with the same identity key. Every
+other live connector and every third-party connector cannot. The digest
 covers the resolved absolute scan paths, so compare scans of the same checkout
 location; a label does not stand in for the path, because a narrower scan under
 the same label would otherwise make out-of-scope findings look resolved.

@@ -262,6 +262,33 @@ class _ExportLedger:
             return entries
 
 
+class _ScopeLedger:
+    """Live collection scope records reported by connector workers of one run, by configuration ordinal.
+
+    A cancelled job reports nothing, and ``records`` drops what a timed-out job reported:
+    its findings are discarded, so its scope must not be attested either.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._records: dict[int, dict[str, Any] | None] = {}
+
+    def record(self, state: _JobState, number: int, record: dict[str, Any]) -> None:
+        with self._lock:
+            if state.cancelled.is_set():
+                return
+            # One record per configured entry; a second report attests nothing.
+            self._records[number] = None if number in self._records else record
+
+    def records(self, timed_out: set[int]) -> dict[int, dict[str, Any]]:
+        with self._lock:
+            return {
+                number: record
+                for number, record in self._records.items()
+                if record is not None and number not in timed_out
+            }
+
+
 class _ConnectorRunner:
     """Run one configured connector on a worker thread and shape its result.
 
@@ -271,7 +298,12 @@ class _ConnectorRunner:
     """
 
     def __init__(
-        self, engine: Engine, cache: IncrementalCache, dump_directory: Path | None, exports: _ExportLedger
+        self,
+        engine: Engine,
+        cache: IncrementalCache,
+        dump_directory: Path | None,
+        exports: _ExportLedger,
+        scopes: _ScopeLedger | None = None,
     ) -> None:
         self._engine = engine
         self._config = engine.config
@@ -279,6 +311,7 @@ class _ConnectorRunner:
         self._cache = cache
         self._dump_directory = dump_directory
         self._exports = exports
+        self._scopes = scopes if scopes is not None else _ScopeLedger()
         # Identical sources in one report share an opaque identity, while
         # separate Engine.run calls cannot link redacted caller/scope IDs
         # unless the operator supplied a stable key.
@@ -495,6 +528,10 @@ class _ConnectorRunner:
         st.findings = len(fs)
         _withhold_registry_records(hooks, builtin, fs, st)
         _sanitize_diagnostics(st)
+        if builtin and hooks.attests_live_scope and not ctx.input_path:
+            # Read after collection and completion bookkeeping: the scope a live connector
+            # attests is what its provider reported in this run.
+            self._scopes.record(state, int(dump_key.split("-")[0]), ctx.scope_record(hooks.scope_options))
         if self._dump_directory and not state.cancelled.is_set():
             exported = ctx.dump_path == cfg.get("_dump_path") and ctx.dump_path is not None and not st.skipped
             self._exports.record(
@@ -1096,6 +1133,7 @@ class Engine:
         dump_directory: Path | None,
         exports: _ExportLedger,
         started_at: str,
+        scopes: _ScopeLedger | None = None,
     ) -> tuple[dict[int, _JobResult], set[int]]:
         """Run every selected connector under deadline supervision."""
         states = {
@@ -1105,7 +1143,7 @@ class Engine:
             )
             for number, spec in jobs
         }
-        runner = _ConnectorRunner(self, cache, dump_directory, exports)
+        runner = _ConnectorRunner(self, cache, dump_directory, exports, scopes)
         workers = max(1, min(self.config.parallel, len(jobs) or 1))
         # Supervise the single-worker path too. A ThreadPoolExecutor context
         # manager would wait forever for a stuck connector on exit.
@@ -1240,8 +1278,21 @@ class Engine:
         jobs = self._select_jobs(only)
         specs = [spec for _, spec in jobs]
         self.config.validate_connector_isolation(specs)
+        stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
+        cache = IncrementalCache(self.config, self.index, identity_key=self._identity_key)
+        dump_records = self.config.dump_records
+        dump_directory = prepare_private_directory(dump_records) if dump_records else None
+        exports = _ExportLedger()
+        scopes = _ScopeLedger()
+        completed, timed_out = self._collect(jobs, cache, dump_directory, exports, result.started_at, scopes)
+        # After collection: a live connector attests the scope its provider reported.
+        live = scopes.records(timed_out)
         result.collection_scope = build_collection_scope(
-            self.config, self.index, specs, identity_key=self._identity_key
+            self.config,
+            self.index,
+            specs,
+            identity_key=self._identity_key,
+            live_records=[live.get(number) for number, _ in jobs],
         )
         result.collection_scope["credential_identity_schema"] = "shadowscan.credential-identity/v1"
         result.collection_scope["credential_identity_scope"] = "keyed" if self._identity_key else "run"
@@ -1249,12 +1300,6 @@ class Engine:
         if not_run:
             # Outside the fingerprint and comparability: operator intent only.
             result.collection_scope["not_run"] = not_run
-        stats = self._selection_stats(specs) + self._inventory_stats(specs, result.started_at)
-        cache = IncrementalCache(self.config, self.index, identity_key=self._identity_key)
-        dump_records = self.config.dump_records
-        dump_directory = prepare_private_directory(dump_records) if dump_records else None
-        exports = _ExportLedger()
-        completed, timed_out = self._collect(jobs, cache, dump_directory, exports, result.started_at)
         # Merge uses first-observed owner and metadata as precedence.
         # Preserve configured order regardless of request completion.
         findings: list[Finding] = []

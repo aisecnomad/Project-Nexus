@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatchcase
 from functools import partial
@@ -224,7 +224,70 @@ _WORKLOAD_TRUST_SERVICES = (
 # Resources whose ARN this connector generates from the account envelope.
 _ENVELOPE_ARN_TYPES = frozenset({"bedrock-logging", "qbusiness-application", "lex-bot", "ssm-parameter"})
 _DENIED_CODES = frozenset({"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"})
+# Error codes botocore's standard retry mode treats as throttling, raised once its attempts ran out.
+_THROTTLING_CODES = frozenset(
+    {
+        "Throttling",
+        "ThrottlingException",
+        "ThrottledException",
+        "RequestThrottledException",
+        "TooManyRequestsException",
+        "ProvisionedThroughputExceededException",
+        "TransactionInProgressException",
+        "RequestLimitExceeded",
+        "BandwidthLimitExceeded",
+        "LimitExceededException",
+        "RequestThrottled",
+        "SlowDown",
+        "PriorRequestNotComplete",
+        "EC2ThrottledException",
+    }
+)
 _UNAVAILABLE_MARKERS = ("Could not connect to the endpoint", "UnknownServiceError", "EndpointConnectionError")
+# Live scope attestation: per `services` value, the listings whose requests do not depend
+# on earlier responses. They enter the scope fingerprint with their region. Every other
+# call (one per agent, gateway, function, registry...) is a detail: recorded without
+# region and never fingerprinted, so a new resource does not change the scope.
+_SCOPE_ENUMERATIONS: dict[str, frozenset[str]] = {
+    "regions": frozenset({"describe_regions"}),
+    "bedrock": frozenset(
+        {
+            "list_agents",
+            "list_knowledge_bases",
+            "list_flows",
+            "get_model_invocation_logging_configuration",
+            "list_guardrails",
+            "list_custom_models",
+        }
+    ),
+    "agentcore": frozenset(
+        {"list_agent_runtimes", "list_gateways", "list_memories", *(op for _, op, _ in _AGENTCORE_LISTS)}
+    ),
+    "lambda": frozenset({"list_functions"}),
+    "ecs": frozenset({"list_clusters", "list_task_definition_families"}),
+    "sagemaker": frozenset({"list_endpoints"}),
+    "stepfunctions": frozenset({"list_state_machines"}),
+    "qbusiness": frozenset({"list_applications"}),
+    "lex": frozenset({"list_bots"}),
+    "secrets": frozenset({"list_secrets", "describe_parameters"}),
+    "iam": frozenset({"get_account_authorization_details"}),
+    "cloudtrail": frozenset({"lookup_events"}),
+    "registry": frozenset({"list_registries", "list_discoverable_registry_records"}),
+}
+# Options a live scope attestation repeats: never credentials or the credential source.
+_SCOPE_OPTIONS = frozenset(
+    {
+        "account_id",
+        "role_arn",
+        "regions",
+        "services",
+        "cloudtrail_days",
+        "max_lambda",
+        "max_ecs_api_calls",
+        "max_registry_records",
+        "registry_arns",
+    }
+)
 # A provider error code is a fixed identifier (``AccessDeniedException``,
 # ``ThrottlingException``); anything else is not reported as one.
 _ERROR_CODE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
@@ -236,6 +299,21 @@ def _error_code(exc: BaseException) -> str | None:
     error = response.get("Error") if isinstance(response, dict) else None
     code = error.get("Code") if isinstance(error, dict) else None
     return code if isinstance(code, str) and _ERROR_CODE_RE.fullmatch(code) else None
+
+
+def _failure_outcome(exc: BaseException) -> str:
+    """The live scope outcome of a failed SDK call; the message is classified, never reported."""
+    code = _error_code(exc)
+    message = str(exc)
+    if code in _DENIED_CODES or "UnauthorizedOperation" in message or "not authorized" in message:
+        return "denied"
+    if code in _THROTTLING_CODES:
+        return "throttled"
+    if type(exc).__name__ in _UNAVAILABLE_MARKERS or any(
+        marker in message for marker in _UNAVAILABLE_MARKERS
+    ):
+        return "unavailable"
+    return "failed"
 
 
 # CloudTrail event fields that must be text (or absent) before aggregation.
@@ -299,6 +377,8 @@ class AwsConnector(BaseConnector):
     registry_record_types: ClassVar[frozenset[str]] = frozenset(
         {AGENT_REGISTRY.registry_type, AGENTCORE_REGISTRY.registry_type}
     )
+    attests_live_scope: ClassVar[bool] = True
+    scope_options: ClassVar[frozenset[str]] = _SCOPE_OPTIONS
     config_keys: ClassVar[dict[str, str]] = {
         "profile": "AWS profile (env AWS_PROFILE)",
         "role_arn": "role to assume before scanning",
@@ -385,6 +465,9 @@ class AwsConnector(BaseConnector):
         self.account: str | None = account
         self._configured_account = account
         self._session: Any = None
+        # The `services` value and region (or "global") of the listing in progress, for the
+        # live scope record; empty outside collection.
+        self._scope: tuple[str, str] = ("", "")
 
     # ------------------------------------------------------------- session
     @staticmethod
@@ -450,6 +533,9 @@ class AwsConnector(BaseConnector):
             )
         self.account = account
         self._session = session
+        # The account STS reported, never the caller ARN: SSO and session names vary between
+        # runs and can carry personal data. A configured role_arn is a requested option.
+        self.ctx.attest_principal("aws", "account", account, "sts:GetCallerIdentity")
         return session
 
     def _client(self, service: str, region: str | None = None) -> Any:
@@ -458,11 +544,48 @@ class AwsConnector(BaseConnector):
     def _regions(self) -> list[str]:
         if self.regions == "all" or self.regions == ["all"]:
             ec2 = self._client("ec2", "us-east-1")
-            return [r["RegionName"] for r in ec2.describe_regions(AllRegions=False)["Regions"]]
+            try:
+                regions = [r["RegionName"] for r in ec2.describe_regions(AllRegions=False)["Regions"]]
+            except Exception as exc:
+                self.ctx.attest_operation("regions", "describe_regions", "global", _failure_outcome(exc))
+                raise
+            self.ctx.attest_operation("regions", "describe_regions", "global", "ok")
+            return regions
         return list(self.regions)
+
+    def _scoped(
+        self, service: str, partition: str, records: Iterable[dict[str, Any]]
+    ) -> Iterator[dict[str, Any]]:
+        """Re-yield one service's records, attributing its listings to ``service`` and ``partition``."""
+        outer = self._scope
+        self._scope = (service, partition)
+        try:
+            yield from records
+        finally:
+            self._scope = outer
+
+    def _attest_call(
+        self,
+        operation: str,
+        outcome: str,
+        *,
+        enumeration: bool | None = None,
+        scope: tuple[str, str] | None = None,
+    ) -> None:
+        """Record one call's outcome under the listing scope in progress (nothing outside collection)."""
+        service, partition = scope or self._scope
+        if not service:
+            return
+        if enumeration is None:
+            enumeration = operation in _SCOPE_ENUMERATIONS.get(service, ())
+        self.ctx.attest_operation(
+            service, operation, partition if enumeration else None, outcome, enumeration=enumeration
+        )
 
     def _pages(self, client: Any, op: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         """Keep successful pages when a later provider request fails."""
+        outcome = "ok"
+        scope = self._scope  # the listing's own scope, even if the generator is closed later
         try:
             try:
                 paginator = client.get_paginator(op)
@@ -472,7 +595,9 @@ class AwsConnector(BaseConnector):
                 # Only failure to create a paginator permits the manual path.
                 paginator = None
             if paginator is None:
-                yield from self._manual_pages(client, op, kwargs)
+                complete = yield from self._manual_pages(client, op, kwargs)
+                if not complete:
+                    outcome = "truncated"
                 return
             for number, page in enumerate(islice(paginator.paginate(**kwargs), MAX_LIST_PAGES), start=1):
                 if not isinstance(page, dict):
@@ -482,16 +607,27 @@ class AwsConnector(BaseConnector):
                     # Inspect the last response without fetching another page.
                     tokens = ("nextToken", "NextToken", "NextMarker", "Marker")
                     if page.get("IsTruncated") or any(page.get(key) for key in tokens):
+                        outcome = "truncated"
                         self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
                     return
         except Exception as exc:  # noqa: BLE001 - preserve pages already yielded
+            outcome = _failure_outcome(exc)
             code = _error_code(exc)
             denied = code in _DENIED_CODES
             detail = f"access denied ({code})" if denied else type(exc).__name__
             self.ctx.warn(f"cloud.aws: {op} collection failed ({detail})")
+        finally:
+            # Also when the consumer stops early; a consumer that caps a listing records the
+            # truncation itself, and the most severe outcome is kept.
+            self._attest_call(op, outcome, scope=scope)
 
-    def _manual_pages(self, client: Any, op: str, kwargs: dict[str, Any]) -> Iterator[dict[str, Any]]:
-        """Follow ``nextToken``/``NextToken`` by hand for operations without a paginator."""
+    def _manual_pages(
+        self, client: Any, op: str, kwargs: dict[str, Any]
+    ) -> Generator[dict[str, Any], None, bool]:
+        """Follow ``nextToken``/``NextToken`` by hand for operations without a paginator.
+
+        Returns False when the page limit stopped the listing.
+        """
         seen: set[str] = set()
         request = dict(kwargs)
         for _ in range(MAX_LIST_PAGES):
@@ -505,21 +641,25 @@ class AwsConnector(BaseConnector):
             except InvalidPageTokenError:
                 raise ValueError("invalid or repeated AWS pagination token") from None
             if token is None:
-                return
+                return True
             request[token_key] = token
         self.ctx.warn(f"cloud.aws: {op} pagination limit reached")
+        return False
 
     def _paginate(self, client: Any, op: str, key: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         for page in self._pages(client, op, **kwargs):
             if key not in page or "error" in page or "Error" in page:
+                self._attest_call(op, "failed")
                 self.ctx.warn(f"cloud.aws: missing or failed {key} page for {op}")
                 continue
             items = page[key]
             if not isinstance(items, list):
+                self._attest_call(op, "failed")
                 self.ctx.warn(f"cloud.aws: invalid {key} page for {op}")
                 continue
             for item in items:
                 if not isinstance(item, dict):
+                    self._attest_call(op, "failed")
                     self.ctx.warn(f"cloud.aws: invalid {key} record for {op}")
                     continue
                 yield item
@@ -539,9 +679,18 @@ class AwsConnector(BaseConnector):
         the exception type, never the message: SDK errors echo request
         arguments, which are built from untrusted response fields, and
         denied-authorization messages can carry encoded policy context.
+        A named SDK operation's outcome is recorded for the live scope.
         """
+        result, outcome = self._call(fn, *args, **kwargs)
+        operation = getattr(fn, "__name__", None)
+        if isinstance(operation, str) and operation.isidentifier() and not isinstance(fn, type):
+            self._attest_call(operation, outcome)
+        return result
+
+    def _call(self, fn: Any, *args: Any, **kwargs: Any) -> tuple[Any, str]:
+        """``_safe`` without recording: the result (None on failure) and the live scope outcome."""
         try:
-            return fn(*args, **kwargs)
+            return fn(*args, **kwargs), "ok"
         except Exception as exc:  # noqa: BLE001 - every failure below is reported as incomplete coverage
             code = _error_code(exc)
             msg = str(exc)
@@ -554,7 +703,7 @@ class AwsConnector(BaseConnector):
                 self.ctx.warn(f"cloud.aws:{where} service coverage unavailable ({detail})", incomplete=True)
             else:
                 self.ctx.warn(f"cloud.aws:{where} request failed ({detail})", incomplete=True)
-            return None
+            return None, _failure_outcome(exc)
 
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -562,6 +711,7 @@ class AwsConnector(BaseConnector):
         # emitting account metadata rather than relying on region discovery.
         self._session_()
         regions = self._regions()
+        self.ctx.attest_partition("regions", regions)
         acct = self.account
         if self._default_regions and self.services - {"iam"}:
             # Informational: the operator chose no scope, so name what was and was not covered.
@@ -577,37 +727,33 @@ class AwsConnector(BaseConnector):
         self._listed_registries = set()
         self._registry_counts = {}
         if "iam" in self.services:
-            yield from self._collect_iam()
+            yield from self._scoped("iam", "global", self._collect_iam())
+        regional = (
+            ("bedrock", self._collect_bedrock),
+            ("agentcore", self._collect_agentcore),
+            ("lambda", self._collect_lambda),
+            ("ecs", self._collect_ecs),
+            ("sagemaker", self._collect_sagemaker),
+            ("stepfunctions", self._collect_stepfunctions),
+            ("qbusiness", self._collect_q),
+            ("lex", self._collect_lex),
+            ("secrets", self._collect_secret_names),
+            ("cloudtrail", self._collect_cloudtrail),
+        )
         for region in regions:
-            if "bedrock" in self.services:
-                yield from self._collect_bedrock(region)
-            if "agentcore" in self.services:
+            for service, collector in regional:
+                if service not in self.services or (service == "cloudtrail" and self.cloudtrail_days <= 0):
+                    continue
                 before = self._warnings_recorded()
-                yield from self._collect_agentcore(region)
+                yield from self._scoped(service, region, collector(region))
                 # Registry bindings to this region's runtimes and gateways are in scope only when
                 # nothing was denied, truncated or malformed here (including while analysing them).
-                if self._warnings_recorded() == before:
+                if service == "agentcore" and self._warnings_recorded() == before:
                     self._agentcore_regions.add(region)
-            if "lambda" in self.services:
-                yield from self._collect_lambda(region)
-            if "ecs" in self.services:
-                yield from self._collect_ecs(region)
-            if "sagemaker" in self.services:
-                yield from self._collect_sagemaker(region)
-            if "stepfunctions" in self.services:
-                yield from self._collect_stepfunctions(region)
-            if "qbusiness" in self.services:
-                yield from self._collect_q(region)
-            if "lex" in self.services:
-                yield from self._collect_lex(region)
-            if "secrets" in self.services:
-                yield from self._collect_secret_names(region)
-            if "cloudtrail" in self.services and self.cloudtrail_days > 0:
-                yield from self._collect_cloudtrail(region)
         if "registry" in self.services:
             # After every region: a record can bind a runtime or gateway of any scanned region.
             for region in regions:
-                yield from self._collect_registries(region)
+                yield from self._scoped("registry", region, self._collect_registries(region))
             yield from self._collect_registry_arns()
 
     def _collect_bedrock(self, region: str) -> Iterator[dict[str, Any]]:
@@ -700,6 +846,7 @@ class AwsConnector(BaseConnector):
         try:
             ac = self._client("bedrock-agentcore-control", region)
         except Exception:  # noqa: BLE001 - old boto3
+            self._attest_call("bedrock-agentcore-control", "unavailable", enumeration=True)
             self.ctx.warn(
                 "cloud.aws: AgentCore unavailable in installed SDK; collection incomplete",
                 incomplete=True,
@@ -757,6 +904,7 @@ class AwsConnector(BaseConnector):
             try:
                 client = self._client(api.service, region)
             except Exception:  # noqa: BLE001 - an installed SDK without this service
+                self._attest_call(api.service, "unavailable", enumeration=True)
                 self.ctx.warn(f"cloud.aws: {api.label} unavailable in installed SDK; collection incomplete")
                 continue
             for summary in self._list_items(client, "list_registries", "registries"):
@@ -806,7 +954,7 @@ class AwsConnector(BaseConnector):
         }
 
     def _bounded_listing(
-        self, api: RegistryApi, region: str, listing: Any
+        self, api: RegistryApi, region: str, operation: str, listing: Any
     ) -> tuple[list[dict[str, Any]], bool]:
         """Read one record listing in full, within ``max_registry_records`` for the namespace and region.
 
@@ -820,6 +968,7 @@ class AwsConnector(BaseConnector):
         items: list[dict[str, Any]] = self._safe(lambda: list(islice(listing(), remaining + 1))) or []
         complete = self._warnings_recorded() == before
         if len(items) > remaining:
+            self._attest_call(operation, "truncated")
             self.ctx.warn(f"cloud.aws: max_registry_records reached for {api.label} in {region}")
             items = items[:remaining]
             complete = False
@@ -836,7 +985,7 @@ class AwsConnector(BaseConnector):
             "registryRecords",
             registryId=registry["registryId"],
         )
-        summaries, complete = self._bounded_listing(api, region, listing)
+        summaries, complete = self._bounded_listing(api, region, "list_registry_records", listing)
         records = []
         for summary in summaries:
             record = guarded_record(
@@ -933,20 +1082,25 @@ class AwsConnector(BaseConnector):
             if arn in self._listed_registries:
                 continue
             region = arn.split(":")[3]
+            # A configured registry is a partition of its own: the ARN is a requested option.
+            scope = ("registry", arn)
             try:
                 client = self._client("agent-registry", region)
             except Exception:  # noqa: BLE001 - an installed SDK without this service
+                self._attest_call("agent-registry", "unavailable", enumeration=True, scope=scope)
                 self.ctx.warn(
                     "cloud.aws: Agent Registry discovery unavailable in installed SDK; collection incomplete"
                 )
                 return
-            yield from self._discoverable_records(client, arn, region)
+            yield from self._scoped(*scope, self._discoverable_records(client, arn, region))
 
     def _discoverable_records(self, client: Any, arn: str, region: str) -> Iterator[dict[str, Any]]:
         listing = partial(
             self._paginate, client, "list_discoverable_registry_records", "registryRecords", registryId=arn
         )
-        summaries, complete = self._bounded_listing(AGENT_REGISTRY, region, listing)
+        summaries, complete = self._bounded_listing(
+            AGENT_REGISTRY, region, "list_discoverable_registry_records", listing
+        )
         ids = [s["recordId"] for s in summaries if isinstance(s.get("recordId"), str) and s["recordId"]]
         details: dict[str, dict[str, Any]] = {}
         for batch in _batches(iter(ids), 100):
@@ -967,6 +1121,7 @@ class AwsConnector(BaseConnector):
                 if isinstance(item, dict) and isinstance(item.get("recordId"), str)
             )
             if errors:
+                self._attest_call("batch_get_discoverable_registry_record", "failed")
                 # The error code only: the message can echo record identifiers or policy context.
                 codes = sorted({_batch_error_code(error) for error in errors})
                 self.ctx.warn(
@@ -1006,6 +1161,7 @@ class AwsConnector(BaseConnector):
         lam = self._client("lambda", region)
         for n, fn in enumerate(self._paginate(lam, "list_functions", "Functions"), start=1):
             if n > self.max_lambda:
+                self._attest_call("list_functions", "truncated")
                 self.ctx.warn(f"cloud.aws: max_lambda reached in {region}", incomplete=True)
                 break
             rec = guarded_record(self, "Lambda function", partial(self._lambda_record, lam, fn, region))
@@ -2488,19 +2644,25 @@ class _EcsInventory:
     def call(self, op: str, **kwargs: Any) -> dict[str, Any] | None:
         """One budgeted request; exhaustion, failures and malformed responses mark coverage incomplete."""
         if self.remaining == 0:
+            self.connector._attest_call(op, "truncated")
             if not self.limit_reported:
                 self.ctx.warn(f"cloud.aws: max_ecs_api_calls reached in {self.region}", incomplete=True)
                 self.limit_reported = True
             return None
         self.remaining -= 1
-        response = self.connector._safe(lambda: getattr(self.client, op)(**kwargs))
+        response, outcome = self.connector._call(lambda: getattr(self.client, op)(**kwargs))
         if response is None:
+            self.connector._attest_call(op, outcome if outcome != "ok" else "failed")
             return None
         if not isinstance(response, dict):
+            self.connector._attest_call(op, "failed")
             self.ctx.warn(f"cloud.aws: invalid ECS {op} response in {self.region}", incomplete=True)
             return None
         if response.get("failures"):
+            self.connector._attest_call(op, "failed")
             self.ctx.warn(f"cloud.aws: partial ECS {op} failure in {self.region}", incomplete=True)
+            return response
+        self.connector._attest_call(op, "ok")
         return response
 
     def identifiers(self, op: str, key: str, **kwargs: Any) -> Iterator[str]:

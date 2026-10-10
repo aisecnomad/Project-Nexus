@@ -584,6 +584,15 @@ and `client_secret`; delegated package listings are caller-scoped and never
 complete. Statuses, bindings, coverage and the delegated token rules are in the
 [identity connector guide](connectors/identity.md#identityentra).
 
+After authenticating, live collection reads `GET /organization` and attests the
+tenant it returns for [live collection scope](scanning.md#live-collection-scope)
+comparisons; a `tenant_id` GUID that differs stops the scan. The call needs
+`Organization.Read.All` or `Directory.Read.All` (application) or `User.Read`
+(delegated) and matters only for comparable drift: when it is denied the scan
+still completes, with an advisory warning, but its scope is not attested.
+Delegated scans are never attested, because their listings return only what
+the signed-in user may see.
+
 ### `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
 "Fireflies has Gmail + Calendar for 214 users". Auth: service account with
@@ -882,6 +891,14 @@ Credentials, and OCI instance or resource principals. The engine replaces an
 `allow_instance_credentials` value in a connector entry with the scan-wide
 value; see [Production](production.md).
 
+Live `cloud.aws`, `cloud.gcp` and `cloud.azure` scans attest their
+[collection scope](scanning.md#live-collection-scope), so two complete live
+scans can be compared: the account STS reports, the configured GCP projects
+their enabled-services listings confirm (or the discovered project set), and the Azure
+subscriptions ARM reports, with the resolved regions, locations or
+subscriptions and each listing's outcome. See the
+[cloud guide](connectors/cloud.md#live-scope-attestation).
+
 ### `cloud.aws`
 Bedrock Agents (action groups and their function confirmation settings,
 knowledge bases, aliases, collaborators, guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
@@ -1118,11 +1135,11 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Zoom | Server-to-Server OAuth app with `marketplace:read:list_apps:admin` |
 | Atlassian | site admin basic auth with an API token for the Universal Plugin Manager listing |
 | Auth0 | Management API v2 token with `read:clients`, `read:client_grants` |
-| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: Graph beta service principal read; confirm the least-privileged permission on Microsoft's current beta reference |
+| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: Graph beta service principal read; confirm the least-privileged permission on Microsoft's current beta reference. Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated) |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition`; the opt-in `registry` service needs `agent-registry:ListRegistries`, `agent-registry:GetRegistry`, `agent-registry:ListRegistryRecords`, `agent-registry:GetRegistryRecord` (AgentCore registries are covered by `bedrock-agentcore:List*/Get*`), and `registry_arns` needs `agent-registry:ListDiscoverableRegistryRecords` and `agent-registry:GetDiscoverableRegistryRecord` on those registries. Do not grant `agent-registry:InvokeRegistryMcp` or `Search*` actions: the connector never calls them |
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs; with the opt-in catalogs, read access to Agent Registry and to Discovery Engine assistants and agents, for example Google's viewer roles for those APIs: verify the role names in your organization) |
-| Azure | `Reader` on subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
+| Azure | `Reader` on subscriptions, which also covers the `GET /subscriptions/{id}` read that verifies configured subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
 | OCI | policy `Allow group audit to read all-resources in tenancy` |
 | Endpoint | read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written |
 | Network | read access to the exported logs; the connector needs no sensor or cloud credentials |

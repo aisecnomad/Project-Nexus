@@ -285,7 +285,7 @@ See [scan semantics](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/
 
 | Exit | Meaning |
 |---|---|
-| **3** | Scan incomplete. `shadowscan diff` also returns 3 when reports are incomparable. |
+| **3** | Scan incomplete. `shadowscan diff` also returns 3 when reports are incomparable, for example live scans other than complete, attested `cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra` collections. |
 | **2** | Scan completed but reached `--fail-on`. |
 | **1** | No scan result: invalid option, value, path or configuration, or setup/output error. |
 | **0** | Scan completed and passed. |

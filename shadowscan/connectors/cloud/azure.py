@@ -36,7 +36,13 @@ from shadowscan.connectors.cloud.common import (
     string_list,
 )
 from shadowscan.connectors.cloud.credentials import allow_instance_credentials
-from shadowscan.connectors.common import apply_matches, config_boolean, failure_summary, model_matches
+from shadowscan.connectors.common import (
+    apply_matches,
+    config_boolean,
+    failure_outcome,
+    failure_summary,
+    model_matches,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
 from shadowscan.utils.text import get_path, truncate
@@ -99,6 +105,16 @@ _BROAD_ROLES = {"Owner", "Contributor"}
 _SUBSCRIPTION_ID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
 _ARM_RESOURCE_ID = re.compile(r"(?:/[^/?#%\\\s\x00-\x1f\x7f-\x9f]++)++")
 _MAX_ARM_ID_CHARS = 4096
+# Live scope attestation. Subscription-level listings are enumerations; calls under a
+# resource Resource Graph returned are details, recorded by template and never fingerprinted.
+_SUBSCRIPTIONS_API = "2022-12-01"
+_ROLE_ASSIGNMENTS = re.compile(
+    r"/subscriptions/([^/]+)/providers/Microsoft\.Authorization/roleAssignments", re.I
+)
+_DETAIL_SUFFIXES = ("/deployments", "/providers/Microsoft.Insights/diagnosticSettings", "/projects")
+_RESOURCE_GRAPH = "POST /providers/Microsoft.ResourceGraph/resources"
+_APP_SETTINGS = "POST {resource}/config/appsettings/list"
+_FOUNDRY_AGENTS = "GET {project-endpoint}/assistants"
 
 
 def _arm_resource_id(value: str) -> bool:
@@ -114,6 +130,19 @@ class _ResourceBase(TypedDict):
     account: str | None
     region: str | None
     owner: str | None
+
+
+def _arm_operation(path: str) -> tuple[str, str | None, bool]:
+    """An ARM request (path or continuation URL) as a live scope (template, partition, enumeration)."""
+    route = urlsplit(path).path.rstrip("/")
+    if route.lower() == "/subscriptions":
+        return "GET /subscriptions", None, True
+    match = _ROLE_ASSIGNMENTS.fullmatch(route)
+    if match:
+        template = "GET /subscriptions/{subscription}/providers/Microsoft.Authorization/roleAssignments"
+        return template, match.group(1).lower(), True
+    suffix = next((suffix for suffix in _DETAIL_SUFFIXES if route.endswith(suffix)), "")
+    return "GET {resource}" + suffix, None, False
 
 
 def _subscription(resource_id: str) -> str | None:
@@ -133,6 +162,8 @@ class AzureConnector(BaseConnector):
         "Azure OpenAI deployments, AI Foundry projects & agents, Bot Service, Logic Apps, "
         "Function/Web/Container apps, managed identities and AI role assignments."
     )
+    attests_live_scope: ClassVar[bool] = True
+    scope_options: ClassVar[frozenset[str]] = frozenset({"subscriptions", "include_app_settings"})
     config_keys: ClassVar[dict[str, str]] = {
         "subscriptions": "list of subscription ids (default: all visible)",
         "access_token": (
@@ -200,6 +231,42 @@ class AzureConnector(BaseConnector):
             )
             token = self._cred.get_token("https://management.azure.com/.default").token
         self.http = HttpClient(ARM, headers={"Authorization": f"Bearer {token}"})
+        if self.subscriptions:
+            self._verify_subscriptions(self.subscriptions)
+
+    def _verify_subscriptions(self, subscriptions: list[str]) -> None:
+        """Attest configured subscriptions that ARM reports for the token (``GET /subscriptions/{id}``).
+
+        A denied, failed or unexpected answer leaves them unverified, so the live scope is not
+        attested, without making the scan incomplete. ARM naming another subscription stops it.
+        """
+        assert self.http
+        for subscription in subscriptions:
+            try:
+                data = self.http.get_json(
+                    f"/subscriptions/{subscription}", params={"api-version": _SUBSCRIPTIONS_API}
+                )
+            except (HttpError, RequestException, RuntimeError, ValueError, OSError) as exc:
+                self.ctx.warn(
+                    f"cloud.azure: subscription not verified ({failure_summary(exc)}); live collection "
+                    "scope not attested",
+                    incomplete=False,
+                )
+                return
+            reported = data.get("subscriptionId") if isinstance(data, dict) else None
+            if not isinstance(reported, str) or not reported:
+                self.ctx.warn(
+                    "cloud.azure: subscription response has no subscription id; live collection scope "
+                    "not attested",
+                    incomplete=False,
+                )
+                return
+            if reported.lower() != subscription.lower():
+                raise ConnectorError("cloud.azure: ARM reported another subscription for a configured one")
+        verified = sorted({subscription.lower() for subscription in subscriptions})
+        self.ctx.attest_principal(
+            "azure", "subscriptions", ",".join(verified), "arm:GET /subscriptions/{subscriptionId}"
+        )
 
     def _foundry(self) -> str | None:
         if self._foundry_token:
@@ -211,18 +278,25 @@ class AzureConnector(BaseConnector):
                 self.log.debug("foundry token acquisition failed (%s)", type(exc).__name__)
         return self._foundry_token
 
+    def _attest(self, path: str, outcome: str) -> None:
+        operation, partition, enumeration = _arm_operation(path)
+        self.ctx.attest_operation("arm", operation, partition, outcome, enumeration=enumeration)
+
     def _get(self, path: str, api: str, **params: Any) -> Any:
         """One failed detail call must not discard the remaining subscription."""
         assert self.http
         try:
             if "api-version" not in parse_qs(urlsplit(path).query):
                 params = {"api-version": api, **params}
-            return self.http.get_json(path, params=params or None)
+            data = self.http.get_json(path, params=params or None)
         except (HttpError, RequestException, ValueError) as exc:
+            self._attest(path, failure_outcome(exc))
             self.ctx.warn(
                 f"cloud.azure: {failure_summary(exc)} for {path}; coverage unknown", incomplete=True
             )
             return None
+        self._attest(path, "ok")
+        return data
 
     def _list(self, path: str, api: str, *, allow_partial: bool = False) -> list[Any] | None:
         """Keep observed ARM resources; strict callers require complete coverage.
@@ -234,8 +308,10 @@ class AzureConnector(BaseConnector):
         items: list[dict[str, Any]] = []
         seen: set[str] = set()
         malformed = False
+        origin = path
         for _ in range(1000):
             if path in seen:
+                self._attest(origin, "failed")
                 self.ctx.warn("cloud.azure: repeated list continuation", incomplete=True)
                 break
             seen.add(path)
@@ -247,16 +323,19 @@ class AzureConnector(BaseConnector):
                 )
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("value"), list):
+                self._attest(origin, "failed")
                 self.ctx.warn("cloud.azure: invalid list response; coverage unknown", incomplete=True)
                 break
             for item in data["value"]:
                 if not isinstance(item, dict):
+                    self._attest(origin, "failed")
                     self.ctx.warn("cloud.azure: invalid list record; coverage unknown")
                     malformed = True
                     continue
                 items.append(item)
             continuation_values = [data[key] for key in ("nextLink", "@odata.nextLink") if key in data]
             if len(continuation_values) == 2 and continuation_values[0] != continuation_values[1]:
+                self._attest(origin, "failed")
                 self.ctx.warn(
                     "cloud.azure: conflicting list continuations; coverage unknown", incomplete=True
                 )
@@ -265,11 +344,13 @@ class AzureConnector(BaseConnector):
             if next_path is None or next_path == "":
                 return None if malformed and not allow_partial else items
             if not isinstance(next_path, str):
+                self._attest(origin, "failed")
                 self.ctx.warn("cloud.azure: invalid list continuation; coverage unknown", incomplete=True)
                 break
             path = next_path
             # _get/HttpClient reject any nextLink outside ARM before sending auth.
         else:
+            self._attest(origin, "truncated")
             self.ctx.warn("cloud.azure: list page limit reached", incomplete=True)
         return items if allow_partial and items else None
 
@@ -280,6 +361,7 @@ class AzureConnector(BaseConnector):
         subs = self.subscriptions or self._listed_subscriptions()
         if not subs:
             raise ConnectorError("cloud.azure: no subscriptions visible")
+        self.ctx.attest_partition("subscriptions", (sub.lower() for sub in subs))
         for r in self._resource_graph(subs):
             if not isinstance(r, dict):
                 self.ctx.warn(
@@ -319,7 +401,8 @@ class AzureConnector(BaseConnector):
         """The visible subscriptions' ids; a listing without a GUID id is reported, never requested."""
         subs: list[str] = []
         invalid = 0
-        for s in self._list("/subscriptions", "2022-12-01", allow_partial=True) or []:
+        warnings = self.ctx._diagnostic_counts.get("warnings", 0)
+        for s in self._list("/subscriptions", _SUBSCRIPTIONS_API, allow_partial=True) or []:
             sub = s.get("subscriptionId")
             if isinstance(sub, str) and _SUBSCRIPTION_ID.fullmatch(sub):
                 subs.append(sub)
@@ -331,6 +414,10 @@ class AzureConnector(BaseConnector):
                 "were not scanned; coverage incomplete",
                 incomplete=True,
             )
+        if subs and self.ctx._diagnostic_counts.get("warnings", 0) == warnings:
+            # Every subscription the listing returned, read without a gap, is the principal.
+            verified = ",".join(sorted({sub.lower() for sub in subs}))
+            self.ctx.attest_principal("azure", "subscriptions", verified, "arm:GET /subscriptions")
         return subs
 
     def _resource_graph(self, subs: list[str]) -> list[Any]:
@@ -351,31 +438,38 @@ class AzureConnector(BaseConnector):
                     json=body,
                 )
             except (HttpError, RequestException, ValueError) as exc:
+                self.ctx.attest_operation("arm", _RESOURCE_GRAPH, None, failure_outcome(exc))
                 self.ctx.warn(
                     f"cloud.azure: Resource Graph collection failed ({failure_summary(exc)}); "
                     "coverage unknown"
                 )
                 break
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
+                self.ctx.attest_operation("arm", _RESOURCE_GRAPH, None, "failed")
                 self.ctx.warn("cloud.azure: invalid Resource Graph response; coverage unknown")
                 break
+            self.ctx.attest_operation("arm", _RESOURCE_GRAPH, None, "ok")
             rows.extend(data["data"])
             skip_token = data.get("$skipToken")
             if skip_token is None or skip_token == "":
                 if str(data.get("resultTruncated", "false")).lower() == "true":
+                    self.ctx.attest_operation("arm", _RESOURCE_GRAPH, None, "truncated")
                     self.ctx.warn(
                         "cloud.azure: Resource Graph results truncated without continuation",
                         incomplete=True,
                     )
                 break
             if not isinstance(skip_token, str):
+                self.ctx.attest_operation("arm", _RESOURCE_GRAPH, None, "failed")
                 self.ctx.warn("cloud.azure: invalid Resource Graph continuation; coverage unknown")
                 break
             if skip_token in seen_tokens:
+                self.ctx.attest_operation("arm", _RESOURCE_GRAPH, None, "failed")
                 self.ctx.warn("cloud.azure: repeated Resource Graph continuation", incomplete=True)
                 break
             seen_tokens.add(skip_token)
         else:
+            self.ctx.attest_operation("arm", _RESOURCE_GRAPH, None, "truncated")
             self.ctx.warn("cloud.azure: Resource Graph page limit reached", incomplete=True)
         return rows
 
@@ -434,11 +528,13 @@ class AzureConnector(BaseConnector):
                     or "error" in settings
                     or not isinstance(settings.get("properties"), dict)
                 ):
+                    self.ctx.attest_operation("arm", _APP_SETTINGS, None, "failed", enumeration=False)
                     self.ctx.warn(
                         f"cloud.azure: invalid appsettings response for {rid}; coverage unknown",
                         incomplete=True,
                     )
                     return
+                self.ctx.attest_operation("arm", _APP_SETTINGS, None, "ok", enumeration=False)
                 # The env-style key ensures dumps redact every value,
                 # including opaque credentials under nonstandard names.
                 yield {
@@ -449,6 +545,7 @@ class AzureConnector(BaseConnector):
                     "environment": settings["properties"],
                 }
             except (HttpError, RequestException, ValueError) as exc:
+                self.ctx.attest_operation("arm", _APP_SETTINGS, None, failure_outcome(exc), enumeration=False)
                 hint = ""
                 if isinstance(exc, HttpError) and exc.status in (401, 403):
                     hint = (
@@ -465,6 +562,7 @@ class AzureConnector(BaseConnector):
             account, "properties.endpoints.AI Foundry API"
         )
         if not (token and endpoint):
+            self.ctx.attest_operation("foundry", _FOUNDRY_AGENTS, None, "unavailable", enumeration=False)
             self.ctx.warn(
                 "cloud.azure: Foundry agent inventory unavailable; token or endpoint missing",
                 incomplete=True,
@@ -473,6 +571,7 @@ class AzureConnector(BaseConnector):
         try:
             validate_url(str(endpoint))
         except ValueError:
+            self.ctx.attest_operation("foundry", _FOUNDRY_AGENTS, None, "failed", enumeration=False)
             self.ctx.warn(
                 "cloud.azure: Foundry endpoint refused by the destination policy; agent coverage unknown",
                 incomplete=True,
@@ -480,6 +579,7 @@ class AzureConnector(BaseConnector):
             return
         host = urlsplit(str(endpoint)).hostname or ""
         if not any(host.endswith(suffix) for suffix in _FOUNDRY_HOST_SUFFIXES):
+            self.ctx.attest_operation("foundry", _FOUNDRY_AGENTS, None, "failed", enumeration=False)
             self.ctx.warn(
                 "cloud.azure: refusing Foundry credentials to an unrecognized endpoint origin; "
                 "agent coverage unknown",
@@ -493,17 +593,22 @@ class AzureConnector(BaseConnector):
             try:
                 data = http.get_json("/assistants", params=dict(params))
             except (HttpError, RequestException, ValueError) as exc:
+                self.ctx.attest_operation(
+                    "foundry", _FOUNDRY_AGENTS, None, failure_outcome(exc), enumeration=False
+                )
                 self.ctx.warn(
                     f"cloud.azure: Foundry agents {failure_summary(exc)}; coverage unknown",
                     incomplete=True,
                 )
                 return
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("data"), list):
+                self.ctx.attest_operation("foundry", _FOUNDRY_AGENTS, None, "failed", enumeration=False)
                 self.ctx.warn(
                     "cloud.azure: invalid Foundry agent response; coverage unknown",
                     incomplete=True,
                 )
                 return
+            self.ctx.attest_operation("foundry", _FOUNDRY_AGENTS, None, "ok", enumeration=False)
             for a in data["data"]:
                 if not isinstance(a, dict) or not isinstance(a.get("id"), str) or not a["id"].strip():
                     self.ctx.warn(
@@ -540,6 +645,7 @@ class AzureConnector(BaseConnector):
                 return
             seen.add(after)
             params["after"] = after
+        self.ctx.attest_operation("foundry", _FOUNDRY_AGENTS, None, "truncated", enumeration=False)
         self.ctx.warn("cloud.azure: Foundry agent page limit reached", incomplete=True)
 
     # -------------------------------------------------------------- analyze
