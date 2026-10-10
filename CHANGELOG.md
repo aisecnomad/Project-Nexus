@@ -530,6 +530,12 @@ summarizes each release for people who install and operate ShadowScan.
   interface to a host other than loopback) and `a2a-card-signature-invalid`
   (10), with threat references ASI07 and AML.T0118.001, and ASI07 and ASI04.
   Card files with such interfaces or malformed signatures now score higher.
+- A verified card is projected and tagged as the form its signature covers,
+  not as served. Empty values added after signing
+  (`"securitySchemes": {"oauth2": {}}`, `"authentication": {"schemes": []}`)
+  left the card `verified` but removed `no-auth-declared` and showed a security
+  scheme; they now change nothing. `signed_forms` returns each form with its
+  payload, and `verify_card` returns the form a signature verified.
 - An interface URL with user information or a backslash before its host is
   left out of `metadata.agent_card.interfaces` and of domain matching:
   `http://agent.example\@localhost/a2a` was projected as

@@ -293,9 +293,12 @@ signature is checked against three payloads, and one match is enough:
    section 8.4.1 example).
 
 The three differ only by nulls and empty values, so a card served with or
-without them verifies, and any other change does not. A signer that also drops `false` or
-`0` defaults matches none of them, and such a card served with those values
-reports `invalid`.
+without them verifies, and any other change does not. A verified card is then
+projected and tagged as the form its signature covers, not as served: an empty
+value added after signing, such as `"securitySchemes": {"oauth2": {}}`, shows
+no security scheme and leaves `no-auth-declared` in place. A signer that also
+drops `false` or `0` defaults matches none of them, and such a card served with
+those values reports `invalid`.
 
 The protected header selects the algorithm (RS256, PS256, ES256 or EdDSA) and
 the key ID; exactly one key of the operator's set must match. Keys or key

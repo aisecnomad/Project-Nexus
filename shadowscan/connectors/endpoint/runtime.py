@@ -410,9 +410,13 @@ class MCPInventoryConnector(_EndpointConnector):
             )
             if not validation.incomplete:
                 return None
+        signature, signed = self._card_signature(card)
+        # A verified card is read as its signature covers it: the served card may carry empty
+        # values the signer dropped (an empty securitySchemes entry), and they decide nothing.
+        read = card if signed is None else signed
         try:
             # Whole-document context recognizes an opaque secret from its siblings.
-            shown = sanitize(card)
+            shown = sanitize(read)
         except (SanitizationLimitError, RecursionError):
             self.ctx.error(
                 f"endpoint.mcp: A2A Agent Card at {origin} omitted: sanitization safety limit exceeded"
@@ -423,8 +427,7 @@ class MCPInventoryConnector(_EndpointConnector):
                 f"endpoint.mcp: A2A Agent Card at {origin} declares a protocol version other than "
                 "0.x or 1.x; its fields were read as A2A 0.3 and 1.0 fields"
             )
-        signature = self._card_signature(card)
-        agent_card = a2a_card_metadata(card, shown, signature)
+        agent_card = a2a_card_metadata(read, shown, signature)
         name = _text(agent_card["name"]) or resource
         prefix = "Incomplete A2A Agent Card" if validation.incomplete else "A2A Agent Card"
         finding = Finding(
@@ -460,7 +463,7 @@ class MCPInventoryConnector(_EndpointConnector):
         )
         for interface in agent_card["interfaces"]:
             apply_matches(finding, self.index.match_domains_in_text(interface["url"]), location=resource)
-        for tag in a2a_card_tags(card, agent_card["signature"]):
+        for tag in a2a_card_tags(read, agent_card["signature"]):
             finding.add_tag(tag)
         finalize(finding, self.index)
         if validation.incomplete:
@@ -472,23 +475,25 @@ class MCPInventoryConnector(_EndpointConnector):
             finding.kind = Kind.AGENT
         return finding
 
-    def _card_signature(self, card: dict[str, Any]) -> tuple[str, str | None]:
-        """The card's signature state, verified against the operator's key set when one is configured."""
+    def _card_signature(self, card: dict[str, Any]) -> tuple[tuple[str, str | None], dict[str, Any] | None]:
+        """The card's signature ``(state, reason)``, verified against the operator's key set when one
+        is configured, and the form of the card a verified signature covers (None otherwise)."""
         state, reason = a2a_signature_state(card)
         if state != "present-unverified" or self._card_jwks_url is None:
-            return state, reason
+            return (state, reason), None
         if self.offline and REDACTED in json.dumps(card, ensure_ascii=False, default=str):
             # --dump-records sanitized part of the card or its signatures, so the
             # replayed card is no longer what was signed.
-            return "present-unverified", "the export redacted part of the card; signature not checked"
+            return ("present-unverified", "the export redacted part of the card; signature not checked"), None
         try:
-            payloads = a2a.signed_payloads(card)
+            forms = a2a.signed_forms(card)
         except CanonicalizationError as exc:
-            return "invalid", str(exc)
+            return ("invalid", str(exc)), None
         keys = self._trusted_card_keys()
         if keys is None:
-            return "present-unverified", "operator-trusted keys unavailable; signature not checked"
-        return a2a.verify_card(card, payloads, keys)
+            return ("present-unverified", "operator-trusted keys unavailable; signature not checked"), None
+        state, reason, signed = a2a.verify_card(card, forms, keys)
+        return (state, reason), signed
 
     def _trusted_card_keys(self) -> dict[str, Any] | None:
         """Fetch the operator's JWKS once per run; a failure is recorded once and the scan is incomplete."""
