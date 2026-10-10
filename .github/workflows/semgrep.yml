@@ -1,0 +1,50 @@
+name: Semgrep
+
+# Optional Semgrep scan with the project's configuration on semgrep.dev
+# (https://semgrep.dev/docs), through returntocorp/semgrep-action pinned by full
+# commit SHA. The job runs only when the repository variable SEMGREP_ENABLED is
+# "true" and the SEMGREP_APP_TOKEN (and, if used, SEMGREP_DEPLOYMENT_ID) secrets
+# exist; until then it is skipped rather than failing every run. Pull requests
+# from forks receive no secrets and a read-only token, so they are skipped too.
+# Results are uploaded to code scanning as SARIF. semgrep-action is deprecated
+# upstream in favour of running `semgrep ci` in the semgrep/semgrep image; move
+# to that before relying on this workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "24 8 * * 5"
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    name: Scan
+    if: >-
+      vars.SEMGREP_ENABLED == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: returntocorp/semgrep-action@fcd5ab7459e8d91cb1777481980d1b18b4fc6735
+        with:
+          publishToken: ${{ secrets.SEMGREP_APP_TOKEN }}
+          publishDeployment: ${{ secrets.SEMGREP_DEPLOYMENT_ID }}
+          generateSarif: "1"
+      # Upload findings even when the scan step reports them as a failure.
+      - name: Upload SARIF file
+        if: always()
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: semgrep.sarif

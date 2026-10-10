@@ -7,6 +7,12 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Integration review corrections (#178)
 
+- Add optional Checkmarx One (#179) and Semgrep (#180) scan workflows that
+  upload SARIF to code scanning. Unlike the templates they came from, both
+  pin every action by commit SHA with `persist-credentials: false`, set a
+  timeout, run only when opted in (`CX_BASE_URI` or `SEMGREP_ENABLED=true` as
+  repository variables, with their secrets) and skip pull requests from
+  forks, which receive no secrets and a read-only token.
 - The Black Duck security scan workflow added on `main` (#182 and this
   branch) pins `actions/checkout` by commit SHA with
   `persist-credentials: false`, keeps every permission read-only (the action

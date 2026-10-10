@@ -41,6 +41,9 @@ ACTION_PIN = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}")
 # Privileges belong only to the job that needs them, never to every workflow.
 WRITE_SCOPES = {
     ("codeql.yml", "analyze"): {"security-events"},
+    # Optional third-party scanners that upload SARIF to code scanning.
+    ("checkmarx-one.yml", "build"): {"security-events"},
+    ("semgrep.yml", "semgrep"): {"security-events"},
     ("scorecard.yml", "analysis"): {"security-events", "id-token"},
     ("release.yml", "attest"): {"attestations", "id-token"},
     ("release.yml", "publish"): {"id-token"},
