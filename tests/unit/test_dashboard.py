@@ -30,7 +30,7 @@ from shadowscan.dashboard import (
     parse_instant,
     render_inventory_json,
 )
-from shadowscan.fleet import FLEET_SCHEMA, PARTIAL_RECONCILIATION, merge_reports, report_result
+from shadowscan.fleet import FLEET_SCHEMA, merge_reports, report_result
 from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface
 from shadowscan.registries import RECORD_KEY, RECORD_SCHEMA, reconcile_registries
 from shadowscan.registry import InventoryEntry
@@ -464,9 +464,9 @@ def test_coverage_grows_with_the_runs_listed_not_sources_times_connectors(monkey
     assert panel.count("class='st-complete'>complete") == 300 + 3
 
 
-def test_reports_without_inventory_present_still_show_their_inventory(tmp_path):
-    # Reports written before inventory_present: one reconciled against three entries, one sanctioned
-    # by a trusted registry, and one that shows no inventory at all.
+def test_reports_without_inventory_present_have_no_inventory(tmp_path):
+    # Reports written before inventory_present, whatever their inventory size or shadow values:
+    # registration counts only from a report that says it reconciled, as shadowscan merge reads it.
     reports = []
     for name, finding, size in (
         ("a.json", _finding("a", "r1", shadow=True), 3),
@@ -479,16 +479,19 @@ def test_reports_without_inventory_present_still_show_their_inventory(tmp_path):
         _write(tmp_path / name, report)
     merged = merge_reports(reports)
     assert [source["inventory_present"] for source in merged.collection_scope["fleet"]["sources"]] == [
-        True,
-        True,
+        False,
+        False,
         False,
     ]
-    assert merged.inventory_present is True
+    assert merged.inventory_present is False
     # One report reads as it does among others.
-    assert [report_result(name, report).inventory_present for name, report in reports] == [True, True, False]
+    assert [report_result(name, report).inventory_present for name, report in reports] == [False] * 3
+    assert {
+        finding.shadow for name, report in reports for finding in report_result(name, report).findings
+    } == {None}
     _, _, inventory = _dashboard(tmp_path, str(tmp_path / "a.json"), str(tmp_path / "b.json"))
-    assert [source["inventory_present"] for source in inventory["sources"]] == [True, True]
-    assert inventory["counts"]["inventory_status"] == {"shadow": 1, "sanctioned": 1, "no-inventory": 0}
+    assert [source["inventory_present"] for source in inventory["sources"]] == [False, False]
+    assert inventory["counts"]["inventory_status"] == {"shadow": 0, "sanctioned": 0, "no-inventory": 2}
 
 
 def _v1_fleet(tmp_path: Path, *, inventory_size: int = 0) -> Path:
@@ -526,13 +529,14 @@ def test_an_earlier_fleet_merge_without_an_inventory_is_not_shadow(tmp_path):
     (history / "fleet.json").write_bytes(path.read_bytes())
     [point] = load_history(history)["points"]
     assert point["shadow"] is None and point["ai_systems"] == 2
-    # With inventory evidence the shadow status is kept, and the page says it may include
-    # findings from sources without an inventory.
+    # An inventory size alone is not reconciliation: only inventory_present counts, so the
+    # earlier fleet's shadow values are never read as registration evidence.
     result, page, inventory = _dashboard(tmp_path, str(_v1_fleet(tmp_path, inventory_size=3)))
     assert result.exit_code == 0, result.output
-    assert inventory["counts"]["inventory_status"]["shadow"] == 2 and inventory["legacy_fleet"] is True
+    assert inventory["counts"]["inventory_status"] == {"shadow": 0, "sanctioned": 0, "no-inventory": 2}
+    assert inventory["legacy_fleet"] is True
     priority = page[page.index("id='priority'") : page.index("id='registries'")]
-    assert "Shadow counts may include unreconciled AI systems" in priority
+    assert "merge the source reports again" in priority
     # A report that is not a fleet merge is never legacy.
     report = _report(tmp_path, "laptop", {"crew.py": AGENT})
     assert _dashboard(tmp_path, str(report))[2]["legacy_fleet"] is False
@@ -546,20 +550,28 @@ def test_shadow_sanctioned_and_no_inventory_stay_three_states():
         _finding("shadow", "r1", shadow=True),
         _finding("sanctioned", "r2", shadow=False, registry_match="agent-2"),
         _finding("unknown", "r3", shadow=None),
-        _finding("partial", "r4", shadow=True, metadata={"fleet_inventory": PARTIAL_RECONCILIATION}),
+        _finding(
+            "ambiguous",
+            "r4",
+            shadow=True,
+            metadata={
+                "registry_match_reason": "ambiguous-resource-approval",
+                "registry_suggestions": ["a", "b"],
+            },
+        ),
     ]
     inventory = build_inventory(_result(findings))
     assert inventory["counts"]["inventory_status"] == {"shadow": 2, "sanctioned": 1, "no-inventory": 1}
-    assert inventory["counts"]["not_reconciled_in_every_source"] == 1
+    assert inventory["counts"]["ambiguous_registration"] == 1
     statuses = {agent["title"]: agent["inventory_status"] for agent in inventory["agents"]}
     assert statuses == {
         "shadow": "shadow",
         "sanctioned": "sanctioned",
         "unknown": "no-inventory",
-        "partial": "shadow",
+        "ambiguous": "shadow",
     }
     page = render_dashboard(inventory)
-    assert "sanctioned: agent-2" in page and "(not reconciled in every source)" in page
+    assert "sanctioned: agent-2" in page and "(matched to different agents)" in page
     assert "have no inventory to reconcile against" in page
 
 
@@ -703,8 +715,9 @@ def test_registry_reconciliation_is_summarized_per_registry():
         _finding(
             "record-3", "rec-3", metadata={RECORD_KEY: _record("rec-3", "agent-3", status="pending")}, **cloud
         ),
-        _finding("observed", "agent-1", **cloud),
-        _finding("unlisted", "agent-9", **cloud),
+        # An AWS registry binds AgentCore runtimes and gateways only (BINDABLE_RESOURCE_TYPES).
+        _finding("observed", "agent-1", resource_type="agentcore-runtime", **cloud),
+        _finding("unlisted", "agent-9", resource_type="agentcore-runtime", **cloud),
         _finding("broken", "rec-x", metadata={RECORD_KEY: {"schema": "other"}}, **cloud),
     ]
     reconcile_registries(findings)
@@ -865,9 +878,12 @@ def test_history_orders_by_start_time_and_shows_gaps(tmp_path):
     agents = [_finding("a", "r1", shadow=True), _finding("b", "r2", shadow=False)]
     later = [*agents, _finding("c", "r3", shadow=True, metadata={"autonomy": _autonomy(4)})]
     # File names sort against time; the series follows started_at.
-    _write(history / "a.json", _history_report(later, "2026-10-08T00:00:00+00:00"))
+    _write(history / "a.json", _history_report(later, "2026-10-08T00:00:00+00:00", inventory_present=True))
     _write(history / "b.json", _history_report(agents, "2026-10-01T00:00:00+00:00", inventory_present=True))
-    _write(history / "c.json", _history_report(later, "2026-10-15T00:00:00+00:00", fingerprint="b" * 64))
+    _write(
+        history / "c.json",
+        _history_report(later, "2026-10-15T00:00:00+00:00", fingerprint="b" * 64, inventory_present=True),
+    )
     undated = _history_report(agents, "2026-10-01T00:00:00+00:00")
     undated["started_at"] = "last week"
     _write(history / "d.json", undated)

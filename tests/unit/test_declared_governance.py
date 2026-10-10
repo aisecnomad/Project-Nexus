@@ -401,9 +401,11 @@ def test_fleet_merge_rejects_malformed_declared_governance(tmp_path, index, dama
         merge_reports([("broken.json", report)])
 
 
-def _declaring(tmp_path: Path, index, name: str, risk_class: str) -> dict[str, Any]:
+def _declaring(
+    tmp_path: Path, index, name: str, risk_class: str, agent_id: str = "payments-card"
+) -> dict[str, Any]:
     governance = {**GOVERNANCE, "eu_ai_act_risk_class": risk_class}
-    metadata = {"agent_id": f"{risk_class}-card", "owner_team": "payments"}
+    metadata = {"agent_id": agent_id, "owner_team": "payments"}
     return _report(tmp_path, index, [write(tmp_path, card(governance=governance, metadata=metadata), name)])
 
 
@@ -427,9 +429,22 @@ def test_fleet_merge_refuses_conflicting_declarations_in_any_order(tmp_path, ind
         assert result.exit_code == 1 and "different declared governance" in result.output
 
 
+def test_fleet_merge_of_different_agents_is_ambiguous_and_declares_nothing(tmp_path, index):
+    # Two inventories that register the finding to different agents make it ambiguous
+    # (shadowscan.fleet): no single card registered it, so neither card's facts apply.
+    high = _declaring(tmp_path, index, "high.yaml", "high", agent_id="high-card")
+    minimal = _declaring(tmp_path, index, "minimal.yaml", "minimal", agent_id="minimal-card")
+    for reports in ([("a.json", high), ("b.json", minimal)], [("b.json", minimal), ("a.json", high)]):
+        [agent] = merge_reports(reports).findings
+        assert agent.shadow is True and agent.registry_match is None
+        assert agent.metadata["registry_match_reason"] == "ambiguous-resource-approval"
+        assert DECLARED_GOVERNANCE_KEY not in agent.metadata
+
+
 def test_fleet_merge_keeps_one_declaration_whatever_the_order(tmp_path, index):
     declared = _declaring(tmp_path, index, "high.yaml", "high")
-    silent = _report(tmp_path, index, [write(tmp_path, card(), "plain.yaml")])
+    plain = card(metadata={"agent_id": "payments-card", "owner_team": "payments"})
+    silent = _report(tmp_path, index, [write(tmp_path, plain, "plain.yaml")])
     for reports in ([("a.json", declared), ("b.json", silent)], [("b.json", silent), ("a.json", declared)]):
         [agent] = merge_reports(reports).findings
         assert agent.metadata[DECLARED_GOVERNANCE_KEY]["eu_ai_act_risk_class"] == "high"

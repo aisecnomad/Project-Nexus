@@ -337,8 +337,9 @@ def test_one_incomplete_report_makes_the_merged_evidence_incomplete(tmp_path):
 def test_an_already_merged_report_is_refused(tmp_path):
     source = _report(_finding("a", 50, shadow=None, registry_match=None), inventory=False)
     merged = json.loads(merge_reports([("noinv.json", source)]).to_json())
-    # The merge records the finding seen without an inventory as shadow.
-    assert [record["shadow"] for record in merged["findings"]] == [True]
+    # The merge records the finding seen without an inventory as unassessed (null), and a merged
+    # report is refused whatever it records: its sources' scopes are not checked again.
+    assert [record["shadow"] for record in merged["findings"]] == [None]
     with pytest.raises(ValueError, match="an already merged report; pass the source reports"):
         control_evidence([("merged.json", merged)])
     result = _invoke(str(_write(tmp_path, merged, "merged.json")))

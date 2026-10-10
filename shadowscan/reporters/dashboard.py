@@ -167,7 +167,7 @@ def _where(agent: dict[str, Any]) -> str:
 def _inventory_cell(agent: dict[str, Any]) -> str:
     status = agent["inventory_status"]
     if status == "shadow":
-        note = " (not reconciled in every source)" if agent["fleet_inventory"] else ""
+        note = " (matched to different agents)" if agent["ambiguous_registration"] else ""
         return f"<span class='shadow'>SHADOW</span>{_e(note)}"
     if status == "sanctioned":
         match = f": {_e(agent['registry_match'])}" if agent["registry_match"] else ""
@@ -222,8 +222,9 @@ def _legacy_fleet_note() -> str:
     return (
         "<p class='note warn'>This fleet report was merged by an earlier version (before"
         " shadowscan.fleet-merge/v2), which counted an AI system that any source did not reconcile,"
-        " including one from a source without an inventory, as shadow. Shadow counts may include"
-        " unreconciled AI systems; merge the source reports again with this version.</p>"
+        " including one from a source without an inventory, as shadow, and recorded no inventory"
+        " reconciliation. Its AI systems therefore read as no inventory here; merge the source"
+        " reports again with this version to see their shadow status.</p>"
     )
 
 
@@ -328,8 +329,8 @@ def _overview(inv: dict[str, Any]) -> list[str]:
         (inv["autonomy"]["priority"], f"shadow at L{PRIORITY_FLOOR} or above"),
         (counts["excluded_credentials"], "credential findings left out"),
     ]
-    if counts["not_reconciled_in_every_source"]:
-        cards.append((counts["not_reconciled_in_every_source"], "shadow, not reconciled in every source"))
+    if counts["ambiguous_registration"]:
+        cards.append((counts["ambiguous_registration"], "shadow, matched to different agents"))
     if inv["autonomy"]["not_classified"]:
         cards.append((inv["autonomy"]["not_classified"], "autonomy not classified (unknown)"))
     parts = [

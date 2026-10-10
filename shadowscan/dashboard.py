@@ -44,7 +44,6 @@ from shadowscan.comparison import (
 from shadowscan.fleet import (
     CONNECTOR_STATUSES,
     MAX_SOURCES,
-    PARTIAL_RECONCILIATION,
     connector_status,
     legacy_fleet,
     shows_inventory,
@@ -327,11 +326,16 @@ def _autonomy_status(finding: Finding, block: dict[str, Any] | None) -> str:
     return "not-classified" if applicable(finding) else "not-applicable"
 
 
+# registry_match_reason of a finding that inventories matched to different agents.
+AMBIGUOUS_REGISTRATION = "ambiguous-resource-approval"
+
+
 def _agent(finding: Finding) -> dict[str, Any]:
     threats, controls = finding_references(finding)
     autonomy = _autonomy(finding.metadata.get("autonomy"))
     merged_from = _strings(finding.metadata.get("merged_from"))
-    partial = finding.metadata.get("fleet_inventory") == PARTIAL_RECONCILIATION
+    # Inventories that matched the finding to different agents (shadowscan.fleet): shadow.
+    ambiguous = finding.metadata.get("registry_match_reason") == AMBIGUOUS_REGISTRATION
     return {
         "id": finding.id,
         "title": finding.title,
@@ -346,7 +350,7 @@ def _agent(finding: Finding) -> dict[str, Any]:
         "owner": finding.owner,
         "shadow": finding.shadow,
         "inventory_status": inventory_status(finding.shadow),
-        "fleet_inventory": PARTIAL_RECONCILIATION if partial else None,
+        "ambiguous_registration": ambiguous,
         "registry_match": finding.registry_match,
         "risk": {
             "level": finding.risk.level.value,
@@ -394,7 +398,7 @@ def _counts(agents: list[dict[str, Any]], excluded: int) -> dict[str, Any]:
         "ai_systems": len(agents),
         "excluded_credentials": excluded,
         "inventory_status": {status: statuses.get(status, 0) for status in INVENTORY_STATUSES},
-        "not_reconciled_in_every_source": sum(1 for agent in agents if agent["fleet_inventory"]),
+        "ambiguous_registration": sum(1 for agent in agents if agent["ambiguous_registration"]),
         "unowned": sum(1 for agent in agents if not agent["owner"]),
         "by_surface": _ranked(Counter(agent["surface"] for agent in agents)),
         "by_kind": _ranked(Counter(agent["kind"] for agent in agents)),

@@ -49,18 +49,12 @@ summarizes each release for people who install and operate ShadowScan.
   each connector run's status for every source, under
   `collection_scope.fleet.schema` `shadowscan.fleet-merge/v2`, and sets the
   merged report's `inventory_present` when any source supplied an
-  inventory. A source written before `inventory_present` existed counts as
-  having one by its `inventory_size` or a finding's shadow status. The
-  scope fingerprint is unchanged.
-- Fleet shadow status is three-valued. A finding no source reconciled
-  against an inventory is now `shadow: null` (no inventory) instead of
-  `true`. A finding sanctioned in one source and not reconciled in another
-  stays shadow and carries `metadata.fleet_inventory`
-  (`not-reconciled-in-every-source`). A fleet report merged before
-  `shadowscan.fleet-merge/v2` that shows no inventory at all reads as no
-  inventory rather than shadow, whether merged again or shown on the
-  dashboard; otherwise the dashboard warns that its shadow counts may
-  include unreconciled findings.
+  inventory. The scope fingerprint is unchanged.
+- The dashboard reads shadow status as `shadowscan merge` records it
+  (registration only from sources with `inventory_present: true`), labels a
+  finding that inventories matched to different agents, and reads a fleet
+  report merged before `shadowscan.fleet-merge/v2` as having no inventory,
+  with a note to merge its sources again.
 - Add authored tests for each view, escaping of hostile report values,
   coverage, determinism, private outputs, a 20,000-finding linear-time
   render budget and a linear-time history budget.

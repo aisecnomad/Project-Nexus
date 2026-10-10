@@ -97,21 +97,20 @@ connector run is incomplete or skipped, the page opens with the incomplete
 banner and the command exits 3.
 
 Shadow status comes from the merged findings. A fleet merge keeps it
-three-valued: shadow when any source found the AI system unregistered,
-sanctioned only when every source matched it to an inventory, and no
-inventory when no source supplied one. An AI system sanctioned in one source
-and not reconciled in another stays shadow and is labelled "not reconciled
-in every source".
+three-valued, as `shadowscan merge` records it: registration counts only from
+sources that reconciled against an inventory (`inventory_present: true`). An
+AI system is shadow when any such source found it unregistered, sanctioned
+when such sources matched it to one agent, and no inventory when no such
+source reported it. Inventories that matched it to different agents make it
+shadow, labelled "matched to different agents"
+(`registry_match_reason: ambiguous-resource-approval`).
 
 A fleet report merged by an earlier version (before
 `shadowscan.fleet-merge/v2`) recorded every AI system that some source did
 not reconcile as shadow, including one from a source without an inventory.
-When such a report shows no inventory at all (no `inventory_present`, an
-`inventory_size` of 0 and no sanctioned finding), its AI systems read "no
-inventory". Otherwise their shadow status is kept, and the coverage and
-priority sections warn that shadow counts may include unreconciled AI
-systems. Merge the source reports again with this version to remove the
-ambiguity.
+Such a report never records `inventory_present: true`, so its AI systems
+read "no inventory", and the coverage and priority sections say why. Merge
+the source reports again with this version to see their shadow status.
 
 ## Drift and history
 
@@ -217,6 +216,7 @@ rows, references and records are shortened.
   "agents": [
     {
       "account": "laptop-a",
+      "ambiguous_registration": false,
       "autonomy": {
         "basis": [{"bound": "oversight", "rule": "approval-bypassed", "value": "bypassed"}],
         "ceiling": 5,
@@ -233,7 +233,6 @@ rows, references and records are shortened.
       "connector": "endpoint.mcp",
       "controls": ["nist-ai-rmf-1.0:GOVERN-1.6"],
       "first_seen": null,
-      "fleet_inventory": null,
       "frameworks": ["protocol.mcp"],
       "id": "ss-18646b80791d8d86",
       "inventory_status": "shadow",
@@ -304,7 +303,7 @@ rows, references and records are shortened.
     "by_surface": [{"count": 1, "value": "endpoint"}],
     "excluded_credentials": 0,
     "inventory_status": {"no-inventory": 0, "sanctioned": 0, "shadow": 1},
-    "not_reconciled_in_every_source": 0,
+    "ambiguous_registration": 0,
     "unowned": 0
   },
   "coverage": {
@@ -379,7 +378,7 @@ rows, references and records are shortened.
 | `coverage` | object | `connectors` (every connector any source ran, without scan-level `engine.*` records), `sources`, `complete_sources`, `incomplete_sources` and `unknown_coverage_sources`. |
 | `sources` | array | One entry per source; see below. |
 | `diagnostics`, `diagnostics_omitted` | array, integer | Connector runs with errors, warnings or a skip reason: `connector`, `status`, the first 20 `errors` and `warnings` with `errors_total` and `warnings_total`, and `skip_reason`. At most 500; the rest are counted. |
-| `counts` | object | `ai_systems`, `excluded_credentials`, `inventory_status` (`shadow`, `sanctioned`, `no-inventory`), `not_reconciled_in_every_source`, `unowned`, and `by_surface`, `by_kind`, `by_provider`, `by_account` and `by_owner` as `{value, count}` lists, most frequent first, with `value` null when not recorded; `by_risk_level` lists every level, most severe first. |
+| `counts` | object | `ai_systems`, `excluded_credentials`, `inventory_status` (`shadow`, `sanctioned`, `no-inventory`), `ambiguous_registration` (shadow because inventories matched it to different agents), `unowned`, and `by_surface`, `by_kind`, `by_provider`, `by_account` and `by_owner` as `{value, count}` lists, most frequent first, with `value` null when not recorded; `by_risk_level` lists every level, most severe first. |
 | `autonomy` | object | `basis` (`floor`); `rows`, one per tier and then not classified and not applicable (`tier` 0 to 5 or null, `autonomy_status` `classified`, `not-classified` or `not-applicable`, `label`, `shadow`, `sanctioned`, `no-inventory`, `total`); `priority_floor` (4); `priority` (shadow AI systems at or above it); and `not_classified` (AI systems whose tier is unknown). |
 | `registries` | object | `registries`, one per registry type and id: `records`, `registered-and-observed`, `registered-not-observed`, `observed-not-registered`, `not-comparable`, `unreconciled`, `approved`, `not_approved`, `auto_approved` and `listing_complete`; and `malformed_records`. |
 | `references` | object | `note`, and `threats` and `controls` as `{ref, title, framework, edition, count}`, most frequent first. |
@@ -409,7 +408,7 @@ rows, references and records are shortened.
 | `resource`, `resource_type`, `provider`, `account`, `region` | string or null | Where the AI system was found. |
 | `owner` | string or null | Recorded or inherited owner. |
 | `shadow`, `inventory_status` | boolean or null, string | Three-valued shadow status and its name. |
-| `fleet_inventory` | string or null | `not-reconciled-in-every-source` for a shadow AI system that one source sanctioned. |
+| `ambiguous_registration` | boolean | True when inventories matched the AI system to different agents, which makes it shadow. |
 | `registry_match` | string or null | The matching inventory entry. |
 | `risk` | object | `level`, `score` and `danger_score`: the discovery heuristic. |
 | `confidence`, `likelihood` | number, string | Detection confidence and its bucket. |

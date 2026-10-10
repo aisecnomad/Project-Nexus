@@ -8,10 +8,10 @@ evidence and technologies union, the earliest ``first_seen`` and latest
 (``metadata.autonomy``) is the exception: it is classified again from the merged
 finding and widened to admit whatever any source's validated block admits, so
 evidence from a later source is never hidden behind the first source's interval.
-A merged finding that is shadow loses its registry match and its declared
-governance facts (``metadata.declared_governance``); a registered finding whose
-sources carry different declared facts is refused, because keeping the first
-source's would make the result depend on the order of the reports.
+A merged finding that is shadow or unassessed loses its declared governance
+facts (``metadata.declared_governance``); a registered finding whose sources
+carry different declared facts for its one agent is refused, because keeping the
+first source's would make the result depend on the order of the reports.
 Findings from different machines keep their own resources because the endpoint
 label prefixes every resource. Registration counts only from sources that
 reconciled against an inventory (``inventory_present: true``: ``--inventory``,
@@ -325,7 +325,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             # Declared facts belong to the card that registered the finding.
             finding.metadata.pop(DECLARED_GOVERNANCE_KEY, None)
         elif len(declared_by_id.get(finding.id, {})) > 1:
-            # Different cards, or different versions of one card, registered this finding.
+            # Different versions of the one card that registered this finding.
             first, second = sorted(declared_by_id[finding.id].values())[:2]
             raise ValueError(
                 f"{first}, {second}: a registered finding carries different declared governance;"
