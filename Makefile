@@ -60,6 +60,10 @@ coverage-gate: ## Enforce per-connector coverage floor
 signatures: ## Validate all signature schemas and regexes
 	python -m shadowscan.signatures.validate
 
+.PHONY: mappings
+mappings: ## Validate the threat and control mapping catalogs
+	python -m shadowscan.mappings.validate
+
 .PHONY: secrets
 secrets: ## Fail on hardcoded credentials in tracked files, as CI does
 	set -o pipefail; git ls-files -z | xargs -0 python tools/check_secrets.py
@@ -86,7 +90,7 @@ evaluate: ## Run the bundled detection regression corpora
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint format-check typecheck signatures secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck signatures mappings secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 # --- Build -----------------------------------------------------------------
@@ -114,6 +118,7 @@ wheel-validate: build ## Validate the wheel installs and works outside checkout
 		"$$wheel_test_dir/venv/bin/python" -m pip check; \
 		cd "$$wheel_test_dir"; \
 		"$$wheel_test_dir/venv/bin/python" -m shadowscan.signatures.validate; \
+		"$$wheel_test_dir/venv/bin/python" -m shadowscan.mappings.validate; \
 		"$$wheel_test_dir/venv/bin/shadowscan" --help
 
 .PHONY: docker
@@ -128,6 +133,9 @@ docker-test: docker ## Run container smoke test
 	docker run --rm --network none --read-only --cap-drop ALL \
 		--security-opt no-new-privileges --entrypoint python shadowscan:local \
 		-m shadowscan.signatures.validate
+	docker run --rm --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --entrypoint python shadowscan:local \
+		-m shadowscan.mappings.validate
 
 # --- Demo ------------------------------------------------------------------
 
@@ -155,6 +163,10 @@ docs-serve: ## Serve documentation site with live reload
 .PHONY: connector-reference
 connector-reference: ## Regenerate docs/connectors/reference.md from the connector classes
 	python -m tools.connector_reference
+
+.PHONY: mapping-reference
+mapping-reference: ## Regenerate docs/concepts/mappings-reference.md from the mapping catalogs
+	python -m tools.mapping_reference
 
 .PHONY: policy
 policy: ## Check workflow and issue-form safety policies

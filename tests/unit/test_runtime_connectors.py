@@ -103,7 +103,9 @@ def test_mcp_offline_analysis_marks_poisoning_and_capabilities() -> None:
     assert "tool-poisoning" in findings[0].tags
     assert "unauthenticated-mcp" in findings[0].tags
     assert "code-exec" in findings[0].capabilities
-    assert "OWASP-LLM-01" in findings[0].to_dict()["metadata"]["compliance"]
+    metadata = findings[0].to_dict()["metadata"]
+    assert "owasp-llm-2026:LLM01" in metadata["threats"]
+    assert "compliance" not in metadata
 
     result = ScanResult(findings=findings, version="test")
     bom = json.loads(render(result, "cyclonedx"))

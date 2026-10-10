@@ -1,0 +1,20 @@
+framework: iso-iec-42001
+edition: "2023"
+prefix: iso-iec-42001-2023
+name: ISO/IEC 42001:2023 Annex A
+kind: control
+source_url: https://www.iso.org/standard/81230.html
+licence: Copyrighted; identifiers and own-words labels only
+retrieved: "2026-10-10"
+verification: secondary
+notes: >-
+  Identifiers only; the standard's text is copyrighted. Labels are the
+  project's own words and do not reproduce control titles or text. The
+  standard was not consulted directly; identifiers follow secondary sources.
+entries:
+  A.3.2: {title: Assigned roles and responsibilities for AI}
+  A.4.2: {title: Documentation of the resources an AI system uses}
+  A.6.2.6: {title: Operating and monitoring AI systems}
+  A.6.2.8: {title: Event logging for AI systems}
+  A.9.2: {title: Responsible use of AI systems}
+  A.10.3: {title: Managing AI suppliers}

@@ -1,0 +1,21 @@
+framework: eu-ai-act
+edition: "2024"
+prefix: eu-ai-act-2024
+name: EU AI Act, Regulation (EU) 2024/1689
+kind: control
+source_url: https://eur-lex.europa.eu/eli/reg/2024/1689/oj
+licence: EU legal act; reuse permitted
+retrieved: "2026-10-10"
+verification: secondary
+notes: >-
+  Amended by Regulation (EU) 2026/1744 (reported by secondary sources; the
+  Official Journal could not be retrieved). Which obligations apply depends on the
+  system's risk class and the operator's role, which ShadowScan cannot
+  determine; a reference is evidence relevant to an article, not a finding
+  that the article applies or is met.
+entries:
+  Art.12: {title: Record-keeping}
+  Art.14: {title: Human oversight}
+  Art.15: {title: "Accuracy, robustness and cybersecurity"}
+  Art.26: {title: Obligations of deployers of high-risk AI systems}
+  Art.50: {title: Transparency obligations}

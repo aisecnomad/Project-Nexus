@@ -108,6 +108,8 @@ nav:
       - Inventory: inventory.md
       - Scanning: scanning.md
       - Risk scoring: concepts/risk.md
+      - Threat and control mappings: concepts/mappings.md
+      - Mapping catalog reference: concepts/mappings-reference.md
       - Severity and enforcement: severity.md
   - Operations:
       - Production deployment: production.md

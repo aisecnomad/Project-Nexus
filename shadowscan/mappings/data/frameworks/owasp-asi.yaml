@@ -1,0 +1,24 @@
+framework: owasp-asi
+edition: "2026"
+prefix: owasp-asi-2026
+name: OWASP Top 10 for Agentic Applications
+kind: threat
+source_url: https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/
+licence: CC-BY-SA-4.0
+retrieved: "2026-10-10"
+verification: primary
+notes: >-
+  Announced 2025-12-09. Entry names were checked against Appendix A of the
+  OWASP Top 10 for LLM Applications 2026 in the GenAI-Security-Project
+  GitHub repository, which crosswalks each LLM entry to this list.
+entries:
+  ASI01: {title: Agent Goal Hijack}
+  ASI02: {title: Tool Misuse & Exploitation}
+  ASI03: {title: Identity & Privilege Abuse}
+  ASI04: {title: Agentic Supply Chain Vulnerabilities}
+  ASI05: {title: Unexpected Code Execution (RCE)}
+  ASI06: {title: Memory & Context Poisoning}
+  ASI07: {title: Insecure Inter-Agent Communication}
+  ASI08: {title: Cascading Failures}
+  ASI09: {title: Human-Agent Trust Exploitation}
+  ASI10: {title: Rogue Agents}

@@ -511,6 +511,11 @@ CycloneDX output into their own BI or SIEM tools (DASH-3).
 
 ## 5. Threat mapping (THREAT)
 
+Status: THREAT-0 to THREAT-3 are implemented, unreleased, in
+`shadowscan/mappings` against the OWASP 2026 lists and ATLAS 2026.09; see
+[Threat and control mappings](../concepts/mappings.md). The rest of this
+section records the proposal as drafted.
+
 ### What exists
 
 `shadowscan/compliance.py` maps nine tags to OWASP LLM, `OWASP-ASI` and MITRE
@@ -570,6 +575,12 @@ results carry them as tags, and JSON findings carry them as
 - SARIF tags and JSON identifiers are edition-qualified.
 
 ## 6. Control mapping (CTRL)
+
+Status: CTRL-1 catalogs are implemented, unreleased, as `metadata.controls`,
+and the HTML and Markdown reports list each finding's control references; see
+[Threat and control mappings](../concepts/mappings.md). The control evidence
+report (CTRL-0 and the rest of CTRL-2) and declared facts (CTRL-3) remain
+proposals.
 
 ### Frameworks
 

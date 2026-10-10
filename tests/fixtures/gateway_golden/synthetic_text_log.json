@@ -458,6 +458,9 @@
       "category": "provider",
       "vendor": "OpenAI"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5"
     ]
    },
    "identity_discriminator": "caller",
@@ -658,6 +661,12 @@
       "category": "provider",
       "vendor": "Anthropic"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5",
+     "mitre-atlas-2026.09:AML.T0050",
+     "owasp-asi-2026:ASI05",
+     "owasp-llm-2026:LLM03"
     ]
    },
    "identity_discriminator": "caller",
@@ -884,6 +893,12 @@
       "category": "provider",
       "vendor": "Anthropic"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5",
+     "mitre-atlas-2026.09:AML.T0050",
+     "owasp-asi-2026:ASI05",
+     "owasp-llm-2026:LLM03"
     ]
    },
    "identity_discriminator": "caller",
@@ -1079,6 +1094,9 @@
       "category": "provider",
       "vendor": "OpenAI"
      }
+    ],
+    "threats": [
+     "maestro-2025:L5"
     ]
    },
    "identity_discriminator": "caller",

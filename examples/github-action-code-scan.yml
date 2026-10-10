@@ -67,6 +67,7 @@ jobs:
           python -m pip install --no-deps "$RUNNER_TEMP"/nexusshadowscan-*.whl
           python -m pip check
           python -m shadowscan.signatures.validate
+          python -m shadowscan.mappings.validate
       - name: Scan checkout
         shell: bash
         env:

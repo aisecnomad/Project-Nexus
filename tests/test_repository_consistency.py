@@ -1262,3 +1262,12 @@ def test_connector_configuration_reference_is_current() -> None:
     assert REFERENCE.read_text(encoding="utf-8") == render(), (
         "docs/connectors/reference.md is stale; run `make connector-reference`"
     )
+
+
+def test_mapping_catalog_reference_is_current() -> None:
+    """docs/concepts/mappings-reference.md is generated from the packaged mapping catalogs and rules."""
+    from tools.mapping_reference import REFERENCE, render
+
+    assert REFERENCE.read_text(encoding="utf-8") == render(), (
+        "docs/concepts/mappings-reference.md is stale; run `make mapping-reference`"
+    )

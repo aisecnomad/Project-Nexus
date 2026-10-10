@@ -1,0 +1,253 @@
+# Threat references: OWASP Top 10 for LLM Applications 2026, OWASP Top 10 for
+# Agentic Applications 2026 and MITRE ATLAS 2026.09. A rule says the finding is
+# relevant to, or supplies a precondition for, each entry; never that an attack
+# happened. Author mappings, not independently reviewed.
+#
+# Every key under `when` must hold; a list matches when any of its values does.
+# Express "either A or B" as two rules with the same references.
+rules:
+  - id: tool-poisoning
+    when: {tags_any: [tool-poisoning]}
+    refs:
+      - owasp-llm-2026:LLM01
+      - owasp-asi-2026:ASI01
+      - mitre-atlas-2026.09:AML.T0110.000
+      - mitre-atlas-2026.09:AML.T0051.001
+    rationale: >-
+      A tool description carrying injected instructions is read by the model as
+      trusted context and can redirect the agent's goal.
+
+  - id: unsafe-serialization
+    when: {tags_any: [unsafe-serialization]}
+    refs:
+      - owasp-llm-2026:LLM04
+      - owasp-asi-2026:ASI04
+      - mitre-atlas-2026.09:AML.T0011.000
+      - mitre-atlas-2026.09:AML.T0010.003
+    rationale: >-
+      A model artifact in a format that can execute code on load is a supply
+      chain risk for anyone who loads it.
+
+  - id: credential-exposure
+    when:
+      tags_any: [hardcoded-credential, plaintext-credential, inline-secrets, secret-in-env, unmasked-ci-variable]
+    refs:
+      - owasp-llm-2026:LLM02
+      - owasp-asi-2026:ASI03
+      - mitre-atlas-2026.09:AML.T0055
+    rationale: >-
+      A credential stored in source, configuration or an unmasked variable can
+      be read and reused by anyone who can read that location.
+
+  - id: credential-finding
+    when: {kinds_any: [secret]}
+    refs:
+      - owasp-llm-2026:LLM02
+      - owasp-asi-2026:ASI03
+      - mitre-atlas-2026.09:AML.T0055
+    rationale: >-
+      A finding that is itself an exposed AI provider credential is relevant to
+      the same disclosure and identity-abuse entries as a credential tag.
+
+  - id: agent-config-credentials
+    when:
+      kinds_any: [agent-config, mcp-server]
+      tags_any: [hardcoded-credential, plaintext-credential, inline-secrets, secret-in-env, unmasked-ci-variable]
+    refs:
+      - mitre-atlas-2026.09:AML.T0083
+    rationale: >-
+      Credentials kept in an agent or MCP configuration file are the target of
+      credential collection from agent configuration.
+
+  - id: privileged-workload
+    when: {tags_any: [cluster-admin, privileged-pod, wildcard-permissions, policy.privileged-scopes]}
+    refs:
+      - owasp-llm-2026:LLM03
+      - owasp-asi-2026:ASI03
+    rationale: >-
+      Administrative or wildcard privileges give an agent, or whoever controls
+      it, more authority than its task needs.
+
+  - id: privileged-pod-escape
+    when: {tags_any: [privileged-pod]}
+    refs:
+      - mitre-atlas-2026.09:AML.T0105
+    rationale: >-
+      A privileged pod can reach the node it runs on, a precondition for
+      escaping the AI workload to the host.
+
+  - id: code-execution-capability
+    when: {capabilities_any: [code-exec]}
+    refs:
+      - owasp-llm-2026:LLM03
+      - owasp-asi-2026:ASI05
+      - mitre-atlas-2026.09:AML.T0050
+    rationale: >-
+      An agent that can run code or shell commands turns a hijacked goal into
+      command execution.
+
+  - id: code-execution-configuration
+    when: {tags_any: [mcp-shell-command, posture-unrestricted-shell, remote-code-fetch]}
+    refs:
+      - owasp-llm-2026:LLM03
+      - owasp-asi-2026:ASI05
+      - mitre-atlas-2026.09:AML.T0050
+    rationale: >-
+      Configuration that starts tools through a shell, permits any command or
+      downloads and runs code gives the agent a command interpreter.
+
+  - id: saas-actions
+    when: {capabilities_any: [saas-actions]}
+    refs:
+      - owasp-llm-2026:LLM03
+      - owasp-asi-2026:ASI02
+      - mitre-atlas-2026.09:AML.T0053
+    rationale: >-
+      An agent that can act in SaaS applications can be steered into misusing
+      those tools.
+
+  - id: approval-bypass
+    when: {tags_any: [posture-permissions-bypassed, mcp-auto-approve]}
+    refs:
+      - owasp-llm-2026:LLM03
+      - owasp-asi-2026:ASI02
+      - owasp-asi-2026:ASI09
+    rationale: >-
+      Tool calls that run without per-call approval remove the human check that
+      would catch a misused tool.
+
+  - id: unsandboxed-agent
+    when: {tags_any: [posture-unsandboxed]}
+    refs:
+      - owasp-asi-2026:ASI05
+      - mitre-atlas-2026.09:AML.T0105
+    rationale: >-
+      An agent running outside its sandbox executes code directly on the host.
+
+  - id: exposed-ai-service
+    when:
+      tags_any:
+        - exposed-llm-server
+        - public-ingress
+        - public-principal
+        - posture-exposed-gateway
+        - posture-unauthenticated-gateway
+        - unauthenticated-mcp
+        - no-authentication
+    refs:
+      - mitre-atlas-2026.09:AML.T0132
+    rationale: >-
+      A service reachable beyond its intended boundary, or without
+      authentication, is a misconfigured or publicly exposed AI service.
+
+  - id: exposed-inference-server
+    when: {tags_any: [exposed-llm-server]}
+    refs:
+      - owasp-llm-2026:LLM06
+      - mitre-atlas-2026.09:AML.T0040
+    rationale: >-
+      An inference server reachable by others gives them model access and lets
+      them consume its capacity.
+
+  - id: unauthenticated-endpoint
+    when: {tags_any: [unauthenticated-mcp, posture-unauthenticated-gateway, no-authentication]}
+    refs:
+      - owasp-asi-2026:ASI03
+    rationale: >-
+      An agent endpoint without authentication cannot tell which identity is
+      acting through it.
+
+  - id: mcp-unpinned-package
+    when: {tags_any: [mcp-unpinned-package]}
+    refs:
+      - owasp-llm-2026:LLM04
+      - owasp-asi-2026:ASI04
+      - mitre-atlas-2026.09:AML.T0010.005
+      - mitre-atlas-2026.09:AML.T0109
+    rationale: >-
+      An MCP server resolved to whatever version is current can change under
+      the agent after it was reviewed.
+
+  - id: mcp-broad-filesystem
+    when: {tags_any: [mcp-broad-filesystem]}
+    refs:
+      - owasp-llm-2026:LLM03
+      - owasp-asi-2026:ASI02
+      - mitre-atlas-2026.09:AML.T0086
+    rationale: >-
+      A filesystem tool scoped to the whole disk or a home directory lets a
+      steered agent read and send files outside its task.
+
+  - id: hidden-instructions
+    when: {tags_any: [hidden-instructions, invisible-text]}
+    refs:
+      - owasp-llm-2026:LLM01
+      - owasp-asi-2026:ASI01
+      - mitre-atlas-2026.09:AML.T0051.001
+      - mitre-atlas-2026.09:AML.T0068
+    rationale: >-
+      Instruction content hidden from the rendered view reaches the model but
+      not the reviewer.
+
+  - id: memory-capability
+    when: {capabilities_any: [memory]}
+    refs:
+      - owasp-asi-2026:ASI06
+      - mitre-atlas-2026.09:AML.T0080.000
+    rationale: >-
+      Persistent agent memory can carry poisoned content into later sessions.
+
+  - id: rag-capability
+    when: {capabilities_any: [rag]}
+    refs:
+      - owasp-llm-2026:LLM09
+      - owasp-asi-2026:ASI06
+      - mitre-atlas-2026.09:AML.T0070
+    rationale: >-
+      Retrieval-augmented generation feeds indexed content into the context,
+      where poisoned documents act as instructions.
+
+  - id: browsing-capability
+    when: {capabilities_any: [browsing]}
+    refs:
+      - owasp-llm-2026:LLM01
+      - mitre-atlas-2026.09:AML.T0051.001
+    rationale: >-
+      An agent that reads web pages takes untrusted content into its context,
+      the channel for indirect prompt injection.
+
+  - id: multi-agent-capability
+    when: {capabilities_any: [multi-agent]}
+    refs:
+      - owasp-asi-2026:ASI07
+      - owasp-asi-2026:ASI08
+      - mitre-atlas-2026.09:AML.T0118
+    rationale: >-
+      Agents that exchange messages can pass a compromise or a fault from one
+      agent to the next.
+
+  - id: delegated-identity-capability
+    when: {capabilities_any: [delegated-identity]}
+    refs:
+      - owasp-asi-2026:ASI03
+    rationale: >-
+      An agent acting with a user's delegated identity can be used to exercise
+      that user's privileges.
+
+  - id: agent-card-without-security-scheme
+    when: {tags_any: [no-auth-declared]}
+    refs:
+      - owasp-asi-2026:ASI07
+      - owasp-asi-2026:ASI03
+    rationale: >-
+      An A2A Agent Card that declares no security scheme invites peers to call
+      the agent without authenticating.
+
+  - id: high-autonomy
+    when: {autonomy_floor_at_least: 4}
+    refs:
+      - owasp-llm-2026:LLM03
+      - owasp-asi-2026:ASI08
+    rationale: >-
+      Evidence places the agent at high or full autonomy, where actions run
+      without per-step human review and errors can compound.
