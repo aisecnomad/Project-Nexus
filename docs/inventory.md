@@ -412,10 +412,11 @@ findings themselves. Records read through `registry_arns` have
 was approved.
 
 `approval_mode` reflects the registry's approval configuration when the scan
-reads it, not how each record was approved. A record approved while an
-auto-approval rule was on reports `manual` once the rule is removed, so trust a
-registry without `allow_auto_approved` only when it has never auto-approved
-records. A configuration the connector does not recognize gives
+reads it, not how each record was approved: a configuration change applies only
+to records submitted after it. A record approved while an auto-approval rule
+was on reports `manual` once the rule is removed, and one a person approved
+before a rule was added reports `auto`, so trust a registry without
+`allow_auto_approved` only when it has never auto-approved records. A configuration the connector does not recognize gives
 `approval_mode: unknown` and makes the scan incomplete.
 
 ### Microsoft Agent 365

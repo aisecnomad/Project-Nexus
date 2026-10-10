@@ -127,6 +127,9 @@ AGENTCORE_REGISTRY = RegistryApi(
 )
 # Records of another account's registry, read through the agent-registry data plane.
 DISCOVERABLE_RECORD_KIND = "agent-registry-discoverable-record"
+# Whether one registry listing finished without a gap (export only, never a finding): a denied
+# listing or an SDK without the service leaves no registry or record to carry the gap.
+COVERAGE_KIND = "aws-registry-coverage"
 
 
 def text(value: Any, limit: int = _MAX_TEXT) -> str | None:
@@ -246,9 +249,11 @@ def provenance_binds(record: dict[str, Any]) -> bool:
     """Whether a record's provenance can bind: only lineage the registry recorded by auto-detection.
 
     ``CreateRegistryRecord`` and ``UpdateRegistryRecord`` accept provenance from the caller, so
-    on a record created through the API it is the publisher's assertion and binds nothing.
+    on a record created through the API it is the publisher's assertion and binds nothing. An
+    auto-detected record still in ``DRAFT`` binds nothing either: the registry wrote it from
+    what it detected and nobody has submitted it, so it registers nothing.
     """
-    return record.get("createdByAutoDetection") is True
+    return record.get("createdByAutoDetection") is True and record.get("status") != "DRAFT"
 
 
 def unrecognized_relation(entry: Any) -> bool:
@@ -286,7 +291,8 @@ def _strings(values: Any, limit: int = _MAX_ITEMS) -> list[str]:
 
 
 def _keys(value: Any) -> list[str]:
-    return sorted(str(key) for key in mapping(value))[:_MAX_ITEMS]
+    """An object's member names, each redacted and bounded like the other names of a card."""
+    return [shown for key in sorted(map(str, mapping(value)))[:_MAX_ITEMS] if (shown := text(key, 64))]
 
 
 def _package(package: dict[str, Any]) -> str:

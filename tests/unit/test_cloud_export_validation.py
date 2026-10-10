@@ -121,6 +121,8 @@ def test_unknown_cloud_records_are_never_cached(tmp_path, index, cls, valid, ide
             {
                 "_kind": "agent-registry",
                 "registryArn": "arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd",
+                "_listing_complete": True,
+                "_detail": "observed",
             },
         ),
         (
@@ -128,6 +130,17 @@ def test_unknown_cloud_records_are_never_cached(tmp_path, index, cls, valid, ide
             {
                 "_kind": "agentcore-registry",
                 "registryArn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:registry/efgh5678efgh",
+                "_listing_complete": True,
+                "_detail": "observed",
+            },
+        ),
+        (
+            AwsConnector,
+            {
+                "_kind": "aws-registry-coverage",
+                "_region": "us-east-1",
+                "namespace": "aws-agent-registry",
+                "complete": True,
             },
         ),
         (AzureConnector, {"_kind": "diagnostics", "_account": "/account", "settings": []}),
