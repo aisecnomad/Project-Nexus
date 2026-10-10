@@ -1116,6 +1116,25 @@ tenant. See the [identity connector guide](connectors/identity.md#identityentra)
 | Credential policy | `auth_mode: delegated` reads a signed-in user's Graph token from the environment variable named by `delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`); no configuration key holds the token. The tenant and delegated claims are checked before any request; the token is never refreshed, logged, exported or reported, and app-only credentials are never used as a fallback. With `include_agent_registry` and `tenant_id`, a pre-issued app-only `access_token` (or `GRAPH_ACCESS_TOKEN`) must be a JWT whose `tid` is `tenant_id`; otherwise the connector is skipped. | Decide which operator signs in and with which role; a delegated scan sees only what that user may see. Do not put the token in configuration through `${VAR}`. Set the variable only for the scan: process-mode plugin workers inherit the environment. Expect exit 3 when the token expires during a long scan. With a pre-issued token and `include_agent_registry`, set `tenant_id` to the tenant ID the token was issued for, and clear stale `GRAPH_ACCESS_TOKEN` values. |
 | Comparison | Delegated package listings are caller-scoped and never complete, and their bindings have `unknown` coverage, so they produce no `observed-not-registered` or `registered-not-observed` statuses. Delegated and app-only scans cover different scopes. | Do not compare delegated and app-only scans for drift; keep `auth_mode` fixed for a baseline. |
 
+### October 10 A2A Agent Card probe (unreleased)
+
+This candidate adds an opt-in live probe to `endpoint.mcp` and a shared A2A
+Agent Card projection. It does not change the published 0.1.2 artifact, create
+a release, or establish live tenant acceptance: the cards, keys and HTTP
+exchanges in the tests are synthetic, modeled on the A2A specification, and
+were not checked against a live agent.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Egress | `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (HTTPS only, same-origin redirects, 1 MiB, at most `max_agent_cards`, default 100) and, when set, the JWKS at `agent_card_jwks_url`. Private and loopback agents need `options.allow_private_origin`; `ca_bundle` trusts a private CA. Without `agent_card_urls` the connector is unchanged. | Allow egress only to the listed agent hosts and the JWKS host. Keep `allow_private_origin` off unless a configuration targets internal agents on purpose. |
+| Findings | One `a2a-agent-card` finding per fetched card (`provider` `a2a`, identity `a2a-card`, resource the card URL without query). Every fetch, HTTP, JSON, size or card-validation failure is an error and the scan is incomplete (exit 3). | Treat exit 3 as unknown coverage of that agent. |
+| Card projection | `code.filesystem` and the probe share `metadata.agent_card`: A2A 1.0 `supportedInterfaces` now supply `url` and `protocol_version` (earlier 1.x cards had `url: null`), interfaces are listed, and `signature` records `absent`, `present-unverified`, `verified` or `invalid`. Projected strings are bounded (200 characters; the description 300). | Consumers that read `agent_card` must tolerate the new `interfaces`, `signature` and `signature_detail` keys. |
+| Risk | New tags `a2a-plaintext-interface` (10) and `a2a-card-signature-invalid` (10), with threat references (ASI07; AML.T0118.001; ASI04). Existing card files with an `http://` interface or a malformed `signatures` entry score higher. | Rebaseline risk-level gates that cover A2A card findings. |
+| Signatures | Verified only against `agent_card_jwks_url`, over the RFC 8785 canonical card without `signatures`: as served, without any empty string, array or object (the A2A Python SDK's form), or without empty members other than REQUIRED and `optional` A2A 1.0 fields (the specification's section 8.4.1 example). Keys or key URLs named by a card are never used. A card holding an integer beyond 2^53, or signed by a signer that also drops `false` or `0` defaults and served with them, reports `invalid`. | Sign with the A2A SDK or the specification's rules. Do not read `verified` as approval: an A2A card never registers or approves a finding. |
+| Protocol versions | A card declaring a `protocolVersion` other than 0.x or 1.x, on the card or an interface, is reported with a warning that makes the scan incomplete (exit 3), in `endpoint.mcp` and `code.filesystem`. | Treat exit 3 as cards read with field assumptions that may not hold. |
+| Configuration | A job that sets both `input` and `agent_card_urls` is refused when the connector is built (exit 3); a replay never probes. | Keep replay jobs (`input`, optionally `agent_card_jwks_url`) separate from probe jobs. |
+| Exports | `--dump-records` card records also withhold the userinfo of scheme-less `user:password@host:port` addresses. A replayed card that lost one reports its signature `present-unverified`. | None; live verification reads the card as served. |
+
 ### October 10 autonomy tiers and card schema version 2 (unreleased)
 
 This candidate adds the [autonomy tiers](concepts/autonomy.md). It does not
@@ -1151,25 +1170,6 @@ resolved findings.
 These cases are authored regressions and a 130-case author-written benchmark.
 They do not establish independent review, live tenant acceptance or measured
 field precision.
-
-### October 10 A2A Agent Card probe (unreleased)
-
-This candidate adds an opt-in live probe to `endpoint.mcp` and a shared A2A
-Agent Card projection. It does not change the published 0.1.2 artifact, create
-a release, or establish live tenant acceptance: the cards, keys and HTTP
-exchanges in the tests are synthetic, modeled on the A2A specification, and
-were not checked against a live agent.
-
-| Area | Changed behavior | Migration check |
-| --- | --- | --- |
-| Egress | `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (HTTPS only, same-origin redirects, 1 MiB, at most `max_agent_cards`, default 100) and, when set, the JWKS at `agent_card_jwks_url`. Private and loopback agents need `options.allow_private_origin`; `ca_bundle` trusts a private CA. Without `agent_card_urls` the connector is unchanged. | Allow egress only to the listed agent hosts and the JWKS host. Keep `allow_private_origin` off unless a configuration targets internal agents on purpose. |
-| Findings | One `a2a-agent-card` finding per fetched card (`provider` `a2a`, identity `a2a-card`, resource the card URL without query). Every fetch, HTTP, JSON, size or card-validation failure is an error and the scan is incomplete (exit 3). | Treat exit 3 as unknown coverage of that agent. |
-| Card projection | `code.filesystem` and the probe share `metadata.agent_card`: A2A 1.0 `supportedInterfaces` now supply `url` and `protocol_version` (earlier 1.x cards had `url: null`), interfaces are listed, and `signature` records `absent`, `present-unverified`, `verified` or `invalid`. Projected strings are bounded (200 characters; the description 300). | Consumers that read `agent_card` must tolerate the new `interfaces`, `signature` and `signature_detail` keys. |
-| Risk | New tags `a2a-plaintext-interface` (10) and `a2a-card-signature-invalid` (10), with threat references (ASI07; AML.T0118.001; ASI04). Existing card files with an `http://` interface or a malformed `signatures` entry score higher. | Rebaseline risk-level gates that cover A2A card findings. |
-| Signatures | Verified only against `agent_card_jwks_url`, over the RFC 8785 canonical card without `signatures`: as served, without any empty string, array or object (the A2A Python SDK's form), or without empty members other than REQUIRED and `optional` A2A 1.0 fields (the specification's section 8.4.1 example). Keys or key URLs named by a card are never used. A card holding an integer beyond 2^53, or signed by a signer that also drops `false` or `0` defaults and served with them, reports `invalid`. | Sign with the A2A SDK or the specification's rules. Do not read `verified` as approval: an A2A card never registers or approves a finding. |
-| Protocol versions | A card declaring a `protocolVersion` other than 0.x or 1.x, on the card or an interface, is reported with a warning that makes the scan incomplete (exit 3), in `endpoint.mcp` and `code.filesystem`. | Treat exit 3 as cards read with field assumptions that may not hold. |
-| Configuration | A job that sets both `input` and `agent_card_urls` is refused when the connector is built (exit 3); a replay never probes. | Keep replay jobs (`input`, optionally `agent_card_jwks_url`) separate from probe jobs. |
-| Exports | `--dump-records` card records also withhold the userinfo of scheme-less `user:password@host:port` addresses. A replayed card that lost one reports its signature `present-unverified`. | None; live verification reads the card as served. |
 
 ### October 9 scan evidence corrections (unreleased)
 
