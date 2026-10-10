@@ -12,6 +12,16 @@ approved records of any vendor registry you explicitly
 
 ### Agent Capability Cards (one YAML per agent)
 
+A Capability Card is not an A2A Agent Card. You write a Capability Card
+(`agent-card.yaml`) to sanction what ShadowScan finds. An agent publishes an
+[A2A Agent Card](https://github.com/a2aproject/A2A/blob/main/docs/specification.md)
+(`/.well-known/agent-card.json`) to advertise its interfaces and skills to
+other agents; ShadowScan discovers those cards in code
+([`code.filesystem`](connectors/code.md)) or fetches the ones you list
+([`endpoint.mcp`](connectors/endpoint.md#a2a-agent-card-probe)) and reports
+each as a finding. A discovered A2A card, signed or not, never registers or
+approves a finding; bind it with a Capability Card like any other agent.
+
 The bundled example is [`agent-card.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/agent-card.yaml). ShadowScan reads
 `schema_version`, `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
 `metadata.classification`, `autonomy_profile.level`, and a `discovery:` block required for automatic registration:
@@ -268,10 +278,14 @@ options:
 ```
 
 In a trusted registry, a record approves when its status is `approved` and its
-`approval_mode` is not `auto`. Two optional per-registry switches widen that:
+`approval_mode` is `manual`: the registry shows that a person approved it. Two
+optional per-registry switches widen that:
 
-- `allow_auto_approved: true` also accepts approved records of a registry that
-  approves every record without a person. Auto-approval is not human review.
+- `allow_auto_approved: true` also accepts approved records whose approval no
+  person is known to have made: `approval_mode: auto` (the registry approves
+  every record without a person) and `approval_mode: unknown` (the connector
+  could not establish how the registry approves records). Auto-approval is not
+  human review.
 - `allow_registered_only: true` also accepts `registered` records of a registry
   without an approval workflow.
 
@@ -279,6 +293,11 @@ Records these rules decline are counted in an advisory `engine.inventory`
 warning (`trusted registry <type> <id>: N auto-approved ... record(s) were not
 treated as sanctioned`). Records of the deprecated `entra-agent-registry` source
 never approve, and the configuration refuses to trust that type.
+
+A record whose `approval_mode` is `unknown` and whose status is `approved` does
+not approve by default: the warning counts it as `approved without a known
+reviewer`. Set `allow_auto_approved` on the entry only when you know who
+approves records in that registry.
 
 Each record that approves:
 
@@ -324,6 +343,119 @@ Offline exports are untrusted input, so before trusting a registry whose
 records you replay, keep its exports where only operators can write them, or
 scan that registry live.
 
+### Example: Google Agent Registry and Gemini Enterprise
+
+The `cloud.gcp` connector reads both catalogs when you opt in
+([details](connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs)):
+
+```yaml
+connectors:
+  - name: cloud.gcp
+    projects: [acme-ml]
+    locations: [us-central1]
+    agent_registry: true          # Agent Registry agents, MCP servers, endpoints
+    gemini_enterprise: true       # agents of Gemini Enterprise apps (caller-scoped)
+options:
+  trusted_registries:
+    # An administrator enables Gemini Enterprise agents: ENABLED records are approved.
+    - registry: gemini-enterprise
+      id: projects/acme-ml/locations/global/collections/default_collection/engines/acme-assist
+```
+
+An `ENABLED` agent of that app approves exactly the reasoning engine or
+Dialogflow CX agent it is bound to; a `PRIVATE`, draft, disabled or suspended
+agent approves nothing. Agent Registry has no approval workflow, so its
+`registered` records approve only with `allow_registered_only: true` on an entry
+such as `{registry: google-agent-registry, id: projects/acme-ml/locations/global}`;
+listing an agent there is not a review. Trust one of the two for a given agent:
+two trusted records approving the same engine are ambiguous and leave it shadow.
+
+### Trusting AWS registries
+
+`cloud.aws` with `registry` in `services` emits records of both AWS registry
+namespaces (see the
+[cloud guide](connectors/cloud.md#aws-agent-registry-and-agentcore-registry-records)).
+The registry id is the registry ARN exactly:
+
+```yaml
+connectors:
+  - name: cloud.aws
+    account_id: "123456789012"
+    regions: [us-east-1]
+    services: [agentcore, registry]
+options:
+  trusted_registries:
+    # Agent Registry without an auto-approval rule, now or before: a person
+    # approves its records.
+    - registry: aws-agent-registry
+      id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
+    # AgentCore registry with autoApproval: its records were not reviewed by a
+    # person, so they approve only because this entry says so.
+    - registry: aws-agentcore-registry
+      id: arn:aws:bedrock-agentcore:us-east-1:123456789012:registry/efgh5678efgh
+      allow_auto_approved: true
+```
+
+An approved Agent Registry record that the registry created by auto-detection
+(`createdByAutoDetection: true`) from an AgentCore runtime or gateway binds that
+exact ARN, so the runtime's finding is registered when its account and region
+match. Provenance is also writable: `CreateRegistryRecord` and
+`UpdateRegistryRecord` accept it from the caller. A record created through the
+API therefore binds nothing, whatever source it names, and an update can change
+the provenance of an auto-detected record, so trusting a registry means trusting
+everyone who can create, update or approve its records. AgentCore registry
+records, and records read from another account's registry through
+`registry_arns`, carry no provenance: trusting them registers only the record
+findings themselves. Records read through `registry_arns` have
+`approval_mode: unknown`, so they approve only when that registry's entry sets
+`allow_auto_approved`; it then accepts every approved record in it, however it
+was approved.
+
+`approval_mode` reflects the registry's approval configuration when the scan
+reads it, not how each record was approved. A record approved while an
+auto-approval rule was on reports `manual` once the rule is removed, so trust a
+registry without `allow_auto_approved` only when it has never auto-approved
+records. A configuration the connector does not recognize gives
+`approval_mode: unknown` and makes the scan incomplete.
+
+### Microsoft Agent 365
+
+`identity.entra` with `include_agent_registry: true` reports each package of the
+tenant's Agent 365 catalog as a `microsoft-agent-365` record whose registry id
+is the connector's `tenant_id`. Trust the tenant by that id:
+
+```yaml
+connectors:
+  - name: identity.entra
+    tenant_id: 00000000-0000-0000-0000-000000000000
+    include_agent_registry: true
+    include_agent_identities: true   # makes agent identity bindings in scope
+options:
+  trusted_registries:
+    - registry: microsoft-agent-365
+      id: 00000000-0000-0000-0000-000000000000
+```
+
+An approved package then approves its own record and the objects it binds: the
+agent identity (`entra:sp:<agentIdentityId>`), only when that id is a listed
+agent identity, and the app registration (`entra:app:<appId>`), only for an
+organization's own package. A package never binds any other service principal,
+and a Microsoft or partner package never binds an app registration of the
+tenant, whatever ids it declares. Blocked, pending, rejected, draft and unknown
+packages approve nothing.
+Only an organization's own package whose request a person approved has
+`approval_mode: manual`; an approved Microsoft or partner package has
+`approval_mode: unknown` and approves nothing unless the tenant's entry sets
+`allow_auto_approved`, which then approves its record and a listed agent
+identity it names. Trust the
+tenant only when the packages allowed in its catalog are ones your organization
+has decided to sanction. Without `tenant_id` the records have an empty registry
+id and cannot be trusted; with it, a pre-issued `access_token` must carry that
+tenant in its `tid` claim. A delegated scan's listing is caller-scoped, so it
+never marks findings `observed-not-registered` or `registered-not-observed`. The
+[identity connector guide](connectors/identity.md#microsoft-agent-365-packages-opt-in)
+lists the status rules and binding coverage.
+
 ## Registry reconciliation statuses
 
 Whether or not a registry is trusted, the engine compares its records with the
@@ -347,6 +479,19 @@ a partial listing proves nothing. The lists hold at most 50 entries. When
 computed.
 
 Statuses are informational: they do not change `shadow`, approval or risk.
+
+## Approved MCP registries
+
+An organisation's approved MCP catalog is configured separately, as a pinned
+snapshot in [`options.mcp_registries`](getting-started/configuration.md#mcp-registry-snapshots)
+with `approved: true`. It is not an inventory source: it never approves a
+finding or changes `shadow`, `registry_match` or `inventory_size`. It adds the
+`mcp-not-in-approved-registry` governance factor to MCP configurations with an
+enabled server it does not list by what the client fetches or connects to,
+including any server whose package or endpoint cannot be identified; see
+[MCP registry provenance](connectors/code.md#mcp-registry-provenance). The
+`mcp-registry` record type above is for registry connectors that emit
+`registry_record` metadata, not for these snapshots.
 
 ## From shadow to registered
 

@@ -1,13 +1,16 @@
-"""Bounded, origin-pinned JWKS fetching and analysis-only JWT verification.
+"""Bounded, origin-pinned JWKS fetching and analysis-only JWT and JWS verification.
 
 Algorithms and the optional expected issuer come from operator configuration.
 A token's own issuer is never used as a trust anchor. Expiry, audience, and
 other authorization claims remain unvalidated: this is a scanner, not a token
-acceptance service.
+acceptance service. Detached JWS (A2A Agent Card signatures) uses the same key
+selection against an operator-trusted key set.
 """
 
 from __future__ import annotations
 
+import base64
+import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -16,6 +19,7 @@ _ALGORITHM_KEY_TYPES = {"RS256": "RSA", "PS256": "RSA", "ES256": "EC", "EdDSA": 
 _PRIVATE_JWK_MEMBERS = frozenset({"k", "d", "p", "q", "dp", "dq", "qi", "oth"})
 _MAX_JWKS_KEYS = 64
 MAX_JWKS_BYTES = 1024 * 1024
+_BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def verification_algorithms(configured: Sequence[str] | None = None) -> tuple[str, ...]:
@@ -80,6 +84,42 @@ def fetch_jwks(jwks_url: str, *, ca_bundle: str | None = None) -> dict[str, Any]
     return document
 
 
+def _header_key_selection(
+    header: dict[str, Any], allowed_algorithms: Sequence[str] | None
+) -> tuple[str, str | None]:
+    """The algorithm and key ID a header selects, refused unless the operator allows them."""
+    allowed = verification_algorithms(allowed_algorithms)
+    alg = header.get("alg")
+    if not isinstance(alg, str) or alg not in allowed:
+        raise ValueError("JWT algorithm is not in the configured asymmetric allowlist")
+    if header.get("crit"):
+        raise ValueError("JWT critical header extensions are unsupported")
+    kid = header.get("kid")
+    if kid is not None and (not isinstance(kid, str) or not kid):
+        raise ValueError("JWT key ID must be a nonempty string")
+    return alg, kid
+
+
+def _select_key(document: Any, alg: str, kid: str | None) -> Any:
+    """Exactly one eligible public key of an operator-trusted key set."""
+    from jwt import PyJWK
+
+    if not isinstance(document, dict) or not isinstance(document.get("keys"), list):
+        raise ValueError("JWKS document is not a key set")
+    keys = document["keys"]
+    if len(keys) > _MAX_JWKS_KEYS:
+        raise ValueError("JWKS document has too many keys")
+    candidates = [item for item in keys if _signature_candidate(item, alg=alg, kid=kid)]
+    if not candidates:
+        raise ValueError("JWKS does not contain a matching signature key")
+    if len(candidates) != 1:
+        raise ValueError("JWKS signing key selection is ambiguous")
+    key = PyJWK.from_dict(candidates[0], algorithm=alg).key
+    if alg in {"RS256", "PS256"} and not 2048 <= key.key_size <= 8192:
+        raise ValueError("RSA signing keys must be between 2048 and 8192 bits")
+    return key
+
+
 def verify_against_jwks(
     token: str,
     jwks_url: str,
@@ -98,33 +138,12 @@ def verify_against_jwks(
     after header validation, so rejected algorithms never trigger network IO.
     """
     import jwt as pyjwt
-    from jwt import PyJWK
 
-    allowed = verification_algorithms(allowed_algorithms)
-    alg = header.get("alg")
-    if not isinstance(alg, str) or alg not in allowed:
-        raise ValueError("JWT algorithm is not in the configured asymmetric allowlist")
-    if header.get("crit"):
-        raise ValueError("JWT critical header extensions are unsupported")
-    kid = header.get("kid")
-    if kid is not None and (not isinstance(kid, str) or not kid):
-        raise ValueError("JWT key ID must be a nonempty string")
+    alg, kid = _header_key_selection(header, allowed_algorithms)
     if expected_issuer is not None and (not isinstance(expected_issuer, str) or not expected_issuer):
         raise ValueError("JWT expected_issuer must be a nonempty string")
     document = (document_loader or fetch_jwks)(jwks_url)
-    if not isinstance(document, dict) or not isinstance(document.get("keys"), list):
-        raise ValueError("JWKS document is not a key set")
-    keys = document["keys"]
-    if len(keys) > _MAX_JWKS_KEYS:
-        raise ValueError("JWKS document has too many keys")
-    candidates = [item for item in keys if _signature_candidate(item, alg=alg, kid=kid)]
-    if not candidates:
-        raise ValueError("JWKS does not contain a matching signature key")
-    if len(candidates) != 1:
-        raise ValueError("JWKS signing key selection is ambiguous")
-    key = PyJWK.from_dict(candidates[0], algorithm=alg).key
-    if alg in {"RS256", "PS256"} and not 2048 <= key.key_size <= 8192:
-        raise ValueError("RSA signing keys must be between 2048 and 8192 bits")
+    key = _select_key(document, alg, kid)
     pyjwt.decode(
         token,
         key,
@@ -142,3 +161,47 @@ def verify_against_jwks(
         },
     )
     return True
+
+
+def _base64url_json_object(segment: Any) -> dict[str, Any]:
+    from shadowscan.utils.safe_json import strict_json_loads
+
+    if not isinstance(segment, str) or not _BASE64URL.fullmatch(segment):
+        raise ValueError("JWS protected header is not base64url")
+    try:
+        raw = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+        header = strict_json_loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        raise ValueError("JWS protected header is not a JSON object") from None
+    if not isinstance(header, dict):
+        raise ValueError("JWS protected header is not a JSON object")
+    return header
+
+
+def verify_detached_jws(
+    protected: Any,
+    payload: bytes,
+    signature: Any,
+    document: dict[str, Any],
+    *,
+    allowed_algorithms: Sequence[str] | None = None,
+) -> None:
+    """Verify an RFC 7515 signature whose payload is supplied separately.
+
+    ``document`` is an operator-trusted JWKS. Only the protected header
+    selects the algorithm and key: key locations a header names (``jku``,
+    ``x5u``) and keys it embeds (``jwk``, ``x5c``) are never fetched or
+    trusted. Critical extensions and unencoded payloads (``b64``) are refused.
+    Raises on every failure, including a signature that does not match.
+    """
+    from jwt.api_jws import PyJWS
+
+    header = _base64url_json_object(protected)
+    if "b64" in header:
+        raise ValueError("JWS unencoded payloads are unsupported")
+    alg, kid = _header_key_selection(header, allowed_algorithms)
+    key = _select_key(document, alg, kid)
+    if not isinstance(signature, str) or not _BASE64URL.fullmatch(signature):
+        raise ValueError("JWS signature is not base64url")
+    encoded = base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+    PyJWS().decode_complete(f"{protected}.{encoded}.{signature}", key, algorithms=[alg])

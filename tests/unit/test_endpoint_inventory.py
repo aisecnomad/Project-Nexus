@@ -14,6 +14,7 @@ from shadowscan.connectors.endpoint.inventory import (
     _history_tool,
     _home_from_path,
     _osquery_extension_id,
+    _valid_server,
     _version_key,
 )
 from shadowscan.models import Kind, Surface
@@ -495,3 +496,21 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
     assert not [f for f in findings if "approval_gate" in f.metadata]
     mcp = next(f for f in findings if f.kind == Kind.MCP_SERVER)
     assert [s["name"] for s in mcp.metadata["servers"]] == ["ok"]
+
+
+@pytest.mark.parametrize(
+    ("packages", "valid"),
+    [
+        (None, True),
+        ([], True),
+        ([{"registry_type": "npm", "identifier": "x", "version": None, "registry_base_url": None}], True),
+        ("npm", False),
+        (["npm"], False),
+        ([{"registry_type": "npm", "identifier": 5}], False),
+    ],
+)
+def test_replayed_manifest_packages_must_have_the_parsed_shape(packages, valid):
+    server: dict[str, object] = {"name": "io.example/tool", "transport": "unknown", "disabled": False}
+    if packages is not None:
+        server["packages"] = packages
+    assert _valid_server(server) is valid

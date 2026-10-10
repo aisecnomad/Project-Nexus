@@ -116,8 +116,16 @@ def test_builtin_connectors_declare_exactly_the_hooks_the_engine_used_to_hard_co
     }
     assert scanning_local_trees == {"code.filesystem", "code.github", "code.gitlab", "endpoint.inventory"}
     # An approved record of a trusted registry approves findings: only registry readers may emit one.
-    assert {name for name, cls in classes.items() if cls.emits_registry_records} == set()
-    assert {name for name, cls in classes.items() if cls.registry_record_types} == set()
+    assert {name for name, cls in classes.items() if cls.emits_registry_records} == {
+        "cloud.aws",
+        "cloud.gcp",
+        "identity.entra",
+    }
+    assert {name for name, cls in classes.items() if cls.registry_record_types} == {
+        "cloud.aws",
+        "cloud.gcp",
+        "identity.entra",
+    }
 
 
 @pytest.mark.parametrize(

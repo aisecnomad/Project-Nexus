@@ -116,9 +116,41 @@ def test_unknown_cloud_records_are_never_cached(tmp_path, index, cls, valid, ide
     [
         (AwsConnector, {"_kind": "account", "account": "123456789012"}),
         (AwsConnector, {"_kind": "bedrock-guardrail", "guardrailId": "known"}),
+        (
+            AwsConnector,
+            {
+                "_kind": "agent-registry",
+                "registryArn": "arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd",
+            },
+        ),
+        (
+            AwsConnector,
+            {
+                "_kind": "agentcore-registry",
+                "registryArn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:registry/efgh5678efgh",
+            },
+        ),
         (AzureConnector, {"_kind": "diagnostics", "_account": "/account", "settings": []}),
         (AzureConnector, {"_kind": "deployment", "_account": "/account", "properties": {}}),
         (GcpConnector, {"_kind": "project", "project": "test", "ai_services": []}),
+        (GcpConnector, {"_kind": "project-number", "_project": "test", "project_number": "42"}),
+        (
+            GcpConnector,
+            {
+                "_kind": "registry-coverage",
+                "_project": "test",
+                "_location": "global",
+                "catalog": "google-agent-registry",
+                "collection": "agents",
+                "api_version": "v1",
+                "complete": True,
+                "listing_scope": "project",
+            },
+        ),
+        (
+            GcpConnector,
+            {"_kind": "agent-registry-publisher", "name": "projects/test/locations/global/publishers/p"},
+        ),
         (OciConnector, {"_kind": "tenancy", "tenancy": "ocid1.tenancy.example"}),
         (OciConnector, {"_kind": "genai-agent-endpoint", "agent_id": "known"}),
     ],

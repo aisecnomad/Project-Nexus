@@ -180,6 +180,13 @@ Scope:
 
 ### REG-3 Google Gemini Enterprise (L)
 
+Status: implemented, unreleased, as the opt-in `agent_registry` and
+`gemini_enterprise` catalogs of `cloud.gcp`; see
+[Agent Registry and Gemini Enterprise catalogs](../connectors/cloud.md#agent-registry-and-gemini-enterprise-catalogs).
+It was built from Google's API discovery documents and synthetic fixtures and
+has not been validated against a live project. The rest of this section
+records the proposal as drafted.
+
 Google has two catalogs:
 
 - The Google Cloud Agent Registry, which manages `Agent`, `McpServer`,
