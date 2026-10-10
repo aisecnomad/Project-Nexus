@@ -5,19 +5,45 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Integration review corrections (#178)
+
+- Agent settings readers no longer crash on a list or object where a string is
+  expected (Claude Code `permissions.defaultMode`, Codex `approval_policy` at
+  the top level or in a profile, OpenClaw `gateway.customBindHost`). The
+  TypeError aborted `endpoint.inventory` and the rest of the file's code
+  analysis; such a value now configures no approval gate, as an unknown string
+  already did.
+- `shadowscan merge` refuses an autonomy block whose basis has a non-string
+  rule or bound, or a value outside its bound's vocabulary (a level for floor
+  and ceiling, a listed value for oversight and initiation), with the usual
+  "rescan before merging" error instead of a traceback. The basis therefore
+  never carries free text into a merged report.
+- Endpoint replay that drops a malformed approval or posture entry from a
+  record no longer records an every-action approval gate from the entries
+  left: the dropped one could have loosened it. The gate is `some-actions`.
+- LLM triage treats a budget that is not a positive finite number as spent,
+  and a NaN deadline as reached, so a `TriageSettings` built in code (which
+  skips option validation) cannot turn off both the budget and the job
+  deadline. Triage is skipped instead.
+- The autonomy guide states the merge rule for declared levels as the code
+  applies it: a source scanned without an inventory does not count either way.
+
 ### Operational controls guide
 
 - Add `docs/operations/operational-controls.md` (from #175): external process
   supervision with correct systemd (`Type=oneshot` with `TimeoutStartSec=`),
   Kubernetes and CI deadlines; network egress, including that ShadowScan's HTTP
-  client refuses configured proxies, so live host allowlists belong in a
+  client ignores proxy environment variables and rejects an explicit proxy,
+  so live host allowlists belong in a
   transparent, name-aware egress layer; the plugin trust model; detection
   expectations; and SBOM and provenance as the release-evidence workflow
   actually produces them (a runtime SBOM and wheel attestations, no container
   image attestation).
 - Add `examples/k8s-network-policy.yaml`, a live-collection egress baseline
   (cluster DNS and HTTPS to public addresses, private, CGNAT and link-local
-  ranges denied) that selects the same labels as `examples/k8s-job.yaml`.
+  ranges denied). It selects `app.kubernetes.io/name: shadowscan` with
+  `shadowscan-mode: live`, the label a live-collection Job's pod template
+  must carry (`examples/k8s-job.yaml` is the offline Job).
 - Pin that an LLM triage reply steered by scanned content cannot change a
   finding's risk, shadow status, kind or tags.
 - Ignore `*.pyo`, `*.egg` and `*.whl` build artifacts (from #176).
@@ -57,11 +83,9 @@ summarizes each release for people who install and operate ShadowScan.
   pulls from shared runner addresses failed with HTTP 429, which failed the
   job on recent pushes to `main`. The digest pin keeps the base image identical;
   the daemon falls back to Docker Hub when the mirror fails.
-- Restore the README's package classifier
-  (`Development Status :: 3 - Alpha`), whose typo failed the documentation
-  consistency test, and its `python -m shadowscan.signatures.validate`
-  contributor command. A new test checks that every `python -m` module shown
-  in the documentation exists.
+- A new test checks that every `python -m` module shown in the documentation
+  exists. (The README classifier and command fix it guards is logged with
+  the #172 entries.)
 - `make install-dev` followed by `make typecheck` no longer fails without the
   cloud SDKs: the mypy overrides list the `google` namespace package, which
   `import google.auth` also binds. A new test type-checks every optional SDK

@@ -507,6 +507,15 @@ def _valid() -> dict[str, Any]:
         lambda a: a.update(basis=[{"bound": "floor", "rule": "ai-system", "value": [0]}]),
         lambda a: a.update(basis=[{"bound": "floor", "rule": "ai-system", "value": 0, "evidence": "x"}]),
         lambda a: a.update(basis=["ai-system"]),
+        # Regression: an unhashable rule raised TypeError, so `shadowscan merge` crashed.
+        lambda a: a.update(basis=[{"bound": "floor", "rule": ["ai-system"], "value": 0}]),
+        lambda a: a.update(basis=[{"bound": "floor", "rule": {"ai-system": 1}, "value": 0}]),
+        lambda a: a.update(basis=[{"bound": ["floor"], "rule": "ai-system", "value": 0}]),
+        # Each value stays in its bound's vocabulary; basis never carries free text.
+        lambda a: a.update(basis=[{"bound": "floor", "rule": "ai-system", "value": "anything"}]),
+        lambda a: a.update(basis=[{"bound": "ceiling", "rule": "per-action-approval", "value": 6}]),
+        lambda a: a.update(basis=[{"bound": "oversight", "rule": "approval-gated", "value": "<b>x</b>"}]),
+        lambda a: a.update(basis=[{"bound": "initiation", "rule": "event-trigger", "value": 2}]),
         lambda a: a.update(basis=[{"bound": "floor", "rule": "ai-system", "value": 0}] * (MAX_BASIS + 1)),
     ],
 )

@@ -300,8 +300,8 @@ NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
 reviewed `/input` volume before running it. For live API collection, use a
 separate Job and enforce a network path through an approved transparent egress
 gateway or firewall that filters by name; a standard Kubernetes NetworkPolicy
-cannot filter destinations by DNS name, and ShadowScan's HTTP client refuses
-configured proxies. See [operational controls](operations/operational-controls.md).
+cannot filter destinations by DNS name, and ShadowScan's HTTP client ignores
+proxy environment variables and rejects an explicit proxy. See [operational controls](operations/operational-controls.md).
 
 Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Cloning requires

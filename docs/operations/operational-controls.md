@@ -49,11 +49,15 @@ not inherit these controls, so enforce egress outside the process as well.
   `graph.microsoft.com`". Enforce the allowlist of the enabled connectors' hosts
   in a layer that sees names: a transparent egress gateway or firewall that
   filters on TLS SNI, or a CNI with FQDN policies. ShadowScan's HTTP client
-  refuses configured proxies, both from the environment and explicit ones, so
-  that a proxy cannot route around its destination checks. The
+  ignores proxy environment variables (`HTTPS_PROXY` and similar) and rejects
+  an explicitly configured proxy, so that a proxy cannot route around its
+  destination checks. The
   [live egress example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-network-policy.yaml)
   is the address-level baseline underneath that allowlist: cluster DNS and HTTPS
-  to public addresses only. It works only with a CNI that enforces
+  to public addresses only. It selects pods labelled
+  `app.kubernetes.io/name: shadowscan` and `shadowscan-mode: live`; give your
+  live-collection Job's pod template those labels (the offline Job example uses
+  `shadowscan-mode: offline`). It works only with a CNI that enforces
   NetworkPolicy.
 
 ## Plugin trust

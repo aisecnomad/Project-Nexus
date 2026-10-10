@@ -446,12 +446,16 @@ def valid_autonomy(value: Any) -> bool:
     if not isinstance(basis, list) or len(basis) > MAX_BASIS:
         return False
     for item in basis:
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"bound", "rule", "value"}
-            or RULES.get(item["rule"]) != item["bound"]
-            or isinstance(item["value"], bool)
-            or not isinstance(item["value"], (int, str))
-        ):
+        if not isinstance(item, dict) or set(item) != {"bound", "rule", "value"}:
+            return False
+        # Values come from a report file: check types before any lookup, so a list or object
+        # is refused rather than raising, and keep each value in its bound's vocabulary.
+        rule, bound, entry = item["rule"], item["bound"], item["value"]
+        if not isinstance(rule, str) or RULES.get(rule) != bound:
+            return False
+        if bound in ("floor", "ceiling"):
+            if not _level(entry):
+                return False
+        elif entry not in (OVERSIGHT_VALUES if bound == "oversight" else INITIATION_VALUES):
             return False
     return True

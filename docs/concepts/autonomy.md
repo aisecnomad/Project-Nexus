@@ -55,8 +55,10 @@ in `metadata.autonomy`:
 - `initiation`: `schedule`, `event`, `human` or `unknown`.
 - `basis`: every rule that fired, as `{bound, rule, value}`, sorted by bound
   and rule order, at most 32 entries. Rule ids come from the closed set below.
-  The basis never holds evidence text, resource names or credentials; the
-  finding's capabilities, tags and evidence show what each rule read.
+  The basis never holds evidence text, resource names or credentials: a floor
+  or ceiling value is a level and an oversight or initiation value is one of
+  the values above, and `shadowscan merge` refuses a source block that breaks
+  this. The finding's capabilities, tags and evidence show what each rule read.
 - `declared` and `declared_source`: only when the finding matched an inventory
   entry that declares a level; see [Declared and observed levels](#declared-and-observed-levels).
 
@@ -280,7 +282,9 @@ keeps the basis rules of the source block that set it. Approval-bypass evidence
 that only a later source recorded therefore raises the merged interval, and an
 approval gate that only one source recorded cannot lower it below another
 source's block. The first declared level is kept while the merged finding is
-registered (every source matched it) and is compared with the merged interval
+registered (some source matched it to its inventory and no source found it
+unregistered; a source scanned without an inventory does not count either
+way) and is compared with the merged interval
 again (`autonomy-understated`, `declared-above-ceiling`); a merged finding that
 any source left unregistered carries no declared level. Risk keeps the highest
 source score and is not rescored. A source whose autonomy block is malformed

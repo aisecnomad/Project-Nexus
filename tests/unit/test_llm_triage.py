@@ -440,6 +440,30 @@ def test_budget_and_deadline_stop_requests_and_skip_the_rest(monkeypatch, option
     assert (findings[-1].kind, findings[-1].risk.score, findings[-1].shadow) == (Kind.AGENT, 86, None)
 
 
+@pytest.mark.parametrize(
+    ("budget", "deadline", "reason"),
+    [
+        (float("nan"), None, "budget_seconds is not a positive finite number"),
+        (float("inf"), None, "budget_seconds is not a positive finite number"),
+        (0, None, "budget_seconds is not a positive finite number"),
+        (300.0, float("nan"), "deadline reached"),
+    ],
+)
+def test_settings_built_in_code_cannot_unbound_the_run(monkeypatch, budget, deadline, reason):
+    # Regression: a TriageSettings built directly skips from_options, and a NaN budget or
+    # deadline compared false against every limit, so neither the budget nor the deadline held.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    clock = [1000.0]
+    monkeypatch.setattr(triage_module, "_monotonic", lambda: clock[0])
+    settings = TriageSettings(enabled=True, model="m", budget_seconds=budget)
+    findings = [_finding(str(i), 90 - i, RiskLevel.HIGH) for i in range(3)]
+    client = SlowClient([_anthropic('{"verdict": "uncertain"}')] * 3, clock, step=100)
+    warnings = Triage(settings, client=client).run(findings, deadline=deadline)
+    assert client.requests == []
+    assert [f.metadata["llm_triage"]["status"] for f in findings] == ["skipped"] * 3
+    assert warnings == [f"llm triage stopped: {reason}; 3 finding(s) not triaged"]
+
+
 def test_three_consecutive_failed_requests_stop_the_run(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     settings = TriageSettings.from_options({"enabled": True, "model": "m"})

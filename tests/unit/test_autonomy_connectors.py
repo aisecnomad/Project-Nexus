@@ -191,6 +191,19 @@ def test_goose_approval_settings(mode, expected):
     assert scopes(".config/goose/config.yaml", f"GOOSE_MODE: {json.dumps(mode)}\n") == expected
 
 
+@pytest.mark.parametrize("value", [["default"], {"mode": "plan"}, 3])
+def test_unreadable_claude_code_mode_configures_no_gate(value):
+    # Regression: a list or object reached a set lookup and raised TypeError, which aborted
+    # endpoint.inventory and the rest of the file's code analysis.
+    assert scopes(CLAUDE, json.dumps({"permissions": {"defaultMode": value}})) == []
+
+
+@pytest.mark.parametrize("value", ['["untrusted"]', '{ mode = "untrusted" }', "3"])
+def test_unreadable_codex_policy_configures_no_gate(value):
+    text = f"approval_policy = {value}\n[profiles.ci]\napproval_policy = {value}\n"
+    assert scopes(".codex/config.toml", text) == []
+
+
 @pytest.mark.parametrize(
     ("rel", "text", "expected"),
     [

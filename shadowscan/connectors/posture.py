@@ -170,18 +170,23 @@ def record_posture(finding: Finding, posture: list[dict[str, str]]) -> None:
         )
 
 
-def record_approval(finding: Finding, approvals: list[dict[str, str]]) -> None:
+def record_approval(finding: Finding, approvals: list[dict[str, str]], *, complete: bool = True) -> None:
     """Record approval settings (``ApprovalSetting.as_dict()`` plus ``file``) as ``metadata.approval_gate``.
 
     Call after :func:`record_posture`. The gate covers every action only when every recorded
-    setting does and no posture issue lets an action run unapproved; otherwise it covers some.
-    Nothing is recorded without a setting that configures approval: absent configuration is not
-    evidence of approval, and a setting that only lets actions run unprompted is not either.
+    setting does, no posture issue lets an action run unapproved and ``complete`` is true;
+    otherwise it covers some. Pass ``complete=False`` when approval or posture entries were
+    dropped (for example malformed entries in a replayed export): a setting that was lost could
+    have loosened the gate. Nothing is recorded without a setting that configures approval:
+    absent configuration is not evidence of approval, and a setting that only lets actions run
+    unprompted is not either.
     """
     if not any((item.get("client"), item.get("setting")) not in _LOOSENING for item in approvals):
         return
-    every = all(item.get("scope") == "every-action" for item in approvals) and not (
-        _UNGATED_ISSUES & set(finding.tags)
+    every = (
+        complete
+        and all(item.get("scope") == "every-action" for item in approvals)
+        and not (_UNGATED_ISSUES & set(finding.tags))
     )
     finding.metadata["approval_gate"] = {
         "scope": "every-action" if every else "some-actions",
@@ -336,7 +341,8 @@ def _openclaw(data: dict[str, Any]) -> list[PostureIssue]:
     gateway = _mapping(data.get("gateway"))
     bind = gateway.get("bind", "loopback")
     custom = gateway.get("customBindHost")
-    exposed = bind == "lan" or (bind == "custom" and custom in {"0.0.0.0", "::"})
+    # Values come from an untrusted file: a list or object must not reach a set lookup.
+    exposed = bind == "lan" or (bind == "custom" and isinstance(custom, str) and custom in {"0.0.0.0", "::"})
     if exposed:
         value = "lan" if bind == "lan" else f"custom {custom}"
         issues.append(PostureIssue("posture-exposed-gateway", "openclaw", "gateway.bind", value))
@@ -362,6 +368,8 @@ def _claude_code_approval(data: dict[str, Any]) -> list[ApprovalSetting]:
     permissions = data.get("permissions")
     if isinstance(permissions, dict):
         mode = permissions.get("defaultMode")
+        if not isinstance(mode, str):
+            mode = None  # an unreadable mode configures no approval
         if mode in {"default", "plan"}:
             settings.append(ApprovalSetting("claude-code", "permissions.defaultMode", mode, "every-action"))
         elif mode == "acceptEdits":
@@ -409,6 +417,8 @@ def _codex_approval(data: dict[str, Any]) -> list[ApprovalSetting]:
         scopes += [(f"profiles.{name}.", p) for name, p in profiles.items() if isinstance(p, dict)]
     for prefix, scope in scopes:
         policy = scope.get("approval_policy")
+        if not isinstance(policy, str):
+            continue  # an unreadable policy configures no approval
         # "untrusted" asks before any command outside a fixed read-only set. "on-request" lets
         # the model decide when to ask and "on-failure" asks only to escalate a failed command.
         if policy == "untrusted":

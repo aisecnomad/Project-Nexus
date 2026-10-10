@@ -88,6 +88,8 @@ _EXTENSION_VERSION = re.compile(
 )
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _RECORD_TYPES = {"agent_config", "ide_extension", "browser_extension", "local_model", "shell_history"}
+# Internal marker on a replayed record that lost approval or posture entries; never exported.
+_GATE_INCOMPLETE = "_approval_entries_dropped"
 _OWN_STRINGS = (
     "device", "home", "client", "product", "signature", "location", "editor", "extension_id", "version",
     "browser", "profile", "name", "runtime", "provider", "shell", "tool",
@@ -632,6 +634,11 @@ class EndpointInventoryConnector(BaseConnector):
                     f"endpoint.inventory: dropped {dropped} malformed server, posture, approval or model "
                     f"entr{'y' if dropped == 1 else 'ies'} from a {rec['record_type']} record"
                 )
+            # A dropped approval or posture entry could have loosened the gate, so what is left
+            # cannot show that every action is approved.
+            rec[_GATE_INCOMPLETE] = len(posture) != len(rec["posture"]) or len(approvals) != len(
+                rec["approval"]
+            )
             return rec
         nested = raw.get("columns")
         columns: dict[str, Any] = nested if isinstance(nested, dict) else raw
@@ -731,7 +738,11 @@ class EndpointInventoryConnector(BaseConnector):
         posture = [p for r in records for p in r.get("posture") or [] if isinstance(p, dict)]
         if posture:
             record_posture(f, posture)
-        record_approval(f, [a for r in records for a in r.get("approval") or [] if isinstance(a, dict)])
+        record_approval(
+            f,
+            [a for r in records for a in r.get("approval") or [] if isinstance(a, dict)],
+            complete=not any(r.get(_GATE_INCOMPLETE) for r in records),
+        )
         f.kind = kind
         out.append(finalize(f, self.index))
         # Each server keeps the file it came from, so its risks cite that file.

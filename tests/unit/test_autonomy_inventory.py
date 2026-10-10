@@ -483,6 +483,11 @@ def test_fleet_merge_notes_a_declared_level_above_the_merged_ceiling(tmp_path, i
         lambda autonomy: autonomy.update(floor=9),
         lambda autonomy: autonomy.update(schema="other"),
         lambda autonomy: autonomy["basis"].append({"bound": "floor", "rule": "made-up", "value": 1}),
+        # Regression: an unhashable rule raised TypeError instead of this ValueError.
+        lambda autonomy: autonomy["basis"].append({"bound": "floor", "rule": ["ai-system"], "value": 0}),
+        lambda autonomy: autonomy["basis"].append(
+            {"bound": "oversight", "rule": "approval-gated", "value": "x"}
+        ),
     ],
 )
 def test_fleet_merge_rejects_malformed_autonomy(tmp_path, index, damage):

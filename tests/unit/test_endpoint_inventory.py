@@ -495,3 +495,45 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
     assert not [f for f in findings if "approval_gate" in f.metadata]
     mcp = next(f for f in findings if f.kind == Kind.MCP_SERVER)
     assert [s["name"] for s in mcp.metadata["servers"]] == ["ok"]
+
+
+@pytest.mark.parametrize(
+    "lost",
+    [
+        {"approval": ["junk"]},
+        {"approval": [{"client": "claude-code", "setting": "permissions.allow", "value": "rules"}]},
+        {"posture": [{"id": "posture-made-up", "client": "claude-code", "setting": "s", "value": "v"}]},
+    ],
+)
+def test_replay_that_drops_approval_or_posture_entries_never_claims_every_action(
+    run_connector, tmp_path, lost
+):
+    # Regression: the dropped entry could have been a loosening setting, yet the valid
+    # every-action entry left behind recorded an every-action gate.
+    gate = {
+        "client": "claude-code",
+        "setting": "permissions.defaultMode",
+        "value": "default",
+        "scope": "every-action",
+        "file": "~/.claude/settings.json",
+    }
+    record = {
+        "device": "lap",
+        "home": "dana",
+        "record_type": "agent_config",
+        "client": "claude-code",
+        "product": "Claude Code",
+        "location": "~/.claude/settings.json",
+        "approval": [gate, *lost.get("approval", [])],
+        "posture": lost.get("posture", []),
+    }
+    path = tmp_path / "records.jsonl"
+    path.write_text(json.dumps(record))
+    findings, _ = run_connector("endpoint.inventory", input=str(path))
+    [agent] = [f for f in findings if "approval_gate" in f.metadata]
+    assert agent.metadata["approval_gate"]["scope"] == "some-actions"
+    # The same record without the lost entry keeps its every-action gate.
+    path.write_text(json.dumps({**record, "approval": [gate], "posture": []}))
+    findings, _ = run_connector("endpoint.inventory", input=str(path))
+    [agent] = [f for f in findings if "approval_gate" in f.metadata]
+    assert agent.metadata["approval_gate"]["scope"] == "every-action"

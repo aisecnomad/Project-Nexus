@@ -36,6 +36,7 @@ named by ``api_key_env``; a key written into the configuration is refused.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
@@ -351,13 +352,22 @@ class Triage:
         ``time.monotonic()`` value) when that is sooner, or after three
         consecutive failed requests. Findings not reached are marked skipped.
         """
-        stop_at = _monotonic() + self.settings.budget_seconds
-        reason = f"budget_seconds ({self.settings.budget_seconds:g} s) exhausted"
+        budget = self.settings.budget_seconds
+        # from_options validates the budget, but a TriageSettings built in code does not pass
+        # through it. A NaN budget or deadline would compare false against every limit and turn
+        # all of them off, so anything but a positive finite budget counts as spent and a NaN
+        # deadline as reached: triage is skipped rather than unbounded.
+        if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not 0 < budget < math.inf:
+            budget, reason = 0.0, "budget_seconds is not a positive finite number"
+        else:
+            reason = f"budget_seconds ({budget:g} s) exhausted"
+        now = _monotonic()
+        stop_at = now + budget
         http = self.client if isinstance(self.client, HttpClient) else None
         client_deadline = http.deadline if http is not None else None
         for limit in (deadline, client_deadline):
-            if limit is not None and limit < stop_at:
-                stop_at, reason = limit, "deadline reached"
+            if limit is not None and (math.isnan(limit) or limit < stop_at):
+                stop_at, reason = (now if math.isnan(limit) else limit), "deadline reached"
         if http is not None:
             # Retries, Retry-After waits, connection set-up and body reads stop
             # there too, not only the next request. The client's own deadline

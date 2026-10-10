@@ -122,6 +122,13 @@ def test_openclaw_gateway(gateway, expected):
     assert ids(".openclaw/openclaw.json", json.dumps({"gateway": gateway})) == expected
 
 
+@pytest.mark.parametrize("host", [["0.0.0.0"], {"host": "::"}])
+def test_openclaw_unreadable_custom_bind_host_is_not_a_crash(host):
+    # Regression: a list or object reached a set lookup and raised TypeError.
+    text = json.dumps({"gateway": {"bind": "custom", "customBindHost": host}})
+    assert ids(".openclaw/openclaw.json", text) == []
+
+
 def test_openclaw_never_reports_the_token_and_flags_shell_access():
     text = json.dumps({"gateway": {"bind": "lan", "auth": "bad"}, "capabilities": {"shellAccess": True}})
     issues = assess(".openclaw/openclaw.json", text)
