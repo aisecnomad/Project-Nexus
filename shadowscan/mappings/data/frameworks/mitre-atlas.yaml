@@ -1,0 +1,33 @@
+framework: mitre-atlas
+edition: "2026.09"
+prefix: mitre-atlas-2026.09
+name: MITRE ATLAS
+kind: threat
+source_url: https://github.com/mitre-atlas/atlas-data
+licence: Apache-2.0
+checked: "2026-10-10"
+verification: primary
+notes: >-
+  Release 2026.09 (dist/v6/ATLAS-2026.09.yaml, format 6.0.0). Only the
+  techniques the rules reference are listed. A sub-technique title gives its
+  parent technique's name first. A reference says a finding supplies a
+  precondition for the technique, never that it was used.
+entries:
+  AML.T0010.003: {title: "AI Supply Chain Compromise: Model"}
+  AML.T0010.005: {title: "AI Supply Chain Compromise: AI Agent Tool"}
+  AML.T0011.000: {title: "User Execution: Unsafe AI Artifacts"}
+  AML.T0040: {title: AI Model Inference API Access}
+  AML.T0050: {title: Command and Scripting Interpreter}
+  AML.T0051.001: {title: "LLM Prompt Injection: Indirect"}
+  AML.T0053: {title: AI Agent Tool Invocation}
+  AML.T0055: {title: Unsecured Credentials}
+  AML.T0068: {title: LLM Prompt Obfuscation}
+  AML.T0070: {title: RAG Poisoning}
+  AML.T0080.000: {title: "AI Agent Context Poisoning: Memory"}
+  AML.T0083: {title: Credentials from AI Agent Configuration}
+  AML.T0086: {title: Exfiltration via AI Agent Tool Invocation}
+  AML.T0105: {title: Escape to Host}
+  AML.T0109: {title: AI Supply Chain Rug Pull}
+  AML.T0110.000: {title: "AI Agent Tool Poisoning: Definition and Instructions"}
+  AML.T0118: {title: Autonomous AI Agent Communication}
+  AML.T0132: {title: Misconfigured or Publicly Exposed AI Services}

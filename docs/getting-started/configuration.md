@@ -47,6 +47,37 @@ thread backend. Workers keep the scanner's privileges and credentials: this is
 lifecycle isolation, not a sandbox. See
 [third-party plugin execution](../connectors.md#third-party-plugin-execution).
 
+## Trusted vendor registries
+
+`options.trusted_registries` lists the vendor registry instances whose
+approved records count as sanctioned inventory. It is empty by default: a
+record that a vendor registry marks approved does not make a finding
+sanctioned unless its registry is listed here.
+
+```yaml
+options:
+  trusted_registries:
+    - registry: aws-agent-registry      # registry type
+      id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
+      allow_auto_approved: false        # optional, default false
+      allow_registered_only: false      # optional, default false
+```
+
+Each entry names exactly one registry: `registry` is one of
+`aws-agent-registry`, `aws-agentcore-registry`, `microsoft-agent-365`,
+`google-agent-registry`, `gemini-enterprise`, `mcp-registry` or `a2a-card`
+(the deprecated `entra-agent-registry` source cannot be trusted), and `id` is
+that registry's exact identity as the connector reports it in
+`registry_record.registry_id`. `allow_auto_approved` and
+`allow_registered_only` must be YAML booleans; they accept auto-approved and
+registered-only records of that registry. Wildcards (`*`, `?`,
+`[`), surrounding whitespace, control characters, unknown keys, duplicate
+entries, more than 64 entries and ids that report redaction would change are
+rejected before anything is scanned. Trusting a registry type as a whole is not
+possible. `${VAR}` expansion works in `id`. There is no command-line flag. See
+[vendor registries as inventory sources](../inventory.md#vendor-registries-as-inventory-sources)
+for what an approved record approves.
+
 ## Environment variable expansion
 
 All string values support `${VAR}` expansion:

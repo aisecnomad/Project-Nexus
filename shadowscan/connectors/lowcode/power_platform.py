@@ -461,6 +461,7 @@ class PowerPlatformConnector(BaseConnector):
         )
         actions = list((props.get("definitionSummary") or {}).get("actions") or [])
         if any("recurrence" in t.lower() or "schedule" in t.lower() for t in trig_types):
+            # Autonomy: initiation evidence (the scheduled tag), not approval-bypass evidence.
             f.add_capability("autonomous")
             f.add_tag("scheduled")
         if any(

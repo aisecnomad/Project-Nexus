@@ -289,6 +289,9 @@ Semantic Kernel, separate configured capabilities from framework availability.
 Empty/unknown tool and delegation collections stay potential; planning vocabulary
 and limit names alone do not imply autonomy. See the [code connector guide](connectors/code.md)
 for supported options, primary SDK contracts and dynamic-configuration limits.
+Coding-agent settings that make a person approve actions (Claude Code, Codex,
+Goose) are recorded as `metadata.approval_gate` for the
+[autonomy tiers](concepts/autonomy.md).
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong
@@ -835,8 +838,8 @@ Credentials, and OCI instance or resource principals. The engine replaces an
 value; see [Production](production.md).
 
 ### `cloud.aws`
-Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
-guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
+Bedrock Agents (action groups and their function confirmation settings,
+knowledge bases, aliases, collaborators, guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
 browsers, code interpreters, workload identities), model invocation logging
 state, Lambda (env names, plaintext keys, layers, images, tags), ECS task
 definitions referenced by running tasks and service deployments, plus latest
@@ -969,7 +972,8 @@ model stores (Ollama, LM Studio, Hugging Face, GPT4All, Jan) and, with
 `shell_history: true`, AI command-line tools named in shell history (tool
 names and counts only). MCP server findings carry the static server risks
 and agent configurations carry the posture checks described in
-[risk](concepts/risk.md). Every location is opened without following
+[risk](concepts/risk.md) and the approval settings used by the
+[autonomy tiers](concepts/autonomy.md). Every location is opened without following
 symbolic links; a link, an unreadable location, an oversized file or an
 exhausted `max_entries` budget makes the scan incomplete.
 

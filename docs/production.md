@@ -210,6 +210,7 @@ python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 python -m pip install --no-deps dist/nexusshadowscan-0.1.2-*.whl
 python -m pip check
 python -m shadowscan.signatures.validate
+python -m shadowscan.mappings.validate
 shadowscan --help
 ```
 
@@ -275,9 +276,9 @@ docker build --tag shadowscan:reviewed .
 ```
 
 Retain the reviewed base and built image digests. The build context is an
-allowlist (`.dockerignore`) of package sources, signature data, packaging
-inputs and the runtime/build locks. Distribution packages from `apk` and image
-metadata remain mutable, so the Dockerfile does not promise byte-for-byte
+allowlist (`.dockerignore`) of package sources, signature and mapping data,
+packaging inputs and the runtime/build locks. Distribution packages from `apk`
+and image metadata remain mutable, so the Dockerfile does not promise byte-for-byte
 reproducible images. There is no claim of a hermetic package snapshot. CI
 smoke-tests a non-root, read-only and network-isolated image; build and test the
 deployment image, generate its container/OS SBOM, and validate resource limits
@@ -1006,6 +1007,55 @@ new full commit SHA before deploying it.
 | Fleet merge | A merged finding is `shadow: true` only when a source found it unregistered, `false` when a source matched it to its inventory, and `null` when no source that reported it had an inventory. Earlier candidates reported every finding of inventory-less sources as shadow. The merged report carries `inventory_present`; a non-boolean value in a source is refused. | Re-merge fleet reports built from scans without an inventory before alerting on `shadow: true` or comparing shadow counts. Supply an inventory to the source scans when registration status is required. |
 | LLM triage | One triage run is limited by `options.llm_triage.budget_seconds` (default 300) and stops after three consecutive failed requests; findings it does not reach are recorded as `status: skipped`. Under a CLI job deadline, triage ends 10% of the deadline before it (5 to 60 s) or is skipped, so it no longer uses up the time reserved for writing the report. | Raise `budget_seconds` together with `max_findings` if later findings are now skipped. Triage remains advisory and never changes risk, shadow status, completeness or `--fail-on`. |
 | Container CI | The CI container job pulls the Dockerfile's digest-pinned base image through the `mirror.gcr.io` Docker Hub cache. | None for deployments: the image content is fixed by the digest. See [the worker image notes](#install-from-a-reviewed-revision). |
+
+### October 10 threat and control references (unreleased)
+
+This source candidate changes the report schema. It does not change the
+published 0.1.2 artifact, create a release, or establish independent review of
+the mappings. Select and review a new full commit SHA before deploying it.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Report schema | `metadata.compliance` is removed. Findings carry `metadata.threats` (OWASP LLM and Agentic 2026, MITRE ATLAS 2026.09, MAESTRO layers) and `metadata.controls` (NIST AI RMF 1.0, ISO/IEC 42001:2023, EU AI Act, AIUC-1), as edition-qualified references such as `owasp-llm-2026:LLM03`. Several earlier references named the wrong entry. Disclosure and unsecured-credential references need an exposure tag; a credential in a managed secret store or an encrypted CI secret is referenced only as an identity. SARIF rule tags and properties, HTML, Markdown and CycloneDX output change accordingly. | Switch SIEM, ticketing and dashboard consumers from `metadata.compliance` to the new keys and their prefixes. Do not translate old identifiers one to one; several were wrong. The references are evidence references and author mappings, not compliance determinations or reviewed control assessments. |
+
+Finding identity, risk scores and `diff` change detection are unchanged: the
+references are derived at export and never read back, so a baseline from an
+earlier candidate compares without reporting the rename as drift. Validate the
+packaged catalogs with `python -m shadowscan.mappings.validate` after
+installing a candidate; see [threat and control mappings](concepts/mappings.md).
+
+### October 10 vendor registry records and trusted registries (unreleased)
+
+This candidate adds the vendor
+[registry record contract, reconciliation statuses and trusted registries](inventory.md#vendor-registries-as-inventory-sources).
+No built-in connector reads a vendor registry yet, so existing scans emit no
+records. It does not change the published 0.1.2 artifact, create a release, or
+establish live tenant acceptance; the tests use synthetic records.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Inventory source | `options.trusted_registries` (empty by default) lets approved records of the listed registry instances approve findings by exact resource. Shadow status changes only when it is configured. | Before trusting a registry, confirm who can approve records in it: its approval becomes organisational sanction for every resource it binds. Keep the setting in reviewed configuration outside scanned checkouts. |
+| Report fields | `metadata.registry_reconciliation` on records and on the observed findings they match or that a complete listing omits. With trusted registries alone, `inventory_present` is true and findings get `shadow: true` or `false`; `inventory_size` counts the approved records of trusted registries. | Consumers that read metadata must tolerate the new key. Rebaseline reports when you first set `trusted_registries`: `shadow` and `registry_match` change. |
+| Completeness | Malformed `registry_record` metadata makes the scan incomplete (`engine.registries`, exit 3). A trusted registry without records in the scan is an advisory `engine.inventory` warning. | Treat exit 3 as unknown coverage. Resolve the advisory warning before relying on that registry's approvals. |
+| Connectors and plugins | Records count only from built-in connectors that declare the `emits_registry_records` hook; `registry_record` from any other connector, including a plugin that declares the hook, is dropped with a stats warning. Records replayed from an offline export count like live records. | Third-party connectors cannot emit records. Trust a registry whose records you replay only when its exports are writable by operators alone, or scan it live. |
+| Approval rules | A card and a trusted record approving the same finding are ambiguous and leave it shadow; bindings of one record that cover the same finding are one approval. A revoked, rejected or deleted record stops approving on the next scan. | Approve each object in one place: remove card bindings that duplicate trusted registry bindings. |
+| Approval policy | Auto-approved records (`approval_mode: auto`) and registered-only records approve only with `allow_auto_approved` or `allow_registered_only` on the trusted entry; caller-scoped listings are never complete; `entra-agent-registry` cannot be trusted; a connector keeps only records of the registry types it declares. | Leave both switches off unless a person reviews records in that registry by other means: auto-approval and registration are not human review. |
+
+### October 10 autonomy tiers and card schema version 2 (unreleased)
+
+This candidate adds the [autonomy tiers](concepts/autonomy.md). It does not
+change the published 0.1.2 artifact, create a release, or establish live tenant
+acceptance. The classification rules and fixtures are synthetic and
+author-written.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Report fields | Applicable findings carry `metadata.autonomy` (`shadowscan.autonomy/v1`: floor, ceiling, oversight, initiation, basis, and the declared level when an inventory entry sets one). Finding identity is unchanged. | Consumers that read metadata must tolerate the new key. Gate on the ceiling, not the floor, which is a lower bound. An L2 ceiling rests on recorded approval settings: configuration evidence, not proof of how a run behaves. |
+| Capability Cards | Top-level `schema_version`; version 2 declares `autonomy_profile.level` (0 to 5). An out-of-range level, a non-mapping `autonomy_profile` or an unknown `schema_version` now fails inventory validation. Version 1 levels are ignored with an advisory warning. | Run `shadowscan inventory check` on every inventory before deploying. Review each card's level against the new scale before adding `schema_version: 2`; never copy an old number unreviewed. |
+| Risk | Tag `autonomy-understated` (weight 10) when a declared level is below the observed floor. New `risk_weights.autonomy` group, zero by default. Other default weights are unchanged. | Expect higher scores only for registered findings whose declared level is understated; rebaseline risk-level gates that cover them. |
+| Connector metadata | Coding-agent settings (code and endpoint) and Bedrock action-group confirmation record `metadata.approval_gate`; Azure Logic Apps record `metadata.trigger_types`. Claude Code allow rules in any settings file, a sandbox that auto-allows Bash and `PreToolUse` or `PermissionRequest` hooks make the gate partial. Endpoint replays keep only approval entries the settings reader could have written for that record; they drop any other entry and are incomplete. | Regenerate endpoint exports to include approval entries; older exports replay without them and keep the ceiling at L5. |
+| Fleet merge | `merge` classifies each merged finding again and widens the interval to admit what every source's block admits (highest floor and ceiling, `bypassed` over `unknown` over `gated`); it refuses a source with a malformed block. | Rescan sources that the merge refuses. Findings from older reports are classified from the merged finding alone. |
+| Inventory stubs | Stubs are `schema_version: 2` cards declaring the observed floor. | Review the generated level and set the approved one before moving a stub into the inventory. |
 
 ### October 9 change-scoped scans, path context and new ecosystems (unreleased)
 

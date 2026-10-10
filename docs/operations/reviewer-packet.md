@@ -48,6 +48,7 @@ python -m venv .venv && . .venv/bin/activate
 python -m pip install -e ".[all]"
 make check
 python -m shadowscan.signatures.validate
+python -m shadowscan.mappings.validate
 shadowscan scan -c examples/shadowscan.offline.yaml --format json -o /tmp/shadowscan-offline.json
 ```
 

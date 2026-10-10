@@ -565,6 +565,48 @@ def _dockerfile_violations(text: str) -> list[str]:
     return problems
 
 
+def _dockerignore_pattern(pattern: str) -> re.Pattern[str]:
+    """A .dockerignore pattern as Docker's matcher reads it: `**/` spans directories, `*` and `?` do not."""
+    regex, position = "", 0
+    while position < len(pattern):
+        if pattern.startswith("**", position):
+            position += 2
+            if pattern.startswith("/", position):
+                position += 1
+            regex += ".*" if position == len(pattern) else "(?:.*/)?"
+            continue
+        char = pattern[position]
+        regex += "[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char)
+        position += 1
+    return re.compile(regex)
+
+
+def _build_context_includes(patterns: list[str], path: str) -> bool:
+    """Whether Docker sends ``path``: the last matching pattern wins, and a matching parent counts."""
+    parts = path.split("/")
+    candidates = ["/".join(parts[:end]) for end in range(1, len(parts) + 1)]
+    included = True
+    for pattern in patterns:
+        regex = _dockerignore_pattern(pattern.removeprefix("!"))
+        if any(regex.fullmatch(candidate) for candidate in candidates):
+            included = pattern.startswith("!")
+    return included
+
+
+def _package_data() -> dict[str, list[str]]:
+    setuptools = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]
+    return dict(setuptools["package-data"])
+
+
+def _packaged_files() -> list[str]:
+    """Repository paths of the files the wheel ships: package modules and declared package data."""
+    files = {path for path in (ROOT / "shadowscan").rglob("*.py") if "__pycache__" not in path.parts}
+    for package, globs in _package_data().items():
+        for glob in globs:
+            files.update((ROOT / package.replace(".", "/")).glob(glob))
+    return sorted(path.relative_to(ROOT).as_posix() for path in files if path.is_file())
+
+
 def _dockerignore_violations(text: str) -> list[str]:
     """The build context is an allow-list: exclude everything, re-include files."""
     patterns = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
@@ -579,6 +621,17 @@ def _dockerignore_violations(text: str) -> list[str]:
         # untracked files included.
         if target.endswith("/") or target.rsplit("/", 1)[-1] in {"*", "**"} or (ROOT / target).is_dir():
             problems.append(f".dockerignore re-includes the directory {pattern}; re-include files instead")
+    # The image builds its wheel from this context, so it must hold everything
+    # the wheel ships: a missing data directory builds an image whose scans
+    # fail. Each package-data glob is re-included as written, which also covers
+    # globs that match no file yet.
+    for package, globs in _package_data().items():
+        for glob in globs:
+            if f"!{package}/{glob}" not in patterns:
+                problems.append(f".dockerignore does not re-include {package}/{glob}, which the wheel ships")
+    for path in _packaged_files():
+        if not _build_context_includes(patterns, path):
+            problems.append(f".dockerignore leaves {path} out of the build context; the wheel ships it")
     return problems
 
 
@@ -675,6 +728,25 @@ def test_local_make_targets_enforce_the_same_coverage_floors_as_ci() -> None:
 def test_container_build_is_digest_pinned_hash_locked_and_non_root() -> None:
     assert not _violations(ROOT / "Dockerfile")
     assert not _violations(ROOT / ".dockerignore")
+
+
+def test_build_context_matcher_follows_docker_pattern_rules() -> None:
+    patterns = ["**", "!shadowscan/**/*.py", "!shadowscan/data/**/*.yaml", "shadowscan/data/private/*.yaml"]
+    included = {
+        "shadowscan/__init__.py": True,
+        "shadowscan/a/b/c.py": True,
+        "shadowscan/__pycache__/c.cpython-313.pyc": False,
+        "shadowscan/data/x.yaml": True,
+        "shadowscan/data/deep/x.yaml": True,
+        "shadowscan/data/private/x.yaml": False,
+        "shadowscan/data/x.yml": False,
+        "tests/test_x.py": False,
+    }
+    assert {path: _build_context_includes(patterns, path) for path in included} == included
+    # Excluding a directory excludes everything below it, unless a later pattern re-includes it.
+    assert not _build_context_includes(["shadowscan"], "shadowscan/x.py")
+    assert _build_context_includes(["shadowscan", "!shadowscan/x.py"], "shadowscan/x.py")
+    assert {"shadowscan/mappings/data/rules/threats.yaml", "shadowscan/py.typed"} <= set(_packaged_files())
 
 
 def _replace(old: str, new: str) -> Callable[[str], str]:
@@ -988,6 +1060,24 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
             lambda text: text + "!shadowscan/\n",
             "re-includes the directory !shadowscan/",
             id="directory-reinclude",
+        ),
+        pytest.param(
+            ".dockerignore",
+            _replace("!shadowscan/mappings/data/**/*.yaml\n", ""),
+            ".dockerignore leaves shadowscan/mappings/data/rules/threats.yaml out of the build context",
+            id="packaged-data-left-out",
+        ),
+        pytest.param(
+            ".dockerignore",
+            _replace("!shadowscan/signatures/data/**/*.yml\n", ""),
+            "does not re-include shadowscan/signatures/data/**/*.yml",
+            id="packaged-glob-left-out",
+        ),
+        pytest.param(
+            ".dockerignore",
+            lambda text: text + "shadowscan/mappings/data/frameworks/*.yaml\n",
+            "leaves shadowscan/mappings/data/frameworks/owasp-llm.yaml out of the build context",
+            id="packaged-data-excluded-again",
         ),
     ],
 )

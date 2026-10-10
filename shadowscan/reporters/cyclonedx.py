@@ -23,7 +23,10 @@ depends on:
 Credential findings (``secret`` and ``token``) are not components: a BOM is an
 inventory, and the JSON or SARIF report is the place to triage credentials.
 ShadowScan's heuristic risk, confidence and shadow status are recorded as
-``shadowscan:*`` properties, never as CycloneDX vulnerabilities or ratings.
+``shadowscan:*`` properties, never as CycloneDX vulnerabilities or ratings,
+and so are its edition-qualified threat and control references
+(``shadowscan:threats``, ``shadowscan:controls``): evidence references, not
+compliance results.
 
 A BOM never reads as more complete than the scan: ``compositions`` declares
 the inventory ``incomplete`` when any connector failed or stopped early, and
@@ -44,7 +47,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from shadowscan import __version__
-from shadowscan.models import Finding, Kind, ScanResult
+from shadowscan.mappings import finding_references
+from shadowscan.models import DERIVED_METADATA_KEYS, Finding, Kind, ScanResult
 from shadowscan.reporters._publication import publication_stats
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.utils.redaction import sanitize
@@ -68,7 +72,11 @@ def _digest(value: str) -> str:
 
 
 def _finding_digest(f: Finding) -> str:
-    return _digest(json.dumps(f.to_dict(), sort_keys=True, default=str))
+    record = f.to_dict()
+    # Threat and control references follow the packaged catalogs, not the finding.
+    for key in DERIVED_METADATA_KEYS:
+        record["metadata"].pop(key, None)
+    return _digest(json.dumps(record, sort_keys=True, default=str))
 
 
 def _timestamp(value: object) -> str | None:
@@ -297,6 +305,7 @@ class _Bom:
         # Entries past the bound, and malformed entries within it, are not published.
         servers_omitted = len(servers) - len(kept) + sum(not isinstance(s, dict) for s in kept)
         models_omitted = max(0, len(models) - _MAX_MODELS)
+        threats, controls = finding_references(f)
         entry["properties"] = _properties(
             [
                 ("shadowscan:finding-id", f.id),
@@ -317,6 +326,8 @@ class _Bom:
                 ("shadowscan:likelihood", f.likelihood.value),
                 ("shadowscan:capabilities", f.capabilities),
                 ("shadowscan:tags", f.tags),
+                ("shadowscan:threats", threats),
+                ("shadowscan:controls", controls),
                 ("shadowscan:first-seen", _timestamp(f.first_seen)),
                 ("shadowscan:last-seen", _timestamp(f.last_seen)),
                 ("shadowscan:mcp:servers-omitted", servers_omitted or None),

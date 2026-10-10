@@ -1032,9 +1032,25 @@ class AzureConnector(BaseConnector):
         trigger_map = (rec.get("definition") or {}).get("triggers") or {}
         triggers = list(trigger_map.keys())
         if any("recurrence" in str(trigger_map.get(t, {}).get("type", "")).lower() for t in triggers):
+            # Autonomy: initiation evidence (a schedule starts the run, read from trigger_types),
+            # not approval-bypass evidence: the connector does not inspect approval actions.
             f.add_capability("autonomous")
         f.add_capability("saas-actions")
-        f.metadata.update({"state": rec.get("state"), "triggers": triggers, "agent_indicators": hits})
+        trigger_types = sorted(
+            {
+                spec["type"]
+                for spec in trigger_map.values()
+                if isinstance(spec, dict) and isinstance(spec.get("type"), str) and spec["type"]
+            }
+        )
+        f.metadata.update(
+            {
+                "state": rec.get("state"),
+                "triggers": triggers,
+                "trigger_types": trigger_types,
+                "agent_indicators": hits,
+            }
+        )
         return done(f, self.index, Kind.WORKFLOW)
 
     def _h_appsettings(self, rec: dict[str, Any]) -> Finding | None:

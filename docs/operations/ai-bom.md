@@ -34,7 +34,10 @@ heuristic risk level and score, confidence, likelihood, shadow status,
 registry match, capabilities, tags (one comma-separated `shadowscan:tags`),
 owner and first and last seen. They are not CycloneDX vulnerabilities or
 ratings: the risk score is a discovery heuristic, not a vulnerability
-severity (see [severity](../severity.md)).
+severity (see [severity](../severity.md)). `shadowscan:threats` and
+`shadowscan:controls` list the finding's edition-qualified
+[threat and control references](../concepts/mappings.md), comma-separated:
+evidence references, not compliance determinations.
 
 Credential findings (`secret`, `token`) are left out; a BOM is an inventory.
 `metadata.properties` records how many were excluded. Use the JSON or SARIF

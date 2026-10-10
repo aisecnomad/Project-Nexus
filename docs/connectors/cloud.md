@@ -27,6 +27,10 @@ definitions referenced by running tasks and service deployments, plus latest
 registered definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
 actions (via `get_account_authorization_details`), CloudTrail LLM callers.
+Bedrock agents whose action-group functions set `requireConfirmation: ENABLED`
+record `metadata.approval_gate` (`every-action` when every enabled action group
+other than the user-input group defines functions and each one requires
+confirmation, else `some-actions`); see [autonomy tiers](../concepts/autonomy.md).
 Options: `profile`, `role_arn`, `regions` (`all`), `services`, `cloudtrail_days`,
 `max_ecs_api_calls` (default 2000 per region). Without `regions`, only six
 default regions are scanned (`us-east-1`, `us-west-2`, `eu-west-1`,
@@ -117,7 +121,8 @@ queries at 50 pages regardless.
 Azure Resource Graph inventory across subscriptions, then: OpenAI/AI Services
 accounts + deployments + diagnostic settings, AI Foundry accounts/projects
 (+ agents via the project endpoint), hub-based ML workspaces, Bot Service,
-Logic Apps (AI connectors / agent loops), Web & Function app settings,
+Logic Apps (AI connectors / agent loops; `metadata.trigger_types` lists the
+trigger types, such as `Recurrence`), Web & Function app settings,
 Container Apps, user-assigned identities, role assignments with AI roles.
 Auth: `DefaultAzureCredential` or `access_token` (+ `foundry_token`).
 App settings are read by default (`include_app_settings: true`) with a POST to

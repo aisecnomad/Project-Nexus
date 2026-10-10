@@ -129,6 +129,7 @@ exact supported Python matrix and dependency pins.
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
+| Mappings | `python -m shadowscan.mappings.validate` | All valid |
 | Secrets | `make secrets` | Every tracked file is scanned; only exact reviewed synthetic-value approvals are accepted |
 | Audit | `pip-audit` | No known vulnerabilities |
 | Evaluation | `make evaluate` | All bundled corpora pass |
@@ -149,6 +150,7 @@ The same gates as individual commands:
 ```bash
 python -m pip install -e ".[cloud,dev]"
 python -m shadowscan.signatures.validate
+python -m shadowscan.mappings.validate
 make secrets
 ruff check shadowscan tests tools benchmarks
 ruff format --check shadowscan tests tools benchmarks
@@ -255,6 +257,21 @@ make evaluate
 ```
 
 See [docs/signatures.md](docs/signatures.md) for the schema and authoring guide.
+
+## Changing threat and control mappings
+
+Catalogs and rules live under `shadowscan/mappings/data/`. They are evidence
+references and author mappings, never compliance determinations. After a
+change:
+
+```bash
+python -m shadowscan.mappings.validate
+make mapping-reference
+```
+
+Add a test with a finding the changed rule should match. See
+[docs/concepts/mappings.md](docs/concepts/mappings.md) for the format, editions
+and licensing limits.
 
 ## Review and merge policy
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import re
 
+from shadowscan.mappings import describe, finding_references
 from shadowscan.models import Finding, ScanResult
 from shadowscan.reporters._publication import (
     has_inventory,
@@ -142,6 +143,12 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("")
     lines.append("## Details")
     lines.append("")
+    if any(any(finding_references(f)) for f in result.findings):
+        lines.append(
+            "_Threats and controls are evidence references, not compliance determinations;"
+            " they are author mappings, not independently reviewed._"
+        )
+        lines.append("")
     for f in result.findings:
         lines.extend(_finding_section(f))
     lines.append("## Connector statistics")
@@ -167,6 +174,15 @@ def render_markdown(result: ScanResult) -> str:
             )
     lines.append("")
     return "\n".join(lines)
+
+
+def _references(refs: list[str]) -> str:
+    """Edition-qualified references as code spans, each followed by its catalog title."""
+    items = []
+    for ref in refs:
+        entry = describe(ref)
+        items.append(_code(ref) + (f" {_text(entry.title)}" if entry else ""))
+    return "; ".join(items)
 
 
 def _finding_section(f: Finding) -> list[str]:
@@ -200,6 +216,11 @@ def _finding_section(f: Finding) -> list[str]:
         out.append(f"- **Capabilities:** {', '.join(map(_text, f.capabilities))}  ")
     if f.tags:
         out.append(f"- **Tags:** {', '.join(map(_text, f.tags))}  ")
+    threats, controls = finding_references(f)
+    if threats:
+        out.append(f"- **Threats:** {_references(threats)}  ")
+    if controls:
+        out.append(f"- **Controls:** {_references(controls)}  ")
     if f.permissions:
         more = " …" if len(f.permissions) > 15 else ""
         out.append(f"- **Permissions:** {', '.join(map(_text, f.permissions[:15]))}{more}  ")

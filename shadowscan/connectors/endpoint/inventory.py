@@ -62,7 +62,13 @@ from shadowscan.connectors.endpoint.catalog import (
     ModelStore,
 )
 from shadowscan.connectors.mcp_risk import record_server_risks
-from shadowscan.connectors.posture import POSTURE_DESCRIPTIONS, record_posture
+from shadowscan.connectors.posture import (
+    POSTURE_DESCRIPTIONS,
+    approval_settings,
+    record_approval,
+    record_posture,
+    valid_approval,
+)
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -373,6 +379,9 @@ class EndpointInventoryConnector(BaseConnector):
         issues = assess_posture(loc.path, text)
         if issues:
             record["posture"] = [{**issue.as_dict(), "file": f"~/{loc.path}"} for issue in issues]
+        approvals = approval_settings(loc.path, text)
+        if approvals:
+            record["approval"] = [{**setting.as_dict(), "file": f"~/{loc.path}"} for setting in approvals]
         return record
 
     # ---------------------------------------------------------- IDE extensions
@@ -581,7 +590,7 @@ class EndpointInventoryConnector(BaseConnector):
             if not self._record_fields_valid(
                 raw,
                 strings=_OWN_STRINGS,
-                arrays=("mcp_servers", "posture", "models"),
+                arrays=("mcp_servers", "posture", "approval", "models"),
                 required=_OWN_REQUIRED[str(raw["record_type"])],
             ) or not all(isinstance(raw.get(k, 0), int) for k in ("count", "model_count", "entry_count")):
                 self.ctx.warn("endpoint.inventory: skipped a malformed endpoint record")
@@ -591,6 +600,7 @@ class EndpointInventoryConnector(BaseConnector):
             rec.setdefault("home", "unknown")
             servers = list(rec.get("mcp_servers") or [])
             posture = list(rec.get("posture") or [])
+            approvals = list(rec.get("approval") or [])
             models = list(rec.get("models") or [])
             rec["mcp_servers"] = [s for s in servers if _valid_server(s)]
             rec["posture"] = [
@@ -601,18 +611,25 @@ class EndpointInventoryConnector(BaseConnector):
                 and p["id"] in POSTURE_DESCRIPTIONS
                 and all(isinstance(p.get(k), str) for k in ("client", "setting", "value"))
             ]
+            # An approval entry this scanner would not have written for this record's settings
+            # file is dropped (and reported): it can never gate an action.
+            rec["approval"] = [
+                a for a in approvals if valid_approval(a, client=rec.get("client"), file=rec.get("location"))
+            ]
             rec["models"] = [m for m in models if isinstance(m, str)]
             dropped = (
                 len(servers)
                 - len(rec["mcp_servers"])
                 + len(posture)
                 - len(rec["posture"])
+                + len(approvals)
+                - len(rec["approval"])
                 + len(models)
                 - len(rec["models"])
             )
             if dropped:
                 self.ctx.warn(
-                    f"endpoint.inventory: dropped {dropped} malformed server, posture or model "
+                    f"endpoint.inventory: dropped {dropped} malformed server, posture, approval or model "
                     f"entr{'y' if dropped == 1 else 'ies'} from a {rec['record_type']} record"
                 )
             return rec
@@ -714,6 +731,7 @@ class EndpointInventoryConnector(BaseConnector):
         posture = [p for r in records for p in r.get("posture") or [] if isinstance(p, dict)]
         if posture:
             record_posture(f, posture)
+        record_approval(f, [a for r in records for a in r.get("approval") or [] if isinstance(a, dict)])
         f.kind = kind
         out.append(finalize(f, self.index))
         # Each server keeps the file it came from, so its risks cite that file.
