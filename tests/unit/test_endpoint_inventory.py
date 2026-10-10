@@ -14,6 +14,7 @@ from shadowscan.connectors.endpoint.inventory import (
     _history_tool,
     _home_from_path,
     _osquery_extension_id,
+    _valid_server,
     _version_key,
 )
 from shadowscan.models import Kind, Surface
@@ -574,3 +575,21 @@ def test_replay_that_drops_approval_or_posture_entries_never_claims_every_action
     findings, _ = run_connector("endpoint.inventory", input=str(path))
     [agent] = [f for f in findings if "approval_gate" in f.metadata]
     assert agent.metadata["approval_gate"]["scope"] == "every-action"
+
+
+@pytest.mark.parametrize(
+    ("packages", "valid"),
+    [
+        (None, True),
+        ([], True),
+        ([{"registry_type": "npm", "identifier": "x", "version": None, "registry_base_url": None}], True),
+        ("npm", False),
+        (["npm"], False),
+        ([{"registry_type": "npm", "identifier": 5}], False),
+    ],
+)
+def test_replayed_manifest_packages_must_have_the_parsed_shape(packages, valid):
+    server: dict[str, object] = {"name": "io.example/tool", "transport": "unknown", "disabled": False}
+    if packages is not None:
+        server["packages"] = packages
+    assert _valid_server(server) is valid

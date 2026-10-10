@@ -62,11 +62,13 @@ summarizes each release for people who install and operate ShadowScan.
   expectations; and SBOM and provenance as the release-evidence workflow
   actually produces them (a runtime SBOM and wheel attestations, no container
   image attestation).
-- Add `examples/k8s-network-policy.yaml`, a live-collection egress baseline
-  (cluster DNS and HTTPS to public addresses, private, CGNAT and link-local
-  ranges denied). It selects `app.kubernetes.io/name: shadowscan` with
-  `shadowscan-mode: live`, the label a live-collection Job's pod template
-  must carry (`examples/k8s-job.yaml` is the offline Job).
+- Add `examples/k8s-network-policy.yaml`: a default deny-all egress policy
+  for every pod labelled `app.kubernetes.io/name: shadowscan`, and a
+  live-collection baseline for pods that also carry `shadowscan-mode: live`
+  (cluster DNS and HTTPS to public addresses; private, CGNAT, link-local and
+  Azure wire-server addresses denied). A live pod without the mode label is
+  denied, not unrestricted. The comments give the IPv6 exceptions for
+  dual-stack clusters and the metadata endpoints the policy blocks.
 - Pin that an LLM triage reply steered by scanned content cannot change a
   finding's risk, shadow status, kind or tags.
 - Ignore `*.pyo`, `*.egg` and `*.whl` build artifacts (from #176).
@@ -85,6 +87,9 @@ summarizes each release for people who install and operate ShadowScan.
   unassessed finding has none. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
   whose `inventory_present` is not a boolean is refused (exit 1).
+  The terminal table, Markdown and HTML reports label such a finding
+  `unassessed` and count them in the summary when the merged report has an
+  inventory, instead of leaving a blank cell that reads as registered.
 - LLM triage is bounded. `options.llm_triage.budget_seconds` (default 300,
   1 to 3600) limits one triage run, and the HTTP client's retries,
   `Retry-After` waits, connection set-up and response reads stop at the same
@@ -100,6 +105,13 @@ summarizes each release for people who install and operate ShadowScan.
   `JobDeadline.expires_at` exposes the CLI's.
   Triage stays advisory: risk, shadow status, completeness and `--fail-on` are
   unchanged.
+- A triage reply is located in linear time, and a reply longer than 16 KiB is
+  refused unread as `status: unparseable` (the response body is capped at
+  64 KiB, down from 256 KiB). A greedy pattern over a hostile reply of
+  unmatched braces took about 23 s, held the interpreter past the job
+  deadline and lost the report. An unexpected error during a request is now
+  recorded as `status: failed` like any other failure, so every selected
+  finding keeps a triage status.
 - CI's container job adds Google's Docker Hub pull-through cache
   (`https://mirror.gcr.io`) to the runner's Docker daemon and pulls the
   Dockerfile's digest-pinned base image before the build. Anonymous Docker Hub
@@ -200,8 +212,9 @@ summarizes each release for people who install and operate ShadowScan.
   an approval workflow), `approval_mode` (`auto`, `manual`, `none`,
   `unknown`) and `listing_scope` (`registry` or `caller`; a caller-scoped
   listing is never complete). A trusted registry's approved records with
-  `approval_mode: auto` approve only when its entry sets
-  `allow_auto_approved: true`, and `registered` records only with
+  `approval_mode: auto` or `unknown` approve only when its entry sets
+  `allow_auto_approved: true` (by default only `manual` approvals count),
+  and `registered` records only with
   `allow_registered_only: true`; declined records are counted in an advisory
   `engine.inventory` warning. The deprecated `entra-agent-registry` source
   cannot be trusted.
@@ -209,6 +222,243 @@ summarizes each release for people who install and operate ShadowScan.
   (`registry_record_types` engine hook); records of other types are removed.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
+
+### MCP registry provenance and approved MCP catalogs
+
+- Add `options.mcp_registries` (empty by default): up to 16 MCP Registry
+  snapshots, each opted in by its own `id` and pinned by the SHA-256 of the
+  file; `approved: true` marks the organisation's approved MCP catalog. Every
+  scan reads each snapshot again without following symbolic links, checks the
+  pin and validates every entry's structure, name, version and status. A
+  missing, changed, oversized, malformed or incomplete snapshot is not used and
+  makes the scan incomplete (`engine.mcp-registry`, exit 3). A package or
+  remote URL no configured server could match (templated, with user
+  information, unparseable, however long, or on another package registry) is
+  not indexed and does not reject the snapshot, so one publisher cannot block
+  every snapshot. A scan never contacts a registry.
+- Add `shadowscan mcp-registry snapshot`. It lists every server version of a
+  registry that serves the MCP Registry API v0.1 (default the official
+  registry, deleted versions included) over the shared HTTPS client, keeps the
+  fields matching reads (packages keep `registryBaseUrl`), validates the result
+  as a scan would and writes it
+  with mode 0600, printing the SHA-256 to pin. A failed or refused request, an
+  invalid page, a repeated cursor or a page, entry or size limit exits 3 and
+  writes nothing. The client never uses a proxy.
+- After correlation, and before registry reconciliation and scoring, the engine
+  matches the MCP servers of `mcp-server` findings (code and endpoint client
+  configurations, and `endpoint.mcp` tool findings by server URL) by what the
+  client fetches or connects to, with one identity and no fallback: a command
+  by its launched package (npm, PyPI or OCI identity), a remote transport by
+  its URL, a `server.json` manifest document by every package and remote it
+  declares. A launch with a source-changing option or environment variable
+  (`--registry`, index flags, `--with`, `--pip-args`, more than one or a
+  foreign `-p` command, `--entrypoint`, an unknown option, `npm_config_*`,
+  `UV_*INDEX*`, `PIP_*`, `DOCKER_HOST`), an npm alias or Git, URL or file
+  source, a shell command line, a URL with user information or an unknown
+  transport with both a command and a URL has no identity. A manifest's own
+  name gives provenance hints only. Servers get `registry` entries; findings
+  get `metadata.mcp_registry` (with an `unidentified` count) and the review
+  tags `mcp-registry-published`, `mcp-unpublished`, `mcp-registry-deprecated`,
+  `mcp-registry-deleted`, `mcp-registry-version-unpublished`,
+  `mcp-registry-outdated` and `mcp-registry-unidentified`, with zero-weight
+  evidence. The tags weigh 0, so a configured registry changes no score by
+  itself, and publication never lowers risk. Disabled servers add no tags.
+  There is no name-similarity matching.
+- Add the governance factor `mcp-not-in-approved-registry` (15). It applies
+  only when an approved registry is configured and every approved registry
+  loaded, to MCP findings with an enabled server that no approved registry
+  lists by its identity, that one lists only as deleted, or that has no
+  identity: an allowlist cannot vouch for what it cannot identify. A catalog
+  package with a `registryBaseUrl` other than its type's public registry
+  approves no launch. Like the other governance
+  factors it is excluded from `danger_score` and weighs 0 under
+  `risk_basis: danger`; `risk_weights.governance` accepts it, and its error
+  message now lists every governance key.
+- `shadowscan.connectors.mcp_risk` gains `server_package` and
+  `registry_package`, the package identity of a launch and of a registry
+  listing, on a launcher parser shared with the existing risk checks. The
+  shared parser also changes those checks: `npx.cmd`, `uvx.exe` and other
+  Windows launcher names are assessed like the plain launchers, `npx
+  --loglevel <level>` and the `docker run` value options it did not know (such
+  as `--gpus`) no longer have their value read as the package or image, and
+  `name@<url>` with an `@` in the URL is no longer read as pinned.
+- A `server.json` manifest's parsed server record gains `packages` (registry
+  type, identifier, version and registry base URL of each declared package);
+  client configuration records are unchanged. A manifest package without a
+  string type and identifier, or more than 16 packages, is a parse error that
+  makes the scan incomplete.
+- The collection scope fingerprint covers the configured registries' ids, pins
+  and approval flags, and only when the option is set: fingerprints of scans
+  without it are unchanged.
+- CycloneDX MCP services carry `shadowscan:mcp:registry-name`,
+  `registry-version`, `registry-status` and `registry-source`.
+- Map `mcp-unpublished` and `mcp-registry-deleted` to OWASP LLM04:2026,
+  ASI04 and ATLAS AML.T0010.005, and to NIST AI RMF GOVERN 6.1 and ISO/IEC
+  42001 A.10.3, as author-written evidence references. The governance factor
+  is not mapped, because mapping rules cannot read risk factors.
+- The tests use a synthetic snapshot shaped like the live registry API. No
+  live registry fetch or tenant acceptance is part of the test suite.
+
+### Google Agent Registry and Gemini Enterprise catalogs in cloud.gcp
+
+- New opt-in `cloud.gcp` options `agent_registry` and `gemini_enterprise`
+  (both default false). `agent_registry` reads Google Agent Registry agents,
+  MCP servers and endpoints in projects with `agentregistry.googleapis.com`
+  enabled (`agent_registry_version` `v1`, or experimental `v1alpha`, which also
+  reads skills and publishers; `agent_registry_locations` limits the
+  locations). `gemini_enterprise` reads the agents of Gemini Enterprise apps
+  through the Discovery Engine `v1alpha` assistants API. With both off and
+  `discovery_collections` unset, no new API calls are made; the engine
+  metadata and enabled-APIs changes below still apply. `cloud.gcp` now
+  declares the `emits_registry_records` hook for `google-agent-registry` and
+  `gemini-enterprise`.
+- Each listed item becomes a registry record finding (`agent-registry-agent`,
+  `agent-registry-mcp-server`, `agent-registry-endpoint`,
+  `agent-registry-skill`, `gemini-enterprise-agent`). Agent Registry records
+  are `registered` with `approval_mode: none`; Gemini Enterprise records map
+  `ENABLED` to `approved` (`approval_mode: manual`), `PRIVATE` with a
+  rejection reason to `rejected`, and other states to `draft`, `blocked` or
+  `unknown`, and are caller-scoped, so never a complete listing. Registry ids
+  are `projects/<project-id>/locations/<location>` and the Gemini Enterprise
+  engine name, with project numbers replaced by ids from the same scan.
+- Records bind only to the exact reasoning engine or Dialogflow CX agent they
+  reference, rendered as the observed finding's resource; binding coverage is
+  `in-scope` only after a complete Vertex AI or Dialogflow CX listing of that
+  project and location. Runtime identity and endpoint URL matches are hints
+  (`metadata.registry_join_hints`), not bindings. An Agent Registry listing is
+  complete only when its locations were enumerated and every location's
+  listings completed. `metadata.catalog_presence` compares the two catalogs on
+  agents; absence from Gemini Enterprise is never reported.
+- New export record kinds `registry-coverage` and `project-number` record
+  listing completeness and project numbers. Any record that analysis cannot
+  read, anything that makes an offline replay incomplete (such as an invalid
+  JSON line or a provider error record that the loader drops), and any
+  registry record whose name carries the number of a project other than the
+  one it was listed in (dropped with a warning) void every completeness claim
+  of that scan: no binding is in scope, no listing is complete and nothing is
+  reported absent. Listed items are reduced when collected: agent cards become
+  summaries, interface URLs lose userinfo, query and fragment, and icons,
+  prompts, assistant instructions and authorization values are dropped.
+  `cloud.gcp` `_pages` now reports whether a listing completed.
+- New option `discovery_collections` (default `default_collection`). Discovery
+  Engine engines keep their kinds (chat engines are `agent`, others
+  `cloud-resource`) and record `app_type`, `associated_agent_registry` and
+  `subscription_tier`, reasoning engines `effective_identity`, when present.
+  Agent Registry counts as an AI API, so a project whose only AI API is Agent
+  Registry now has an enabled-APIs finding.
+- The fixtures and transports in the tests are synthetic, written from
+  Google's API discovery documents; nothing was validated against a live
+  project.
+
+### AWS Agent Registry and AgentCore registry records in cloud.aws
+
+- New opt-in `cloud.aws` service `registry` reads AWS Agent Registry
+  (`agent-registry-control`) and AgentCore registry
+  (`bedrock-agentcore-control`) registries and records of every status
+  through `ListRegistries`, `GetRegistry`, `ListRegistryRecords` and
+  `GetRegistryRecord`, in every scanned region. `services` now defaults to
+  every service except `registry`, so existing configurations make no new API
+  call, need no new permission and report no new finding after upgrading.
+- Each record is a finding with `metadata.registry_record` (registry types
+  `aws-agent-registry` and `aws-agentcore-registry`, registry id = registry
+  ARN). The resource is the record ARN and the resource type
+  (`agent-registry-record` or `agentcore-registry-record`) is fixed per
+  namespace, so identity does not change with the record's status or type.
+  Statuses map onto the contract (`CREATING`, `UPDATING` and failed states
+  become `unknown`); MCP and gateway records are MCP servers, agent and A2A
+  records agents, skill records agent configurations and custom records cloud
+  resources. `cloud.aws` declares both registry types through the
+  `emits_registry_records` and `registry_record_types` hooks.
+- The `DETECTED_FROM` provenance of a record the registry created by
+  auto-detection binds the exact AgentCore runtime or gateway ARN it was
+  detected from; the binding is in scope only when the `agentcore` service ran
+  without a warning in that region for the scanned account. Provenance on a
+  record created through the API is the publisher's assertion and binds
+  nothing, and a provenance relation this release does not recognize binds
+  nothing and makes the scan incomplete.
+- `approval_mode` reflects the registry's approval configuration at scan time:
+  `auto` when an Agent Registry holds any auto-approval rule or an AgentCore
+  registry sets `autoApproval`, whatever other settings sit beside it;
+  `manual` when neither does and nothing else is set; `unknown` when the
+  registry details were denied, and for an approval configuration this
+  release does not recognize, which also makes the scan incomplete.
+  Auto-approval is not human review: the record's evidence says so, and it
+  approves through `trusted_registries` only with `allow_auto_approved`.
+- `listing_complete` is set only for a record listing that finished without
+  denial, a failed or truncated page, a skipped malformed record or the new
+  `max_registry_records` cap (default 1000 per region and namespace). Denials,
+  throttling, unsupported regions, missing SDK services, malformed responses,
+  failed record details and invalid descriptors make the scan incomplete
+  (exit 3), and replaying such an export is incomplete again.
+- Descriptors are parsed as bounded strict JSON during collection and kept
+  only as a sanitized summary (A2A 1.0 cards contribute their
+  `supportedInterfaces`); raw descriptor documents, authorizer settings and
+  OAuth `customParameters` are never exported or reported, and descriptor URLs
+  never become finding resources.
+- New `registry_arns` reads the approved records of other accounts'
+  registries through the discovery API (`ListDiscoverableRegistryRecords`,
+  `BatchGetDiscoverableRegistryRecord`). Those records carry
+  `registry_coverage: approved-only`, never set `listing_complete`, have no
+  bindings and `approval_mode: unknown`, and keep their registry's account
+  without being marked unresolved. Batch errors report only their codes.
+- The registry responses and `tests/fixtures/cloud/aws_registry_records.jsonl`
+  are synthetic, modeled on the installed SDK models; nothing was validated
+  against a live account. The README demo export is unchanged.
+
+### Microsoft Agent 365, Entra Agent ID and delegated Graph auth in identity.entra
+
+- `identity.entra` gains two opt-in collections, both off by default.
+  `include_agent_registry` lists the Microsoft Agent 365 package catalog
+  (`agent_registry_api`: `v1.0` by default, or `beta`; `CopilotPackages.Read.All`)
+  and reads each package's details, bounded by `max_package_lookups`. Each
+  package is a `microsoft-agent-365` registry record finding
+  (`entra:copilot-package:<id>`, resource type `copilot-package`) with registry
+  id `tenant_id`, a status mapped from `isBlocked`, `requestStatus` and
+  `availableTo`, `approval_mode: manual` only for an organization's own package
+  whose request was approved, and bindings to the objects it may own in the
+  tenant: the agent identity it names only when that id is a listed agent
+  identity, and the app registration only for an organization's own package.
+  A package never binds another service principal, and a Microsoft or partner
+  package never binds an app registration of the tenant, so publisher-declared
+  ids cannot approve tenant objects. Unknown enum members become `unknown`;
+  both enum spellings Microsoft's pages use are accepted. Member lists are stored as
+  counts only; the package file and element definitions are not kept.
+- `include_agent_identities` lists Entra Agent ID agent identities from the
+  Graph beta API. An agent identity enriches the service principal finding of
+  the same id (tag `entra-agent-identity`) or stands alone as `entra:sp:<id>`
+  with resource type `service-principal/AgentIdentity`; the finding id is the
+  same either way. Agent identities, and service principals and app
+  registrations a package binds, are reported even without AI signals. Each
+  listed agent identity's app role assignments are read, within the
+  `max_app_role_lookups` budget, also when the service principal listing does
+  not return it.
+- Records of the deprecated Entra agent registry (`agentInstance`,
+  `agentCardManifest`) are accepted from offline exports only, as
+  `entra-agent-registry` records with status `deprecated` that never approve.
+- `identity.entra` declares the `emits_registry_records` hook for
+  `microsoft-agent-365` and `entra-agent-registry`.
+- Live collection with an opt-in appends an `agentRegistryCoverage` record, so
+  a replayed export keeps listing completeness and binding coverage and reports
+  incomplete collections again. Denied, failed, capped, conflicting or malformed
+  package listings make the scan incomplete and the listing not complete; an
+  export without the marker has unknown coverage.
+- New credential policy: `auth_mode: delegated` reads a signed-in user's Graph
+  token from the environment variable named by `delegated_token_env` (default
+  `GRAPH_DELEGATED_TOKEN`). There is no configuration key for the token itself.
+  Delegated mode requires `tenant_id`, refuses `access_token`, `client_id` and
+  `client_secret`, never falls back to app-only credentials, checks the
+  unverified `tid`, `scp`, `idtyp` and `exp` claims before any request, and never
+  refreshes the token; a token that expires during the scan makes it
+  incomplete. Delegated package listings are caller-scoped: the reported
+  record has `listing_complete: false` and every binding `unknown` coverage.
+  With `include_agent_registry` and `tenant_id`, a pre-issued app-only
+  `access_token` must be a JWT whose unverified `tid` equals `tenant_id`, so a
+  token of another tenant never produces records attributed to the trusted one.
+  `ConnectorContext.secret_env` reads such a variable and registers its value
+  for redaction.
+- The fixtures and Graph payloads in the tests are synthetic, modeled on
+  Microsoft's Graph reference pages; nothing was validated against a live
+  tenant.
 
 ### Autonomy tiers and Capability Card schema version 2
 
@@ -257,6 +507,58 @@ summarizes each release for people who install and operate ShadowScan.
   evidence, not proof of how a run behaves.
 - The rules and fixtures are synthetic and author-written; they do not
   establish live tenant acceptance or measured precision.
+
+### A2A Agent Card probe and card signatures
+
+- `endpoint.mcp` gains an opt-in live probe. `agent_card_urls` lists HTTPS card
+  URLs or agent origins (an origin is fetched at
+  `/.well-known/agent-card.json`, then `/.well-known/agent.json` only after a
+  404); `max_agent_cards` (default 100) refuses a longer list instead of
+  truncating it. Entries are checked when the connector is built. Fetches use
+  the shared HTTPS client: same-origin redirects only, private and loopback
+  addresses refused unless `options.allow_private_origin`, a 1 MiB body cap,
+  strict JSON, and `ca_bundle` for a private CA. URLs declared inside a card
+  are never fetched. Without `agent_card_urls` the connector behaves as
+  before. A job that sets both `input` and `agent_card_urls` is refused
+  (exit 3): a replay never probes, so the listed agents would go unchecked.
+- Each fetched card is one `a2a-agent-card` finding (`provider` `a2a`,
+  identity discriminator `a2a-card`, resource the card URL without query or
+  fragment, framework `protocol.a2a`). Every fetch, HTTP, size, JSON or card
+  validation failure is a connector error and the scan is incomplete; a
+  card-shaped but incomplete card is an `incomplete-agent-card`
+  framework-usage finding. Card records replay from `--dump-records` exports
+  and are validated again; an unknown `record_type` is dropped with a warning
+  that makes the scan incomplete. MCP tool-list records are unaffected. The
+  export also withholds the userinfo of scheme-less `user:password@host:port`
+  addresses (gRPC interfaces), which the shared sanitizer does not recognize.
+- `code.filesystem` and the probe share one `metadata.agent_card` projection.
+  A2A 1.0 `supportedInterfaces` now supply `url` and `protocol_version`, which
+  were empty for 1.x cards; `interfaces` lists up to 20 interfaces as scheme,
+  host, port and path; projected strings are bounded. A card that declares a
+  protocol version other than 0.x or 1.x (top level or on an interface) is
+  still reported, with a warning that makes the scan incomplete, in both
+  connectors.
+- `metadata.agent_card.signature` records `absent`, `present-unverified`,
+  `verified` or `invalid`. Verification runs only against the operator's
+  `agent_card_jwks_url` (fetched once per run; a failure is an error and
+  leaves signatures unverified), as an RFC 7515 JWS over the RFC 8785
+  canonical card without `signatures`. Signers drop different empty values
+  first, so each signature is checked against three payloads: the card as
+  served, the card without any empty string, array or object (the A2A Python
+  SDK's form), and the card without empty members other than those the A2A
+  1.0 schema marks REQUIRED or `optional` (the specification's section 8.4.1
+  example). They differ only by empty values. Key locations a card or
+  signature header names (`jku`, `jwk`, `x5u`, `x5c`) are never used; only
+  RS256, PS256, ES256 and EdDSA are accepted; critical header extensions and
+  unencoded payloads are refused. A card holding an integer beyond 2^53, or
+  signed by a signer that also drops `false` or `0` defaults and served with
+  them, reports `invalid`. `verified` never approves or registers a finding.
+- New risk tags `a2a-plaintext-interface` (10; an `http://` or `ws://`
+  interface to a host other than loopback) and `a2a-card-signature-invalid`
+  (10), with threat references ASI07 and AML.T0118.001, and ASI07 and ASI04.
+  Card files with such interfaces or malformed signatures now score higher.
+- The cards, keys and HTTP exchanges in the tests are synthetic, modeled on
+  the A2A specification; nothing was validated against a live agent.
 
 ### Scan evidence, completeness and replay corrections
 

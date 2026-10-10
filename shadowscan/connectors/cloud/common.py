@@ -94,20 +94,25 @@ def next_page_token(token: Any, seen: set[str]) -> str | None:
 
 
 def guarded_record(
-    connector: BaseConnector, kind: str, build: Callable[[], dict[str, Any] | None]
+    connector: BaseConnector,
+    kind: str,
+    build: Callable[[], dict[str, Any] | None],
+    *,
+    noun: str = "record",
 ) -> dict[str, Any] | None:
     """Build one record from provider responses; a malformed response skips that record only.
 
     Response fields are untrusted: a missing or mistyped field raises
     inside the builder. The record is reported as a coverage gap and
     collection continues with the next resource, service and region
-    instead of abandoning them all.
+    instead of abandoning them all. The diagnostic names the skipped
+    item as ``<kind> <noun>``.
     """
     try:
         return build()
     except RECORD_ERRORS as exc:
         connector.ctx.warn(
-            f"{connector.name}: malformed {kind} record skipped ({type(exc).__name__}); coverage incomplete",
+            f"{connector.name}: malformed {kind} {noun} skipped ({type(exc).__name__}); coverage incomplete",
             incomplete=True,
         )
         return None

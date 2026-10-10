@@ -11,6 +11,7 @@ from shadowscan.reporters._publication import (
     has_inventory,
     publication_stats,
     related_finding_ids,
+    unassessed_count,
     without_connector_prefix,
 )
 from shadowscan.utils.output import terminal_text
@@ -115,6 +116,10 @@ def render_markdown(result: ScanResult) -> str:
         shadow_note = (
             f" (**{s['shadow']} shadow** — not in the inventory of {result.inventory_size} registered agents)"
         )
+        if unassessed := unassessed_count(result):
+            shadow_note += (
+                f"; **{unassessed} unassessed** (reported only by sources scanned without an inventory)"
+            )
     lines.append(f"- **Findings:** {s['total']}" + shadow_note)
     by_risk = sorted(s["by_risk_level"].items(), key=lambda kv: _LEVEL_ORDER.index(kv[0]))
     lines.append("- **By risk:** " + ", ".join(f"{_LEVEL_ICON.get(k, '')} {k}: {v}" for k, v in by_risk))
@@ -129,10 +134,14 @@ def render_markdown(result: ScanResult) -> str:
     lines.append("")
     lines.append("## Findings")
     lines.append("")
+    inventory = has_inventory(result)
     lines.append("| Risk | Shadow | Surface | Kind | Title | Owner | Confidence | Technologies |")
     lines.append("|---|---|---|---|---|---|---|---|")
     for f in result.findings:
-        shadow = "" if f.shadow is None else ("**yes**" if f.shadow else "no")
+        if f.shadow is None:
+            shadow = "unassessed" if inventory else ""
+        else:
+            shadow = "**yes**" if f.shadow else "no"
         level = f.risk.level.value
         technologies = _text(", ".join((f.frameworks + f.model_providers)[:4]))
         lines.append(

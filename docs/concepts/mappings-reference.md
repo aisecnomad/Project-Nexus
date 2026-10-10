@@ -121,6 +121,7 @@ Release 2026.09 (dist/v6/ATLAS-2026.09.yaml, format 6.0.0). Only the techniques 
 | `mitre-atlas-2026.09:AML.T0109` | AI Supply Chain Rug Pull |
 | `mitre-atlas-2026.09:AML.T0110.000` | AI Agent Tool Poisoning: Definition and Instructions |
 | `mitre-atlas-2026.09:AML.T0118` | Autonomous AI Agent Communication |
+| `mitre-atlas-2026.09:AML.T0118.001` | Autonomous AI Agent Communication: Direct Agent Communication |
 | `mitre-atlas-2026.09:AML.T0132` | Misconfigured or Publicly Exposed AI Services |
 
 ### `nist-ai-rmf-1.0`
@@ -215,6 +216,7 @@ From `shadowscan/mappings/data/rules/threats.yaml`.
 | `unauthenticated-endpoint` | tag `no-authentication` or `posture-unauthenticated-gateway` or `unauthenticated-mcp` | `owasp-asi-2026:ASI03` | An agent endpoint without authentication cannot tell which identity is acting through it. |
 | `mcp-unpinned-package` | tag `mcp-unpinned-package` | `owasp-llm-2026:LLM04`, `owasp-asi-2026:ASI04`, `mitre-atlas-2026.09:AML.T0010.005`, `mitre-atlas-2026.09:AML.T0109` | An MCP server resolved to whatever version is current can change under the agent after it was reviewed. |
 | `mcp-broad-filesystem` | tag `mcp-broad-filesystem` | `owasp-llm-2026:LLM03`, `owasp-asi-2026:ASI02`, `mitre-atlas-2026.09:AML.T0086` | A filesystem tool scoped to the whole disk or a home directory lets a steered agent read and send files outside its task. |
+| `mcp-unvetted-source` | tag `mcp-registry-deleted` or `mcp-unpublished` | `owasp-llm-2026:LLM04`, `owasp-asi-2026:ASI04`, `mitre-atlas-2026.09:AML.T0010.005` | An MCP server that no configured MCP registry lists, or that its registry marks deleted, has no registry provenance to review. |
 | `hidden-instructions` | tag `hidden-instructions` or `invisible-text` | `owasp-llm-2026:LLM01`, `owasp-asi-2026:ASI01`, `mitre-atlas-2026.09:AML.T0051.001`, `mitre-atlas-2026.09:AML.T0068` | Instruction content hidden from the rendered view reaches the model but not the reviewer. |
 | `memory-capability` | capability `memory` | `owasp-asi-2026:ASI06`, `mitre-atlas-2026.09:AML.T0080.000` | Persistent agent memory can carry poisoned content into later sessions. |
 | `rag-capability` | capability `rag` | `owasp-llm-2026:LLM09`, `owasp-asi-2026:ASI06`, `mitre-atlas-2026.09:AML.T0070` | Retrieval-augmented generation feeds indexed content into the context, where poisoned documents act as instructions. |
@@ -222,6 +224,8 @@ From `shadowscan/mappings/data/rules/threats.yaml`.
 | `multi-agent-capability` | capability `multi-agent` | `owasp-asi-2026:ASI07`, `owasp-asi-2026:ASI08`, `mitre-atlas-2026.09:AML.T0118` | Agents that exchange messages can pass a compromise or a fault from one agent to the next. |
 | `delegated-identity-capability` | capability `delegated-identity` | `owasp-asi-2026:ASI03` | An agent acting with a user's delegated identity can be used to exercise that user's privileges. |
 | `agent-card-without-security-scheme` | tag `no-auth-declared` | `owasp-asi-2026:ASI07`, `owasp-asi-2026:ASI03` | An A2A Agent Card that declares no security scheme invites peers to call the agent without authenticating. |
+| `a2a-plaintext-interface` | tag `a2a-plaintext-interface` | `owasp-asi-2026:ASI07`, `mitre-atlas-2026.09:AML.T0118.001` | An A2A interface over plaintext HTTP lets anyone on the network path read or alter the messages agents exchange directly. |
+| `a2a-card-signature-invalid` | tag `a2a-card-signature-invalid` | `owasp-asi-2026:ASI07`, `owasp-asi-2026:ASI04` | An Agent Card whose signature is malformed or does not verify may have been altered after signing, so peers cannot rely on the identity, endpoints and skills it advertises. |
 | `high-autonomy` | `metadata.autonomy.floor` at least 4 | `owasp-llm-2026:LLM03`, `owasp-asi-2026:ASI08` | Evidence places the agent at high or full autonomy, where actions run without per-step human review and errors can compound. |
 
 ### Layer rules
@@ -258,5 +262,6 @@ From `shadowscan/mappings/data/rules/controls.yaml`.
 | `logging-gap` | tag `no-diagnostic-logging` or `no-invocation-logging` or `tracing-disabled` | `eu-ai-act-2024:Art.12`, `iso-iec-42001-2023:A.6.2.8`, `nist-ai-rmf-1.0:MEASURE-3.1` | Disabled invocation logging or tracing removes the records that event logging and risk tracking rely on. |
 | `security-exposure` | tag `exposed-llm-server` or `hardcoded-credential` or `inline-secrets` or `no-authentication` or `plaintext-credential` or `policy.privileged-scopes` or `posture-exposed-gateway` or `posture-unauthenticated-gateway` or `public-ingress` or `public-principal` or `secret-in-env` or `unauthenticated-mcp` or `unmasked-ci-variable` or `wildcard-permissions` | `nist-ai-rmf-1.0:MEASURE-2.7`, `eu-ai-act-2024:Art.15`, `aiuc-1-2026q2:B` | Exposed credentials, unauthenticated or public endpoints and excessive privileges are evidence about the system's security and resilience. |
 | `third-party-components` | tag `mcp-unpinned-package` or `unsafe-serialization` | `nist-ai-rmf-1.0:GOVERN-6.1`, `nist-ai-rmf-1.0:MANAGE-3.1`, `nist-ai-rmf-1.0:MAP-4.1`, `iso-iec-42001-2023:A.10.3` | Unpinned MCP packages and unsafe model artifacts are third-party components whose risks the organization has to manage. |
+| `mcp-unvetted-component` | tag `mcp-registry-deleted` or `mcp-unpublished` | `nist-ai-rmf-1.0:GOVERN-6.1`, `iso-iec-42001-2023:A.10.3` | An MCP server outside the configured MCP registries, or deleted from one, is a third-party component whose provenance the organization has to review. |
 | `user-facing-ai` | kind `ai-app` or `bot-app` | `eu-ai-act-2024:Art.50` | A bot or AI application that people interact with is relevant to transparency obligations towards those people. |
 | `agentic-monitoring` | `metadata.autonomy.floor` at least 3 | `nist-ai-rmf-1.0:MANAGE-4.1`, `iso-iec-42001-2023:A.6.2.6` | An agent that runs multi-step workflows on its own needs operational monitoring after deployment. |

@@ -16,13 +16,15 @@ from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import PurePosixPath
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from xml.parsers.expat import errors as expat_errors
 
 import yaml
 
+from shadowscan.connectors.mcp_risk import _plaintext_remote
 from shadowscan.signatures.matcher import Match, SignatureIndex
 from shadowscan.utils.jsonc import load_json_lenient
+from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import (
     YAMLIntegrityError,
@@ -30,6 +32,7 @@ from shadowscan.utils.safe_yaml import (
     strict_bounded_safe_load,
     strict_bounded_safe_load_all,
 )
+from shadowscan.utils.text import truncate
 
 
 @dataclass(slots=True)
@@ -112,14 +115,7 @@ def _list_of_objects(value: Any) -> bool:
 
 
 def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
-    """Validate substantive declarations without executing or importing them.
-
-    LangGraph: graph entry points. A2A: identity, HTTP/gRPC endpoint, capabilities and
-    named skills (0.x URL and 1.x interfaces supported). Microsoft 365: named,
-    versioned instructions. CrewAI: role, goal and backstory for every agent.
-    Unknown optional fields are retained for forward-compatible discovery.
-    """
-    result = AgentManifestResult()
+    """Load a manifest file without executing it, then :func:`validate_agent_manifest`."""
     try:
         data = (
             strict_bounded_safe_load(text)
@@ -127,8 +123,20 @@ def parse_agent_manifest(rel: str, text: str, kind: str) -> AgentManifestResult:
             else strict_json_loads(text)
         )
     except (ValueError, RecursionError, yaml.YAMLError):
-        result.errors.append("invalid agent manifest syntax")
-        return result
+        return AgentManifestResult(errors=["invalid agent manifest syntax"])
+    return validate_agent_manifest(data, kind)
+
+
+def validate_agent_manifest(data: Any, kind: str) -> AgentManifestResult:
+    """Validate substantive declarations without executing or importing them.
+
+    LangGraph: graph entry points. A2A: identity, HTTP/gRPC endpoint, capabilities and
+    named skills (0.x URL and 1.x interfaces supported). Microsoft 365: named,
+    versioned instructions. CrewAI: role, goal and backstory for every agent.
+    Unknown optional fields are retained for forward-compatible discovery.
+    ``data`` is an already decoded document, such as a card fetched as JSON.
+    """
+    result = AgentManifestResult()
     if not isinstance(data, dict):
         result.errors.append("agent manifest must be an object")
         return result
@@ -232,6 +240,210 @@ def _graph_entrypoint(value: Any) -> bool:
 def _objects(value: Any) -> Iterator[dict[str, Any]]:
     if isinstance(value, list):
         yield from (item for item in value if isinstance(item, dict))
+
+
+# --------------------------------------------------------------- A2A cards
+# Shared by the code connectors (card files), the endpoint.mcp card probe and
+# registry connectors that hold A2A entries, so every source projects a card
+# into the same ``metadata.agent_card``.
+
+_CLIP_ITEMS = 50
+_CLIP_CHARS = 200
+_MAX_CARD_INTERFACES = 20
+MAX_CARD_SIGNATURES = 10
+_BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
+_KNOWN_PROTOCOL_VERSION = re.compile(r"[01](?:\.[0-9]+){0,2}")
+# ``verified`` and a verification ``invalid`` come only from a check against
+# operator-trusted keys (the endpoint.mcp probe); the projection alone tells
+# absent, present-unverified and structurally invalid signatures apart.
+A2A_SIGNATURE_STATES = ("absent", "present-unverified", "verified", "invalid")
+
+
+def bounded_metadata(value: Any, depth: int = 0) -> Any:
+    """Bound a projected metadata value so aggregates stay within the sanitizer budget."""
+    if isinstance(value, str):
+        return truncate(value, _CLIP_CHARS)
+    if depth >= 4:
+        return None if isinstance(value, (dict, list, tuple)) else value
+    if isinstance(value, dict):
+        return {
+            str(k)[:_CLIP_CHARS]: bounded_metadata(v, depth + 1) for k, v in list(value.items())[:_CLIP_ITEMS]
+        }
+    if isinstance(value, (list, tuple)):
+        return [bounded_metadata(v, depth + 1) for v in value[:_CLIP_ITEMS]]
+    return value
+
+
+def _interface_address(value: Any) -> str | None:
+    """An interface URL reduced to scheme, host, port and path, or a gRPC host:port."""
+    if not _nonempty(value) or any(char.isspace() for char in value):
+        return None
+    try:
+        parts = urlsplit(value)
+        if parts.scheme.lower() in {"http", "https", "ws", "wss"} and parts.hostname:
+            host = parts.hostname
+            authority = f"[{host}]" if ":" in host else host
+            if parts.port is not None:
+                authority += f":{parts.port}"
+            return truncate(urlunsplit((parts.scheme.lower(), authority, parts.path, "", "")), _CLIP_CHARS)
+        address = urlsplit("//" + value)
+        if (
+            address.hostname
+            and address.port is not None
+            and not (
+                address.path or address.query or address.fragment or address.username or address.password
+            )
+        ):
+            return truncate(value, _CLIP_CHARS)
+    except ValueError:
+        return None
+    return None
+
+
+def _declared_interfaces(card: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Every declared interface: 1.x ``supportedInterfaces`` first, then the 0.x fields.
+
+    A card may carry both forms for older clients; every address it declares
+    is reachable, so each one counts.
+    """
+    for key in ("supportedInterfaces", "supported_interfaces"):
+        yield from _objects(card.get(key))
+    if "url" in card:
+        yield {
+            "url": card.get("url"),
+            "transport": card.get("preferredTransport"),
+            "protocolVersion": card.get("protocolVersion"),
+        }
+    yield from _objects(card.get("additionalInterfaces"))
+
+
+def a2a_card_interfaces(card: dict[str, Any]) -> list[dict[str, Any]]:
+    """Declared service interfaces in preference order, deduplicated and bounded."""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, Any]] = set()
+    for item in _declared_interfaces(card):
+        url = _interface_address(item.get("url"))
+        if url is None:
+            continue
+        binding = item.get("protocolBinding", item.get("protocol_binding", item.get("transport")))
+        version = item.get("protocolVersion", item.get("protocol_version"))
+        entry = {
+            "url": url,
+            "protocol_binding": truncate(binding, _CLIP_CHARS) if _nonempty(binding) else None,
+            "protocol_version": truncate(version, _CLIP_CHARS) if _nonempty(version) else None,
+        }
+        if (url, entry["protocol_binding"]) in seen:
+            continue
+        seen.add((url, entry["protocol_binding"]))
+        out.append(entry)
+        if len(out) >= _MAX_CARD_INTERFACES:
+            break
+    return out
+
+
+def a2a_plaintext_interfaces(card: dict[str, Any]) -> bool:
+    """Whether any declared interface is plaintext HTTP to a host other than loopback."""
+    return any(
+        (url := _interface_address(item.get("url"))) is not None and _plaintext_remote(url)
+        for item in _declared_interfaces(card)
+    )
+
+
+def a2a_unsupported_protocol_version(card: dict[str, Any]) -> bool:
+    """Whether the card or one of its interfaces declares an A2A version other than 0.x or 1.x.
+
+    The projection reads 0.2/0.3 and 1.x fields; a legacy card may declare
+    no version. Any other declared value, a non-string included, is unknown.
+    """
+    declared = [card.get("protocolVersion", card.get("protocol_version"))]
+    declared += [
+        item.get("protocolVersion", item.get("protocol_version")) for item in _declared_interfaces(card)
+    ]
+    return any(
+        version not in (None, "")
+        and not (isinstance(version, str) and _KNOWN_PROTOCOL_VERSION.fullmatch(version))
+        for version in declared
+    )
+
+
+def a2a_signature_state(card: dict[str, Any]) -> tuple[str, str | None]:
+    """Signature presence and shape, without verification: ``(state, reason)``.
+
+    ``invalid`` here means no key could verify the entries: not an array, too
+    many, or an entry without base64url ``protected`` and ``signature``
+    strings. A verifier turns ``present-unverified`` into ``verified`` or
+    ``invalid``; nothing else may report ``verified``.
+    """
+    signatures = card.get("signatures")
+    if signatures is None or signatures == []:
+        return "absent", None
+    if not isinstance(signatures, list):
+        return "invalid", "signatures is not an array"
+    if len(signatures) > MAX_CARD_SIGNATURES:
+        return "invalid", f"more than {MAX_CARD_SIGNATURES} signatures"
+    for entry in signatures:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("protected"), str)
+            or not _BASE64URL.fullmatch(entry["protected"])
+            or not isinstance(entry.get("signature"), str)
+            or not _BASE64URL.fullmatch(entry["signature"])
+            or ("header" in entry and not isinstance(entry["header"], dict))
+        ):
+            return "invalid", "malformed signature entry"
+    return "present-unverified", None
+
+
+def a2a_card_metadata(
+    card: dict[str, Any],
+    display: dict[str, Any] | None = None,
+    signature: tuple[str, str | None] | None = None,
+) -> dict[str, Any]:
+    """Project an A2A Agent Card into ``metadata.agent_card``.
+
+    Decisions (declared authentication, plaintext interfaces, signatures) read
+    ``card`` as parsed. Displayed values read ``display``: the card sanitized
+    as a whole document, so an opaque secret is recognized from its sibling
+    fields. That redaction replaces the value of a credential-named key (an
+    OAuth flow's ``clientCredentials``), so the sanitized copy never decides.
+    Interface URLs keep scheme, host, port and path only. ``signature`` is a
+    verifier's ``(state, reason)``; without one the card's own shape decides
+    between ``absent``, ``present-unverified`` and ``invalid``.
+    """
+    shown = card if display is None else display
+    interfaces = a2a_card_interfaces(shown)
+    schemes = card.get("securitySchemes")
+    state, reason = a2a_signature_state(card) if signature is None else signature
+    metadata: dict[str, Any] = {
+        "name": bounded_metadata(shown.get("name")),
+        "description": truncate(sanitize_text(str(shown.get("description", ""))), 300),
+        "url": interfaces[0]["url"] if interfaces else None,
+        "version": bounded_metadata(shown.get("version")),
+        "protocol_version": bounded_metadata(shown.get("protocolVersion"))
+        or (interfaces[0]["protocol_version"] if interfaces else None),
+        "skills": bounded_metadata([s.get("name") or s.get("id") for s in _objects(shown.get("skills"))]),
+        "capabilities": bounded_metadata(shown.get("capabilities")),
+        "security_schemes": bounded_metadata(
+            list(schemes.keys()) if isinstance(schemes, dict) else shown.get("authentication")
+        ),
+        "interfaces": interfaces,
+        "signature": state,
+    }
+    if reason:
+        metadata["signature_detail"] = truncate(reason, _CLIP_CHARS)
+    return metadata
+
+
+def a2a_card_tags(card: dict[str, Any], signature: str) -> list[str]:
+    """Risk tags of a card as parsed, given its final signature state."""
+    tags = []
+    if not card.get("securitySchemes") and not card.get("authentication"):
+        tags.append("no-auth-declared")
+    if a2a_plaintext_interfaces(card):
+        tags.append("a2a-plaintext-interface")
+    if signature == "invalid":
+        tags.append("a2a-card-signature-invalid")
+    return tags
 
 
 def _validate_projection_aliases(data: dict[str, Any]) -> None:

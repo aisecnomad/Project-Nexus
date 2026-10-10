@@ -85,6 +85,51 @@
   color: "006b75"
   description: Exempt from stale-issue automation.
 
+# Pull request triage
+- name: coding-assistant
+  color: "5319e7"
+  description: Opened by a coding assistant (Claude Code or Copilot) for a maintainer; not independent review.
+
+- name: integration
+  color: "1d76db"
+  description: Combines other pull requests into one change.
+
+- name: superseded
+  color: "cfd3d7"
+  description: Closed unmerged; the change landed through another pull request or was replaced.
+
+- name: review-fix
+  color: "fef2c0"
+  description: Fixes findings from a review; does not by itself show independent human review.
+
+- name: regression-fix
+  color: "e99695"
+  description: Restores behavior that previously worked.
+
+- name: fail-closed
+  color: "b60205"
+  description: Makes limits, malformed input or denied access mark the scan incomplete (exit 3).
+
+- name: trust-boundary
+  color: "d93f0b"
+  description: Changes an authentication, origin, privilege or input trust boundary.
+
+- name: redaction
+  color: "f9d0c4"
+  description: Credential redaction, secret handling or output sanitization.
+
+- name: benchmark
+  color: "c2e0c6"
+  description: Evaluation corpora, benchmarks or measured detection accuracy.
+
+- name: ci-cd
+  color: "0e8a16"
+  description: GitHub Actions workflows, build, release or repository gates.
+
+- name: community
+  color: "bfdadc"
+  description: Community health files, templates and contributor guidance.
+
 # Dependencies
 - name: dependencies
   color: "0366d6"

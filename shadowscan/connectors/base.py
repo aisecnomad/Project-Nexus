@@ -195,6 +195,19 @@ class ConnectorContext:
             raise ConnectorError(f"missing required config '{key}'{hint}")
         return val
 
+    def secret_env(self, name: str) -> str | None:
+        """Read a credential from the environment variable *name*; None when unset or empty.
+
+        For a credential the configuration names by environment variable rather than
+        holding it. The value is registered like a configured secret, so diagnostics
+        redact it wherever an upstream message echoes it.
+        """
+        value = os.environ.get(name)
+        if not value:
+            return None
+        self._resolved_config[f"_secret_env_{name}_access_token"] = value
+        return value
+
     def sanitize_message(self, msg: str) -> str:
         """Remove configured credentials even when an upstream error echoes them."""
         try:
@@ -474,6 +487,14 @@ class BaseConnector(ABC):
         return _offline.unwrap(cls, data, on_error if on_error is not None else _raise_connector_error)
 
     # ------------------------------------------------------------------- run
+    def _export_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        """The record as exported, before the shared sanitizer; analysis keeps the original.
+
+        A connector overrides this to withhold values its records carry that
+        the sanitizer does not recognize. It never adds content.
+        """
+        return record
+
     def _tee(self, records: Iterable[dict[str, Any]], path: str) -> Iterator[dict[str, Any]]:
         """Export sanitized records atomically, with owner-only permissions.
 
@@ -496,7 +517,10 @@ class BaseConnector(ABC):
                 for rec in records:
                     offset = fh.tell()
                     try:
-                        clean = sanitize(rec, env_values_are_secrets=not self._ENV_VALUES_ARE_CONFIGURATION)
+                        clean = sanitize(
+                            self._export_record(rec),
+                            env_values_are_secrets=not self._ENV_VALUES_ARE_CONFIGURATION,
+                        )
                     except SanitizationLimitError:
                         rejected = True
                         self.ctx.error(

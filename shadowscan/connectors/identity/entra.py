@@ -8,18 +8,36 @@ assignments and tenant-owned app registrations, then reports:
 * machine identities holding Graph / Copilot / Azure OpenAI permissions (``service-identity``)
 * app registrations that look like in-house agents (``service-identity``)
 
-Auth: client credentials (``tenant_id`` / ``client_id`` / ``client_secret``) with
-``Application.Read.All`` + ``DelegatedPermissionGrant.Read.All`` +
-``Directory.Read.All``, or a pre-issued ``access_token``.
+Opt-in collections (default off):
+
+* ``include_agent_identities``: Entra Agent ID agent identities (Graph beta), which
+  enrich the service principal finding of the same id or stand alone;
+* ``include_agent_registry``: Microsoft Agent 365 catalog packages, reported as
+  vendor registry records (``metadata.registry_record``, registry
+  ``microsoft-agent-365``, see :mod:`shadowscan.registries`).
+
+Records of the deprecated Entra agent registry (``agentInstance``,
+``agentCardManifest``) are accepted from offline exports only; their registry
+records (``entra-agent-registry``) are ``deprecated`` and never approve.
+
+Auth (``auth_mode: app-only``, the default): client credentials (``tenant_id`` /
+``client_id`` / ``client_secret``) with ``Application.Read.All`` +
+``DelegatedPermissionGrant.Read.All`` + ``Directory.Read.All``, or a pre-issued
+``access_token`` (whose ``tid`` must be ``tenant_id`` when Agent 365 records are
+collected). ``auth_mode: delegated`` reads a signed-in user's Graph token from
+the environment variable named by ``delegated_token_env``; it is never refreshed.
 
 Offline export: any mix of Graph objects (servicePrincipal, oauth2PermissionGrant,
-appRoleAssignment, application); each record may carry ``_kind`` or is inferred
-from its shape.
+appRoleAssignment, application, agentIdentity, copilotPackage, agentInstance,
+agentCardManifest); each record may carry ``_kind`` or is inferred from its shape.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+import re
+import time
+from collections.abc import Generator, Iterable, Iterator
+from dataclasses import dataclass
 from typing import Any, ClassVar
 from urllib.parse import quote
 
@@ -29,12 +47,99 @@ from shadowscan.connectors.base import BaseConnector, ConnectorContext, Connecto
 from shadowscan.connectors.common import config_boolean, failure_summary, finalize, scope_matches
 from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.registries import (
+    LISTING_SCOPES,
+    MAX_IDENTIFIER_LENGTH,
+    RECORD_KEY,
+    RECORD_SCHEMA,
+    registry_evidence,
+)
 from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.safe_json import strict_json_loads
 
 GRAPH = "https://graph.microsoft.com/v1.0"
+GRAPH_BETA = "https://graph.microsoft.com/beta"
+# Microsoft Agent 365 catalog; documented under v1.0 and beta.
+COPILOT_PACKAGES = "/copilot/admin/catalog/packages"
+AGENT_REGISTRY_APIS = {"v1.0": GRAPH, "beta": GRAPH_BETA}
+# Entra Agent ID agent identities are a service principal subtype listed by an OData cast (beta only).
+AGENT_IDENTITIES = f"{GRAPH_BETA}/servicePrincipals/microsoft.graph.agentIdentity"
+AGENT_365 = "microsoft-agent-365"
+DEPRECATED_REGISTRY = "entra-agent-registry"
+AUTH_MODES = ("app-only", "delegated")
+DEFAULT_DELEGATED_TOKEN_ENV = "GRAPH_DELEGATED_TOKEN"
+MAX_DELEGATED_TOKEN_CHARS = 16 * 1024
+# The coverage marker a live collection appends when an opt-in collection ran; it survives export,
+# so a replay knows which collections were complete.
+COVERAGE_KIND = "agentRegistryCoverage"
+COVERAGE_STATES = ("complete", "incomplete", "not-collected")
+PACKAGE_DETAIL_STATES = ("observed", "unavailable", "limit")
 FIRST_PARTY_OWNER = "f8cdef31-a31e-4b4a-93e4-5f571e91255a"  # Microsoft services tenant
 MAX_CONFLICTING_SNAPSHOTS = 16
 MAX_CONFLICTING_EVIDENCE = 64
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+_TOKEN_CHARACTERS = re.compile(r"[A-Za-z0-9._~+/=-]+")
+# Package element types and governance classes that make a package an agent; enum spellings
+# vary between the Graph reference and its examples, so they are compared case-insensitively.
+_AGENT_ELEMENT_TYPES = frozenset({"bot", "bots", "declarativeagent", "customengineagent"})
+_AGENT_CLASSES = frozenset({"promptagent", "hostedagent", "workflowagent", "managedagent", "unmanaged"})
+# Package types an organization publishes itself; Microsoft and partner packages are vendor-published.
+_ORG_PUBLISHED_TYPES = frozenset({"shared", "custom", "lob"})
+_AVAILABLE = frozenset({"allowedforall", "all", "allowedforsome", "some"})
+_AVAILABLE_TO_NONE = frozenset({"allowedfornone", "none"})
+# User and group lists of a package; only their sizes are kept.
+_ACCESS_LISTS = ("allowedUsersAndGroups", "acquireUsersAndGroups", "sharedWithUsersAndGroups")
+# Never kept in a collected package record: member ids, the package file and element definitions.
+_DROPPED_PACKAGE_FIELDS = frozenset({"zipFile", "elementDetails", "@odata.context", *_ACCESS_LISTS})
+_PACKAGE_STRINGS = (
+    "type",
+    "shortDescription",
+    "longDescription",
+    "platform",
+    "version",
+    "manifestId",
+    "manifestVersion",
+    "assetId",
+    "agentIdentityId",
+    "governanceMetadata",
+    "requestStatus",
+    "requestType",
+    "publisher",
+    "availableTo",
+    "deployedTo",
+    "sensitivity",
+    "createdDateTime",
+    "lastModifiedDateTime",
+    "lastUsedDateTime",
+    "_detail",
+)
+_INSTANCE_STRINGS = (
+    "agentIdentityId",
+    "agentIdentityBlueprintId",
+    "agentUserId",
+    "url",
+    "preferredTransport",
+    "originatingStore",
+    "sourceAgentId",
+    "managedBy",
+    "createdBy",
+    "createdDateTime",
+    "lastModifiedDateTime",
+)
+_CARD_STRINGS = (
+    "id",
+    "displayName",
+    "description",
+    "protocolVersion",
+    "version",
+    "documentationUrl",
+    "iconUrl",
+    "originatingStore",
+    "managedBy",
+    "createdBy",
+    "createdDateTime",
+    "lastModifiedDateTime",
+)
 # Typed Graph fields: a record whose field has another JSON type is rejected.
 _STRING_FIELDS = (
     "_kind",
@@ -86,6 +191,43 @@ class _GraphExport:
         self.conflicting_sps: set[str] = set()
         self.conflicting_snapshots: dict[str, list[dict[str, Any]]] = {}
         self.truncated_snapshots: set[str] = set()
+        # Agent ID, Agent 365 and deprecated agent registry records, by id. A second record
+        # with the same id and another body makes the id conflicting; snapshots are bounded.
+        self.agent_identities: dict[str, dict[str, Any]] = {}
+        self.conflicting_agent_identities: set[str] = set()
+        self.agent_identity_snapshots: dict[str, list[dict[str, Any]]] = {}
+        self.packages: dict[str, dict[str, Any]] = {}
+        self.conflicting_packages: set[str] = set()
+        self.package_snapshots: dict[str, list[dict[str, Any]]] = {}
+        self.agent_instances: dict[str, dict[str, Any]] = {}
+        self.conflicting_instances: set[str] = set()
+        self.card_manifests: dict[str, dict[str, Any]] = {}
+        self.conflicting_cards: set[str] = set()
+        self.coverage_markers: list[dict[str, Any]] = []
+        # Whether any record was rejected: a listing missing a record is not complete.
+        self.rejected = False
+
+    def agent_identity_id(self, value: Any) -> str | None:
+        """``value`` when it names a listed agent identity whose records do not conflict."""
+        principal_id = _text(value)
+        if (
+            principal_id is None
+            or principal_id not in self.agent_identities
+            or principal_id in self.conflicting_agent_identities
+            or principal_id in self.conflicting_sps
+        ):
+            return None
+        return principal_id
+
+
+@dataclass(frozen=True, slots=True)
+class _Coverage:
+    """Which collections of the run (or of the replayed export) finished complete."""
+
+    packages: str = "unknown"
+    agent_identities: str = "unknown"
+    applications: str = "unknown"
+    listing_scope: str = "registry"
 
 
 class EntraConnector(BaseConnector):
@@ -93,18 +235,43 @@ class EntraConnector(BaseConnector):
     surface: ClassVar[Surface] = Surface.IDENTITY
     provider: ClassVar[str | None] = "entra"
     description: ClassVar[str] = (
-        "Entra ID service principals, OAuth consent grants, app-only permissions and app registrations via "
-        "Microsoft Graph."
+        "Entra ID service principals, OAuth consent grants, app-only permissions, app registrations, "
+        "Agent ID agent identities and Microsoft Agent 365 packages via Microsoft Graph."
     )
+    # Agent 365 packages are registry records; deprecated Entra agent registry records are offline only.
+    emits_registry_records: ClassVar[bool] = True
+    registry_record_types: ClassVar[frozenset[str]] = frozenset({AGENT_365, DEPRECATED_REGISTRY})
     config_keys: ClassVar[dict[str, str]] = {
         "tenant_id": "env AZURE_TENANT_ID",
         "client_id": "env AZURE_CLIENT_ID",
         "client_secret": "env AZURE_CLIENT_SECRET",
-        "access_token": "pre-issued Graph token (env GRAPH_ACCESS_TOKEN) instead of client credentials",
+        "access_token": (
+            "pre-issued Graph token (env GRAPH_ACCESS_TOKEN) instead of client credentials; with "
+            "include_agent_registry and tenant_id, its tid claim must equal tenant_id"
+        ),
+        "auth_mode": (
+            "app-only (default: client credentials or access_token) or delegated (a signed-in user's Graph "
+            "token read from the environment variable named by delegated_token_env; never refreshed)"
+        ),
+        "delegated_token_env": (
+            "name of the environment variable that holds the delegated Graph token (default "
+            "GRAPH_DELEGATED_TOKEN); the token itself is never configuration"
+        ),
         "include_first_party": (
             "include Microsoft first-party service principals (default false, Copilot SPs always kept)"
         ),
-        "max_app_role_lookups": "cap on per-SP appRoleAssignments calls (default 2000)",
+        "max_app_role_lookups": (
+            "cap on per-principal appRoleAssignments calls, agent identities included (default 2000)"
+        ),
+        "include_agent_identities": (
+            "collect Entra Agent ID agent identities from the Graph beta API (default false)"
+        ),
+        "include_agent_registry": (
+            "collect Microsoft Agent 365 catalog packages as registry records (default false; needs "
+            "CopilotPackages.Read.All)"
+        ),
+        "agent_registry_api": "Graph version for the Agent 365 package catalog: v1.0 (default) or beta",
+        "max_package_lookups": "cap on per-package detail calls (default 2000)",
         "input": "offline: JSON export of Graph objects",
     }
 
@@ -115,11 +282,61 @@ class EntraConnector(BaseConnector):
             ctx.get("include_first_party", False), "include_first_party"
         )
         self.max_lookups = _positive_limit(ctx.get("max_app_role_lookups", 2000), "max_app_role_lookups")
+        self.include_agent_identities = config_boolean(
+            ctx.get("include_agent_identities", False), "include_agent_identities"
+        )
+        self.include_agent_registry = config_boolean(
+            ctx.get("include_agent_registry", False), "include_agent_registry"
+        )
+        self.registry_api = ctx.get("agent_registry_api", "v1.0")
+        if self.registry_api not in AGENT_REGISTRY_APIS:
+            raise ConnectorError("identity.entra: agent_registry_api must be v1.0 or beta")
+        self.max_package_lookups = _positive_limit(
+            ctx.get("max_package_lookups", 2000), "max_package_lookups"
+        )
+        self.auth_mode = ctx.get("auth_mode", "app-only")
+        if self.auth_mode not in AUTH_MODES:
+            raise ConnectorError("identity.entra: auth_mode must be app-only or delegated")
+        token_env = ctx.get("delegated_token_env", DEFAULT_DELEGATED_TOKEN_ENV)
+        if not isinstance(token_env, str) or not _ENV_NAME.fullmatch(token_env):
+            raise ConnectorError("identity.entra: delegated_token_env must name an environment variable")
+        self.delegated_token_env = token_env
+        if self.auth_mode == "delegated":
+            # A delegated scan uses exactly one credential: the signed-in user's token. Its
+            # tenant binds the token (tid) and names the registry.
+            configured = (
+                ctx.config.get("access_token"),
+                ctx.config.get("client_id"),
+                ctx.config.get("client_secret"),
+            )
+            if any(value is not None for value in configured):
+                raise ConnectorError(
+                    "identity.entra: auth_mode delegated does not accept access_token, client_id or "
+                    "client_secret"
+                )
+            if not isinstance(self.tenant, str) or not self.tenant.strip():
+                raise ConnectorError("identity.entra: auth_mode delegated requires tenant_id")
         self.http: HttpClient | None = None
+        # Paths whose collection failed in this run.
+        self._failed: set[str] = set()
+        # Principals whose appRoleAssignments were requested; their number is capped by max_lookups.
+        self._role_lookups: set[str] = set()
+        self._role_lookups_capped = False
 
     # ----------------------------------------------------------------- auth
     def _auth(self) -> None:
+        if self.auth_mode == "delegated":
+            # Never falls back to GRAPH_ACCESS_TOKEN or client credentials from the environment.
+            token = self._delegated_token()
+            self.http = HttpClient(
+                GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"}
+            )
+            return
         token = self.ctx.get("access_token", env="GRAPH_ACCESS_TOKEN")
+        if token and self.include_agent_registry and self._binding_account():
+            # Registry records are attributed to tenant_id, which operators trust; a token
+            # of another tenant must not produce them. A minted token is bound by its request.
+            self._check_token_tenant(token, "the access_token")
         if not token:
             cid = self.ctx.get("client_id", env="AZURE_CLIENT_ID")
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
@@ -142,11 +359,52 @@ class EntraConnector(BaseConnector):
             GRAPH, headers={"Authorization": f"Bearer {token}", "ConsistencyLevel": "eventual"}
         )
 
+    def _delegated_token(self) -> str:
+        """The signed-in user's Graph token from ``delegated_token_env``, checked before any request.
+
+        Graph access tokens cannot be signature-verified by a client, so the claims are read
+        unverified and serve as scope bindings only: the token must be a delegated (``scp``,
+        not ``idtyp: app``) token of ``tenant_id`` that has not expired. Failures use fixed
+        text; neither the token nor its claims enter a message.
+        """
+        name = self.delegated_token_env
+        token = self.ctx.secret_env(name)
+        if not token:
+            raise ConnectorError(f"identity.entra: environment variable {name} is not set")
+        if len(token) > MAX_DELEGATED_TOKEN_CHARS or not _TOKEN_CHARACTERS.fullmatch(token):
+            raise ConnectorError(
+                f"identity.entra: environment variable {name} does not hold a usable access token"
+            )
+        claims = self._check_token_tenant(token, "the delegated token")
+        scopes = claims.get("scp")
+        if claims.get("idtyp") == "app" or not isinstance(scopes, str) or not scopes.strip():
+            raise ConnectorError("identity.entra: the delegated token is not a delegated user token")
+        expires = claims.get("exp")
+        if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires <= time.time():
+            raise ConnectorError("identity.entra: the delegated token has expired")
+        return token
+
+    def _check_token_tenant(self, token: Any, label: str) -> dict[str, Any]:
+        """The unverified claims of a pre-issued token whose tenant (``tid``) must be ``tenant_id``.
+
+        ``label`` is fixed text naming the token; neither the token nor its claims enter a message.
+        """
+        claims = _unverified_claims(token) if isinstance(token, str) else None
+        if claims is None:
+            raise ConnectorError(f"identity.entra: {label} is not a decodable JWT")
+        tenant = claims.get("tid")
+        if not isinstance(tenant, str) or tenant.lower() != str(self.tenant).strip().lower():
+            raise ConnectorError(
+                f"identity.entra: the tenant (tid) of {label} does not match tenant_id (use the tenant ID)"
+            )
+        return claims
+
     def _pages(self, path: str, **kwargs: Any) -> Iterator[dict[str, Any]]:
         assert self.http
         try:
             yield from self.http.paginate_odata(path, **kwargs)
         except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            self._failed.add(path)
             status = failure_summary(exc)
             if path.endswith("/appRoleAssignments"):
                 self.ctx.warn(
@@ -172,18 +430,11 @@ class EntraConnector(BaseConnector):
         for grant in self._pages("/oauth2PermissionGrants", params={"$top": 999}):
             grant["_kind"] = "oauth2PermissionGrant"
             yield grant
-        lookups = 0
-        for sp in sps:
-            if sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER and not self.include_first_party:
-                continue
-            if lookups >= self.max_lookups:
-                self.ctx.warn("identity.entra: max_app_role_lookups reached; app-only permissions partial")
-                break
-            lookups += 1
-            principal = quote(str(sp["id"]), safe="")
-            for a in self._pages(f"/servicePrincipals/{principal}/appRoleAssignments", params={"$top": 999}):
-                a["_kind"] = "appRoleAssignment"
-                yield a
+        yield from self._app_role_assignments(
+            str(sp["id"])
+            for sp in sps
+            if sp.get("appOwnerOrganizationId") != FIRST_PARTY_OWNER or self.include_first_party
+        )
         for app in self._pages(
             "/applications",
             params={
@@ -196,25 +447,154 @@ class EntraConnector(BaseConnector):
         ):
             app["_kind"] = "application"
             yield app
+        if not (self.include_agent_identities or self.include_agent_registry):
+            return
+        identities = "not-collected"
+        if self.include_agent_identities:
+            agent_identities = list(self._pages(AGENT_IDENTITIES))
+            for identity in agent_identities:
+                yield {**identity, "_kind": "agentIdentity"}
+            identities = "incomplete" if AGENT_IDENTITIES in self._failed else "complete"
+            # Agent identities are always reported, so each one's app-only permissions are read,
+            # including those the service principal listing did not return or skipped.
+            yield from self._app_role_assignments(
+                identity_id
+                for identity in agent_identities
+                if isinstance(identity_id := identity.get("id"), str) and identity_id.strip()
+            )
+        packages = "not-collected"
+        if self.include_agent_registry:
+            packages = "complete" if (yield from self._collect_packages()) else "incomplete"
+        yield {
+            "_kind": COVERAGE_KIND,
+            "packages": packages,
+            "agentIdentities": identities,
+            "applications": "incomplete" if "/applications" in self._failed else "complete",
+            # The Graph returns what the signed-in user may see: never a complete registry listing.
+            "listingScope": "caller" if self.auth_mode == "delegated" else "registry",
+        }
+
+    def _app_role_assignments(self, principal_ids: Iterable[str]) -> Iterator[dict[str, Any]]:
+        """Each principal's app role assignments, once per principal, within ``max_app_role_lookups``."""
+        for principal_id in principal_ids:
+            if principal_id in self._role_lookups:
+                continue
+            if len(self._role_lookups) >= self.max_lookups:
+                if not self._role_lookups_capped:
+                    self._role_lookups_capped = True
+                    self.ctx.warn(
+                        "identity.entra: max_app_role_lookups reached; app-only permissions partial"
+                    )
+                return
+            self._role_lookups.add(principal_id)
+            principal = quote(principal_id, safe="")
+            for a in self._pages(f"/servicePrincipals/{principal}/appRoleAssignments", params={"$top": 999}):
+                a["_kind"] = "appRoleAssignment"
+                yield a
+
+    def _collect_packages(self) -> Generator[dict[str, Any], None, bool]:
+        """Agent 365 packages with their details; returns whether the listing finished complete.
+
+        Member lists become counts (``_accessCounts``); the package file and element
+        definitions are not kept. ``_detail`` records whether the detail call succeeded, so a
+        replay of the export knows what was missing.
+        """
+        listing = AGENT_REGISTRY_APIS[self.registry_api] + COPILOT_PACKAGES
+        complete = True
+        capped = False
+        lookups = 0
+        for item in self._pages(listing):
+            record = _package_record(item)
+            package_id = item.get("id")
+            if not isinstance(package_id, str) or not package_id.strip():
+                # Analysis rejects the record; the listing is not complete without it.
+                complete = False
+                yield {**record, "_kind": "copilotPackage"}
+                continue
+            if lookups >= self.max_package_lookups:
+                if not capped:
+                    capped = True
+                    self.ctx.warn("identity.entra: max_package_lookups reached; package details partial")
+                complete = False
+                yield {**record, "_kind": "copilotPackage", "_detail": "limit"}
+                continue
+            lookups += 1
+            detail = self._package_detail(listing, package_id)
+            if detail is None:
+                complete = False
+                yield {**record, "_kind": "copilotPackage", "_detail": "unavailable"}
+            else:
+                yield {**record, **_package_record(detail), "_kind": "copilotPackage", "_detail": "observed"}
+        return complete and listing not in self._failed
+
+    def _package_detail(self, listing: str, package_id: str) -> dict[str, Any] | None:
+        assert self.http
+        try:
+            detail = self.http.get_json(f"{listing}/{quote(package_id, safe='')}")
+        except (HttpError, RequestException, RuntimeError, ValueError) as exc:
+            self.ctx.warn(
+                f"identity.entra: package details unreadable ({failure_summary(exc)}); "
+                "registry coverage incomplete"
+            )
+            return None
+        if not isinstance(detail, dict) or detail.get("id") != package_id:
+            self.ctx.warn(
+                "identity.entra: package details do not describe the listed package; registry coverage "
+                "incomplete"
+            )
+            return None
+        return detail
 
     # -------------------------------------------------------------- analyze
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         graph = self._index_records(records)
-        conflicting = graph.conflicting_sps
+        coverage = self._coverage(graph)
+        packages = {
+            package_id: package
+            for package_id, package in graph.packages.items()
+            if package_id not in graph.conflicting_packages
+        }
+        # Objects an Agent 365 package binds are reported even without AI signals of their own,
+        # so its bindings can match them.
+        bound_principals = {
+            graph.agent_identity_id(package.get("agentIdentityId")) for package in packages.values()
+        } - {None}
+        bound_apps = {_bindable_app_id(package) for package in packages.values()} - {None}
+        conflicting = graph.conflicting_sps | graph.conflicting_agent_identities
         sp_by_app_id = {sp.get("appId"): sp for sp_id, sp in graph.sps.items() if sp_id not in conflicting}
         for sp_id, sp in graph.sps.items():
             if sp_id in conflicting:
                 continue
             self.ctx.examined()
             f = self._sp_finding(
-                sp, graph.grants.get(sp_id, []), graph.role_assignments.get(sp_id, []), graph
+                sp,
+                graph.grants.get(sp_id, []),
+                graph.role_assignments.get(sp_id, []),
+                graph,
+                agent_identity=graph.agent_identities.get(sp_id),
+                keep=sp_id in bound_principals,
+            )
+            if f:
+                yield f
+        for sp_id, identity in graph.agent_identities.items():
+            if sp_id in graph.sps or sp_id in conflicting:
+                continue
+            self.ctx.examined()
+            f = self._sp_finding(
+                identity,
+                graph.grants.get(sp_id, []),
+                graph.role_assignments.get(sp_id, []),
+                graph,
+                agent_identity=identity,
+                sp_type="AgentIdentity",
             )
             if f:
                 yield f
         # A missing principal must not silently erase observed consent or
         # application privileges. Keep the permission evidence, but do not
         # invent the missing application's identity or permit registry approval.
-        unresolved = ((graph.grants.keys() | graph.role_assignments.keys()) - graph.sps.keys()) | conflicting
+        principals = graph.sps.keys() | graph.agent_identities.keys()
+        unresolved = ((graph.grants.keys() | graph.role_assignments.keys()) - principals) | conflicting
         for sp_id in sorted(unresolved):
             self.ctx.examined()
             self.ctx.warn(
@@ -225,15 +605,32 @@ class EntraConnector(BaseConnector):
                 yield f
         for app in graph.applications:
             self.ctx.examined()
-            f = self._app_registration_finding(app, sp_by_app_id.get(app.get("appId")), graph)
+            f = self._app_registration_finding(
+                app, sp_by_app_id.get(app.get("appId")), graph, keep=app.get("appId") in bound_apps
+            )
             if f:
                 yield f
+        for package in graph.packages.values():
+            self.ctx.examined()
+            yield self._package_finding(package, graph, coverage)
+        embedded_cards: set[str] = set()
+        for instance in graph.agent_instances.values():
+            self.ctx.examined()
+            card = instance.get("agentCardManifest")
+            if isinstance(card, dict) and isinstance(card.get("id"), str):
+                embedded_cards.add(card["id"])
+            yield self._instance_finding(instance, graph, coverage)
+        for card_id, card in graph.card_manifests.items():
+            self.ctx.examined()
+            if card_id not in embedded_cards:
+                yield self._card_finding(card, graph)
 
     def _index_records(self, records: Iterable[dict[str, Any]]) -> _GraphExport:
         graph = _GraphExport()
         for rec in records:
             kind = self._record_kind(rec)
             if kind is None:
+                graph.rejected = True
                 self.ctx.warn("identity.entra: unsupported or malformed Graph record; coverage incomplete")
                 continue
             if kind == "roleMap":
@@ -247,7 +644,87 @@ class EntraConnector(BaseConnector):
                 graph.role_assignments.setdefault(rec.get("principalId", ""), []).append(rec)
             elif kind == "application":
                 graph.applications.append(rec)
+            elif kind == "agentIdentity":
+                self._add_unique(
+                    rec,
+                    graph.agent_identities,
+                    graph.conflicting_agent_identities,
+                    graph.agent_identity_snapshots,
+                    "agent identity",
+                )
+            elif kind == "copilotPackage":
+                self._add_unique(
+                    rec, graph.packages, graph.conflicting_packages, graph.package_snapshots, "package"
+                )
+            elif kind == "agentInstance":
+                self._add_unique(
+                    rec, graph.agent_instances, graph.conflicting_instances, {}, "agent instance"
+                )
+            elif kind == "agentCardManifest":
+                self._add_unique(
+                    rec, graph.card_manifests, graph.conflicting_cards, {}, "agent card manifest"
+                )
+            elif kind == COVERAGE_KIND:
+                graph.coverage_markers.append(rec)
         return graph
+
+    def _add_unique(
+        self,
+        rec: dict[str, Any],
+        items: dict[str, dict[str, Any]],
+        conflicts: set[str],
+        snapshots: dict[str, list[dict[str, Any]]],
+        label: str,
+    ) -> None:
+        """Index a record by id; a second record of that id with another body makes it conflicting."""
+        record_id = rec["id"]
+        existing = items.get(record_id)
+        if existing is not None and existing != rec:
+            if record_id not in conflicts:
+                conflicts.add(record_id)
+                self.ctx.warn(f"identity.entra: conflicting {label} records; coverage incomplete")
+            kept = snapshots.setdefault(record_id, [existing])
+            if len(kept) < MAX_CONFLICTING_SNAPSHOTS:
+                kept.append(rec)
+        items[record_id] = rec
+
+    def _coverage(self, graph: _GraphExport) -> _Coverage:
+        """Combine the export's coverage markers; replays re-report incomplete collections.
+
+        Without a marker (an export written by hand, or by a run without opt-in collections)
+        nothing is known to be complete. Markers that disagree count as incomplete.
+        """
+        markers = graph.coverage_markers
+        if not markers:
+            return _Coverage()
+
+        def combined(field: str) -> str:
+            values = {marker[field] for marker in markers}
+            return values.pop() if len(values) == 1 else "incomplete"
+
+        coverage = _Coverage(
+            packages=combined("packages"),
+            agent_identities=combined("agentIdentities"),
+            applications=combined("applications"),
+            listing_scope="caller" if any(m["listingScope"] == "caller" for m in markers) else "registry",
+        )
+        if self.offline:
+            # Live collection warned already; a replay must not look complete.
+            for state, collection in (
+                (coverage.packages, "Agent 365 package listing"),
+                (coverage.agent_identities, "agent identity collection"),
+                (coverage.applications, "app registration collection"),
+            ):
+                if state == "incomplete":
+                    self.ctx.warn(
+                        f"identity.entra: exported {collection} was incomplete; coverage incomplete"
+                    )
+            if any(package.get("_detail") in ("unavailable", "limit") for package in graph.packages.values()):
+                self.ctx.warn(
+                    "identity.entra: exported package details were unavailable or capped; registry "
+                    "coverage incomplete"
+                )
+        return coverage
 
     def _add_principal(self, graph: _GraphExport, rec: dict[str, Any]) -> None:
         """Index a service principal, keeping every conflicting snapshot of its id (bounded)."""
@@ -356,6 +833,12 @@ class EntraConnector(BaseConnector):
             f.metadata["conflicting_principal_snapshots"] = len(graph.conflicting_snapshots[sp_id])
             if sp_id in graph.truncated_snapshots or truncated_evidence:
                 f.metadata["conflicting_principal_evidence_truncated"] = True
+        if _agent_identity_snapshots(sp_id, graph):
+            f.metadata["agent_identity"] = True
+        if sp_id in graph.conflicting_agent_identities:
+            f.metadata["conflicting_agent_identity_snapshots"] = len(graph.agent_identity_snapshots[sp_id])
+            if truncated_evidence:
+                f.metadata["conflicting_principal_evidence_truncated"] = True
         f.add_tag("unresolved-identity")
         kind = f.kind
         finalize(f, self.index)
@@ -366,12 +849,20 @@ class EntraConnector(BaseConnector):
     def _merge_conflicting_snapshots(
         self, f: Finding | None, sp_id: str, graph: _GraphExport
     ) -> tuple[Finding | None, bool]:
-        """Fold AI signals of every conflicting snapshot into *f*; report evidence truncation."""
+        """Fold AI signals of every conflicting snapshot into *f*; report evidence truncation.
+
+        Agent identity records of the principal are folded too: an agent identity is never
+        dropped for lacking AI signals, so its evidence survives an unresolved identity.
+        """
         seen_evidence: set[tuple[str, str]] = set()
         truncated_evidence = False
-        for snapshot in graph.conflicting_snapshots.get(sp_id, []):
+        snapshots: list[tuple[dict[str, Any], dict[str, Any] | None]] = [
+            (snapshot, None) for snapshot in graph.conflicting_snapshots.get(sp_id, [])
+        ]
+        snapshots += [(snapshot, snapshot) for snapshot in _agent_identity_snapshots(sp_id, graph)]
+        for snapshot, identity in snapshots:
             self.ctx.check_deadline()
-            observed = self._sp_finding(snapshot, [], [], graph)
+            observed = self._sp_finding(snapshot, [], [], graph, agent_identity=identity)
             if observed is None:
                 continue
             if f is None:
@@ -430,8 +921,22 @@ class EntraConnector(BaseConnector):
             "oauth2PermissionGrant": ("clientId",),
             "appRoleAssignment": ("principalId", "appRoleId"),
             "roleMap": (),
+            "agentIdentity": ("id",),
+            "copilotPackage": ("id",),
+            "agentInstance": ("id",),
+            "agentCardManifest": ("id",),
+            COVERAGE_KIND: (),
         }
         if kind not in required or not self._record_fields_valid(rec, required=required[kind]):
+            return None
+        validators = {
+            "agentIdentity": self._valid_agent_identity,
+            "copilotPackage": self._valid_package,
+            "agentInstance": self._valid_instance,
+            "agentCardManifest": self._valid_card,
+            COVERAGE_KIND: _valid_coverage,
+        }
+        if kind in validators and not validators[kind](rec):
             return None
         if kind == "oauth2PermissionGrant" and not isinstance(rec.get("scope"), str):
             return None
@@ -468,15 +973,104 @@ class EntraConnector(BaseConnector):
                 return None
         return kind
 
+    def _valid_agent_identity(self, rec: dict[str, Any]) -> bool:
+        return (
+            self._record_fields_valid(
+                rec,
+                strings=(
+                    "agentIdentityBlueprintId",
+                    "createdByAppId",
+                    "disabledByMicrosoftStatus",
+                    "createdDateTime",
+                ),
+                arrays=("managerApplications",),
+            )
+            and _strings(rec.get("managerApplications"))
+            and _bounded_ids(rec, "id")
+        )
+
+    def _valid_package(self, rec: dict[str, Any]) -> bool:
+        if not self._record_fields_valid(
+            rec,
+            strings=_PACKAGE_STRINGS,
+            arrays=("elementTypes", "supportedHosts", "categories", *_ACCESS_LISTS),
+            mappings=("_accessCounts",),
+        ):
+            return False
+        counts = rec.get("_accessCounts") or {}
+        return (
+            (rec.get("isBlocked") is None or isinstance(rec["isBlocked"], bool))
+            and all(_strings(rec.get(field)) for field in ("elementTypes", "supportedHosts", "categories"))
+            and all(isinstance(item, dict) for field in _ACCESS_LISTS for item in rec.get(field) or [])
+            and all(name in _ACCESS_LISTS and _count(value) for name, value in counts.items())
+            and all(
+                rec.get(field) is None or _count(rec[field]) for field in ("activeUsers", "totalSessions")
+            )
+            and rec.get("_detail") in (None, *PACKAGE_DETAIL_STATES)
+            and _bounded_ids(rec, "id", "appId", "agentIdentityId", "publisher")
+        )
+
+    def _valid_instance(self, rec: dict[str, Any]) -> bool:
+        if not self._record_fields_valid(
+            rec,
+            strings=_INSTANCE_STRINGS,
+            arrays=("ownerIds", "additionalInterfaces", "signatures"),
+            mappings=("agentCardManifest",),
+        ):
+            return False
+        card = rec.get("agentCardManifest")
+        return (
+            _strings(rec.get("ownerIds"))
+            and all(
+                self._record_fields_valid(interface, strings=("url", "transport"))
+                for interface in rec.get("additionalInterfaces") or []
+            )
+            and all(isinstance(signature, dict) for signature in rec.get("signatures") or [])
+            and (card is None or self._valid_card(card))
+            and _bounded_ids(rec, "id", "agentIdentityId")
+        )
+
+    def _valid_card(self, rec: dict[str, Any]) -> bool:
+        if not self._record_fields_valid(
+            rec,
+            strings=_CARD_STRINGS,
+            mappings=("provider", "capabilities", "securitySchemes"),
+            arrays=("skills", "defaultInputModes", "defaultOutputModes", "security", "ownerIds"),
+        ):
+            return False
+        return (
+            self._record_fields_valid(rec.get("provider") or {}, strings=("organization", "url"))
+            and all(
+                self._record_fields_valid(skill, strings=("id", "name", "description"))
+                for skill in rec.get("skills") or []
+            )
+            and all(
+                _strings(rec.get(field)) for field in ("defaultInputModes", "defaultOutputModes", "ownerIds")
+            )
+            and _bounded_ids(rec, "id")
+        )
+
     def _sp_finding(
         self,
         sp: dict[str, Any],
         grants: list[dict[str, Any]],
         roles: list[dict[str, Any]],
         graph: _GraphExport,
+        *,
+        agent_identity: dict[str, Any] | None = None,
+        keep: bool = False,
+        sp_type: str | None = None,
     ) -> Finding | None:
+        """The finding for a service principal, or None when it shows nothing AI-related.
+
+        An agent identity (``agent_identity``: its Agent ID record) and a principal an Agent 365
+        package names (``keep``) are always reported. A standalone agent identity passes
+        ``sp_type`` ``AgentIdentity``; the identity discriminator stays ``service-principal``,
+        so its finding id does not change when the service principal listing also returns it.
+        """
         first_party = sp.get("appOwnerOrganizationId") == FIRST_PARTY_OWNER
-        sp_type = sp.get("servicePrincipalType") or "Application"
+        sp_type = sp_type or sp.get("servicePrincipalType") or "Application"
+        retained = keep or agent_identity is not None
         delegated, principals, admin_consented = _grant_consent(grants)
         app_perms = sorted(
             {
@@ -485,17 +1079,21 @@ class EntraConnector(BaseConnector):
                 if isinstance(role_id := r.get("appRoleId"), str) and role_id
             }
         )
-        machine = sp_type == "ManagedIdentity" or bool(app_perms)
+        machine = sp_type == "ManagedIdentity" or bool(app_perms) or agent_identity is not None
         user_consented = bool(principals) or admin_consented
         kind = identity_kind_for(user_consented=user_consented, machine=machine)
         name = sp.get("displayName") or sp.get("appDisplayName") or sp.get("appId")
+        if agent_identity is not None:
+            # An agent's own identity, whatever consent it holds; the grants stay as evidence.
+            kind = Kind.SERVICE_IDENTITY
+            label = "agent identity"
+        else:
+            label = "managed identity" if sp_type == "ManagedIdentity" else "service principal"
         f = Finding(
             surface=Surface.IDENTITY,
             connector=self.name,
             kind=kind,
-            title=(
-                f"Entra {'managed identity' if sp_type == 'ManagedIdentity' else 'service principal'}: {name}"
-            ),
+            title=f"Entra {label}: {name}",
             resource=f"entra:sp:{sp.get('id')}",
             resource_type=f"service-principal/{sp_type}",
             provider="entra",
@@ -514,9 +1112,15 @@ class EntraConnector(BaseConnector):
             scopes=sorted(delegated) + app_perms,
             client_id=sp.get("appId"),
         )
-        if first_party and not f.frameworks and not self.include_first_party:
+        if not retained and first_party and not f.frameworks and not self.include_first_party:
             return None
-        if not f.frameworks and not delegated and not app_perms and sp_type != "ManagedIdentity":
+        if (
+            not retained
+            and not f.frameworks
+            and not delegated
+            and not app_perms
+            and sp_type != "ManagedIdentity"
+        ):
             return None
         f.add_evidence(
             Evidence(
@@ -557,13 +1161,48 @@ class EntraConnector(BaseConnector):
                 "reply_urls": (sp.get("replyUrls") or [])[:10],
             }
         )
+        if agent_identity is not None:
+            self._agent_identity_details(f, agent_identity, name)
+        if keep:
+            f.metadata["registry_bound"] = True
         finalize(f, self.index)
         f.kind = kind
         return f
 
+    @staticmethod
+    def _agent_identity_details(f: Finding, identity: dict[str, Any], name: Any) -> None:
+        """Agent ID evidence, tag and metadata for a principal that is an agent identity."""
+        blueprint = identity.get("agentIdentityBlueprintId")
+        creator = identity.get("createdByAppId")
+        f.add_evidence(
+            Evidence(
+                signal="entra:agent-identity",
+                description=(
+                    f"Entra Agent ID agent identity '{name}' (blueprint appId {blueprint or 'unknown'}, "
+                    f"created by appId {creator or 'unknown'})"
+                ),
+                location=(
+                    "https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/"
+                    f"~/Overview/objectId/{identity.get('id')}"
+                ),
+                weight=0.4,
+            )
+        )
+        f.add_tag("entra-agent-identity")
+        f.metadata.update(
+            {
+                "agent_identity": True,
+                "agent_identity_blueprint_id": blueprint,
+                "created_by_app_id": creator,
+                "disabled_by_microsoft_status": identity.get("disabledByMicrosoftStatus"),
+                "manager_applications": (identity.get("managerApplications") or [])[:10],
+            }
+        )
+
     def _app_registration_finding(
-        self, app: dict[str, Any], sp: dict[str, Any] | None, graph: _GraphExport
+        self, app: dict[str, Any], sp: dict[str, Any] | None, graph: _GraphExport, *, keep: bool = False
     ) -> Finding | None:
+        """The finding for a tenant app registration; ``keep`` reports one an Agent 365 package names."""
         name = app.get("displayName") or app.get("appId")
         requested_roles: set[str] = set()
         requested_scopes: set[str] = set()
@@ -612,11 +1251,16 @@ class EntraConnector(BaseConnector):
         requested_classes = sorted({m.signature_id for m in scope_matches(self.index, requested)})
         secrets = app.get("passwordCredentials") or []
         certs = app.get("keyCredentials") or []
-        if not f.frameworks and not set(requested_classes) & {
-            "policy.llm-access-scopes",
-            "policy.privileged-scopes",
-            "policy.data-access-scopes",
-        }:
+        if (
+            not keep
+            and not f.frameworks
+            and not set(requested_classes)
+            & {
+                "policy.llm-access-scopes",
+                "policy.privileged-scopes",
+                "policy.data-access-scopes",
+            }
+        ):
             return None
         f.add_evidence(
             Evidence(
@@ -652,8 +1296,326 @@ class EntraConnector(BaseConnector):
                 "has_service_principal": sp is not None,
             }
         )
+        if keep:
+            f.metadata["registry_bound"] = True
         finalize(f, self.index)
         f.kind = Kind.SERVICE_IDENTITY
+        return f
+
+    # ------------------------------------------------------ registry records
+    def _binding_account(self) -> str | None:
+        return self.tenant if isinstance(self.tenant, str) and self.tenant else None
+
+    def _registry_record(
+        self,
+        registry: str,
+        record_id: str,
+        status: str,
+        descriptor_type: str,
+        bindings: list[dict[str, Any]],
+        *,
+        listing_complete: bool = False,
+        approval_mode: str = "unknown",
+        listing_scope: str = "registry",
+        publisher: Any = None,
+        updated_at: Any = None,
+    ) -> dict[str, Any]:
+        """A ``shadowscan.registry-record/v1`` block; the registry id is the tenant ("" when unknown)."""
+        tenant = (
+            self.tenant if isinstance(self.tenant, str) and len(self.tenant) <= MAX_IDENTIFIER_LENGTH else ""
+        )
+        record: dict[str, Any] = {
+            "schema": RECORD_SCHEMA,
+            "registry": registry,
+            # Without a tenant the registry is unidentified, so its records can never be trusted.
+            "registry_id": tenant,
+            "record_id": record_id,
+            "status": status,
+            "descriptor_type": descriptor_type,
+            "bindings": bindings,
+            "listing_complete": listing_complete,
+            "approval_mode": approval_mode,
+            "listing_scope": listing_scope,
+        }
+        if isinstance(publisher, str) and publisher.strip():
+            record["publisher"] = publisher
+        if isinstance(updated_at, str) and len(updated_at) <= MAX_IDENTIFIER_LENGTH:
+            record["updated_at"] = updated_at
+        return record
+
+    def _principal_binding(
+        self, principal_id: Any, graph: _GraphExport, coverage: _Coverage
+    ) -> list[dict[str, Any]]:
+        """A binding to the service principal finding of an agent identity.
+
+        Only a listed agent identity is bound: a record naming any other service principal
+        (a privileged application, say) must not approve it.
+        """
+        principal = graph.agent_identity_id(principal_id)
+        if principal is None:
+            return []
+        return [
+            {
+                "resource": f"entra:sp:{principal}",
+                "provider": "entra",
+                "account": self._binding_account(),
+                # In scope only when this run (or the replayed one) listed agent identities completely.
+                "coverage": _binding_coverage(coverage.agent_identities, coverage),
+            }
+        ]
+
+    def _package_finding(self, package: dict[str, Any], graph: _GraphExport, coverage: _Coverage) -> Finding:
+        """An Agent 365 catalog package as a ``microsoft-agent-365`` registry record finding."""
+        package_id = package["id"]
+        conflicting = package_id in graph.conflicting_packages
+        snapshots = graph.package_snapshots.get(package_id, [package]) if conflicting else [package]
+        agentic = any(_agentic_package(snapshot) for snapshot in snapshots)
+        kind = Kind.AGENT if agentic else Kind.AI_APP
+        name = package.get("displayName") or package_id
+        f = Finding(
+            surface=Surface.IDENTITY,
+            connector=self.name,
+            kind=kind,
+            title=(
+                f"Microsoft 365 package with conflicting records: {package_id}"
+                if conflicting
+                else f"Microsoft 365 {'agent' if agentic else 'app'} package: {name}"
+            ),
+            # The resource type is constant so the identity does not depend on the package type.
+            resource=f"entra:copilot-package:{package_id}",
+            resource_type="copilot-package",
+            provider="entra",
+            account=self.tenant,
+            first_seen=None if conflicting else package.get("createdDateTime"),
+            last_seen=None if conflicting else package.get("lastUsedDateTime"),
+        )
+        location = f"{GRAPH}{COPILOT_PACKAGES}/{quote(package_id, safe='')}"
+        if conflicting:
+            # No snapshot's name, publisher, status or bindings is chosen: nothing here approves.
+            f.add_evidence(
+                registry_evidence(
+                    AGENT_365,
+                    f"Agent 365 package {package_id} was exported with {len(snapshots)} conflicting records",
+                    location=location,
+                )
+            )
+            f.add_tag("registry-record")
+            f.add_tag("unresolved-identity")
+            f.metadata.update(
+                {
+                    "identity_unresolved": True,
+                    "conflicting_package_snapshots": len(snapshots),
+                    RECORD_KEY: self._registry_record(AGENT_365, package_id, "unknown", "package", []),
+                }
+            )
+            finalize(f, self.index)
+            f.kind = kind
+            return f
+        status = _package_status(package)
+        package_type = _enum(package.get("type"))
+        org_published = package_type in _ORG_PUBLISHED_TYPES
+        assess_app(
+            self.index,
+            f,
+            name=name,
+            publisher=package.get("publisher"),
+            description=" ".join(
+                x for x in (package.get("shortDescription"), package.get("longDescription")) if x
+            ),
+            client_id=package.get("appId"),
+        )
+        bindings = self._principal_binding(package.get("agentIdentityId"), graph, coverage)
+        app_id = _bindable_app_id(package)
+        if app_id:
+            bindings.append(
+                {
+                    "resource": f"entra:app:{app_id}",
+                    "provider": "entra",
+                    "account": self._binding_account(),
+                    "coverage": _binding_coverage(coverage.applications, coverage),
+                }
+            )
+        # A caller-scoped listing shows what the signed-in user may see: never the whole registry.
+        listing_complete = (
+            coverage.listing_scope == "registry"
+            and coverage.packages == "complete"
+            and not graph.conflicting_packages
+            and not graph.rejected
+        )
+        access = _access_counts(package)
+        f.add_evidence(
+            registry_evidence(
+                AGENT_365,
+                (
+                    f"Agent 365 catalog package '{name}' (type {package.get('type') or 'unknown'}, publisher "
+                    f"{package.get('publisher') or 'unknown'}): status {status}, blocked="
+                    f"{package.get('isBlocked')}, available to {package.get('availableTo') or 'unknown'}, "
+                    f"deployed to {package.get('deployedTo') or 'unknown'}"
+                ),
+                location=location,
+            )
+        )
+        f.add_tag("registry-record")
+        if status == "blocked":
+            f.add_tag("registry-blocked")
+        f.metadata.update(
+            {
+                "app_id": package.get("appId"),
+                "agent_identity_id": package.get("agentIdentityId"),
+                "package_type": package.get("type"),
+                "element_types": (package.get("elementTypes") or [])[:20],
+                "supported_hosts": (package.get("supportedHosts") or [])[:20],
+                "platform": package.get("platform"),
+                "version": package.get("version"),
+                "manifest_id": package.get("manifestId"),
+                "manifest_version": package.get("manifestVersion"),
+                "governance_class": package.get("governanceMetadata"),
+                "is_blocked": package.get("isBlocked"),
+                "available_to": package.get("availableTo"),
+                "deployed_to": package.get("deployedTo"),
+                "request_status": package.get("requestStatus"),
+                "request_type": package.get("requestType"),
+                "publisher": package.get("publisher"),
+                "categories": (package.get("categories") or [])[:20],
+                "sensitivity": package.get("sensitivity"),
+                # Member lists are counted, never listed.
+                "allowed_principals": access.get("allowedUsersAndGroups"),
+                "acquired_principals": access.get("acquireUsersAndGroups"),
+                "shared_principals": access.get("sharedWithUsersAndGroups"),
+                "active_users": package.get("activeUsers"),
+                "total_sessions": package.get("totalSessions"),
+                "package_detail": package.get("_detail", "unspecified"),
+                RECORD_KEY: self._registry_record(
+                    AGENT_365,
+                    package_id,
+                    status,
+                    "package",
+                    bindings,
+                    listing_complete=listing_complete,
+                    approval_mode="manual"
+                    if org_published and _enum(package.get("requestStatus")) == "approved"
+                    else "unknown",
+                    listing_scope=coverage.listing_scope,
+                    publisher=package.get("publisher"),
+                    updated_at=package.get("lastModifiedDateTime"),
+                ),
+            }
+        )
+        finalize(f, self.index)
+        f.kind = kind
+        return f
+
+    def _instance_finding(
+        self, instance: dict[str, Any], graph: _GraphExport, coverage: _Coverage
+    ) -> Finding:
+        """A deprecated Entra agent registry instance (offline import): ``deprecated``, never approving."""
+        instance_id = instance["id"]
+        conflicting = instance_id in graph.conflicting_instances
+        card = instance.get("agentCardManifest") if not conflicting else None
+        name = instance_id if conflicting else instance.get("displayName") or instance_id
+        f = Finding(
+            surface=Surface.IDENTITY,
+            connector=self.name,
+            kind=Kind.AGENT,
+            title=f"Entra agent registry instance (deprecated source): {name}",
+            resource=f"entra:agent-registry-instance:{instance_id}",
+            resource_type="agent-registry-instance",
+            provider="entra",
+            account=self.tenant,
+            first_seen=None if conflicting else instance.get("createdDateTime"),
+        )
+        location = f"{GRAPH_BETA}/agentRegistry/agentInstances/{quote(instance_id, safe='')}"
+        if conflicting:
+            f.add_evidence(
+                registry_evidence(
+                    DEPRECATED_REGISTRY,
+                    f"Deprecated Entra agent registry instance {instance_id} was exported with "
+                    "conflicting records",
+                    location=location,
+                )
+            )
+            f.add_tag("unresolved-identity")
+            bindings: list[dict[str, Any]] = []
+            f.metadata["identity_unresolved"] = True
+        else:
+            assess_app(
+                self.index,
+                f,
+                name=name,
+                description=(card or {}).get("description"),
+                urls=[instance.get("url")],
+            )
+            f.add_evidence(
+                registry_evidence(
+                    DEPRECATED_REGISTRY,
+                    (
+                        f"Deprecated Entra agent registry instance '{name}' from "
+                        f"{instance.get('originatingStore') or 'an unknown store'}"
+                    ),
+                    location=location,
+                )
+            )
+            bindings = self._principal_binding(instance.get("agentIdentityId"), graph, coverage)
+            f.metadata.update(
+                {
+                    "endpoint": instance.get("url"),
+                    "preferred_transport": instance.get("preferredTransport"),
+                    "transports": sorted(
+                        {
+                            i["transport"]
+                            for i in instance.get("additionalInterfaces") or []
+                            if i.get("transport")
+                        }
+                    )[:10],
+                    "originating_store": instance.get("originatingStore"),
+                    "source_agent_id": instance.get("sourceAgentId"),
+                    "agent_identity_id": instance.get("agentIdentityId"),
+                    "agent_identity_blueprint_id": instance.get("agentIdentityBlueprintId"),
+                    "agent_user_id": instance.get("agentUserId"),
+                    "managed_by": instance.get("managedBy"),
+                    "owners": len(instance.get("ownerIds") or []),
+                    "signatures": len(instance.get("signatures") or []),
+                    "agent_card": _card_summary(card) if isinstance(card, dict) else None,
+                }
+            )
+        f.add_tag("registry-record")
+        f.metadata[RECORD_KEY] = self._registry_record(
+            DEPRECATED_REGISTRY, instance_id, "deprecated", "agent", bindings
+        )
+        finalize(f, self.index)
+        f.kind = Kind.AGENT
+        return f
+
+    def _card_finding(self, card: dict[str, Any], graph: _GraphExport) -> Finding:
+        """A deprecated Entra agent registry card manifest that no exported instance embeds."""
+        card_id = card["id"]
+        conflicting = card_id in graph.conflicting_cards
+        name = card_id if conflicting else card.get("displayName") or card_id
+        f = Finding(
+            surface=Surface.IDENTITY,
+            connector=self.name,
+            kind=Kind.AGENT,
+            title=f"Entra agent registry card (deprecated source): {name}",
+            resource=f"entra:agent-registry-card:{card_id}",
+            resource_type="agent-registry-card",
+            provider="entra",
+            account=self.tenant,
+        )
+        if conflicting:
+            f.add_tag("unresolved-identity")
+            f.metadata["identity_unresolved"] = True
+            description = (
+                f"Deprecated Entra agent registry card {card_id} was exported with conflicting records"
+            )
+        else:
+            assess_app(self.index, f, name=name, description=card.get("description"))
+            f.metadata["agent_card"] = _card_summary(card)
+            description = f"Deprecated Entra agent registry card '{name}'"
+        f.add_evidence(registry_evidence(DEPRECATED_REGISTRY, description))
+        f.add_tag("registry-record")
+        f.metadata[RECORD_KEY] = self._registry_record(DEPRECATED_REGISTRY, card_id, "deprecated", "a2a", [])
+        finalize(f, self.index)
+        f.kind = Kind.AGENT
         return f
 
 
@@ -695,8 +1657,175 @@ def _permission_evidence(
         f.add_tag("app-only-permissions")
 
 
+def _unverified_claims(token: str) -> dict[str, Any] | None:
+    """A JWT's claims without signature verification; None when it is not a strict JWT."""
+    import jwt as pyjwt
+
+    try:
+        # Duplicate claim names would make the tenant binding ambiguous.
+        for segment in token.split(".")[:2]:
+            strict_json_loads(pyjwt.utils.base64url_decode(segment))
+        claims = pyjwt.decode(
+            token,
+            options={
+                "verify_signature": False,
+                "verify_exp": False,
+                "verify_nbf": False,
+                "verify_iat": False,
+                "verify_aud": False,
+            },
+        )
+    except (pyjwt.PyJWTError, RecursionError, ValueError):
+        return None
+    return claims if isinstance(claims, dict) else None
+
+
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _enum(value: Any) -> str | None:
+    """An evolvable Graph enum member, compared case-insensitively."""
+    return value.strip().lower() if isinstance(value, str) and value.strip() else None
+
+
+def _strings(value: Any) -> bool:
+    return value is None or (isinstance(value, list) and all(isinstance(item, str) for item in value))
+
+
+def _count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _bounded_ids(rec: dict[str, Any], *fields: str) -> bool:
+    """Identities that fit a registry record once prefixed (``entra:sp:``) as binding resources."""
+    return all(len(rec.get(field) or "") <= MAX_IDENTIFIER_LENGTH // 2 for field in fields)
+
+
+def _valid_coverage(rec: dict[str, Any]) -> bool:
+    return (
+        rec.get("packages") in COVERAGE_STATES
+        and rec.get("agentIdentities") in COVERAGE_STATES
+        and rec.get("applications") in ("complete", "incomplete")
+        and rec.get("listingScope") in LISTING_SCOPES
+    )
+
+
+def _package_record(item: dict[str, Any]) -> dict[str, Any]:
+    """A collected package without member ids, the package file or element definitions."""
+    record = {key: value for key, value in item.items() if key not in _DROPPED_PACKAGE_FIELDS}
+    counts = {field: len(item[field]) for field in _ACCESS_LISTS if isinstance(item.get(field), list)}
+    if counts:
+        record["_accessCounts"] = counts
+    return record
+
+
+def _access_counts(package: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = dict(package.get("_accessCounts") or {})
+    for field in _ACCESS_LISTS:
+        if isinstance(package.get(field), list):
+            counts[field] = len(package[field])
+    return counts
+
+
+def _package_status(package: dict[str, Any]) -> str:
+    """The registry status of an Agent 365 package.
+
+    Blocked, then an open or rejected request, then a package available to nobody (draft).
+    Otherwise a package explicitly not blocked and available to all or some users, with no
+    request or an approved one, is approved; any other combination (a missing flag, an
+    unknown enum member) is unknown.
+    """
+    if package.get("isBlocked") is True:
+        return "blocked"
+    request = _enum(package.get("requestStatus"))
+    if request == "pending":
+        return "pending"
+    if request == "rejected":
+        return "rejected"
+    available = _enum(package.get("availableTo"))
+    if available in _AVAILABLE_TO_NONE:
+        return "draft"
+    if package.get("isBlocked") is False and available in _AVAILABLE and request in (None, "approved"):
+        return "approved"
+    return "unknown"
+
+
+def _bindable_app_id(package: dict[str, Any]) -> str | None:
+    """The appId of an organization's own package; a vendor package's app is registered elsewhere.
+
+    Microsoft and partner packages are registered in the publisher's tenant, so an app
+    registration of this tenant with that appId is not theirs and is never bound.
+    """
+    return _text(package.get("appId")) if _enum(package.get("type")) in _ORG_PUBLISHED_TYPES else None
+
+
+def _binding_coverage(state: str, coverage: _Coverage) -> str:
+    """``in-scope`` only for a collection that finished complete over the whole tenant."""
+    return "in-scope" if state == "complete" and coverage.listing_scope == "registry" else "unknown"
+
+
+def _agentic_package(package: dict[str, Any]) -> bool:
+    elements = {_enum(element) for element in package.get("elementTypes") or []}
+    return bool(elements & _AGENT_ELEMENT_TYPES) or _enum(package.get("governanceMetadata")) in _AGENT_CLASSES
+
+
+def _card_summary(card: dict[str, Any]) -> dict[str, Any]:
+    """A bounded summary of an A2A agent card manifest; scheme definitions are named, not copied."""
+    provider = card.get("provider") or {}
+    skills = card.get("skills") or []
+    return {
+        "id": card.get("id"),
+        "name": card.get("displayName"),
+        "description": (card.get("description") or "")[:300] or None,
+        "protocol_version": card.get("protocolVersion"),
+        "version": card.get("version"),
+        "provider": provider.get("organization"),
+        "skills": [name for skill in skills if (name := skill.get("name") or skill.get("id"))][:25],
+        "input_modes": (card.get("defaultInputModes") or [])[:10],
+        "output_modes": (card.get("defaultOutputModes") or [])[:10],
+        "capabilities": sorted(
+            str(name) for name, value in (card.get("capabilities") or {}).items() if value is True
+        )[:10],
+        "security_schemes": sorted(str(name) for name in card.get("securitySchemes") or {})[:10],
+        "documentation_url": card.get("documentationUrl"),
+    }
+
+
+def _agent_identity_snapshots(sp_id: str, graph: _GraphExport) -> list[dict[str, Any]]:
+    """Every agent identity record of a principal: its conflicting snapshots, or the one record."""
+    if sp_id in graph.conflicting_agent_identities:
+        return graph.agent_identity_snapshots[sp_id]
+    identity = graph.agent_identities.get(sp_id)
+    return [identity] if identity is not None else []
+
+
+# Graph casts of the agent-related kinds; a record's @odata.type names its kind exactly.
+_ODATA_KINDS = {
+    "agentidentity": "agentIdentity",
+    "copilotpackage": "copilotPackage",
+    "copilotpackagedetail": "copilotPackage",
+    "agentinstance": "agentInstance",
+    "agentcardmanifest": "agentCardManifest",
+}
+
+
 def _infer_kind(rec: dict[str, Any]) -> str:
     odata = str(rec.get("@odata.type", "")).lower()
+    cast = odata.rsplit(".", 1)[-1].lstrip("#")
+    if cast in _ODATA_KINDS:
+        return _ODATA_KINDS[cast]
+    if not odata:
+        # Shapes of untyped agent records. Agent identities also carry servicePrincipalType, and
+        # agent instances an agentIdentityBlueprintId, so these come before the older shapes.
+        if {"elementTypes", "supportedHosts", "isBlocked"} & rec.keys():
+            return "copilotPackage"
+        if {"preferredTransport", "agentUserId", "agentIdentityId"} & rec.keys():
+            return "agentInstance"
+        if {"protocolVersion", "skills"} <= rec.keys():
+            return "agentCardManifest"
+        if "agentIdentityBlueprintId" in rec:
+            return "agentIdentity"
     if "serviceprincipal" in odata or "servicePrincipalType" in rec:
         return "servicePrincipal"
     if "permissiongrant" in odata or "consentType" in rec:

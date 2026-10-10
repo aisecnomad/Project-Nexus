@@ -13,6 +13,9 @@ are available:
 - `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and
   `endpoint.ebpf` consume bounded offline exports from host, MDM, MCP, model
   and eBPF collectors (see [offline inventories](#offline-host-mcp-model-and-ebpf-inventories)).
+  `endpoint.mcp` can also fetch the A2A Agent Cards of agents the operator
+  lists (see [A2A Agent Card probe](#a2a-agent-card-probe)); it probes
+  nothing else.
 
 Running processes are reported by [`runtime.processes`](runtime.md); the
 engine links them to `endpoint.inventory` findings for the same tool and
@@ -60,6 +63,12 @@ as `metadata.approval_gate`, as in the
 extensions and commands from shell history count as person-started
 (`initiation: human`); a configured client does not, because it can also run
 unattended.
+
+With [`options.mcp_registries`](../getting-started/configuration.md#mcp-registry-snapshots),
+each client's MCP servers are matched against pinned MCP Registry snapshots by
+package and remote URL, as for the code connector: see
+[MCP registry provenance](code.md#mcp-registry-provenance). The matching runs
+in the engine, so `--dump-records` exports and replays are unchanged.
 
 Options:
 
@@ -140,10 +149,12 @@ ran; shell history is evidence of use on that account only.
 
 The `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`,
 `endpoint.ebpf` and `gateway.otel` connectors consume bounded offline JSON,
-JSONL, or YAML exports. They do not probe network services, discover local
-configuration files, or traverse model directories in the current version
-(`endpoint.inventory` above reads its fixed list of local locations). Supply
-only synthetic or appropriately sanitized exports.
+JSONL, or YAML exports. They do not discover local configuration files or
+traverse model directories (`endpoint.inventory` above reads its fixed list of
+local locations), and they probe no network service, with one opt-in
+exception: `endpoint.mcp` fetches the A2A Agent Cards listed in
+`agent_card_urls` ([below](#a2a-agent-card-probe)). MCP servers are never
+contacted. Supply only synthetic or appropriately sanitized exports.
 
 These offline inventories are not correlated with other surfaces. In
 particular, MCP tool fingerprints are not compared with a rug-pull baseline.
@@ -151,7 +162,7 @@ particular, MCP tool fingerprints are not compared with a rug-pull baseline.
 | Connector | Offline input |
 |---|---|
 | `endpoint.host` | Host/MDM inventory records with a runtime or configuration name |
-| `endpoint.mcp` | Server records containing MCP tool-list responses |
+| `endpoint.mcp` | Server records containing MCP tool-list responses, and A2A card records exported with `--dump-records` |
 | `endpoint.ollama` | Ollama-compatible model inventory, including an `endpoint` and `models` list |
 | `endpoint.models` | Artifact metadata records; do not serialize model contents |
 | `endpoint.ebpf` | Tetragon, Falco, Tracee, or Hubble event records |
@@ -161,7 +172,10 @@ MCP tool definitions are analyzed for risky capability names, prompt-injection
 or exfiltration indicators, missing declared authentication, and duplicate
 tool names across servers. Tool definitions are fingerprinted for downstream
 comparison, but baseline/rug-pull detection is not yet implemented. No tool is
-invoked.
+invoked. With `options.mcp_registries`, a tool finding whose server is an
+HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL
+(`metadata.mcp_registry.matches`); a bare server name identifies nothing and
+is counted as `unidentified`, so an approved registry never vouches for it.
 
 OTLP analysis selects only service, agent, provider, model, and operation
 attributes; prompt and completion content is not copied into findings.
@@ -171,5 +185,130 @@ are tagged and are never unpickled.
 
 eBPF event correlation is heuristic and offline-only. ShadowScan does not load
 eBPF programs; example operator policies are under `examples/ebpf/`.
+
+## A2A Agent Card probe
+
+An [A2A Agent Card](https://github.com/a2aproject/A2A/blob/main/docs/specification.md)
+is the JSON document an Agent2Agent server publishes to describe itself: its
+name, the interfaces (URL and protocol binding) peers call, its skills, the
+security schemes it accepts and, optionally, JWS signatures over the card. It
+is not ShadowScan's [Capability Card](../inventory.md#agent-capability-cards-one-yaml-per-agent)
+(`agent-card.yaml`), which an operator writes to sanction findings; a
+discovered A2A card never registers or approves anything, signed or not.
+
+`endpoint.mcp` fetches cards only from the URLs you list. Card files in a
+repository or on a workstation are read by [`code.filesystem`](code.md) and
+`shadowscan endpoint` instead; both produce the same `metadata.agent_card`.
+
+```yaml
+connectors:
+  - name: endpoint.mcp
+    agent_card_urls:
+      - https://planner.agents.example.com          # origin: well-known path
+      - https://agents.example.com/cards/travel.json # exact card URL
+    agent_card_jwks_url: https://keys.agents.example.com/jwks.json  # optional
+```
+
+Options:
+
+- `agent_card_urls`: the HTTPS card URLs or agent origins to fetch. An origin
+  (no path, or `/`) is fetched at `/.well-known/agent-card.json`; only an
+  HTTP 404 there tries the older `/.well-known/agent.json`. Any other URL is
+  fetched as written, query included. Each entry must be HTTPS without
+  embedded credentials, and the list is checked when the connector is built:
+  an invalid entry stops the connector (exit 3).
+- `max_agent_cards`: the most entries `agent_card_urls` may hold (default
+  100). A longer list is refused, never truncated.
+- `agent_card_jwks_url`: an optional operator-trusted HTTPS JWKS endpoint.
+  Signatures are verified against these keys only.
+- `ca_bundle`: an optional PEM file trusted instead of the default CA store
+  for the card and JWKS endpoints (a private CA). TLS verification stays on.
+- `input`: replays records exported with `--dump-records`; without
+  `agent_card_urls` or `input` the connector has nothing to read. A replay
+  never probes, so a job that sets both `input` and `agent_card_urls` is
+  refused when the connector is built (exit 3) instead of leaving the listed
+  agents unchecked. `agent_card_jwks_url` may accompany `input`.
+
+Fetch rules:
+
+- URLs declared inside a card (interfaces, provider, documentation, icons,
+  a signature header's `jku` or `x5u`) are never fetched, and no A2A method is
+  called.
+- Redirects must stay on the card URL's origin. Loopback, private,
+  link-local and cloud-metadata addresses are refused unless the scan sets
+  `options.allow_private_origin`. Proxies are not used.
+- A card is read up to 1 MiB, as strict JSON: duplicate keys and non-finite
+  numbers are refused.
+- Every failure is an error and the scan is incomplete (exit 3): an
+  unreachable agent, an HTTP error, a redirect off the origin, an oversized or
+  malformed body, a body that is not a JSON object, or a document that is not
+  an Agent Card. One failing agent does not stop the others.
+
+Findings: one per card, kind `agent` with framework `protocol.a2a` and
+capability `multi-agent`, `resource` the card URL without query or fragment,
+`resource_type` `a2a-agent-card` and `provider` `a2a`. A card that names its
+agent and declares an endpoint, skills or capabilities but misses required
+fields is reported as an `incomplete-agent-card` framework-usage finding with
+`metadata.card_errors`, and the scan is incomplete. `metadata.agent_card`
+holds the name, description, version, protocol version, skills, capabilities,
+security scheme names, up to 20 interfaces (scheme, host, port and path only)
+and the signature state. Both A2A 1.0 (`supportedInterfaces`) and 0.3 (`url`,
+`preferredTransport`, `additionalInterfaces`) cards are read. A card that
+declares any other `protocolVersion` (not 0.x or 1.x), at the top level or on
+an interface, is still reported, with a warning that makes the scan
+incomplete: its fields were read as 0.3 and 1.0 fields and tags can be missed.
+
+Tags (see [risk](../concepts/risk.md)):
+
+- `no-auth-declared` (10): the card declares no security scheme.
+- `a2a-plaintext-interface` (10): an interface uses `http://` or `ws://` to a
+  host other than loopback.
+- `a2a-card-signature-invalid` (10): a signature is malformed or fails
+  verification.
+
+### Card signatures
+
+`metadata.agent_card.signature` is one of:
+
+| State | Meaning |
+| --- | --- |
+| `absent` | The card has no `signatures`. |
+| `present-unverified` | The card is signed, but no operator key set checked it: `agent_card_jwks_url` is not set, the key set could not be read (an error; the scan is incomplete), or a replayed export redacted part of the card. |
+| `verified` | At least one signature verifies with a key from `agent_card_jwks_url`. |
+| `invalid` | A signature entry is malformed, or none verifies with the operator's keys. `signature_detail` gives the reason. |
+
+A signature is an RFC 7515 JWS whose payload is the RFC 8785 (JCS) canonical
+card without its `signatures` member. The A2A specification also removes
+default values before canonicalizing, and signers differ on which: each
+signature is checked against three payloads, and one match is enough:
+
+1. the card as served;
+2. the card with every null, empty string, array and object removed, at any
+   depth (what the A2A Python SDK signs);
+3. the card with empty members removed except those the A2A 1.0 schema marks
+   REQUIRED or `optional`, such as an empty `description` (the specification's
+   section 8.4.1 example).
+
+The three differ only by nulls and empty values, so a card served with or
+without them verifies, and any other change does not. A signer that also drops `false` or
+`0` defaults matches none of them, and such a card served with those values
+reports `invalid`.
+
+The protected header selects the algorithm (RS256, PS256, ES256 or EdDSA) and
+the key ID; exactly one key of the operator's set must match. Keys or key
+locations named by the card or its header (`jku`, `jwk`, `x5u`, `x5c`) are
+never fetched or trusted, and critical header extensions and unencoded
+payloads are refused. A card holding a number with no exact canonical form
+(an integer beyond 2^53) is `invalid`. `verified` says the card was signed by
+a key you trust and, apart from empty values, not changed since; it does not
+check key expiry or revocation beyond the contents of your key set, and it is
+not a review of what the agent does.
+
+Records exported with `--dump-records` carry the card and are re-validated on
+replay; a signature state in an export is never read. The export is sanitized
+like every other, and the userinfo of a scheme-less `user:password@host:port`
+address (a gRPC interface) is also withheld. Replaying with
+`agent_card_jwks_url` verifies again, unless the export's redaction changed
+the card (`present-unverified`).
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

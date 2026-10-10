@@ -13,6 +13,7 @@ from shadowscan.reporters._publication import (
     has_inventory,
     publication_stats,
     related_finding_ids,
+    unassessed_count,
     visible_controls,
 )
 
@@ -151,6 +152,8 @@ def render_html(result: ScanResult) -> str:
             f"<div class='stat'><b class='shadow'>{s['shadow']}</b>shadow (unregistered)</div>"
             f"<div class='stat'><b>{_e(result.inventory_size)}</b>registered agents</div>"
         )
+        if unassessed := unassessed_count(result):
+            parts.append(f"<div class='stat'><b>{_e(unassessed)}</b>unassessed (no source inventory)</div>")
     for lvl in _LEVELS:
         count = s["by_risk_level"].get(lvl, 0)
         parts.append(f"<div class='stat'><b><span class='pill {lvl}'>{count}</span></b>{lvl}</div>")
@@ -187,8 +190,12 @@ def render_html(result: ScanResult) -> str:
         )
         + "<th>Technologies</th></tr></thead><tbody>"
     )
+    inventory = has_inventory(result)
     for n, f in enumerate(result.findings):
-        shadow = "" if f.shadow is None else ("yes" if f.shadow else "no")
+        if f.shadow is None:
+            shadow = "unassessed" if inventory else ""
+        else:
+            shadow = "yes" if f.shadow else "no"
         level = f.risk.level.value
         labels = " ".join(f.frameworks + f.model_providers + f.tags + f.capabilities)
         text = " ".join(

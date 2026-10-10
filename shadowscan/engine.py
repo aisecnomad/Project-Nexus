@@ -27,6 +27,7 @@ from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
 from shadowscan.errors import SetupError
 from shadowscan.incremental import IncrementalCache
+from shadowscan.mcp_registry import LoadedRegistries, enrich_mcp_findings, load_registries
 from shadowscan.merge import merge
 from shadowscan.models import Finding, ScanResult, ScanStats, now_iso
 from shadowscan.registries import (
@@ -249,6 +250,8 @@ class _RegistryOutcome:
     inventory_warnings: list[str] = field(default_factory=list)
     # Approved records of trusted registries: one inventory item each.
     approval_entries: int = 0
+    # MCP registry snapshots that failed to load or match: an incomplete engine.mcp-registry entry.
+    mcp_registry_errors: list[str] = field(default_factory=list)
 
 
 class _ExportLedger:
@@ -903,6 +906,8 @@ class Engine:
         # reloads the inventory: approval can change after construction and a
         # stale first-run snapshot must never authorize a finding.
         self.inventory: Inventory | None = Inventory.load(config.inventory) if config.inventory else None
+        # Pinned MCP Registry snapshots, read again by every run (see _prepare_run).
+        self._mcp_registries: LoadedRegistries | None = None
 
     def _report_progress(self, connector: str, message: str) -> None:
         """A failed output observer must not change collection or scan completeness."""
@@ -978,6 +983,8 @@ class Engine:
         self._refresh_index()
         self._validate_risk_policy()
         self._refresh_inventory()
+        # A replaced or revoked catalog must not keep counting: snapshots are never reused.
+        self._mcp_registries = load_registries(self.config.mcp_registries)
 
     # -------------------------------------------------------------- selection
     def _invalid_selectors(self, only: list[str] | None) -> list[str]:
@@ -1090,6 +1097,19 @@ class Engine:
             )
             _sanitize_diagnostics(registries)
             added.append(registries)
+        if outcome.mcp_registry_errors:
+            log.warning(
+                "MCP registry snapshots were not usable; scan marked incomplete (engine.mcp-registry)"
+            )
+            mcp = ScanStats(
+                connector="engine.mcp-registry",
+                started_at=started_at,
+                finished_at=now_iso(),
+                incomplete=True,
+                errors=list(outcome.mcp_registry_errors),
+            )
+            _sanitize_diagnostics(mcp)
+            added.append(mcp)
         return added
 
     # ------------------------------------------------------------- collection
@@ -1158,9 +1178,9 @@ class Engine:
     def _postprocess(
         self, findings: list[Finding], *, registries: _RegistryOutcome | None = None
     ) -> tuple[list[Finding], list[str]]:
-        """Merge, correlate, reconcile and score; report what had to be omitted.
+        """Merge, correlate, match MCP registries, reconcile and score; report what had to be omitted.
 
-        ``registries`` receives the registry reconciliation and trusted-approval results.
+        ``registries`` receives the MCP registry, registry reconciliation and trusted-approval results.
         """
         # Individually bounded findings can exceed the output budget when
         # merged. Reject only that aggregate before correlation touches it.
@@ -1173,6 +1193,12 @@ class Engine:
             errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
         correlate_lifecycle(findings)
         outcome = registries if registries is not None else _RegistryOutcome()
+        if self._mcp_registries is None:
+            self._mcp_registries = load_registries(self.config.mcp_registries)
+        outcome.mcp_registry_errors += [
+            *self._mcp_registries.errors,
+            *enrich_mcp_findings(findings, self._mcp_registries),
+        ]
         outcome.warnings += reconcile_registries(findings)
         self._reconcile_and_score(findings, outcome)
         findings, omitted_after_scoring = _retain_sanitizable(findings)

@@ -53,6 +53,8 @@ def _record(**overrides: Any) -> dict[str, Any]:
         ],
         "publisher": "platform-team",
         "listing_complete": True,
+        # A person approved it; other approval modes need allow_auto_approved.
+        "approval_mode": "manual",
     }
     value.update(overrides)
     return value
@@ -532,12 +534,24 @@ def test_an_auto_approved_record_needs_allow_auto_approved(monkeypatch):
     assert _by_resource(result)[RUNTIME].registry_match == "aws-agent-registry:rec-1"
 
 
-@pytest.mark.parametrize("mode", ["manual", "unknown", "none"])
-def test_approved_records_that_are_not_auto_approved_sanction_their_binding(monkeypatch, mode):
+def test_only_a_manual_approval_sanctions_without_allow_auto_approved(monkeypatch):
     result = _engine(
-        monkeypatch, lambda: [_record_finding(_record(approval_mode=mode))], trusted_registries=TRUSTED
+        monkeypatch, lambda: [_record_finding(_record(approval_mode="manual"))], trusted_registries=TRUSTED
     ).run()
     assert _by_resource(result)[RUNTIME].shadow is False
+
+
+@pytest.mark.parametrize("mode", ["unknown", "none"])
+def test_an_approval_without_a_known_reviewer_needs_allow_auto_approved(monkeypatch, mode):
+    records = lambda: [_record_finding(_record(approval_mode=mode))]  # noqa: E731
+    result = _engine(monkeypatch, records, trusted_registries=TRUSTED).run()
+    assert {finding.shadow for finding in result.findings} == {True}
+    inventory = _stats(result, "engine.inventory")
+    assert inventory is not None and not inventory.incomplete
+    assert any("approved without a known reviewer" in warning for warning in inventory.warnings)
+    allowed = [{**TRUSTED[0], "allow_auto_approved": True}]
+    result = _engine(monkeypatch, records, trusted_registries=allowed).run()
+    assert _by_resource(result)[RUNTIME].registry_match == "aws-agent-registry:rec-1"
 
 
 def test_registered_only_records_need_allow_registered_only(monkeypatch):

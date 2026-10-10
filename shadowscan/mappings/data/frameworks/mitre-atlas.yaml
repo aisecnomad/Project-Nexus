@@ -30,4 +30,5 @@ entries:
   AML.T0109: {title: AI Supply Chain Rug Pull}
   AML.T0110.000: {title: "AI Agent Tool Poisoning: Definition and Instructions"}
   AML.T0118: {title: Autonomous AI Agent Communication}
+  AML.T0118.001: {title: "Autonomous AI Agent Communication: Direct Agent Communication"}
   AML.T0132: {title: Misconfigured or Publicly Exposed AI Services}

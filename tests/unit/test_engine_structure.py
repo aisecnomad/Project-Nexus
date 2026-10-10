@@ -471,6 +471,41 @@ def test_postprocess_reports_runtime_and_omission_errors_in_order(monkeypatch, i
     ]
 
 
+def test_mcp_registry_matching_runs_after_correlation_and_before_reconciliation(monkeypatch, index):
+    calls: list[str] = []
+    for name in ("correlate_lifecycle", "enrich_mcp_findings", "reconcile_registries"):
+        original = getattr(engine_module, name)
+
+        def record(*args, _name=name, _original=original):
+            calls.append(_name)
+            return _original(*args)
+
+        monkeypatch.setattr(engine_module, name, record)
+    engine = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem")]), index)
+    original_score = engine._reconcile_and_score
+    monkeypatch.setattr(
+        engine, "_reconcile_and_score", lambda *args: calls.append("score") or original_score(*args)
+    )
+    engine._postprocess([_finding()])
+    assert calls == ["correlate_lifecycle", "enrich_mcp_findings", "reconcile_registries", "score"]
+
+
+def test_mcp_registry_snapshots_are_loaded_for_every_run(monkeypatch):
+    loads = []
+
+    def counting(sources):
+        loads.append(list(sources))
+        return engine_module.LoadedRegistries()
+
+    monkeypatch.setattr(engine_module, "load_registries", counting)
+    monkeypatch.setattr(engine_module, "get_connector_class", lambda name: _Connector)
+    engine = Engine(ScanConfig(connectors=[ConnectorSpec("code.filesystem")]), SignatureIndex([]))
+    # Nothing is read at construction; each run reads the configured snapshots again.
+    assert loads == []
+    assert engine.run().complete and engine.run().complete
+    assert loads == [[], []]
+
+
 def test_run_keeps_configured_order_and_finishes_incomplete_results(monkeypatch):
     monkeypatch.setattr(engine_module, "get_connector_class", lambda name: _Connector)
     cfg = ScanConfig(
