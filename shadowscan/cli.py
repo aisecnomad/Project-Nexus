@@ -1151,6 +1151,8 @@ def inventory_check(paths: tuple[str, ...]) -> None:
     for link in inv.skipped_links:
         message = f"warning: inventory {link}: symbolic link skipped (links are not followed)"
         err_console.print(Text(terminal_text(message), style="yellow"))
+    for notice in inv.autonomy_warnings():
+        err_console.print(Text(terminal_text(f"warning: {notice}"), style="yellow"))
     table = Table(title=f"{len(inv)} registered agents", header_style="bold")
     table.add_column("Agent id")
     table.add_column("Name")

@@ -113,6 +113,13 @@ None of these read a vendor registry.
    pending, rejected and deprecated records never approve anything. A revoked
    approval makes the finding shadow on the next scan.
 
+**Implemented core.** The record contract, the reconciliation statuses and the
+optional inventory source exist now, with the option named
+`options.trusted_registries` and trust given per registry instance (type and
+exact id), never per type. See
+[vendor registries as inventory sources](../inventory.md#vendor-registries-as-inventory-sources).
+The registry connectors below (REG-1 to REG-5) are still proposals.
+
 Recommendation: vendor registries become services inside the existing
 connectors (`cloud.aws`, `identity.entra` or a Graph sibling, `cloud.gcp`). They
 reuse the credential handling, account scope, pagination limits and offline
@@ -391,6 +398,13 @@ system can do without a person, and how sure the scanner is about that label.
   from capabilities.
 
 ### Taxonomy
+
+**Superseded.** The maintainer chose a six-level scale: L0 Chatbot, L1
+Copilot, L2 Supervised, L3 Semi-Autonomous / Agentic Workflow, L4 High
+Autonomy, L5 Fully Autonomous, declared as `autonomy_profile.level` (0 to 5)
+behind card `schema_version: 2`. TIER-1 implements it; see
+[autonomy tiers](../concepts/autonomy.md). The table below is the original
+proposal.
 
 | Tier | Name | Who chooses the next step | Who starts it | Side effects |
 |------|------|---------------------------|---------------|--------------|

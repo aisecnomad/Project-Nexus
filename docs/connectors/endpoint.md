@@ -52,7 +52,14 @@ connector (`mcp-unpinned-package`, `mcp-broad-filesystem`,
 configuration findings carry the same posture checks
 (`posture-permissions-bypassed`, `posture-unrestricted-shell`,
 `posture-unsandboxed`, `posture-exposed-gateway`,
-`posture-unauthenticated-gateway`). See [risk](../concepts/risk.md).
+`posture-unauthenticated-gateway`). See [risk](../concepts/risk.md). Claude
+Code, Codex and Goose settings that make a person approve actions are recorded
+as `metadata.approval_gate`, as in the
+[code connector](code.md#coding-agent-settings-posture-and-approval), and feed the
+[autonomy tiers](../concepts/autonomy.md). Editor extensions, browser
+extensions and commands from shell history count as person-started
+(`initiation: human`); a configured client does not, because it can also run
+unattended.
 
 Options:
 
@@ -103,17 +110,26 @@ collection on each laptop can be analysed centrally.
 - File contents never enter a record. MCP server entries are the sanitized
   projection the code connector uses (environment variable and header names,
   never values), browser extensions are kept only when their name matches an
-  AI product, and posture records hold enumerated setting values, never a
-  token.
+  AI product, and posture and approval records hold enumerated setting values,
+  never a token.
 - Malformed configuration (invalid JSON, YAML or TOML) still produces the
   configuration finding, records a warning and makes the scan incomplete,
   because its MCP servers or its posture could not be read. Comments and
   trailing commas are accepted in JSON files; OpenClaw's other JSON5 forms
   (unquoted keys, single-quoted strings) are not, so such a file is a gap.
 - A malformed offline record is ignored with a warning, and the scan is
-  incomplete. So are malformed MCP server, posture or model entries inside an
-  otherwise valid record: they are dropped, and the rest of the record is
-  kept.
+  incomplete. So are malformed MCP server, posture, approval or model entries
+  inside an otherwise valid record: they are dropped, and the rest of the
+  record is kept. A dropped approval entry never gates an action. A replayed
+  approval entry is kept only when this scanner could have written it for that
+  record: exactly the keys `client`, `setting`, `value`, `scope` and `file`;
+  a Claude Code, Codex or Goose client equal to the record's `client`; a `file`
+  equal to the record's `location` and naming a settings file of that client;
+  and a setting, value and scope the settings reader produces (for example
+  `every-action` only for `permissions.defaultMode` `default` or `plan`, Codex
+  `untrusted` or Goose `approve`). Anything else is dropped as malformed. An
+  export can still describe settings a home directory does not have: replay
+  exports only from hosts and storage you trust.
 
 Findings are owned by the home directory name and scoped to the device, so
 `owner` and `account` identify whose workstation a finding came from. An

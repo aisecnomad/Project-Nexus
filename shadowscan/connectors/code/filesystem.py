@@ -152,7 +152,12 @@ from shadowscan.connectors.common import (
     placeholder_reason,
 )
 from shadowscan.connectors.mcp_risk import record_server_risks
-from shadowscan.connectors.posture import CLIENT_SIGNATURES, record_posture
+from shadowscan.connectors.posture import (
+    CLIENT_SIGNATURES,
+    approval_settings,
+    record_approval,
+    record_posture,
+)
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
@@ -555,6 +560,8 @@ class _Project:
     mcp_tools_limited: bool = False
     # Coding-agent signature id -> posture issues read from its settings files.
     posture: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    # Coding-agent signature id -> settings that make a person approve actions.
+    approvals: dict[str, list[dict[str, str]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -2139,6 +2146,11 @@ class FilesystemConnector(BaseConnector):
                 entry = {**issue.as_dict(), "file": file.rel}
                 if entry not in file.proj.posture.setdefault(sig_id, []):
                     file.proj.posture[sig_id].append(entry)
+        for setting in approval_settings(file.rel, file.text) or []:
+            sig_id = CLIENT_SIGNATURES[setting.client]
+            approval = {**setting.as_dict(), "file": file.rel}
+            if approval not in file.proj.approvals.setdefault(sig_id, []):
+                file.proj.approvals[sig_id].append(approval)
 
     def _detect_secrets(self, scan: _ScanState, file: _SourceFile) -> None:
         """Collect provider credentials from the file text and a notebook's raw document.
@@ -3517,6 +3529,7 @@ class FilesystemConnector(BaseConnector):
         posture = proj.posture.get(sig_id, [])
         if posture:
             record_posture(f, posture)
+        record_approval(f, proj.approvals.get(sig_id, []))
         defs = [d for d in proj.agent_defs if any(d["file"] == x for x in files)]
         if defs:
             f.metadata["agent_definitions"] = defs

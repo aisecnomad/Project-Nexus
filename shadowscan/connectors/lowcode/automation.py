@@ -116,6 +116,8 @@ class _AutomationBase(BaseConnector):
                 )
             )
             f.add_capability("tool-use")
+        # Autonomy: both triggers are initiation evidence (the scheduled and event-triggered tags),
+        # not approval-bypass evidence: the connector does not inspect approval steps in the flow.
         if any(re.search(r"(?i)cron|schedule|interval|timer|recurr", t) for t in triggers):
             f.add_capability("autonomous")
             f.add_tag("scheduled")

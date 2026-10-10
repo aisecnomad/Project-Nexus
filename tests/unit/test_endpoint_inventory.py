@@ -470,6 +470,8 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
             "location": "~/.cursor/mcp.json",
             "mcp_servers": [{"name": "a", "urls": 5}, {"name": "b", "args": 5}, "junk", {"name": "ok"}],
             "posture": ["junk", {"id": ["unhashable"], "client": "cursor", "setting": "s", "value": "v"}],
+            # An approval entry with an unknown scope can never gate an action.
+            "approval": ["junk", {"client": "cursor", "setting": "s", "value": "v", "scope": "all"}],
         },
         {
             "device": "lap",
@@ -485,8 +487,11 @@ def test_malformed_replayed_entries_are_dropped_with_a_warning(run_connector, tm
     path.write_text("\n".join(json.dumps(r) for r in records))
     findings, ctx = run_connector("endpoint.inventory", input=str(path))
     assert not ctx.stats.errors and ctx.stats.incomplete
-    assert any("dropped 5 malformed server, posture or model entries" in w for w in ctx.stats.warnings)
+    assert any(
+        "dropped 7 malformed server, posture, approval or model entries" in w for w in ctx.stats.warnings
+    )
     titles = {f.title for f in findings}
     assert "Codex configured on lap (~dana)" in titles
+    assert not [f for f in findings if "approval_gate" in f.metadata]
     mcp = next(f for f in findings if f.kind == Kind.MCP_SERVER)
     assert [s["name"] for s in mcp.metadata["servers"]] == ["ok"]

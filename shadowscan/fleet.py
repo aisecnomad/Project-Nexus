@@ -4,9 +4,12 @@ A fleet report is the union of its sources. Findings with the same identity
 (the same object seen by the same connector, for example one workstation
 scanned twice) merge exactly as repeated observations do inside one scan:
 evidence and technologies union, the earliest ``first_seen`` and latest
-``last_seen`` survive, the first report's metadata wins. Findings from
-different machines keep their own resources because the endpoint label
-prefixes every resource.
+``last_seen`` survive, the first report's metadata wins. The autonomy interval
+(``metadata.autonomy``) is the exception: it is classified again from the merged
+finding and widened to admit whatever any source's validated block admits, so
+evidence from a later source is never hidden behind the first source's interval.
+Findings from different machines keep their own resources because the endpoint
+label prefixes every resource.
 
 The merged report is comparable with ``shadowscan diff`` only when every
 source is complete and carries a comparable collection scope; its fingerprint
@@ -25,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
+from shadowscan.autonomy import merge_autonomy, valid_autonomy
 from shadowscan.comparison import _SCHEMA as _SCOPE_SCHEMA
 from shadowscan.comparison import _complete, _findings, _scope_digest, _summary_matches_findings
 from shadowscan.merge import merge
@@ -42,6 +46,11 @@ def _check(report: Any, name: str) -> dict[str, Any]:
     for finding in report["findings"]:
         if not isinstance(finding, dict) or finding.get("identity_schema") != FINDING_IDENTITY_SCHEMA:
             raise ValueError(f"{name}: a finding does not carry the current identity schema")
+        metadata = finding.get("metadata")
+        # The merged interval admits at least what every source's block admits, so a block the
+        # merge cannot read is refused rather than ignored.
+        if isinstance(metadata, dict) and "autonomy" in metadata and not valid_autonomy(metadata["autonomy"]):
+            raise ValueError(f"{name}: a finding has malformed autonomy metadata; rescan before merging")
     _findings(report)
     return report
 
@@ -97,6 +106,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     risks_by_id: dict[str, Risk] = {}
     shadow_by_id: dict[str, bool] = {}
     identity_by_id: dict[str, str] = {}
+    autonomy_by_id: dict[str, list[Any]] = {}
     stats: list[ScanStats] = []
     sources: list[dict[str, Any]] = []
     fingerprints: list[str] = []
@@ -138,6 +148,8 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             ):
                 risks_by_id[finding.id] = finding.risk
             shadow_by_id[finding.id] = shadow_by_id.get(finding.id, False) or finding.shadow is not False
+            if "autonomy" in finding.metadata:
+                autonomy_by_id.setdefault(finding.id, []).append(finding.metadata["autonomy"])
             findings.append(finding)
         stats.extend(_stats(report))
         if not complete:
@@ -177,6 +189,9 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         finding.shadow = shadow_by_id[finding.id]
         if finding.shadow:
             finding.registry_match = None
+        # Unioned tags, capabilities and evidence can change the interval; the merged one also
+        # admits at least what each source's block admits, as risk keeps the highest score.
+        merge_autonomy(finding, autonomy_by_id.get(finding.id, []))
         finding.metadata["fleet_risk_aggregation"] = "maximum-source-score"
     merged.sort(key=lambda f: (-f.risk.score, f.resource, f.id))
     if comparable:

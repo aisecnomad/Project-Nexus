@@ -24,6 +24,14 @@ Example ``shadowscan.yaml``::
         regions: [us-east-1, eu-west-1]
         cloudtrail_days: 7
 
+``options.trusted_registries`` lists vendor registry instances, each by registry type and
+exact id, whose approved records count as sanctioned inventory::
+
+    options:
+      trusted_registries:
+        - registry: aws-agent-registry
+          id: arn:aws:agent-registry:us-east-1:123456789012:registry/abcd1234abcd
+
 ``${VAR}`` requires a nonempty environment value. ``${VAR:-default}`` uses its
 explicit fallback when the variable is missing or empty.
 
@@ -55,6 +63,12 @@ from typing import Any
 import yaml
 
 from shadowscan.errors import SetupError, yaml_error_position
+from shadowscan.registries import (
+    MAX_IDENTIFIER_LENGTH,
+    MAX_TRUSTED_REGISTRIES,
+    REGISTRY_TYPES,
+    TrustedRegistry,
+)
 from shadowscan.risk import RiskPolicy
 from shadowscan.triage import TriageConfigError, TriageSettings
 from shadowscan.utils.files import read_policy_text, require_no_symlinks
@@ -98,6 +112,7 @@ _OPTION_FIELDS = {
     "risk_weights",
     "job_deadline_seconds",
     "llm_triage",
+    "trusted_registries",
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
@@ -380,6 +395,8 @@ class ScanConfig:
     risk_basis: str = "combined"
     risk_weights: dict[str, Any] | None = field(default_factory=dict)
     llm_triage: TriageSettings = field(default_factory=TriageSettings)
+    # Vendor registry instances whose approved records count as sanctioned inventory.
+    trusted_registries: list[TrustedRegistry] = field(default_factory=list)
     source: str | None = None
     # Constructor-only compatibility: never retain stale alias state that could
     # overwrite a later CLI or library update to the canonical setting.
@@ -431,6 +448,8 @@ class ScanConfig:
             RiskPolicy.from_options(self.risk_weights, self.risk_basis)
         except ValueError as exc:
             raise ConfigValidationError(f"options.{exc}") from None
+        # Trusting a registry changes which findings are sanctioned: revalidate every run.
+        self.trusted_registries = validate_trusted_registries(self.trusted_registries)
 
     def validate_connector_specs(self) -> None:
         """Validate programmatically constructed built-in connector specs.
@@ -576,6 +595,7 @@ class ScanConfig:
             risk_basis=opts.get("risk_basis", "combined"),
             risk_weights=opts.get("risk_weights", {}),
             llm_triage=_triage_settings(opts.get("llm_triage")),
+            trusted_registries=validate_trusted_registries(opts.get("trusted_registries", [])),
             source=source,
         )
 
@@ -651,6 +671,63 @@ def validate_plugins(value: Any) -> list[str]:
     if not isinstance(value, list) or any(not isinstance(name, str) or not name.strip() for name in value):
         raise ConfigValidationError("options.plugins must be a list of nonempty connector names")
     return list(dict.fromkeys(name.strip() for name in value))
+
+
+_TRUSTED_REGISTRY_FIELDS = {"registry", "id"}
+_WILDCARDS = frozenset("*?[")
+
+
+def validate_trusted_registries(value: Any) -> list[TrustedRegistry]:
+    """Validate ``options.trusted_registries``: exact registry instances, never a whole type.
+
+    Each entry is a mapping (or a :class:`TrustedRegistry`) with exactly ``registry``, a known
+    registry type, and ``id``, the registry's exact identity: no wildcard characters, no
+    surrounding whitespace or control characters, and nothing redaction would change, since a
+    redacted id can never equal a record's. Duplicates and more than 64 entries are rejected.
+    Messages never include the values.
+    """
+    location = "options.trusted_registries"
+    if not isinstance(value, list):
+        raise ConfigValidationError(f"{location} must be a list of mappings with registry and id")
+    if len(value) > MAX_TRUSTED_REGISTRIES:
+        raise ConfigValidationError(f"{location} accepts at most {MAX_TRUSTED_REGISTRIES} entries")
+    trusted: list[TrustedRegistry] = []
+    for number, item in enumerate(value, 1):
+        where = f"{location} entry {number}"
+        if isinstance(item, TrustedRegistry):
+            item = {"registry": item.registry, "id": item.id}
+        if not isinstance(item, Mapping):
+            raise ConfigValidationError(f"{where} must be a mapping with registry and id")
+        _check_fields(dict(item), _TRUSTED_REGISTRY_FIELDS, where)
+        if set(item) != _TRUSTED_REGISTRY_FIELDS:
+            raise ConfigValidationError(f"{where} requires both registry and id")
+        registry, identity = item["registry"], item["id"]
+        if not isinstance(registry, str) or registry not in REGISTRY_TYPES:
+            raise ConfigValidationError(f"{where}.registry must be one of " + ", ".join(REGISTRY_TYPES))
+        if (
+            not isinstance(identity, str)
+            or not identity
+            or identity != identity.strip()
+            or len(identity) > MAX_IDENTIFIER_LENGTH
+            or any(not character.isprintable() for character in identity)
+        ):
+            raise ConfigValidationError(
+                f"{where}.id must be a nonempty single-line string of at most {MAX_IDENTIFIER_LENGTH}"
+                " characters without surrounding whitespace"
+            )
+        if _WILDCARDS.intersection(identity):
+            raise ConfigValidationError(
+                f"{where}.id must name one registry exactly; wildcard characters (* ? [) are not allowed"
+            )
+        if sanitize_text(identity) != identity:
+            raise ConfigValidationError(
+                f"{where}.id would be redacted in reports, so it could never match a registry record"
+            )
+        entry = TrustedRegistry(registry, identity)
+        if entry in trusted:
+            raise ConfigValidationError(f"{where} duplicates an earlier entry")
+        trusted.append(entry)
+    return trusted
 
 
 def _check_fields(value: dict[Any, Any], allowed: set[str], location: str) -> None:

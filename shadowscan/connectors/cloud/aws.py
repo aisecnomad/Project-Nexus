@@ -1100,6 +1100,8 @@ class AwsConnector(BaseConnector):
                     )
                 )
             if ag.get("parentActionSignature") == "AMAZON.UserInput":
+                # Autonomy: a person in the loop at some steps (oversight "gated"); it does not
+                # make a person approve each action, so the ceiling stays open.
                 f.add_tag("asks-user")
         if any(k.get("knowledgeBaseState") != "DISABLED" for k in kbs):
             f.add_capability("rag")
@@ -1116,6 +1118,9 @@ class AwsConnector(BaseConnector):
         f.owner = first_tag(rec.get("tags"), "owner", "Owner")
         name_hint(self.index, f, rec.get("agentName"), rec.get("description"))
         f.metadata.update(_bedrock_agent_metadata(rec, details, ags, kbs))
+        gate = _bedrock_approval_gate(ags)
+        if gate is not None:
+            f.metadata["approval_gate"] = gate
         return done(f, self.index, Kind.AGENT)
 
     def _agent_version_details(self, rec: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1668,6 +1673,8 @@ class AwsConnector(BaseConnector):
                     signature="provider.aws-bedrock",
                 )
             )
+        # Autonomy: an unattended workflow definition. Neither approval-bypass nor initiation
+        # evidence: a run can still be started by a person and wait at an approval step.
         f.add_capability("autonomous")
         f.metadata.update({"role": rec.get("roleArn")})
         return done(f, self.index, Kind.WORKFLOW)
@@ -2179,6 +2186,45 @@ def _cloudtrail_record(ev: dict[str, Any], region: str) -> dict[str, Any] | None
         "modelId": (detail.get("requestParameters") or {}).get("modelId")
         or (detail.get("requestParameters") or {}).get("agentId"),
         "errorCode": detail.get("errorCode"),
+    }
+
+
+def _bedrock_approval_gate(ags: list[Any]) -> dict[str, Any] | None:
+    """Positive approval gating from action group function ``requireConfirmation`` settings.
+
+    Every action is gated only when every enabled action group (the user-input group asks for
+    information and acts on nothing) defines functions and each one requires confirmation. A
+    code interpreter or an API-schema group carries no per-function setting this reader can
+    verify, so it leaves the gate partial. No confirmation at all records nothing.
+    """
+    acting = [
+        ag
+        for ag in ags
+        if isinstance(ag, dict)
+        and ag.get("actionGroupState") != "DISABLED"
+        and ag.get("parentActionSignature") != "AMAZON.UserInput"
+    ]
+    every = bool(acting)
+    confirmed = total = 0
+    for ag in acting:
+        schema = ag.get("functionSchema")
+        functions = schema.get("functions") if isinstance(schema, dict) else None
+        functions = [fn for fn in functions if isinstance(fn, dict)] if isinstance(functions, list) else []
+        required = sum(1 for fn in functions if fn.get("requireConfirmation") == "ENABLED")
+        confirmed += required
+        total += len(functions)
+        if not functions or required < len(functions):
+            every = False
+    if not confirmed:
+        return None
+    return {
+        "scope": "every-action" if every else "some-actions",
+        "settings": [
+            {
+                "setting": "functionSchema.functions.requireConfirmation",
+                "value": f"ENABLED for {confirmed} of {total} function(s)",
+            }
+        ],
     }
 
 

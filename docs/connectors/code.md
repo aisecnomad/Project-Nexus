@@ -481,6 +481,34 @@ rules and files. The checks are bounded regexes; nothing is executed. They do
 not judge whether an instruction is malicious: a hidden comment may be a
 template note, and a documented installer may pipe to a shell. Read the file.
 
+### Coding-agent settings: posture and approval
+
+Claude Code (`.claude/settings.json`, `.claude/settings.local.json`), Codex
+(`.codex/config.toml`), Goose and OpenClaw settings add posture tags to their
+coding-agent configuration finding (`posture-permissions-bypassed`,
+`posture-unrestricted-shell`, `posture-unsandboxed`, `posture-exposed-gateway`,
+`posture-unauthenticated-gateway`; see [risk](../concepts/risk.md)). Settings
+that make a person approve actions are recorded as `metadata.approval_gate`:
+`every-action` for Claude Code `permissions.defaultMode` `default` or `plan`,
+Codex `approval_policy = "untrusted"` and Goose `GOOSE_MODE: approve`;
+`some-actions` for Claude Code `acceptEdits`, Codex `on-request` or
+`on-failure` and Goose `smart_approve`. Each Claude Code settings file is read
+for settings that let an action run without a prompt, whichever file sets the
+mode: a nonempty `permissions.allow` list (in `settings.local.json` too), a
+sandbox with `sandbox.enabled` whose `autoAllowBashIfSandboxed` is not `false`
+(it defaults to `true`), and `PreToolUse` or `PermissionRequest` hooks, which
+can allow a call. Each is recorded as a `some-actions` setting, and so is a
+`permissions`, `sandbox` or `hooks` value that is not a mapping. Allow rules
+are approval settings of their own; the sandbox and hook settings only make
+another setting's gate partial and record no gate alone. The gate covers every
+action only when every setting the finding reports does and no posture issue
+lets an action run unapproved. It feeds the
+[autonomy tiers](../concepts/autonomy.md): a gate on every action caps the
+interval at L2 Supervised. A settings file shows configuration, not how a run
+was started; command-line flags, managed settings, user settings and project
+files outside the scanned tree can override it, so treat an L2 ceiling as
+configuration evidence.
+
 ## `code.github`
 Enumerates an organization, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded

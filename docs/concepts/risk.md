@@ -97,6 +97,8 @@ include:
 | `tag:hidden-instructions` | Instruction file carries content hidden from the rendered view (an HTML comment holding sentences) | 20 |
 | `tag:remote-code-fetch` | Instruction file downloads and executes code in one step, or decodes an inline blob into an interpreter | 15 |
 | `tag:invisible-text` | Instruction file contains invisible or bidirectional control characters | 10 |
+| `tag:autonomy-understated` | The matched inventory entry declares an autonomy level below the observed floor ([autonomy tiers](autonomy.md)) | 10 |
+| `autonomy:L0` … `autonomy:L5` | Observed autonomy floor; weighted only through `options.risk_weights.autonomy` | 0 |
 | `tag:disabled` / `tag:inactive` / `tag:suspended` | Resource is not active | −10 |
 
 The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
@@ -106,8 +108,15 @@ The `kind` base weight is 30 for `secret`; 15 for `agent` and `mcp-server`;
 `ai-app`, `local-model` and `network-contact`.
 
 The complete tables are `KIND_BASE`, `CAPABILITY_WEIGHTS`, `TAG_WEIGHTS`,
-`PROVIDER_WEIGHTS` and `GOVERNANCE_WEIGHTS` in `shadowscan/risk.py`; tags with
-a zero weight add no factor. Some factors depend on finding metadata:
+`PROVIDER_WEIGHTS`, `GOVERNANCE_WEIGHTS` and `AUTONOMY_WEIGHTS` in
+`shadowscan/risk.py`; tags with a zero weight add no factor.
+`AUTONOMY_WEIGHTS` holds one weight per autonomy level, `L0` to `L5`, all 0 by
+default: the `autonomous` capability and the approval-bypass tags already score
+the evidence behind a high floor. A nonzero weight adds the factor
+`autonomy:L<n>` ("observed autonomy floor L<n> <label>") for the finding's
+observed floor, recomputed from the finding rather than read from
+`metadata.autonomy`; a finding kind without autonomy never gets one. See
+[autonomy tiers](autonomy.md). Some factors depend on finding metadata:
 `vendor-notes` (5, signature risk notes), `multiple-secrets` (5),
 `mcp-stdio` (5), `mcp-auto-approve` (10), `mcp-plain-http` (10), `sub-agents`
 (3 per definition, at most 10), `volume` (5 from 1,000 gateway events, 10 from
@@ -121,7 +130,8 @@ tags skip.
 Posture and MCP-risk evidence has weight 0: it changes risk, not confidence.
 `options.risk_weights` overrides weights; see the README's risk policy. Its
 keys are checked, so a typo cannot silently change nothing: unknown groups,
-`kinds` and `governance` keys are rejected, `capabilities` keys must be one of
+`kinds`, `governance` and `autonomy` keys are rejected (`autonomy` keys are `L0`
+to `L5`), `capabilities` keys must be one of
 the capability names (`code-exec`, `autonomous`, `saas-actions`, `data-access`,
 `browsing`, `memory`, `multi-agent`, `delegated-identity`, `tool-use`, `rag`),
 and `providers` keys must be the id of a provider signature in the loaded
@@ -160,7 +170,10 @@ so `score`, `level` and `--fail-on` follow the danger score.
 
 A finding is `shadow: true` unless **exactly one** inventory entry matches
 via an explicit resource pattern and its configured scope restrictions.
-Name-only matches suggest entries for review but do not approve.
+Name-only matches suggest entries for review but do not approve. Approved
+records of the vendor registries listed in `options.trusted_registries` add
+exact-resource entries for the scan; see
+[vendor registries as inventory sources](../inventory.md#vendor-registries-as-inventory-sources).
 
 An approved entry lends its `owner` to the finding.
 

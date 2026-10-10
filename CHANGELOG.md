@@ -51,6 +51,93 @@ summarizes each release for people who install and operate ShadowScan.
   image scans could not write reports, and `.yml` signature packs. A
   repository test checks that the context carries every file the wheel ships.
 
+### Vendor registry records and trusted registries
+
+- Define the vendor registry record contract in `shadowscan/registries.py`:
+  `metadata.registry_record` (`shadowscan.registry-record/v1`) with a registry
+  type from a closed set, the exact registry and record ids, a closed status
+  vocabulary, up to 64 exact-resource bindings with collection coverage, and
+  `listing_complete`. A malformed record is ignored and makes the scan
+  incomplete (`engine.registries`, exit 3). Record evidence
+  (`registry:<type>`, confidence group `registry-record`) has weight 0.5. No
+  built-in connector emits records yet.
+- Only a built-in connector that declares the new `emits_registry_records`
+  engine hook may emit records. The engine drops `registry_record` from other
+  connectors' findings, including cached ones and those of a plugin that
+  declares the hook, and notes the drop in their stats. Records replayed from
+  an offline export count like live records.
+- The engine writes `metadata.registry_reconciliation`:
+  `registered-and-observed` and `registered-not-observed` or `not-comparable`
+  on records, and `registered-and-observed` or `observed-not-registered` on
+  observed agents, workflows, bots and MCP servers. Matching is by exact
+  binding identity, never by name. `registered-not-observed` requires in-scope
+  collection coverage, and `observed-not-registered` requires a complete
+  listing of that registry. Statuses do not change shadow status or risk.
+- New `options.trusted_registries` lists registry instances by type and exact
+  id; wildcards, duplicates, unknown keys and types, and ids that redaction
+  would change are rejected, and the list is revalidated before every run. Only
+  for those registries does an approved record register its own finding and
+  approve its exact bound resources (glob characters escaped) under the usual
+  inventory rules. Other statuses and untrusted registries never approve, and a
+  card and a trusted record approving the same finding are ambiguous, while
+  bindings of one record that cover the same finding are one approval.
+  Approvals are rebuilt every scan, so revocation applies on the next run.
+  `inventory_present` is true when the option is set, `inventory_size` counts
+  the approved records of trusted registries, and a trusted registry without
+  records gets an advisory `engine.inventory` warning.
+- `Inventory.match` accepts extra entries for a single call; extra entries with
+  the same agent id and source count once.
+- The records in the tests are synthetic; nothing was validated against a live
+  registry.
+
+### Autonomy tiers and Capability Card schema version 2
+
+- Classify agents, agent configurations, MCP servers, workflows, bots, gateway
+  callers, AI apps, runtime processes and AI cloud resources on the L0 Chatbot
+  to L5 Fully Autonomous scale. Each such finding carries
+  `metadata.autonomy` (`shadowscan.autonomy/v1`): the floor its evidence
+  proves, the ceiling positive evidence has not ruled out (L5 without such
+  evidence), oversight, initiation and the rules behind them. Credentials,
+  grants, identities, infrastructure, stored models and network contacts carry
+  none. The interval is not part of finding identity.
+- The `autonomous` capability counts as approval-bypass evidence only where it
+  means no person approves each step; low-code and cloud triggers and gateway
+  cadence count as initiation evidence instead.
+- Agent Capability Cards gain a top-level `schema_version`. Version 2 declares
+  `autonomy_profile.level` (an integer from 0 to 5); a level outside that
+  range, a non-mapping `autonomy_profile` or a `schema_version` other than 1
+  or 2 makes the inventory invalid. A version 1 card's level is ignored as
+  undeclared, with the advisory warning
+  `autonomy_profile.level ignored: card has no schema_version 2` from
+  `inventory check` and under `engine.inventory`. Simple and CSV inventories
+  accept `autonomy_level`. The bundled `agent-card.yaml` and example
+  inventories declare levels on the new scale.
+- A declared level below the observed floor adds the `autonomy-understated`
+  tag (risk weight 10). `options.risk_weights.autonomy` (`L0` to `L5`, all 0
+  by default) can weigh the observed floor; unknown keys are rejected. No
+  other default weight changes.
+- `inventory stubs` writes `schema_version: 2` cards whose level is the
+  observed floor.
+- `code.filesystem` and `endpoint.inventory` record Claude Code, Codex and
+  Goose settings that make a person approve actions as
+  `metadata.approval_gate`; `cloud.aws` records Bedrock action-group function
+  confirmation the same way; `cloud.azure` Logic Apps record
+  `metadata.trigger_types`. Claude Code allow rules in any settings file
+  (`settings.local.json` included), a sandbox that auto-allows Bash, and
+  `PreToolUse` or `PermissionRequest` hooks make the gate partial
+  (`some-actions`); the sandbox and hook settings never record a gate on
+  their own. Replayed endpoint records keep only approval entries the settings
+  reader could have written for that record's client and file, and drop any
+  other entry with a warning that makes the scan incomplete.
+- `merge` classifies each merged finding again and widens the interval to
+  admit what every source's block admits (highest floor and ceiling,
+  `bypassed` over `unknown` over `gated`); it rejects a source whose block is
+  malformed.
+- An L2 ceiling rests on recorded approval settings: it is configuration
+  evidence, not proof of how a run behaves.
+- The rules and fixtures are synthetic and author-written; they do not
+  establish live tenant acceptance or measured precision.
+
 ### Scan evidence, completeness and replay corrections
 
 - Resolve supported Go SDK import aliases before publishing credential-bearing

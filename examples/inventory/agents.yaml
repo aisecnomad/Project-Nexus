@@ -1,11 +1,15 @@
 # Simple inventory format (alternative to one Agent Capability Card per agent).
+# autonomy_level (optional, 0-5) is the declared level on the L0 Chatbot to
+# L5 Fully Autonomous scale (docs/concepts/autonomy.md).
 agents:
   - id: claims-assistant
     name: Claims Assistant
     owner: claims-it
     resources: ["ocid1.genaiagent.oc1.us-chicago-1.agent1"]
+    autonomy_level: 3
   - id: coderabbit-reviewer
     name: CodeRabbit
     owner: dev-productivity
     resources: ["github:installation:101"]
     names: [coderabbitai]
+    autonomy_level: 3

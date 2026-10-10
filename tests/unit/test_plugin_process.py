@@ -400,6 +400,8 @@ def test_non_json_metadata_round_trips_like_thread_mode(installed_probe, monkeyp
         sys.modules.pop(MODULE, None)
         registry._cache.pop(ENTRY, None)
     assert reported["process"] == reported["thread"]
+    # The engine derives the autonomy block after collection, for either backend alike.
+    assert reported["thread"].pop("autonomy")["schema"] == "shadowscan.autonomy/v1"
     # Threat and control references are derived from the finding at export,
     # not carried by the plugin (tests/unit/test_mappings.py covers them).
     connector_metadata = {k: v for k, v in reported["thread"].items() if k not in DERIVED_METADATA_KEYS}
