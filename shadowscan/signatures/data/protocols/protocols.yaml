@@ -33,8 +33,8 @@ signatures:
         weight: 0.9
       - type: dependency
         ecosystem: maven
-        names: ["io.modelcontextprotocol.sdk:mcp", "io.modelcontextprotocol.sdk:mcp-spring-webmvc", "io.modelcontextprotocol.sdk:mcp-spring-webflux", "org.springframework.ai:spring-ai-starter-mcp-server", "org.springframework.ai:spring-ai-starter-mcp-client", "org.springframework.ai:spring-ai-mcp"]
-        prefixes: ["io.modelcontextprotocol"]
+        names: ["io.modelcontextprotocol.sdk:mcp", "io.modelcontextprotocol.sdk:mcp-spring-webmvc", "io.modelcontextprotocol.sdk:mcp-spring-webflux", "org.springframework.ai:spring-ai-starter-mcp-server", "org.springframework.ai:spring-ai-starter-mcp-client", "org.springframework.ai:spring-ai-mcp", "dev.langchain4j:langchain4j-mcp"]
+        prefixes: ["io.modelcontextprotocol", "org.springframework.ai:spring-ai-starter-mcp", "org.springframework.ai:spring-ai-mcp"]
         weight: 0.9
       - type: dependency
         ecosystem: nuget
@@ -59,14 +59,57 @@ signatures:
         weight: 0.9
       - type: import
         languages: [java]
-        patterns: ['^[^\S\r\n]*import\s+io\.modelcontextprotocol\.']
+        patterns: ['^[^\S\r\n]*import\s+io\.modelcontextprotocol\.', '^[^\S\r\n]*import\s+dev\.langchain4j\.mcp\.']
         weight: 0.9
       - type: import
         languages: [dotnet]
         patterns: ['^[^\S\r\n]*using\s+ModelContextProtocol\b']
         weight: 0.9
+      # Server idioms carry the mcp-server capability: the project exposes
+      # tools to other agents. Client idioms (below) only consume servers.
       - type: code
-        patterns: ['\bFastMCP\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bMcpServer\.Create\s*\(', '\bserver\.NewMCPServer\s*\(', '\[McpServerTool', '\bMultiServerMCPClient\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(', '\bmcp\.run\s*\(']
+        description: MCP server construction, transports and tool registration (Python, TypeScript)
+        patterns: ['\bFastMCP\s*\(', '\bmcp\.server\.Server\s*\(', '@mcp\.tool\b', '@server\.(?:tool|list_tools|call_tool)\b', '\bnew\s+McpServer\s*\(', '\bserver\.(?:tool|registerTool)\s*\(', '\bStdioServerTransport\s*\(', '\bStreamableHTTPServerTransport\s*\(', '\bSSEServerTransport\s*\(', '\bstdio_server\s*\(', '\bSseServerTransport\s*\(', '\bStreamableHTTPSessionManager\s*\(', '\bmcp\.run\s*\(']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP server construction (Go SDKs)
+        languages: [go]
+        patterns: ['\bserver\.NewMCPServer\s*\(', '\bmcp\.NewServer\s*\(']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP server construction (Java SDK)
+        languages: [java]
+        patterns: ['\bMcpServer\.(?:sync|async)\s*\(']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP server construction and tool attributes (.NET SDK)
+        languages: [dotnet]
+        patterns: ['\bMcpServer\.Create\s*\(', '\.AddMcpServer\s*\(', '\[McpServerTool']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP server handler (Rust rmcp)
+        languages: [rust]
+        patterns: ['\bimpl\s+ServerHandler\s+for\b']
+        weight: 0.9
+        capabilities: [mcp-server]
+      - type: code
+        # Server( is the low-level class of the Python and TypeScript SDKs, and
+        # also the name of every HTTP server class. Counted only with other
+        # library evidence of this signature in the project; in Python and
+        # JavaScript the import binder also binds Server imported from
+        # mcp.server or @modelcontextprotocol/sdk/server.
+        description: Low-level MCP server class
+        ambiguous: true
+        patterns: ['\bServer\s*\(', '\bnew\s+Server\s*\(']
+        weight: 0.6
+        capabilities: [mcp-server]
+      - type: code
+        description: MCP client sessions, transports and framework adapters
+        patterns: ['\bMultiServerMCPClient\s*\(', '\bstdio_client\s*\(', '\bstreamablehttp_client\s*\(', '\bsse_client\s*\(', '\bMCPServerStdio\s*\(', '\bMCPServerStreamableHttp\s*\(', '\bMcpToolset\s*\(', '\bMCPClient\s*\(']
         weight: 0.9
       - type: code
         # aiohttp.ClientSession is one of the most common classes in async Python.
@@ -78,6 +121,13 @@ signatures:
         patterns: ['"mcpServers"\s*:', '"mcp"\s*:\s*\{\s*"servers"', '^[^\S\r\n]*mcpServers\s*:', '\[mcp_servers\.[A-Za-z0-9_-]+\]', '\[mcp\.servers\.[A-Za-z0-9_-]+\]']
         weight: 0.95
         description: MCP client configuration block
+      - type: code
+        # A server or client that speaks JSON-RPC itself, without an SDK, dispatches on these MCP method
+        # names. A match that starts inside a string literal is ignored for source files, so the pattern
+        # starts at executable syntax: a line start (a match arm or table row), `case`, `==` or `method:`.
+        patterns: ['(?:^[^\S\r\n]*|\bcase\s+|===?\s*|\bmethod\s*[:=]\s*)["''](?:tools/list|tools/call|resources/list|resources/read|prompts/list|prompts/get|notifications/initialized)["'']']
+        weight: 0.75
+        description: MCP JSON-RPC method dispatched without an SDK
       - type: file
         globs: [".mcp.json", "mcp.json", "mcp-config.json", "mcp_config.json", "mcp-servers.json", ".cursor/mcp.json", ".vscode/mcp.json", "claude_desktop_config.json", ".roo/mcp.json", ".windsurf/mcp_config.json", "cline_mcp_settings.json", ".kiro/settings/mcp.json", ".amazonq/mcp.json", ".codeium/windsurf/mcp_config.json", "**/.mcp.json", "**/mcp.json", "**/mcp-config.json", "**/mcp_config.json", "**/mcp-servers.json", "**/claude_desktop_config.json", "**/cline_mcp_settings.json", "**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.roo/mcp.json", "**/.windsurf/mcp_config.json", "**/.kiro/settings/mcp.json", "**/.amazonq/mcp.json", "smithery.yaml", "**/smithery.yaml", "**/.well-known/mcp.json"]
         weight: 0.9
@@ -88,7 +138,13 @@ signatures:
         names: [MCP_SERVER_URL, MCP_SERVER_PORT, MCP_TRANSPORT, MCP_API_KEY, FASTMCP_PORT, FASTMCP_HOST, SMITHERY_API_KEY]
         weight: 0.6
       - type: domain
-        values: [server.smithery.ai, registry.smithery.ai, mcp.zapier.com, mcp.composio.dev, api.githubcopilot.com, mcp.notion.com, mcp.linear.app, mcp.atlassian.com, mcp.stripe.com, mcp.paypal.com, mcp.sentry.dev, mcp.cloudflare.com, remote.mcpservers.org, "re:^mcp\\.[a-z0-9-]+\\.[a-z]+$"]
+        # The mcp.<vendor>.<tld> form stops at real top-level domains: a dotted identifier such as the
+        # translation key mcp.translator.translatekey (Minecraft Coder Pack) is not a host. The two-letter
+        # forms are the country-code domains except those that are also common file extensions or
+        # property names (py, md, rs, pl, ps, id, in, cc, mk, ...); host, info, page, live and other words
+        # that name properties or methods are left out for the same reason. A candidate followed by a
+        # call, an index, an underscore or an assignment is code (see match_domains_in_text).
+        values: [server.smithery.ai, registry.smithery.ai, mcp.zapier.com, mcp.composio.dev, api.githubcopilot.com, mcp.notion.com, mcp.linear.app, mcp.atlassian.com, mcp.stripe.com, mcp.paypal.com, mcp.sentry.dev, mcp.cloudflare.com, remote.mcpservers.org, "re:^mcp\\.[a-z0-9-]+\\.(?:a[defgiloqrtuwxz]|b[abdefghijmnoqrstwyz]|c[adfghikmnouvwxyz]|d[ejkmoz]|e[cegrstu]|f[ijkmor]|g[aefghilmnpqrtuwy]|h[kmnrtu]|i[elmoqrst]|j[emop]|k[eghimnprwyz]|l[abcikrstuvy]|m[aceghnpqrstuvwxyz]|n[acefgilopruz]|om|p[aefghknrtw]|qa|r[ouw]|s[abdeghiklmnoruxyz]|t[cdghjklmnortvwz]|u[agksyz]|v[aceginu]|w[fs]|y[et]|z[amw]|com|dev|app|net|org|tech|cloud|xyz|run|tools|chat|site|online|network|studio|systems|software|services|biz|digital|club|technology|agency|solutions)$"]
         weight: 0.85
       - type: user_agent
         patterns: ['(?i)\bmcp(?:-|_)?(?:client|server|remote|inspector)\b', '(?i)modelcontextprotocol', '(?i)\bmcp/\d']

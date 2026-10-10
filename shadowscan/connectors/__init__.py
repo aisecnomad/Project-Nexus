@@ -302,7 +302,7 @@ def available_connectors() -> dict[str, str]:
     errors: list[PluginDiagnostic] = []
     try:
         discovered = list(entry_points(group="shadowscan.connectors"))
-    except Exception as exc:  # noqa: BLE001 - odd entry-point metadata  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 - odd entry-point metadata
         errors.append(
             PluginDiagnostic(
                 None, "unreadable-metadata", f"plugin metadata listing failed: {type(exc).__name__}"
@@ -315,7 +315,7 @@ def available_connectors() -> dict[str, str]:
         try:
             name = ep.name
             value = ep.value
-        except Exception as exc:  # noqa: BLE001 - broken metadata object  # pragma: no cover
+        except Exception as exc:  # noqa: BLE001 - broken metadata object
             errors.append(
                 PluginDiagnostic(
                     None, "unreadable-metadata", f"plugin entry is unreadable: {type(exc).__name__}"

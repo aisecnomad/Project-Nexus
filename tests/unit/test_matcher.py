@@ -44,6 +44,7 @@ def test_explicit_scan_budget_is_not_silently_capped_at_default(monkeypatch):
 def test_unscoped_matching_still_opens_default_budget(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(matcher_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(matcher_module.time, "thread_time", lambda: clock[0])
     original = matcher_module._finditer
 
     def delayed_match(*args, **kwargs):

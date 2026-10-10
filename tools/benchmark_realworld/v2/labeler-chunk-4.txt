@@ -1,0 +1,10 @@
+/home/user/spring-projects/spring-petclinic
+/home/user/gin-gonic/gin
+/home/user/burntsushi/ripgrep
+/home/user/jekyll/jekyll
+/home/user/laravel/laravel
+/home/user/vuejs/core
+/home/user/vercel/turborepo
+/home/user/dotnet/eshop
+/home/user/square/okhttp
+/home/user/sindresorhus/execa

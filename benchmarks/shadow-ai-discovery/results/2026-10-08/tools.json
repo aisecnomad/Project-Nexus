@@ -1,0 +1,36 @@
+{
+ "extra_path": "/opt/node22/bin",
+ "empty_home": "<work>/home-empty",
+ "tools": {
+  "shadowscan": {
+   "bin": "<tools>/venv-shadowscan/bin/shadowscan"
+  },
+  "trusera_ai_bom": {
+   "bin": "<tools>/venv-aibom/bin/ai-bom"
+  },
+  "nuguard": {
+   "bin": "<tools>/venv-nuguard/bin/nuguard"
+  },
+  "agentdiscover": {
+   "bin": "<tools>/venv-agentdiscover/bin/agentdiscover"
+  },
+  "agentic_radar": {
+   "bin": "<tools>/venv-agenticradar/bin/agentic-radar"
+  },
+  "xbom": {
+   "bin": "<tools>/bin/xbom"
+  },
+  "vet": {
+   "bin": "<tools>/bin/vet"
+  },
+  "geiger": {
+   "bin": "<tools>/node/node_modules/.bin/geiger"
+  },
+  "cdxgen": {
+   "bin": "<tools>/node/node_modules/.bin/cdxgen"
+  },
+  "cisco_aibom": {
+   "bin": "<tools>/venv-ciscoaibom/bin/cisco-aibom"
+  }
+ }
+}

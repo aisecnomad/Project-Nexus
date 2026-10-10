@@ -118,12 +118,13 @@ def apply_matches(
     finding: Finding,
     matches: Iterable[Match],
     location: str | None = None,
-    snippet: str | None = None,
+    snippet: str | Callable[[], str | None] | None = None,
     max_evidence_per_signature: int = 12,
     weight_scale: float = 1.0,
     capabilities: bool = True,
     signature_capabilities: bool = True,
     indicator_filter: Callable[[Match], bool] | None = None,
+    establish: bool = True,
 ) -> int:
     """Attach matches to a finding as evidence, tags, frameworks and capabilities.
 
@@ -131,12 +132,32 @@ def apply_matches(
     promote a finding from ``framework-usage`` to ``agent``. ``indicator_filter``
     narrows which agent-indicator matches count, for a surface where a
     signature's indicator does not describe the finding's subject.
+
+    With ``establish`` false the matches are evidence only: they keep their
+    weight and location but join neither ``frameworks`` nor
+    ``model_providers``, add no capability and count no agent indicator. The
+    signature is listed under ``metadata.potential_frameworks`` or
+    ``metadata.potential_providers`` instead, for a code pattern without the
+    library's import or dependency, or a mention too weak to establish.
+
+    ``snippet`` may be a callable: it is invoked once, and only when the
+    per-signature evidence quota retains a match, so an excerpt that reaches
+    no report is never produced.
     """
     counts: dict[str, int] = finding.metadata.setdefault("_evidence_counts", {})
+    producer = snippet if callable(snippet) else None
+    excerpt: str | None = None if callable(snippet) else snippet
     indicators = 0
     for m in matches:
         sig = m.signature
-        if sig.id == "identity-app.generic-ai-name":
+        if not establish:
+            if sig.category == "provider" or sig.category in TECH_CATEGORIES:
+                key = "potential_providers" if sig.category == "provider" else "potential_frameworks"
+                potential: list[str] = finding.metadata.setdefault(key, [])
+                if sig.id not in potential:
+                    potential.append(sig.id)
+                    potential.sort()
+        elif sig.id == "identity-app.generic-ai-name":
             finding.add_tag("ai-name-hint")  # a hint, not a technology
         elif sig.category in TECH_CATEGORIES:
             finding.add_framework(sig.id)
@@ -144,19 +165,21 @@ def apply_matches(
             finding.add_model_provider(sig.id)
         elif sig.category == "policy":
             finding.add_tag(sig.id)
-        if capabilities:
+        if capabilities and establish:
             # Static source analysis can retain library-wide features as
             # potential metadata while scoring only the matched code signal.
             for cap in m.capabilities() if signature_capabilities else m.signal.capabilities:
                 finding.add_capability(cap)
         for t in sig.tags:
             finding.add_tag(t)
-        if m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
+        if establish and m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
             indicators += 1
         key = f"{sig.id}|{m.signal.type}"
         counts[key] = counts.get(key, 0) + 1
         if counts[key] > max_evidence_per_signature:
             continue
+        if producer is not None:
+            excerpt, producer = producer(), None
         value = m.value
         if m.signal.type == "secret":
             value = redact(value)
@@ -168,7 +191,7 @@ def apply_matches(
                 signal=f"{m.signal.type}:{sig.id}",
                 description=describe_match(m).replace(m.value, value) if m.value else describe_match(m),
                 location=loc,
-                snippet=snippet,
+                snippet=excerpt,
                 weight=max(0.0, min(1.0, m.weight * weight_scale)),
                 signature=sig.id,
                 attributes={"category": sig.category, "value": value},

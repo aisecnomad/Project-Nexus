@@ -39,6 +39,40 @@ def test_mcp_description_decorator_preserves_execution_capability(tmp_path, inde
     server = next(f for f in findings if "protocol.mcp" in f.frameworks)
     assert "code-exec" in server.capabilities
     assert server.metadata["mcp_tools"] == ["run"]
+    # The project implements the server: the capability and where it is built.
+    assert "mcp-server" in server.capabilities
+    construction = server.metadata["mcp_server"]["constructions"][0]
+    assert (construction["file"], construction["line"], construction["bound"]) == ("server.py", 5, True)
+    assert server.title.startswith("MCP server in repository root")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'from mcp.server import Server\n\nserver = Server("x")\n',
+        'from mcp.server.lowlevel import Server as Low\n\nserver = Low("x")\n',
+    ],
+)
+def test_low_level_server_class_is_bound_to_its_import(tmp_path, index, source):
+    findings, ctx = _scan(index, tmp_path, {"server.py": source})
+    assert not ctx.stats.incomplete
+    server = next(f for f in findings if "protocol.mcp" in f.frameworks)
+    assert "mcp-server" in server.capabilities
+    [construction] = server.metadata["mcp_server"]["constructions"]
+    assert construction["bound"] is True and construction["construct"].endswith(":Server(")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'from http.server import HTTPServer as Server\n\nhttpd = Server(("", 8000), None)\n',
+        "from aiohttp import web\n\nserver = web.Server(handler)\n",
+    ],
+)
+def test_other_server_classes_are_not_mcp_servers(tmp_path, index, source):
+    findings, ctx = _scan(index, tmp_path, {"server.py": source})
+    assert not ctx.stats.incomplete
+    assert not [f for f in findings if "protocol.mcp" in f.frameworks or "mcp-server" in f.capabilities]
 
 
 def test_mcp_tools_registered_only_in_tests_imply_no_capabilities(tmp_path, index):

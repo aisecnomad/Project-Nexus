@@ -11,7 +11,14 @@ import pytest
 import regex
 
 from shadowscan.signatures import SignatureIndex
-from shadowscan.signatures.matcher import _MAX_CONTENTION_RETRIES, MatchTimeoutError, _finditer, _run_regex
+from shadowscan.signatures.matcher import (
+    _MAX_CONTENTION_RETRIES,
+    DEFAULT_SCAN_BUDGET_SECONDS,
+    WALL_BUDGET_FACTOR,
+    MatchTimeoutError,
+    _finditer,
+    _run_regex,
+)
 
 # Every test here measures retries against the shipped regex and input budgets.
 pytestmark = pytest.mark.production_budgets
@@ -96,7 +103,9 @@ def test_contention_retry_cannot_restart_the_input_wall_deadline(monkeypatch):
     def expire_deadline(timeout):
         nonlocal now, attempts
         attempts += 1
-        now += 3
+        # Past the absolute wall cap of the default budget, with no CPU spent:
+        # waiting that long is not contention the retry may absorb.
+        now += DEFAULT_SCAN_BUDGET_SECONDS * WALL_BUDGET_FACTOR + 1
         raise TimeoutError
 
     with pytest.raises(MatchTimeoutError, match="input execution budget"), SignatureIndex([]).scan_budget():

@@ -1,0 +1,11 @@
+/home/user/langchain4j/langchain4j-examples
+/home/user/azure-samples/azure-search-openai-demo-csharp
+/home/user/google-gemini/cookbook
+/home/user/mistralai/cookbook
+/home/user/huggingface/notebooks
+/home/user/azure-samples/openai
+/home/user/lobehub/lobe-chat
+/home/user/patrickjs/awesome-cursorrules
+/home/user/hesreallyhim/awesome-claude-code
+/home/user/e2b-dev/awesome-ai-agents
+/home/user/steven2358/awesome-generative-ai

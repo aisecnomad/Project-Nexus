@@ -39,3 +39,17 @@ signatures:
           - '\bAKIA[A-Z0-9]{16}\b'
         weight: 0.8
         description: High-entropy assigned credential or recognized token prefix
+
+  - id: heuristic.homebrew-ai
+    name: Homebrew AI tool installation
+    category: heuristic
+    vendor: null
+    description: AI tools declared in a Brewfile or installed via Homebrew.
+    signals:
+      - type: file
+        globs: [Brewfile, "**/Brewfile", Brewfile.lock.json, "**/Brewfile.lock.json"]
+        weight: 0.3
+      - type: code
+        patterns: ['^\s*brew\s+["''](?:ollama|aider|llm|mods|fabric|gpt4all|localai|jan|lm-studio|llamafile|claude|chatgpt)["'']', '^\s*cask\s+["''](?:ollama|lm-studio|jan|gpt4all|msty|claude|chatgpt)["'']']
+        weight: 0.7
+        description: AI tool formula or cask in a Brewfile

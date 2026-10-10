@@ -63,9 +63,9 @@ jobs:
         run: pytest -q tests/unit/test_confined_file_portability.py tests/unit/test_plugin_process.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
-      - run: ruff check shadowscan tests tools
-      - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools
+      - run: ruff check shadowscan tests tools benchmarks
+      - run: ruff format --check shadowscan tests tools benchmarks
+      - run: mypy shadowscan tools benchmarks
       # The full suite without coverage tracing; the Linux coverage leg of the
       # test job enforces both coverage floors. The console entry point is used
       # on purpose: it must import the checkout-only tools packages.
@@ -128,9 +128,9 @@ jobs:
           git ls-files -z | xargs -0 python tools/check_secrets.py
       - name: Validate signature schemas and regular expressions
         run: python -m shadowscan.signatures.validate
-      - run: ruff check shadowscan tests tools
-      - run: ruff format --check shadowscan tests tools
-      - run: mypy shadowscan tools
+      - run: ruff check shadowscan tests tools benchmarks
+      - run: ruff format --check shadowscan tests tools benchmarks
+      - run: mypy shadowscan tools benchmarks
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
@@ -169,6 +169,8 @@ jobs:
             --output "$RUNNER_TEMP/shadowscan-attribution-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json \
             --output "$RUNNER_TEMP/shadowscan-current-idioms-evaluation.json"
+          python -m tools.evaluation.evaluate --corpus tools/evaluation/benchmark_followup_corpus.json \
+            --output "$RUNNER_TEMP/shadowscan-benchmark-followup-evaluation.json"
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"
