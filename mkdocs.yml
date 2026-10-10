@@ -120,6 +120,7 @@ nav:
       - Merge policy enforcement: operations/merge-policy.md
       - Publishing a release: operations/publishing.md
       - External reviewer packet: operations/reviewer-packet.md
+      - AI Review Gate: security/ai-review-gate.md
   - Community: community.md
   - Development:
       - Contributing: contributing.md
