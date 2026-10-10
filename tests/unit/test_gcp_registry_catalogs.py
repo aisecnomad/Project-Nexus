@@ -1031,7 +1031,11 @@ def test_a_trusted_gemini_enterprise_app_never_approves_another_projects_engine(
     result = scan(
         index,
         write_records(tmp_path, records),
-        trusted_registries=[{"registry": "gemini-enterprise", "id": registry_id}],
+        # The export is replayed offline, so the entry opts in to offline records: the
+        # cross-project rule, not the offline default, must keep the victim unapproved.
+        trusted_registries=[
+            {"registry": "gemini-enterprise", "id": registry_id, "allow_offline_records": True}
+        ],
     )
     # A reference to another project's engine is no coverage gap.
     assert result.complete
