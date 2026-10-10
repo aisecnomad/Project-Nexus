@@ -389,7 +389,7 @@ options:
     tags: {meeting-bot: 20}
     providers: {provider.deepseek: 20}
     kinds: {agent: 20}
-    governance: {shadow: 15, no-owner: 5, registered: -10}
+    governance: {shadow: 15, no-owner: 5, registered: -10}  # and mcp-not-in-approved-registry (options.mcp_registries)
     autonomy: {L4: 10, L5: 20}  # observed autonomy floor L0..L5; every level defaults to 0
 ```
 

@@ -115,6 +115,35 @@ def _text(record: dict[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _registry_properties(entries: object) -> list[tuple[str, object]]:
+    """MCP registry matches of one server, each value as ``<registry id>:<value>``.
+
+    Read defensively: the entries come from finding metadata, which a loaded report or a
+    plugin can shape freely, so a malformed entry or field is skipped.
+    """
+    names: list[str] = []
+    versions: list[str] = []
+    statuses: list[str] = []
+    sources: list[str] = []
+    for entry in entries if isinstance(entries, list) else []:
+        registry = _text(entry, "registry") if isinstance(entry, dict) else None
+        if not isinstance(entry, dict) or not registry:
+            continue
+        for values, key in ((names, "name"), (versions, "latest_version"), (statuses, "status")):
+            value = _text(entry, key)
+            if value:
+                values.append(f"{registry}:{value}")
+        match = _text(entry, "match")
+        if match:
+            sources.append(f"{registry}:{match}" + (" (ambiguous)" if entry.get("ambiguous") is True else ""))
+    return [
+        ("shadowscan:mcp:registry-name", names),
+        ("shadowscan:mcp:registry-version", versions),
+        ("shadowscan:mcp:registry-status", statuses),
+        ("shadowscan:mcp:registry-source", sources),
+    ]
+
+
 def _published(entry: dict[str, Any]) -> dict[str, Any]:
     """Sanitize one entry on its own (a whole BOM can exceed the sanitizer's node bound).
 
@@ -220,6 +249,7 @@ class _Bom:
             if isinstance(r, (str, dict))
         ]
         disabled = server.get("disabled")
+        registry = _registry_properties(server.get("registry"))
         service["properties"] = _properties(
             [
                 ("shadowscan:mcp:transport", _text(server, "transport")),
@@ -228,6 +258,7 @@ class _Bom:
                 ("shadowscan:mcp:disabled", disabled if isinstance(disabled, bool) else None),
                 ("shadowscan:mcp:risks", [r for r in risk_ids if isinstance(r, str)]),
                 ("shadowscan:mcp:endpoints-omitted", endpoints_omitted or None),
+                *registry,
             ]
         )
         self.services[ref] = service

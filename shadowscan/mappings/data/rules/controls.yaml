@@ -113,6 +113,16 @@ rules:
       Unpinned MCP packages and unsafe model artifacts are third-party
       components whose risks the organization has to manage.
 
+  - id: mcp-unvetted-component
+    when: {tags_any: [mcp-unpublished, mcp-registry-deleted]}
+    refs:
+      - nist-ai-rmf-1.0:GOVERN-6.1
+      - iso-iec-42001-2023:A.10.3
+    rationale: >-
+      An MCP server outside the configured MCP registries, or deleted from one,
+      is a third-party component whose provenance the organization has to
+      review.
+
   - id: user-facing-ai
     when: {kinds_any: [bot-app, ai-app]}
     refs:

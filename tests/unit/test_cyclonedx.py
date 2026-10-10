@@ -297,3 +297,43 @@ def test_unnamed_servers_and_endpoint_bounds_are_never_silent(tmp_path):
     assert len(many["endpoints"]) == 5
     assert {"name": "shadowscan:mcp:endpoints-omitted", "value": "2"} in many["properties"]
     assert {"aggregate": "incomplete", "dependencies": ["ss-cfg"]} in doc["compositions"]
+
+
+def test_mcp_registry_matches_become_service_properties():
+    matched = {
+        "registry": "official",
+        "name": "io.github.acme/files",
+        "match": "package",
+        "latest_version": "1.1.0",
+        "status": "active",
+        "ambiguous": False,
+    }
+    corp = {"registry": "corp", "name": "com.acme/shared", "match": "package", "ambiguous": True}
+    mcp = _finding(
+        "ss-mcp",
+        Kind.MCP_SERVER,
+        metadata={
+            "servers": [
+                {"name": "files", "transport": "stdio", "registry": [corp, matched]},
+                {"name": "unlisted", "transport": "stdio", "registry": []},
+                # Report metadata can be shaped freely: malformed entries are skipped.
+                {"name": "odd", "registry": ["bogus", {"name": "no registry id"}, {"registry": 7}]},
+                {"name": "shapeless", "registry": "official"},
+            ]
+        },
+    )
+    doc = json.loads(render_cyclonedx(_result([mcp])))
+    services = {
+        s["name"]: {p["name"]: p["value"] for p in s["properties"]}
+        for s in doc["services"]
+        if s.get("group") == "mcp-server"
+    }
+    assert (
+        services["files"]["shadowscan:mcp:registry-name"]
+        == "corp:com.acme/shared, official:io.github.acme/files"
+    )
+    assert services["files"]["shadowscan:mcp:registry-version"] == "official:1.1.0"
+    assert services["files"]["shadowscan:mcp:registry-status"] == "official:active"
+    assert services["files"]["shadowscan:mcp:registry-source"] == "corp:package (ambiguous), official:package"
+    for name in ("unlisted", "odd", "shapeless"):
+        assert not any(key.startswith("shadowscan:mcp:registry-") for key in services[name]), name

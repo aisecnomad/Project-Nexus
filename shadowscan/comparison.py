@@ -150,26 +150,27 @@ def build_collection_scope(
             return {**unavailable, "reason": "configuration contains private comparison values"}
         inputs.append({"name": spec.name, "label": spec.label, "config": options})
     try:
-        fingerprint = hashlib.sha256(
-            _canonical(
-                {
-                    "inputs": sorted(inputs, key=_canonical),
-                    "min_confidence": config.min_confidence,
-                    "signatures": index.fingerprint(),
-                    "scanner": _scanner_digest(),
-                    "version": __version__,
-                    # Key rotation invalidates comparisons using keyed
-                    # credential evidence without revealing the secret key.
-                    "credential_identity_key": (
-                        hmac.digest(
-                            identity_key, b"shadowscan.collection-scope.credential-key.v1", "sha256"
-                        ).hex()
-                        if identity_key is not None
-                        else None
-                    ),
-                }
+        scope: dict[str, Any] = {
+            "inputs": sorted(inputs, key=_canonical),
+            "min_confidence": config.min_confidence,
+            "signatures": index.fingerprint(),
+            "scanner": _scanner_digest(),
+            "version": __version__,
+            # Key rotation invalidates comparisons using keyed
+            # credential evidence without revealing the secret key.
+            "credential_identity_key": (
+                hmac.digest(identity_key, b"shadowscan.collection-scope.credential-key.v1", "sha256").hex()
+                if identity_key is not None
+                else None
+            ),
+        }
+        if config.mcp_registries:
+            # Pinned snapshots change tags and scores. The key is added only when configured, so
+            # the fingerprints of scans without MCP registries, and their baselines, are unchanged.
+            scope["mcp_registries"] = sorted(
+                [source.id, source.sha256, source.approved] for source in config.mcp_registries
             )
-        ).hexdigest()
+        fingerprint = hashlib.sha256(_canonical(scope)).hexdigest()
     except (OSError, TypeError, ValueError):
         return {**unavailable, "reason": "collection scope could not be fingerprinted"}
     return {"schema": _SCHEMA, "comparable": True, "fingerprint": fingerprint}

@@ -348,6 +348,18 @@ computed.
 
 Statuses are informational: they do not change `shadow`, approval or risk.
 
+## Approved MCP registries
+
+An organisation's approved MCP catalog is configured separately, as a pinned
+snapshot in [`options.mcp_registries`](getting-started/configuration.md#mcp-registry-snapshots)
+with `approved: true`. It is not an inventory source: it never approves a
+finding or changes `shadow`, `registry_match` or `inventory_size`. It adds the
+`mcp-not-in-approved-registry` governance factor to MCP configurations whose
+enabled servers it does not list; see
+[MCP registry provenance](connectors/code.md#mcp-registry-provenance). The
+`mcp-registry` record type above is for registry connectors that emit
+`registry_record` metadata, not for these snapshots.
+
 ## From shadow to registered
 
 ```

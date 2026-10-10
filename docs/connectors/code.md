@@ -432,6 +432,62 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
+### MCP registry provenance
+
+With [`options.mcp_registries`](../getting-started/configuration.md#mcp-registry-snapshots),
+the engine matches every MCP server of an `mcp-server` finding against each
+pinned MCP Registry snapshot after correlation and before scoring. It applies
+to this connector's MCP configurations, to `endpoint.inventory` client
+configurations and, by server URL, to `endpoint.mcp` tool findings; it reads no
+file and contacts no registry. A server is matched, in this order, by:
+
+1. the package its launch fetches (`npx`, `bunx`, `pnpm dlx`, `yarn dlx`,
+   `bun x`, `uvx`, `uv tool run`, `pipx run`, `docker run`, `podman run`),
+   compared by registry type and identifier: npm names lowercased, PyPI names
+   normalized as PEP 503 does, OCI images without tag or digest and with Docker
+   Hub spelled `docker.io`. The exact version or image tag the launch pins is
+   the configured version; a range or a moving tag such as `latest` pins none;
+2. a remote URL, compared with the scheme and host lowercased and the default
+   port, user information, query, fragment and trailing `/` removed; a
+   registry URL with a `{variable}` never matches;
+3. for an MCP server manifest (`server.json`) only, the registry name. A client
+   configuration chooses its server names freely, so a name proves nothing there.
+
+A server that names no package or URL (`node ./server.js`, a shell command
+line, a local path or a Git source) cannot be identified and is not matched.
+Each identifiable server gets `registry`: one entry per registry that lists it,
+sorted by registry id, with `registry`, `name`, `namespace`, `match`
+(`package`, `remote` or `name`), `configured_version`, `version_published`,
+`latest_version`, `is_latest`, `status` (`active`, `deprecated` or `deleted`),
+`published_at` and `ambiguous`. An empty list means no loaded registry lists
+it. A package or URL that several registry names list is `ambiguous`: the first
+name is shown and no version or status is claimed. An `endpoint.mcp` tool
+finding keeps its server's entries in `metadata.mcp_registry.matches`.
+
+The finding carries `metadata.mcp_registry` (`registries`: id, `sha256`,
+`fetched_at` and `approved` of each loaded registry; `approved_checked`;
+`not_in_approved`) and these review tags, each with zero-weight evidence
+`mcp-registry:<tag>`. They never lower risk and weigh 0 by default:
+
+| Tag | Meaning |
+|---|---|
+| `mcp-registry-published` | an enabled server is listed in a configured registry |
+| `mcp-unpublished` | an enabled, identifiable server is listed in none (only when every configured registry loaded) |
+| `mcp-registry-deprecated` / `mcp-registry-deleted` | the registry marks the matched version, or the latest one, deprecated or deleted |
+| `mcp-registry-version-unpublished` | the pinned version is not among the versions the registry lists for that package |
+| `mcp-registry-outdated` | the pinned version, or the endpoint, is not the registry's latest version |
+
+An `options.mcp_registries` entry with `approved: true` is the organisation's
+approved MCP catalog. When at least one is configured and every approved registry loaded
+(`approved_checked: true`), `not_in_approved` counts the enabled, identifiable
+servers that no approved registry lists, or lists only as deleted, and scoring
+adds the governance factor `mcp-not-in-approved-registry` (15; see
+[risk](../concepts/risk.md)). A server whose pinned version the catalog does
+not list still counts as listed and is tagged `mcp-registry-version-unpublished`.
+Disabled servers get `registry` entries but no tags and no count. Publication
+in a registry says who published a server, not that it is safe; the matching
+is exact and makes no name-similarity guesses.
+
 ### Limiting a walk with `include`
 
 `include` lists paths relative to each root; the walk enters only the

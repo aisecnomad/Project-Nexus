@@ -327,6 +327,13 @@ example `run-gemini-cli` `settings` or `claude-code-action` `mcp_config`) are
 reported from that workflow, and an embedded object that cannot be parsed
 makes the scan incomplete.
 
+With `options.mcp_registries`, the engine matches each configured MCP server
+against pinned MCP Registry snapshots by package, remote URL or, for a
+`server.json` manifest, registry name. Servers get `registry` entries, findings
+get review tags such as `mcp-unpublished` and `mcp-registry-outdated` (weight
+0), and an approved registry adds the `mcp-not-in-approved-registry` governance
+factor; see [MCP registry provenance](connectors/code.md#mcp-registry-provenance).
+
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
 `max_notebook_size`, `max_ast_nodes`, `scan_timeout`, `scan_secrets`,
 `strict_coverage`, `include_tests`, `use_git`, `label`. When using labeled `paths`,
@@ -965,7 +972,9 @@ model stores (Ollama, LM Studio, Hugging Face, GPT4All, Jan) and, with
 names and counts only). MCP server findings carry the static server risks
 and agent configurations carry the posture checks described in
 [risk](concepts/risk.md) and the approval settings used by the
-[autonomy tiers](concepts/autonomy.md). Every location is opened without following
+[autonomy tiers](concepts/autonomy.md). With `options.mcp_registries`, MCP
+servers are also matched against pinned MCP Registry snapshots
+([MCP registry provenance](connectors/code.md#mcp-registry-provenance)). Every location is opened without following
 symbolic links; a link, an unreadable location, an oversized file or an
 exhausted `max_entries` budget makes the scan incomplete.
 

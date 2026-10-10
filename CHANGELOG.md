@@ -101,6 +101,56 @@ summarizes each release for people who install and operate ShadowScan.
 - The records in the tests are synthetic; nothing was validated against a live
   registry.
 
+### MCP registry provenance and approved MCP catalogs
+
+- Add `options.mcp_registries` (empty by default): up to 16 MCP Registry
+  snapshots, each opted in by its own `id` and pinned by the SHA-256 of the
+  file; `approved: true` marks the organisation's approved MCP catalog. Every
+  scan reads each snapshot again without following symbolic links, checks the
+  pin and validates every entry strictly. A missing, changed, oversized,
+  malformed or incomplete snapshot is not used and makes the scan incomplete
+  (`engine.mcp-registry`, exit 3). A scan never contacts a registry.
+- Add `shadowscan mcp-registry snapshot`. It lists every server version of a
+  registry that serves the MCP Registry API v0.1 (default the official
+  registry, deleted versions included) over the shared HTTPS client, keeps the
+  fields matching reads, validates the result as a scan would and writes it
+  with mode 0600, printing the SHA-256 to pin. A failed or refused request, an
+  invalid page, a repeated cursor or a page, entry or size limit exits 3 and
+  writes nothing. The client never uses a proxy.
+- After correlation, and before registry reconciliation and scoring, the engine
+  matches the MCP servers of `mcp-server` findings (code and endpoint client
+  configurations, and `endpoint.mcp` tool findings by server URL) by launched
+  package (npm, PyPI or OCI identity), then remote URL, then a `server.json`
+  manifest's registry name. Servers get `registry` entries; findings get
+  `metadata.mcp_registry` and the review tags `mcp-registry-published`,
+  `mcp-unpublished`, `mcp-registry-deprecated`, `mcp-registry-deleted`,
+  `mcp-registry-version-unpublished` and `mcp-registry-outdated`, with
+  zero-weight evidence. The tags weigh 0, so a configured registry changes no
+  score by itself, and publication never lowers risk. Disabled servers add no
+  tags. There is no name-similarity matching.
+- Add the governance factor `mcp-not-in-approved-registry` (15). It applies
+  only when an approved registry is configured and every approved registry
+  loaded, to MCP findings with an enabled, identifiable server that no approved
+  registry lists or that one lists only as deleted. Like the other governance
+  factors it is excluded from `danger_score` and weighs 0 under
+  `risk_basis: danger`; `risk_weights.governance` accepts it, and its error
+  message now lists every governance key.
+- `shadowscan.connectors.mcp_risk` gains `server_package` and
+  `registry_package`, the package identity of a launch and of a registry
+  listing, on a launcher parser shared with the existing risk checks, whose
+  results are unchanged.
+- The collection scope fingerprint covers the configured registries' ids, pins
+  and approval flags, and only when the option is set: fingerprints of scans
+  without it are unchanged.
+- CycloneDX MCP services carry `shadowscan:mcp:registry-name`,
+  `registry-version`, `registry-status` and `registry-source`.
+- Map `mcp-unpublished` and `mcp-registry-deleted` to OWASP LLM04:2026,
+  ASI04 and ATLAS AML.T0010.005, and to NIST AI RMF GOVERN 6.1 and ISO/IEC
+  42001 A.10.3, as author-written evidence references. The governance factor
+  is not mapped, because mapping rules cannot read risk factors.
+- The tests use a synthetic snapshot shaped like the live registry API. No
+  live registry fetch or tenant acceptance is part of the test suite.
+
 ### Autonomy tiers and Capability Card schema version 2
 
 - Classify agents, agent configurations, MCP servers, workflows, bots, gateway

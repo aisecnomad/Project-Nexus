@@ -21,6 +21,11 @@ The checks read only the sanitized server record the configuration parser
 produced; they never start a server or contact a registry. A digest-pinned
 image or an exact package version is treated as pinned even though a
 registry can still be compromised.
+
+:func:`server_package` reads the same launch to name the package a server is
+fetched from (registry type, normalized identifier and exact version), which
+MCP registry snapshots are matched against; :func:`registry_package`
+normalizes a registry's own package listing the same way.
 """
 
 from __future__ import annotations
@@ -71,6 +76,28 @@ _DOCKER_VALUE_FLAGS = {
 _BROAD_ROOTS = {"/", "~", "~/", "$HOME", "${HOME}", "%USERPROFILE%", "/home", "/Users", "/root"}
 _DRIVE_ROOT = re.compile(r"^[A-Za-z]:[\\/]?$")
 _HOME_DIR = re.compile(r"^(?:/home/[^/]+|/Users/[^/]+|[A-Za-z]:[\\/]Users[\\/][^\\/]+)[\\/]?$")
+_MOVING_TAGS = frozenset({"latest", "main", "master", "edge", "nightly"})
+# A spec that names a path, a URL, a Git source or an npm alias is not a registry package.
+_NOT_REGISTRY = (".", "/", "~", "file:", "git+", "git:", "github:", "npm:", "http:", "https:")
+_NPM_NAME = re.compile(r"(?:@[a-z0-9._~-]+/)?[a-z0-9._~-]+\Z")
+_PY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_PY_SEPARATORS = re.compile(r"[-_.]+")
+_DOCKER_HUB_HOSTS = frozenset({"docker.io", "index.docker.io", "registry-1.docker.io"})
+
+
+@dataclass(frozen=True, slots=True)
+class PackageRef:
+    """The package an MCP server is fetched from.
+
+    ``identifier`` is normalized per registry type: npm names lowercased, PyPI names
+    normalized as PEP 503 does, OCI images as ``host/path`` with Docker Hub spelled
+    ``docker.io`` and no tag or digest. ``version`` is the exact version or image tag,
+    or None when the launch does not pin one.
+    """
+
+    registry_type: str
+    identifier: str
+    version: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,11 +115,8 @@ class McpRisk:
 def assess_server(server: dict[str, Any]) -> list[McpRisk]:
     """Return the risks of one parsed server record (``_mcp_server_record`` output)."""
     risks: list[McpRisk] = []
-    command = server.get("command")
-    raw_args = server.get("args")
-    args = [a for a in raw_args if isinstance(a, str)] if isinstance(raw_args, list) else []
-    if isinstance(command, str) and command.strip():
-        argv = command.split() + args if " " in command.strip() and not args else [command, *args]
+    argv = _argv(server)
+    if argv is not None:
         risks += _launcher_risks(argv)
     raw_urls = server.get("urls")
     urls = [u for u in raw_urls if isinstance(u, str)] if isinstance(raw_urls, list) else []
@@ -130,15 +154,114 @@ def record_server_risks(finding: Finding, server: dict[str, Any], location: str)
         )
 
 
-def _launcher_risks(argv: list[str]) -> list[McpRisk]:
+def server_package(server: dict[str, Any]) -> PackageRef | None:
+    """The registry package a parsed server record launches, or None when it launches none.
+
+    Only the launchers :func:`assess_server` recognizes count. A shell command line, a
+    local path, a URL or Git source, an npm alias and a GitHub shorthand name no package.
+    """
+    argv = _argv(server)
+    if argv is None or (_basename(argv[0]) in _SHELLS and any(a.lower() in _SHELL_FLAGS for a in argv[1:])):
+        return None
+    registry, spec, _ = _launch(argv)
+    if registry is None or not spec:
+        return None
+    if registry == "npm":
+        parsed = _npm_ref(spec)
+    elif registry == "pypi":
+        parsed = _pypi_ref(spec)
+    else:
+        parsed = _oci_ref(spec)
+    return PackageRef(registry, parsed[0], parsed[1]) if parsed is not None else None
+
+
+def registry_package(registry_type: str, identifier: str, version: str | None = None) -> PackageRef | None:
+    """Normalize a package as an MCP registry lists it, comparably with :func:`server_package`.
+
+    An OCI identifier carries its tag, which is the version unless ``version`` is given.
+    Other registry types keep their lowercased identifier. None when the identifier does
+    not name a registry package.
+    """
+    kind = registry_type.strip().lower()
+    name = identifier.strip()
+    if not kind or not name:
+        return None
+    if kind == "oci":
+        parsed = _oci_ref(name)
+        return PackageRef(kind, parsed[0], version or parsed[1]) if parsed is not None else None
+    if kind == "npm":
+        npm = _npm_ref(name)
+        return PackageRef(kind, npm[0], version) if npm is not None else None
+    if kind == "pypi":
+        pypi = _pypi_ref(name)
+        return PackageRef(kind, pypi[0], version) if pypi is not None else None
+    return PackageRef(kind, name.lower(), version)
+
+
+def _argv(server: dict[str, Any]) -> list[str] | None:
+    """The command line a server record starts, or None when it starts no command."""
+    command = server.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+    raw_args = server.get("args")
+    args = [a for a in raw_args if isinstance(a, str)] if isinstance(raw_args, list) else []
+    return command.split() + args if " " in command.strip() and not args else [command, *args]
+
+
+def _npm_ref(spec: str) -> tuple[str, str | None] | None:
+    if spec.startswith(_NOT_REGISTRY):
+        return None
+    name = _package_name(spec).lower()
+    if not _NPM_NAME.match(name):
+        return None
+    body = spec[1:] if spec.startswith("@") else spec
+    version = body.rsplit("@", 1)[1] if "@" in body else ""
+    return name, version.removeprefix("v") if _EXACT_SEMVER.match(version) else None
+
+
+def _pypi_ref(spec: str) -> tuple[str, str | None] | None:
+    if spec.startswith(_NOT_REGISTRY) or "://" in spec:
+        return None
+    match = _PY_NAME.match(spec)
+    if match is None:
+        return None
+    name = _PY_SEPARATORS.sub("-", match.group(0)).lower()
+    version = None
+    if _PY_EXACT.match(spec):
+        version = spec.split("==", 1)[1].lstrip("=").strip()
+    elif _PY_AT_VERSION.match(spec):
+        version = spec.rsplit("@", 1)[1].removeprefix("v")
+    return name, version
+
+
+def _oci_ref(image: str) -> tuple[str, str | None] | None:
+    reference = image.strip().partition("@")[0]
+    if not reference or reference.startswith(("-", "/", ".")) or "://" in reference:
+        return None
+    head, _, last = reference.rpartition("/")
+    last, _, tag = last.partition(":")
+    parts = [*head.split("/"), last] if head else [last]
+    if len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost"):
+        host, path = parts[0].lower(), parts[1:]
+    else:
+        host, path = "docker.io", parts
+    if host in _DOCKER_HUB_HOSTS:
+        host = "docker.io"
+        if len(path) == 1:
+            path = ["library", *path]
+    if not all(path):
+        return None
+    return "/".join([host, *path]).lower(), tag if tag and tag not in _MOVING_TAGS else None
+
+
+def _launch(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
+    """The registry a launcher fetches from, the package or image it names, and the arguments after it.
+
+    The registry is ``npm``, ``pypi`` or ``oci``, or None when ``argv`` does not start a
+    package launcher; the arguments are then everything after the executable.
+    """
     exe = _basename(argv[0])
     rest = argv[1:]
-    risks: list[McpRisk] = []
-    if exe in _SHELLS and any(a.lower() in _SHELL_FLAGS for a in rest):
-        risks.append(McpRisk("mcp-shell-command", exe))
-        return risks
-    package = None
-    unpinned = False
     if (
         exe in {"npx", "bunx"}
         or (exe in {"pnpm", "yarn"} and rest[:1] == ["dlx"])
@@ -146,27 +269,36 @@ def _launcher_risks(argv: list[str]) -> list[McpRisk]:
     ):
         tail = rest[1:] if exe in {"pnpm", "yarn", "bun"} else rest
         package, positional = _node_package(tail)
-        unpinned = package is not None and not _npm_pinned(package)
-        rest = positional
-    elif exe == "uvx" or (exe == "uv" and rest[:2] == ["tool", "run"]):
+        return "npm", package, positional
+    if exe == "uvx" or (exe == "uv" and rest[:2] == ["tool", "run"]):
         tail = rest[2:] if exe == "uv" else rest
         package, positional = _python_package(tail, _UV_VALUE_FLAGS, "--from")
-        unpinned = package is not None and not _python_pinned(package)
-        rest = positional
-    elif exe == "pipx" and rest[:1] == ["run"]:
+        return "pypi", package, positional
+    if exe == "pipx" and rest[:1] == ["run"]:
         package, positional = _python_package(rest[1:], _PIPX_VALUE_FLAGS, "--spec")
-        unpinned = package is not None and not _python_pinned(package)
-        rest = positional
-    elif exe in {"docker", "podman"} and rest[:1] == ["run"]:
+        return "pypi", package, positional
+    if exe in {"docker", "podman"} and rest[:1] == ["run"]:
         image, positional = _docker_image(rest[1:])
-        if image is not None and _image_unpinned(image):
-            risks.append(McpRisk("mcp-unpinned-package", image.split("@", 1)[0]))
-        rest = positional
-    if unpinned and package is not None:
+        return "oci", image, positional
+    return None, None, rest
+
+
+def _launcher_risks(argv: list[str]) -> list[McpRisk]:
+    exe = _basename(argv[0])
+    if exe in _SHELLS and any(a.lower() in _SHELL_FLAGS for a in argv[1:]):
+        return [McpRisk("mcp-shell-command", exe)]
+    registry, package, rest = _launch(argv)
+    risks: list[McpRisk] = []
+    if registry == "oci":
+        if package is not None and _image_unpinned(package):
+            risks.append(McpRisk("mcp-unpinned-package", package.split("@", 1)[0]))
+        return risks
+    if package is None:
+        return risks
+    if not (_npm_pinned(package) if registry == "npm" else _python_pinned(package)):
         risks.append(McpRisk("mcp-unpinned-package", _package_name(package)))
-    if package is not None and "server-filesystem" in package.lower():
-        if any(_broad_root(a) for a in rest):
-            risks.append(McpRisk("mcp-broad-filesystem", _package_name(package)))
+    if "server-filesystem" in package.lower() and any(_broad_root(a) for a in rest):
+        risks.append(McpRisk("mcp-broad-filesystem", _package_name(package)))
     return risks
 
 

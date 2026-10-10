@@ -78,6 +78,61 @@ possible. `${VAR}` expansion works in `id`. There is no command-line flag. See
 [vendor registries as inventory sources](../inventory.md#vendor-registries-as-inventory-sources)
 for what an approved record approves.
 
+## MCP registry snapshots
+
+`options.mcp_registries` pins MCP Registry snapshots that the scan matches
+configured MCP servers against: where each server is published, whether its
+pinned version is listed and current, and whether the registry marks it
+deprecated or deleted. It is empty by default, and a scan never fetches a
+registry. Produce a snapshot where direct HTTPS egress to the registry is
+allowed:
+
+```bash
+shadowscan mcp-registry snapshot --output ./mcp-registry.json
+```
+
+The command lists every server version of the official registry
+(`https://registry.modelcontextprotocol.io`), deleted versions included, writes
+the file with mode 0600 and prints the SHA-256 to pin on standard output.
+`--url` names another registry that serves the MCP Registry API v0.1, such as an
+organisation's private catalog; `--ca-bundle` trusts a private CA and
+`--allow-private-origin` allows a registry on a private address. The client
+never uses a proxy, so run the command where the registry is reachable
+directly. The listing is complete or nothing is written: a failed or refused
+request, an invalid page, a repeated cursor, more than `--max-pages` pages
+(default 5,000 pages of 100 versions), more than 500,000 versions or 256 MiB
+exits with code 3. A snapshot keeps only what matching reads from each version:
+its name and version, its packages (registry type, identifier and version), its
+remote URLs, and the registry's status, latest flag and publication time. A
+full official listing (about 145,000 versions in October 2026) is about 45 MB
+and takes the scan a few seconds and a few hundred MiB of memory to load.
+
+```yaml
+options:
+  mcp_registries:
+    - id: official                      # 1-64 of a-z 0-9 . _ -, unique
+      snapshot: ./mcp-registry.json     # resolved beside this configuration file
+      sha256: <the SHA-256 the command printed>
+    - id: corp-catalog
+      snapshot: ./corp-mcp-catalog.json
+      sha256: <its SHA-256>
+      approved: true                    # the organisation's approved MCP catalog
+```
+
+At most 16 entries. `sha256` is 64 lowercase hexadecimal characters and
+`approved` a YAML boolean (default false); unknown keys and repeated ids are
+rejected before anything is scanned. Every scan reads each snapshot again
+without following symbolic links and checks its pin. A snapshot that is
+missing, changed, larger than 256 MiB, not strict JSON, not `complete`, of
+another schema or API version, or that has an invalid entry (an unknown status,
+a repeated name and version, an invalid name) is not used, and the scan is
+incomplete (`engine.mcp-registry`, exit 3). The ids, pins and approval flags
+are part of the [collection scope](../scanning.md#comparing-reports) fingerprint when configured,
+so a baseline taken with other snapshots is not comparable. See
+[MCP registry provenance](../connectors/code.md#mcp-registry-provenance) for
+what is matched and reported, and [risk scoring](../concepts/risk.md) for the
+`mcp-not-in-approved-registry` governance factor an approved registry enables.
+
 ## Environment variable expansion
 
 All string values support `${VAR}` expansion:

@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from shadowscan.connectors.mcp_risk import RISK_DESCRIPTIONS, McpRisk, assess_server
+from shadowscan.connectors.mcp_risk import (
+    RISK_DESCRIPTIONS,
+    McpRisk,
+    PackageRef,
+    assess_server,
+    registry_package,
+    server_package,
+)
 from shadowscan.models import Kind
 from shadowscan.risk import assess
 
@@ -194,3 +201,115 @@ def test_every_insecure_transport_label_is_scored(url):
     record_server_risks(f, server, ".mcp.json")
     assert "mcp-insecure-transport" in f.tags
     assert "mcp-plain-http" in {factor.id for factor in assess(f).factors}
+
+
+# ------------------------------------------------------------------ package identity
+
+
+@pytest.mark.parametrize(
+    ("command", "args", "expected"),
+    [
+        (
+            "npx",
+            ["-y", "@modelcontextprotocol/server-github@1.2.3"],
+            ("npm", "@modelcontextprotocol/server-github", "1.2.3"),
+        ),
+        ("npx", ["-y", "@Scope/Pkg@latest"], ("npm", "@scope/pkg", None)),
+        ("npx", ["@playwright/mcp@^0.0.30"], ("npm", "@playwright/mcp", None)),
+        ("npx", ["--yes", "--package", "mcp-remote@0.1.0", "mcp-remote"], ("npm", "mcp-remote", "0.1.0")),
+        ("pnpm", ["dlx", "some-server@v2.0.0"], ("npm", "some-server", "2.0.0")),
+        ("bun", ["x", "some-server"], ("npm", "some-server", None)),
+        ("npx -y foo@1.0.0", [], ("npm", "foo", "1.0.0")),
+        ("uvx", ["mcp-server-fetch"], ("pypi", "mcp-server-fetch", None)),
+        (
+            "uvx",
+            ["--from", "MCP_Server.Time==0.6.2", "mcp-server-time"],
+            ("pypi", "mcp-server-time", "0.6.2"),
+        ),
+        ("uvx", ["mcp-server-time[extra]===1.0"], ("pypi", "mcp-server-time", "1.0")),
+        ("uv", ["tool", "run", "mcp-server-sqlite@v0.6"], ("pypi", "mcp-server-sqlite", "0.6")),
+        (
+            "pipx",
+            ["run", "--spec", "mcp-server-fetch>=0.6", "mcp-server-fetch"],
+            ("pypi", "mcp-server-fetch", None),
+        ),
+        (
+            "docker",
+            ["run", "-i", "--rm", "ghcr.io/github/github-mcp-server:2.0.2"],
+            ("oci", "ghcr.io/github/github-mcp-server", "2.0.2"),
+        ),
+        ("docker", ["run", "mcp/fetch:latest"], ("oci", "docker.io/mcp/fetch", None)),
+        (
+            "docker",
+            ["run", "index.docker.io/library/ubuntu@sha256:" + "a" * 64],
+            ("oci", "docker.io/library/ubuntu", None),
+        ),
+        (
+            "podman",
+            ["run", "--name", "x", "Registry.Local:5000/mcp/time:1.0"],
+            ("oci", "registry.local:5000/mcp/time", "1.0"),
+        ),
+        ("docker", ["run", "alpine"], ("oci", "docker.io/library/alpine", None)),
+    ],
+)
+def test_server_package_names_the_launched_registry_package(command, args, expected):
+    assert server_package({"command": command, "args": args}) == PackageRef(*expected)
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        ("npx", ["owner/repo"]),
+        ("npx", ["github:owner/repo"]),
+        ("npx", ["./local-server"]),
+        ("npx", ["npm:alias@1.0.0"]),
+        ("npx", ["@scope"]),
+        ("npx", ["-y"]),
+        ("uvx", ["--from", "https://example.com/server.whl", "server"]),
+        ("uvx", ["!!!"]),
+        ("docker", ["run", "-i"]),
+        ("docker", ["run", "https://example.com/image"]),
+        ("docker", ["run", "registry.example.com/"]),
+        ("sh", ["-c", "npx -y @acme/server@1.0.0"]),
+        ("node", ["server.js"]),
+        ("", []),
+        (None, []),
+    ],
+)
+def test_server_package_is_none_without_a_registry_package(command, args):
+    assert server_package({"command": command, "args": args}) is None
+
+
+def test_server_package_ignores_a_remote_only_server():
+    assert server_package({"url": "https://mcp.example.com/mcp", "args": "not a list"}) is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "identifier", "version", "expected"),
+    [
+        ("npm", "@Acme/MCP-Files", "1.0.0", ("npm", "@acme/mcp-files", "1.0.0")),
+        ("pypi", "Acme_Legacy.MCP", "0.9.0", ("pypi", "acme-legacy-mcp", "0.9.0")),
+        (
+            "OCI",
+            "ghcr.io/github/github-mcp-server:2.0.2",
+            None,
+            ("oci", "ghcr.io/github/github-mcp-server", "2.0.2"),
+        ),
+        ("oci", "docker.io/mcp/fetch:v1", "1.0", ("oci", "docker.io/mcp/fetch", "1.0")),
+        (
+            "mcpb",
+            "https://example.com/Tool.mcpb",
+            "3.0.0",
+            ("mcpb", "https://example.com/tool.mcpb", "3.0.0"),
+        ),
+    ],
+)
+def test_registry_package_normalizes_like_a_launch(kind, identifier, version, expected):
+    assert registry_package(kind, identifier, version) == PackageRef(*expected)
+
+
+@pytest.mark.parametrize(
+    ("kind", "identifier"), [("", "x"), ("npm", " "), ("npm", "owner/repo"), ("pypi", "-x"), ("oci", "-x")]
+)
+def test_registry_package_rejects_what_names_no_package(kind, identifier):
+    assert registry_package(kind, identifier) is None

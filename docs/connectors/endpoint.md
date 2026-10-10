@@ -61,6 +61,12 @@ extensions and commands from shell history count as person-started
 (`initiation: human`); a configured client does not, because it can also run
 unattended.
 
+With [`options.mcp_registries`](../getting-started/configuration.md#mcp-registry-snapshots),
+each client's MCP servers are matched against pinned MCP Registry snapshots by
+package and remote URL, as for the code connector: see
+[MCP registry provenance](code.md#mcp-registry-provenance). The matching runs
+in the engine, so `--dump-records` exports and replays are unchanged.
+
 Options:
 
 - `path`: the home directory to inventory. The default is the home directory
@@ -161,7 +167,9 @@ MCP tool definitions are analyzed for risky capability names, prompt-injection
 or exfiltration indicators, missing declared authentication, and duplicate
 tool names across servers. Tool definitions are fingerprinted for downstream
 comparison, but baseline/rug-pull detection is not yet implemented. No tool is
-invoked.
+invoked. With `options.mcp_registries`, a tool finding whose server is an
+HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL
+(`metadata.mcp_registry.matches`); a bare server name identifies nothing.
 
 OTLP analysis selects only service, agent, provider, model, and operation
 attributes; prompt and completion content is not copied into findings.
