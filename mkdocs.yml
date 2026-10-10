@@ -122,6 +122,7 @@ nav:
       - Scheduled drift detection: operations/drift.md
       - AI bill of materials: operations/ai-bom.md
       - Fleet dashboard: operations/dashboard.md
+      - Control evidence report: operations/controls.md
       - OCSF events: operations/ocsf.md
       - LLM triage: operations/llm-triage.md
       - Merge policy enforcement: operations/merge-policy.md

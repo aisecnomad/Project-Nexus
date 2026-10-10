@@ -219,6 +219,56 @@ summarizes each release for people who install and operate ShadowScan.
   `import google.auth` also binds. A new test type-checks every optional SDK
   import with installed packages hidden.
 
+### Control evidence report and declared governance facts
+
+- Add `shadowscan controls REPORT.json [...]` (`--format markdown|csv|json`,
+  `-o`, repeatable `--framework`). For every entry of the NIST AI RMF,
+  ISO/IEC 42001, EU AI Act and AIUC-1 catalogs it lists the findings whose
+  control references name it, split by risk level, with up to 10 examples
+  (highest risk first), an evidence status and the scope behind it (report
+  and connector completeness, whether an inventory was supplied). Several
+  reports are merged as `merge` merges them; a finding counts as shadow only
+  when a report reconciled with an inventory says so.
+- A control no finding references reads `not observed` only when every report
+  is complete; otherwise it reads `unknown (scan incomplete)`, and counts of
+  referenced controls are marked as lower bounds. An incomplete input still
+  writes the output, with an `INCOMPLETE SCAN` banner (a first
+  `SCAN-INCOMPLETE` row in CSV), and exits 3. Controls whose rules all need
+  inventory facts read `unknown (inventory not supplied)` without one, and
+  controls no rule maps read `not mapped`. The output never says a control is
+  met and has no score.
+- Every output carries the notice "Evidence references, not compliance
+  determinations. Mappings are author mappings and have not been
+  independently reviewed." Catalogs gain a required `review` field whose only
+  accepted value is `author`; the validator rejects anything else, and the
+  generated catalog reference shows it. CSV cells use the CSV reporter's
+  spreadsheet-injection protection, and output files are written with mode
+  0600 and never through a symbolic link. The JSON schema is
+  `shadowscan.control-evidence/v1`.
+- Capability Cards with `schema_version: 2` accept an optional `governance:`
+  block: `eu_ai_act_risk_class` (`prohibited`, `high`, `limited`, `minimal`,
+  `gpai`, `gpai-systemic`, `unknown`), `intended_purpose`,
+  `oversight_measures`, `aiuc1_certificate` and `iso42001_scope`. Unknown keys,
+  malformed values and a block on an earlier card fail inventory validation.
+  `inventory check` lists the declared class, and `inventory stubs` writes a
+  `governance: {eu_ai_act_risk_class: unknown}` placeholder.
+- A finding registered by such a card records `metadata.declared_governance`
+  (the block plus `source`, the card's agent id). The value is rebuilt on every
+  reconciliation pass, so a connector, plugin or earlier run cannot plant it;
+  `merge` drops it from findings that are shadow and refuses a report with a
+  malformed block. HTML and Markdown reports show the facts as declared and
+  not verified.
+- Mapping rules gain the `declared_risk_class_any` condition and two control
+  rules: a declared `high` class references EU AI Act Articles 12, 14 and 26,
+  and a declared `limited`, `gpai` or `gpai-systemic` agent, bot or AI
+  application references Article 50. Declared facts count only for registered
+  findings and never change risk, matching or approval.
+- Add authored positive and negative regressions for every format, the
+  incomplete and no-inventory statuses, framework selection, spreadsheet
+  injection, card validation and the declared rules. The declared facts and
+  the mappings are not verified against any tenant, and regression passes do
+  not supply independent human review.
+
 ### Drift classes, baseline pinning and weekly drift templates
 
 - `shadowscan diff` labels every changed field with a drift class

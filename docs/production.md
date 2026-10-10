@@ -1021,6 +1021,26 @@ sources recorded; a source that was not collected cannot be inferred, and the
 threat and control reference counts are evidence references, not compliance
 determinations.
 
+### October 10 control evidence report and declared governance facts (unreleased)
+
+This candidate adds the [control evidence report](operations/controls.md) and
+the Capability Card [`governance:` block](inventory.md#declared-governance-facts).
+It does not change the published 0.1.2 artifact, create a release, or establish
+independent review of the mappings or live tenant acceptance. The fixtures are
+synthetic and author-written.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Control evidence | `shadowscan controls` writes per-control findings, risk-level counts, examples and evidence status as Markdown, CSV or JSON (`shadowscan.control-evidence/v1`). An incomplete input writes the banner and exits 3; zero-reference controls then read `unknown (scan incomplete)`, never `not observed`. | Gate pipelines on exit 3 like other commands. Treat the output as evidence references for an analyst, not as a compliance determination or an assessment of any control. Pass source reports rather than a merged report, so reports without an inventory never make findings look shadow. |
+| Capability Cards | `schema_version: 2` cards accept `governance:` (EU AI Act risk class, intended purpose, oversight measures, AIUC-1 certificate, ISO/IEC 42001 scope). Unknown keys, malformed values and a block on an earlier card fail inventory validation (exit 1). | Run `shadowscan inventory check` before deploying cards with the block. Declare a risk class only after your own legal assessment; ShadowScan never infers or checks it. |
+| Report fields | Findings registered by such a card carry `metadata.declared_governance` (the block plus `source`), rebuilt on every run. `merge` drops it from shadow findings and refuses a report with a malformed block. Finding identity, risk scores and `diff` change detection are unchanged. | Consumers that read metadata must tolerate the new key. Regenerate hand-edited reports that `merge` refuses. |
+| Control references | New rules: a declared `high` class references EU AI Act Articles 12, 14 and 26; a declared `limited`, `gpai` or `gpai-systemic` agent, bot or AI application references Article 50. Catalogs carry `review: author`, the only accepted value. | Expect `metadata.controls` of registered findings to change once cards declare a class. The references remain author mappings. |
+| Inventory stubs | Stubs carry `governance: {eu_ai_act_risk_class: unknown}`. | Replace the placeholder, or remove the block, when reviewing a stub. |
+
+The report shows what the scanned sources contained and how the author mappings
+relate it to each control. It does not establish that a control is designed or
+operating, that an obligation applies, or that declared facts are true.
+
 ### October 10 drift classes and baseline lifecycle (unreleased)
 
 This candidate adds drift classes, baseline pinning and expiry to

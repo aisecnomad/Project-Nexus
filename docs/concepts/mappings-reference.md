@@ -12,24 +12,27 @@ and the rules are author mappings, not independently reviewed. See
 `Checked` is the date a catalog was compiled and its entries last checked.
 A `primary` catalog was checked against the source it links. A `secondary`
 catalog links the framework's own publication, which could not be consulted;
-its entries follow secondary sources.
+its entries follow secondary sources. `Review` says who reviewed the mappings:
+`author` means the project's author only.
 
-| Prefix | Framework | Kind | Verification | Licence | Checked |
-| --- | --- | --- | --- | --- | --- |
-| `aiuc-1-2026q2` | AIUC-1 | control | secondary | Unverified; identifiers and own-words labels only | 2026-10-10 |
-| `eu-ai-act-2024` | EU AI Act, Regulation (EU) 2024/1689 | control | secondary | EU legal act; reuse permitted | 2026-10-10 |
-| `iso-iec-42001-2023` | ISO/IEC 42001:2023 Annex A | control | secondary | Copyrighted; identifiers and own-words labels only | 2026-10-10 |
-| `maestro-2025` | CSA MAESTRO agentic threat modelling layers | layer | secondary | CSA publication; layer numbers and short labels only | 2026-10-10 |
-| `mitre-atlas-2026.09` | MITRE ATLAS | threat | primary | Apache-2.0 | 2026-10-10 |
-| `nist-ai-rmf-1.0` | NIST AI Risk Management Framework (AI 100-1) | control | secondary | Public domain (US government work) | 2026-10-10 |
-| `owasp-asi-2026` | OWASP Top 10 for Agentic Applications | threat | primary | CC-BY-SA-4.0 | 2026-10-10 |
-| `owasp-llm-2026` | OWASP Top 10 for LLM Applications | threat | primary | CC-BY-SA-4.0 | 2026-10-10 |
+| Prefix | Framework | Kind | Verification | Review | Licence | Checked |
+| --- | --- | --- | --- | --- | --- | --- |
+| `aiuc-1-2026q2` | AIUC-1 | control | secondary | author | Unverified; identifiers and own-words labels only | 2026-10-10 |
+| `eu-ai-act-2024` | EU AI Act, Regulation (EU) 2024/1689 | control | secondary | author | EU legal act; reuse permitted | 2026-10-10 |
+| `iso-iec-42001-2023` | ISO/IEC 42001:2023 Annex A | control | secondary | author | Copyrighted; identifiers and own-words labels only | 2026-10-10 |
+| `maestro-2025` | CSA MAESTRO agentic threat modelling layers | layer | secondary | author | CSA publication; layer numbers and short labels only | 2026-10-10 |
+| `mitre-atlas-2026.09` | MITRE ATLAS | threat | primary | author | Apache-2.0 | 2026-10-10 |
+| `nist-ai-rmf-1.0` | NIST AI Risk Management Framework (AI 100-1) | control | secondary | author | Public domain (US government work) | 2026-10-10 |
+| `owasp-asi-2026` | OWASP Top 10 for Agentic Applications | threat | primary | author | CC-BY-SA-4.0 | 2026-10-10 |
+| `owasp-llm-2026` | OWASP Top 10 for LLM Applications | threat | primary | author | CC-BY-SA-4.0 | 2026-10-10 |
 
 ### `aiuc-1-2026q2`
 
 AIUC-1, edition 2026q2.
 
 Publication: <https://standard.aiuc-1.com/> (not consulted directly; entries follow secondary sources)
+
+Mappings are author mappings and have not been independently reviewed.
 
 Versioned quarterly. References are at domain level (A to F). Requirement-level identifiers other than D003 are not used because they could not be verified against the official text.
 
@@ -49,6 +52,8 @@ EU AI Act, Regulation (EU) 2024/1689, edition 2024.
 
 Publication: <https://eur-lex.europa.eu/eli/reg/2024/1689/oj> (not consulted directly; entries follow secondary sources)
 
+Mappings are author mappings and have not been independently reviewed.
+
 Amended by Regulation (EU) 2026/1744 (reported by secondary sources; the Official Journal could not be retrieved). Which obligations apply depends on the system's risk class and the operator's role, which ShadowScan cannot determine; a reference is evidence relevant to an article, not a finding that the article applies or is met.
 
 | Reference | Title |
@@ -64,6 +69,8 @@ Amended by Regulation (EU) 2026/1744 (reported by secondary sources; the Officia
 ISO/IEC 42001:2023 Annex A, edition 2023.
 
 Publication: <https://www.iso.org/standard/81230.html> (not consulted directly; entries follow secondary sources)
+
+Mappings are author mappings and have not been independently reviewed.
 
 Identifiers only; the standard's text is copyrighted. Labels are the project's own words and do not reproduce control titles or text. The standard was not consulted directly; identifiers follow secondary sources.
 
@@ -82,6 +89,8 @@ CSA MAESTRO agentic threat modelling layers, edition 2025.
 
 Publication: <https://cloudsecurityalliance.org/blog/2025/02/06/agentic-ai-threat-modeling-framework-maestro> (not consulted directly; entries follow secondary sources)
 
+Mappings are author mappings and have not been independently reviewed.
+
 Seven-layer reference architecture published by the Cloud Security Alliance in February 2025. The publication itself could not be retrieved; layer labels follow secondary sources, which differ slightly on layers 4 to 6. Layer 6 is cross-cutting. A layer says where in the stack a finding sits; it is not a threat identifier.
 
 | Reference | Title |
@@ -99,6 +108,8 @@ Seven-layer reference architecture published by the Cloud Security Alliance in F
 MITRE ATLAS, edition 2026.09.
 
 Checked against: <https://github.com/mitre-atlas/atlas-data>
+
+Mappings are author mappings and have not been independently reviewed.
 
 Release 2026.09 (dist/v6/ATLAS-2026.09.yaml, format 6.0.0). Only the techniques the rules reference are listed. A sub-technique title gives its parent technique's name first. A reference says a finding supplies a precondition for the technique, never that it was used.
 
@@ -130,6 +141,8 @@ NIST AI Risk Management Framework (AI 100-1), edition 1.0.
 
 Publication: <https://airc.nist.gov/airmf-resources/airmf/5-sec-core/> (not consulted directly; entries follow secondary sources)
 
+Mappings are author mappings and have not been independently reviewed.
+
 Subcategory identifiers from the AI RMF Core. Titles are short summaries in the project's own words, not the subcategory text. The NIST site could not be retrieved when this catalog was written, so the identifiers are marked as checked against secondary sources only.
 
 | Reference | Title |
@@ -152,6 +165,8 @@ OWASP Top 10 for Agentic Applications, edition 2026.
 
 Checked against: <https://github.com/GenAI-Security-Project/GenAI-LLM-Top10/blob/main/2026/final/Appendix_A_Related_Framework_Mappings.md>
 
+Mappings are author mappings and have not been independently reviewed.
+
 Announced 2025-12-09. The list's own page on genai.owasp.org could not be retrieved. Entry names were checked against Appendix A of the OWASP Top 10 for LLM Applications 2026 in the GenAI Security Project repository (the source URL), an OWASP publication that crosswalks each LLM entry to this list.
 
 | Reference | Title |
@@ -172,6 +187,8 @@ Announced 2025-12-09. The list's own page on genai.owasp.org could not be retrie
 OWASP Top 10 for LLM Applications, edition 2026.
 
 Checked against: <https://github.com/GenAI-Security-Project/GenAI-LLM-Top10>
+
+Mappings are author mappings and have not been independently reviewed.
 
 2026 edition, published 2026-08-04. Entry numbers changed from the 2025 edition (for example LLM03 is Excessive Agency, not Supply Chain), so a reference is meaningful only with its edition prefix.
 
@@ -265,3 +282,5 @@ From `shadowscan/mappings/data/rules/controls.yaml`.
 | `mcp-unvetted-component` | tag `mcp-registry-deleted` or `mcp-unpublished` | `nist-ai-rmf-1.0:GOVERN-6.1`, `iso-iec-42001-2023:A.10.3` | An MCP server outside the configured MCP registries, or deleted from one, is a third-party component whose provenance the organization has to review. |
 | `user-facing-ai` | kind `ai-app` or `bot-app` | `eu-ai-act-2024:Art.50` | A bot or AI application that people interact with is relevant to transparency obligations towards those people. |
 | `agentic-monitoring` | `metadata.autonomy.floor` at least 3 | `nist-ai-rmf-1.0:MANAGE-4.1`, `iso-iec-42001-2023:A.6.2.6` | An agent that runs multi-step workflows on its own needs operational monitoring after deployment. |
+| `declared-high-risk` | declared `metadata.declared_governance.eu_ai_act_risk_class` `high` | `eu-ai-act-2024:Art.12`, `eu-ai-act-2024:Art.14`, `eu-ai-act-2024:Art.26` | The operator declares the system high-risk under the EU AI Act, so evidence about its records, human oversight and use is relevant to the record-keeping, human oversight and deployer obligations for high-risk systems. |
+| `declared-transparency` | kind `agent` or `ai-app` or `bot-app`; and declared `metadata.declared_governance.eu_ai_act_risk_class` `gpai` or `gpai-systemic` or `limited` | `eu-ai-act-2024:Art.50` | The operator declares a limited-risk or general-purpose AI system that people interact with, which is relevant to the transparency obligations towards those people. |

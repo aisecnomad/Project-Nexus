@@ -7,6 +7,7 @@ source_url: https://cloudsecurityalliance.org/blog/2025/02/06/agentic-ai-threat-
 licence: CSA publication; layer numbers and short labels only
 checked: "2026-10-10"
 verification: secondary
+review: author
 notes: >-
   Seven-layer reference architecture published by the Cloud Security Alliance
   in February 2025. The publication itself could not be retrieved; layer

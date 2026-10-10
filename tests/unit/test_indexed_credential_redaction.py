@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from io import StringIO
@@ -11,9 +12,11 @@ import pytest
 from rich.console import Console
 
 from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.controls import control_evidence
 from shadowscan.dashboard import build_inventory, render_inventory_json
 from shadowscan.engine import Engine
 from shadowscan.models import ScanResult
+from shadowscan.reporters.controls import CONTROL_FORMATS, render_controls
 from shadowscan.reporters.csv_ import render_csv
 from shadowscan.reporters.dashboard import render_dashboard
 from shadowscan.reporters.html import render_html
@@ -23,6 +26,13 @@ from shadowscan.reporters.sarif import render_sarif
 from shadowscan.reporters.table import print_table
 from shadowscan.utils import redaction
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize_text
+
+
+def render_controls_report(result: ScanResult) -> str:
+    """The control evidence report, in every format, of ``result`` read back as a JSON report."""
+    evidence = control_evidence([("report.json", json.loads(result.to_json()))])
+    return "\n".join(render_controls(evidence, fmt) for fmt in CONTROL_FORMATS)
+
 
 SECRET = "opaque-sensitive-canary-123456789"
 TAIL = "additional-private-credential-fragment"
@@ -175,6 +185,7 @@ def test_engine_reporters_never_export_indexed_credentials(tmp_path, scan_secret
         render_html,
         render_markdown,
         render_csv,
+        render_controls_report,
         render_dashboard_page,
         render_inventory_document,
     ):

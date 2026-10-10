@@ -139,3 +139,28 @@ rules:
     rationale: >-
       An agent that runs multi-step workflows on its own needs operational
       monitoring after deployment.
+
+  # Declared facts: an inventory card's `governance` block, never inferred by
+  # the scanner. ShadowScan cannot tell whether a system is high-risk under the
+  # EU AI Act; these rules apply only to a registered finding whose card says so.
+  - id: declared-high-risk
+    when: {declared_risk_class_any: [high]}
+    refs:
+      - eu-ai-act-2024:Art.12
+      - eu-ai-act-2024:Art.14
+      - eu-ai-act-2024:Art.26
+    rationale: >-
+      The operator declares the system high-risk under the EU AI Act, so evidence
+      about its records, human oversight and use is relevant to the record-keeping,
+      human oversight and deployer obligations for high-risk systems.
+
+  - id: declared-transparency
+    when:
+      declared_risk_class_any: [limited, gpai, gpai-systemic]
+      kinds_any: [agent, bot-app, ai-app]
+    refs:
+      - eu-ai-act-2024:Art.50
+    rationale: >-
+      The operator declares a limited-risk or general-purpose AI system that
+      people interact with, which is relevant to the transparency obligations
+      towards those people.

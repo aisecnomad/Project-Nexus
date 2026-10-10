@@ -8,6 +8,8 @@ evidence and technologies union, the earliest ``first_seen`` and latest
 (``metadata.autonomy``) is the exception: it is classified again from the merged
 finding and widened to admit whatever any source's validated block admits, so
 evidence from a later source is never hidden behind the first source's interval.
+A merged finding that is shadow loses its registry match and its declared
+governance facts (``metadata.declared_governance``).
 Findings from different machines keep their own resources because the endpoint
 label prefixes every resource. Registration counts only from sources that
 reconciled against an inventory (``inventory_present: true``: ``--inventory``,
@@ -40,6 +42,7 @@ from shadowscan import __version__
 from shadowscan.autonomy import UNDERSTATED_TAG, merge_autonomy, merged_autonomy, valid_autonomy
 from shadowscan.comparison import _SCHEMA as _SCOPE_SCHEMA
 from shadowscan.comparison import _complete, _findings, _scope_digest, _started_at, _summary_matches_findings
+from shadowscan.governance import DECLARED_GOVERNANCE_KEY, valid_declared_governance
 from shadowscan.merge import merge
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, Risk, ScanResult, ScanStats, now_iso
 from shadowscan.registry import clear_match_state
@@ -77,6 +80,12 @@ def _check(report: Any, name: str) -> dict[str, Any]:
         # merge cannot read is refused rather than ignored.
         if isinstance(metadata, dict) and "autonomy" in metadata and not valid_autonomy(metadata["autonomy"]):
             raise ValueError(f"{name}: a finding has malformed autonomy metadata; rescan before merging")
+        if (
+            isinstance(metadata, dict)
+            and DECLARED_GOVERNANCE_KEY in metadata
+            and not valid_declared_governance(metadata[DECLARED_GOVERNANCE_KEY])
+        ):
+            raise ValueError(f"{name}: a finding has malformed declared governance; rescan before merging")
     _findings(report)
     return report
 
@@ -303,6 +312,9 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         # merge() keeps the first observation's registry match, which may come
         # from a source that did not reconcile the finding.
         _merge_registration(finding, finding.id in unregistered, matches_by_id.get(finding.id, set()))
+        if finding.shadow is not False:
+            # Declared facts belong to the card that registered the finding.
+            finding.metadata.pop(DECLARED_GOVERNANCE_KEY, None)
         # Unioned tags, capabilities and evidence can change the interval; the merged one also
         # admits at least what each source's block admits, as risk keeps the highest score.
         merge_autonomy(finding, autonomy_by_id.get(finding.id, []))
@@ -321,7 +333,6 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         inventory_size=inventory_size,
         inventory_present=inventory_present,
         collection_scope=scope_out,
-        inventory_present=inventory_present,
     )
     # The fleet started when its oldest source did, so a baseline age limit measures its oldest
     # evidence. One source without a valid start time leaves the fleet undated: dating it by the

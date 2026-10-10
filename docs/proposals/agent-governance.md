@@ -623,8 +623,11 @@ results carry them as tags, and JSON findings carry them as
 Status: CTRL-1 catalogs are implemented, unreleased, as `metadata.controls`,
 and the HTML and Markdown reports list each finding's control references; see
 [Threat and control mappings](../concepts/mappings.md). The control evidence
-report (CTRL-0 and the rest of CTRL-2) and declared facts (CTRL-3) remain
-proposals.
+report (CTRL-0 and CTRL-2) is implemented, unreleased, as
+[`shadowscan controls`](../operations/controls.md) with Markdown, CSV and JSON
+output; the HTML report has no controls section yet. Declared facts (CTRL-3)
+are implemented, unreleased, as the Capability Card
+[`governance:` block](../inventory.md#declared-governance-facts).
 
 ### Frameworks
 

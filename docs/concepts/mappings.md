@@ -19,6 +19,7 @@ analyst, not as an assessment.
 | HTML | "Threats" list in each finding's details | "Controls" list in each finding's details |
 | Markdown | `Threats` line in each finding's details | `Controls` line in each finding's details |
 | CycloneDX | `shadowscan:threats` property | `shadowscan:controls` property |
+| [`shadowscan controls`](../operations/controls.md) | not included | findings per control, by risk level, with examples and the completeness of the evidence |
 
 `metadata.threats` holds threat and MAESTRO layer references;
 `metadata.controls` holds control references. Each is a sorted list and is
@@ -65,8 +66,11 @@ entry and rule; it is generated from the packaged data.
 ## Catalogs and verification
 
 Each catalog in `shadowscan/mappings/data/frameworks/` records the framework,
-edition, prefix, `source_url`, licence, a `checked` date and a verification
-level:
+edition, prefix, `source_url`, licence, a `checked` date, a `review` status and
+a verification level. `review: author` means only the project's author has
+reviewed the mappings; reports render it as "Mappings are author mappings and
+have not been independently reviewed." It is the only accepted value: a catalog
+file cannot claim an independent review. The verification levels are:
 
 - `primary`: entries were checked against the publication `source_url` names:
   the OWASP LLM list and its Appendix A in the GenAI Security Project
@@ -129,6 +133,7 @@ written as two rules with the same references. The condition keys are:
 | `autonomy_floor_at_least` | `metadata.autonomy.floor`, an integer from 0 to 5 |
 | `oversight_any` | `metadata.autonomy.oversight`: `gated`, `bypassed` or `unknown` |
 | `registry_status_any` | `metadata.registry_reconciliation.status`: `registered-and-observed`, `registered-not-observed`, `observed-not-registered` or `not-comparable` |
+| `declared_risk_class_any` | the declared `metadata.declared_governance.eu_ai_act_risk_class` of a registered finding: `prohibited`, `high`, `limited`, `minimal`, `gpai`, `gpai-systemic` or `unknown` (see [declared facts](#declared-facts)) |
 
 `metadata.autonomy` is the autonomy classification (levels L0 Chatbot to
 L5 Fully Autonomous) and `metadata.registry_reconciliation` the comparison
@@ -145,6 +150,28 @@ layer 6. Sensitive Information Disclosure (`LLM02`) and Unsecured Credentials
 (`AML.T0055`) need an exposure tag such as `hardcoded-credential` or
 `unmasked-ci-variable`.
 
+## Declared facts
+
+ShadowScan cannot decide whether a system is high-risk under the EU AI Act:
+that depends on its intended purpose and on the operator's role. An operator
+can declare the risk class in the registering Capability Card's
+[`governance:` block](../inventory.md#declared-governance-facts); a finding
+that card registers carries it as `metadata.declared_governance`, with the
+card's agent id as `source`. Two control rules read it through
+`declared_risk_class_any`:
+
+| Rule | Declared class | References |
+| --- | --- | --- |
+| `declared-high-risk` | `high` | `eu-ai-act-2024:Art.12`, `eu-ai-act-2024:Art.14`, `eu-ai-act-2024:Art.26` |
+| `declared-transparency` | `limited`, `gpai` or `gpai-systemic`, on an `agent`, `bot-app` or `ai-app` finding | `eu-ai-act-2024:Art.50` |
+
+Declared facts count only for a registered finding (`shadow: false`) with a
+well-formed block. A shadow finding, a finding without inventory status, or a
+malformed block (an unknown class, a missing `source`, an unknown key) matches
+neither rule. ShadowScan does not verify the declaration; the
+[control evidence report](../operations/controls.md) labels references that
+rest only on it as declared.
+
 ## Validation
 
 `python -m shadowscan.mappings.validate` loads the packaged data and prints
@@ -154,15 +181,15 @@ to signature validation. The validator rejects:
 
 - unknown keys, missing keys and values of the wrong type;
 - a prefix that is not `<framework>-<edition>`, a non-HTTPS source URL, a
-  `checked` date that is not `YYYY-MM-DD`, or an unknown kind or verification
-  level;
+  `checked` date that is not `YYYY-MM-DD`, or an unknown kind, verification
+  level or review status;
 - a rule with an empty `when`, a duplicate rule id, or an autonomy level
   outside 0 to 5;
 - a reference that no catalog lists, or one whose catalog kind does not match
   the rules file;
 - a tag that is neither a weighted risk tag nor listed in the rules file's
   `extra_known_tags`, and unknown capabilities, kinds, surfaces, oversight
-  values or registry statuses;
+  values, registry statuses or declared risk classes;
 - symbolic links, files other than `.yaml`, subdirectories, and rules files
   other than the three above.
 

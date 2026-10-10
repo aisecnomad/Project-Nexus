@@ -7,6 +7,7 @@ import hashlib
 import html
 import json
 
+from shadowscan.governance import DECLARED_GOVERNANCE_KEY, declared_facts
 from shadowscan.mappings import describe, finding_references
 from shadowscan.models import DERIVED_METADATA_KEYS, ScanResult
 from shadowscan.reporters._publication import (
@@ -238,6 +239,14 @@ def render_html(result: ScanResult) -> str:
             parts.append(_references("Threats", threats))
         if controls:
             parts.append(_references("Controls", controls))
+        declared = declared_facts(f)
+        if declared:
+            source, facts = declared
+            items = "".join(f"<li>{_e(label)}: {_e(value)}</li>" for label, value in facts)
+            parts.append(
+                f"<div><b>Declared governance</b> (card <code>{_e(source)}</code>, not verified)"
+                f"<ul>{items}</ul></div>"
+            )
         if f.models:
             parts.append(f"<div><b>Models</b> {_e(', '.join(f.models[:8]))}</div>")
         if f.permissions:
@@ -274,6 +283,9 @@ def render_html(result: ScanResult) -> str:
         parts.append("</div>")
         hidden = {"related", "technologies", "evidence_counts", "agent_indicators", "scan_root"}
         hidden |= DERIVED_METADATA_KEYS
+        if declared:
+            # Shown above as declared facts; a malformed block stays visible in the dump.
+            hidden.add(DECLARED_GOVERNANCE_KEY)
         meta = {k: v for k, v in f.metadata.items() if k not in hidden}
         if meta:
             dumped = _e(json.dumps(meta, indent=2, default=str)[:6000])

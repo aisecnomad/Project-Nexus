@@ -210,6 +210,7 @@ shadowscan inventory stubs report.json -o inventory/pending/    # capability-car
 shadowscan diff last-week.json today.json                        # what is new / resolved/changed
 shadowscan diff baseline.json today.json --fail-on-drift inventory,capability,autonomy,governance  # exit 2 on adverse drift
 shadowscan scan -c shadowscan.yaml --format cyclonedx -o ai-bom.json   # CycloneDX 1.6 bill of materials
+shadowscan controls today.json --format csv -o controls.csv      # findings per NIST AI RMF / ISO 42001 / EU AI Act / AIUC-1 control
 ```
 
 Steps 1 and 2 need a repository checkout: `agent-card.yaml`, `examples/` and
@@ -390,6 +391,15 @@ read as text regardless of delimiter. Strip markers for programmatic use or use
 in untrusted text, so a report pasted into an issue or pull request creates no
 links, @-mentions or e-mail links; code spans keep identifiers verbatim.
 
+`shadowscan controls report.json` turns one or more JSON reports into a control
+evidence report (Markdown, CSV for GRC tools, or JSON): for each NIST AI RMF,
+ISO/IEC 42001, EU AI Act and AIUC-1 control, the findings that reference it by
+risk level, the highest-risk examples, and whether the evidence is complete. A
+control no finding references reads "not observed" only when every report is
+complete, and "unknown" otherwise; an incomplete input exits 3. Evidence
+references, not compliance determinations; see
+[control evidence report](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/controls.md).
+
 ### Risk policy
 
 ```yaml
@@ -422,7 +432,10 @@ discovery:
 
 Simple `agents.yaml` lists and CSV work too. A card with `schema_version: 2`
 declares `autonomy_profile.level` (0 to 5); an older card's level is ignored
-with a warning. `shadowscan inventory stubs`
+with a warning. Such a card may also declare governance facts the scanner
+cannot observe (`governance:`: EU AI Act risk class, intended purpose,
+oversight measures, AIUC-1 certificate, ISO/IEC 42001 scope); reports label
+them declared. `shadowscan inventory stubs`
 turns shadow findings into card skeletons for review. See
 [docs/inventory.md](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/inventory.md).
 
