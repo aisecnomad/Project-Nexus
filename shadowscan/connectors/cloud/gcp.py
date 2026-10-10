@@ -83,6 +83,7 @@ from shadowscan.connectors.cloud.gcp_registry import (
 from shadowscan.connectors.common import (
     apply_matches,
     config_boolean,
+    failure_outcome,
     failure_summary,
     max_pages_limit,
     model_matches,
@@ -155,6 +156,10 @@ _LLM_SECRET_KEYWORDS = (
 _RUN_LOCATION = re.compile(r"[a-z][a-z0-9-]*[0-9]")
 _SERVICE_ACCOUNT_NAME = re.compile(r"projects/[A-Za-z0-9._:-]+/serviceAccounts/[^/?#\s]+")
 _DISCOVERY_LOCATIONS = ("global", "us", "eu")
+_PROJECTS = "https://cloudresourcemanager.googleapis.com/v1/projects"
+# Path segments whose value an earlier response supplied: a request under one of them is a
+# detail of the live scope, recorded by template and never fingerprinted.
+_DISCOVERED_SEGMENTS = {"engines": "{engine}", "assistants": "{assistant}", "serviceAccounts": "{account}"}
 # Registry record kinds: finding kind and title of each.
 _RECORD_FINDINGS = {
     "agent-registry-agent": (Kind.AGENT, "Agent Registry agent"),
@@ -207,6 +212,21 @@ class GcpConnector(BaseConnector):
     )
     emits_registry_records: ClassVar[bool] = True
     registry_record_types: ClassVar[frozenset[str]] = frozenset({AR_REGISTRY, GE_REGISTRY})
+    attests_live_scope: ClassVar[bool] = True
+    scope_options: ClassVar[frozenset[str]] = frozenset(
+        {
+            "projects",
+            "locations",
+            "audit_days",
+            "max_projects",
+            "max_pages",
+            "agent_registry",
+            "agent_registry_version",
+            "agent_registry_locations",
+            "gemini_enterprise",
+            "discovery_collections",
+        }
+    )
     config_keys: ClassVar[dict[str, str]] = {
         "projects": "list of project ids (default: all projects visible to the credentials)",
         "locations": f"Vertex/Dialogflow locations (default {DEFAULT_LOCATIONS})",
@@ -282,6 +302,8 @@ class GcpConnector(BaseConnector):
         self._locations_noted = False
         # Project number -> id for registry reconciliation, from discovery or a project lookup.
         self._project_numbers: dict[str, str] = {}
+        # Configured projects whose enabled-service listing completed in this run.
+        self._verified_projects: set[str] = set()
 
     @property
     def _catalogs(self) -> bool:
@@ -368,14 +390,49 @@ class GcpConnector(BaseConnector):
             token = creds.token
         self.http = HttpClient(headers={"Authorization": f"Bearer {token}"})
 
+    def _scope_operation(self, url: str, project: str | None = None) -> tuple[str, str, str | None, bool]:
+        """One request as a live scope operation: (service, path template, partition, enumeration).
+
+        Project and location path segments become placeholders and form the partition. A
+        request under a resource an earlier response named (an engine, an assistant, a
+        service account) is a detail, and so is every per-project request when the projects
+        were discovered rather than configured: only the discovery itself is fingerprinted.
+        """
+        parts = urlsplit(url)
+        service = (parts.hostname or "").split(".")[0].rsplit("-", 1)[-1]
+        segments = parts.path.strip("/").split("/")
+        location: str | None = None
+        detail = False
+        template = []
+        for previous, segment in zip(["", *segments], segments, strict=False):
+            value, colon, method = segment.partition(":")
+            if previous == "projects":
+                project, segment = value, "{project}" + colon + method
+            elif previous == "locations":
+                location, segment = value, "{location}" + colon + method
+            elif previous in _DISCOVERED_SEGMENTS:
+                detail, segment = True, _DISCOVERED_SEGMENTS[previous] + colon + method
+            template.append(segment)
+        enumeration = not detail and (project is None or bool(self.projects))
+        partition = project if location is None or project is None else f"{project}/{location}"
+        return service, "/" + "/".join(template), partition if enumeration else None, enumeration
+
+    def _attest(self, url: str, outcome: str, project: str | None = None) -> None:
+        service, operation, partition, enumeration = self._scope_operation(url, project)
+        self.ctx.attest_operation(service, operation, partition, outcome, enumeration=enumeration)
+
     def _get(self, url: str, **params: Any) -> Any:
         assert self.http
         try:
             data = self.http.get_json(url, params=params or None)
             if data is None:
+                self._attest(url, "failed")
                 self.ctx.warn(f"cloud.gcp: empty response for {url.split('?')[0]}")
+            else:
+                self._attest(url, "ok")
             return data
         except (HttpError, RequestException, ValueError) as exc:
+            self._attest(url, failure_outcome(exc))
             self.ctx.warn(f"cloud.gcp: collection failed for {url.split('?')[0]} ({failure_summary(exc)})")
             return None
 
@@ -411,6 +468,7 @@ class GcpConnector(BaseConnector):
             if data is None:
                 return False  # _get has already recorded the collection failure
             if not isinstance(data, dict) or "error" in data:
+                self._attest(url, "failed")
                 self.ctx.warn(f"cloud.gcp: invalid response for {url}")
                 return False
             # Aggregated list APIs may succeed while omitting unavailable regions.
@@ -420,25 +478,30 @@ class GcpConnector(BaseConnector):
             if not isinstance(unreachable, list) or any(
                 not isinstance(loc, str) or not loc for loc in unreachable
             ):
+                self._attest(url, "failed")
                 self.ctx.warn(f"cloud.gcp: invalid unreachable locations for {url}")
                 complete = False
             elif unreachable:
+                self._attest(url, "unavailable")
                 self.ctx.warn(
                     f"cloud.gcp: {len(unreachable)} unreachable location(s) for {url}; coverage unknown"
                 )
                 complete = False
             items = data.get(items_key, [])
             if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                self._attest(url, "failed")
                 self.ctx.warn(f"cloud.gcp: invalid {items_key} page for {url}")
                 return False
             yield from items
             try:
                 token = next_page_token(data.get("nextPageToken"), seen)
             except InvalidPageTokenError:
+                self._attest(url, "failed")
                 self.ctx.warn(f"cloud.gcp: invalid or repeated pagination token for {url}")
                 return False
             if token is None:
                 return complete
+        self._attest(url, "truncated")
         self.ctx.warn(f"cloud.gcp: pagination limit reached for {url}")
         return False
 
@@ -503,19 +566,42 @@ class GcpConnector(BaseConnector):
     # -------------------------------------------------------------- collect
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
+        self._verified_projects = set()
         projects: Iterable[str] = list(self.projects)
+        discovery: list[bool] = []
         if not projects:
-            listed = self._pages(
-                "https://cloudresourcemanager.googleapis.com/v1/projects",
-                "projects",
-                filter="lifecycleState:ACTIVE",
-            )
-            projects = self._project_ids(listed)
+            listed = self._pages(_PROJECTS, "projects", filter="lifecycleState:ACTIVE")
+            projects = self._project_ids(self._completion(listed, discovery))
         for i, project in enumerate(projects):
             if i >= self.max_projects:
                 self.ctx.warn("cloud.gcp: max_projects reached")
                 break
             yield from self._collect_project(project)
+        self._attest_scope(discovery)
+
+    def _attest_scope(self, discovery: list[bool]) -> None:
+        """The live scope principal: configured projects the API answered for, or the discovery mode.
+
+        Discovered projects are never the principal: a new project would change the scope. In
+        that mode only the listing's outcome is attested, so a project the credentials can no
+        longer see cannot be told apart from a deleted one.
+        """
+        self.ctx.attest_partition("locations", self.locations)
+        if self.projects:
+            self.ctx.attest_partition("projects", self.projects)
+            if set(self.projects) <= self._verified_projects:
+                principal = ",".join(sorted(set(self.projects)))
+                self.ctx.attest_principal("gcp", "projects", principal, "serviceusage.services.list")
+        elif discovery == [True]:
+            self.ctx.attest_principal("gcp", "visible-projects", "all", "cloudresourcemanager.projects.list")
+
+    @staticmethod
+    def _completion(
+        pages: Generator[dict[str, Any], None, bool], sink: list[bool]
+    ) -> Iterator[dict[str, Any]]:
+        """Re-yield a listing and append whether it completed once it ends."""
+        complete = yield from pages
+        sink.append(complete is True)
 
     def _project_ids(self, projects: Iterable[dict[str, Any]]) -> Iterator[str]:
         """Validate discovered scope before it becomes an authenticated API path."""
@@ -535,12 +621,17 @@ class GcpConnector(BaseConnector):
             yield project_id
 
     def _collect_project(self, project: str) -> Iterator[dict[str, Any]]:
-        services = self._pages(
-            f"https://serviceusage.googleapis.com/v1/projects/{project}/services",
-            "services",
-            filter="state:ENABLED",
-            pageSize=200,
+        services, listed = self._drain(
+            self._pages(
+                f"https://serviceusage.googleapis.com/v1/projects/{project}/services",
+                "services",
+                filter="state:ENABLED",
+                pageSize=200,
+            )
         )
+        if listed:
+            # The project exists and the credentials can read it: a configured project is verified.
+            self._verified_projects.add(project)
         enabled: list[str] = []
         for service in services:
             # Response shapes are untrusted: a service record without a config
@@ -769,14 +860,14 @@ class GcpConnector(BaseConnector):
 
     def _collect_iam_policy(self, project: str) -> Iterator[dict[str, Any]]:
         assert self.http
+        url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}:getIamPolicy"
         try:
-            policy = self.http.post_json(
-                f"https://cloudresourcemanager.googleapis.com/v1/projects/{project}:getIamPolicy",
-                json={"options": {"requestedPolicyVersion": 3}},
-            )
+            policy = self.http.post_json(url, json={"options": {"requestedPolicyVersion": 3}})
             if not isinstance(policy, dict) or "error" in policy:
+                self._attest(url, "failed")
                 self.ctx.warn(f"cloud.gcp: invalid IAM policy response for {project}")
             else:
+                self._attest(url, "ok")
                 yield {
                     "_kind": "iam-policy",
                     "_project": project,
@@ -784,6 +875,7 @@ class GcpConnector(BaseConnector):
                     "bindings": policy.get("bindings", []),
                 }
         except (HttpError, RequestException, ValueError) as exc:
+            self._attest(url, failure_outcome(exc))
             self.ctx.warn(f"cloud.gcp: IAM policy not readable for {project} ({failure_summary(exc)})")
 
     def _collect_service_accounts(self, project: str) -> Iterator[dict[str, Any]]:
@@ -825,17 +917,21 @@ class GcpConnector(BaseConnector):
         }
         token: str | None = None
         seen: set[str] = set()
+        url = "https://logging.googleapis.com/v2/entries:list"
         for _ in range(min(50, self.max_pages)):
             if token:
                 body["pageToken"] = token
             try:
-                data = self.http.post_json("https://logging.googleapis.com/v2/entries:list", json=body)
+                data = self.http.post_json(url, json=body)
             except (HttpError, RequestException) as exc:
+                self._attest(url, failure_outcome(exc), project)
                 self.ctx.warn(f"cloud.gcp: audit logs not readable for {project} ({failure_summary(exc)})")
                 return
             if not isinstance(data, dict) or "error" in data or not isinstance(data.get("entries", []), list):
+                self._attest(url, "failed", project)
                 self.ctx.warn(f"cloud.gcp: invalid audit log response for {project}")
                 return
+            self._attest(url, "ok", project)
             for e in data.get("entries", []):
                 if not isinstance(e, dict) or not isinstance(e.get("protoPayload") or {}, dict):
                     self.ctx.warn(f"cloud.gcp: invalid audit log entry for {project}")
@@ -857,6 +953,7 @@ class GcpConnector(BaseConnector):
             )
             if token is None:
                 return
+        self._attest(url, "truncated", project)
         self.ctx.warn(f"cloud.gcp: audit pagination limit reached for {project}")
 
     # -------------------------------------------------------------- analyze

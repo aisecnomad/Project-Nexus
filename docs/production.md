@@ -1108,6 +1108,37 @@ author-written.
 | Fleet merge | `merge` classifies each merged finding again and widens the interval to admit what every source's block admits (highest floor and ceiling, `bypassed` over `unknown` over `gated`); it refuses a source with a malformed block. | Rescan sources that the merge refuses. Findings from older reports are classified from the merged finding alone. |
 | Inventory stubs | Stubs are `schema_version: 2` cards declaring the observed floor. | Review the generated level and set the approved one before moving a stub into the inventory. |
 
+### October 10 attested live collection scope (unreleased)
+
+This candidate lets live `cloud.aws`, `cloud.azure`, `cloud.gcp` and
+`identity.entra` scans attest their
+[collection scope](scanning.md#live-collection-scope), so `shadowscan diff` can
+resolve findings between two complete live scans. It does not change the
+published 0.1.2 artifact, create a release, or establish live tenant
+acceptance: the provider responses in the tests are mocked and synthetic, and
+nothing was validated against a live account, tenant, project or subscription.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Rollout | `collection_scope` is computed after collection. A complete live scan by one of the four connectors whose provider confirmed the principal is now comparable; before, every live comparison exited 3. Other live connectors, plugins and timed-out jobs are unchanged: never attested. | Live scans taken before this candidate carry no attested scope: collect a new baseline with the reviewed revision before gating on `diff`. Pin that revision: any scanner change changes every fingerprint. |
+| Collection scope | The fingerprint covers each live entry's verified principal, non-secret requested options as resolved, partitions (regions, projects and locations, subscriptions) and every enumeration with its outcome. Detail calls, counts, identifiers and timestamps are excluded. Changing options, enabling an API in a configured GCP project, adding a service or region, or a region enabled under `regions: all` changes the fingerprint. `collection_scope.live` publishes each live record outside the fingerprint. | Expect exit 3 (`scope differs`) after any scope change and re-baseline deliberately. Read `collection_scope.live` to see which listing was denied, throttled or truncated. Do not pass connector-specific secrets through non-credential option names: a value the sanitizer would change fails closed (`configuration contains private comparison values`). |
+| Credential policy | `identity.entra` reads `GET /organization` (`Organization.Read.All` or `Directory.Read.All` for application tokens, `User.Read` delegated); `cloud.azure` reads `GET /subscriptions/{id}` for configured subscriptions (covered by `Reader`). AWS and GCP use calls they already made. A denied verification is an advisory warning, the scan still completes, and its scope is not attested (`live principal could not be verified`). A reported tenant other than a GUID `tenant_id`, or another subscription than a configured one, stops the scan (exit 3). | Grant the organization read only where you need comparable drift. Set `tenant_id` to the tenant ID and `subscriptions` to the exact subscription IDs the credentials are meant for. |
+| Finding identity | Unchanged. | None. |
+
+What attestation proves: which principal, partitions and listings a scan
+enumerated successfully, and with which options. It does not prove that the
+account or tenant has no agents outside the enumerated APIs, services, regions,
+locations or projects, that the credentials could read every object (a listing
+returns only what they may see), or that another identity would see the same.
+Without `projects`,
+`cloud.gcp` attests only its discovery mode: a project the credentials lose
+access to is indistinguishable from a deleted one and its findings resolve, so
+set `projects` for drift gates. Comparing replays of record exports remains
+possible; stage every replay at the same absolute `input` path and label, and
+replay only exports whose `manifest.json` shows a complete run, because an
+export is published even when its live run was incomplete
+([record export replay](scanning.md#record-export-replay)).
+
 ### October 9 change-scoped scans, path context and new ecosystems (unreleased)
 
 These `code.filesystem` changes move confidence, risk and kind, and add or

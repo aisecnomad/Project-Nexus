@@ -18,12 +18,14 @@ under the names connectors override.
 
 ``BaseConnector`` also declares the *engine hooks*: class-level capabilities
 the engine consults instead of special-casing connector names (per-root
-incremental caching, the scan-wide instance-credential approval, and the
-per-run identity key). Their defaults describe an ordinary connector.
+incremental caching, the scan-wide instance-credential approval, the
+per-run identity key and live scope attestation). Their defaults describe an
+ordinary connector.
 """
 
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import logging
@@ -48,6 +50,13 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitiz
 
 class ConnectorError(RuntimeError):
     """Raised when a connector cannot run at all (bad config, missing creds)."""
+
+
+# A live connector's record of what it collected (ConnectorContext.scope_record),
+# fingerprinted by shadowscan.comparison. Outcomes run from least to most
+# severe; any outcome but "ok" leaves the live scope unattested.
+LIVE_SCOPE_SCHEMA = "shadowscan.live-scope/v1"
+SCOPE_OUTCOMES = ("ok", "truncated", "unavailable", "throttled", "failed", "denied")
 
 
 # Historical names, still imported by connectors.
@@ -102,6 +111,13 @@ def _non_negative_limit(value: Any, name: str) -> int:
     return _integer_option(value, name, 0, "a non-negative integer")
 
 
+def _scope_value(value: Any) -> Any:
+    """A requested option as a live scope records it: a list of names is a set."""
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return sorted(set(value))
+    return copy.deepcopy(value)
+
+
 class _ExportReplayLimitError(ValueError):
     """A credential-free export limit diagnostic; analysis can still use the original record."""
 
@@ -141,6 +157,13 @@ class ConnectorContext:
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
         self._diagnostic_counts: dict[str, int] = {}
+        # Live collection scope evidence (the attest_* methods). The engine reads it
+        # only for a built-in connector that declares attests_live_scope.
+        self._scope_principal: dict[str, str] | None = None
+        self._scope_principal_conflict = False
+        self._scope_partitions: dict[str, list[str]] = {}
+        self._scope_operations: dict[tuple[str, str, str | None], str] = {}
+        self._scope_details: dict[tuple[str, str], str] = {}
 
     def check_deadline(self) -> None:
         """Cooperative cancellation; cannot interrupt an in-flight SDK or plugin call."""
@@ -257,6 +280,85 @@ class ConnectorContext:
         if self.stats is not None:
             self.stats.objects_examined += n
 
+    # ----------------------------------------------------- scope attestation
+    def attest_principal(self, provider: str, kind: str, value: str, verified_by: str) -> None:
+        """Record the account, tenant or project set the provider's API reported for this run.
+
+        Only what an API call returned qualifies, never a configured value on its own. A
+        second, different principal in the same run leaves the scope unattested.
+        """
+        principal = {"provider": provider, "kind": kind, "id": value, "verified_by": verified_by}
+        if self._scope_principal is not None and self._scope_principal != principal:
+            self._scope_principal_conflict = True
+        self._scope_principal = principal
+
+    def attest_partition(self, name: str, values: Iterable[str]) -> None:
+        """Record the resolved partitions (regions, projects, subscriptions) collection covered."""
+        self._scope_partitions[name] = sorted(set(values))
+
+    def attest_operation(
+        self, service: str, operation: str, partition: str | None, outcome: str, *, enumeration: bool = True
+    ) -> None:
+        """Record the outcome of one listing; repeated calls keep the most severe outcome.
+
+        An enumeration is a listing whose request does not depend on earlier responses: it
+        enters the scope fingerprint with its partition. Any other call (one per listed agent,
+        principal or registry) is a detail, kept per operation template without partition or
+        count, because new resources must not change the scope. ``outcome`` is one of
+        ``SCOPE_OUTCOMES``; an unknown value counts as ``failed``.
+        """
+        if outcome not in SCOPE_OUTCOMES:
+            outcome = "failed"
+        if enumeration:
+            key = (service, operation, partition)
+            previous = self._scope_operations.get(key, "ok")
+            self._scope_operations[key] = max(previous, outcome, key=SCOPE_OUTCOMES.index)
+        else:
+            detail = (service, operation)
+            previous = self._scope_details.get(detail, "ok")
+            self._scope_details[detail] = max(previous, outcome, key=SCOPE_OUTCOMES.index)
+
+    def scope_record(self, options: Iterable[str]) -> dict[str, Any]:
+        """This run's live scope evidence, read by the engine after collection.
+
+        ``requested`` holds the named options as the connector resolved them, defaults and
+        environment fallbacks included, with lists of names in sorted order (regions, projects
+        and subscriptions are sets); name only non-secret keys. The record is complete
+        only when the connector's stats report a complete run and every recorded listing
+        succeeded.
+        """
+        operations: list[dict[str, str | None]] = [
+            {"service": service, "operation": operation, "partition": partition, "outcome": outcome}
+            for (service, operation, partition), outcome in sorted(
+                self._scope_operations.items(), key=lambda item: (item[0][0], item[0][1], item[0][2] or "")
+            )
+        ]
+        details: list[dict[str, str | None]] = [
+            {"service": service, "operation": operation, "outcome": outcome}
+            for (service, operation), outcome in sorted(self._scope_details.items())
+        ]
+        stats = self.stats
+        outcomes = [*self._scope_operations.values(), *self._scope_details.values()]
+        complete = (
+            stats is not None
+            and not (stats.incomplete or stats.skipped or stats.errors)
+            and all(outcome == "ok" for outcome in outcomes)
+        )
+        principal = None if self._scope_principal_conflict else self._scope_principal
+        return {
+            "schema": LIVE_SCOPE_SCHEMA,
+            "principal": dict(principal) if principal is not None else None,
+            "requested": {
+                key: _scope_value(self._resolved_config[key])
+                for key in sorted(options)
+                if key in self._resolved_config
+            },
+            "partitions": {name: list(values) for name, values in sorted(self._scope_partitions.items())},
+            "operations": operations,
+            "details": details,
+            "complete": complete,
+        }
+
 
 class BaseConnector(ABC):
     """Base class for all connectors."""
@@ -311,6 +413,15 @@ class BaseConnector(ABC):
     # reads. A record of any other type is dropped like an undeclared one, so a
     # registry connector cannot speak for another vendor's registry.
     registry_record_types: ClassVar[frozenset[str]] = frozenset()
+
+    # A built-in live connector that sets this records its collection scope through the
+    # ConnectorContext attest_* methods: the principal its provider reported, the partitions
+    # it covered and each enumeration's outcome. The engine passes that record to
+    # shadowscan.comparison, which fingerprints it so two live scans can be compared.
+    # ``scope_options`` names the configuration keys the record repeats; never list a
+    # credential. Third-party connectors are never attested, whatever they declare.
+    attests_live_scope: ClassVar[bool] = False
+    scope_options: ClassVar[frozenset[str]] = frozenset()
 
     @classmethod
     def inherits_instance_credentials_approval(cls) -> bool:

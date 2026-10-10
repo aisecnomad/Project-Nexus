@@ -200,6 +200,29 @@ recorded in the connector configuration. Every process the scanner starts,
 including approved plugins in process mode, inherits the environment variable:
 set it only for the duration of the scan.
 
+### Live scope attestation
+
+After authenticating, live collection reads `GET /organization?$select=id`
+and attests the tenant the Graph returns, so `shadowscan diff` can resolve
+findings between two complete live scans
+([live collection scope](../scanning.md#live-collection-scope)). A `tenant_id`
+that is a GUID must equal it, or the scan stops; a domain name in `tenant_id`
+cannot be compared and the returned tenant is attested. The call needs
+`Organization.Read.All` or `Directory.Read.All` for application tokens and
+`User.Read` for delegated ones. It matters only for drift: when it is denied or
+answers with anything but one tenant, the scan completes with an advisory
+warning and its scope is not attested (`live principal could not be verified`).
+
+The fingerprint covers `tenant_id`, `auth_mode`, `include_first_party`,
+`max_app_role_lookups`, `include_agent_identities`, `include_agent_registry`,
+`agent_registry_api` and `max_package_lookups`, never `client_id`, credentials
+or the delegated token, so app-only and delegated scans never compare. The
+service principal, consent grant, application, agent identity and package
+listings are the enumerations; each principal's `appRoleAssignments` and each
+package's details are details, recorded per template and never fingerprinted,
+and reaching `max_app_role_lookups` or `max_package_lookups` is recorded as a
+truncation.
+
 ## `identity.google-workspace`
 Admin SDK `users/{id}/tokens` for every user, aggregated per OAuth client:
 "Fireflies has Gmail + Calendar for 214 users". Auth: service account with

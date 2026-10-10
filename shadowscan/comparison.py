@@ -13,13 +13,14 @@ import hmac
 import json
 import re
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
 from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
-from shadowscan.connectors import _BUILTIN
+from shadowscan.connectors import _BUILTIN, get_connector_class
+from shadowscan.connectors.base import LIVE_SCOPE_SCHEMA
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
@@ -91,17 +92,100 @@ def _scanner_digest() -> str:
     return scanner_source_digest()
 
 
+def _attests_live_scope(name: str) -> bool:
+    """Whether a built-in connector declares live scope attestation (False if it cannot be loaded)."""
+    try:
+        return getattr(get_connector_class(name), "attests_live_scope", False) is True
+    except Exception:  # noqa: BLE001 - an unloadable connector attests nothing
+        return False
+
+
+def _live_scope_material(record: Any) -> tuple[dict[str, Any] | None, str]:
+    """The fingerprinted part of a live scope record, or the reason it cannot be attested.
+
+    Only the reported principal, the requested options, the partitions and the
+    enumerations with their outcomes are hashed. Detail calls, counts and the
+    principal's ``verified_by`` note never are: a new agent adds detail calls
+    and must not change the scope.
+    """
+    incomplete = "live collection was not verified or was incomplete"
+    if not isinstance(record, Mapping) or record.get("schema") != LIVE_SCOPE_SCHEMA:
+        return None, incomplete
+    requested, partitions = record.get("requested"), record.get("partitions")
+    operations, details = record.get("operations"), record.get("details")
+    if (
+        record.get("complete") is not True
+        or not isinstance(requested, Mapping)
+        or not isinstance(partitions, Mapping)
+        or not isinstance(operations, list)
+        or not isinstance(details, list)
+    ):
+        return None, incomplete
+    enumerations = []
+    for entry in [*operations, *details]:
+        if not isinstance(entry, Mapping) or entry.get("outcome") != "ok":
+            return None, incomplete
+    for entry in operations:
+        partition = entry.get("partition")
+        if (
+            not isinstance(entry.get("service"), str)
+            or not isinstance(entry.get("operation"), str)
+            or not (partition is None or isinstance(partition, str))
+        ):
+            return None, incomplete
+        enumerations.append([entry["service"], entry["operation"], partition, entry["outcome"]])
+    if not enumerations:
+        # Nothing was listed: there is no coverage to attest.
+        return None, incomplete
+    # A complete collection whose account, tenant or projects the provider did not confirm.
+    principal = record.get("principal")
+    if not isinstance(principal, Mapping) or not all(
+        isinstance(principal.get(key), str) and principal[key] for key in ("provider", "kind", "id")
+    ):
+        return None, "live principal could not be verified"
+    material = {
+        "principal": {key: principal[key] for key in ("provider", "kind", "id")},
+        "requested": dict(requested),
+        "partitions": dict(partitions),
+        "operations": sorted(enumerations, key=_canonical),
+    }
+    return material, ""
+
+
+def _live_summary(spec: ConnectorSpec, record: Any) -> dict[str, Any]:
+    """The public, unfingerprinted account of what one live connector collected."""
+    summary: dict[str, Any] = {"connector": spec.name, "label": spec.label}
+    if not isinstance(record, Mapping):
+        return {**summary, "complete": False}
+    fields = ("principal", "requested", "partitions", "operations", "details", "complete")
+    values = {key: record.get(key) for key in fields}
+    try:
+        if _has_private_scope_values(values) or sanitize(values) != values:
+            return {**summary, "complete": False}
+    except (RecursionError, TypeError, ValueError):
+        return {**summary, "complete": False}
+    return {**summary, **values}
+
+
 def build_collection_scope(
     config: ScanConfig,
     index: SignatureIndex,
     specs: list[ConnectorSpec],
     *,
     identity_key: bytes | None = None,
+    live_records: Sequence[Mapping[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
-    """Describe selected static inputs without exposing any configuration values.
+    """Describe the selected inputs and attested live scopes without exposing configuration values.
 
-    Live provider identity/coverage and third-party implementations are not
-    attested here, so those scans cannot automatically resolve earlier findings.
+    ``live_records`` lists, in ``specs`` order, what each live built-in connector
+    recorded during collection (``ConnectorContext.scope_record``); the engine
+    passes them after collection. A live connector is attested only by its own
+    complete record with a verified principal and successful enumerations, and
+    every live record is also published under ``live``, outside the fingerprint.
+    Without records (before collection), live scopes are not attested. Third-party
+    implementations never are, so those scans cannot automatically resolve
+    earlier findings.
+
     A public digest of low-entropy credentials or binding labels would permit
     offline guessing. Such configurations have no exported fingerprint and
     cannot automatically resolve findings in a comparison.
@@ -111,17 +195,49 @@ def build_collection_scope(
     under a secret key cannot be tested against guessed labels or bindings,
     and a different key, which changes every gateway ID, changes the scope.
     """
+    records = (list(live_records) if live_records is not None else [])[: len(specs)]
+    records += [None] * (len(specs) - len(records))
+    scope = _collection_scope(config, index, specs, records, identity_key, live_records is not None)
+    summaries = [
+        _live_summary(spec, record) for spec, record in zip(specs, records, strict=True) if record is not None
+    ]
+    if summaries:
+        scope["live"] = summaries
+    return scope
+
+
+def _collection_scope(
+    config: ScanConfig,
+    index: SignatureIndex,
+    specs: list[ConnectorSpec],
+    records: list[Mapping[str, Any] | None],
+    identity_key: bytes | None,
+    collected: bool,
+) -> dict[str, Any]:
     unavailable = {"schema": _SCHEMA, "comparable": False}
     if not specs:
         return {**unavailable, "reason": "no connectors selected"}
     inputs: list[dict[str, Any]] = []
-    for spec in specs:
+    for spec, record in zip(specs, records, strict=True):
         if spec.name not in _BUILTIN:
             return {**unavailable, "reason": "third-party connector scope is not attested"}
         offline = isinstance(spec.config.get("input"), str) and bool(spec.config["input"])
         local = spec.name == "code.filesystem" and bool(spec.config.get("path") or spec.config.get("paths"))
         if not offline and not local:
-            return {**unavailable, "reason": "live collection scope is not attested"}
+            if not collected or (record is None and not _attests_live_scope(spec.name)):
+                return {**unavailable, "reason": "live collection scope is not attested"}
+            live, reason = _live_scope_material(record)
+            if live is None:
+                return {**unavailable, "reason": reason}
+            live_input = {"name": spec.name, "label": spec.label, "live": live}
+            try:
+                if sanitize(live_input) != live_input or _has_private_scope_values(live_input):
+                    # A value the sanitizer would change is a credential that slipped in.
+                    return {**unavailable, "reason": "configuration contains private comparison values"}
+            except (RecursionError, TypeError, ValueError):
+                return {**unavailable, "reason": "configuration contains private comparison values"}
+            inputs.append(live_input)
+            continue
         if spec.name == "code.filesystem" and spec.config.get("diff_base"):
             # Which files were read depends on Git state outside the configuration, and
             # unchanged files are not read at all: absence is not evidence of resolution.

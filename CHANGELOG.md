@@ -439,6 +439,44 @@ summarizes each release for people who install and operate ShadowScan.
 - The cards, keys and HTTP exchanges in the tests are synthetic, modeled on
   the A2A specification; nothing was validated against a live agent.
 
+### Attested collection scope for live cloud.aws, cloud.azure, cloud.gcp and identity.entra scans
+
+- Live scans by `cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra`
+  can now attest a comparable `collection_scope`, so `shadowscan diff` can
+  resolve findings between two complete live scans instead of always exiting
+  3. Each connector records, during collection, the principal its provider
+  reported (the STS account, never the caller ARN; the tenant
+  `GET /organization` returns; configured GCP projects confirmed by their
+  enabled-services listings, or only the discovery mode and the outcome of
+  `projects.list`; Azure subscriptions read with `GET /subscriptions/{id}` or
+  listed by `GET /subscriptions`), its non-secret options as resolved, the
+  regions, projects, locations or subscriptions it covered, and the outcome
+  (`ok`, `denied`, `throttled`, `truncated`, `unavailable` or `failed`) of
+  every listing whose request does not depend on earlier responses. Detail
+  calls per discovered resource, counts, identifiers and timestamps are never
+  fingerprinted, so new agents and extra pages keep the scope.
+- The scope fingerprint is now computed after collection. A live entry attests
+  only when its connector completed, every listing succeeded and the principal
+  was confirmed; otherwise the scope is not comparable with the new reasons
+  `live collection was not verified or was incomplete` or `live principal
+  could not be verified`. A timed-out job, a plugin and every other live
+  connector are never attested. `collection_scope.live` publishes each live
+  entry's record, outside the fingerprint. The collection scope schema stays
+  `shadowscan.collection-scope/v1` and static inputs are fingerprinted as
+  before; as with any scanner change, collect new baselines after upgrading.
+- `identity.entra` reads `GET /organization` after authenticating
+  (`Organization.Read.All` or `Directory.Read.All`, or `User.Read` delegated).
+  A denied or ambiguous answer is an advisory warning that leaves the scope
+  unattested; a tenant other than a GUID `tenant_id` stops the scan.
+  `cloud.azure` reads `GET /subscriptions/{id}` for configured subscriptions
+  (covered by `Reader`) with the same rules.
+- New engine hooks `attests_live_scope` and `scope_options` and the
+  `ConnectorContext` methods `attest_principal`, `attest_partition`,
+  `attest_operation` and `scope_record`. Only built-in connectors are
+  attested.
+- The transports in the tests are mocked; nothing was validated against a live
+  account or tenant.
+
 ### Scan evidence, completeness and replay corrections
 
 - Report only the exception type when a connector, or one `code.github` or
