@@ -1,6 +1,9 @@
-# Agent Capability Card v1.0
+# Agent Capability Card, schema version 2: autonomy_profile.level uses the
+# L0 Chatbot to L5 Fully Autonomous scale (docs/concepts/autonomy.md).
 # Example sanctioned inventory entry for the bundled offline AWS fixtures.
 # Replace resources and scopes with approved identities for your estate.
+schema_version: 2
+
 metadata:
   agent_id: "ops-provisioning-04"
   version: "2.4.1"
@@ -8,7 +11,7 @@ metadata:
   classification: "Internal-Restricted"
 
 autonomy_profile:
-  level: 3
+  level: 3  # L3 Semi-Autonomous / Agentic Workflow: a bounded model-driven loop
   decision_logic: "chain-of-thought"
   memory_persistence: true
   max_loop_iterations: 10

@@ -481,6 +481,25 @@ rules and files. The checks are bounded regexes; nothing is executed. They do
 not judge whether an instruction is malicious: a hidden comment may be a
 template note, and a documented installer may pipe to a shell. Read the file.
 
+### Coding-agent settings: posture and approval
+
+Claude Code (`.claude/settings.json`, `.claude/settings.local.json`), Codex
+(`.codex/config.toml`), Goose and OpenClaw settings add posture tags to their
+coding-agent configuration finding (`posture-permissions-bypassed`,
+`posture-unrestricted-shell`, `posture-unsandboxed`, `posture-exposed-gateway`,
+`posture-unauthenticated-gateway`; see [risk](../concepts/risk.md)). Settings
+that make a person approve actions are recorded as `metadata.approval_gate`:
+`every-action` for Claude Code `permissions.defaultMode` `default` or `plan`
+with no allow rules, Codex `approval_policy = "untrusted"` and Goose
+`GOOSE_MODE: approve`; `some-actions` for Claude Code `acceptEdits` or allow
+rules, Codex `on-request` or `on-failure` and Goose `smart_approve`. The gate
+covers every action only when every settings file the finding reports does and
+no posture issue lets an action run unapproved. It feeds the
+[autonomy tiers](../concepts/autonomy.md): a gate on every action caps the
+interval at L2 Supervised. A settings file shows configuration, not how a run
+was started; command-line flags and settings outside the scanned tree can
+override it.
+
 ## `code.github`
 Enumerates an organization, a user or an explicit `repos:` list, fetches
 content by shallow clone (default) or the contents API (`mode: api`, bounded

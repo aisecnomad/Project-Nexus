@@ -11,16 +11,19 @@ recorded on their card.
 ### Agent Capability Cards (one YAML per agent)
 
 The bundled example is [`agent-card.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/agent-card.yaml). ShadowScan reads
-`metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
-`metadata.classification`, and a `discovery:` block required for automatic registration:
+`schema_version`, `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
+`metadata.classification`, `autonomy_profile.level`, and a `discovery:` block required for automatic registration:
 
 ```yaml
+schema_version: 2                              # autonomy_profile.level uses the L0-L5 scale
 metadata:
   agent_id: "ops-provisioning-04"
   version: "2.4.1"
   owner_team: "Platform-Engineering"
   classification: "Internal-Restricted"
-# ... autonomy_profile, identity_and_delegation, capability_surface, security_controls, risk_scoring ...
+autonomy_profile:
+  level: 3                                     # declared level: L3 Semi-Autonomous / Agentic Workflow
+# ... identity_and_delegation, capability_surface, security_controls, risk_scoring ...
 discovery:
   resources:                                   # glob patterns against finding.resource
     - "arn:aws:bedrock:us-east-1:123456789012:agent/AGENT1"
@@ -40,6 +43,35 @@ Standalone `[cite_start]` / `[cite: n]` export markers are ignored only in the
 leading document preamble. Markers inside resource patterns are rejected so
 that removing one cannot silently broaden an approval.
 
+### Card schema version and declared autonomy
+
+`schema_version` is a top-level integer. A card without it is version 1.
+
+- **Version 2** declares `autonomy_profile.level`, an integer from 0 (L0
+  Chatbot) to 5 (L5 Fully Autonomous) on the scale in
+  [autonomy tiers](concepts/autonomy.md). An omitted or null level is
+  undeclared. A level outside 0 to 5 (including a string or a boolean) or an
+  `autonomy_profile` that is not a mapping makes the card invalid, and the
+  inventory fails to load.
+- **Version 1** cards used `autonomy_profile.level` on an undefined scale, so
+  their level is ignored and counts as undeclared. `shadowscan inventory check`
+  prints `autonomy_profile.level ignored: card has no schema_version 2`, and a
+  scan records the same advisory warning under `engine.inventory`; neither
+  makes a scan incomplete.
+- Any other `schema_version` (0, 3, `"2"`, …) is invalid.
+
+A finding matched to an entry with a declared level records `declared` and
+`declared_source` in `metadata.autonomy`. A declared level below the observed
+floor adds the tag `autonomy-understated` (risk weight 10); one above the
+observed ceiling adds a `declared-above-ceiling` note to the autonomy basis.
+Matching and approval do not depend on the level.
+
+**Migration from version 1:** add `schema_version: 2` and set
+`autonomy_profile.level` on the new scale; do not carry over an old number
+without reviewing it against the scale's definitions. Until then the card
+keeps registering its resources and its level is ignored with the warning
+above.
+
 ### Simple list
 
 ```yaml
@@ -49,14 +81,19 @@ agents:
     owner: claims-it
     resources: ["ocid1.genaiagent.oc1.us-chicago-1.agent1"]
     names: [claims bot]
+    autonomy_level: 3          # optional declared level, 0-5
 ```
 
 ### CSV
 
 ```
-agent_id,name,owner,resources,names
-hr-helper,HR Helper,erin@acme.com,power-platform:bot:bot-1|okta:app:0oa9x,HR bot|hr assistant
+agent_id,name,owner,resources,names,autonomy_level
+hr-helper,HR Helper,erin@acme.com,power-platform:bot:bot-1|okta:app:0oa9x,HR bot|hr assistant,2
 ```
+
+Simple entries and CSV rows declare a level with `autonomy_level` (an integer
+from 0 to 5; a blank CSV cell is undeclared). They have no schema version: the
+field exists only on the current scale.
 
 Pass any mix with `--inventory` (repeatable) or `inventory:` in the config;
 directories are searched recursively. Symbolic links are never followed: a
@@ -133,7 +170,8 @@ fixtures; replace them with your reviewed identities before production use.
 `shadowscan inventory check inventory/` validates the files and lists what was
 loaded: each entry's agent id, name, owner, explicit resource patterns (or
 `none (suggestions only)` when the entry can only produce suggestions) and
-source file. It does not display scope restrictions or simulate matching; run
+source file. It warns about skipped symbolic links and about version 1 cards
+whose autonomy level is ignored. It does not display scope restrictions or simulate matching; run
 a scan against the inventory to see which findings an entry approves.
 
 ## From shadow to registered
@@ -152,7 +190,11 @@ its resource. A redacted resource or scope leaves `discovery.resources` empty
 pending an identity review. Generated cards also bind the finding's region when
 present. The finding's names go into `discovery.names` as review suggestions,
 detected capabilities into `capability_surface`, the risk score into
-`risk_scoring`, and the owner (when known) into `owner_team`. Review, complete
+`risk_scoring`, and the owner (when known) into `owner_team`. Stubs are
+`schema_version: 2` cards whose `autonomy_profile.level` is the finding's
+observed autonomy floor, the lowest level its evidence proves; set it to the
+level the agent is approved for. A finding kind without autonomy (for example
+`oauth-grant`) gets no level. Review, complete
 and move the card into the inventory directory; on the next scan the finding is
 registered and its risk drops.
 

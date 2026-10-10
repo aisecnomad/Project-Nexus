@@ -37,6 +37,7 @@ from shadowscan.models import (
     now_iso,
 )
 from shadowscan.risk import (
+    AUTONOMY_WEIGHTS,
     CAPABILITY_WEIGHTS,
     GOVERNANCE_WEIGHTS,
     KIND_BASE,
@@ -848,7 +849,7 @@ def test_builtin_tag_keys_do_not_warn(caplog, monkeypatch):
 
 # The default weights are policy: a change moves every score, so it has to be deliberate. When this
 # fails, update docs/concepts/risk.md, the changelog and the migration notes, then this digest.
-_DEFAULT_WEIGHTS_DIGEST = "cd4ac6c379997546276b168e06024dadcb3112862d159a15245157571c5f0c41"
+_DEFAULT_WEIGHTS_DIGEST = "723e0bead954c4d21bc2dbeacd2ac04510bf534e0bffb35d8278614a009bea5b"
 
 
 def test_default_risk_weights_change_only_deliberately():
@@ -858,6 +859,7 @@ def test_default_risk_weights_change_only_deliberately():
         "tags": TAG_WEIGHTS,
         "providers": PROVIDER_WEIGHTS,
         "governance": GOVERNANCE_WEIGHTS,
+        "autonomy": AUTONOMY_WEIGHTS,
     }
     digest = hashlib.sha256(json.dumps(tables, sort_keys=True).encode()).hexdigest()
     assert digest == _DEFAULT_WEIGHTS_DIGEST, f"the default risk weights changed (new digest {digest})"

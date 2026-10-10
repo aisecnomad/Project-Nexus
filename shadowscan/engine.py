@@ -18,6 +18,7 @@ from threading import Event, Lock
 from typing import Any
 
 from shadowscan import __version__
+from shadowscan.autonomy import apply_autonomy
 from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
@@ -27,7 +28,7 @@ from shadowscan.errors import SetupError
 from shadowscan.incremental import IncrementalCache
 from shadowscan.merge import merge
 from shadowscan.models import Finding, ScanResult, ScanStats, now_iso
-from shadowscan.registry import Inventory
+from shadowscan.registry import Inventory, InventoryEntry
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
@@ -607,6 +608,7 @@ def _inventory_warnings(
 ) -> list[str]:
     """Approvals that scanned content could change, or whose resource scope is broad.
 
+    Also lists cards whose autonomy level was not read because they lack schema_version 2.
     Advisory, not incomplete: ``shadowscan code . --inventory agent-card.yaml``
     is legitimate locally, but in CI a pull request can edit an inventory kept
     in the scanned tree and approve its own findings.
@@ -656,6 +658,7 @@ def _inventory_warnings(
         f"inventory {link}: symbolic link skipped (links are not followed)"
         for link in inventory.skipped_links
     ]
+    warnings += inventory.autonomy_warnings()
     warnings = list(dict.fromkeys(warnings))
     if len(warnings) > _MAX_INVENTORY_WARNINGS:
         omitted = len(warnings) - _MAX_INVENTORY_WARNINGS
@@ -1014,12 +1017,15 @@ class Engine:
     def _reconcile_and_score(self, findings: list[Finding]) -> None:
         risk_policy = RiskPolicy.from_options(self.config.risk_weights, self.config.risk_basis)
         for f in findings:
+            entry: InventoryEntry | None = None
             if self.inventory is not None:
                 entry = self.inventory.match(f)
                 f.registry_match = entry.agent_id if entry else None
                 f.shadow = entry is None
                 if entry and not f.owner:
                     f.owner = entry.owner
+            # Before scoring: a declared level below the observed floor adds a weighted tag.
+            apply_autonomy(f, entry)
             f.risk = assess(f, self.index, inventory_present=self.inventory is not None, policy=risk_policy)
 
     def _postprocess(self, findings: list[Finding]) -> tuple[list[Finding], list[str]]:

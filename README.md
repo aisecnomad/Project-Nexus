@@ -354,6 +354,7 @@ changes; legacy baselines cannot establish resolution under the new schema. See
 * **risk** is additive and explainable: kind, capabilities (code-exec, autonomous, SaaS actions…), permission classes, credential exposure, exposure/auditability tags, registration status, ownership — scaled by confidence. The listed factors always add up to `score`; confidence scaling and the 0–100 bounds appear as factors.
 * **danger_score** is the same model without the governance factors (inventory registration and ownership): what the agent can do, independent of whether anyone approved it. Set `options.risk_basis: danger` to base `level` and `--fail-on` on it, and `options.risk_weights` to tune weights (see [Risk policy](#risk-policy)).
 * **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its configured scope restrictions; names only suggest entries for review. An approved entry lends its owner to the finding.
+* **autonomy** (`metadata.autonomy`) places agents, agent configurations, MCP servers, workflows, bots, callers, apps, processes and AI cloud resources on the L0 Chatbot to L5 Fully Autonomous scale as an interval: the `floor` the evidence proves and the `ceiling` that positive evidence has not ruled out (L5 without such evidence), with `oversight`, `initiation` and the rules behind them. A Capability Card with `schema_version: 2` declares a level; one below the floor adds the `autonomy-understated` tag. See [autonomy tiers](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/concepts/autonomy.md).
 * **related** links findings across surfaces (the Terraform that provisions an agent ↔ the agent in the account ↔ the role calling Bedrock ↔ the CloudTrail caller).
 
 Outputs: `table` (terminal), `json`, `sarif` (GitHub code scanning; code
@@ -380,12 +381,13 @@ links, @-mentions or e-mail links; code spans keep identifiers verbatim.
 ```yaml
 options:
   risk_basis: danger          # combined (default) | danger: level from capabilities, not registration
-  risk_weights:               # integers -100..100; unknown groups, kinds, capabilities, provider ids or governance keys are rejected (tags may be custom)
+  risk_weights:               # integers -100..100; unknown groups, kinds, capabilities, provider ids, governance or autonomy keys are rejected (tags may be custom)
     capabilities: {code-exec: 25}
     tags: {meeting-bot: 20}
     providers: {provider.deepseek: 20}
     kinds: {agent: 20}
     governance: {shadow: 15, no-owner: 5, registered: -10}
+    autonomy: {L4: 10, L5: 20}  # observed autonomy floor L0..L5; every level defaults to 0
 ```
 
 ## Sanctioned inventory
@@ -404,7 +406,9 @@ discovery:
   names: ["ops provisioning agent"]
 ```
 
-Simple `agents.yaml` lists and CSV work too. `shadowscan inventory stubs`
+Simple `agents.yaml` lists and CSV work too. A card with `schema_version: 2`
+declares `autonomy_profile.level` (0 to 5); an older card's level is ignored
+with a warning. `shadowscan inventory stubs`
 turns shadow findings into card skeletons for review. See
 [docs/inventory.md](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/inventory.md).
 

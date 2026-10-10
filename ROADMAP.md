@@ -55,9 +55,13 @@ control mapping, then the fleet dashboard.
 - Threat mapping: correct the OWASP and MITRE ATLAS references the scanner
   already emits, and pin each to an edition. Then move mappings into
   validated catalogs and add MAESTRO layer attribution.
-- Autonomy tiers L1 (chatbot) to L5 (fully autonomous), reported as an
-  evidence interval (floor and ceiling) and compared with the tier a
-  Capability Card declares. An unknown tier never counts as a low one.
+- Autonomy tiers L0 (Chatbot) to L5 (Fully Autonomous), reported as an
+  evidence interval (floor and ceiling) and compared with the level a
+  schema version 2 Capability Card declares. An unknown tier never counts as
+  a low one. The first part is implemented; see
+  [docs/concepts/autonomy.md](docs/concepts/autonomy.md). Evaluation corpus
+  cases per tier and surface and a comparison with other autonomy frameworks
+  remain open.
 - Scheduled drift: attested collection scope for live API connectors, which
   cannot be compared today. Add drift classes (inventory, capability,
   autonomy, governance, coverage), a reviewed baseline lifecycle and a weekly

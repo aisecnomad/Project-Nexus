@@ -392,6 +392,13 @@ system can do without a person, and how sure the scanner is about that label.
 
 ### Taxonomy
 
+**Superseded.** The maintainer chose a six-level scale: L0 Chatbot, L1
+Copilot, L2 Supervised, L3 Semi-Autonomous / Agentic Workflow, L4 High
+Autonomy, L5 Fully Autonomous, declared as `autonomy_profile.level` (0 to 5)
+behind card `schema_version: 2`. TIER-1 implements it; see
+[autonomy tiers](../concepts/autonomy.md). The table below is the original
+proposal.
+
 | Tier | Name | Who chooses the next step | Who starts it | Side effects |
 |------|------|---------------------------|---------------|--------------|
 | L1 | Chatbot | A person | A person | None. It answers. |

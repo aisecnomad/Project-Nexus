@@ -5,6 +5,45 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Autonomy tiers and Capability Card schema version 2
+
+- Classify agents, agent configurations, MCP servers, workflows, bots, gateway
+  callers, AI apps, runtime processes and AI cloud resources on the L0 Chatbot
+  to L5 Fully Autonomous scale. Each such finding carries
+  `metadata.autonomy` (`shadowscan.autonomy/v1`): the floor its evidence
+  proves, the ceiling positive evidence has not ruled out (L5 without such
+  evidence), oversight, initiation and the rules behind them. Credentials,
+  grants, identities, infrastructure, stored models and network contacts carry
+  none. The interval is not part of finding identity.
+- The `autonomous` capability counts as approval-bypass evidence only where it
+  means no person approves each step; low-code and cloud triggers and gateway
+  cadence count as initiation evidence instead.
+- Agent Capability Cards gain a top-level `schema_version`. Version 2 declares
+  `autonomy_profile.level` (an integer from 0 to 5); a level outside that
+  range, a non-mapping `autonomy_profile` or a `schema_version` other than 1
+  or 2 makes the inventory invalid. A version 1 card's level is ignored as
+  undeclared, with the advisory warning
+  `autonomy_profile.level ignored: card has no schema_version 2` from
+  `inventory check` and under `engine.inventory`. Simple and CSV inventories
+  accept `autonomy_level`. The bundled `agent-card.yaml` and example
+  inventories declare levels on the new scale.
+- A declared level below the observed floor adds the `autonomy-understated`
+  tag (risk weight 10). `options.risk_weights.autonomy` (`L0` to `L5`, all 0
+  by default) can weigh the observed floor; unknown keys are rejected. No
+  other default weight changes.
+- `inventory stubs` writes `schema_version: 2` cards whose level is the
+  observed floor.
+- `code.filesystem` and `endpoint.inventory` record Claude Code, Codex and
+  Goose settings that make a person approve actions as
+  `metadata.approval_gate`; `cloud.aws` records Bedrock action-group function
+  confirmation the same way; `cloud.azure` Logic Apps record
+  `metadata.trigger_types`. Replayed endpoint records drop malformed approval
+  entries with a warning that makes the scan incomplete.
+- `merge` keeps the first source's autonomy block and rejects a source whose
+  block is malformed.
+- The rules and fixtures are synthetic and author-written; they do not
+  establish live tenant acceptance or measured precision.
+
 ### Scan evidence, completeness and replay corrections
 
 - Resolve supported Go SDK import aliases before publishing credential-bearing

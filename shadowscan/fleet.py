@@ -4,7 +4,9 @@ A fleet report is the union of its sources. Findings with the same identity
 (the same object seen by the same connector, for example one workstation
 scanned twice) merge exactly as repeated observations do inside one scan:
 evidence and technologies union, the earliest ``first_seen`` and latest
-``last_seen`` survive, the first report's metadata wins. Findings from
+``last_seen`` survive, the first report's metadata wins. That includes the
+autonomy interval (``metadata.autonomy``): like risk, it is validated and kept
+as a source scan computed it, not recomputed from the merged evidence. Findings from
 different machines keep their own resources because the endpoint label
 prefixes every resource.
 
@@ -25,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
+from shadowscan.autonomy import valid_autonomy
 from shadowscan.comparison import _SCHEMA as _SCOPE_SCHEMA
 from shadowscan.comparison import _complete, _findings, _scope_digest, _summary_matches_findings
 from shadowscan.merge import merge
@@ -42,6 +45,11 @@ def _check(report: Any, name: str) -> dict[str, Any]:
     for finding in report["findings"]:
         if not isinstance(finding, dict) or finding.get("identity_schema") != FINDING_IDENTITY_SCHEMA:
             raise ValueError(f"{name}: a finding does not carry the current identity schema")
+        metadata = finding.get("metadata")
+        # The merge keeps the first source's autonomy block, as it keeps its other metadata and
+        # the sources' risk, so a block it cannot read must not reach the fleet report.
+        if isinstance(metadata, dict) and "autonomy" in metadata and not valid_autonomy(metadata["autonomy"]):
+            raise ValueError(f"{name}: a finding has malformed autonomy metadata; rescan before merging")
     _findings(report)
     return report
 

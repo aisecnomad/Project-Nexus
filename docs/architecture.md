@@ -40,6 +40,7 @@
 | `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |
 | `shadowscan/registry.py` | inventory formats and reconciliation, capability-card stub generation |
 | `shadowscan/risk.py` | additive, explainable risk model |
+| `shadowscan/autonomy.py` | autonomy tier interval (L0 to L5) for each applicable finding and its comparison with a declared level |
 | `shadowscan/engine.py` | parallel connector execution, merge, correlation, reconciliation, scoring; no connector names |
 | `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing, connector key validation |
 | `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
@@ -59,7 +60,9 @@
    connector, provider, account, region, resource and observation discriminator),
    **correlates** across surfaces by resource ids and normalised names
    (`metadata.related`), **reconciles** with the inventory (`shadow`,
-   `registry_match`, inherited owner) and **scores** risk. Findings below
+   `registry_match`, inherited owner), **classifies** autonomy
+   (`metadata.autonomy`, compared with a matched entry's declared level) and
+   **scores** risk. Findings below
    `min_confidence` are then dropped, together with the `related` links that
    name them.
 5. Reporters render. SARIF carries `file:line` for code findings and logical

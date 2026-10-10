@@ -16,8 +16,12 @@ The inventory can be supplied as:
         names: ["ops provisioning agent", "ops-bot"]   # aliases matched against titles / names
         frameworks: [framework.langgraph]
 
-* a simple inventory list ``agents: [{id, name, owner, resources, names}]`` (YAML/JSON)
+  A card with top-level ``schema_version: 2`` declares ``autonomy_profile.level`` on the L0-L5
+  scale of :mod:`shadowscan.autonomy`; an earlier card's level is ignored and reported.
+
+* a simple inventory list ``agents: [{id, name, owner, resources, names, autonomy_level}]`` (YAML/JSON)
 * a CSV with columns ``agent_id, name, owner, resources`` (resources separated by ``|``)
+  and an optional ``autonomy_level``
 
 Automatic approval requires an explicit, case-sensitive resource pattern and
 all configured ``surfaces``, ``providers``, ``accounts``, ``regions`` and
@@ -39,6 +43,7 @@ from typing import Any
 
 import yaml
 
+from shadowscan.autonomy import observed_floor, valid_autonomy
 from shadowscan.errors import SetupError, SetupPathError
 from shadowscan.models import Finding, Surface
 from shadowscan.utils.files import (
@@ -172,6 +177,11 @@ class InventoryEntry:
     tags: list[str] = field(default_factory=list)
     source: str | None = None
     card: dict[str, Any] = field(default_factory=dict)
+    # Declared autonomy level (0-5): ``autonomy_profile.level`` of a schema_version 2 card, or a
+    # simple entry's ``autonomy_level``. None when the entry declares none.
+    autonomy_level: int | None = None
+    # A card without schema_version 2 set autonomy_profile.level; it was not read (older scale).
+    ignored_autonomy_level: bool = False
 
     def __post_init__(self) -> None:
         # Direct users of the public model must not bypass parser type checks.
@@ -183,6 +193,9 @@ class InventoryEntry:
             raise _invalid(path, "entry.agent_id", "a nonempty string is required")
         for name in _LIST_FIELDS - {"aliases"}:
             setattr(self, name, _string_list(values, name, path, "entry"))
+        _autonomy_level(values, "autonomy_level", path, "entry")
+        if type(self.ignored_autonomy_level) is not bool:
+            raise _invalid(path, "entry.ignored_autonomy_level", "expected a boolean")
 
     def all_names(self) -> list[str]:
         out = [self.agent_id]
@@ -203,6 +216,15 @@ class Inventory:
 
     def __len__(self) -> int:
         return len(self.entries)
+
+    def autonomy_warnings(self) -> list[str]:
+        """Advisory notices for cards whose autonomy level was not read (no schema_version 2)."""
+        return [
+            f"inventory entry {entry.agent_id}{f' in {entry.source}' if entry.source else ''}: "
+            f"{IGNORED_AUTONOMY_LEVEL}"
+            for entry in self.entries
+            if entry.ignored_autonomy_level
+        ]
 
     # ---------------------------------------------------------------- load
     @classmethod
@@ -315,6 +337,9 @@ class Inventory:
                     if name in row:
                         value = row[name].strip()
                         item[name] = [part.strip() for part in value.split("|")] if value else []
+                level = row.get("autonomy_level", "").strip()
+                if _CSV_LEVEL.fullmatch(level):
+                    item["autonomy_level"] = int(level)
                 # Blank optional CSV cells are absent, not invalid empty strings.
                 item = {name: value for name, value in item.items() if value != ""}
                 out.append(cls._entry_from_simple(item, path, location))
@@ -351,6 +376,7 @@ class Inventory:
         tags = _string_list(meta, "tags", path, f"{location}.metadata")
         if meta.get("classification"):
             tags.append(meta["classification"].strip())
+        level, ignored = _card_autonomy(doc, path, location)
         return InventoryEntry(
             agent_id=aid.strip(),
             name=_first_string(meta, "name", "display_name"),
@@ -366,6 +392,8 @@ class Inventory:
             tags=tags,
             source=str(path),
             card=doc,
+            autonomy_level=level,
+            ignored_autonomy_level=ignored,
         )
 
     @staticmethod
@@ -373,12 +401,13 @@ class Inventory:
         if not isinstance(item, dict):
             raise _invalid(path, location, "expected an inventory mapping")
         _check_fields(item, _SIMPLE_FIELDS, path, location)
-        for name in _SIMPLE_FIELDS - _LIST_FIELDS:
+        for name in _SIMPLE_FIELDS - _LIST_FIELDS - {"autonomy_level"}:
             _optional_string(item, name, path, location)
         aid = item.get("id") or item.get("agent_id") or item.get("name")
         if not aid:
             raise _invalid(path, location, "id, agent_id, or name is required")
         lists = {name: _string_list(item, name, path, location) for name in _LIST_FIELDS}
+        level = _autonomy_level(item, "autonomy_level", path, location)
         return InventoryEntry(
             agent_id=aid.strip(),
             name=_first_string(item, "name"),
@@ -394,6 +423,7 @@ class Inventory:
             tags=lists["tags"],
             source=str(path),
             card=item,
+            autonomy_level=level,
         )
 
     # --------------------------------------------------------------- match
@@ -523,7 +553,40 @@ _LIST_FIELDS = {
     "discriminators",
     "tags",
 }
-_SIMPLE_FIELDS = _LIST_FIELDS | {"id", "agent_id", "name", "owner", "owner_team"}
+_SIMPLE_FIELDS = _LIST_FIELDS | {"id", "agent_id", "name", "owner", "owner_team", "autonomy_level"}
+_CSV_LEVEL = re.compile(r"[0-5]")
+CARD_SCHEMA_VERSIONS = (1, 2)
+IGNORED_AUTONOMY_LEVEL = "autonomy_profile.level ignored: card has no schema_version 2"
+
+
+def _autonomy_level(value: dict, name: str, path: Path, location: str) -> int | None:
+    """An optional declared autonomy level: an integer from 0 to 5 (booleans are not levels)."""
+    level = value.get(name)
+    if level is None:
+        # Like an optional string, an omitted or null level declares nothing.
+        return None
+    if type(level) is not int or not 0 <= level <= 5:
+        raise _invalid(path, f"{location}.{name}", "expected an integer from 0 to 5")
+    return level
+
+
+def _card_autonomy(doc: dict[str, Any], path: Path, location: str) -> tuple[int | None, bool]:
+    """``(declared level, ignored)`` for a card: only schema_version 2 cards declare a level.
+
+    Earlier cards used ``autonomy_profile.level`` on an undefined scale. Reading it on the
+    L0-L5 scale could misstate a card, so it counts as undeclared and is reported.
+    """
+    version = doc.get("schema_version", 1)
+    if type(version) is not int or version not in CARD_SCHEMA_VERSIONS:
+        raise _invalid(path, f"{location}.schema_version", "unsupported card schema version; expected 1 or 2")
+    profile = doc.get("autonomy_profile")
+    if version == 1:
+        return None, isinstance(profile, dict) and "level" in profile
+    if profile is None:
+        return None, False
+    if not isinstance(profile, dict):
+        raise _invalid(path, f"{location}.autonomy_profile", "expected a mapping")
+    return _autonomy_level(profile, "level", path, f"{location}.autonomy_profile"), False
 
 
 def _check_fields(value: dict, allowed: set[str], path: Path, location: str) -> None:
@@ -607,11 +670,24 @@ def _strip_cite_markers(text: str) -> str:
     return "".join(result)
 
 
+def _stub_autonomy_level(finding: Finding) -> int | None:
+    """The observed autonomy floor: the report's value when well formed, else recomputed."""
+    recorded = finding.metadata.get("autonomy")
+    if isinstance(recorded, dict) and valid_autonomy(recorded):
+        return int(recorded["floor"])
+    return observed_floor(finding)
+
+
 def card_stub_for(finding: Finding) -> dict[str, Any]:
-    """Generate an Agent Capability Card skeleton for a discovered agent (to register it)."""
+    """Generate an Agent Capability Card skeleton for a discovered agent (to register it).
+
+    The card uses schema version 2 and declares the finding's observed autonomy floor, the
+    lowest level its evidence proves. A reviewer raises it to the level the agent is approved for.
+    """
     caps = finding.capabilities
-    autonomy = 4 if "autonomous" in caps else 3 if "tool-use" in caps else 2
+    level = _stub_autonomy_level(finding)
     return {
+        "schema_version": 2,
         "metadata": {
             "agent_id": _slug(
                 finding.metadata.get("agent_name")
@@ -625,7 +701,7 @@ def card_stub_for(finding: Finding) -> dict[str, Any]:
             "discovered_as": finding.resource,
         },
         "autonomy_profile": {
-            "level": autonomy,
+            **({"level": level} if level is not None else {}),
             "memory_persistence": "memory" in caps,
             "max_loop_iterations": None,
             "velocity_limit": None,

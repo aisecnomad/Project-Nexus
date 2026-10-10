@@ -2122,6 +2122,8 @@ def _protocol_evidence(
         return []
     found: list[Match] = []
     if tree is not None:
+        # Autonomy: approval-bypass evidence. The loop runs each tool the model selects and feeds
+        # the result back without a person approving the call.
         for line in provider_tool_loop_lines(tree, requests.provider, dispatch_calls=dispatch_calls):
             found.append(
                 Match(

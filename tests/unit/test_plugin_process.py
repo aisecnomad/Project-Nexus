@@ -400,6 +400,8 @@ def test_non_json_metadata_round_trips_like_thread_mode(installed_probe, monkeyp
         sys.modules.pop(MODULE, None)
         registry._cache.pop(ENTRY, None)
     assert reported["process"] == reported["thread"]
+    # The engine derives the autonomy block after collection, for either backend alike.
+    assert reported["thread"].pop("autonomy")["schema"] == "shadowscan.autonomy/v1"
     # The report renders a datetime as text and reads a set as a list and
     # bytes as text; the transport must not change that rendering.
     assert reported["thread"] == {"seen": "2026-01-01 00:00:00", "scopes": ["read"], "raw": "ab"}

@@ -108,6 +108,7 @@ nav:
       - Inventory: inventory.md
       - Scanning: scanning.md
       - Risk scoring: concepts/risk.md
+      - Autonomy tiers: concepts/autonomy.md
       - Severity and enforcement: severity.md
   - Operations:
       - Production deployment: production.md
@@ -141,6 +142,7 @@ nav:
           - Models: api/models.md
           - Config: api/config.md
           - Risk: api/risk.md
+          - Autonomy: api/autonomy.md
           - Merge: api/merge.md
           - Correlation: api/correlation.md
           - Inventory registry: api/registry.md

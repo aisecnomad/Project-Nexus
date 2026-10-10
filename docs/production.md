@@ -914,6 +914,22 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 10 autonomy tiers and card schema version 2 (unreleased)
+
+This candidate adds the [autonomy tiers](concepts/autonomy.md). It does not
+change the published 0.1.2 artifact, create a release, or establish live tenant
+acceptance. The classification rules and fixtures are synthetic and
+author-written.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Report fields | Applicable findings carry `metadata.autonomy` (`shadowscan.autonomy/v1`: floor, ceiling, oversight, initiation, basis, and the declared level when an inventory entry sets one). Finding identity is unchanged. | Consumers that read metadata must tolerate the new key. Gate on the ceiling, which never understates; the floor is a lower bound. |
+| Capability Cards | Top-level `schema_version`; version 2 declares `autonomy_profile.level` (0 to 5). An out-of-range level, a non-mapping `autonomy_profile` or an unknown `schema_version` now fails inventory validation. Version 1 levels are ignored with an advisory warning. | Run `shadowscan inventory check` on every inventory before deploying. Review each card's level against the new scale before adding `schema_version: 2`; never copy an old number unreviewed. |
+| Risk | Tag `autonomy-understated` (weight 10) when a declared level is below the observed floor. New `risk_weights.autonomy` group, zero by default. Other default weights are unchanged. | Expect higher scores only for registered findings whose declared level is understated; rebaseline risk-level gates that cover them. |
+| Connector metadata | Coding-agent settings (code and endpoint) and Bedrock action-group confirmation record `metadata.approval_gate`; Azure Logic Apps record `metadata.trigger_types`. Endpoint replays drop malformed approval entries and are incomplete. | Regenerate endpoint exports to include approval entries; older exports replay without them and keep the ceiling at L5. |
+| Fleet merge | `merge` keeps the first source's autonomy block and refuses a source with a malformed one. | Rescan sources that the merge refuses; mixed-version fleets merge without autonomy for findings from older reports. |
+| Inventory stubs | Stubs are `schema_version: 2` cards declaring the observed floor. | Review the generated level and set the approved one before moving a stub into the inventory. |
+
 ### October 9 scan evidence corrections (unreleased)
 
 This source candidate includes corrections reviewed from the existing discovery,

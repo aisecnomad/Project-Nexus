@@ -879,6 +879,8 @@ class GcpConnector(BaseConnector):
             )
         )
         if rec.get("eventTrigger"):
+            # Autonomy: initiation evidence (an event starts the function; metadata.trigger names
+            # the event type), not approval-bypass evidence.
             f.add_capability("autonomous")
         f.metadata.update(
             {
