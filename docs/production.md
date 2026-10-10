@@ -999,6 +999,28 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 10 drift classes and baseline lifecycle (unreleased)
+
+This candidate adds drift classes, baseline pinning and expiry to
+`shadowscan diff`, and the weekly [drift templates](operations/drift.md). It
+does not change the published 0.1.2 artifact, create a release, or establish
+live tenant acceptance. The class rules and fixtures are synthetic and
+author-written.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Comparison fields | `diff` also compares `metadata.autonomy` floor, ceiling, oversight and initiation, `metadata.tool_definition_sha256` and `metadata.registry_reconciliation.status`. A finding whose only difference is one of these is now `changed`. Finding identity and the scope fingerprint are unchanged. | Expect `changed` entries that earlier builds did not report, for example an MCP tool whose definition changed. Consumers that count `changed` should not treat the increase as a regression in the scanner. |
+| Report import | Reading a report for `diff`, `merge` or `inventory stubs` rejects (exit 1) a finding whose `metadata` is not an object, or whose value at one of those paths is malformed. | Regenerate edited or hand-built reports; reports this scanner wrote are unaffected. |
+| JSON output | Each change carries `drift`; the document carries `drift_summary`, `adverse` and `baseline` (`sha256`, `pinned`, `age_days`). Existing keys and `changed_fields` names are unchanged. | Consumers that require an exact key set must accept the new keys. |
+| Gating | `--fail-on-drift CLASSES` exits 2 on adverse drift in a listed class. An incomplete comparison still exits 3, and `coverage` never yields 2. `--fail-on-new` is unchanged. | Start with `inventory,capability,autonomy,governance`, and review which changes the [class table](operations/drift.md#drift-classes) treats as adverse before gating on it. |
+| Baseline lifecycle | `--baseline-sha256` refuses (exit 1) a baseline whose raw bytes differ from the pinned digest. `--max-baseline-age-days` makes an expired or undatable baseline, or one that started after the current scan, incomplete (exit 3). | Store baselines in a private baseline repository, accept drift by reviewed pull request, and pin `sha256sum baseline.json`. Disable line-ending conversion for the baseline file. A replayed report is dated by the replay, not by the collection. |
+| Mitigating tags | Removing `disabled`, `inactive`, `suspended`, `expired`, `asks-user`, a `*-code-only` or `docs-only` scope tag, `pending-request`, `managed-secret` or `mcp-registry-published` is adverse capability drift; adding one is not. | Expect exit 2 from `--fail-on-drift capability` when an agent is enabled again or an app is restored, and none when one is disabled. |
+| Fleet start time | A fleet's `started_at` is the earliest source start compared as instants. Any source without a valid timezone-aware start makes it `null` instead of the merge time. | A fleet baseline with an undated source makes `--max-baseline-age-days` exit 3. Regenerate its sources, or merge only dated reports. |
+
+A pinned digest shows only that the baseline file is the reviewed one. The
+drift classes record what changed between two reports. They do not prove that
+a change is malicious or benign, and they are not a measured detector.
+
 ### October 10 fleet shadow status and triage budget corrections (unreleased)
 
 This source candidate corrects fleet merging and bounds LLM triage. It does not
@@ -1157,6 +1179,38 @@ author-written.
 | Fleet merge | `merge` classifies each merged finding again and widens the interval to admit what every source's block admits (highest floor and ceiling, `bypassed` over `unknown` over `gated`); it refuses a source with a malformed block. | Rescan sources that the merge refuses. Findings from older reports are classified from the merged finding alone. |
 | Fleet merge combinations and declared levels | The merged finding is classified with the widest oversight and initiation any source recorded, so the combination rules apply across sources: approval bypassed in one source and a schedule trigger in another now give floor L5 (`self-initiated`) instead of L4. A registered finding keeps the lowest level any source declares for its agent, so `autonomy-understated` no longer depends on the order of the reports; sources that matched different agents leave it ambiguous with no declared level. | Expect higher merged floors where sources recorded complementary evidence, and the understated tag in every argument order. Rebaseline gates on merged floors. |
 | Inventory stubs | Stubs are `schema_version: 2` cards declaring the observed floor. | Review the generated level and set the approved one before moving a stub into the inventory. |
+
+### October 10 attested live collection scope (unreleased)
+
+This candidate lets live `cloud.aws`, `cloud.azure`, `cloud.gcp` and
+`identity.entra` scans attest their
+[collection scope](scanning.md#live-collection-scope), so `shadowscan diff` can
+resolve findings between two complete live scans. It does not change the
+published 0.1.2 artifact, create a release, or establish live tenant
+acceptance: the provider responses in the tests are mocked and synthetic, and
+nothing was validated against a live account, tenant, project or subscription.
+
+| Area | Changed behavior | Migration check |
+| --- | --- | --- |
+| Rollout | `collection_scope` is computed after collection. A complete live scan by one of the four connectors whose provider confirmed the principal is now comparable; before, every live comparison exited 3. Other live connectors, plugins and timed-out jobs are unchanged: never attested. | Live scans taken before this candidate carry no attested scope: collect a new baseline with the reviewed revision before gating on `diff`. Pin that revision: any scanner change changes every fingerprint. |
+| Collection scope | The fingerprint covers each live entry's verified principal, non-secret requested options as resolved, partitions (regions, projects and locations, subscriptions) and every enumeration with its outcome. Detail calls, counts, identifiers and timestamps are excluded. Changing options, enabling an API in a configured GCP project, adding a service or region, or a region enabled under `regions: all` changes the fingerprint. `collection_scope.live` publishes each live record outside the fingerprint. | Expect exit 3 (`scope differs`) after any scope change and re-baseline deliberately. Read `collection_scope.live` to see which listing was denied, throttled or truncated. Do not pass connector-specific secrets through non-credential option names: a value the sanitizer would change fails closed (`configuration contains private comparison values`). |
+| Credential policy | `identity.entra` reads `GET /organization` (`Organization.Read.All` or `Directory.Read.All` for application tokens, `User.Read` delegated); `cloud.azure` reads `GET /subscriptions/{id}` for configured subscriptions (covered by `Reader`). AWS and GCP use calls they already made. A denied verification is an advisory warning, the scan still completes, and its scope is not attested (`live principal could not be verified`). A reported tenant other than a GUID `tenant_id`, or another subscription than a configured one, stops the scan (exit 3). | Grant the organization read only where you need comparable drift. Set `tenant_id` to the tenant ID and `subscriptions` to the exact subscription IDs the credentials are meant for. |
+| Finding identity | Unchanged. | None. |
+
+What attestation proves: which principal, partitions and listings a scan
+enumerated successfully, and with which options. It does not prove that the
+account or tenant has no agents outside the enumerated APIs, services, regions,
+locations or projects, that the credentials could read every object (a listing
+returns only what they may see), or that another identity would see the same.
+Delegated `identity.entra` scans are never attested, for that reason.
+Without `projects`, `cloud.gcp` attests the discovered project set, as
+`cloud.azure` does for listed subscriptions: a project the credentials lose
+access to, or a new one, changes the scope (exit 3) instead of resolving
+findings. Set `projects` or `subscriptions` for a stable drift gate. Comparing replays of record exports remains
+possible; stage every replay at the same absolute `input` path and label, and
+replay only exports whose `manifest.json` shows a complete run, because an
+export is published even when its live run was incomplete
+([record export replay](scanning.md#record-export-replay)).
 
 ### October 9 change-scoped scans, path context and new ecosystems (unreleased)
 

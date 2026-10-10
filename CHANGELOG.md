@@ -149,6 +149,59 @@ summarizes each release for people who install and operate ShadowScan.
   `import google.auth` also binds. A new test type-checks every optional SDK
   import with installed packages hidden.
 
+### Drift classes, baseline pinning and weekly drift templates
+
+- `shadowscan diff` labels every changed field with a drift class
+  (`inventory`, `capability`, `autonomy`, `governance`, `coverage`) and
+  whether it is adverse. Each `changed` entry gains `drift`, and the
+  document gains `drift_summary`, `adverse` and `baseline` (`sha256`,
+  `pinned`, `age_days`). Existing keys, `changed_fields` names and the text
+  header line are unchanged; text output adds a `drift:` line and appends
+  the classes to each changed line.
+- `diff` now also compares `metadata.autonomy` (floor, ceiling, oversight,
+  initiation), an MCP tool's `metadata.tool_definition_sha256` and
+  `metadata.registry_reconciliation.status`. A change to one of them alone now
+  reports the finding as changed. Reading a report (for `diff`, `merge` and
+  `inventory stubs`) now rejects a finding whose metadata is not an object,
+  or whose value at one of these paths is malformed.
+- Adverse drift: new findings and changed kinds; added permissions,
+  capabilities, frameworks, model providers, models and tags (MCP registry
+  status tags included); a removed mitigating tag (`disabled`, `inactive`,
+  `suspended`, `expired`, `asks-user`, the `*-code-only` and `docs-only`
+  scope tags, `pending-request`, `managed-secret`, `mcp-registry-published`),
+  whose addition is not adverse; a changed or lost tool definition digest; a higher
+  autonomy floor or ceiling, oversight moving towards `bypassed` and
+  initiation moving away from `human`; a lost owner, a finding becoming
+  shadow, a lost or changed registry match, a reconciliation status becoming
+  `observed-not-registered` or leaving `registered-and-observed`, and an
+  added `autonomy-understated` tag. Risk changes stay unclassified.
+- Add `diff --fail-on-drift CLASSES` (exit 2 on adverse drift in a listed
+  class; an unknown class exits 1; an incomplete comparison still exits 3,
+  so `coverage` never yields 2), `--baseline-sha256 HEX` (refuse, exit 1, a
+  baseline whose raw file bytes have another SHA-256, before parsing or
+  printing it) and `--max-baseline-age-days N` (an expired, undatable or
+  future baseline, or one that started after the current scan, makes the
+  comparison incomplete, exit 3; the limit is at most 36500 days).
+  `--fail-on-new` is unchanged.
+- A fleet report's `started_at` is now the earliest source start time
+  compared as instants, not as text. When any source lacks a valid
+  timezone-aware start time, the fleet's `started_at` is `null` instead of
+  the merge time, so an age limit cannot pass an undated fleet baseline.
+- Add `read_policy_bytes` and `load_report_with_digest` so the pinned digest
+  and the parsed report come from one bounded, link-refusing read.
+- Add the weekly `examples/github-action-drift.yml` workflow and
+  `examples/k8s-drift-cronjob.yaml` CronJob. The workflow has no pull request
+  trigger, top-level `contents: read`, `id-token: write` on its one job, a
+  named environment, pinned actions and `persist-credentials: false` on both
+  checkouts. It writes only counts per drift class to the job summary and
+  keeps reports as 14-day artifacts. Both templates fail with the scan's own
+  exit code 2 (`options.fail_on`) or 3 when the comparison exits 0. Repository policy tests check both
+  templates. Add the scheduled drift detection page, which covers the record
+  and replay pitfalls.
+- Add authored regression tests for each drift class and the baseline
+  lifecycle. They use synthetic reports and do not establish live tenant
+  acceptance or measured precision of the drift classes.
+
 ### Threat and control references
 
 - Replace `metadata.compliance` with `metadata.threats` and
@@ -733,6 +786,48 @@ summarizes each release for people who install and operate ShadowScan.
   such an `http://` or `ws://` interface.
 - The cards, keys and HTTP exchanges in the tests are synthetic, modeled on
   the A2A specification; nothing was validated against a live agent.
+
+### Attested collection scope for live cloud.aws, cloud.azure, cloud.gcp and identity.entra scans
+
+- Live scans by `cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra`
+  can now attest a comparable `collection_scope`, so `shadowscan diff` can
+  resolve findings between two complete live scans instead of always exiting
+  3. Each connector records, during collection, the principal its provider
+  reported (the STS account, never the caller ARN; the tenant
+  `GET /organization` returns, for app-only scans; configured GCP projects
+  confirmed by their enabled-services listings, or the project set a complete
+  `projects.list` returned; Azure subscriptions read with
+  `GET /subscriptions/{id}` or listed by `GET /subscriptions`), its non-secret
+  options as resolved, the
+  regions, projects, locations or subscriptions it covered, and the outcome
+  (`ok`, `denied`, `throttled`, `truncated`, `unavailable` or `failed`) of
+  every listing whose request does not depend on earlier responses. Detail
+  calls per discovered resource, counts, identifiers and timestamps are never
+  fingerprinted, so new agents and extra pages keep the scope.
+- The scope fingerprint is now computed after collection. A live entry attests
+  only when its connector completed, every listing succeeded and the principal
+  was confirmed; otherwise the scope is not comparable with the new reasons
+  `live collection was not verified or was incomplete` or `live principal
+  could not be verified`. A timed-out job, a plugin and every other live
+  connector are never attested. `collection_scope.live` publishes each live
+  entry's record, outside the fingerprint. The collection scope schema stays
+  `shadowscan.collection-scope/v1` and static inputs are fingerprinted as
+  before; as with any scanner change, collect new baselines after upgrading.
+- `identity.entra` reads `GET /organization` after authenticating
+  (`Organization.Read.All` or `Directory.Read.All`, or `User.Read` delegated).
+  A denied or ambiguous answer is an advisory warning that leaves the scope
+  unattested; a tenant other than a GUID `tenant_id` stops the scan. A
+  delegated scan is never attested: its listings return only what the
+  signed-in user may see, so another user in the tenant could see less
+  without any error.
+  `cloud.azure` reads `GET /subscriptions/{id}` for configured subscriptions
+  (covered by `Reader`) with the same rules.
+- New engine hooks `attests_live_scope` and `scope_options` and the
+  `ConnectorContext` methods `attest_principal`, `attest_partition`,
+  `attest_operation` and `scope_record`. Only built-in connectors are
+  attested.
+- The transports in the tests are mocked; nothing was validated against a live
+  account or tenant.
 
 ### Scan evidence, completeness and replay corrections
 

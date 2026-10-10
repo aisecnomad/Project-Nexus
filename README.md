@@ -207,6 +207,7 @@ shadowscan merge laptop-*.json --format json -o fleet.json       # one report fo
 # 7. Register what you found
 shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents
 shadowscan diff last-week.json today.json                        # what is new / resolved/changed
+shadowscan diff baseline.json today.json --fail-on-drift inventory,capability,autonomy,governance  # exit 2 on adverse drift
 shadowscan scan -c shadowscan.yaml --format cyclonedx -o ai-bom.json   # CycloneDX 1.6 bill of materials
 ```
 
@@ -285,8 +286,8 @@ See [scan semantics](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/
 
 | Exit | Meaning |
 |---|---|
-| **3** | Scan incomplete. `shadowscan diff` also returns 3 when reports are incomparable. |
-| **2** | Scan completed but reached `--fail-on`. |
+| **3** | Scan incomplete. `shadowscan diff` also returns 3 when reports are incomparable, for example live scans other than complete, attested `cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra` collections, or an expired or undatable baseline with `--max-baseline-age-days`. |
+| **2** | Scan completed but reached `--fail-on`. `shadowscan diff` returns 2 for new findings or a higher risk level with `--fail-on-new`, and for adverse drift with `--fail-on-drift`. |
 | **1** | No scan result: invalid option, value, path or configuration, or setup/output error. |
 | **0** | Scan completed and passed. |
 

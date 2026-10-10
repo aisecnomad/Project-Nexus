@@ -28,8 +28,7 @@ fail-closed trust model.
 ## Next
 
 - Add opt-in live Kubernetes and endpoint collection, confined host/config and
-  model-artifact discovery, MCP HTTP inventory probes, and stronger baseline
-  comparison for MCP tool-definition changes.
+  model-artifact discovery, and MCP HTTP inventory probes.
 - Additional connectors on the existing surfaces, driven by
   [connector requests](https://github.com/aisecnomad/Project-Nexus/issues?q=label%3Aconnector-request).
 - Field validation of the endpoint, network and runtime connectors on real
@@ -62,10 +61,14 @@ control mapping, then the fleet dashboard.
   [docs/concepts/autonomy.md](docs/concepts/autonomy.md). Evaluation corpus
   cases per tier and surface and a comparison with other autonomy frameworks
   remain open.
-- Scheduled drift: attested collection scope for live API connectors, which
-  cannot be compared today. Add drift classes (inventory, capability,
-  autonomy, governance, coverage), a reviewed baseline lifecycle and a weekly
-  workflow template. This includes the MCP tool-definition comparison above.
+- Scheduled drift: implemented, unreleased. Live `cloud.aws`, `cloud.azure`,
+  `cloud.gcp` and app-only `identity.entra` scans attest their collection
+  scope, `diff` labels drift classes (inventory, capability, autonomy,
+  governance, coverage, including MCP tool-definition changes), baselines are
+  pinned and expire, and weekly workflow and CronJob templates exist; see
+  [docs/operations/drift.md](docs/operations/drift.md). Validation against
+  live accounts and tenants, and attestation for the other live connectors,
+  remain open.
 - Registry integrations: AWS AgentCore Registry, Microsoft Agent 365 and
   Gemini Enterprise as discovery and reconciliation sources; official MCP
   Registry provenance and private MCP registry allowlists; A2A Agent Card

@@ -119,6 +119,7 @@ nav:
       - Tenant canaries: canaries.md
       - CI integration: operations/ci.md
       - Operational controls: operations/operational-controls.md
+      - Scheduled drift detection: operations/drift.md
       - AI bill of materials: operations/ai-bom.md
       - OCSF events: operations/ocsf.md
       - LLM triage: operations/llm-triage.md

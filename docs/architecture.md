@@ -107,11 +107,13 @@ defaults, which describe an ordinary connector.
 
 | hook | default | declared by | engine behaviour |
 |---|---|---|---|
+| `attests_live_scope` | `False` | `cloud.aws`, `cloud.azure`, `cloud.gcp`, `identity.entra` | after a live job (no `input`) the engine reads the connector's scope record (`ConnectorContext.scope_record`: the principal the provider reported, requested options, partitions and each listing's outcome) into a per-run ledger, which drops cancelled and timed-out jobs, and computes `collection_scope` after collection from it ([live collection scope](scanning.md#live-collection-scope)). Only built-in connectors are honoured: a plugin's record is never read |
 | `cache_roots_separately(roots, root_ids, *, labelled)` | `False` | `code.filesystem` | an incremental scan of several `paths` runs and caches one job per root; raising `ConnectorError` runs the connector once so its own validation reports the scan incomplete; any other exception marks the connector incomplete without running it |
 | `emits_registry_records` | `False` | `cloud.aws`, `cloud.gcp`, `identity.entra` | the connector's findings may carry `metadata.registry_record` ([vendor registries](inventory.md#vendor-registries-as-inventory-sources)); the engine removes the key from every other connector's findings and records `registry record metadata ignored on N finding(s)` in that connector's stats, because an approved record of a trusted registry approves findings. Only built-in connectors are honoured: a plugin that declares the hook has its records removed the same way (`only built-in connectors may emit registry records`) |
 | `registry_record_types` | empty | `cloud.aws` (`aws-agent-registry`, `aws-agentcore-registry`), `cloud.gcp` (`google-agent-registry`, `gemini-enterprise`), `identity.entra` (`microsoft-agent-365`, `entra-agent-registry`) | the registry types (`shadowscan.registries.REGISTRY_TYPES`) a connector that declares `emits_registry_records` reads; the engine removes records of any other type from its findings (`the connector does not declare that registry type`), so a connector for one vendor cannot emit records for another vendor's registry |
 | `inherits_instance_credentials_approval()` | `True` for a connector on the cloud surface or one whose `config_keys` documents `allow_instance_credentials` | every `cloud.*` connector, plugins included, through its surface: the registry holds `cloud.*` names to it | the connector's `allow_instance_credentials` is set from `options.allow_instance_credentials`, whether or not it documents the key; a value in any connector entry is replaced the same way, so it never takes effect; an exception from the hook marks the connector incomplete without running it |
 | `scanned_local_paths(config)` | `[]` | `code.filesystem`; `code.github` and `code.gitlab` through their shared base class | the local files or directories the entry scans: `code.filesystem` paths (none when it replays an `input` export) and the offline clone directory (`input`) of a remote repository connector, whose live clones stay in private temporary directories; an approval inventory inside one of them is reported in the `engine.inventory` stats entry, because scanned content could edit its own approvals. Only built-in connectors are asked: the lookup never imports a plugin |
+| `scope_options` | empty | the connectors that declare `attests_live_scope` | the non-secret configuration keys a scope record repeats, as resolved; never a credential, profile or credential file |
 | `uses_run_identity_key` | `False` | `gateway.logs` | the connector's jobs share one private key per scan run (`ConnectorContext.gateway_identity_key`), so identical sources in one report share opaque caller and scope IDs that separate runs cannot link; when the operator sets `SHADOWSCAN_IDENTITY_KEY`, every run uses that stable key instead (`gateway_identity_key_stable`) and its IDs can be compared across runs |
 
 The engine looks up the connector class once per configured entry and reads
@@ -119,10 +121,11 @@ these hooks from it. As in collection, the lookup, which imports an approved
 plugin, runs under the scan's private-origin policy and is skipped once the
 entry is out of time. When the lookup fails or is skipped the defaults apply
 and the entry is reported incomplete. Plugins run with scanner privileges, so a
-hook a plugin declares is trusted like the rest of its code, with two
-exceptions: `scanned_local_paths` is asked only of built-in connectors, and
+hook a plugin declares is trusted like the rest of its code, with three
+exceptions: `scanned_local_paths` is asked only of built-in connectors,
 `emits_registry_records` is honoured only for them, because a registry record
-can approve other connectors' findings.
+can approve other connectors' findings, and `attests_live_scope` is honoured only
+for them, because an attested scope lets missing findings count as resolved.
 
 ## Design principles
 

@@ -32,13 +32,14 @@ import hashlib
 import os
 from collections.abc import Sequence
 from dataclasses import fields
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from shadowscan import __version__
 from shadowscan.autonomy import merge_autonomy, valid_autonomy
 from shadowscan.comparison import _SCHEMA as _SCOPE_SCHEMA
-from shadowscan.comparison import _complete, _findings, _scope_digest, _summary_matches_findings
+from shadowscan.comparison import _complete, _findings, _scope_digest, _started_at, _summary_matches_findings
 from shadowscan.merge import merge
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, Risk, ScanResult, ScanStats, now_iso
 from shadowscan.registry import clear_match_state
@@ -143,7 +144,8 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     fingerprints: list[str] = []
     comparable = True
     reasons: list[str] = []
-    started: list[str] = []
+    started: list[tuple[datetime, str]] = []
+    undated = False
     finished: list[str] = []
     inventory_size = 0
     inventory_present = False
@@ -202,8 +204,11 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
                     errors=[f"{name}: source report is incomplete or has inconsistent completion evidence"],
                 )
             )
-        if isinstance(report.get("started_at"), str):
-            started.append(report["started_at"])
+        moment = _started_at(report)
+        if moment is None:
+            undated = True
+        else:
+            started.append((moment, report["started_at"]))
         if isinstance(report.get("finished_at"), str):
             finished.append(report["finished_at"])
         size = report.get("inventory_size", 0)
@@ -250,7 +255,9 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
         inventory_present=inventory_present,
         collection_scope=scope_out,
     )
-    if started:
-        result.started_at = min(started)
+    # The fleet started when its oldest source did, so a baseline age limit measures its oldest
+    # evidence. One source without a valid start time leaves the fleet undated: dating it by the
+    # merge would let an arbitrarily old baseline pass the limit.
+    result.started_at = "" if undated else min(started, key=lambda item: item[0])[1]
     result.finished_at = max(finished) if finished else None
     return result
